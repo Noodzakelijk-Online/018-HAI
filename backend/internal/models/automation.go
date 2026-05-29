@@ -5,6 +5,7 @@ import (
 	"github.com/google/uuid"
 	jsoniter "github.com/json-iterator/go"
 	"mime/multipart"
+	"time"
 )
 
 var JSON = jsoniter.ConfigCompatibleWithStandardLibrary
@@ -20,6 +21,27 @@ type Automation struct {
 	ImageFile   *multipart.FileHeader `json:"imageFile,omitempty" gorm:"-"`
 	RemoveImage bool                  `json:"removeImage,omitempty" gorm:"-"`
 	OldUrlPath  string                `json:"oldUrlPath,omitempty" gorm:"-"`
+
+	LaunchType                 string     `gorm:"type:varchar(50);default:'browser_url'" json:"launchType,omitempty"`
+	LaunchTarget               string     `gorm:"type:varchar(1024)" json:"launchTarget,omitempty"`
+	RuntimeType                string     `gorm:"type:varchar(50)" json:"runtimeType,omitempty"`
+	ServiceName                string     `gorm:"type:varchar(255)" json:"serviceName,omitempty"`
+	RoutePath                  string     `gorm:"type:varchar(255)" json:"routePath,omitempty"`
+	PublicURL                  string     `gorm:"type:varchar(1024)" json:"publicUrl,omitempty"`
+	LocalURL                   string     `gorm:"type:varchar(1024)" json:"localUrl,omitempty"`
+	DependencyNotes            string     `gorm:"type:text" json:"dependencyNotes,omitempty"`
+	HealthCheckType            string     `gorm:"type:varchar(50);default:'http'" json:"healthCheckType,omitempty"`
+	HealthCheckURL             string     `gorm:"type:varchar(1024)" json:"healthCheckUrl,omitempty"`
+	HealthCheckIntervalSeconds int        `gorm:"default:60" json:"healthCheckIntervalSeconds,omitempty"`
+	ExpectedHTTPStatus         int        `gorm:"default:200" json:"expectedHttpStatus,omitempty"`
+	Status                     string     `gorm:"type:varchar(30);default:'unknown'" json:"status,omitempty"`
+	LastCheckedAt              *time.Time `json:"lastCheckedAt,omitempty"`
+	LastSuccessAt              *time.Time `json:"lastSuccessAt,omitempty"`
+	LastFailureAt              *time.Time `json:"lastFailureAt,omitempty"`
+	LastFailureReason          string     `gorm:"type:text" json:"lastFailureReason,omitempty"`
+	ConsecutiveFailures        int        `gorm:"default:0" json:"consecutiveFailures,omitempty"`
+	AverageLatencyMs           int64      `gorm:"default:0" json:"averageLatencyMs,omitempty"`
+	LastLaunchAt               *time.Time `json:"lastLaunchAt,omitempty"`
 }
 
 func (a *Automation) Validate() error {
