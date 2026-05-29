@@ -13,11 +13,49 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+type HealthResult struct {
+	AutomationID        uuid.UUID `json:"automationId"`
+	Status              string    `json:"status"`
+	CheckedAt           time.Time `json:"checkedAt"`
+	LatencyMs           int64     `json:"latencyMs"`
+	FailureReason       string    `json:"failureReason,omitempty"`
+	ConsecutiveFailures int       `json:"consecutiveFailures"`
+}
+
+type HealthSummary struct {
+	Healthy  int       `json:"healthy"`
+	Warning  int       `json:"warning"`
+	Broken   int       `json:"broken"`
+	Unknown  int       `json:"unknown"`
+	CheckedAt time.Time `json:"checkedAt"`
+}
+
+type LaunchResult struct {
+	AutomationID uuid.UUID `json:"automationId"`
+	LaunchType   string    `json:"launchType"`
+	Target       string    `json:"target"`
+	LaunchedAt   time.Time `json:"launchedAt"`
+}
+
+type DiagnosticResult struct {
+	AutomationID      uuid.UUID         `json:"automationId"`
+	Name              string            `json:"name"`
+	Status            string            `json:"status"`
+	LaunchTarget      string            `json:"launchTarget"`
+	HealthCheckTarget string            `json:"healthCheckTarget"`
+	RoutePath         string            `json:"routePath"`
+	Host              string            `json:"host"`
+	Port              int               `json:"port"`
+	Checks            map[string]string `json:"checks"`
+}
 
 type Service interface {
 	FindByID(id uuid.UUID) (*models.Automation, error)
@@ -26,6 +64,10 @@ type Service interface {
 	Delete(id uuid.UUID) error
 	FindAll() ([]*models.Automation, error)
 	SwapOrder(id1 uuid.UUID, id2 uuid.UUID) error
+	RunHealthCheck(id uuid.UUID) (*HealthResult, error)
+	HealthSummary() (*HealthSummary, error)
+	Launch(id uuid.UUID) (*LaunchResult, error)
+	Diagnostics(id uuid.UUID) (*DiagnosticResult, error)
 }
 
 type service struct {
@@ -71,6 +113,7 @@ func (s *service) Create(automation *models.Automation) (*models.Automation, err
 	if err != nil {
 		return nil, err
 	}
+	s.applyAutomationDefaults(automation)
 
 	if err := automation.Validate(); err != nil {
 		return nil, err
@@ -99,6 +142,13 @@ func (s *service) Update(automation *models.Automation) (*models.Automation, err
 	}
 
 	automation.Position = currentAutomation.Position
+	automation.LastCheckedAt = currentAutomation.LastCheckedAt
+	automation.LastSuccessAt = currentAutomation.LastSuccessAt
+	automation.LastFailureAt = currentAutomation.LastFailureAt
+	automation.LastFailureReason = currentAutomation.LastFailureReason
+	automation.ConsecutiveFailures = currentAutomation.ConsecutiveFailures
+	automation.AverageLatencyMs = currentAutomation.AverageLatencyMs
+	automation.LastLaunchAt = currentAutomation.LastLaunchAt
 
 	if automation.ImageFile != nil {
 		newFileName, errIf := s.processImageFile(automation.ImageFile)
@@ -130,6 +180,7 @@ func (s *service) Update(automation *models.Automation) (*models.Automation, err
 		automation.URLPath = currentAutomation.URLPath
 	}
 
+	s.applyAutomationDefaults(automation)
 	if errValidate := automation.Validate(); errValidate != nil {
 		return nil, errValidate
 	}
@@ -217,6 +268,152 @@ func (s *service) SwapOrder(id1 uuid.UUID, id2 uuid.UUID) error {
 
 		return nil
 	})
+}
+
+func (s *service) RunHealthCheck(id uuid.UUID) (*HealthResult, error) {
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	started := time.Now().UTC()
+	status := "healthy"
+	failureReason := ""
+
+	s.applyAutomationDefaults(automation)
+
+	switch strings.ToLower(automation.HealthCheckType) {
+	case "tcp":
+		target := fmt.Sprintf("%s:%d", automation.Host, automation.Port)
+		conn, errDial := net.DialTimeout("tcp", target, 5*time.Second)
+		if errDial != nil {
+			status = classifyFailure(automation.ConsecutiveFailures + 1)
+			failureReason = errDial.Error()
+		} else {
+			_ = conn.Close()
+		}
+	case "manual", "disabled":
+		status = "unknown"
+		failureReason = "automatic health checks are disabled for this automation"
+	default:
+		target := automation.HealthCheckURL
+		if target == "" {
+			target = fmt.Sprintf("http://%s:%d", automation.Host, automation.Port)
+		}
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, errGet := client.Get(target)
+		if errGet != nil {
+			status = classifyFailure(automation.ConsecutiveFailures + 1)
+			failureReason = errGet.Error()
+		} else {
+			defer resp.Body.Close()
+			expected := automation.ExpectedHTTPStatus
+			if expected == 0 {
+				expected = http.StatusOK
+			}
+			if resp.StatusCode != expected {
+				status = classifyFailure(automation.ConsecutiveFailures + 1)
+				failureReason = fmt.Sprintf("unexpected HTTP status: got %d, expected %d", resp.StatusCode, expected)
+			}
+		}
+	}
+
+	latency := time.Since(started).Milliseconds()
+	checkedAt := time.Now().UTC()
+	automation.LastCheckedAt = &checkedAt
+	automation.AverageLatencyMs = latency
+	if status == "healthy" {
+		automation.LastSuccessAt = &checkedAt
+		automation.LastFailureReason = ""
+		automation.ConsecutiveFailures = 0
+	} else if status == "unknown" {
+		automation.LastFailureReason = failureReason
+	} else {
+		automation.LastFailureAt = &checkedAt
+		automation.LastFailureReason = failureReason
+		automation.ConsecutiveFailures++
+	}
+	automation.Status = status
+
+	if _, errUpdate := s.repo.Update(automation); errUpdate != nil {
+		return nil, errUpdate
+	}
+
+	return &HealthResult{
+		AutomationID:        automation.ID,
+		Status:              status,
+		CheckedAt:           checkedAt,
+		LatencyMs:           latency,
+		FailureReason:       failureReason,
+		ConsecutiveFailures: automation.ConsecutiveFailures,
+	}, nil
+}
+
+func (s *service) HealthSummary() (*HealthSummary, error) {
+	automations, err := s.repo.FindAll()
+	if err != nil {
+		return nil, err
+	}
+	summary := &HealthSummary{CheckedAt: time.Now().UTC()}
+	for _, automation := range automations {
+		switch strings.ToLower(automation.Status) {
+		case "healthy":
+			summary.Healthy++
+		case "warning", "degraded":
+			summary.Warning++
+		case "broken":
+			summary.Broken++
+		default:
+			summary.Unknown++
+		}
+	}
+	return summary, nil
+}
+
+func (s *service) Launch(id uuid.UUID) (*LaunchResult, error) {
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	s.applyAutomationDefaults(automation)
+	launchedAt := time.Now().UTC()
+	automation.LastLaunchAt = &launchedAt
+	if _, errUpdate := s.repo.Update(automation); errUpdate != nil {
+		return nil, errUpdate
+	}
+	return &LaunchResult{
+		AutomationID: automation.ID,
+		LaunchType:   automation.LaunchType,
+		Target:       automation.LaunchTarget,
+		LaunchedAt:   launchedAt,
+	}, nil
+}
+
+func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	s.applyAutomationDefaults(automation)
+	checks := map[string]string{
+		"launchTargetConfigured": boolStatus(automation.LaunchTarget != ""),
+		"healthCheckConfigured":  boolStatus(automation.HealthCheckType != ""),
+		"routePathConfigured":    boolStatus(automation.RoutePath != "" || automation.URLPath != ""),
+		"hostConfigured":         boolStatus(automation.Host != ""),
+		"portConfigured":         boolStatus(automation.Port > 0 && automation.Port <= 65535),
+		"dependencyNotesPresent": boolStatus(automation.DependencyNotes != ""),
+	}
+	return &DiagnosticResult{
+		AutomationID:      automation.ID,
+		Name:              automation.Name,
+		Status:            automation.Status,
+		LaunchTarget:      automation.LaunchTarget,
+		HealthCheckTarget: automation.HealthCheckURL,
+		RoutePath:         firstNonEmpty(automation.RoutePath, automation.URLPath),
+		Host:              automation.Host,
+		Port:              automation.Port,
+		Checks:            checks,
+	}, nil
 }
 
 func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
@@ -340,4 +537,63 @@ func (s *service) ensureUniqueURLPath(automation *models.Automation) error {
 
 	automation.URLPath = uniqueURLPath
 	return nil
+}
+
+func (s *service) applyAutomationDefaults(automation *models.Automation) {
+	if automation.LaunchType == "" {
+		automation.LaunchType = "browser_url"
+	}
+	if automation.HealthCheckType == "" {
+		automation.HealthCheckType = "http"
+	}
+	if automation.HealthCheckIntervalSeconds == 0 {
+		automation.HealthCheckIntervalSeconds = 60
+	}
+	if automation.ExpectedHTTPStatus == 0 {
+		automation.ExpectedHTTPStatus = http.StatusOK
+	}
+	if automation.Status == "" {
+		automation.Status = "unknown"
+	}
+	if automation.RoutePath == "" {
+		automation.RoutePath = automation.URLPath
+	}
+	if automation.LaunchTarget == "" {
+		if automation.PublicURL != "" {
+			automation.LaunchTarget = automation.PublicURL
+		} else if automation.LocalURL != "" {
+			automation.LaunchTarget = automation.LocalURL
+		} else {
+			automation.LaunchTarget = fmt.Sprintf("/%s", automation.URLPath)
+		}
+	}
+	if automation.HealthCheckURL == "" && automation.Host != "" && automation.Port > 0 {
+		automation.HealthCheckURL = fmt.Sprintf("http://%s:%d", automation.Host, automation.Port)
+	}
+}
+
+func classifyFailure(failures int) string {
+	if failures >= 3 {
+		return "broken"
+	}
+	if failures >= 2 {
+		return "degraded"
+	}
+	return "warning"
+}
+
+func boolStatus(value bool) string {
+	if value {
+		return "ok"
+	}
+	return "missing"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
