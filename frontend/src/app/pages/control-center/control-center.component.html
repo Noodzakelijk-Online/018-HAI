@@ -1,0 +1,197 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">Control Center</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container">
+      <!-- Summary bar -->
+      <div nz-row [nzGutter]="16" class="summary-bar" *ngIf="summary as s">
+        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
+          <nz-card nzSize="small" class="summary-card">
+            <div class="summary-card__value">{{ s.total }}</div>
+            <div class="summary-card__label">Total</div>
+          </nz-card>
+        </div>
+        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
+          <nz-card nzSize="small" class="summary-card summary-card--healthy">
+            <div class="summary-card__value">{{ s.healthy }}</div>
+            <div class="summary-card__label">Healthy</div>
+          </nz-card>
+        </div>
+        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
+          <nz-card nzSize="small" class="summary-card summary-card--warning">
+            <div class="summary-card__value">{{ s.warning }}</div>
+            <div class="summary-card__label">Warning</div>
+          </nz-card>
+        </div>
+        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
+          <nz-card nzSize="small" class="summary-card summary-card--degraded">
+            <div class="summary-card__value">{{ s.degraded }}</div>
+            <div class="summary-card__label">Degraded</div>
+          </nz-card>
+        </div>
+        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
+          <nz-card nzSize="small" class="summary-card summary-card--broken">
+            <div class="summary-card__value">{{ s.broken }}</div>
+            <div class="summary-card__label">Broken</div>
+          </nz-card>
+        </div>
+        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
+          <nz-card nzSize="small" class="summary-card summary-card--unknown">
+            <div class="summary-card__value">{{ s.unknown }}</div>
+            <div class="summary-card__label">Unknown</div>
+          </nz-card>
+        </div>
+      </div>
+
+      <!-- Automations table -->
+      <nz-table
+        #table
+        [nzData]="automations"
+        [nzLoading]="loading"
+        [nzPageSize]="20"
+        nzSize="middle"
+        class="automation-table"
+      >
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Last checked</th>
+            <th>Last success</th>
+            <th>Last failure</th>
+            <th>Failure reason</th>
+            <th nzWidth="260px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let automation of table.data">
+            <td>{{ automation.name }}</td>
+            <td>
+              <nz-tag [nzColor]="statusColor(automation.status)">
+                {{ automation.status || 'unknown' }}
+              </nz-tag>
+            </td>
+            <td>
+              {{ automation.lastCheckedAt ? (automation.lastCheckedAt | date: 'short') : '—' }}
+            </td>
+            <td>
+              {{ automation.lastSuccessAt ? (automation.lastSuccessAt | date: 'short') : '—' }}
+            </td>
+            <td>
+              {{ automation.lastFailureAt ? (automation.lastFailureAt | date: 'short') : '—' }}
+            </td>
+            <td class="reason-cell">
+              <span nz-tooltip [nzTooltipTitle]="automation.lastFailureReason || ''">
+                {{ automation.lastFailureReason || '—' }}
+              </span>
+            </td>
+            <td>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="runHealthCheck(automation)"
+                [nzLoading]="isChecking(automation)"
+              >
+                Run Check
+              </button>
+              <button
+                nz-button
+                nzType="default"
+                nzSize="small"
+                (click)="openDiagnostics(automation)"
+              >
+                Diagnostics
+              </button>
+              <button
+                nz-button
+                nzType="link"
+                nzSize="small"
+                (click)="openTarget(automation)"
+                [disabled]="!isOpenable(automation)"
+                nz-tooltip
+                [nzTooltipTitle]="isOpenable(automation) ? targetUrl(automation) : 'No browser-openable URL'"
+              >
+                <i nz-icon nzType="link" nzTheme="outline"></i>
+                Open
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </nz-table>
+    </nz-content>
+  </nz-layout>
+</section>
+
+<!-- Diagnostics modal -->
+<nz-modal
+  [(nzVisible)]="isDiagnosticsVisible"
+  [nzTitle]="'Diagnostics — ' + diagnosticsName"
+  [nzFooter]="null"
+  (nzOnCancel)="closeDiagnostics()"
+  nzWidth="640px"
+>
+  <ng-container *nzModalContent>
+    <nz-spin [nzSpinning]="diagnosticsLoading">
+      <div *ngIf="diagnostics as d">
+        <p><strong>Status:</strong>
+          <nz-tag [nzColor]="statusColor(d.status)">{{ d.status || 'unknown' }}</nz-tag>
+        </p>
+        <p><strong>Launch target:</strong> {{ d.launchTarget || '—' }}</p>
+        <p><strong>Health check target:</strong> {{ d.healthCheckTarget || '—' }}</p>
+        <p><strong>Route path:</strong> {{ d.routePath || '—' }}</p>
+        <p><strong>Host / Port:</strong> {{ d.host || '—' }} : {{ d.port || '—' }}</p>
+        <p *ngIf="d.lastFailureReason"><strong>Last failure reason:</strong> {{ d.lastFailureReason }}</p>
+
+        <nz-divider nzText="Configuration checks" nzOrientation="left"></nz-divider>
+        <div class="checks-grid">
+          <div class="checks-grid__item" *ngFor="let key of diagnosticsCheckKeys()">
+            <span class="checks-grid__key">{{ key }}</span>
+            <nz-tag [nzColor]="d.checks[key] === 'ok' ? 'green' : 'red'">
+              {{ d.checks[key] }}
+            </nz-tag>
+          </div>
+        </div>
+
+        <nz-divider nzText="Recent health events" nzOrientation="left"></nz-divider>
+        <p *ngIf="!d.recentEvents?.length" class="muted">No health history recorded yet.</p>
+        <table class="events-table" *ngIf="d.recentEvents?.length">
+          <thead>
+            <tr>
+              <th>Checked at</th>
+              <th>Status</th>
+              <th>Type</th>
+              <th>Latency</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let event of d.recentEvents">
+              <td>{{ event.checkedAt | date: 'short' }}</td>
+              <td>
+                <nz-tag [nzColor]="statusColor(event.status)">{{ event.status }}</nz-tag>
+              </td>
+              <td>{{ event.checkType }}</td>
+              <td>{{ event.latencyMs }} ms</td>
+              <td class="reason-cell">{{ event.failureReason || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </nz-spin>
+  </ng-container>
+</nz-modal>

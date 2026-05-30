@@ -31,10 +31,12 @@ type HealthResult struct {
 }
 
 type HealthSummary struct {
-	Healthy  int       `json:"healthy"`
-	Warning  int       `json:"warning"`
-	Broken   int       `json:"broken"`
-	Unknown  int       `json:"unknown"`
+	Total     int       `json:"total"`
+	Healthy   int       `json:"healthy"`
+	Warning   int       `json:"warning"`
+	Degraded  int       `json:"degraded"`
+	Broken    int       `json:"broken"`
+	Unknown   int       `json:"unknown"`
 	CheckedAt time.Time `json:"checkedAt"`
 }
 
@@ -46,15 +48,20 @@ type LaunchResult struct {
 }
 
 type DiagnosticResult struct {
-	AutomationID      uuid.UUID         `json:"automationId"`
-	Name              string            `json:"name"`
-	Status            string            `json:"status"`
-	LaunchTarget      string            `json:"launchTarget"`
-	HealthCheckTarget string            `json:"healthCheckTarget"`
-	RoutePath         string            `json:"routePath"`
-	Host              string            `json:"host"`
-	Port              int               `json:"port"`
-	Checks            map[string]string `json:"checks"`
+	AutomationID      uuid.UUID                      `json:"automationId"`
+	Name              string                         `json:"name"`
+	Status            string                         `json:"status"`
+	LaunchTarget      string                         `json:"launchTarget"`
+	HealthCheckTarget string                         `json:"healthCheckTarget"`
+	RoutePath         string                         `json:"routePath"`
+	Host              string                         `json:"host"`
+	Port              int                            `json:"port"`
+	LastCheckedAt     *time.Time                     `json:"lastCheckedAt,omitempty"`
+	LastSuccessAt     *time.Time                     `json:"lastSuccessAt,omitempty"`
+	LastFailureAt     *time.Time                     `json:"lastFailureAt,omitempty"`
+	LastFailureReason string                         `json:"lastFailureReason,omitempty"`
+	Checks            map[string]string              `json:"checks"`
+	RecentEvents      []models.AutomationHealthEvent `json:"recentEvents"`
 }
 
 type Service interface {
@@ -279,12 +286,14 @@ func (s *service) RunHealthCheck(id uuid.UUID) (*HealthResult, error) {
 	started := time.Now().UTC()
 	status := "healthy"
 	failureReason := ""
+	target := ""
 
 	s.applyAutomationDefaults(automation)
 
-	switch strings.ToLower(automation.HealthCheckType) {
+	checkType := strings.ToLower(automation.HealthCheckType)
+	switch checkType {
 	case "tcp":
-		target := fmt.Sprintf("%s:%d", automation.Host, automation.Port)
+		target = fmt.Sprintf("%s:%d", automation.Host, automation.Port)
 		conn, errDial := net.DialTimeout("tcp", target, 5*time.Second)
 		if errDial != nil {
 			status = classifyFailure(automation.ConsecutiveFailures + 1)
@@ -296,7 +305,7 @@ func (s *service) RunHealthCheck(id uuid.UUID) (*HealthResult, error) {
 		status = "unknown"
 		failureReason = "automatic health checks are disabled for this automation"
 	default:
-		target := automation.HealthCheckURL
+		target = automation.HealthCheckURL
 		if target == "" {
 			target = fmt.Sprintf("http://%s:%d", automation.Host, automation.Port)
 		}
@@ -339,6 +348,22 @@ func (s *service) RunHealthCheck(id uuid.UUID) (*HealthResult, error) {
 		return nil, errUpdate
 	}
 
+	// Persist the check as a health-history event. A history write failure
+	// must not fail the check itself, so it is only logged.
+	event := &models.AutomationHealthEvent{
+		AutomationID:        automation.ID,
+		Status:              status,
+		CheckType:           checkType,
+		Target:              target,
+		LatencyMs:           latency,
+		FailureReason:       failureReason,
+		ConsecutiveFailures: automation.ConsecutiveFailures,
+		CheckedAt:           checkedAt,
+	}
+	if errEvent := s.repo.SaveHealthEvent(event); errEvent != nil {
+		log.Printf("Failed to persist health event for automation %s: %v", automation.ID, errEvent)
+	}
+
 	return &HealthResult{
 		AutomationID:        automation.ID,
 		Status:              status,
@@ -355,12 +380,15 @@ func (s *service) HealthSummary() (*HealthSummary, error) {
 		return nil, err
 	}
 	summary := &HealthSummary{CheckedAt: time.Now().UTC()}
+	summary.Total = len(automations)
 	for _, automation := range automations {
 		switch strings.ToLower(automation.Status) {
 		case "healthy":
 			summary.Healthy++
-		case "warning", "degraded":
+		case "warning":
 			summary.Warning++
+		case "degraded":
+			summary.Degraded++
 		case "broken":
 			summary.Broken++
 		default:
@@ -403,6 +431,12 @@ func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
 		"portConfigured":         boolStatus(automation.Port > 0 && automation.Port <= 65535),
 		"dependencyNotesPresent": boolStatus(automation.DependencyNotes != ""),
 	}
+	recentEvents, errEvents := s.repo.FindHealthEvents(automation.ID, 10)
+	if errEvents != nil {
+		log.Printf("Failed to load health history for automation %s: %v", automation.ID, errEvents)
+		recentEvents = []models.AutomationHealthEvent{}
+	}
+
 	return &DiagnosticResult{
 		AutomationID:      automation.ID,
 		Name:              automation.Name,
@@ -412,7 +446,12 @@ func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
 		RoutePath:         firstNonEmpty(automation.RoutePath, automation.URLPath),
 		Host:              automation.Host,
 		Port:              automation.Port,
+		LastCheckedAt:     automation.LastCheckedAt,
+		LastSuccessAt:     automation.LastSuccessAt,
+		LastFailureAt:     automation.LastFailureAt,
+		LastFailureReason: automation.LastFailureReason,
 		Checks:            checks,
+		RecentEvents:      recentEvents,
 	}, nil
 }
 

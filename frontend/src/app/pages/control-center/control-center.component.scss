@@ -1,0 +1,114 @@
+.header-container {
+  background: #001529;
+  padding: 0 24px;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  &__title {
+    color: #fff;
+    margin: 0;
+    font-size: 20px;
+  }
+
+  &__actions {
+    display: flex;
+    gap: 8px;
+  }
+}
+
+.content-container {
+  padding: 24px;
+  background: #f0f2f5;
+  min-height: calc(100vh - 64px);
+}
+
+.summary-bar {
+  margin-bottom: 24px;
+}
+
+.summary-card {
+  text-align: center;
+
+  &__value {
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  &__label {
+    color: rgba(0, 0, 0, 0.45);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+  }
+
+  &--healthy &__value {
+    color: #52c41a;
+  }
+  &--warning &__value {
+    color: #faad14;
+  }
+  &--degraded &__value {
+    color: #fa8c16;
+  }
+  &--broken &__value {
+    color: #f5222d;
+  }
+  &--unknown &__value {
+    color: rgba(0, 0, 0, 0.45);
+  }
+}
+
+.automation-table {
+  background: #fff;
+}
+
+.reason-cell {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+
+  &__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  &__key {
+    font-size: 13px;
+    color: rgba(0, 0, 0, 0.65);
+  }
+}
+
+.events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+
+  th,
+  td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  th {
+    color: rgba(0, 0, 0, 0.45);
+    font-weight: 500;
+  }
+}
+
+.muted {
+  color: rgba(0, 0, 0, 0.45);
+}

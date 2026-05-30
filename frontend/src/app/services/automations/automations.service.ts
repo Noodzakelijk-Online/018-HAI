@@ -1,6 +1,11 @@
 import {Injectable} from '@angular/core';
 import {IAutomationsService} from '../automations.service.interface';
-import {IAutomationModel} from "../../models/automation.model.interface";
+import {
+  IAutomationDiagnostics,
+  IAutomationHealthResult,
+  IAutomationHealthSummary,
+  IAutomationModel,
+} from "../../models/automation.model.interface";
 import {Observable} from "rxjs";
 import {HttpClient} from "@angular/common/http";
 
@@ -54,6 +59,18 @@ export class AutomationsService implements IAutomationsService {
 
   swapAutomations(automation_id1: string, automation_id2: string): Observable<void> {
     return this.http.get<void>(`${this.apiUrl}/swap/${automation_id1}/${automation_id2}`);
+  }
+
+  getHealthSummary(): Observable<IAutomationHealthSummary> {
+    return this.http.get<IAutomationHealthSummary>(`${this.apiUrl}/health/summary`);
+  }
+
+  runHealthCheck(id: string): Observable<IAutomationHealthResult> {
+    return this.http.post<IAutomationHealthResult>(`${this.apiUrl}/${id}/health-check`, {});
+  }
+
+  getDiagnostics(id: string): Observable<IAutomationDiagnostics> {
+    return this.http.get<IAutomationDiagnostics>(`${this.apiUrl}/${id}/diagnostics`);
   }
 
 }
