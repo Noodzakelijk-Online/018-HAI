@@ -32,8 +32,10 @@ export interface IAutomationModel {
 }
 
 export interface IAutomationHealthSummary {
+  total: number;
   healthy: number;
   warning: number;
+  degraded: number;
   broken: number;
   unknown: number;
   checkedAt: string;
@@ -48,6 +50,18 @@ export interface IAutomationHealthResult {
   consecutiveFailures: number;
 }
 
+export interface IAutomationHealthEvent {
+  id?: string;
+  automationId: string;
+  status: string;
+  checkType: string;
+  target?: string;
+  latencyMs: number;
+  failureReason?: string;
+  consecutiveFailures: number;
+  checkedAt: string;
+}
+
 export interface IAutomationDiagnostics {
   automationId: string;
   name: string;
@@ -57,5 +71,10 @@ export interface IAutomationDiagnostics {
   routePath: string;
   host: string;
   port: number;
+  lastCheckedAt?: string;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  lastFailureReason?: string;
   checks: Record<string, string>;
+  recentEvents: IAutomationHealthEvent[];
 }

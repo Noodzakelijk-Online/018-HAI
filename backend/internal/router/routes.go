@@ -29,7 +29,10 @@ func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *autom
 	{
 		automations.GET("/swap/:id1/:id2", autoHandler.SwapPosition)
 		automations.GET("/", autoHandler.GetAll)
+		automations.GET("/health/summary", autoHandler.HealthSummary)
 		automations.GET("/:id", autoHandler.GetByID)
+		automations.POST("/:id/health-check", autoHandler.HealthCheck)
+		automations.GET("/:id/diagnostics", autoHandler.Diagnostics)
 		automations.POST("/", autoHandler.Create)
 		automations.PATCH("/", autoHandler.Update)
 		automations.DELETE("/:id", autoHandler.DeleteByID)

@@ -35,7 +35,19 @@ func GetDefaultDB() (*gorm.DB, error) {
 }
 
 func RunMigrations(db *gorm.DB) error {
-	if err := db.AutoMigrate(&models.Automation{}); err != nil {
+	// uuid_generate_v4() is used as the default for primary keys.
+	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`).Error; err != nil {
+		return err
+	}
+	if err := db.AutoMigrate(
+		&models.Automation{},
+		&models.AutomationHealthEvent{},
+		&models.AutomationDependency{},
+		&models.AutomationRouteCheck{},
+		&models.AutomationAlert{},
+		&models.AutomationIncident{},
+		&models.AutomationSLO{},
+	); err != nil {
 		return err
 	}
 	return nil

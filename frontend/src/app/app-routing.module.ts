@@ -16,6 +16,14 @@ const routes: Routes = [
       import("./pages/home/home.module").then((m) => m.HomeModule),
     canActivate: [authGuard],
   },
+  {
+    path: "control-center",
+    loadChildren: () =>
+      import("./pages/control-center/control-center.module").then(
+        (m) => m.ControlCenterModule
+      ),
+    canActivate: [authGuard],
+  },
   // {
   //   path: 'home',
   //   loadChildren: () =>

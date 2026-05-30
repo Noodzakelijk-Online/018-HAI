@@ -18,6 +18,8 @@ type Repository interface {
 	MaxPosition() (int, error)
 	GetByURLPath(urlPath string) (*models.Automation, error)
 	Transaction(txFunc func(tx *gorm.DB) error) (err error)
+	SaveHealthEvent(event *models.AutomationHealthEvent) error
+	FindHealthEvents(automationID uuid.UUID, limit int) ([]models.AutomationHealthEvent, error)
 }
 
 type GormUserRepository struct {
@@ -111,6 +113,26 @@ func (r *GormUserRepository) MaxPosition() (int, error) {
 		return 0, err
 	}
 	return automation.Position, nil
+}
+
+func (r *GormUserRepository) SaveHealthEvent(event *models.AutomationHealthEvent) error {
+	return r.DB.Create(event).Error
+}
+
+func (r *GormUserRepository) FindHealthEvents(automationID uuid.UUID, limit int) ([]models.AutomationHealthEvent, error) {
+	var events []models.AutomationHealthEvent
+	if limit <= 0 {
+		limit = 20
+	}
+	err := r.DB.
+		Where("automation_id = ?", automationID).
+		Order("checked_at desc").
+		Limit(limit).
+		Find(&events).Error
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 func (r *GormUserRepository) GetByURLPath(urlPath string) (*models.Automation, error) {
