@@ -1,0 +1,63 @@
+.header-container {
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 0 24px;
+}
+
+.header-content {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+
+  &__title {
+    font-size: 20px;
+    margin: 0;
+  }
+
+  &__actions {
+    display: flex;
+    gap: 8px;
+  }
+}
+
+.content-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+}
+
+.status-strip,
+.metric-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.status-strip nz-card,
+.metric-button {
+  min-height: 86px;
+}
+
+.status-strip strong,
+.status-strip span,
+.metric-button span,
+.metric-button strong,
+.metric-button small {
+  display: block;
+}
+
+.metric-button {
+  height: auto;
+  text-align: left;
+  white-space: normal;
+}
+
+.metric-button strong {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.section-card {
+  width: 100%;
+}

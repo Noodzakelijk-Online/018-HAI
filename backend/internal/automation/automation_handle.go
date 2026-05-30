@@ -56,6 +56,20 @@ func (h *Handler) Create(c *gin.Context) {
 	automation.Host = c.PostForm("host")
 	port, _ := strconv.Atoi(c.PostForm("port"))
 	automation.Port = port
+	automation.LaunchType = c.PostForm("launchType")
+	automation.LaunchTarget = c.PostForm("launchTarget")
+	automation.RuntimeType = c.PostForm("runtimeType")
+	automation.ServiceName = c.PostForm("serviceName")
+	automation.RoutePath = c.PostForm("routePath")
+	automation.PublicURL = c.PostForm("publicUrl")
+	automation.LocalURL = c.PostForm("localUrl")
+	automation.DependencyNotes = c.PostForm("dependencyNotes")
+	automation.HealthCheckType = c.PostForm("healthCheckType")
+	automation.HealthCheckURL = c.PostForm("healthCheckUrl")
+	healthInterval, _ := strconv.Atoi(c.PostForm("healthCheckIntervalSeconds"))
+	automation.HealthCheckIntervalSeconds = healthInterval
+	expectedStatus, _ := strconv.Atoi(c.PostForm("expectedHttpStatus"))
+	automation.ExpectedHTTPStatus = expectedStatus
 	removeImage, _ := strconv.ParseBool(c.PostForm("removeImage"))
 	automation.RemoveImage = removeImage
 

@@ -1,0 +1,19 @@
+import { Observable } from 'rxjs';
+import {
+  IContextMemory,
+  IContextMemoryRequest,
+  IMemoryExport,
+  IMemoryRetrieveRequest,
+  IMemoryRetrieveResult,
+} from '../models/context-memory.model.interface';
+
+export interface IContextMemoryService {
+  list(projectKey?: string, includeArchived?: boolean): Observable<IContextMemory[]>;
+  create(request: IContextMemoryRequest): Observable<IContextMemory>;
+  update(id: string, request: IContextMemoryRequest): Observable<IContextMemory>;
+  archive(id: string): Observable<IContextMemory>;
+  restore(id: string): Observable<IContextMemory>;
+  delete(id: string): Observable<void>;
+  retrieve(request: IMemoryRetrieveRequest): Observable<IMemoryRetrieveResult>;
+  exportMemories(projectKey?: string): Observable<IMemoryExport>;
+}

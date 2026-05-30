@@ -11,6 +11,10 @@ import (
 )
 
 func initializeRoutes(router *gin.Engine) error {
+	router.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok", "service": "idp"})
+	})
+
 	relativePathV1 := config.ServerConfig.BaseURL + "/v1"
 	docs.SwaggerInfo.BasePath = relativePathV1
 	v1 := router.Group(relativePathV1)

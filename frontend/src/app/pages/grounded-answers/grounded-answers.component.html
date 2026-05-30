@@ -1,0 +1,164 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">Grounded Answers</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="loadRuns()">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container">
+      <nz-card nzSize="small" nzTitle="Source-Grounded Answer">
+        <form nz-form [formGroup]="answerForm">
+          <nz-form-item>
+            <nz-form-label>Question</nz-form-label>
+            <nz-form-control>
+              <textarea nz-input rows="3" formControlName="question"></textarea>
+            </nz-form-control>
+          </nz-form-item>
+          <div class="form-row">
+            <nz-form-item>
+              <nz-form-label>Project</nz-form-label>
+              <nz-form-control>
+                <input nz-input formControlName="projectKey" />
+              </nz-form-control>
+            </nz-form-item>
+            <nz-form-item>
+              <nz-form-label>Mode</nz-form-label>
+              <nz-form-control>
+                <nz-select formControlName="mode">
+                  <nz-option nzValue="draft" nzLabel="Draft"></nz-option>
+                  <nz-option nzValue="grounded" nzLabel="Grounded"></nz-option>
+                  <nz-option nzValue="strict" nzLabel="Strict"></nz-option>
+                  <nz-option nzValue="action" nzLabel="Action"></nz-option>
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+          </div>
+          <div class="form-row">
+            <label nz-checkbox formControlName="includeSensitive">Include sensitive</label>
+            <label nz-checkbox formControlName="humanApproved">Human approved</label>
+            <label nz-checkbox formControlName="allowMemoryUpdate">Allow memory update</label>
+          </div>
+          <div class="form-row">
+            <input nz-input formControlName="evidenceLabel" />
+            <input nz-input formControlName="evidenceUri" />
+          </div>
+          <textarea nz-input rows="3" formControlName="evidenceSnippet"></textarea>
+          <div class="form-row">
+            <label nz-checkbox formControlName="official">Official source</label>
+            <label nz-checkbox formControlName="primary">Primary document</label>
+          </div>
+          <button nz-button nzType="primary" (click)="answer()" [nzLoading]="loading">
+            Verify Answer
+          </button>
+        </form>
+      </nz-card>
+
+      <div class="answer-grid" *ngIf="result as r">
+        <nz-card nzSize="small" nzTitle="Answer">
+          <p><strong>Status:</strong> {{ r.run.status }}</p>
+          <p>{{ r.run.answer }}</p>
+          <p *ngIf="r.run.missingSources"><strong>Missing:</strong> {{ r.run.missingSources }}</p>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Research Questions">
+          <ul>
+            <li *ngFor="let question of r.researchQuestions">{{ question }}</li>
+          </ul>
+          <p *ngIf="!r.researchQuestions.length">{{ r.run.researchQuestions || '-' }}</p>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Claim Verification" *ngIf="result as r" class="section-card">
+        <nz-table [nzData]="r.claims" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Claim</th>
+              <th>Status</th>
+              <th>Confidence</th>
+              <th>Source</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let claim of r.claims">
+              <td>{{ claim.claimText }}</td>
+              <td>{{ claim.status }}</td>
+              <td>{{ claim.confidence }}</td>
+              <td>{{ claim.sourceRefs || '-' }}</td>
+              <td>{{ claim.supportExplanation }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Sources Used and Rejected" *ngIf="result as r" class="section-card">
+        <nz-empty *ngIf="!r.evidence.length" nzNotFoundContent="No evidence was available."></nz-empty>
+        <nz-table *ngIf="r.evidence.length" [nzData]="r.evidence" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Quality</th>
+              <th>Used</th>
+              <th>Snippet</th>
+              <th>Rejected</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let source of r.evidence">
+              <td>{{ source.sourceLabel || source.sourceUri || source.sourceType }}</td>
+              <td>{{ source.qualityScore }}</td>
+              <td>{{ source.used ? 'yes' : 'no' }}</td>
+              <td>{{ source.snippet }}</td>
+              <td>{{ source.rejectReason || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Needs Review" *ngIf="result as r" class="section-card">
+        <nz-empty *ngIf="!r.unsupportedClaims.length" nzNotFoundContent="No unsupported or uncertain claims."></nz-empty>
+        <ul>
+          <li *ngFor="let claim of r.unsupportedClaims">
+            {{ claim.status }}: {{ claim.claimText }}
+          </li>
+        </ul>
+      </nz-card>
+
+      <nz-card nzTitle="Verification Runs" class="section-card">
+        <nz-table [nzData]="runs" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Mode</th>
+              <th>Status</th>
+              <th>Question</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let run of runs">
+              <td>{{ run.createdAt | date: 'short' }}</td>
+              <td>{{ run.mode }}</td>
+              <td>{{ run.status }}</td>
+              <td>{{ run.question }}</td>
+              <td>
+                <button nz-button nzSize="small" nzType="default" (click)="loadDetails(run)">Open</button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+    </nz-content>
+  </nz-layout>
+</section>

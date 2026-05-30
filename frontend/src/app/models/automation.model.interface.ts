@@ -50,6 +50,13 @@ export interface IAutomationHealthResult {
   consecutiveFailures: number;
 }
 
+export interface IAutomationLaunchResult {
+  automationId: string;
+  launchType: string;
+  target: string;
+  launchedAt: string;
+}
+
 export interface IAutomationHealthEvent {
   id?: string;
   automationId: string;

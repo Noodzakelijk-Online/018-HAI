@@ -15,7 +15,7 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/auth/confirm-password-reset": {
+        "/auth/confirm-password-reset/{reset-token}": {
             "post": {
                 "description": "ConfirmPasswordReset",
                 "consumes": [

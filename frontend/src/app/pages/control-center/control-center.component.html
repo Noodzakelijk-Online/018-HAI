@@ -17,7 +17,6 @@
     </nz-header>
 
     <nz-content class="content-container">
-      <!-- Summary bar -->
       <div nz-row [nzGutter]="16" class="summary-bar" *ngIf="summary as s">
         <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
           <nz-card nzSize="small" class="summary-card">
@@ -57,7 +56,6 @@
         </div>
       </div>
 
-      <!-- Automations table -->
       <nz-table
         #table
         [nzData]="automations"
@@ -71,10 +69,12 @@
             <th>Name</th>
             <th>Status</th>
             <th>Last checked</th>
+            <th>Last launch</th>
             <th>Last success</th>
+            <th>Latency</th>
             <th>Last failure</th>
             <th>Failure reason</th>
-            <th nzWidth="260px">Actions</th>
+            <th nzWidth="340px">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -85,24 +85,29 @@
                 {{ automation.status || 'unknown' }}
               </nz-tag>
             </td>
-            <td>
-              {{ automation.lastCheckedAt ? (automation.lastCheckedAt | date: 'short') : '—' }}
-            </td>
-            <td>
-              {{ automation.lastSuccessAt ? (automation.lastSuccessAt | date: 'short') : '—' }}
-            </td>
-            <td>
-              {{ automation.lastFailureAt ? (automation.lastFailureAt | date: 'short') : '—' }}
-            </td>
+            <td>{{ automation.lastCheckedAt ? (automation.lastCheckedAt | date: 'short') : '-' }}</td>
+            <td>{{ automation.lastLaunchAt ? (automation.lastLaunchAt | date: 'short') : '-' }}</td>
+            <td>{{ automation.lastSuccessAt ? (automation.lastSuccessAt | date: 'short') : '-' }}</td>
+            <td>{{ automation.averageLatencyMs || 0 }} ms</td>
+            <td>{{ automation.lastFailureAt ? (automation.lastFailureAt | date: 'short') : '-' }}</td>
             <td class="reason-cell">
               <span nz-tooltip [nzTooltipTitle]="automation.lastFailureReason || ''">
-                {{ automation.lastFailureReason || '—' }}
+                {{ automation.lastFailureReason || '-' }}
               </span>
             </td>
             <td>
               <button
                 nz-button
                 nzType="primary"
+                nzSize="small"
+                (click)="launch(automation)"
+                [nzLoading]="isLaunching(automation)"
+              >
+                Launch
+              </button>
+              <button
+                nz-button
+                nzType="default"
                 nzSize="small"
                 (click)="runHealthCheck(automation)"
                 [nzLoading]="isChecking(automation)"
@@ -137,10 +142,9 @@
   </nz-layout>
 </section>
 
-<!-- Diagnostics modal -->
 <nz-modal
   [(nzVisible)]="isDiagnosticsVisible"
-  [nzTitle]="'Diagnostics — ' + diagnosticsName"
+  [nzTitle]="'Diagnostics - ' + diagnosticsName"
   [nzFooter]="null"
   (nzOnCancel)="closeDiagnostics()"
   nzWidth="640px"
@@ -151,10 +155,10 @@
         <p><strong>Status:</strong>
           <nz-tag [nzColor]="statusColor(d.status)">{{ d.status || 'unknown' }}</nz-tag>
         </p>
-        <p><strong>Launch target:</strong> {{ d.launchTarget || '—' }}</p>
-        <p><strong>Health check target:</strong> {{ d.healthCheckTarget || '—' }}</p>
-        <p><strong>Route path:</strong> {{ d.routePath || '—' }}</p>
-        <p><strong>Host / Port:</strong> {{ d.host || '—' }} : {{ d.port || '—' }}</p>
+        <p><strong>Launch target:</strong> {{ d.launchTarget || '-' }}</p>
+        <p><strong>Health check target:</strong> {{ d.healthCheckTarget || '-' }}</p>
+        <p><strong>Route path:</strong> {{ d.routePath || '-' }}</p>
+        <p><strong>Host / Port:</strong> {{ d.host || '-' }} : {{ d.port || '-' }}</p>
         <p *ngIf="d.lastFailureReason"><strong>Last failure reason:</strong> {{ d.lastFailureReason }}</p>
 
         <nz-divider nzText="Configuration checks" nzOrientation="left"></nz-divider>
@@ -187,7 +191,7 @@
               </td>
               <td>{{ event.checkType }}</td>
               <td>{{ event.latencyMs }} ms</td>
-              <td class="reason-cell">{{ event.failureReason || '—' }}</td>
+              <td class="reason-cell">{{ event.failureReason || '-' }}</td>
             </tr>
           </tbody>
         </table>

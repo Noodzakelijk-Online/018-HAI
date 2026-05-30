@@ -1,0 +1,202 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">Connected Sources</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container">
+      <div class="source-grid">
+        <nz-card nzSize="small" nzTitle="Connect Source">
+          <form nz-form [formGroup]="sourceForm">
+            <nz-form-item>
+              <nz-form-label>Connector</nz-form-label>
+              <nz-form-control>
+                <nz-select formControlName="connectorKey">
+                  <nz-option
+                    *ngFor="let connector of connectors"
+                    [nzValue]="connector.connectorKey"
+                    [nzLabel]="connector.name"
+                  ></nz-option>
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+            <nz-form-item>
+              <nz-form-label>Name</nz-form-label>
+              <nz-form-control>
+                <input nz-input formControlName="name" />
+              </nz-form-control>
+            </nz-form-item>
+            <div class="form-row">
+              <nz-form-item>
+                <nz-form-label>Sync</nz-form-label>
+                <nz-form-control>
+                  <input nz-input formControlName="syncFrequency" />
+                </nz-form-control>
+              </nz-form-item>
+              <label nz-checkbox formControlName="localOnly">Local only</label>
+            </div>
+            <nz-form-item>
+              <nz-form-label>Exclude</nz-form-label>
+              <nz-form-control>
+                <input nz-input formControlName="excludePatterns" />
+              </nz-form-control>
+            </nz-form-item>
+            <button nz-button nzType="primary" (click)="connectSource()">Connect</button>
+          </form>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Manual Import">
+          <form nz-form [formGroup]="importForm">
+            <nz-form-item>
+              <nz-form-label>Source</nz-form-label>
+              <nz-form-control>
+                <nz-select formControlName="sourceId">
+                  <nz-option
+                    *ngFor="let source of sources"
+                    [nzValue]="source.id"
+                    [nzLabel]="source.name"
+                  ></nz-option>
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+            <div class="form-row">
+              <input nz-input formControlName="mode" />
+              <input nz-input formControlName="projectKey" />
+            </div>
+            <input nz-input formControlName="externalId" />
+            <input nz-input formControlName="title" />
+            <input nz-input formControlName="sourceUri" />
+            <textarea nz-input rows="5" formControlName="content"></textarea>
+            <button nz-button nzType="primary" (click)="sync()" [nzLoading]="syncing">
+              Sync and Extract
+            </button>
+          </form>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Connected Sources" class="section-card">
+        <label nz-checkbox [(ngModel)]="includeDisabled" (ngModelChange)="refresh()">Show disabled</label>
+        <nz-table [nzData]="sources" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Status</th>
+              <th>Local</th>
+              <th>Last sync</th>
+              <th nzWidth="300px">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let source of sources">
+              <td>{{ source.name }}</td>
+              <td>{{ source.category }}</td>
+              <td>{{ source.status }}</td>
+              <td>{{ source.localOnly ? 'yes' : 'no' }}</td>
+              <td>{{ source.lastSyncedAt ? (source.lastSyncedAt | date: 'short') : '-' }}</td>
+              <td>
+                <button *ngIf="source.enabled" nz-button nzSize="small" nzType="default" (click)="pause(source)">Pause</button>
+                <button *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzSize="small" nzType="default" (click)="resume(source)">Resume</button>
+                <button nz-button nzSize="small" nzType="default" (click)="reindex(source)">Re-index</button>
+                <button nz-button nzSize="small" nzType="link" nzDanger (click)="revoke(source)">Revoke</button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Search Extracted Context" class="section-card">
+        <form nz-form [formGroup]="searchForm" class="search-form">
+          <textarea nz-input rows="3" formControlName="query"></textarea>
+          <div class="form-row">
+            <input nz-input formControlName="projectKey" />
+            <input nz-input type="number" formControlName="limit" />
+            <label nz-checkbox formControlName="includeSensitive">Include sensitive</label>
+          </div>
+          <button nz-button nzType="primary" (click)="search()">Search</button>
+        </form>
+        <p *ngIf="searchResult">{{ searchResult.explanation }}</p>
+        <nz-empty *ngIf="searchResult && !searchResult.usedContext.length" nzNotFoundContent="No relevant extracted context."></nz-empty>
+        <nz-table *ngIf="searchResult?.usedContext?.length" [nzData]="searchResult!.usedContext" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Score</th>
+              <th>Summary</th>
+              <th>Why</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of searchResult!.usedContext">
+              <td>{{ item.score }}</td>
+              <td>{{ item.extraction.summary || item.extraction.text }}</td>
+              <td>{{ item.explanation }}</td>
+              <td>{{ item.extraction.sourceLabel || item.extraction.sourceUri || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Extracted Records" class="section-card">
+        <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()">Show archived</label>
+        <nz-table [nzData]="extractions" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Summary</th>
+              <th>Tasks</th>
+              <th>Flags</th>
+              <th>Source</th>
+              <th nzWidth="230px">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let extraction of extractions">
+              <td>{{ extraction.contentType }}</td>
+              <td>{{ extraction.summary || extraction.text }}</td>
+              <td>{{ extraction.tasks || extraction.followUps || '-' }}</td>
+              <td>{{ extraction.sensitive ? 'sensitive ' : '' }}{{ extraction.uncertain ? 'uncertain' : '' }}</td>
+              <td>{{ extraction.sourceLabel || extraction.sourceUri || '-' }}</td>
+              <td>
+                <button nz-button nzSize="small" nzType="default" (click)="markCorrected(extraction)">Correct</button>
+                <button nz-button nzSize="small" nzType="default" (click)="archive(extraction)">Archive</button>
+                <button nz-button nzSize="small" nzType="link" nzDanger (click)="delete(extraction)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Sync and Extraction Audit" class="section-card">
+        <nz-table [nzData]="auditLogs" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Action</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let log of auditLogs">
+              <td>{{ log.createdAt | date: 'short' }}</td>
+              <td>{{ log.action }}</td>
+              <td>{{ log.message }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+    </nz-content>
+  </nz-layout>
+</section>

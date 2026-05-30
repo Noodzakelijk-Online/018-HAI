@@ -19,6 +19,7 @@ export class ControlCenterComponent implements OnInit {
   summary?: IAutomationHealthSummary
   loading = false
   private checkingIds = new Set<string>()
+  private launchingIds = new Set<string>()
 
   isDiagnosticsVisible = false
   diagnostics?: IAutomationDiagnostics
@@ -97,6 +98,35 @@ export class ControlCenterComponent implements OnInit {
 
   isChecking(automation: IAutomationModel): boolean {
     return !!automation.id && this.checkingIds.has(automation.id)
+  }
+
+  launch(automation: IAutomationModel): void {
+    if (!automation.id) {
+      return
+    }
+    const id = automation.id
+    this.launchingIds.add(id)
+    this.automationsService.launchAutomation(id).subscribe({
+      next: (result) => {
+        this.launchingIds.delete(id)
+        automation.lastLaunchAt = result.launchedAt
+        this.notification.success(
+          'Launch recorded',
+          `${automation.name}: ${result.launchType || 'browser_url'}`
+        )
+        if (/^https?:\/\//i.test(result.target)) {
+          window.open(result.target, '_blank', 'noopener')
+        }
+      },
+      error: () => {
+        this.launchingIds.delete(id)
+        this.notification.error('Error', `Launch failed for ${automation.name}.`)
+      },
+    })
+  }
+
+  isLaunching(automation: IAutomationModel): boolean {
+    return !!automation.id && this.launchingIds.has(automation.id)
   }
 
   openDiagnostics(automation: IAutomationModel): void {

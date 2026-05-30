@@ -27,23 +27,93 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	a.GET("/swap/:id1/:id2", mark("swap"))
 	a.GET("/", mark("getAll"))
 	a.GET("/health/summary", mark("summary"))
+	a.GET("/health-summary", mark("summary"))
+	a.GET("/images/:imageName", mark("image"))
 	a.GET("/:id", mark("getByID"))
+	a.POST("/:id/launch", mark("launch"))
 	a.POST("/:id/health-check", mark("healthCheck"))
 	a.GET("/:id/diagnostics", mark("diagnostics"))
 	a.POST("/", mark("create"))
 	a.PATCH("/", mark("update"))
 	a.DELETE("/:id", mark("delete"))
-	a.GET("/images/:imageName", mark("image"))
+
+	m := r.Group("/api/v1").Group("/memory")
+	m.GET("/", mark("memoryList"))
+	m.POST("/", mark("memoryCreate"))
+	m.POST("/retrieve", mark("memoryRetrieve"))
+	m.GET("/export", mark("memoryExport"))
+	m.GET("/:id", mark("memoryGet"))
+
+	tasks := r.Group("/api/v1").Group("/task")
+	tasks.POST("/plan", mark("taskPlan"))
+	tasks.POST("/run", mark("taskRun"))
+	tasks.POST("/success", mark("taskRun"))
+	tasks.GET("/logs", mark("taskLogs"))
+	tasks.GET("/review-queue", mark("taskReviewQueue"))
+
+	sources := r.Group("/api/v1").Group("/sources")
+	sources.GET("/connectors", mark("sourceConnectors"))
+	sources.GET("/", mark("sourceList"))
+	sources.POST("/", mark("sourceCreate"))
+	sources.POST("/search", mark("sourceSearch"))
+	sources.GET("/extractions", mark("sourceExtractions"))
+	sources.GET("/audit-logs", mark("sourceAuditLogs"))
+	sources.PATCH("/extractions/:id", mark("sourceExtractionUpdate"))
+	sources.POST("/extractions/:id/archive", mark("sourceExtractionArchive"))
+	sources.DELETE("/extractions/:id", mark("sourceExtractionDelete"))
+	sources.PATCH("/:id", mark("sourceUpdate"))
+	sources.POST("/:id/sync", mark("sourceSync"))
+	sources.POST("/:id/reindex", mark("sourceReindex"))
+	sources.POST("/:id/pause", mark("sourcePause"))
+	sources.POST("/:id/resume", mark("sourceResume"))
+	sources.POST("/:id/revoke", mark("sourceRevoke"))
+
+	verificationRoutes := r.Group("/api/v1").Group("/verification")
+	verificationRoutes.POST("/answer", mark("verificationAnswer"))
+	verificationRoutes.GET("/runs", mark("verificationRuns"))
+	verificationRoutes.GET("/runs/:id", mark("verificationRunDetails"))
+
+	osRoutes := r.Group("/api/v1").Group("/os")
+	osRoutes.GET("/overview", mark("osOverview"))
 
 	cases := []struct {
 		method, path, want string
 	}{
 		{"GET", "/api/v1/automation/health/summary", "summary"},
+		{"GET", "/api/v1/automation/health-summary", "summary"},
+		{"POST", "/api/v1/automation/abc/launch", "launch"},
 		{"POST", "/api/v1/automation/abc/health-check", "healthCheck"},
 		{"GET", "/api/v1/automation/abc/diagnostics", "diagnostics"},
 		{"GET", "/api/v1/automation/abc", "getByID"},
 		{"GET", "/api/v1/automation/images/logo.png", "image"},
 		{"GET", "/api/v1/automation/swap/1/2", "swap"},
+		{"POST", "/api/v1/memory/retrieve", "memoryRetrieve"},
+		{"GET", "/api/v1/memory/export", "memoryExport"},
+		{"GET", "/api/v1/memory/abc", "memoryGet"},
+		{"POST", "/api/v1/task/plan", "taskPlan"},
+		{"POST", "/api/v1/task/run", "taskRun"},
+		{"POST", "/api/v1/task/success", "taskRun"},
+		{"GET", "/api/v1/task/logs", "taskLogs"},
+		{"GET", "/api/v1/task/review-queue", "taskReviewQueue"},
+		{"GET", "/api/v1/sources/connectors", "sourceConnectors"},
+		{"GET", "/api/v1/sources/", "sourceList"},
+		{"POST", "/api/v1/sources/", "sourceCreate"},
+		{"POST", "/api/v1/sources/search", "sourceSearch"},
+		{"GET", "/api/v1/sources/extractions", "sourceExtractions"},
+		{"GET", "/api/v1/sources/audit-logs", "sourceAuditLogs"},
+		{"PATCH", "/api/v1/sources/extractions/abc", "sourceExtractionUpdate"},
+		{"POST", "/api/v1/sources/extractions/abc/archive", "sourceExtractionArchive"},
+		{"DELETE", "/api/v1/sources/extractions/abc", "sourceExtractionDelete"},
+		{"PATCH", "/api/v1/sources/abc", "sourceUpdate"},
+		{"POST", "/api/v1/sources/abc/sync", "sourceSync"},
+		{"POST", "/api/v1/sources/abc/reindex", "sourceReindex"},
+		{"POST", "/api/v1/sources/abc/pause", "sourcePause"},
+		{"POST", "/api/v1/sources/abc/resume", "sourceResume"},
+		{"POST", "/api/v1/sources/abc/revoke", "sourceRevoke"},
+		{"POST", "/api/v1/verification/answer", "verificationAnswer"},
+		{"GET", "/api/v1/verification/runs", "verificationRuns"},
+		{"GET", "/api/v1/verification/runs/abc", "verificationRunDetails"},
+		{"GET", "/api/v1/os/overview", "osOverview"},
 	}
 	for _, tc := range cases {
 		hit = ""

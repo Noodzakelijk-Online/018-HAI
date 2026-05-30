@@ -1,0 +1,95 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">HAI Personal AI OS</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container" *ngIf="overview as os">
+      <div class="status-strip">
+        <nz-card nzSize="small">
+          <strong>Completion first</strong>
+          <span>{{ os.completionFirst ? 'enabled' : 'disabled' }}</span>
+        </nz-card>
+        <nz-card nzSize="small">
+          <strong>Local first</strong>
+          <span>{{ os.localFirst ? 'enabled' : 'disabled' }}</span>
+        </nz-card>
+        <nz-card nzSize="small">
+          <strong>Paid budget</strong>
+          <span>EUR {{ os.paidBudgetEur }}</span>
+        </nz-card>
+        <nz-card nzSize="small">
+          <strong>Needs review</strong>
+          <span>{{ os.needsReviewTotal }}</span>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="System Metrics" class="section-card">
+        <div class="metric-grid">
+          <button
+            nz-button
+            nzType="default"
+            class="metric-button"
+            *ngFor="let metric of os.metrics"
+          >
+            <span>{{ metric.label }}</span>
+            <strong>{{ metric.value }}</strong>
+            <small>{{ metric.status }}</small>
+          </button>
+        </div>
+      </nz-card>
+
+      <nz-card nzTitle="Operating Planes" class="section-card">
+        <nz-table [nzData]="os.planes" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Plane</th>
+              <th>Status</th>
+              <th>Description</th>
+              <th>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let plane of os.planes">
+              <td>{{ plane.name }}</td>
+              <td>{{ plane.status }}</td>
+              <td>{{ plane.description }}</td>
+              <td>
+                <button
+                  nz-button
+                  nzSize="small"
+                  nzType="default"
+                  *ngFor="let link of plane.links"
+                  (click)="open(link)"
+                >
+                  {{ link }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Governance" class="section-card">
+        <p>{{ os.emergencyStopNote }}</p>
+        <p>
+          Paid usage allowed:
+          <strong>{{ os.paidUsageAllowed ? 'yes' : 'no' }}</strong>
+        </p>
+        <p>Last updated: {{ os.generatedAt | date: 'short' }}</p>
+      </nz-card>
+    </nz-content>
+  </nz-layout>
+</section>

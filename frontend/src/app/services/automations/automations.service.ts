@@ -4,6 +4,7 @@ import {
   IAutomationDiagnostics,
   IAutomationHealthResult,
   IAutomationHealthSummary,
+  IAutomationLaunchResult,
   IAutomationModel,
 } from "../../models/automation.model.interface";
 import {Observable} from "rxjs";
@@ -30,6 +31,18 @@ export class AutomationsService implements IAutomationsService {
     formData.append('port', automation.port.toString());
     formData.append('position', automation.position.toString());
     formData.append('removeImage', automation.removeImage.toString());
+    this.appendIfSet(formData, 'launchType', automation.launchType);
+    this.appendIfSet(formData, 'launchTarget', automation.launchTarget);
+    this.appendIfSet(formData, 'runtimeType', automation.runtimeType);
+    this.appendIfSet(formData, 'serviceName', automation.serviceName);
+    this.appendIfSet(formData, 'routePath', automation.routePath);
+    this.appendIfSet(formData, 'publicUrl', automation.publicUrl);
+    this.appendIfSet(formData, 'localUrl', automation.localUrl);
+    this.appendIfSet(formData, 'dependencyNotes', automation.dependencyNotes);
+    this.appendIfSet(formData, 'healthCheckType', automation.healthCheckType);
+    this.appendIfSet(formData, 'healthCheckUrl', automation.healthCheckUrl);
+    this.appendIfSet(formData, 'healthCheckIntervalSeconds', automation.healthCheckIntervalSeconds);
+    this.appendIfSet(formData, 'expectedHttpStatus', automation.expectedHttpStatus);
 
     if (automation.id) {
       formData.append('id', automation.id);
@@ -62,7 +75,11 @@ export class AutomationsService implements IAutomationsService {
   }
 
   getHealthSummary(): Observable<IAutomationHealthSummary> {
-    return this.http.get<IAutomationHealthSummary>(`${this.apiUrl}/health/summary`);
+    return this.http.get<IAutomationHealthSummary>(`${this.apiUrl}/health-summary`);
+  }
+
+  launchAutomation(id: string): Observable<IAutomationLaunchResult> {
+    return this.http.post<IAutomationLaunchResult>(`${this.apiUrl}/${id}/launch`, {});
   }
 
   runHealthCheck(id: string): Observable<IAutomationHealthResult> {
@@ -71,6 +88,12 @@ export class AutomationsService implements IAutomationsService {
 
   getDiagnostics(id: string): Observable<IAutomationDiagnostics> {
     return this.http.get<IAutomationDiagnostics>(`${this.apiUrl}/${id}/diagnostics`);
+  }
+
+  private appendIfSet(formData: FormData, key: string, value: unknown): void {
+    if (value !== undefined && value !== null && value !== '') {
+      formData.append(key, String(value));
+    }
   }
 
 }

@@ -1,0 +1,144 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">LLM Routing Policy</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container">
+      <nz-alert
+        *ngIf="policy"
+        nzType="info"
+        [nzMessage]="'Paid usage: ' + (policy.paidCallsAllowed ? 'enabled' : 'disabled') + ' | Daily paid budget: EUR ' + policy.dailyPaidBudgetEur"
+        nzShowIcon
+      ></nz-alert>
+
+      <div class="policy-grid" *ngIf="policy as p">
+        <nz-card nzSize="small" nzTitle="Policy">
+          <p><strong>Tier order:</strong> {{ p.tierOrder.join(' -> ') }}</p>
+          <p><strong>Local first:</strong> {{ p.localFirst ? 'yes' : 'no' }}</p>
+          <p><strong>Local models:</strong> {{ p.localModelsAllowed ? 'allowed' : 'disabled' }}</p>
+          <p><strong>Free cloud quota:</strong> {{ p.freeCloudQuotaAllowed ? 'allowed' : 'disabled' }}</p>
+          <p><strong>Paid approval:</strong> {{ p.requireApprovalBeforePaidUsage ? 'required' : 'not required' }}</p>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Route a Task">
+          <form nz-form [formGroup]="routeForm">
+            <nz-form-item>
+              <nz-form-control nzErrorTip="Enter a task to route.">
+                <textarea nz-input rows="4" formControlName="task"></textarea>
+              </nz-form-control>
+            </nz-form-item>
+            <nz-form-item>
+              <label nz-checkbox formControlName="validationPassed">Previous result passed validation</label>
+            </nz-form-item>
+            <nz-form-item>
+              <input nz-input formControlName="previousModelId" placeholder="Previous model ID, if validation failed" />
+            </nz-form-item>
+            <button nz-button nzType="primary" (click)="routeTask()" [nzLoading]="routing">
+              Route Task
+            </button>
+          </form>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Providers" class="section-card" *ngIf="policy as p">
+        <nz-table [nzData]="p.providers" nzSize="small" [nzPageSize]="10">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>Quota</th>
+              <th>Budget</th>
+              <th>Models</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let provider of p.providers">
+              <td>{{ provider.name }}</td>
+              <td>
+                <nz-tag [nzColor]="providerColor(provider)">
+                  {{ providerStatus(provider) }}
+                </nz-tag>
+              </td>
+              <td>{{ provider.quotaRemaining < 0 ? 'unlimited local' : provider.quotaRemaining }}</td>
+              <td>EUR {{ provider.dailyBudgetEur || 0 }}</td>
+              <td>
+                <div class="model-list">
+                  <nz-tag
+                    *ngFor="let model of provider.models"
+                    [nzColor]="model.enabled ? tierColor(model.tier) : 'default'"
+                  >
+                    {{ model.name }} / {{ model.tier }}
+                  </nz-tag>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Selected Model" class="section-card" *ngIf="decision">
+        <p>
+          <strong>{{ decision.selectedModelName || 'No model selected' }}</strong>
+          <nz-tag [nzColor]="tierColor(decision.tier)">{{ decision.tier || 'none' }}</nz-tag>
+        </p>
+        <p><strong>Provider:</strong> {{ decision.selectedProviderId || '-' }}</p>
+        <p><strong>Estimated cost:</strong> EUR {{ decision.estimatedCostEur || 0 }}</p>
+        <p><strong>Approval required:</strong> {{ decision.requiresApproval ? 'yes' : 'no' }}</p>
+        <p><strong>Reason:</strong> {{ decision.reason }}</p>
+        <p>
+          <strong>Classification:</strong>
+          {{ decision.classification.taskType }},
+          difficulty {{ decision.classification.difficulty }},
+          {{ decision.classification.requiredReasoning }} reasoning
+        </p>
+        <p><strong>Classifier reason:</strong> {{ decision.classification.reason }}</p>
+      </nz-card>
+
+      <nz-card nzTitle="Fallback Path" class="section-card" *ngIf="decision">
+        <nz-empty *ngIf="!decision.fallbackPath.length" nzNotFoundContent="No fallback model available under current policy."></nz-empty>
+        <nz-timeline *ngIf="decision.fallbackPath.length">
+          <nz-timeline-item *ngFor="let item of decision.fallbackPath">
+            {{ item.modelName }} / {{ item.tier }} / EUR {{ item.estimatedCostEur || 0 }}
+          </nz-timeline-item>
+        </nz-timeline>
+      </nz-card>
+
+      <nz-card nzTitle="Routing Log" class="section-card">
+        <nz-empty *ngIf="!logs.length" nzNotFoundContent="No routing decisions logged yet."></nz-empty>
+        <nz-table *ngIf="logs.length" [nzData]="logs" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Model</th>
+              <th>Tier</th>
+              <th>Reason</th>
+              <th>Fallbacks</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let log of logs">
+              <td>{{ log.loggedAt | date: 'short' }}</td>
+              <td>{{ log.selectedModelName || '-' }}</td>
+              <td><nz-tag [nzColor]="tierColor(log.tier)">{{ log.tier || '-' }}</nz-tag></td>
+              <td>{{ log.reason }}</td>
+              <td>{{ log.fallbackPath.length }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+    </nz-content>
+  </nz-layout>
+</section>

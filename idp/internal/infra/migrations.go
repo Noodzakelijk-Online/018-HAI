@@ -4,6 +4,7 @@ import (
 	"automation-hub-idp/internal/app/models"
 	"automation-hub-idp/internal/app/utils"
 	"errors"
+	"os"
 	"gorm.io/gorm"
 )
 
@@ -16,8 +17,8 @@ func RunMigrations(db *gorm.DB) error {
 
 func SeedDatabase(db *gorm.DB) error {
 	hasher := utils.DefaultBcryptHasher()
-	defaultPassword := "1234"
-	defaultEmail := "admin@admin.nl"
+	defaultPassword := firstNonEmpty(os.Getenv("FIRST_RUN_ADMIN_PASSWORD"), "ChangeMe123!")
+	defaultEmail := firstNonEmpty(os.Getenv("FIRST_RUN_ADMIN_EMAIL"), "noodzakelijkonline@gmail.com")
 	var user models.User
 	err := db.Where("Email = ?", defaultEmail).First(&user).Error
 	if err != nil {
@@ -39,4 +40,13 @@ func SeedDatabase(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -1,0 +1,297 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">Task Blueprint</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container">
+      <nz-card nzSize="small" nzTitle="Completion-First Intake">
+        <form nz-form [formGroup]="planForm">
+          <nz-form-item>
+            <nz-form-label>Request</nz-form-label>
+            <nz-form-control nzErrorTip="A task request is required.">
+              <textarea nz-input rows="4" formControlName="request"></textarea>
+            </nz-form-control>
+          </nz-form-item>
+          <nz-form-item>
+            <nz-form-label>Project</nz-form-label>
+            <nz-form-control>
+              <input nz-input formControlName="projectKey" />
+            </nz-form-control>
+          </nz-form-item>
+          <nz-form-item>
+            <nz-form-label>Success criteria</nz-form-label>
+            <nz-form-control>
+              <textarea nz-input rows="3" formControlName="successCriteria" placeholder="One criterion per line"></textarea>
+            </nz-form-control>
+          </nz-form-item>
+          <div class="button-row">
+            <button nz-button nzType="primary" (click)="createPlan()" [nzLoading]="loading">
+              Create Plan
+            </button>
+            <button nz-button nzType="default" (click)="runSuccessEngine()" [nzLoading]="running">
+              Run Success Engine
+            </button>
+          </div>
+        </form>
+      </nz-card>
+
+      <div class="plan-grid" *ngIf="plan as p">
+        <nz-card nzSize="small" nzTitle="Intake">
+          <p><strong>Real goal:</strong> {{ p.realGoal }}</p>
+          <p><strong>Type:</strong> {{ p.intake.taskType }}</p>
+          <p><strong>Risk:</strong> {{ p.intake.riskLevel }}</p>
+          <p><strong>Difficulty:</strong> {{ p.intake.difficulty }}</p>
+          <p><strong>Reasoning:</strong> {{ p.intake.requiredReasoning }}</p>
+          <p><strong>Approval:</strong> {{ p.intake.needsApproval ? 'required' : 'not required' }}</p>
+          <p><strong>Reason:</strong> {{ p.intake.reason }}</p>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Model Selection">
+          <p><strong>Model:</strong> {{ p.modelDecision.selectedModelName || '-' }}</p>
+          <p><strong>Tier:</strong> {{ p.modelDecision.tier || '-' }}</p>
+          <p><strong>Cost:</strong> EUR {{ p.modelDecision.estimatedCostEur || 0 }}</p>
+          <p><strong>Reason:</strong> {{ p.modelDecision.reason }}</p>
+          <p><strong>Skipped:</strong> {{ p.modelDecision.skipped.length }}</p>
+        </nz-card>
+      </div>
+
+      <div class="plan-grid" *ngIf="plan as p">
+        <nz-card nzSize="small" nzTitle="Tool Routing">
+          <p><strong>Selected:</strong> {{ p.toolDecision.selectedTools.join(', ') || '-' }}</p>
+          <p><strong>Blocked:</strong> {{ p.toolDecision.blockedTools.join(', ') || '-' }}</p>
+          <p><strong>Skipped:</strong> {{ p.toolDecision.skippedTools.join(', ') || '-' }}</p>
+          <p><strong>Reason:</strong> {{ p.toolDecision.reason }}</p>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Risk Gate">
+          <p><strong>Level:</strong> {{ p.riskAssessment.level }}</p>
+          <p><strong>Allowed now:</strong> {{ p.riskAssessment.allowedNow ? 'yes' : 'no' }}</p>
+          <p><strong>Approval:</strong> {{ p.riskAssessment.approvalRequired ? 'required' : 'not required' }}</p>
+          <ul>
+            <li *ngFor="let reason of p.riskAssessment.reasons">{{ reason }}</li>
+          </ul>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Success Criteria" *ngIf="plan as p" class="section-card">
+        <ul>
+          <li *ngFor="let criterion of p.intake.successCriteria">{{ criterion }}</li>
+        </ul>
+      </nz-card>
+
+      <nz-card nzTitle="Context Used" *ngIf="plan as p" class="section-card">
+        <p>{{ p.contextPlan.explanation }}</p>
+        <nz-empty *ngIf="!p.contextPlan.usedContext.length" nzNotFoundContent="No relevant memory was loaded."></nz-empty>
+        <nz-table *ngIf="p.contextPlan.usedContext.length" [nzData]="p.contextPlan.usedContext" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Score</th>
+              <th>Summary</th>
+              <th>Why used</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of p.contextPlan.usedContext">
+              <td>{{ item.score }}</td>
+              <td>{{ item.memory.summary || item.memory.content }}</td>
+              <td>{{ item.explanation }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Connected-Source Context" *ngIf="plan as p" class="section-card">
+        <nz-empty *ngIf="!p.contextPlan.sourceContext.length" nzNotFoundContent="No connected-source context was loaded."></nz-empty>
+        <nz-table *ngIf="p.contextPlan.sourceContext.length" [nzData]="p.contextPlan.sourceContext" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Score</th>
+              <th>Summary</th>
+              <th>Why used</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of p.contextPlan.sourceContext">
+              <td>{{ item.score }}</td>
+              <td>{{ item.extraction.summary || item.extraction.text }}</td>
+              <td>{{ item.explanation }}</td>
+              <td>{{ item.extraction.sourceLabel || item.extraction.sourceUri || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Universal Task Loop" *ngIf="plan as p" class="section-card">
+        <nz-table [nzData]="p.steps" nzSize="small" [nzPageSize]="9">
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Purpose</th>
+              <th>Allowed</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let step of p.steps">
+              <td>{{ step.name }}</td>
+              <td>{{ step.purpose }}</td>
+              <td>{{ step.allowed ? 'yes' : 'approval needed' }}</td>
+              <td>{{ step.status }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <div class="plan-grid" *ngIf="plan as p">
+        <nz-card nzSize="small" nzTitle="Validation">
+          <ul>
+            <li *ngFor="let step of p.validationPlan.steps">{{ step }}</li>
+          </ul>
+          <p><strong>Failure policy:</strong> {{ p.validationPlan.failurePolicy }}</p>
+          <p><strong>Completion gate:</strong> {{ p.validationPlan.completionGate }}</p>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Validation Result">
+          <p><strong>Status:</strong> {{ p.validationResult.status }}</p>
+          <p><strong>Passed:</strong> {{ p.validationResult.passed ? 'yes' : 'no' }}</p>
+          <p><strong>Attempt:</strong> {{ p.validationResult.attemptNumber }}</p>
+          <p><strong>Next:</strong> {{ p.validationResult.nextAction }}</p>
+          <ul>
+            <li *ngFor="let failure of p.validationResult.failures">{{ failure }}</li>
+          </ul>
+        </nz-card>
+      </div>
+
+      <div class="plan-grid" *ngIf="plan as p">
+        <nz-card nzSize="small" nzTitle="Execution Controls">
+          <p><strong>Mode:</strong> {{ p.executionPlan.controlledExecutionMode }}</p>
+          <p><strong>Planning separated:</strong> {{ p.executionPlan.planningSeparatedFromExecution ? 'yes' : 'no' }}</p>
+          <p><strong>Approval required for:</strong> {{ p.executionPlan.approvalRequiredFor.join(', ') || '-' }}</p>
+          <p><strong>Status:</strong> {{ p.completionStatus }}</p>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Retry and Escalation">
+          <p><strong>Attempt:</strong> {{ p.retryPolicy.currentAttempt }} / {{ p.retryPolicy.maxAttempts }}</p>
+          <p><strong>Retry available:</strong> {{ p.retryPolicy.retryAvailable ? 'yes' : 'no' }}</p>
+          <p><strong>Escalation:</strong> {{ p.retryPolicy.escalationPath.join(' -> ') }}</p>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Memory Updates Proposed" *ngIf="plan as p" class="section-card">
+        <nz-empty *ngIf="!p.memoryUpdateProposals.length" nzNotFoundContent="No memory updates proposed."></nz-empty>
+        <nz-table *ngIf="p.memoryUpdateProposals.length" [nzData]="p.memoryUpdateProposals" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Content</th>
+              <th>Reason</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let proposal of p.memoryUpdateProposals">
+              <td>{{ proposal.kind }}</td>
+              <td>{{ proposal.content }}</td>
+              <td>{{ proposal.reason }}</td>
+              <td>{{ proposal.confidence }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Lessons Learned" *ngIf="plan as p" class="section-card">
+        <nz-empty *ngIf="!p.lessonsLearned.length" nzNotFoundContent="No lessons proposed."></nz-empty>
+        <nz-table *ngIf="p.lessonsLearned.length" [nzData]="p.lessonsLearned" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Lesson</th>
+              <th>Stored</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let lesson of p.lessonsLearned">
+              <td>{{ lesson.kind }}</td>
+              <td>{{ lesson.content }}</td>
+              <td>{{ p.storedMemoryIds.length ? 'yes' : 'proposed' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Engine Events" *ngIf="plan as p" class="section-card">
+        <nz-empty *ngIf="!p.events.length" nzNotFoundContent="No engine events."></nz-empty>
+        <nz-table *ngIf="p.events.length" [nzData]="p.events" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Stage</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let event of p.events">
+              <td>{{ event.at | date: 'short' }}</td>
+              <td>{{ event.stage }}</td>
+              <td>{{ event.message }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Review Queue" class="section-card">
+        <nz-empty *ngIf="!reviewQueue.length" nzNotFoundContent="No tasks waiting for review."></nz-empty>
+        <nz-table *ngIf="reviewQueue.length" [nzData]="reviewQueue" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Priority</th>
+              <th>Reason</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of reviewQueue">
+              <td>{{ item.createdAt | date: 'short' }}</td>
+              <td>{{ item.priority }}</td>
+              <td>{{ item.reason }}</td>
+              <td>{{ item.status }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Recent Plans" class="section-card">
+        <nz-empty *ngIf="!logs.length" nzNotFoundContent="No task plans yet."></nz-empty>
+        <nz-table *ngIf="logs.length" [nzData]="logs" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Type</th>
+              <th>Model</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let log of logs">
+              <td>{{ log.createdAt | date: 'short' }}</td>
+              <td>{{ log.intake.taskType }}</td>
+              <td>{{ log.modelDecision.selectedModelName || '-' }}</td>
+              <td>{{ log.completionStatus }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+    </nz-content>
+  </nz-layout>
+</section>

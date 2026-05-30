@@ -19,6 +19,7 @@ import {NzUploadModule} from "ng-zorro-antd/upload";
 import { AutomationsFormComponent } from './modals/automations-form/automations-form.component';
 import {USER_SERVICE_TOKEN} from "../../services/user/user.service.token";
 import {UserService} from "../../services/user/user.service";
+import {NzSelectModule} from "ng-zorro-antd/select";
 
 const routes: Routes = [
   { path: '', component: HomeComponent },
@@ -41,6 +42,7 @@ const routes: Routes = [
         ReactiveFormsModule,
         NzButtonModule,
         NzUploadModule,
+        NzSelectModule,
     ],
   exports: [HomeComponent],
   providers: [

@@ -15,7 +15,21 @@ func (h *Handler) HealthSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, summary)
 }
 
-func (h *Handler) HealthCheck(c *gin.Context) {
+func (h *Handler) Launch(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		return
+	}
+	result, err := h.service.Launch(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) RunHealthCheck(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
@@ -27,6 +41,10 @@ func (h *Handler) HealthCheck(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) HealthCheck(c *gin.Context) {
+	h.RunHealthCheck(c)
 }
 
 func (h *Handler) Diagnostics(c *gin.Context) {

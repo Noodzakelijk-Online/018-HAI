@@ -4,12 +4,23 @@ import (
 	"automation-hub-backend/docs"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/haios"
+	"automation-hub-backend/internal/llm"
+	"automation-hub-backend/internal/memory"
+	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/task"
+	"automation-hub-backend/internal/verification"
+
 	"github.com/gin-gonic/gin"
 	swaggerfiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 func initializeRoutes(router *gin.Engine) error {
+	router.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
+	})
+
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"
 	docs.SwaggerInfo.BasePath = relativePathV1
 	v1 := router.Group(relativePathV1)
@@ -19,6 +30,24 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
+		llmHandler, err := llm.DefaultHandler()
+		if err != nil {
+			return err
+		}
+		initializeLLMRoutes(v1, llmHandler)
+		initializeMemoryRoutes(v1, memory.DefaultHandler())
+		initializeSourceRoutes(v1, source.DefaultHandler())
+		initializeVerificationRoutes(v1, verification.DefaultHandler())
+		osHandler, err := haios.DefaultHandler()
+		if err != nil {
+			return err
+		}
+		initializeHAIOSRoutes(v1, osHandler)
+		taskHandler, err := task.DefaultHandler()
+		if err != nil {
+			return err
+		}
+		initializeTaskRoutes(v1, taskHandler)
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
@@ -30,14 +59,88 @@ func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *autom
 		automations.GET("/swap/:id1/:id2", autoHandler.SwapPosition)
 		automations.GET("/", autoHandler.GetAll)
 		automations.GET("/health/summary", autoHandler.HealthSummary)
+		automations.GET("/health-summary", autoHandler.HealthSummary)
+		automations.GET("/images/:imageName", autoHandler.ImageHandler)
 		automations.GET("/:id", autoHandler.GetByID)
-		automations.POST("/:id/health-check", autoHandler.HealthCheck)
+		automations.POST("/:id/launch", autoHandler.Launch)
+		automations.POST("/:id/health-check", autoHandler.RunHealthCheck)
 		automations.GET("/:id/diagnostics", autoHandler.Diagnostics)
 		automations.POST("/", autoHandler.Create)
 		automations.PATCH("/", autoHandler.Update)
 		automations.DELETE("/:id", autoHandler.DeleteByID)
-		automations.GET("/images/:imageName", autoHandler.ImageHandler)
 	}
 
 	return nil
+}
+
+func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {
+	llmRoutes := apiVersion.Group("/llm")
+	{
+		llmRoutes.GET("/policy", llmHandler.Policy)
+		llmRoutes.POST("/route", llmHandler.Route)
+		llmRoutes.GET("/logs", llmHandler.Logs)
+	}
+}
+
+func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.Handler) {
+	memoryRoutes := apiVersion.Group("/memory")
+	{
+		memoryRoutes.GET("/", memoryHandler.List)
+		memoryRoutes.POST("/", memoryHandler.Create)
+		memoryRoutes.POST("/retrieve", memoryHandler.Retrieve)
+		memoryRoutes.GET("/export", memoryHandler.Export)
+		memoryRoutes.GET("/:id", memoryHandler.Get)
+		memoryRoutes.PATCH("/:id", memoryHandler.Update)
+		memoryRoutes.POST("/:id/archive", memoryHandler.Archive)
+		memoryRoutes.POST("/:id/restore", memoryHandler.Restore)
+		memoryRoutes.DELETE("/:id", memoryHandler.Delete)
+	}
+}
+
+func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.Handler) {
+	sourceRoutes := apiVersion.Group("/sources")
+	{
+		sourceRoutes.GET("/connectors", sourceHandler.Connectors)
+		sourceRoutes.GET("/", sourceHandler.Sources)
+		sourceRoutes.POST("/", sourceHandler.CreateSource)
+		sourceRoutes.POST("/search", sourceHandler.Search)
+		sourceRoutes.GET("/extractions", sourceHandler.Extractions)
+		sourceRoutes.GET("/audit-logs", sourceHandler.AuditLogs)
+		sourceRoutes.PATCH("/extractions/:id", sourceHandler.UpdateExtraction)
+		sourceRoutes.POST("/extractions/:id/archive", sourceHandler.ArchiveExtraction)
+		sourceRoutes.DELETE("/extractions/:id", sourceHandler.DeleteExtraction)
+		sourceRoutes.PATCH("/:id", sourceHandler.UpdateSource)
+		sourceRoutes.POST("/:id/sync", sourceHandler.Sync)
+		sourceRoutes.POST("/:id/reindex", sourceHandler.Reindex)
+		sourceRoutes.POST("/:id/pause", sourceHandler.Pause)
+		sourceRoutes.POST("/:id/resume", sourceHandler.Resume)
+		sourceRoutes.POST("/:id/revoke", sourceHandler.Revoke)
+	}
+}
+
+func initializeTaskRoutes(apiVersion *gin.RouterGroup, taskHandler *task.Handler) {
+	taskRoutes := apiVersion.Group("/task")
+	{
+		taskRoutes.POST("/plan", taskHandler.Plan)
+		taskRoutes.POST("/run", taskHandler.Run)
+		taskRoutes.POST("/success", taskHandler.Run)
+		taskRoutes.GET("/logs", taskHandler.Logs)
+		taskRoutes.GET("/review-queue", taskHandler.ReviewQueue)
+	}
+}
+
+func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandler *verification.Handler) {
+	verificationRoutes := apiVersion.Group("/verification")
+	{
+		verificationRoutes.POST("/answer", verificationHandler.Answer)
+		verificationRoutes.GET("/runs", verificationHandler.Runs)
+		verificationRoutes.GET("/runs/:id", verificationHandler.RunDetails)
+	}
+}
+
+func initializeHAIOSRoutes(apiVersion *gin.RouterGroup, osHandler *haios.Handler) {
+	osRoutes := apiVersion.Group("/os")
+	{
+		osRoutes.GET("/overview", osHandler.Overview)
+	}
 }

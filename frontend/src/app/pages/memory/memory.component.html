@@ -1,0 +1,181 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">Context Memory</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="exportMemories()">
+            <i nz-icon nzType="download" nzTheme="outline"></i>
+            Export
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container">
+      <div class="memory-grid">
+        <nz-card nzSize="small" [nzTitle]="editingId ? 'Correct Memory' : 'Store Memory'">
+          <form nz-form [formGroup]="memoryForm">
+            <div class="form-row">
+              <nz-form-item>
+                <nz-form-label>Project</nz-form-label>
+                <nz-form-control>
+                  <input nz-input formControlName="projectKey" />
+                </nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Kind</nz-form-label>
+                <nz-form-control>
+                  <nz-select formControlName="kind">
+                    <nz-option nzValue="preference" nzLabel="Preference"></nz-option>
+                    <nz-option nzValue="project" nzLabel="Project context"></nz-option>
+                    <nz-option nzValue="decision" nzLabel="Decision"></nz-option>
+                    <nz-option nzValue="source" nzLabel="Source note"></nz-option>
+                  </nz-select>
+                </nz-form-control>
+              </nz-form-item>
+            </div>
+            <nz-form-item>
+              <nz-form-label>Content</nz-form-label>
+              <nz-form-control nzErrorTip="Memory content is required.">
+                <textarea nz-input rows="5" formControlName="content"></textarea>
+              </nz-form-control>
+            </nz-form-item>
+            <nz-form-item>
+              <nz-form-label>Summary</nz-form-label>
+              <nz-form-control>
+                <input nz-input formControlName="summary" placeholder="Optional compact summary" />
+              </nz-form-control>
+            </nz-form-item>
+            <div class="form-row">
+              <nz-form-item>
+                <nz-form-label>Tags</nz-form-label>
+                <nz-form-control>
+                  <input nz-input formControlName="tags" placeholder="comma, separated" />
+                </nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Confidence</nz-form-label>
+                <nz-form-control>
+                  <input nz-input type="number" min="0.1" max="1" step="0.1" formControlName="confidence" />
+                </nz-form-control>
+              </nz-form-item>
+            </div>
+            <div class="form-row">
+              <nz-form-item>
+                <nz-form-label>Source URI</nz-form-label>
+                <nz-form-control>
+                  <input nz-input formControlName="sourceUri" />
+                </nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Source label</nz-form-label>
+                <nz-form-control>
+                  <input nz-input formControlName="sourceLabel" />
+                </nz-form-control>
+              </nz-form-item>
+            </div>
+            <div class="button-row">
+              <button nz-button nzType="primary" (click)="save()" [nzLoading]="saving">
+                Save
+              </button>
+              <button nz-button nzType="default" (click)="clearForm()">Clear</button>
+            </div>
+          </form>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Retrieve Relevant Context">
+          <form nz-form [formGroup]="retrieveForm">
+            <nz-form-item>
+              <nz-form-label>Task or query</nz-form-label>
+              <nz-form-control>
+                <textarea nz-input rows="5" formControlName="query"></textarea>
+              </nz-form-control>
+            </nz-form-item>
+            <div class="form-row">
+              <nz-form-item>
+                <nz-form-label>Project</nz-form-label>
+                <nz-form-control>
+                  <input nz-input formControlName="projectKey" />
+                </nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Limit</nz-form-label>
+                <nz-form-control>
+                  <input nz-input type="number" formControlName="limit" />
+                </nz-form-control>
+              </nz-form-item>
+            </div>
+            <button nz-button nzType="primary" (click)="retrieve()" [nzLoading]="retrieving">
+              Retrieve Context
+            </button>
+          </form>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Context Used" *ngIf="retrieveResult" class="section-card">
+        <p>{{ retrieveResult.explanation }}</p>
+        <nz-empty *ngIf="!retrieveResult.usedContext.length" nzNotFoundContent="No relevant context matched this task."></nz-empty>
+        <nz-table *ngIf="retrieveResult.usedContext.length" [nzData]="retrieveResult.usedContext" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Score</th>
+              <th>Summary</th>
+              <th>Why used</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of retrieveResult.usedContext">
+              <td>{{ item.score }}</td>
+              <td>{{ item.memory.summary || item.memory.content }}</td>
+              <td>{{ item.explanation }}</td>
+              <td>{{ item.memory.sourceLabel || item.memory.sourceUri || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Stored Memories" class="section-card">
+        <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()">Show archived</label>
+        <nz-table [nzData]="memories" [nzLoading]="loading" nzSize="small" [nzPageSize]="10">
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Summary</th>
+              <th>Tags</th>
+              <th>Confidence</th>
+              <th>Last used</th>
+              <th nzWidth="260px">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let memory of memories">
+              <td>
+                <nz-tag [nzColor]="memory.archived ? 'default' : 'blue'">{{ memory.kind }}</nz-tag>
+              </td>
+              <td>{{ memory.summary || memory.content }}</td>
+              <td>{{ memory.tags || '-' }}</td>
+              <td>{{ memory.confidence }}</td>
+              <td>{{ memory.lastUsedAt ? (memory.lastUsedAt | date: 'short') : '-' }}</td>
+              <td>
+                <button nz-button nzSize="small" nzType="default" (click)="edit(memory)">Edit</button>
+                <button *ngIf="!memory.archived" nz-button nzSize="small" nzType="default" (click)="archive(memory)">Archive</button>
+                <button *ngIf="memory.archived" nz-button nzSize="small" nzType="default" (click)="restore(memory)">Restore</button>
+                <button nz-button nzSize="small" nzType="link" nzDanger (click)="delete(memory)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+    </nz-content>
+  </nz-layout>
+</section>

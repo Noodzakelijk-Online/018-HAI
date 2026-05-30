@@ -13,6 +13,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -184,11 +185,15 @@ func calculateBlockDuration(failedLoginAttempts int) time.Duration {
 
 func (a *service) Logout(accessToken string) error {
 	_, claims, err := a.parseAndValidateToken(accessToken)
+	if err != nil {
+		a.logger.Error("Error parsing access token: %v", err)
+		return errors.New("invalid access token")
+	}
 
 	userID, ok := claims["user_id"].(string)
 	if !ok {
-		a.logger.Error("Error parsing user ID from claims: %v", err)
-		return err
+		a.logger.Error("User ID not found in the access token")
+		return errors.New("user ID not found in the token")
 	}
 
 	accessUUID, ok := claims["access_uuid"].(string)
@@ -238,6 +243,10 @@ func (a *service) Logout(accessToken string) error {
 
 func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 	_, claims, err := a.parseAndValidateToken(refreshToken)
+	if err != nil {
+		a.logger.Error("Error parsing refresh token: %v", err)
+		return nil, errors.New("invalid refresh token")
+	}
 
 	refreshUUID, ok := claims["refresh_uuid"].(string)
 	if !ok {
@@ -257,13 +266,18 @@ func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 	}
 
 	// Renew the access token using the refresh token's claims
-	userID, err := uuid.Parse(claims["user_id"].(string))
+	userIDStr, ok := claims["user_id"].(string)
+	if !ok {
+		a.logger.Warn("User ID not found in the refresh token")
+		return nil, errors.New("user ID not found in the token")
+	}
+	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
 		a.logger.Error("Error parsing user ID from claims: %v", err)
 		return nil, err
 	}
 
-	refreshExp, ok := claims["refresh_exp"].(int64)
+	refreshExp, ok := unixClaim(claims, "exp")
 	if !ok {
 		a.logger.Warn("Refresh expiration time not found in the token for user: %s", userID)
 		return nil, errors.New("refresh expiration time not found in the token")
@@ -356,6 +370,14 @@ func (a *service) RequestPasswordReset(email string) (string, time.Time, error) 
 }
 
 func (a *service) ConfirmPasswordReset(token, newPassword string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("invalid token")
+	}
+	if newPassword == "" {
+		return errors.New("new password is required")
+	}
+
 	user, err := a.userService.GetUserByResetToken(token)
 	if err != nil {
 		a.logger.Error("Error fetching user by reset token: %v", err)
@@ -366,17 +388,14 @@ func (a *service) ConfirmPasswordReset(token, newPassword string) error {
 		return errors.New("invalid token")
 	}
 
+	if user.ResetTokenExpires == nil {
+		return errors.New("invalid token")
+	}
+
 	if user.ResetTokenExpires.Before(time.Now()) {
 		return errors.New("token expired")
 	}
 
-	hashedPassword, err := a.hasher.Hash(newPassword)
-	if err != nil {
-		a.logger.Error("Error generating hashed password for user with ID: %s, %v", user.ID, err)
-		return errors.New("failed to change password due to internal error")
-	}
-
-	user.Password = hashedPassword
 	user.ResetPasswordToken = ""
 	user.ResetTokenExpires = nil
 
@@ -396,6 +415,10 @@ func (a *service) ConfirmPasswordReset(token, newPassword string) error {
 }
 
 func (a *service) ChangePassword(accessToken string, newPassword string) error {
+	if newPassword == "" {
+		return errors.New("new password is required")
+	}
+
 	_, claims, err := a.parseAndValidateToken(accessToken)
 	if err != nil {
 		a.logger.Error("Error parsing accessToken: %v", err)
@@ -417,18 +440,10 @@ func (a *service) ChangePassword(accessToken string, newPassword string) error {
 		return errors.New("invalid email")
 	}
 
-	hashedPassword, hashErr := a.hasher.Hash(newPassword)
-	if hashErr != nil {
-		a.logger.Error("Error hashing new password: %v", hashErr)
-		return errors.New("failed to hash password")
-	}
-
-	user.Password = hashedPassword
-
 	user.ResetPasswordToken = ""
 	user.ResetTokenExpires = nil
 
-	updateErr := a.userService.UpdatePassword(user.ID, hashedPassword)
+	updateErr := a.userService.UpdatePassword(user.ID, newPassword)
 	if updateErr != nil {
 		a.logger.Error("Error updating user password: %v", updateErr)
 		return errors.New("failed to update password")
@@ -510,4 +525,22 @@ func (a *service) parseAndValidateToken(tokenString string) (*jwt.Token, jwt.Map
 	}
 
 	return token, claims, nil
+}
+
+func unixClaim(claims jwt.MapClaims, key string) (int64, bool) {
+	value, ok := claims[key]
+	if !ok {
+		return 0, false
+	}
+
+	switch typedValue := value.(type) {
+	case float64:
+		return int64(typedValue), true
+	case int64:
+		return typedValue, true
+	case int:
+		return int64(typedValue), true
+	default:
+		return 0, false
+	}
 }

@@ -47,6 +47,18 @@ func RunMigrations(db *gorm.DB) error {
 		&models.AutomationAlert{},
 		&models.AutomationIncident{},
 		&models.AutomationSLO{},
+		&models.ContextMemory{},
+		&models.SourceConnector{},
+		&models.ConnectedSource{},
+		&models.SourceSyncJob{},
+		&models.SourceRawItem{},
+		&models.SourceExtraction{},
+		&models.SourceIndexEntry{},
+		&models.SourceAuditLog{},
+		&models.VerificationRun{},
+		&models.VerificationEvidence{},
+		&models.VerificationClaim{},
+		&models.VerificationAuditLog{},
 	); err != nil {
 		return err
 	}

@@ -1,0 +1,20 @@
+# Local operator configuration. Keep committed examples only.
+.env.local
+.env.*.local
+
+# Local runtime state.
+db_data_automation/
+db_data_idp/
+images/
+
+# Dependencies and build output.
+frontend/node_modules/
+frontend/.npm-cache/
+frontend/dist/
+backend/images/
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

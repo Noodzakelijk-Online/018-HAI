@@ -1,0 +1,38 @@
+import { NgModule } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ReactiveFormsModule } from '@angular/forms';
+import { RouterModule, Routes } from '@angular/router';
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzCardModule } from 'ng-zorro-antd/card';
+import { NzEmptyModule } from 'ng-zorro-antd/empty';
+import { NzFormModule } from 'ng-zorro-antd/form';
+import { NzIconModule } from 'ng-zorro-antd/icon';
+import { NzInputModule } from 'ng-zorro-antd/input';
+import { NzLayoutModule } from 'ng-zorro-antd/layout';
+import { NzNotificationModule } from 'ng-zorro-antd/notification';
+import { NzTableModule } from 'ng-zorro-antd/table';
+import { TaskBlueprintComponent } from './task-blueprint.component';
+import { TASK_PLAN_SERVICE_TOKEN } from '../../services/task-plan/task-plan.service.token';
+import { TaskPlanService } from '../../services/task-plan/task-plan.service';
+
+const routes: Routes = [{ path: '', component: TaskBlueprintComponent }];
+
+@NgModule({
+  declarations: [TaskBlueprintComponent],
+  imports: [
+    CommonModule,
+    RouterModule.forChild(routes),
+    ReactiveFormsModule,
+    NzButtonModule,
+    NzCardModule,
+    NzEmptyModule,
+    NzFormModule,
+    NzIconModule,
+    NzInputModule,
+    NzLayoutModule,
+    NzNotificationModule,
+    NzTableModule,
+  ],
+  providers: [{ provide: TASK_PLAN_SERVICE_TOKEN, useClass: TaskPlanService }],
+})
+export class TaskBlueprintModule {}

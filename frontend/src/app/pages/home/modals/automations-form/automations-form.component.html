@@ -53,6 +53,93 @@
           </nz-form-control>
         </nz-form-item>
         <nz-form-item>
+          <nz-form-label [nzSpan]="5">Runtime</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <nz-select formControlName="runtimeType">
+              <nz-option nzValue="browser" nzLabel="Browser/API"></nz-option>
+              <nz-option nzValue="docker" nzLabel="Docker service"></nz-option>
+              <nz-option nzValue="script" nzLabel="Local script"></nz-option>
+              <nz-option nzValue="mcp" nzLabel="MCP"></nz-option>
+              <nz-option nzValue="openclaw" nzLabel="OpenClaw"></nz-option>
+              <nz-option nzValue="qwenpaw" nzLabel="QwenPaw"></nz-option>
+              <nz-option nzValue="anythingllm" nzLabel="AnythingLLM"></nz-option>
+              <nz-option nzValue="khoj" nzLabel="Khoj"></nz-option>
+              <nz-option nzValue="librechat" nzLabel="LibreChat"></nz-option>
+              <nz-option nzValue="agent-zero" nzLabel="Agent Zero"></nz-option>
+            </nz-select>
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Launch type</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <nz-select formControlName="launchType">
+              <nz-option nzValue="browser_url" nzLabel="Browser URL"></nz-option>
+              <nz-option nzValue="docker_service" nzLabel="Docker service"></nz-option>
+              <nz-option nzValue="script" nzLabel="Local script"></nz-option>
+              <nz-option nzValue="api" nzLabel="API call"></nz-option>
+            </nz-select>
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Launch target</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <input nz-input formControlName="launchTarget" placeholder="https://localhost/app or service name" />
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Service name</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <input nz-input formControlName="serviceName" placeholder="Docker Compose service name" />
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Route path</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <input nz-input formControlName="routePath" placeholder="/my-automation" />
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Public URL</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <input nz-input formControlName="publicUrl" placeholder="https://example.com" />
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Local URL</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <input nz-input formControlName="localUrl" placeholder="http://localhost:3000" />
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Health type</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <nz-select formControlName="healthCheckType">
+              <nz-option nzValue="http" nzLabel="HTTP"></nz-option>
+              <nz-option nzValue="tcp" nzLabel="TCP"></nz-option>
+              <nz-option nzValue="manual" nzLabel="Manual"></nz-option>
+              <nz-option nzValue="disabled" nzLabel="Disabled"></nz-option>
+            </nz-select>
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Health target</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <input nz-input formControlName="healthCheckUrl" placeholder="http://service:port/healthz" />
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Expected status</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <input type="number" nz-input formControlName="expectedHttpStatus" />
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
+          <nz-form-label [nzSpan]="5">Dependency notes</nz-form-label>
+          <nz-form-control [nzSpan]="12">
+            <textarea nz-input formControlName="dependencyNotes" rows="3"></textarea>
+          </nz-form-control>
+        </nz-form-item>
+        <nz-form-item>
           <nz-form-label [nzSpan]="5">Image</nz-form-label>
           <nz-form-control [nzSpan]="12">
             <ng-container *ngIf="!removeImage">

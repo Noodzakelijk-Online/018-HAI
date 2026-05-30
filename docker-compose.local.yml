@@ -1,0 +1,294 @@
+services:
+  idp:
+    build:
+      context: ./idp
+      dockerfile: Dockerfile
+    container_name: 018-hai-idp
+    hostname: idp
+    restart: unless-stopped
+    depends_on:
+      postgres-idp:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      BLOCKING_TIME_EXPONENTIATION_BASIS: ${BLOCKING_TIME_EXPONENTIATION_BASIS}
+      MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK: ${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK}
+      MIN_TIME_BETWEEN_ATTEMPTS_IN_SECONDS: ${MIN_TIME_BETWEEN_ATTEMPTS_IN_SECONDS}
+      EXPIRATION_TIME_RESET_TOKEN_IN_HOURS: ${EXPIRATION_TIME_RESET_TOKEN_IN_HOURS}
+      ACCESS_TOKEN_DURATION_MINUTES: ${ACCESS_TOKEN_DURATION_MINUTES}
+      REFRESH_TOKEN_DURATION_DAYS: ${REFRESH_TOKEN_DURATION_DAYS}
+      PASSWORD_RESET_TOPIC: ${PASSWORD_RESET_TOPIC}
+      ACCOUNT_BLOCKED_TOPIC: ${ACCOUNT_BLOCKED_TOPIC}
+      ACCOUNT_CREATED_TOPIC: ${ACCOUNT_CREATED_TOPIC}
+      JWT_SECRET: ${JWT_SECRET}
+      REDIS_ADDR: ${REDIS_ADDR}
+      LOGGER_TOPIC: ${LOGGER_TOPIC}
+      MAIL_TOPIC: ${MAIL_TOPIC}
+      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID}
+      BROKERS_ADDR: ${BROKERS_ADDR}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${IDP_DB_NAME}
+      DB_HOST: ${IDP_DB_HOST}
+      DB_PORT: ${DB_PORT}
+      WEB_SERVER_PORT: ${WEB_SERVER_PORT}
+      BASE_URL: ${BASE_URL}
+      FIRST_RUN_ADMIN_EMAIL: ${FIRST_RUN_ADMIN_EMAIL}
+      FIRST_RUN_ADMIN_PASSWORD: ${FIRST_RUN_ADMIN_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${WEB_SERVER_PORT}'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - service-hub
+      - idp-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: 018-hai-backend
+    hostname: backend
+    restart: unless-stopped
+    depends_on:
+      postgres-automation:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      idp:
+        condition: service_started
+    environment:
+      SERVER_PORT: ${SERVER_PORT}
+      BASE_URL: ${BASE_URL}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${AUTOMATION_DB_NAME}
+      DB_HOST: ${AUTOMATION_DB_HOST}
+      DB_PORT: ${DB_PORT}
+      IMAGE_MAX_SIZE_IN_MB: ${IMAGE_MAX_SIZE_IN_MB}
+      IMAGE_EXTENSIONS: ${IMAGE_EXTENSIONS}
+      IMAGE_SAVE_DIR: ${IMAGE_SAVE_DIR}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      LLM_POLICY_JSON: ${LLM_POLICY_JSON}
+      LLM_PROVIDERS_JSON: ${LLM_PROVIDERS_JSON}
+    volumes:
+      - ./images:/root/images
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${SERVER_PORT}'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - service-hub
+      - automation-hub-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: 018-hai-frontend
+    hostname: frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - service-hub
+
+  nginx:
+    image: nginx:alpine
+    container_name: gateway
+    hostname: gateway
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_started
+      idp:
+        condition: service_started
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx-config:/etc/nginx:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - service-hub
+
+  nginxconfigmanager:
+    build:
+      context: ./nginx-config-manager
+      dockerfile: Dockerfile
+    container_name: 018-hai-nginx-config-manager
+    restart: unless-stopped
+    environment:
+      BROKERS_ADDR: ${BROKERS_ADDR}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      NGINX_CONTAINER: ${NGINX_CONTAINER}
+      CONFIG_DIR: ${CONFIG_DIR}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      nginx:
+        condition: service_started
+    volumes:
+      - ./nginx-config/sites-enabled:/app/sites-enabled
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - service-hub
+
+  postgres-idp:
+    image: postgres:16-alpine
+    container_name: 018-hai-postgres-idp
+    hostname: postgres-idp
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${IDP_DB_NAME}
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./db_data_idp:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${IDP_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - idp-network
+
+  postgres-automation:
+    image: postgres:16-alpine
+    container_name: 018-hai-postgres-automation
+    hostname: postgres-automation
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${AUTOMATION_DB_NAME}
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./db_data_automation:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${AUTOMATION_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - automation-hub-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: 018-hai-redis
+    hostname: redis
+    restart: unless-stopped
+    command: ["redis-server", "--port", "${REDIS_PORT}"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "${REDIS_PORT}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - idp-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: 018-hai-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT}
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${ZOOKEEPER_PORT}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - kafka-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: 018-hai-kafka
+    hostname: kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:${ZOOKEEPER_PORT}
+      KAFKA_LISTENERS: INTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 30s
+    networks:
+      - kafka-network
+      - service-hub
+
+  generic-auto:
+    build:
+      context: ./generic-auto
+      dockerfile: dockerfile
+    container_name: 018-hai-generic-auto
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - service-hub
+
+networks:
+  idp-network:
+    name: 018-hai-idp-network
+    driver: bridge
+  kafka-network:
+    name: 018-hai-kafka-network
+    driver: bridge
+  automation-hub-network:
+    name: 018-hai-automation-hub-network
+    driver: bridge
+  service-hub:
+    name: 018-hai-service-hub
+    driver: bridge

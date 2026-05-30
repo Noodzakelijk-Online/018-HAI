@@ -2,6 +2,7 @@ import {
   IAutomationDiagnostics,
   IAutomationHealthResult,
   IAutomationHealthSummary,
+  IAutomationLaunchResult,
   IAutomationModel,
 } from "../models/automation.model.interface";
 import { Observable } from "rxjs";
@@ -14,6 +15,7 @@ export interface IAutomationsService {
   deleteAutomation(id: string): Observable<void>;
   swapAutomations(automation_id1: string, automation_id2: string): Observable<void>;
   getHealthSummary(): Observable<IAutomationHealthSummary>;
+  launchAutomation(id: string): Observable<IAutomationLaunchResult>;
   runHealthCheck(id: string): Observable<IAutomationHealthResult>;
   getDiagnostics(id: string): Observable<IAutomationDiagnostics>;
 }

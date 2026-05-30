@@ -50,6 +50,18 @@ export class AutomationsFormComponent implements OnInit {
           ],
         },
       ],
+      launchType: ['browser_url'],
+      launchTarget: [''],
+      runtimeType: ['browser'],
+      serviceName: [''],
+      routePath: [''],
+      publicUrl: [''],
+      localUrl: [''],
+      healthCheckType: ['http'],
+      healthCheckUrl: [''],
+      healthCheckIntervalSeconds: [60, { validators: [Validators.min(0)] }],
+      expectedHttpStatus: [200, { validators: [Validators.min(100), Validators.max(599)] }],
+      dependencyNotes: [''],
     })
   }
 
@@ -119,6 +131,18 @@ export class AutomationsFormComponent implements OnInit {
         name: automation.name,
         host: automation.host,
         port: automation.port,
+        launchType: automation.launchType || 'browser_url',
+        launchTarget: automation.launchTarget || '',
+        runtimeType: automation.runtimeType || 'browser',
+        serviceName: automation.serviceName || '',
+        routePath: automation.routePath || '',
+        publicUrl: automation.publicUrl || '',
+        localUrl: automation.localUrl || '',
+        healthCheckType: automation.healthCheckType || 'http',
+        healthCheckUrl: automation.healthCheckUrl || '',
+        healthCheckIntervalSeconds: automation.healthCheckIntervalSeconds || 60,
+        expectedHttpStatus: automation.expectedHttpStatus || 200,
+        dependencyNotes: automation.dependencyNotes || '',
       })
       this.automationForm.get('image')?.setValue(automation.image)
     }

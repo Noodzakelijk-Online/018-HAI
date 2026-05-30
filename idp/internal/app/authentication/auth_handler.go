@@ -214,10 +214,10 @@ func (h *Handler) RequestPasswordReset(c *gin.Context) {
 // @Success 200 {object} string
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
-// @Router /auth/confirm-password-reset [post]
+// @Router /auth/confirm-password-reset/{reset-token} [post]
 func (h *Handler) ConfirmPasswordReset(c *gin.Context) {
 	var errorResponse dto.ErrorResponse
-	token := c.Query("reset-token")
+	token := c.Param("reset-token")
 	newPassword := c.PostForm("newPassword")
 
 	err := h.authService.ConfirmPasswordReset(token, newPassword)
