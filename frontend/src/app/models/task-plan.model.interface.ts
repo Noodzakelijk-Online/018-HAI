@@ -1,6 +1,7 @@
 import { ILLMRouteDecision } from './llm-policy.model.interface';
 import { IRankedMemory } from './context-memory.model.interface';
 import { IRankedExtraction } from './connected-source.model.interface';
+import { IVerificationClaim } from './verification.model.interface';
 
 export interface ITaskPlanRequest {
   request: string;
@@ -42,6 +43,28 @@ export interface IExecutionPlan {
   controlledExecutionMode: string;
   approvalRequiredFor: string[];
   auditEvents: string[];
+}
+
+export interface IExecutedAction {
+  name: string;
+  status: string;
+  input?: string;
+  output?: string;
+  startedAt: string;
+  endedAt: string;
+}
+
+export interface IExecutionResult {
+  startedAt: string;
+  completedAt: string;
+  mode: string;
+  output: string;
+  verificationStatus: string;
+  claims: IVerificationClaim[];
+  evidenceCount: number;
+  unsupportedClaims: number;
+  actions: IExecutedAction[];
+  blockedReason?: string;
 }
 
 export interface IToolRouteDecision {
@@ -122,6 +145,7 @@ export interface ICompletionPlan {
   validationPlan: IValidationPlan;
   validationResult: IValidationResult;
   executionPlan: IExecutionPlan;
+  executionResult?: IExecutionResult;
   retryPolicy: IRetryPolicy;
   reviewQueueItem?: IReviewQueueItem;
   memoryUpdateProposals: IMemoryUpdateProposal[];

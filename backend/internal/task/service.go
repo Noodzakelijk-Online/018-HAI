@@ -3,7 +3,10 @@ package task
 import (
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
+	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/verification"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,11 +22,11 @@ type IntakeRequest struct {
 }
 
 type IntakeAnalysis struct {
-	TaskType          string   `json:"taskType"`
-	RiskLevel         string   `json:"riskLevel"`
-	Difficulty        int      `json:"difficulty"`
-	RequiredReasoning string   `json:"requiredReasoning"`
-	SuccessCriteria   []string `json:"successCriteria"`
+	TaskType            string   `json:"taskType"`
+	RiskLevel           string   `json:"riskLevel"`
+	Difficulty          int      `json:"difficulty"`
+	RequiredReasoning   string   `json:"requiredReasoning"`
+	SuccessCriteria     []string `json:"successCriteria"`
 	NeedsMemory         bool     `json:"needsMemory"`
 	NeedsTools          bool     `json:"needsTools"`
 	NeedsDocuments      bool     `json:"needsDocuments"`
@@ -86,11 +89,11 @@ type ValidationResult struct {
 }
 
 type RetryPolicy struct {
-	MaxAttempts       int      `json:"maxAttempts"`
-	EscalationPath    []string `json:"escalationPath"`
-	EscalateWhen      []string `json:"escalateWhen"`
-	CurrentAttempt    int      `json:"currentAttempt"`
-	RetryAvailable    bool     `json:"retryAvailable"`
+	MaxAttempts    int      `json:"maxAttempts"`
+	EscalationPath []string `json:"escalationPath"`
+	EscalateWhen   []string `json:"escalateWhen"`
+	CurrentAttempt int      `json:"currentAttempt"`
+	RetryAvailable bool     `json:"retryAvailable"`
 }
 
 type ReviewQueueItem struct {
@@ -106,6 +109,28 @@ type TaskEvent struct {
 	At      time.Time `json:"at"`
 	Stage   string    `json:"stage"`
 	Message string    `json:"message"`
+}
+
+type ExecutedAction struct {
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	Input     string    `json:"input,omitempty"`
+	Output    string    `json:"output,omitempty"`
+	StartedAt time.Time `json:"startedAt"`
+	EndedAt   time.Time `json:"endedAt"`
+}
+
+type ExecutionResult struct {
+	StartedAt          time.Time                  `json:"startedAt"`
+	CompletedAt        time.Time                  `json:"completedAt"`
+	Mode               string                     `json:"mode"`
+	Output             string                     `json:"output"`
+	VerificationStatus string                     `json:"verificationStatus"`
+	Claims             []models.VerificationClaim `json:"claims"`
+	EvidenceCount      int                        `json:"evidenceCount"`
+	UnsupportedClaims  int                        `json:"unsupportedClaims"`
+	Actions            []ExecutedAction           `json:"actions"`
+	BlockedReason      string                     `json:"blockedReason,omitempty"`
 }
 
 type MemoryUpdateProposal struct {
@@ -131,13 +156,14 @@ type CompletionPlan struct {
 	ValidationPlan        ValidationPlan         `json:"validationPlan"`
 	ValidationResult      ValidationResult       `json:"validationResult"`
 	ExecutionPlan         ExecutionPlan          `json:"executionPlan"`
+	ExecutionResult       *ExecutionResult       `json:"executionResult,omitempty"`
 	RetryPolicy           RetryPolicy            `json:"retryPolicy"`
 	ReviewQueueItem       *ReviewQueueItem       `json:"reviewQueueItem,omitempty"`
 	MemoryUpdateProposals []MemoryUpdateProposal `json:"memoryUpdateProposals"`
-	LessonsLearned         []MemoryUpdateProposal `json:"lessonsLearned"`
-	StoredMemoryIDs        []string               `json:"storedMemoryIds"`
-	Events                 []TaskEvent            `json:"events"`
-	CompletionStatus       string                 `json:"completionStatus"`
+	LessonsLearned        []MemoryUpdateProposal `json:"lessonsLearned"`
+	StoredMemoryIDs       []string               `json:"storedMemoryIds"`
+	Events                []TaskEvent            `json:"events"`
+	CompletionStatus      string                 `json:"completionStatus"`
 }
 
 type Service interface {
@@ -148,12 +174,13 @@ type Service interface {
 }
 
 type service struct {
-	memoryService memory.Service
-	sourceService source.Service
-	llmService    *llm.Service
-	mu            sync.Mutex
-	logs          []CompletionPlan
-	reviewQueue   []ReviewQueueItem
+	memoryService       memory.Service
+	sourceService       source.Service
+	verificationService verification.Service
+	llmService          *llm.Service
+	mu                  sync.Mutex
+	logs                []CompletionPlan
+	reviewQueue         []ReviewQueueItem
 }
 
 func NewService(memoryService memory.Service, llmService *llm.Service, sourceServices ...source.Service) Service {
@@ -170,12 +197,23 @@ func NewService(memoryService memory.Service, llmService *llm.Service, sourceSer
 	}
 }
 
+func NewServiceWithEngines(memoryService memory.Service, llmService *llm.Service, sourceService source.Service, verificationService verification.Service) Service {
+	return &service{
+		memoryService:       memoryService,
+		sourceService:       sourceService,
+		verificationService: verificationService,
+		llmService:          llmService,
+		logs:                []CompletionPlan{},
+		reviewQueue:         []ReviewQueueItem{},
+	}
+}
+
 func DefaultService() (Service, error) {
 	llmService, err := llm.NewServiceFromEnv()
 	if err != nil {
 		return nil, err
 	}
-	return NewService(memory.DefaultService(), llmService, source.DefaultService()), nil
+	return NewServiceWithEngines(memory.DefaultService(), llmService, source.DefaultService(), verification.DefaultService()), nil
 }
 
 func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
@@ -191,6 +229,9 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	plan, err := s.buildPlan(request, true)
 	if err != nil {
 		return nil, err
+	}
+	if plan.RiskAssessment.AllowedNow {
+		plan.ExecutionResult = s.executeAllowedSteps(plan, request)
 	}
 	plan.ValidationResult = validatePlan(plan, 1)
 	plan.RetryPolicy.CurrentAttempt = 1
@@ -208,7 +249,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.CompletionStatus = "validated"
 		plan.ValidationResult.Status = "passed"
 		plan.ValidationResult.NextAction = "mark task complete"
-		plan.Events = append(plan.Events, event("validation", "result validated against success criteria"))
+		plan.Events = append(plan.Events, event("validation", "execution result verified against success criteria"))
 		plan.StoredMemoryIDs = s.storeLessons(plan)
 	} else if plan.RetryPolicy.RetryAvailable {
 		plan.Events = append(plan.Events, event("retry", "validation failed; retrying with fallback model route"))
@@ -225,6 +266,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 			plan.ModelDecision = retryDecision
 			plan.Events = append(plan.Events, event("routing", "fallback model route evaluated after validation failure"))
 		}
+		plan.ExecutionResult = s.executeAllowedSteps(plan, request)
 		plan.RetryPolicy.CurrentAttempt = 2
 		plan.ValidationResult = validatePlan(plan, 2)
 		plan.RetryPolicy.RetryAvailable = !plan.ValidationResult.Passed && plan.RetryPolicy.CurrentAttempt < plan.RetryPolicy.MaxAttempts
@@ -307,7 +349,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 		ExecutionPlan:         buildExecutionPlan(intake),
 		RetryPolicy:           buildRetryPolicy(intake),
 		MemoryUpdateProposals: memoryProposals,
-		LessonsLearned:         proposeLessons(request, intake, toolDecision),
+		LessonsLearned:        proposeLessons(request, intake, toolDecision),
 		Events: []TaskEvent{
 			event("intake", "request classified and real goal inferred"),
 			event("context", contextResult.Explanation),
@@ -315,7 +357,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 			event("tool-routing", toolDecision.Reason),
 			event("risk", strings.Join(risk.Reasons, "; ")),
 		},
-		CompletionStatus:      "planned",
+		CompletionStatus: "planned",
 	}
 
 	if runMode {
@@ -369,6 +411,10 @@ func (s *service) addReviewItem(item ReviewQueueItem) {
 
 func (s *service) storeLessons(plan *CompletionPlan) []string {
 	stored := []string{}
+	if plan.ExecutionResult == nil || !verificationStatusAcceptsMemory(plan.ExecutionResult.VerificationStatus) {
+		plan.Events = append(plan.Events, event("memory", "lesson storage skipped because execution was not verified"))
+		return stored
+	}
 	for _, lesson := range plan.LessonsLearned {
 		created, err := s.memoryService.Create(memory.CreateRequest{
 			ProjectKey:  plan.ProjectKey,
@@ -387,6 +433,175 @@ func (s *service) storeLessons(plan *CompletionPlan) []string {
 		plan.Events = append(plan.Events, event("memory", "stored useful lessons for future tasks"))
 	}
 	return stored
+}
+
+func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeRequest) *ExecutionResult {
+	started := time.Now().UTC()
+	result := &ExecutionResult{
+		StartedAt:          started,
+		Mode:               executionMode(plan, request),
+		VerificationStatus: verification.StatusNeedsReview,
+		Actions:            []ExecutedAction{},
+	}
+
+	if !plan.RiskAssessment.AllowedNow {
+		result.CompletedAt = time.Now().UTC()
+		result.BlockedReason = "risk gate blocked execution until approval is recorded"
+		result.Output = "Execution was blocked before action because approval is required."
+		result.Actions = append(result.Actions, executedAction("risk.approval_gate", "blocked", plan.Request, result.BlockedReason, started))
+		plan.Events = append(plan.Events, event("execution", result.BlockedReason))
+		return result
+	}
+
+	evidence := evidenceFromPlan(plan)
+	result.EvidenceCount = len(evidence)
+	result.Actions = append(result.Actions,
+		executedAction("memory.retrieve", "completed", request.Request, countLabel(len(plan.ContextPlan.UsedContext), "memory item"), started),
+		executedAction("source.search", "completed", request.Request, countLabel(len(plan.ContextPlan.SourceContext), "source extraction"), started),
+	)
+
+	verifyStarted := time.Now().UTC()
+	if s.verificationService == nil {
+		result.Output, result.Claims, result.VerificationStatus = localGroundedResult(plan, evidence)
+		result.UnsupportedClaims = unsupportedClaimCount(result.Claims)
+		result.CompletedAt = time.Now().UTC()
+		result.Actions = append(result.Actions, executedAction("verification.answer", "completed", request.Request, "used local evidence verifier", verifyStarted))
+		plan.Events = append(plan.Events, event("execution", "produced grounded result from retrieved context"))
+		return result
+	}
+
+	verificationResult, err := s.verificationService.Answer(verification.AnswerRequest{
+		Question:          plan.RealGoal,
+		ProjectKey:        plan.ProjectKey,
+		Mode:              result.Mode,
+		ExternalEvidence:  evidence,
+		IncludeSensitive:  false,
+		HumanApproved:     !plan.RiskAssessment.ApprovalRequired,
+		AllowMemoryUpdate: false,
+	})
+	if err != nil {
+		result.CompletedAt = time.Now().UTC()
+		result.Output = "Verification engine failed before a grounded answer could be accepted: " + err.Error()
+		result.VerificationStatus = verification.StatusNeedsReview
+		result.BlockedReason = "verification engine unavailable"
+		result.Actions = append(result.Actions, executedAction("verification.answer", "failed", request.Request, err.Error(), verifyStarted))
+		plan.Events = append(plan.Events, event("verification", "verification engine failed; task requires review"))
+		return result
+	}
+
+	result.Output = verificationResult.Run.Answer
+	result.VerificationStatus = verificationResult.Run.Status
+	result.Claims = verificationResult.Claims
+	result.UnsupportedClaims = len(verificationResult.UnsupportedClaims)
+	result.CompletedAt = time.Now().UTC()
+	result.Actions = append(result.Actions, executedAction("verification.answer", "completed", request.Request, verificationResult.Run.Status, verifyStarted))
+	plan.Events = append(plan.Events, event("verification", "claims were checked against retrieved evidence before completion"))
+	return result
+}
+
+func executionMode(plan *CompletionPlan, request IntakeRequest) string {
+	if plan.Intake.NeedsApproval || plan.Intake.NeedsTools || request.ExecuteAllowed {
+		return verification.ModeAction
+	}
+	return verification.ModeGrounded
+}
+
+func evidenceFromPlan(plan *CompletionPlan) []verification.EvidenceInput {
+	evidence := []verification.EvidenceInput{}
+	for _, ranked := range plan.ContextPlan.UsedContext {
+		mem := ranked.Memory
+		snippet := firstNonEmpty(mem.Summary, mem.Content)
+		if strings.TrimSpace(snippet) == "" {
+			continue
+		}
+		evidence = append(evidence, verification.EvidenceInput{
+			SourceType:  "memory",
+			SourceID:    mem.ID.String(),
+			SourceURI:   mem.SourceURI,
+			SourceLabel: firstNonEmpty(mem.SourceLabel, mem.Kind, "context memory"),
+			Snippet:     snippet,
+			Authority:   "local_memory",
+			Primary:     true,
+		})
+	}
+	for _, ranked := range plan.ContextPlan.SourceContext {
+		extraction := ranked.Extraction
+		snippet := firstNonEmpty(extraction.Summary, extraction.Text)
+		if strings.TrimSpace(snippet) == "" {
+			continue
+		}
+		evidence = append(evidence, verification.EvidenceInput{
+			SourceType:  "connected_source",
+			SourceID:    extraction.ID.String(),
+			SourceURI:   extraction.SourceURI,
+			SourceLabel: firstNonEmpty(extraction.SourceLabel, extraction.ContentType, "connected source"),
+			Snippet:     snippet,
+			Authority:   "connected_account",
+			Primary:     true,
+		})
+	}
+	return evidence
+}
+
+func localGroundedResult(plan *CompletionPlan, evidence []verification.EvidenceInput) (string, []models.VerificationClaim, string) {
+	if len(evidence) == 0 {
+		return "No grounded answer can be produced because no supporting context or source evidence was retrieved.", []models.VerificationClaim{
+			{
+				ID:                 uuid.New(),
+				ClaimText:          "No supporting context or source evidence was retrieved.",
+				Status:             verification.StatusNeedsReview,
+				SupportExplanation: "task output requires evidence before it can be accepted",
+				Confidence:         0.1,
+				NeedsReview:        true,
+			},
+		}, verification.StatusNeedsReview
+	}
+
+	lines := []string{}
+	claims := []models.VerificationClaim{}
+	for _, item := range evidence {
+		lines = append(lines, compact(item.Snippet))
+		claims = append(claims, models.VerificationClaim{
+			ID:                 uuid.New(),
+			ClaimText:          compact(item.Snippet),
+			Status:             verification.StatusSourceSupported,
+			SourceRefs:         firstNonEmpty(item.SourceURI, item.SourceID, item.SourceLabel),
+			SupportExplanation: "claim is directly derived from retrieved task context",
+			Confidence:         0.7,
+		})
+		if len(lines) >= 5 {
+			break
+		}
+	}
+	return strings.Join(lines, ". "), claims, verification.StatusSourceSupported
+}
+
+func executedAction(name, status, input, output string, started time.Time) ExecutedAction {
+	return ExecutedAction{
+		Name:      name,
+		Status:    status,
+		Input:     compact(input),
+		Output:    compact(output),
+		StartedAt: started,
+		EndedAt:   time.Now().UTC(),
+	}
+}
+
+func countLabel(count int, label string) string {
+	if count == 1 {
+		return "1 " + label
+	}
+	return strconv.Itoa(count) + " " + label + "s"
+}
+
+func unsupportedClaimCount(claims []models.VerificationClaim) int {
+	count := 0
+	for _, claim := range claims {
+		if claim.NeedsReview || !verificationStatusAcceptsCompletion(claim.Status) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *service) retrieveSourceContext(request IntakeRequest) ([]source.RankedExtraction, string) {
@@ -634,6 +849,27 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 	if plan.RiskAssessment.ApprovalRequired {
 		failures = append(failures, "approval is required before execution")
 	}
+	if attempt > 0 {
+		if plan.ExecutionResult == nil {
+			failures = append(failures, "no execution result was produced")
+		} else {
+			if strings.TrimSpace(plan.ExecutionResult.Output) == "" {
+				failures = append(failures, "execution produced no output")
+			}
+			if !verificationStatusAcceptsCompletion(plan.ExecutionResult.VerificationStatus) {
+				failures = append(failures, "execution output is not verified: "+plan.ExecutionResult.VerificationStatus)
+			}
+			if plan.ExecutionResult.UnsupportedClaims > 0 {
+				failures = append(failures, "execution has unsupported or review-needed claims")
+			}
+			for _, claim := range plan.ExecutionResult.Claims {
+				if claim.NeedsReview || !verificationStatusAcceptsCompletion(claim.Status) {
+					failures = append(failures, "claim requires review: "+compact(claim.ClaimText))
+					break
+				}
+			}
+		}
+	}
 
 	passed := len(failures) == 0
 	status := "passed"
@@ -649,6 +885,24 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 		Failures:      failures,
 		NextAction:    next,
 		AttemptNumber: attempt,
+	}
+}
+
+func verificationStatusAcceptsCompletion(status string) bool {
+	switch status {
+	case verification.StatusVerified, verification.StatusSourceSupported, verification.StatusSchemaValidated, verification.StatusTestPassed, verification.StatusHumanApproved:
+		return true
+	default:
+		return false
+	}
+}
+
+func verificationStatusAcceptsMemory(status string) bool {
+	switch status {
+	case verification.StatusVerified, verification.StatusSourceSupported, verification.StatusTestPassed, verification.StatusHumanApproved:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -775,4 +1029,14 @@ func compact(value string) string {
 		return value
 	}
 	return value[:177] + "..."
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

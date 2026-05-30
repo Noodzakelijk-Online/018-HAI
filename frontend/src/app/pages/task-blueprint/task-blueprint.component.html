@@ -187,6 +187,59 @@
         </nz-card>
       </div>
 
+      <nz-card nzTitle="Execution Output" *ngIf="plan?.executionResult as result" class="section-card">
+        <div class="plan-grid">
+          <div>
+            <p><strong>Mode:</strong> {{ result.mode }}</p>
+            <p><strong>Verification:</strong> {{ result.verificationStatus }}</p>
+            <p><strong>Evidence used:</strong> {{ result.evidenceCount }}</p>
+            <p><strong>Unsupported claims:</strong> {{ result.unsupportedClaims }}</p>
+            <p *ngIf="result.blockedReason"><strong>Blocked:</strong> {{ result.blockedReason }}</p>
+          </div>
+          <div>
+            <p><strong>Started:</strong> {{ result.startedAt | date: 'short' }}</p>
+            <p><strong>Completed:</strong> {{ result.completedAt | date: 'short' }}</p>
+          </div>
+        </div>
+        <p class="output-text">{{ result.output }}</p>
+
+        <nz-table *ngIf="result.actions.length" [nzData]="result.actions" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Status</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let action of result.actions">
+              <td>{{ action.name }}</td>
+              <td>{{ action.status }}</td>
+              <td>{{ action.output || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+
+        <nz-table *ngIf="result.claims.length" [nzData]="result.claims" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Claim</th>
+              <th>Status</th>
+              <th>Source</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let claim of result.claims">
+              <td>{{ claim.claimText }}</td>
+              <td>{{ claim.status }}</td>
+              <td>{{ claim.sourceRefs || '-' }}</td>
+              <td>{{ claim.confidence }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
       <nz-card nzTitle="Memory Updates Proposed" *ngIf="plan as p" class="section-card">
         <nz-empty *ngIf="!p.memoryUpdateProposals.length" nzNotFoundContent="No memory updates proposed."></nz-empty>
         <nz-table *ngIf="p.memoryUpdateProposals.length" [nzData]="p.memoryUpdateProposals" nzSize="small" [nzPageSize]="5">

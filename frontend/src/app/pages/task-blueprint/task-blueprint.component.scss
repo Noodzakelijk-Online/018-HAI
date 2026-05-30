@@ -43,6 +43,15 @@
   gap: 8px;
 }
 
+.output-text {
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  margin: 12px 0;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 textarea {
   resize: vertical;
 }
