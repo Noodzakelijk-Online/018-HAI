@@ -156,7 +156,7 @@ export class ControlCenterComponent implements OnInit {
       case 'broken':
         return 'red'
       default:
-        return 'default'
+        return ''
     }
   }
 
