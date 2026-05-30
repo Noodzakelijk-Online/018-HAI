@@ -17,16 +17,31 @@ type AutomationHealthEvent struct {
 	CheckedAt           time.Time `gorm:"index" json:"checkedAt"`
 }
 
+type AutomationLaunchEvent struct {
+	ID           uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	AutomationID uuid.UUID `gorm:"type:uuid;index" json:"automationId"`
+	RuntimeType  string    `gorm:"type:varchar(50);index" json:"runtimeType,omitempty"`
+	LaunchType   string    `gorm:"type:varchar(50);index" json:"launchType"`
+	Target       string    `gorm:"type:varchar(1024)" json:"target,omitempty"`
+	Status       string    `gorm:"type:varchar(30);index" json:"status"`
+	Message      string    `gorm:"type:text" json:"message,omitempty"`
+	Output       string    `gorm:"type:text" json:"output,omitempty"`
+	ExitCode     int       `gorm:"default:0" json:"exitCode"`
+	DurationMs   int64     `gorm:"default:0" json:"durationMs"`
+	StartedAt    time.Time `gorm:"index" json:"startedAt"`
+	CompletedAt  time.Time `gorm:"index" json:"completedAt"`
+}
+
 type AutomationDependency struct {
-	ID           uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
-	AutomationID uuid.UUID  `gorm:"type:uuid;index" json:"automationId"`
-	Name         string     `gorm:"type:varchar(255);not null" json:"name"`
-	Kind         string     `gorm:"type:varchar(50);not null" json:"kind"`
-	Target       string     `gorm:"type:varchar(1024)" json:"target,omitempty"`
-	Required     bool       `gorm:"default:true" json:"required"`
-	Status       string     `gorm:"type:varchar(30);default:'unknown'" json:"status"`
+	ID            uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	AutomationID  uuid.UUID  `gorm:"type:uuid;index" json:"automationId"`
+	Name          string     `gorm:"type:varchar(255);not null" json:"name"`
+	Kind          string     `gorm:"type:varchar(50);not null" json:"kind"`
+	Target        string     `gorm:"type:varchar(1024)" json:"target,omitempty"`
+	Required      bool       `gorm:"default:true" json:"required"`
+	Status        string     `gorm:"type:varchar(30);default:'unknown'" json:"status"`
 	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
-	Notes        string     `gorm:"type:text" json:"notes,omitempty"`
+	Notes         string     `gorm:"type:text" json:"notes,omitempty"`
 }
 
 type AutomationRouteCheck struct {
@@ -67,11 +82,11 @@ type AutomationIncident struct {
 }
 
 type AutomationSLO struct {
-	ID                    uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
-	AutomationID          uuid.UUID `gorm:"type:uuid;index" json:"automationId"`
-	AvailabilityTargetPct float64   `gorm:"default:99" json:"availabilityTargetPct"`
-	MaxLatencyMs          int64     `gorm:"default:5000" json:"maxLatencyMs"`
-	MaxConsecutiveFailures int      `gorm:"default:3" json:"maxConsecutiveFailures"`
-	MonitoringWindowHours int       `gorm:"default:24" json:"monitoringWindowHours"`
-	Notes                 string    `gorm:"type:text" json:"notes,omitempty"`
+	ID                     uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	AutomationID           uuid.UUID `gorm:"type:uuid;index" json:"automationId"`
+	AvailabilityTargetPct  float64   `gorm:"default:99" json:"availabilityTargetPct"`
+	MaxLatencyMs           int64     `gorm:"default:5000" json:"maxLatencyMs"`
+	MaxConsecutiveFailures int       `gorm:"default:3" json:"maxConsecutiveFailures"`
+	MonitoringWindowHours  int       `gorm:"default:24" json:"monitoringWindowHours"`
+	Notes                  string    `gorm:"type:text" json:"notes,omitempty"`
 }

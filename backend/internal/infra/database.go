@@ -42,6 +42,7 @@ func RunMigrations(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&models.Automation{},
 		&models.AutomationHealthEvent{},
+		&models.AutomationLaunchEvent{},
 		&models.AutomationDependency{},
 		&models.AutomationRouteCheck{},
 		&models.AutomationAlert{},

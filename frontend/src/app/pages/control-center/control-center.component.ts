@@ -110,11 +110,21 @@ export class ControlCenterComponent implements OnInit {
       next: (result) => {
         this.launchingIds.delete(id)
         automation.lastLaunchAt = result.launchedAt
-        this.notification.success(
-          'Launch recorded',
-          `${automation.name}: ${result.launchType || 'browser_url'}`
-        )
-        if (/^https?:\/\//i.test(result.target)) {
+        const title =
+          result.status === 'completed' || result.status === 'ready'
+            ? 'Launch completed'
+            : result.status === 'blocked'
+            ? 'Launch blocked'
+            : 'Launch failed'
+        const message = `${automation.name}: ${result.message || result.status}`
+        if (result.status === 'completed' || result.status === 'ready') {
+          this.notification.success(title, message)
+        } else if (result.status === 'blocked') {
+          this.notification.warning(title, message)
+        } else {
+          this.notification.error(title, message)
+        }
+        if (result.status === 'ready' && /^https?:\/\//i.test(result.target)) {
           window.open(result.target, '_blank', 'noopener')
         }
       },
@@ -178,12 +188,16 @@ export class ControlCenterComponent implements OnInit {
   statusColor(status?: string): string {
     switch ((status || 'unknown').toLowerCase()) {
       case 'healthy':
+      case 'completed':
+      case 'ready':
         return 'green'
       case 'warning':
+      case 'blocked':
         return 'gold'
       case 'degraded':
         return 'orange'
       case 'broken':
+      case 'failed':
         return 'red'
       default:
         return ''

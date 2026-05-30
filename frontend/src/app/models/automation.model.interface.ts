@@ -52,9 +52,32 @@ export interface IAutomationHealthResult {
 
 export interface IAutomationLaunchResult {
   automationId: string;
+  runtimeType?: string;
   launchType: string;
   target: string;
+  status: string;
+  message?: string;
+  output?: string;
+  exitCode: number;
+  durationMs: number;
+  requiresApproval: boolean;
+  auditEvents: string[];
   launchedAt: string;
+}
+
+export interface IAutomationLaunchEvent {
+  id?: string;
+  automationId: string;
+  runtimeType?: string;
+  launchType: string;
+  target?: string;
+  status: string;
+  message?: string;
+  output?: string;
+  exitCode: number;
+  durationMs: number;
+  startedAt: string;
+  completedAt: string;
 }
 
 export interface IAutomationHealthEvent {
@@ -84,4 +107,5 @@ export interface IAutomationDiagnostics {
   lastFailureReason?: string;
   checks: Record<string, string>;
   recentEvents: IAutomationHealthEvent[];
+  recentLaunches: IAutomationLaunchEvent[];
 }

@@ -161,6 +161,31 @@
         <p><strong>Host / Port:</strong> {{ d.host || '-' }} : {{ d.port || '-' }}</p>
         <p *ngIf="d.lastFailureReason"><strong>Last failure reason:</strong> {{ d.lastFailureReason }}</p>
 
+        <nz-divider nzText="Recent launch events" nzOrientation="left"></nz-divider>
+        <p *ngIf="!d.recentLaunches?.length" class="muted">No launch history recorded yet.</p>
+        <table class="events-table" *ngIf="d.recentLaunches?.length">
+          <thead>
+            <tr>
+              <th>Started at</th>
+              <th>Status</th>
+              <th>Type</th>
+              <th>Duration</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let event of d.recentLaunches">
+              <td>{{ event.startedAt | date: 'short' }}</td>
+              <td>
+                <nz-tag [nzColor]="statusColor(event.status)">{{ event.status }}</nz-tag>
+              </td>
+              <td>{{ event.launchType }}</td>
+              <td>{{ event.durationMs }} ms</td>
+              <td class="reason-cell">{{ event.message || event.output || '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+
         <nz-divider nzText="Configuration checks" nzOrientation="left"></nz-divider>
         <div class="checks-grid">
           <div class="checks-grid__item" *ngFor="let key of diagnosticsCheckKeys()">

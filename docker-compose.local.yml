@@ -77,8 +77,13 @@ services:
       KAFKA_TOPIC: ${KAFKA_TOPIC}
       LLM_POLICY_JSON: ${LLM_POLICY_JSON}
       LLM_PROVIDERS_JSON: ${LLM_PROVIDERS_JSON}
+      AUTOMATION_SCRIPT_DIR: ${AUTOMATION_SCRIPT_DIR}
+      AUTOMATION_SCRIPT_TIMEOUT_SECONDS: ${AUTOMATION_SCRIPT_TIMEOUT_SECONDS}
+      AUTOMATION_DOCKER_CONTROL_ENABLED: ${AUTOMATION_DOCKER_CONTROL_ENABLED}
+      AUTOMATION_DOCKER_SOCKET: ${AUTOMATION_DOCKER_SOCKET}
     volumes:
       - ./images:/root/images
+      - ./automation-scripts:/root/automation-scripts:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${SERVER_PORT}'"]
       interval: 10s

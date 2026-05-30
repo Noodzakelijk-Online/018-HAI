@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/util"
+	"context"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -15,8 +16,11 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,10 +45,18 @@ type HealthSummary struct {
 }
 
 type LaunchResult struct {
-	AutomationID uuid.UUID `json:"automationId"`
-	LaunchType   string    `json:"launchType"`
-	Target       string    `json:"target"`
-	LaunchedAt   time.Time `json:"launchedAt"`
+	AutomationID     uuid.UUID `json:"automationId"`
+	RuntimeType      string    `json:"runtimeType,omitempty"`
+	LaunchType       string    `json:"launchType"`
+	Target           string    `json:"target"`
+	Status           string    `json:"status"`
+	Message          string    `json:"message,omitempty"`
+	Output           string    `json:"output,omitempty"`
+	ExitCode         int       `json:"exitCode"`
+	DurationMs       int64     `json:"durationMs"`
+	RequiresApproval bool      `json:"requiresApproval"`
+	AuditEvents      []string  `json:"auditEvents"`
+	LaunchedAt       time.Time `json:"launchedAt"`
 }
 
 type DiagnosticResult struct {
@@ -62,6 +74,17 @@ type DiagnosticResult struct {
 	LastFailureReason string                         `json:"lastFailureReason,omitempty"`
 	Checks            map[string]string              `json:"checks"`
 	RecentEvents      []models.AutomationHealthEvent `json:"recentEvents"`
+	RecentLaunches    []models.AutomationLaunchEvent `json:"recentLaunches"`
+}
+
+type launchExecution struct {
+	Status           string
+	Message          string
+	Output           string
+	ExitCode         int
+	DurationMs       int64
+	RequiresApproval bool
+	AuditEvents      []string
 }
 
 type Service interface {
@@ -405,15 +428,43 @@ func (s *service) Launch(id uuid.UUID) (*LaunchResult, error) {
 	}
 	s.applyAutomationDefaults(automation)
 	launchedAt := time.Now().UTC()
+	execution := s.executeLaunch(automation, launchedAt)
 	automation.LastLaunchAt = &launchedAt
+	if execution.Status == "failed" || execution.Status == "blocked" {
+		automation.LastFailureReason = execution.Message
+	}
 	if _, errUpdate := s.repo.Update(automation); errUpdate != nil {
 		return nil, errUpdate
 	}
-	return &LaunchResult{
+	event := &models.AutomationLaunchEvent{
 		AutomationID: automation.ID,
+		RuntimeType:  automation.RuntimeType,
 		LaunchType:   automation.LaunchType,
 		Target:       automation.LaunchTarget,
-		LaunchedAt:   launchedAt,
+		Status:       execution.Status,
+		Message:      execution.Message,
+		Output:       execution.Output,
+		ExitCode:     execution.ExitCode,
+		DurationMs:   execution.DurationMs,
+		StartedAt:    launchedAt,
+		CompletedAt:  time.Now().UTC(),
+	}
+	if errEvent := s.repo.SaveLaunchEvent(event); errEvent != nil {
+		log.Printf("Failed to persist launch event for automation %s: %v", automation.ID, errEvent)
+	}
+	return &LaunchResult{
+		AutomationID:     automation.ID,
+		RuntimeType:      automation.RuntimeType,
+		LaunchType:       automation.LaunchType,
+		Target:           automation.LaunchTarget,
+		Status:           execution.Status,
+		Message:          execution.Message,
+		Output:           execution.Output,
+		ExitCode:         execution.ExitCode,
+		DurationMs:       execution.DurationMs,
+		RequiresApproval: execution.RequiresApproval,
+		AuditEvents:      execution.AuditEvents,
+		LaunchedAt:       launchedAt,
 	}, nil
 }
 
@@ -436,6 +487,11 @@ func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
 		log.Printf("Failed to load health history for automation %s: %v", automation.ID, errEvents)
 		recentEvents = []models.AutomationHealthEvent{}
 	}
+	recentLaunches, errLaunches := s.repo.FindLaunchEvents(automation.ID, 10)
+	if errLaunches != nil {
+		log.Printf("Failed to load launch history for automation %s: %v", automation.ID, errLaunches)
+		recentLaunches = []models.AutomationLaunchEvent{}
+	}
 
 	return &DiagnosticResult{
 		AutomationID:      automation.ID,
@@ -452,7 +508,193 @@ func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
 		LastFailureReason: automation.LastFailureReason,
 		Checks:            checks,
 		RecentEvents:      recentEvents,
+		RecentLaunches:    recentLaunches,
 	}, nil
+}
+
+func (s *service) executeLaunch(automation *models.Automation, started time.Time) launchExecution {
+	launchType := strings.ToLower(strings.TrimSpace(automation.LaunchType))
+	if launchType == "" {
+		launchType = "browser_url"
+	}
+	audit := []string{
+		"launch requested",
+		"automation configuration loaded",
+		"runtime safety policy evaluated",
+	}
+	switch launchType {
+	case "browser_url":
+		return launchExecution{
+			Status:      "ready",
+			Message:     "browser target prepared for client-side opening",
+			DurationMs:  time.Since(started).Milliseconds(),
+			AuditEvents: append(audit, "no server-side device action was performed"),
+		}
+	case "api":
+		return s.executeAPILaunch(automation, started, audit)
+	case "script":
+		return s.executeScriptLaunch(automation, started, audit)
+	case "docker_service":
+		return s.executeDockerLaunch(automation, started, audit)
+	default:
+		return launchExecution{
+			Status:           "blocked",
+			Message:          fmt.Sprintf("launch type %q is not supported by the controlled runtime executor", launchType),
+			ExitCode:         -1,
+			DurationMs:       time.Since(started).Milliseconds(),
+			RequiresApproval: true,
+			AuditEvents:      append(audit, "unsupported runtime blocked"),
+		}
+	}
+}
+
+func (s *service) executeAPILaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
+	method, target := parseLaunchMethodTarget(automation.LaunchTarget, http.MethodPost)
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return blockedLaunch("API launch target must be an absolute http or https URL", started, append(audit, "api target rejected"))
+	}
+	if method != http.MethodGet && method != http.MethodPost {
+		return blockedLaunch("API launch supports only GET or POST without a request body", started, append(audit, "api method rejected"))
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest(method, target, nil)
+	if err != nil {
+		return failedLaunch(err.Error(), started, append(audit, "api request creation failed"))
+	}
+	req.Header.Set("User-Agent", "018-HAI-Controlled-Launcher/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return failedLaunch(err.Error(), started, append(audit, "api request failed"))
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	status := "completed"
+	message := fmt.Sprintf("%s %s returned HTTP %d", method, target, resp.StatusCode)
+	expected := automation.ExpectedHTTPStatus
+	if expected > 0 {
+		if resp.StatusCode != expected {
+			status = "failed"
+			message = fmt.Sprintf("%s; expected HTTP %d", message, expected)
+		}
+	} else if resp.StatusCode >= 400 {
+		status = "failed"
+	}
+	return launchExecution{
+		Status:      status,
+		Message:     message,
+		Output:      strings.TrimSpace(string(body)),
+		ExitCode:    resp.StatusCode,
+		DurationMs:  time.Since(started).Milliseconds(),
+		AuditEvents: append(audit, "api request executed", "response captured with bounded output"),
+	}
+}
+
+func (s *service) executeScriptLaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
+	root := firstNonEmpty(os.Getenv("AUTOMATION_SCRIPT_DIR"), "/root/automation-scripts")
+	scriptPath, err := resolveAllowedScriptPath(root, automation.LaunchTarget)
+	if err != nil {
+		return blockedLaunch(err.Error(), started, append(audit, "script target rejected"))
+	}
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		return failedLaunch(err.Error(), started, append(audit, "script file not found"))
+	}
+	if info.IsDir() {
+		return blockedLaunch("script target is a directory", started, append(audit, "script target rejected"))
+	}
+	timeoutSeconds := intEnv("AUTOMATION_SCRIPT_TIMEOUT_SECONDS", 30)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, scriptPath)
+	output, err := cmd.CombinedOutput()
+	outputText := trimOutput(output, 4096)
+	if ctx.Err() == context.DeadlineExceeded {
+		return launchExecution{
+			Status:      "failed",
+			Message:     fmt.Sprintf("script exceeded %d second timeout", timeoutSeconds),
+			Output:      outputText,
+			ExitCode:    -1,
+			DurationMs:  time.Since(started).Milliseconds(),
+			AuditEvents: append(audit, "script executed without shell", "script timed out"),
+		}
+	}
+	if err != nil {
+		exitCode := -1
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+		return launchExecution{
+			Status:      "failed",
+			Message:     err.Error(),
+			Output:      outputText,
+			ExitCode:    exitCode,
+			DurationMs:  time.Since(started).Milliseconds(),
+			AuditEvents: append(audit, "script executed without shell", "script returned non-zero exit"),
+		}
+	}
+	return launchExecution{
+		Status:      "completed",
+		Message:     "script executed from allowlisted folder without shell expansion",
+		Output:      outputText,
+		ExitCode:    0,
+		DurationMs:  time.Since(started).Milliseconds(),
+		AuditEvents: append(audit, "script executed without shell", "script completed"),
+	}
+}
+
+func (s *service) executeDockerLaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
+	if strings.ToLower(os.Getenv("AUTOMATION_DOCKER_CONTROL_ENABLED")) != "true" {
+		return launchExecution{
+			Status:           "blocked",
+			Message:          "Docker control is disabled; set AUTOMATION_DOCKER_CONTROL_ENABLED=true and mount the Docker socket to enable it",
+			ExitCode:         -1,
+			DurationMs:       time.Since(started).Milliseconds(),
+			RequiresApproval: true,
+			AuditEvents:      append(audit, "docker control blocked by policy"),
+		}
+	}
+	containerName := strings.TrimSpace(firstNonEmpty(automation.ServiceName, automation.LaunchTarget))
+	if containerName == "" {
+		return blockedLaunch("Docker launch requires serviceName or launchTarget", started, append(audit, "docker target missing"))
+	}
+	socketPath := firstNonEmpty(os.Getenv("AUTOMATION_DOCKER_SOCKET"), "/var/run/docker.sock")
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	endpoint := "http://docker/containers/" + url.PathEscape(containerName) + "/start"
+	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	if err != nil {
+		return failedLaunch(err.Error(), started, append(audit, "docker request creation failed"))
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return failedLaunch(err.Error(), started, append(audit, "docker socket request failed"))
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified {
+		return launchExecution{
+			Status:      "completed",
+			Message:     fmt.Sprintf("Docker container %s start request accepted", containerName),
+			Output:      strings.TrimSpace(string(body)),
+			ExitCode:    resp.StatusCode,
+			DurationMs:  time.Since(started).Milliseconds(),
+			AuditEvents: append(audit, "docker start request executed through Docker API"),
+		}
+	}
+	return launchExecution{
+		Status:      "failed",
+		Message:     fmt.Sprintf("Docker API returned HTTP %d for container %s", resp.StatusCode, containerName),
+		Output:      strings.TrimSpace(string(body)),
+		ExitCode:    resp.StatusCode,
+		DurationMs:  time.Since(started).Milliseconds(),
+		AuditEvents: append(audit, "docker start request failed"),
+	}
 }
 
 func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
@@ -630,9 +872,93 @@ func boolStatus(value bool) string {
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
+		value = strings.TrimSpace(value)
 		if value != "" {
 			return value
 		}
 	}
 	return ""
+}
+
+func parseLaunchMethodTarget(value, defaultMethod string) (string, string) {
+	trimmed := strings.TrimSpace(value)
+	fields := strings.Fields(trimmed)
+	if len(fields) >= 2 {
+		method := strings.ToUpper(fields[0])
+		if method == http.MethodGet || method == http.MethodPost {
+			return method, strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+		}
+	}
+	return defaultMethod, trimmed
+}
+
+func resolveAllowedScriptPath(root, target string) (string, error) {
+	if strings.TrimSpace(target) == "" {
+		return "", fmt.Errorf("script launch target is required")
+	}
+	rootAbs, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return "", err
+	}
+	target = strings.TrimSpace(target)
+	if strings.ContainsAny(target, "\r\n\x00") {
+		return "", fmt.Errorf("script launch target contains invalid characters")
+	}
+	var targetAbs string
+	if filepath.IsAbs(target) {
+		targetAbs, err = filepath.Abs(filepath.Clean(target))
+	} else {
+		targetAbs, err = filepath.Abs(filepath.Join(rootAbs, filepath.Clean(target)))
+	}
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("script target must stay inside allowlisted folder %s", rootAbs)
+	}
+	return targetAbs, nil
+}
+
+func blockedLaunch(message string, started time.Time, audit []string) launchExecution {
+	return launchExecution{
+		Status:           "blocked",
+		Message:          message,
+		ExitCode:         -1,
+		DurationMs:       time.Since(started).Milliseconds(),
+		RequiresApproval: true,
+		AuditEvents:      audit,
+	}
+}
+
+func failedLaunch(message string, started time.Time, audit []string) launchExecution {
+	return launchExecution{
+		Status:      "failed",
+		Message:     message,
+		ExitCode:    -1,
+		DurationMs:  time.Since(started).Milliseconds(),
+		AuditEvents: audit,
+	}
+}
+
+func trimOutput(output []byte, limit int64) string {
+	if int64(len(output)) > limit {
+		output = output[:limit]
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func intEnv(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

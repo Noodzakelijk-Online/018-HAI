@@ -20,6 +20,8 @@ type Repository interface {
 	Transaction(txFunc func(tx *gorm.DB) error) (err error)
 	SaveHealthEvent(event *models.AutomationHealthEvent) error
 	FindHealthEvents(automationID uuid.UUID, limit int) ([]models.AutomationHealthEvent, error)
+	SaveLaunchEvent(event *models.AutomationLaunchEvent) error
+	FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error)
 }
 
 type GormUserRepository struct {
@@ -127,6 +129,26 @@ func (r *GormUserRepository) FindHealthEvents(automationID uuid.UUID, limit int)
 	err := r.DB.
 		Where("automation_id = ?", automationID).
 		Order("checked_at desc").
+		Limit(limit).
+		Find(&events).Error
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func (r *GormUserRepository) SaveLaunchEvent(event *models.AutomationLaunchEvent) error {
+	return r.DB.Create(event).Error
+}
+
+func (r *GormUserRepository) FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error) {
+	var events []models.AutomationLaunchEvent
+	if limit <= 0 {
+		limit = 20
+	}
+	err := r.DB.
+		Where("automation_id = ?", automationID).
+		Order("started_at desc").
 		Limit(limit).
 		Find(&events).Error
 	if err != nil {

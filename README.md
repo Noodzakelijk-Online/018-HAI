@@ -20,8 +20,8 @@ Implemented:
 
 Not implemented yet:
 
-- Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, local scripts, Docker jobs, browser automation, or arbitrary APIs.
-- Actual autonomous device control. Automation `launch` currently records launch metadata and target; it does not start external processes or services.
+- Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
+- Full autonomous device control. Automation `launch` now has controlled adapters for API calls, allowlisted container-local scripts, and optionally Docker API container start requests, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
 - Real OAuth connectors, webhook sync, scheduled sync workers, or local folder watchers. The connected-source layer is ready for adapters, but the operational path today is manual/import-driven.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
 - Direct model inference. The LLM module routes to a provider/model and explains why; task output is currently produced by the grounded verification/evidence workflow, not by calling Ollama or a cloud LLM.
@@ -36,6 +36,7 @@ Not implemented yet:
 |-- idp/                     Go identity provider service
 |-- nginx-config/            Gateway nginx config
 |-- nginx-config-manager/    Go service for nginx route config updates
+|-- automation-scripts/      Allowlisted scripts mounted read-only into backend
 |-- generic-auto/            Placeholder generic automation service
 |-- gate/                    Gateway-related legacy/config files
 |-- kafka/                   Kafka-related config area
@@ -300,6 +301,8 @@ The automation control layer provides:
 - Automation CRUD.
 - Runtime/launch metadata fields.
 - Launch button and `POST /automation/:id/launch`.
+- Controlled launch execution for API targets, allowlisted scripts, and optionally Docker API container starts.
+- Persisted launch events shown in diagnostics.
 - HTTP/TCP/manual/disabled health check modes.
 - Persisted health events.
 - Health summary.
@@ -307,7 +310,14 @@ The automation control layer provides:
 - Last launch/check/success/failure data.
 - Average latency and failure reason fields.
 
-Current limitation: launch does not execute an external runtime. It records the selected launch type, launch target, and timestamp. Real runtime execution should be added through a controlled runtime adapter layer with approvals, allowlists, auditing, and rollback where possible.
+Runtime behavior:
+
+- `browser_url`: prepares a target for client-side opening; no server-side device action is performed.
+- `api`: sends a bounded GET or POST request to an absolute `http` or `https` target. Prefix the target with `GET ` or `POST ` to select the method; default is POST.
+- `script`: executes a single script file without shell expansion. The target must resolve inside `AUTOMATION_SCRIPT_DIR`, mounted from `./automation-scripts` in local Compose.
+- `docker_service`: blocked by default. It can send a Docker Engine API start request only when `AUTOMATION_DOCKER_CONTROL_ENABLED=true` and the Docker socket is deliberately mounted/configured.
+
+Current limitation: OpenClaw/QwenPaw/MCP/browser/desktop agent runtimes are still blocked until explicit adapters and approval policies are added.
 
 ## Safety Rules for Developers
 
