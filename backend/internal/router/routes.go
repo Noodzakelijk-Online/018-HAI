@@ -13,6 +13,7 @@ import (
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
 	"automation-hub-backend/internal/workflow"
+	"automation-hub-backend/internal/workflowtask"
 
 	"github.com/gin-gonic/gin"
 	swaggerfiles "github.com/swaggo/files"
@@ -43,7 +44,11 @@ func initializeRoutes(router *gin.Engine) error {
 		source.StartScheduler(context.Background(), sourceService)
 		initializeSourceRoutes(v1, source.NewHandler(sourceService))
 		initializeVerificationRoutes(v1, verification.DefaultHandler())
-		initializeWorkflowRoutes(v1, workflow.DefaultHandler())
+		workflowRunner, err := workflowtask.DefaultRunner()
+		if err != nil {
+			return err
+		}
+		initializeWorkflowRoutes(v1, workflow.NewHandler(workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner)))
 		osHandler, err := haios.DefaultHandler()
 		if err != nil {
 			return err
@@ -158,10 +163,14 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 	workflowRoutes := apiVersion.Group("/workflow")
 	{
 		workflowRoutes.GET("/overview", workflowHandler.Overview)
+		workflowRoutes.GET("/approvals", workflowHandler.ApprovalItems)
+		workflowRoutes.GET("/dashboard", workflowHandler.Dashboard)
 		workflowRoutes.GET("/", workflowHandler.Items)
 		workflowRoutes.POST("/intake", workflowHandler.Intake)
+		workflowRoutes.POST("/run-due", workflowHandler.RunDue)
 		workflowRoutes.GET("/:id", workflowHandler.Get)
 		workflowRoutes.POST("/:id/transition", workflowHandler.Transition)
+		workflowRoutes.POST("/:id/approval", workflowHandler.ResolveApproval)
 		workflowRoutes.PATCH("/:id/checklist/:itemId", workflowHandler.UpdateChecklistItem)
 	}
 }

@@ -7,38 +7,166 @@ import (
 )
 
 type WorkflowItem struct {
+	ID                 uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	Title              string     `gorm:"type:varchar(512);index;not null" json:"title"`
+	Description        string     `gorm:"type:text" json:"description,omitempty"`
+	ProjectKey         string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`
+	CurrentState       string     `gorm:"type:varchar(80);index;not null" json:"currentState"`
+	TaskType           string     `gorm:"type:varchar(80);index" json:"taskType"`
+	RiskLevel          string     `gorm:"type:varchar(80);index" json:"riskLevel"`
+	PriorityScore      int        `gorm:"index" json:"priorityScore"`
+	Confidence         float64    `json:"confidence"`
+	AutonomyLevel      string     `gorm:"type:varchar(80);index" json:"autonomyLevel"`
+	RequiresApproval   bool       `gorm:"index" json:"requiresApproval"`
+	ApprovalStatus     string     `gorm:"type:varchar(50);index" json:"approvalStatus"`
+	ApprovalReason     string     `gorm:"type:text" json:"approvalReason,omitempty"`
+	BlockedReason      string     `gorm:"type:text" json:"blockedReason,omitempty"`
+	NextAction         string     `gorm:"type:text" json:"nextAction,omitempty"`
+	SourceType         string     `gorm:"type:varchar(80);index" json:"sourceType,omitempty"`
+	SourceURI          string     `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
+	SourceLabel        string     `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
+	DueAt              *time.Time `gorm:"index" json:"dueAt,omitempty"`
+	RetryCount         int        `gorm:"default:0;index" json:"retryCount"`
+	MaxRetries         int        `gorm:"default:2" json:"maxRetries"`
+	NextRunAt          *time.Time `gorm:"index" json:"nextRunAt,omitempty"`
+	LastRunAt          *time.Time `json:"lastRunAt,omitempty"`
+	CompletedAt        *time.Time `gorm:"index" json:"completedAt,omitempty"`
+	VerificationStatus string     `gorm:"type:varchar(80);index" json:"verificationStatus,omitempty"`
+	LastTaskPlanID     string     `gorm:"type:varchar(120)" json:"lastTaskPlanId,omitempty"`
+	LastWorkerError    string     `gorm:"type:text" json:"lastWorkerError,omitempty"`
+	Archived           bool       `gorm:"default:false;index" json:"archived"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+}
+
+type WorkflowChecklistItem struct {
 	ID               uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
-	Title            string     `gorm:"type:varchar(512);index;not null" json:"title"`
-	Description      string     `gorm:"type:text" json:"description,omitempty"`
-	ProjectKey       string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`
-	CurrentState     string     `gorm:"type:varchar(80);index;not null" json:"currentState"`
-	TaskType         string     `gorm:"type:varchar(80);index" json:"taskType"`
-	RiskLevel        string     `gorm:"type:varchar(80);index" json:"riskLevel"`
-	PriorityScore    int        `gorm:"index" json:"priorityScore"`
-	Confidence       float64    `json:"confidence"`
-	AutonomyLevel    string     `gorm:"type:varchar(80);index" json:"autonomyLevel"`
+	WorkflowID       uuid.UUID  `gorm:"type:uuid;index;not null" json:"workflowId"`
+	Label            string     `gorm:"type:text;not null" json:"label"`
+	Status           string     `gorm:"type:varchar(50);index;not null" json:"status"`
+	Position         int        `gorm:"index" json:"position"`
 	RequiresApproval bool       `gorm:"index" json:"requiresApproval"`
-	ApprovalReason   string     `gorm:"type:text" json:"approvalReason,omitempty"`
-	BlockedReason    string     `gorm:"type:text" json:"blockedReason,omitempty"`
-	NextAction       string     `gorm:"type:text" json:"nextAction,omitempty"`
-	SourceType       string     `gorm:"type:varchar(80);index" json:"sourceType,omitempty"`
-	SourceURI        string     `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
-	SourceLabel      string     `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
 	DueAt            *time.Time `gorm:"index" json:"dueAt,omitempty"`
-	Archived         bool       `gorm:"default:false;index" json:"archived"`
+	ReminderAt       *time.Time `gorm:"index" json:"reminderAt,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
-type WorkflowChecklistItem struct {
-	ID               uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
-	WorkflowID       uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
-	Label            string    `gorm:"type:text;not null" json:"label"`
-	Status           string    `gorm:"type:varchar(50);index;not null" json:"status"`
-	Position         int       `gorm:"index" json:"position"`
-	RequiresApproval bool      `gorm:"index" json:"requiresApproval"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+type WorkflowIntakeRecord struct {
+	ID                uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID        uuid.UUID  `gorm:"type:uuid;index" json:"workflowId,omitempty"`
+	SourceType        string     `gorm:"type:varchar(80);index" json:"sourceType,omitempty"`
+	SourceID          string     `gorm:"type:varchar(120);index" json:"sourceId,omitempty"`
+	SourceURI         string     `gorm:"type:varchar(1024);index" json:"sourceUri,omitempty"`
+	SourceLabel       string     `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
+	ContentType       string     `gorm:"type:varchar(80);index" json:"contentType,omitempty"`
+	Sender            string     `gorm:"type:varchar(255);index" json:"sender,omitempty"`
+	ReceivedAt        *time.Time `gorm:"index" json:"receivedAt,omitempty"`
+	RawContent        string     `gorm:"type:text" json:"rawContent,omitempty"`
+	NormalizedSummary string     `gorm:"type:text" json:"normalizedSummary,omitempty"`
+	DetectedEntities  string     `gorm:"type:text" json:"detectedEntities,omitempty"`
+	PossibleProject   string     `gorm:"type:varchar(255);index" json:"possibleProject,omitempty"`
+	Urgency           string     `gorm:"type:varchar(50);index" json:"urgency,omitempty"`
+	CreatedAt         time.Time  `json:"createdAt"`
+}
+
+type WorkflowProjectMatch struct {
+	ID             uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID     uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
+	ProjectKey     string    `gorm:"type:varchar(255);index;not null" json:"projectKey"`
+	MatchedBy      string    `gorm:"type:text" json:"matchedBy,omitempty"`
+	Confidence     float64   `gorm:"index" json:"confidence"`
+	TrelloCardRef  string    `gorm:"type:varchar(512)" json:"trelloCardRef,omitempty"`
+	DriveFolderRef string    `gorm:"type:varchar(512)" json:"driveFolderRef,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+type WorkflowEvidenceClaim struct {
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID  uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
+	ClaimText   string    `gorm:"type:text;not null" json:"claimText"`
+	SourceURI   string    `gorm:"type:varchar(1024);index" json:"sourceUri,omitempty"`
+	SourceLabel string    `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
+	Reliability string    `gorm:"type:varchar(80);index" json:"reliability"`
+	Status      string    `gorm:"type:varchar(80);index" json:"status"`
+	NeedsReview bool      `gorm:"index" json:"needsReview"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type WorkflowOpenLoop struct {
+	ID               uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID       uuid.UUID  `gorm:"type:uuid;index;not null" json:"workflowId"`
+	ResponsibleParty string     `gorm:"type:varchar(120);index" json:"responsibleParty"`
+	WaitingFor       string     `gorm:"type:text" json:"waitingFor"`
+	NextAction       string     `gorm:"type:text" json:"nextAction"`
+	FollowUpAt       *time.Time `gorm:"index" json:"followUpAt,omitempty"`
+	Status           string     `gorm:"type:varchar(50);index" json:"status"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+}
+
+type WorkflowProposal struct {
+	ID                uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID        uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
+	RecommendedAction string    `gorm:"type:text;not null" json:"recommendedAction"`
+	Options           string    `gorm:"type:text" json:"options,omitempty"`
+	Status            string    `gorm:"type:varchar(50);index" json:"status"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+type WorkflowQualityGate struct {
+	ID         uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
+	Gate       string    `gorm:"type:varchar(120);index;not null" json:"gate"`
+	Status     string    `gorm:"type:varchar(50);index;not null" json:"status"`
+	Reason     string    `gorm:"type:text" json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type WorkflowRule struct {
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	RuleKey     string    `gorm:"type:varchar(120);uniqueIndex;not null" json:"ruleKey"`
+	Name        string    `gorm:"type:varchar(255);not null" json:"name"`
+	Description string    `gorm:"type:text" json:"description"`
+	Category    string    `gorm:"type:varchar(80);index" json:"category"`
+	Enabled     bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type WorkflowTransition struct {
+	ID         uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
+	FromState  string    `gorm:"type:varchar(80);index" json:"fromState,omitempty"`
+	ToState    string    `gorm:"type:varchar(80);index;not null" json:"toState"`
+	Trigger    string    `gorm:"type:varchar(255);index" json:"trigger,omitempty"`
+	Actor      string    `gorm:"type:varchar(120)" json:"actor,omitempty"`
+	Approved   bool      `gorm:"index" json:"approved"`
+	Reason     string    `gorm:"type:text" json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type WorkflowSourceLink struct {
+	ID           uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID   uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
+	SourceType   string    `gorm:"type:varchar(80);index" json:"sourceType,omitempty"`
+	SourceID     string    `gorm:"type:varchar(120);index" json:"sourceId,omitempty"`
+	SourceURI    string    `gorm:"type:varchar(1024);index" json:"sourceUri,omitempty"`
+	SourceLabel  string    `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
+	Relationship string    `gorm:"type:varchar(80);index" json:"relationship"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+type WorkflowDecision struct {
+	ID           uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID   uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
+	DecisionType string    `gorm:"type:varchar(80);index;not null" json:"decisionType"`
+	Decision     string    `gorm:"type:varchar(120);index;not null" json:"decision"`
+	Reason       string    `gorm:"type:text" json:"reason,omitempty"`
+	RuleApplied  string    `gorm:"type:text" json:"ruleApplied,omitempty"`
+	Approved     bool      `gorm:"index" json:"approved"`
+	Actor        string    `gorm:"type:varchar(120)" json:"actor,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 type WorkflowEvent struct {

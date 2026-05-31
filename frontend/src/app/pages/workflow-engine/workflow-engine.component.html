@@ -8,6 +8,10 @@
             <i nz-icon nzType="reload" nzTheme="outline"></i>
             Refresh
           </button>
+          <button nz-button nzType="primary" (click)="runDue()">
+            <i nz-icon nzType="play-circle" nzTheme="outline"></i>
+            Run Worker
+          </button>
           <button nz-button nzType="default" (click)="goHome()">
             <i nz-icon nzType="appstore" nzTheme="outline"></i>
             Automations
@@ -30,6 +34,11 @@
               <input nz-input formControlName="projectKey" placeholder="Project" />
               <input nz-input formControlName="sourceType" placeholder="Source type" />
             </div>
+            <div class="form-row">
+              <input nz-input formControlName="sourceId" placeholder="Source ID" />
+              <input nz-input formControlName="contentType" placeholder="Content type" />
+            </div>
+            <input nz-input formControlName="sender" placeholder="Sender or account" />
             <input nz-input formControlName="sourceUri" placeholder="Source URI" />
             <input nz-input formControlName="sourceLabel" placeholder="Source label" />
             <input nz-input formControlName="trigger" placeholder="Trigger" />
@@ -39,7 +48,7 @@
           </form>
         </nz-card>
 
-        <nz-card nzSize="small" nzTitle="14 Engine Capabilities" *ngIf="overview as data">
+        <nz-card nzSize="small" nzTitle="Operational Engine Capabilities" *ngIf="overview as data">
           <nz-table [nzData]="data.capabilities" nzSize="small" [nzPageSize]="7">
             <thead>
               <tr>
@@ -61,6 +70,73 @@
         </nz-card>
       </div>
 
+      <nz-card nzTitle="Operational Monitor" class="section-card" *ngIf="dashboard as monitor">
+        <div class="workflow-grid">
+          <div>
+            <p><strong>Total:</strong> {{ monitor.counts['total'] || 0 }}</p>
+            <p><strong>Approvals:</strong> {{ monitor.counts['approvals'] || 0 }}</p>
+            <p><strong>Ready:</strong> {{ monitor.counts['ready'] || 0 }}</p>
+            <p><strong>Blocked:</strong> {{ monitor.counts['blocked'] || 0 }}</p>
+            <p><strong>High risk:</strong> {{ monitor.counts['highRisk'] || 0 }}</p>
+            <p><strong>Due open loops:</strong> {{ monitor.counts['dueOpenLoops'] || 0 }}</p>
+          </div>
+          <div>
+            <nz-table [nzData]="monitor.dueOpenLoops" nzSize="small" [nzPageSize]="4">
+              <thead>
+                <tr>
+                  <th>Waiting for</th>
+                  <th>Responsible</th>
+                  <th>Follow-up</th>
+                  <th>Next action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let loop of monitor.dueOpenLoops">
+                  <td>{{ loop.waitingFor }}</td>
+                  <td>{{ loop.responsibleParty }}</td>
+                  <td>{{ (loop.followUpAt | date: 'short') || '-' }}</td>
+                  <td>{{ loop.nextAction }}</td>
+                </tr>
+              </tbody>
+            </nz-table>
+          </div>
+        </div>
+      </nz-card>
+
+      <nz-card nzTitle="Approval Queue" class="section-card">
+        <form nz-form [formGroup]="approvalForm">
+          <input nz-input formControlName="note" placeholder="Approval or rejection note" />
+        </form>
+        <nz-empty *ngIf="!approvalItems.length" nzNotFoundContent="No workflow approvals pending."></nz-empty>
+        <nz-table *ngIf="approvalItems.length" [nzData]="approvalItems" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>Workflow</th>
+              <th>Reason</th>
+              <th>Source</th>
+              <th>Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of approvalItems">
+              <td>{{ item.priorityScore }}</td>
+              <td>{{ item.title }}</td>
+              <td>{{ item.approvalReason || '-' }}</td>
+              <td>{{ item.sourceLabel || item.sourceUri || '-' }}</td>
+              <td>
+                <button nz-button nzSize="small" nzType="primary" (click)="resolveApproval(item, true)">
+                  Approve
+                </button>
+                <button nz-button nzSize="small" nzType="default" (click)="resolveApproval(item, false)">
+                  Reject
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
       <nz-card nzTitle="Workflow Inbox" class="section-card">
         <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()">
           Include archived
@@ -75,6 +151,8 @@
               <th>Type</th>
               <th>Risk</th>
               <th>Approval</th>
+              <th>Retries</th>
+              <th>Verification</th>
               <th>Next action</th>
               <th>Open</th>
             </tr>
@@ -86,7 +164,9 @@
               <td>{{ item.title }}</td>
               <td>{{ item.taskType }}</td>
               <td>{{ item.riskLevel }}</td>
-              <td>{{ item.requiresApproval ? 'required' : 'not required' }}</td>
+              <td>{{ item.approvalStatus || (item.requiresApproval ? 'pending' : 'not required') }}</td>
+              <td>{{ item.retryCount }}/{{ item.maxRetries }}</td>
+              <td>{{ item.verificationStatus || '-' }}</td>
               <td>{{ item.nextAction || '-' }}</td>
               <td>
                 <button nz-button nzSize="small" nzType="default" (click)="open(item)">
@@ -104,7 +184,13 @@
           <p><strong>Project:</strong> {{ record.item.projectKey || '-' }}</p>
           <p><strong>Autonomy:</strong> {{ record.item.autonomyLevel }}</p>
           <p><strong>Approval reason:</strong> {{ record.item.approvalReason || '-' }}</p>
+          <p><strong>Approval status:</strong> {{ record.item.approvalStatus || '-' }}</p>
           <p><strong>Blocked:</strong> {{ record.item.blockedReason || '-' }}</p>
+          <p><strong>Retry:</strong> {{ record.item.retryCount }}/{{ record.item.maxRetries }}</p>
+          <p><strong>Verification:</strong> {{ record.item.verificationStatus || '-' }}</p>
+          <p><strong>Next run:</strong> {{ (record.item.nextRunAt | date: 'short') || '-' }}</p>
+          <p><strong>Last task plan:</strong> {{ record.item.lastTaskPlanId || '-' }}</p>
+          <p><strong>Worker error:</strong> {{ record.item.lastWorkerError || '-' }}</p>
           <p><strong>Source:</strong> {{ record.item.sourceLabel || record.item.sourceUri || '-' }}</p>
         </nz-card>
 
@@ -131,6 +217,8 @@
               <th>Status</th>
               <th>Step</th>
               <th>Approval</th>
+              <th>Due</th>
+              <th>Reminder</th>
               <th>Update</th>
             </tr>
           </thead>
@@ -139,10 +227,243 @@
               <td>{{ item.status }}</td>
               <td>{{ item.label }}</td>
               <td>{{ item.requiresApproval ? 'required' : '-' }}</td>
+              <td>{{ (item.dueAt | date: 'short') || '-' }}</td>
+              <td>{{ (item.reminderAt | date: 'short') || '-' }}</td>
               <td>
                 <button nz-button nzSize="small" nzType="default" (click)="markChecklist(item.id, 'done')">Done</button>
                 <button nz-button nzSize="small" nzType="default" (click)="markChecklist(item.id, 'blocked')">Blocked</button>
               </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <div class="workflow-grid" *ngIf="selected as record">
+        <nz-card nzTitle="Intake Record" class="section-card">
+          <nz-table [nzData]="record.intake" nzSize="small" [nzPageSize]="4">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Sender</th>
+                <th>Urgency</th>
+                <th>Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let intake of record.intake">
+                <td>{{ intake.sourceLabel || intake.sourceUri || intake.sourceType || '-' }}</td>
+                <td>{{ intake.sender || '-' }}</td>
+                <td>{{ intake.urgency || '-' }}</td>
+                <td>{{ intake.normalizedSummary || '-' }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+
+        <nz-card nzTitle="Project Match" class="section-card">
+          <nz-table [nzData]="record.matches" nzSize="small" [nzPageSize]="4">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Confidence</th>
+                <th>Matched by</th>
+                <th>Refs</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let match of record.matches">
+                <td>{{ match.projectKey }}</td>
+                <td>{{ match.confidence | number: '1.0-2' }}</td>
+                <td>{{ match.matchedBy || '-' }}</td>
+                <td>{{ match.trelloCardRef || match.driveFolderRef || '-' }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+      </div>
+
+      <div class="workflow-grid" *ngIf="selected as record">
+        <nz-card nzTitle="Evidence Claims" class="section-card">
+          <nz-table [nzData]="record.evidence" nzSize="small" [nzPageSize]="5">
+            <thead>
+              <tr>
+                <th>Claim</th>
+                <th>Status</th>
+                <th>Source</th>
+                <th>Review</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let claim of record.evidence">
+                <td>{{ claim.claimText }}</td>
+                <td>{{ claim.status }}</td>
+                <td>{{ claim.sourceLabel || claim.sourceUri || claim.reliability }}</td>
+                <td>{{ claim.needsReview ? 'needs review' : 'linked' }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+
+        <nz-card nzTitle="Open Loops" class="section-card">
+          <nz-table [nzData]="record.openLoops" nzSize="small" [nzPageSize]="5">
+            <thead>
+              <tr>
+                <th>Responsible</th>
+                <th>Waiting for</th>
+                <th>Follow-up</th>
+                <th>Next action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let loop of record.openLoops">
+                <td>{{ loop.responsibleParty }}</td>
+                <td>{{ loop.waitingFor }}</td>
+                <td>{{ (loop.followUpAt | date: 'short') || '-' }}</td>
+                <td>{{ loop.nextAction }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+      </div>
+
+      <div class="workflow-grid" *ngIf="selected as record">
+        <nz-card nzTitle="Proposals" class="section-card">
+          <nz-table [nzData]="record.proposals" nzSize="small" [nzPageSize]="4">
+            <thead>
+              <tr>
+                <th>Recommended action</th>
+                <th>Options</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let proposal of record.proposals">
+                <td>{{ proposal.recommendedAction }}</td>
+                <td>
+                  <div *ngFor="let option of optionLines(proposal.options)">{{ option }}</div>
+                </td>
+                <td>{{ proposal.status }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+
+        <nz-card nzTitle="Quality Gates" class="section-card">
+          <nz-table [nzData]="record.qualityGates" nzSize="small" [nzPageSize]="6">
+            <thead>
+              <tr>
+                <th>Gate</th>
+                <th>Status</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let gate of record.qualityGates">
+                <td>{{ gate.gate }}</td>
+                <td>{{ gate.status }}</td>
+                <td>{{ gate.reason || '-' }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+      </div>
+
+      <div class="workflow-grid" *ngIf="selected as record">
+        <nz-card nzTitle="Decisions" class="section-card">
+          <nz-table [nzData]="record.decisions" nzSize="small" [nzPageSize]="6">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Type</th>
+                <th>Decision</th>
+                <th>Reason</th>
+                <th>Rule</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let decision of record.decisions">
+                <td>{{ decision.createdAt | date: 'short' }}</td>
+                <td>{{ decision.decisionType }}</td>
+                <td>{{ decision.decision }}</td>
+                <td>{{ decision.reason || '-' }}</td>
+                <td>{{ decision.ruleApplied || '-' }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+
+        <nz-card nzTitle="Source Links" class="section-card">
+          <nz-table [nzData]="record.sourceLinks" nzSize="small" [nzPageSize]="6">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Type</th>
+                <th>Relationship</th>
+                <th>URI</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let link of record.sourceLinks">
+                <td>{{ link.sourceLabel || link.sourceId || '-' }}</td>
+                <td>{{ link.sourceType || '-' }}</td>
+                <td>{{ link.relationship }}</td>
+                <td>{{ link.sourceUri || '-' }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Transitions" class="section-card" *ngIf="selected as record">
+        <nz-table [nzData]="record.transitions" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Trigger</th>
+              <th>Approved</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let transition of record.transitions">
+              <td>{{ transition.createdAt | date: 'short' }}</td>
+              <td>{{ transition.fromState || '-' }}</td>
+              <td>{{ transition.toState }}</td>
+              <td>{{ transition.trigger || '-' }}</td>
+              <td>{{ transition.approved ? 'yes' : 'no' }}</td>
+              <td>{{ transition.reason || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Worker Result" class="section-card" *ngIf="runSummary as summary">
+        <p>
+          Checked {{ summary.checked }},
+          completed {{ summary.completed }},
+          retried {{ summary.retried }},
+          blocked {{ summary.blocked }},
+          skipped {{ summary.skipped }}.
+        </p>
+        <nz-table [nzData]="summary.results" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>State</th>
+              <th>Attempts</th>
+              <th>Verification</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let result of summary.results">
+              <td>{{ result.status }}</td>
+              <td>{{ result.state }}</td>
+              <td>{{ result.attempts }}</td>
+              <td>{{ result.verificationStatus || '-' }}</td>
+              <td>{{ result.message || '-' }}</td>
             </tr>
           </tbody>
         </nz-table>
@@ -177,6 +498,24 @@
         <ul class="safety-list">
           <li *ngFor="let rule of data.safetyRules">{{ rule }}</li>
         </ul>
+        <nz-table [nzData]="data.rules" nzSize="small" [nzPageSize]="6">
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>Category</th>
+              <th>Enabled</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let rule of data.rules">
+              <td>{{ rule.name }}</td>
+              <td>{{ rule.category }}</td>
+              <td>{{ rule.enabled ? 'yes' : 'no' }}</td>
+              <td>{{ rule.description }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
       </nz-card>
     </nz-content>
   </nz-layout>

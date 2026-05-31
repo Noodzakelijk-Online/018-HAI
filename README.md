@@ -16,7 +16,7 @@ Implemented:
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
 - Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
-- Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, blocked/waiting/completed/archive states, and audit events.
+- Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, source links, decision records, transition records, durable retry limits, task-engine worker execution, verification-gated completion, and audit events.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
 - CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
 
@@ -194,10 +194,14 @@ Task engine:
 Workflow engine:
 
 - `GET /workflow/overview`
+- `GET /workflow/approvals`
+- `GET /workflow/dashboard`
 - `GET /workflow/`
 - `POST /workflow/intake`
+- `POST /workflow/run-due`
 - `GET /workflow/:id`
 - `POST /workflow/:id/transition`
+- `POST /workflow/:id/approval`
 - `PATCH /workflow/:id/checklist/:itemId`
 
 Connected sources:
@@ -256,24 +260,40 @@ The task engine now treats connected sources as an active preflight dependency. 
 
 ## Workflow Engine
 
-The workflow engine implements the 14 operational suggestions as a concrete backend module and dashboard page:
+The workflow engine now implements the first real operational slice of the personal operations engine. It is not a fully autonomous agent, but it does more than display workflow screens:
 
-1. Persistent workflow state machine.
-2. Event-trigger metadata and audit records.
-3. Adapter-facing source and trigger fields.
-4. Project/source context links.
-5. Approval and autonomy decision rules.
-6. Deterministic task/risk/deadline reasoning.
-7. Generated execution checklists.
-8. Deadline/risk/type priority scoring.
-9. Blocked and waiting states for exceptions.
-10. Full workflow audit trail.
-11. Human approval gates before sensitive transitions.
-12. Worker-ready lifecycle states such as `ready` and `in_progress`.
-13. Checklist correction/progress feedback events.
-14. Safety boundaries for legal, financial, public, destructive, and account-changing actions.
+1. Normalizes intake from manual input and connected-source events.
+2. Classifies task type, risk, priority, confidence, and autonomy level.
+3. Matches likely project/case context and stores match evidence.
+4. Creates persistent workflow items with a state machine.
+5. Generates task-type checklists and deadline reminder steps.
+6. Stores separate transition, decision, source-link, intake, evidence-claim, open-loop, proposal, quality-gate, and rulebook records.
+7. Creates approval gates for legal, government, insurance, lawyer, financial, public-posting, destructive, and account-changing work.
+8. Creates open loops for waiting/blocked/approval items with follow-up dates.
+9. Creates proposal options so Robert can approve, reject, change tone, request evidence, or block a workflow.
+10. Creates software quality gates for developer/GitHub work such as commits, tests, README/setup, and Windows 11 run path.
+11. Runs low-risk or approved ready workflows through the task engine worker.
+12. Uses durable retry counters, backoff, and blocked-after-limit behavior.
+13. Marks completion only when the task engine returns a validated result.
+14. Surfaces operational monitoring for approvals, blocked work, ready work, high-risk items, due open loops, missing next actions, and safety rules.
 
 Manual input can be sent to `POST /workflow/intake`. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Intake deduplicates by source URI so repeated syncs do not create duplicate workflow items for the same source record.
+
+The workflow layer now stores operational history in separate tables:
+
+- `WorkflowTransition` records every state change.
+- `WorkflowSourceLink` records source provenance separately from the workflow item.
+- `WorkflowDecision` records classification, priority, approval, deadline, retry, and completion decisions.
+- `WorkflowChecklistItem` supports detected due dates and check reminders.
+- `WorkflowIntakeRecord` stores normalized source/input metadata.
+- `WorkflowProjectMatch` stores likely project/card/folder links.
+- `WorkflowEvidenceClaim` stores source-linked factual claims and review flags.
+- `WorkflowOpenLoop` stores waiting states and follow-up actions.
+- `WorkflowProposal` stores recommended actions and approval options.
+- `WorkflowQualityGate` stores acceptance checks for developer, legal, publishing, and verification workflows.
+- `WorkflowRule` stores the default editable safety/workflow rulebook.
+
+Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. The worker moves items through `ready -> in_progress -> completed` only when the task engine returns a validated result. Failed worker attempts increment durable retry counters, schedule a later retry, and block the workflow after the retry limit. High-risk items remain in `needs_approval` until approved from `/workflow/approvals` or the dashboard approval queue.
 
 Workflow states:
 
@@ -289,7 +309,7 @@ waiting_external_input
 blocked
 ```
 
-The dashboard page at `/workflow-engine` shows the workflow inbox, capability coverage, generated checklist, validated state transitions, approval toggle, safety rules, and audit trail.
+The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, due open loops, approval queue with approve/reject buttons, worker run control, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposals, quality gates, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
 
 ## LLM Routing Policy
 

@@ -29,8 +29,12 @@ type IntakeRequest struct {
 	Input       string `json:"input"`
 	ProjectKey  string `json:"projectKey,omitempty"`
 	SourceType  string `json:"sourceType,omitempty"`
+	SourceID    string `json:"sourceId,omitempty"`
 	SourceURI   string `json:"sourceUri,omitempty"`
 	SourceLabel string `json:"sourceLabel,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+	Sender      string `json:"sender,omitempty"`
+	ReceivedAt  string `json:"receivedAt,omitempty"`
 	Trigger     string `json:"trigger,omitempty"`
 	Actor       string `json:"actor,omitempty"`
 }
@@ -46,10 +50,70 @@ type ChecklistUpdateRequest struct {
 	Status string `json:"status"`
 }
 
+type ApprovalResolutionRequest struct {
+	Approved bool   `json:"approved"`
+	Note     string `json:"note,omitempty"`
+	Actor    string `json:"actor,omitempty"`
+}
+
+type RunDueRequest struct {
+	Limit int `json:"limit,omitempty"`
+}
+
+type TaskRunRequest struct {
+	WorkflowID    string `json:"workflowId"`
+	Request       string `json:"request"`
+	ProjectKey    string `json:"projectKey,omitempty"`
+	HumanApproved bool   `json:"humanApproved"`
+	ApprovalNote  string `json:"approvalNote,omitempty"`
+}
+
+type TaskRunResult struct {
+	PlanID             string `json:"planId,omitempty"`
+	CompletionStatus   string `json:"completionStatus"`
+	VerificationStatus string `json:"verificationStatus"`
+	Output             string `json:"output,omitempty"`
+	FailureReason      string `json:"failureReason,omitempty"`
+	Passed             bool   `json:"passed"`
+	ReviewRequired     bool   `json:"reviewRequired"`
+}
+
+type TaskRunner interface {
+	RunWorkflowTask(request TaskRunRequest) (*TaskRunResult, error)
+}
+
+type WorkflowRunResult struct {
+	WorkflowID         uuid.UUID  `json:"workflowId"`
+	Status             string     `json:"status"`
+	State              string     `json:"state"`
+	Attempts           int        `json:"attempts"`
+	VerificationStatus string     `json:"verificationStatus,omitempty"`
+	NextRunAt          *time.Time `json:"nextRunAt,omitempty"`
+	Message            string     `json:"message,omitempty"`
+}
+
+type WorkflowRunSummary struct {
+	Checked   int                 `json:"checked"`
+	Completed int                 `json:"completed"`
+	Retried   int                 `json:"retried"`
+	Blocked   int                 `json:"blocked"`
+	Skipped   int                 `json:"skipped"`
+	Results   []WorkflowRunResult `json:"results"`
+}
+
 type WorkflowRecord struct {
-	Item      models.WorkflowItem            `json:"item"`
-	Checklist []models.WorkflowChecklistItem `json:"checklist"`
-	Events    []models.WorkflowEvent         `json:"events"`
+	Item         models.WorkflowItem            `json:"item"`
+	Checklist    []models.WorkflowChecklistItem `json:"checklist"`
+	Intake       []models.WorkflowIntakeRecord  `json:"intake"`
+	Matches      []models.WorkflowProjectMatch  `json:"matches"`
+	Evidence     []models.WorkflowEvidenceClaim `json:"evidence"`
+	OpenLoops    []models.WorkflowOpenLoop      `json:"openLoops"`
+	Proposals    []models.WorkflowProposal      `json:"proposals"`
+	QualityGates []models.WorkflowQualityGate   `json:"qualityGates"`
+	Transitions  []models.WorkflowTransition    `json:"transitions"`
+	SourceLinks  []models.WorkflowSourceLink    `json:"sourceLinks"`
+	Decisions    []models.WorkflowDecision      `json:"decisions"`
+	Events       []models.WorkflowEvent         `json:"events"`
 }
 
 type EngineCapability struct {
@@ -61,26 +125,47 @@ type EngineCapability struct {
 }
 
 type Overview struct {
-	Capabilities []EngineCapability `json:"capabilities"`
-	States       []string           `json:"states"`
-	SafetyRules  []string           `json:"safetyRules"`
+	Capabilities []EngineCapability    `json:"capabilities"`
+	States       []string              `json:"states"`
+	SafetyRules  []string              `json:"safetyRules"`
+	Rules        []models.WorkflowRule `json:"rules"`
+}
+
+type WorkflowDashboard struct {
+	Counts                 map[string]int64          `json:"counts"`
+	ApprovalItems          []models.WorkflowItem     `json:"approvalItems"`
+	BlockedItems           []models.WorkflowItem     `json:"blockedItems"`
+	ReadyItems             []models.WorkflowItem     `json:"readyItems"`
+	HighRiskItems          []models.WorkflowItem     `json:"highRiskItems"`
+	ItemsWithoutNextAction []models.WorkflowItem     `json:"itemsWithoutNextAction"`
+	DueOpenLoops           []models.WorkflowOpenLoop `json:"dueOpenLoops"`
+	Rules                  []models.WorkflowRule     `json:"rules"`
 }
 
 type Service interface {
 	Intake(request IntakeRequest) (*WorkflowRecord, error)
 	Items(includeArchived bool) ([]models.WorkflowItem, error)
+	ApprovalItems() ([]models.WorkflowItem, error)
+	Dashboard() (*WorkflowDashboard, error)
 	Get(id uuid.UUID) (*WorkflowRecord, error)
 	Transition(id uuid.UUID, request TransitionRequest) (*WorkflowRecord, error)
+	ResolveApproval(id uuid.UUID, request ApprovalResolutionRequest) (*WorkflowRecord, error)
 	UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error)
+	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
 	Overview() Overview
 }
 
 type service struct {
-	repo Repository
+	repo       Repository
+	taskRunner TaskRunner
 }
 
 func NewService(repo Repository) Service {
 	return &service{repo: repo}
+}
+
+func NewServiceWithTaskRunner(repo Repository, taskRunner TaskRunner) Service {
+	return &service{repo: repo, taskRunner: taskRunner}
 }
 
 func DefaultService() Service {
@@ -92,6 +177,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	if input == "" {
 		return nil, fmt.Errorf("input is required")
 	}
+	_ = s.ensureDefaultRules()
 	if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
 		existing, err := s.repo.FindActiveItemBySourceURI(sourceURI)
 		if err != nil {
@@ -103,10 +189,11 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		}
 	}
 	analysis := analyzeInput(request)
+	projectKey := firstNonEmpty(request.ProjectKey, analysis.projectKey)
 	item := &models.WorkflowItem{
 		Title:            analysis.title,
 		Description:      input,
-		ProjectKey:       strings.TrimSpace(request.ProjectKey),
+		ProjectKey:       projectKey,
 		CurrentState:     analysis.initialState,
 		TaskType:         analysis.taskType,
 		RiskLevel:        analysis.riskLevel,
@@ -114,6 +201,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		Confidence:       analysis.confidence,
 		AutonomyLevel:    analysis.autonomyLevel,
 		RequiresApproval: analysis.requiresApproval,
+		ApprovalStatus:   approvalStatus(analysis.requiresApproval),
 		ApprovalReason:   analysis.approvalReason,
 		BlockedReason:    analysis.blockedReason,
 		NextAction:       analysis.nextAction,
@@ -121,11 +209,27 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		SourceURI:        strings.TrimSpace(request.SourceURI),
 		SourceLabel:      strings.TrimSpace(request.SourceLabel),
 		DueAt:            analysis.dueAt,
+		MaxRetries:       maxRetriesForAnalysis(analysis),
 	}
 	created, err := s.repo.CreateItem(item)
 	if err != nil {
 		return nil, err
 	}
+	intakeRecord, _ := s.repo.SaveIntakeRecord(&models.WorkflowIntakeRecord{
+		WorkflowID:        created.ID,
+		SourceType:        strings.TrimSpace(request.SourceType),
+		SourceID:          strings.TrimSpace(request.SourceID),
+		SourceURI:         strings.TrimSpace(request.SourceURI),
+		SourceLabel:       strings.TrimSpace(request.SourceLabel),
+		ContentType:       firstNonEmpty(request.ContentType, analysis.taskType),
+		Sender:            strings.TrimSpace(request.Sender),
+		ReceivedAt:        parseOptionalTime(request.ReceivedAt),
+		RawContent:        input,
+		NormalizedSummary: compact(input, 420),
+		DetectedEntities:  strings.Join(analysis.entities, ","),
+		PossibleProject:   projectKey,
+		Urgency:           urgencyForPriority(analysis.priority),
+	})
 	for index, checklist := range checklistForAnalysis(analysis) {
 		_, _ = s.repo.CreateChecklistItem(&models.WorkflowChecklistItem{
 			WorkflowID:       created.ID,
@@ -135,12 +239,134 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 			RequiresApproval: checklist.requiresApproval,
 		})
 	}
+	if analysis.dueAt != nil {
+		_, _ = s.repo.CreateChecklistItem(&models.WorkflowChecklistItem{
+			WorkflowID: created.ID,
+			Label:      "Follow up or check before detected deadline",
+			Status:     "open",
+			Position:   900,
+			DueAt:      analysis.dueAt,
+			ReminderAt: reminderBefore(*analysis.dueAt),
+		})
+	}
+	if created.SourceURI != "" || created.SourceLabel != "" {
+		s.linkSource(created.ID, created.SourceType, request.SourceID, created.SourceURI, created.SourceLabel, "origin")
+		s.decide(created.ID, "source_link", "linked", "source provenance captured for workflow", "source link created at intake", false, firstNonEmpty(request.Actor, "engine"))
+	}
+	if projectKey != "" {
+		_, _ = s.repo.CreateProjectMatch(&models.WorkflowProjectMatch{
+			WorkflowID:     created.ID,
+			ProjectKey:     projectKey,
+			MatchedBy:      strings.Join(analysis.matchReasons, ", "),
+			Confidence:     analysis.projectConfidence,
+			TrelloCardRef:  analysis.trelloRef,
+			DriveFolderRef: analysis.driveRef,
+		})
+		s.decide(created.ID, "project_match", projectKey, "workflow linked to project context", strings.Join(analysis.matchReasons, ", "), false, "engine")
+	}
+	for _, claim := range evidenceClaimsForInput(created.ID, input, request) {
+		_, _ = s.repo.CreateEvidenceClaim(&claim)
+	}
+	if loop := openLoopForAnalysis(created.ID, analysis); loop != nil {
+		_, _ = s.repo.CreateOpenLoop(loop)
+		s.decide(created.ID, "open_loop", "created", loop.WaitingFor, "follow-up/open-loop detection", false, "engine")
+	}
+	if proposal := proposalForAnalysis(created.ID, analysis); proposal != nil {
+		_, _ = s.repo.CreateProposal(proposal)
+	}
+	for _, gate := range qualityGatesForAnalysis(created.ID, analysis) {
+		_, _ = s.repo.CreateQualityGate(&gate)
+	}
+	s.recordTransition(created.ID, StateNewInput, created.CurrentState, request.Trigger, firstNonEmpty(request.Actor, "engine"), false, "input classified and workflow state initialized")
+	s.decide(created.ID, "classification", analysis.taskType, "input classified as "+analysis.taskType, analysis.ruleApplied, false, "engine")
+	s.decide(created.ID, "priority", fmt.Sprintf("%d", analysis.priority), "priority assigned from risk, deadline, and task type", "priority engine", false, "engine")
+	if analysis.requiresApproval {
+		s.decide(created.ID, "approval_gate", "required", analysis.approvalReason, "approval rule engine", false, "engine")
+	} else {
+		s.decide(created.ID, "approval_gate", "not_required", "low-risk workflow can enter worker queue", "approval rule engine", false, "engine")
+	}
+	if analysis.blockedReason != "" {
+		s.decide(created.ID, "missing_info", "blocked", analysis.blockedReason, "missing information detection", false, "engine")
+	}
+	if analysis.dueAt != nil {
+		s.decide(created.ID, "deadline_reminder", "created", "check reminder created from detected deadline", "deadline detection", false, "engine")
+	}
+	if intakeRecord != nil {
+		s.audit(created.ID, "workflow.intake_normalized", "", "", "input normalized from "+firstNonEmpty(request.SourceType, "manual"), request.Trigger, "universal intake engine", request.SourceURI, firstNonEmpty(request.Actor, "engine"))
+	}
 	s.audit(created.ID, "workflow.intake", "", created.CurrentState, "input classified and workflow state initialized", request.Trigger, analysis.ruleApplied, request.SourceURI, firstNonEmpty(request.Actor, "engine"))
 	return s.Get(created.ID)
 }
 
 func (s *service) Items(includeArchived bool) ([]models.WorkflowItem, error) {
 	return s.repo.FindItems(includeArchived)
+}
+
+func (s *service) ApprovalItems() ([]models.WorkflowItem, error) {
+	return s.repo.FindApprovalItems()
+}
+
+func (s *service) Dashboard() (*WorkflowDashboard, error) {
+	_ = s.ensureDefaultRules()
+	items, err := s.repo.FindItems(false)
+	if err != nil {
+		return nil, err
+	}
+	approvalItems, err := s.repo.FindApprovalItems()
+	if err != nil {
+		return nil, err
+	}
+	openLoops, err := s.repo.FindDashboardOpenLoops(time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	rules, err := s.repo.FindRules()
+	if err != nil {
+		return nil, err
+	}
+	dashboard := &WorkflowDashboard{
+		Counts: map[string]int64{
+			"total":                  int64(len(items)),
+			"approvals":              int64(len(approvalItems)),
+			"blocked":                0,
+			"ready":                  0,
+			"highRisk":               0,
+			"itemsWithoutNextAction": 0,
+			"dueOpenLoops":           int64(len(openLoops)),
+		},
+		ApprovalItems: approvalItems,
+		DueOpenLoops:  openLoops,
+		Rules:         rules,
+	}
+	for _, item := range items {
+		switch item.CurrentState {
+		case StateBlocked:
+			dashboard.BlockedItems = append(dashboard.BlockedItems, item)
+			dashboard.Counts["blocked"]++
+		case StateReady:
+			dashboard.ReadyItems = append(dashboard.ReadyItems, item)
+			dashboard.Counts["ready"]++
+		}
+		if item.RiskLevel == "high" {
+			dashboard.HighRiskItems = append(dashboard.HighRiskItems, item)
+			dashboard.Counts["highRisk"]++
+		}
+		if strings.TrimSpace(item.NextAction) == "" && item.CurrentState != StateArchived {
+			dashboard.ItemsWithoutNextAction = append(dashboard.ItemsWithoutNextAction, item)
+			dashboard.Counts["itemsWithoutNextAction"]++
+		}
+	}
+	SortItems(dashboard.ApprovalItems)
+	SortItems(dashboard.BlockedItems)
+	SortItems(dashboard.ReadyItems)
+	SortItems(dashboard.HighRiskItems)
+	SortItems(dashboard.ItemsWithoutNextAction)
+	dashboard.ApprovalItems = limitWorkflowItems(dashboard.ApprovalItems, 25)
+	dashboard.BlockedItems = limitWorkflowItems(dashboard.BlockedItems, 25)
+	dashboard.ReadyItems = limitWorkflowItems(dashboard.ReadyItems, 25)
+	dashboard.HighRiskItems = limitWorkflowItems(dashboard.HighRiskItems, 25)
+	dashboard.ItemsWithoutNextAction = limitWorkflowItems(dashboard.ItemsWithoutNextAction, 25)
+	return dashboard, nil
 }
 
 func (s *service) Get(id uuid.UUID) (*WorkflowRecord, error) {
@@ -152,11 +378,47 @@ func (s *service) Get(id uuid.UUID) (*WorkflowRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	intake, err := s.repo.FindIntakeRecords(id)
+	if err != nil {
+		return nil, err
+	}
+	matches, err := s.repo.FindProjectMatches(id)
+	if err != nil {
+		return nil, err
+	}
+	evidence, err := s.repo.FindEvidenceClaims(id)
+	if err != nil {
+		return nil, err
+	}
+	openLoops, err := s.repo.FindOpenLoops(id)
+	if err != nil {
+		return nil, err
+	}
+	proposals, err := s.repo.FindProposals(id)
+	if err != nil {
+		return nil, err
+	}
+	qualityGates, err := s.repo.FindQualityGates(id)
+	if err != nil {
+		return nil, err
+	}
 	events, err := s.repo.FindEvents(id)
 	if err != nil {
 		return nil, err
 	}
-	return &WorkflowRecord{Item: *item, Checklist: checklist, Events: events}, nil
+	transitions, err := s.repo.FindTransitions(id)
+	if err != nil {
+		return nil, err
+	}
+	sourceLinks, err := s.repo.FindSourceLinks(id)
+	if err != nil {
+		return nil, err
+	}
+	decisions, err := s.repo.FindDecisions(id)
+	if err != nil {
+		return nil, err
+	}
+	return &WorkflowRecord{Item: *item, Checklist: checklist, Intake: intake, Matches: matches, Evidence: evidence, OpenLoops: openLoops, Proposals: proposals, QualityGates: qualityGates, Transitions: transitions, SourceLinks: sourceLinks, Decisions: decisions, Events: events}, nil
 }
 
 func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*WorkflowRecord, error) {
@@ -175,11 +437,13 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 	item.CurrentState = target
 	if target == StateNeedsApproval {
 		item.RequiresApproval = true
+		item.ApprovalStatus = "pending"
 		item.ApprovalReason = firstNonEmpty(item.ApprovalReason, "manual review requested")
 	}
 	if target == StateReady && item.RequiresApproval && request.Approved {
 		item.BlockedReason = ""
 		item.NextAction = "execute approved workflow steps"
+		item.ApprovalStatus = "approved"
 	}
 	if target == StateBlocked {
 		item.BlockedReason = firstNonEmpty(request.Message, "workflow blocked")
@@ -187,6 +451,8 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 	}
 	if target == StateCompleted {
 		item.NextAction = "write completion summary and archive when reviewed"
+		now := time.Now().UTC()
+		item.CompletedAt = &now
 	}
 	if target == StateArchived {
 		item.Archived = true
@@ -195,7 +461,39 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 	if err != nil {
 		return nil, err
 	}
+	s.recordTransition(updated.ID, from, target, "manual_transition", firstNonEmpty(request.Actor, "operator"), request.Approved, request.Message)
+	if request.Approved {
+		s.decide(updated.ID, "approval", "approved", firstNonEmpty(request.Message, "human approval recorded"), "manual approval gate", true, firstNonEmpty(request.Actor, "operator"))
+	}
 	s.audit(updated.ID, "workflow.transition", from, target, request.Message, "manual_transition", approvalRule(request.Approved), updated.SourceURI, firstNonEmpty(request.Actor, "operator"))
+	return s.Get(updated.ID)
+}
+
+func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionRequest) (*WorkflowRecord, error) {
+	if request.Approved {
+		return s.Transition(id, TransitionRequest{
+			TargetState: StateReady,
+			Message:     firstNonEmpty(request.Note, "workflow approved for controlled execution"),
+			Approved:    true,
+			Actor:       firstNonEmpty(request.Actor, "operator"),
+		})
+	}
+	item, err := s.repo.FindItem(id)
+	if err != nil {
+		return nil, err
+	}
+	from := item.CurrentState
+	item.CurrentState = StateBlocked
+	item.ApprovalStatus = "rejected"
+	item.BlockedReason = firstNonEmpty(request.Note, "approval rejected")
+	item.NextAction = "review rejection reason before continuing"
+	updated, err := s.repo.UpdateItem(item)
+	if err != nil {
+		return nil, err
+	}
+	s.recordTransition(updated.ID, from, StateBlocked, "approval_resolution", firstNonEmpty(request.Actor, "operator"), false, updated.BlockedReason)
+	s.decide(updated.ID, "approval", "rejected", updated.BlockedReason, "manual approval gate", false, firstNonEmpty(request.Actor, "operator"))
+	s.audit(updated.ID, "workflow.approval", from, StateBlocked, updated.BlockedReason, "approval_resolution", "human approval rejected", updated.SourceURI, firstNonEmpty(request.Actor, "operator"))
 	return s.Get(updated.ID)
 }
 
@@ -222,17 +520,153 @@ func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request Ch
 	return nil, fmt.Errorf("checklist item not found")
 }
 
+func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
+	items, err := s.repo.FindRunnableItems(time.Now().UTC(), request.Limit)
+	if err != nil {
+		return nil, err
+	}
+	summary := &WorkflowRunSummary{
+		Checked: len(items),
+		Results: []WorkflowRunResult{},
+	}
+	for _, item := range items {
+		result := s.runWorkflowItem(item)
+		summary.Results = append(summary.Results, result)
+		switch result.Status {
+		case "completed":
+			summary.Completed++
+		case "retry_scheduled":
+			summary.Retried++
+		case "blocked":
+			summary.Blocked++
+		default:
+			summary.Skipped++
+		}
+	}
+	return summary, nil
+}
+
+func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
+	if item.MaxRetries <= 0 {
+		item.MaxRetries = 2
+	}
+	if s.taskRunner == nil {
+		message := "task runner is not configured"
+		item.CurrentState = StateBlocked
+		item.BlockedReason = message
+		item.NextAction = "configure task runner adapter before worker execution"
+		item.LastWorkerError = message
+		updated, _ := s.repo.UpdateItem(&item)
+		if updated != nil {
+			s.recordTransition(updated.ID, StateReady, StateBlocked, "worker", "workflow-worker", false, message)
+			s.decide(updated.ID, "worker_execution", "blocked", message, "task runner dependency check", false, "workflow-worker")
+			s.audit(updated.ID, "workflow.worker", StateReady, StateBlocked, message, "worker", "task runner missing", updated.SourceURI, "workflow-worker")
+		}
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, Message: message}
+	}
+
+	now := time.Now().UTC()
+	from := item.CurrentState
+	item.CurrentState = StateInProgress
+	item.LastRunAt = &now
+	item.NextAction = "task engine is executing approved workflow item"
+	item.LastWorkerError = ""
+	if _, err := s.repo.UpdateItem(&item); err != nil {
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: from, Attempts: item.RetryCount, Message: err.Error()}
+	}
+	s.recordTransition(item.ID, from, StateInProgress, "worker", "workflow-worker", item.ApprovalStatus == "approved", "worker claimed runnable workflow")
+	s.audit(item.ID, "workflow.worker_started", from, StateInProgress, "worker claimed runnable workflow", "worker", "durable worker execution", item.SourceURI, "workflow-worker")
+
+	runResult, err := s.taskRunner.RunWorkflowTask(TaskRunRequest{
+		WorkflowID:    item.ID.String(),
+		Request:       item.Description,
+		ProjectKey:    item.ProjectKey,
+		HumanApproved: !item.RequiresApproval || item.ApprovalStatus == "approved",
+		ApprovalNote:  item.ApprovalReason,
+	})
+	if err != nil {
+		return s.handleRunFailure(&item, "task engine failed: "+err.Error(), "")
+	}
+	if runResult == nil {
+		return s.handleRunFailure(&item, "task engine returned no result", "")
+	}
+	item.LastTaskPlanID = runResult.PlanID
+	item.VerificationStatus = runResult.VerificationStatus
+	if runResult.Passed && !runResult.ReviewRequired {
+		completed := time.Now().UTC()
+		item.CurrentState = StateCompleted
+		item.CompletedAt = &completed
+		item.NextRunAt = nil
+		item.LastWorkerError = ""
+		item.NextAction = "write completion summary and archive when reviewed"
+		if _, err := s.repo.UpdateItem(&item); err != nil {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: err.Error()}
+		}
+		s.recordTransition(item.ID, StateInProgress, StateCompleted, "worker", "workflow-worker", item.ApprovalStatus == "approved", "task engine result verified workflow completion")
+		s.decide(item.ID, "verification_completion", "completed", "verification accepted task engine result", firstNonEmpty(runResult.VerificationStatus, "validation passed"), item.ApprovalStatus == "approved", "workflow-worker")
+		s.audit(item.ID, "workflow.worker_completed", StateInProgress, StateCompleted, firstNonEmpty(runResult.Output, "task engine result verified workflow completion"), "worker", "verification accepted completion", item.SourceURI, "workflow-worker")
+		s.markChecklistProgress(item.ID, "Verify completion before closing")
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "completed", State: StateCompleted, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "verified completion"}
+	}
+	reason := firstNonEmpty(runResult.FailureReason, "task engine validation did not pass")
+	if runResult.ReviewRequired {
+		reason = firstNonEmpty(reason, "task engine requested review")
+	}
+	return s.handleRunFailure(&item, reason, runResult.VerificationStatus)
+}
+
+func (s *service) handleRunFailure(item *models.WorkflowItem, reason, verificationStatus string) WorkflowRunResult {
+	item.RetryCount++
+	item.VerificationStatus = verificationStatus
+	item.LastWorkerError = reason
+	attempts := item.RetryCount
+	if attempts < item.MaxRetries {
+		next := time.Now().UTC().Add(retryBackoff(attempts))
+		item.CurrentState = StateReady
+		item.NextRunAt = &next
+		item.NextAction = "retry scheduled after worker validation failure"
+		_, _ = s.repo.UpdateItem(item)
+		s.recordTransition(item.ID, StateInProgress, StateReady, "worker_retry", "workflow-worker", item.ApprovalStatus == "approved", reason)
+		s.decide(item.ID, "retry", "scheduled", reason, fmt.Sprintf("retry %d of %d", attempts, item.MaxRetries), false, "workflow-worker")
+		s.audit(item.ID, "workflow.worker_retry", StateInProgress, StateReady, reason, "worker_retry", "retry scheduled with durable counter", item.SourceURI, "workflow-worker")
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "retry_scheduled", State: StateReady, Attempts: attempts, VerificationStatus: verificationStatus, NextRunAt: item.NextRunAt, Message: reason}
+	}
+	item.CurrentState = StateBlocked
+	item.BlockedReason = reason
+	item.NextAction = "human review required after retry limit"
+	item.NextRunAt = nil
+	_, _ = s.repo.UpdateItem(item)
+	s.recordTransition(item.ID, StateInProgress, StateBlocked, "worker_retry_exhausted", "workflow-worker", item.ApprovalStatus == "approved", reason)
+	s.decide(item.ID, "retry", "exhausted", reason, fmt.Sprintf("retry limit reached at %d attempts", attempts), false, "workflow-worker")
+	s.audit(item.ID, "workflow.worker_blocked", StateInProgress, StateBlocked, reason, "worker_retry_exhausted", "retry limit reached", item.SourceURI, "workflow-worker")
+	return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: attempts, VerificationStatus: verificationStatus, Message: reason}
+}
+
 func (s *service) Overview() Overview {
+	rules := s.ensureDefaultRules()
 	return Overview{
 		States: []string{StateNewInput, StateClassified, StateLinked, StateChecklistGenerated, StateWaitingInput, StateNeedsApproval, StateReady, StateInProgress, StateCompleted, StateArchived, StateBlocked},
 		SafetyRules: []string{
 			"legal, government, insurance, lawyer, financial, account-change, deletion, and public-posting workflows require approval",
 			"low-risk administrative checklist generation may run automatically",
+			"workflow worker retries are capped and failed items are blocked for review",
 			"blocked workflows must record a reason and next action",
 			"completion requires checklist and verification evidence before archive",
 		},
 		Capabilities: engineCapabilities(),
+		Rules:        rules,
 	}
+}
+
+func (s *service) ensureDefaultRules() []models.WorkflowRule {
+	for _, rule := range defaultWorkflowRules() {
+		_, _ = s.repo.SaveRule(&rule)
+	}
+	rules, err := s.repo.FindRules()
+	if err != nil {
+		return defaultWorkflowRules()
+	}
+	return rules
 }
 
 func (s *service) audit(workflowID uuid.UUID, eventType, from, to, message, trigger, rule, sourceURI, actor string) {
@@ -249,20 +683,78 @@ func (s *service) audit(workflowID uuid.UUID, eventType, from, to, message, trig
 	})
 }
 
+func (s *service) recordTransition(workflowID uuid.UUID, from, to, trigger, actor string, approved bool, reason string) {
+	_, _ = s.repo.CreateTransition(&models.WorkflowTransition{
+		WorkflowID: workflowID,
+		FromState:  from,
+		ToState:    to,
+		Trigger:    trigger,
+		Actor:      actor,
+		Approved:   approved,
+		Reason:     reason,
+	})
+}
+
+func (s *service) linkSource(workflowID uuid.UUID, sourceType, sourceID, sourceURI, sourceLabel, relationship string) {
+	_, _ = s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+		WorkflowID:   workflowID,
+		SourceType:   sourceType,
+		SourceID:     sourceID,
+		SourceURI:    sourceURI,
+		SourceLabel:  sourceLabel,
+		Relationship: firstNonEmpty(relationship, "related"),
+	})
+}
+
+func (s *service) decide(workflowID uuid.UUID, decisionType, decision, reason, rule string, approved bool, actor string) {
+	_, _ = s.repo.CreateDecision(&models.WorkflowDecision{
+		WorkflowID:   workflowID,
+		DecisionType: decisionType,
+		Decision:     decision,
+		Reason:       reason,
+		RuleApplied:  rule,
+		Approved:     approved,
+		Actor:        actor,
+	})
+}
+
+func (s *service) markChecklistProgress(workflowID uuid.UUID, contains string) {
+	checklist, err := s.repo.FindChecklist(workflowID)
+	if err != nil {
+		return
+	}
+	needle := strings.ToLower(contains)
+	for _, item := range checklist {
+		if item.Status == "done" || !strings.Contains(strings.ToLower(item.Label), needle) {
+			continue
+		}
+		item.Status = "done"
+		_, _ = s.repo.UpdateChecklistItem(&item)
+		s.audit(workflowID, "workflow.checklist", "", "", "checklist item marked done: "+item.Label, "worker_completion", "verification completed", "", "workflow-worker")
+		return
+	}
+}
+
 type inputAnalysis struct {
-	title            string
-	taskType         string
-	riskLevel        string
-	priority         int
-	confidence       float64
-	autonomyLevel    string
-	requiresApproval bool
-	approvalReason   string
-	blockedReason    string
-	nextAction       string
-	initialState     string
-	dueAt            *time.Time
-	ruleApplied      string
+	title             string
+	taskType          string
+	projectKey        string
+	projectConfidence float64
+	matchReasons      []string
+	trelloRef         string
+	driveRef          string
+	riskLevel         string
+	priority          int
+	confidence        float64
+	autonomyLevel     string
+	requiresApproval  bool
+	approvalReason    string
+	blockedReason     string
+	nextAction        string
+	initialState      string
+	dueAt             *time.Time
+	entities          []string
+	ruleApplied       string
 }
 
 type checklistTemplate struct {
@@ -278,8 +770,10 @@ func analyzeInput(request IntakeRequest) inputAnalysis {
 	priority := priorityScore(text, taskType, risk)
 	title := compactTitle(request.Input)
 	dueAt := detectDueDate(text)
-	state := StateChecklistGenerated
-	next := "review checklist and execute allowed low-risk steps"
+	projectKey, projectConfidence, matchReasons, trelloRef, driveRef := matchProject(request, text, taskType)
+	entities := extractEntities(request.Input)
+	state := StateReady
+	next := "execute allowed low-risk steps through workflow worker"
 	blocked := ""
 	autonomy := "autonomous_safe"
 	if requiresApproval {
@@ -299,19 +793,25 @@ func analyzeInput(request IntakeRequest) inputAnalysis {
 		next = "request clarification before execution"
 	}
 	return inputAnalysis{
-		title:            title,
-		taskType:         taskType,
-		riskLevel:        risk,
-		priority:         priority,
-		confidence:       confidence,
-		autonomyLevel:    autonomy,
-		requiresApproval: requiresApproval,
-		approvalReason:   approvalReason,
-		blockedReason:    blocked,
-		nextAction:       next,
-		initialState:     state,
-		dueAt:            dueAt,
-		ruleApplied:      "workflow suggestions applied: state machine, trigger handling, adapters, memory context, decision rules, AI reasoning, checklist, priority, escalation, audit, approvals, workers, feedback, safety",
+		title:             title,
+		taskType:          taskType,
+		projectKey:        projectKey,
+		projectConfidence: projectConfidence,
+		matchReasons:      matchReasons,
+		trelloRef:         trelloRef,
+		driveRef:          driveRef,
+		riskLevel:         risk,
+		priority:          priority,
+		confidence:        confidence,
+		autonomyLevel:     autonomy,
+		requiresApproval:  requiresApproval,
+		approvalReason:    approvalReason,
+		blockedReason:     blocked,
+		nextAction:        next,
+		initialState:      state,
+		dueAt:             dueAt,
+		entities:          entities,
+		ruleApplied:       "workflow suggestions applied: state machine, trigger handling, adapters, memory context, decision rules, AI reasoning, checklist, priority, escalation, audit, approvals, workers, feedback, safety",
 	}
 }
 
@@ -387,6 +887,126 @@ func detectDueDate(text string) *time.Time {
 	return nil
 }
 
+func matchProject(request IntakeRequest, text, taskType string) (string, float64, []string, string, string) {
+	if strings.TrimSpace(request.ProjectKey) != "" {
+		return strings.TrimSpace(request.ProjectKey), 0.95, []string{"explicit project key"}, "", driveRefForProject(request.ProjectKey)
+	}
+	switch {
+	case containsAny(text, "vivare", "hearing", "heat pump", "housing association"):
+		return "Vivare dispute", 0.88, []string{"keyword: vivare", "legal/dispute terms"}, "Vivare - hearing preparation", "Legal/Vivare"
+	case containsAny(text, "asr", "burglary", "claim", "policy number", "damage number"):
+		return "ASR burglary claim", 0.84, []string{"insurance claim terms"}, "ASR - claim documents", "Insurance/ASR"
+	case containsAny(text, "sharet"):
+		return "ShareT development", 0.82, []string{"project name: ShareT"}, "ShareT - development", "Projects/ShareT"
+	case containsAny(text, "laro"):
+		return "LARO development", 0.8, []string{"project name: LARO"}, "LARO - development", "Projects/LARO"
+	case taskType == "publishing" || containsAny(text, "medium", "blog", "article"):
+		return "Medium publishing", 0.7, []string{"publishing workflow terms"}, "Medium - draft pipeline", "Content/Medium"
+	case taskType == "technical" && containsAny(text, "github", "developer", "feature", "branch", "commit"):
+		return "Software development", 0.68, []string{"software/developer terms"}, "Development - review queue", "Projects/Software"
+	default:
+		return "", 0, []string{"no confident project match"}, "", ""
+	}
+}
+
+func evidenceClaimsForInput(workflowID uuid.UUID, input string, request IntakeRequest) []models.WorkflowEvidenceClaim {
+	lower := strings.ToLower(input)
+	claims := []models.WorkflowEvidenceClaim{}
+	if !containsAny(lower, "said", "claims", "sent", "received", "approved", "rejected", "deadline", "hearing", "invoice", "contract") {
+		return claims
+	}
+	for _, sentence := range splitSentences(input) {
+		if !containsAny(strings.ToLower(sentence), "said", "claims", "sent", "received", "approved", "rejected", "deadline", "hearing", "invoice", "contract") {
+			continue
+		}
+		claims = append(claims, models.WorkflowEvidenceClaim{
+			WorkflowID:  workflowID,
+			ClaimText:   compact(sentence, 360),
+			SourceURI:   request.SourceURI,
+			SourceLabel: request.SourceLabel,
+			Reliability: reliabilityForSource(request.SourceType),
+			Status:      "source_linked",
+			NeedsReview: request.SourceURI == "",
+		})
+		if len(claims) >= 8 {
+			break
+		}
+	}
+	return claims
+}
+
+func openLoopForAnalysis(workflowID uuid.UUID, analysis inputAnalysis) *models.WorkflowOpenLoop {
+	text := strings.ToLower(analysis.title + " " + analysis.nextAction + " " + analysis.blockedReason)
+	responsible := "Robert"
+	waitingFor := ""
+	next := analysis.nextAction
+	switch {
+	case analysis.initialState == StateNeedsApproval:
+		responsible = "Robert"
+		waitingFor = "approval decision"
+		next = "approve, reject, or request changes"
+	case analysis.initialState == StateBlocked:
+		responsible = "Robert"
+		waitingFor = firstNonEmpty(analysis.blockedReason, "missing information")
+		next = "provide missing information or access"
+	case containsAny(text, "lawyer", "client", "municipality", "insurer", "vivare", "waiting"):
+		responsible = "external"
+		waitingFor = "external reply or document"
+		next = "draft follow-up if no response arrives"
+	default:
+		return nil
+	}
+	followUp := time.Now().UTC().Add(5 * 24 * time.Hour)
+	if analysis.dueAt != nil {
+		followUp = analysis.dueAt.Add(-48 * time.Hour)
+		if followUp.Before(time.Now().UTC()) {
+			followUp = time.Now().UTC().Add(24 * time.Hour)
+		}
+	}
+	return &models.WorkflowOpenLoop{
+		WorkflowID:       workflowID,
+		ResponsibleParty: responsible,
+		WaitingFor:       waitingFor,
+		NextAction:       next,
+		FollowUpAt:       &followUp,
+		Status:           "open",
+	}
+}
+
+func proposalForAnalysis(workflowID uuid.UUID, analysis inputAnalysis) *models.WorkflowProposal {
+	action := analysis.nextAction
+	options := []string{"Approve recommended action", "Request changes", "Add evidence/context", "Block this workflow"}
+	if analysis.taskType == "technical" {
+		options = []string{"Accept as ready for worker", "Request technical plan first", "Ask for tests/docs", "Block until GitHub evidence exists"}
+	}
+	if analysis.taskType == "publishing" {
+		options = []string{"Approve draft-only workflow", "Make tone safer", "Add evidence links", "Do not publish"}
+	}
+	return &models.WorkflowProposal{
+		WorkflowID:        workflowID,
+		RecommendedAction: action,
+		Options:           strings.Join(options, "\n"),
+		Status:            "open",
+	}
+}
+
+func qualityGatesForAnalysis(workflowID uuid.UUID, analysis inputAnalysis) []models.WorkflowQualityGate {
+	gates := []models.WorkflowQualityGate{
+		{WorkflowID: workflowID, Gate: "source provenance", Status: "pending", Reason: "workflow must retain source links"},
+		{WorkflowID: workflowID, Gate: "verification before completion", Status: "pending", Reason: "completion requires task/verification result"},
+	}
+	if analysis.taskType == "technical" {
+		for _, gate := range []string{"GitHub commit exists", "tests or build evidence", "README/setup updated", "Windows 11 operational path"} {
+			gates = append(gates, models.WorkflowQualityGate{WorkflowID: workflowID, Gate: gate, Status: "pending", Reason: "developer/GitHub quality gate"})
+		}
+	}
+	if analysis.taskType == "legal" || analysis.taskType == "financial" || analysis.taskType == "publishing" {
+		gates = append(gates, models.WorkflowQualityGate{WorkflowID: workflowID, Gate: "human approval", Status: "pending", Reason: "risk/autonomy rule"})
+		gates = append(gates, models.WorkflowQualityGate{WorkflowID: workflowID, Gate: "evidence-linked claims", Status: "pending", Reason: "factual claims need provenance"})
+	}
+	return gates
+}
+
 func checklistForAnalysis(analysis inputAnalysis) []checklistTemplate {
 	base := []checklistTemplate{
 		{label: "Review original source and provenance"},
@@ -457,22 +1077,80 @@ func transitionAllowed(from, to string, approved bool) bool {
 	return false
 }
 
+func defaultWorkflowRules() []models.WorkflowRule {
+	return []models.WorkflowRule{
+		{RuleKey: "approval.legal_external", Name: "Legal and government communication is draft-only", Description: "Legal, government, insurance, housing association, and lawyer messages must be drafted and held for Robert approval before sending.", Category: "approval", Enabled: true},
+		{RuleKey: "approval.public_posting", Name: "Public posting requires evidence and approval", Description: "Public accountability posts, Medium publishing, social posts, and public claims are prepared as drafts only until evidence is linked and Robert approves.", Category: "approval", Enabled: true},
+		{RuleKey: "approval.financial_limit_25", Name: "Financial commitments over 25 EUR need approval", Description: "Payments, paid provider usage, purchases, refunds, quotes, contracts, and commitments over 25 EUR cannot execute automatically.", Category: "approval", Enabled: true},
+		{RuleKey: "safety.no_permanent_delete", Name: "Never delete evidence permanently", Description: "Legal, financial, source, and project files may be archived or marked duplicate, but permanent deletion requires explicit human approval.", Category: "safety", Enabled: true},
+		{RuleKey: "safety.account_changes", Name: "Account changes require approval", Description: "Password, permission, profile, connector, posting, or account-setting changes must be approval-gated.", Category: "safety", Enabled: true},
+		{RuleKey: "workflow.checklist_required", Name: "Execution workflows receive checklists", Description: "Every actionable workflow item gets a concrete checklist before worker execution or completion.", Category: "workflow", Enabled: true},
+		{RuleKey: "workflow.blocked_has_reason", Name: "Blocked workflows need owner, reason, and next action", Description: "Blocked and waiting workflows must record the responsible party, blocker, next action, and follow-up date where possible.", Category: "workflow", Enabled: true},
+		{RuleKey: "workflow.external_followup", Name: "External waiting creates follow-up", Description: "Items waiting for a lawyer, municipality, client, insurer, freelancer, developer, or VA get an open loop with a follow-up date.", Category: "workflow", Enabled: true},
+		{RuleKey: "workflow.retry_limits", Name: "Worker retries are durable and capped", Description: "Failed worker attempts are counted, retried with backoff, and blocked for human review after the retry limit.", Category: "workflow", Enabled: true},
+		{RuleKey: "verification.before_done", Name: "Completion requires verification", Description: "A workflow can only complete through the worker when checklist progress and task verification support completion.", Category: "verification", Enabled: true},
+		{RuleKey: "verification.claims_need_sources", Name: "Important factual claims need sources", Description: "Evidence claims are linked to their source where possible and marked for review when unsupported.", Category: "verification", Enabled: true},
+		{RuleKey: "developer.github_quality_gate", Name: "Developer completion requires GitHub evidence", Description: "Developer claims of completion require branch/commit/build/test/readme evidence before acceptance.", Category: "developer", Enabled: true},
+		{RuleKey: "content.medium_draft_only", Name: "Medium articles are draft-only", Description: "Article workflows may draft, format, and attach a draft link, but publishing remains approval-gated.", Category: "content", Enabled: true},
+		{RuleKey: "learning.corrections_feed_memory", Name: "Corrections become future rules or memory", Description: "Rejected drafts, project corrections, and tone changes should become reviewable lessons instead of unbounded raw memory.", Category: "learning", Enabled: true},
+	}
+}
+
+func limitWorkflowItems(items []models.WorkflowItem, limit int) []models.WorkflowItem {
+	if limit <= 0 || len(items) <= limit {
+		return items
+	}
+	return items[:limit]
+}
+
 func engineCapabilities() []EngineCapability {
 	return []EngineCapability{
 		{ID: "state-machine", Name: "Workflow state machine", Status: "implemented", Implemented: []string{"persistent workflow states", "validated transitions", "blocked/waiting/completed/archive states"}, Next: []string{"per-project custom states"}},
-		{ID: "event-triggers", Name: "Event-driven trigger logic", Status: "partial", Implemented: []string{"intake trigger field", "audit trigger log", "source preflight integration"}, Next: []string{"webhook workers per connector"}},
-		{ID: "adapters", Name: "Integration adapter layer", Status: "partial", Implemented: []string{"adapter capability names", "source-local-folder path", "internal action abstraction"}, Next: []string{"Gmail/Trello/Drive concrete adapters"}},
-		{ID: "context-memory", Name: "Context and memory layer", Status: "implemented", Implemented: []string{"project key", "source links", "memory/task/source retrieval"}, Next: []string{"project dossier projection"}},
-		{ID: "decision-rules", Name: "Autonomous decision rules", Status: "implemented", Implemented: []string{"approval rules", "autonomy levels", "blocked reasons", "next action"}, Next: []string{"configurable per-contact rules"}},
+		{ID: "event-triggers", Name: "Event-driven trigger logic", Status: "implemented", Implemented: []string{"intake trigger field", "audit trigger log", "connected-source extraction creates workflow candidates"}, Next: []string{"webhook workers per connector"}},
+		{ID: "adapters", Name: "Integration adapter layer", Status: "partial", Implemented: []string{"adapter capability names", "source-local-folder path", "task-engine runner adapter"}, Next: []string{"Gmail/Trello/Drive concrete adapters"}},
+		{ID: "context-memory", Name: "Context and memory layer", Status: "implemented", Implemented: []string{"project key", "separate source links", "memory/task/source retrieval"}, Next: []string{"project dossier projection"}},
+		{ID: "decision-rules", Name: "Autonomous decision rules", Status: "implemented", Implemented: []string{"separate decision records", "approval rules", "autonomy levels", "blocked reasons", "next action"}, Next: []string{"configurable per-contact rules"}},
 		{ID: "ai-reasoning", Name: "AI reasoning layer", Status: "partial", Implemented: []string{"deterministic classification fallback", "task type/risk/priority extraction"}, Next: []string{"LLM structured extractor with schema validation"}},
 		{ID: "checklists", Name: "Checklist generation", Status: "implemented", Implemented: []string{"type-specific checklist templates", "approval-marked checklist steps"}, Next: []string{"learned checklist templates"}},
 		{ID: "priority", Name: "Priority engine", Status: "implemented", Implemented: []string{"deadline/risk/type scoring", "priority-sorted inbox"}, Next: []string{"waiting-time and client importance scoring"}},
-		{ID: "exceptions", Name: "Exception and escalation logic", Status: "implemented", Implemented: []string{"blocked state", "missing-info detection", "retry/escalation concepts"}, Next: []string{"worker retry ledger"}},
-		{ID: "audit", Name: "Audit trail and traceability", Status: "implemented", Implemented: []string{"workflow events", "rule applied", "trigger/source/actor logging"}, Next: []string{"cross-module trace IDs"}},
-		{ID: "approval-gates", Name: "Human approval gates", Status: "implemented", Implemented: []string{"requiresApproval flag", "approval-only transitions", "approval checklist steps"}, Next: []string{"per-action approval records"}},
-		{ID: "worker-queue", Name: "Worker/queue system", Status: "partial", Implemented: []string{"worker state model", "ready/in-progress/blocked lifecycle"}, Next: []string{"durable job runner"}},
+		{ID: "exceptions", Name: "Exception and escalation logic", Status: "implemented", Implemented: []string{"blocked state", "missing-info detection", "durable retry limits"}, Next: []string{"operator notification channels"}},
+		{ID: "audit", Name: "Audit trail and traceability", Status: "implemented", Implemented: []string{"workflow events", "separate transitions", "decision records", "source links"}, Next: []string{"cross-module trace IDs"}},
+		{ID: "approval-gates", Name: "Human approval gates", Status: "implemented", Implemented: []string{"approval queue", "approve/reject buttons", "approval-only transitions", "approval checklist steps"}, Next: []string{"per-action approval scopes"}},
+		{ID: "worker-queue", Name: "Worker/queue system", Status: "implemented", Implemented: []string{"durable retry counters", "ready/in-progress/completed/blocked lifecycle", "task-engine execution adapter"}, Next: []string{"background scheduler process"}},
 		{ID: "feedback", Name: "Feedback loop", Status: "partial", Implemented: []string{"checklist correction events", "resolution notes"}, Next: []string{"store rejected draft/tone preferences into memory"}},
 		{ID: "safety", Name: "Safety boundaries", Status: "implemented", Implemented: []string{"never-send/publish/delete/spend without approval rules", "approval reason surfaced"}, Next: []string{"policy editor"}},
+		{ID: "universal-intake", Name: "Universal intake engine", Status: "implemented", Implemented: []string{"manual/source intake request", "source id/type/content/sender metadata", "normalized intake records"}, Next: []string{"connector webhooks and voice/screenshot intake"}},
+		{ID: "project-matching", Name: "Project matching engine", Status: "implemented", Implemented: []string{"project match records", "keyword/project heuristics", "trello and drive reference hints"}, Next: []string{"semantic matching against connected-source index"}},
+		{ID: "context-builder", Name: "Context builder engine", Status: "partial", Implemented: []string{"project key", "source provenance", "memory/source modules available"}, Next: []string{"project dossier projection with people, deadlines, documents, and open questions"}},
+		{ID: "action-planner", Name: "Action planner engine", Status: "partial", Implemented: []string{"next action selection", "task-engine worker adapter", "proposal records"}, Next: []string{"multi-step executable plans per workflow"}},
+		{ID: "checklist-compiler", Name: "Checklist compiler engine", Status: "implemented", Implemented: []string{"task-type checklist templates", "approval-marked checklist steps", "deadline reminder steps"}, Next: []string{"per-project editable templates"}},
+		{ID: "autonomy-levels", Name: "Autonomy level engine", Status: "implemented", Implemented: []string{"approve_before_execute", "autonomous_safe", "blocked/waiting handling"}, Next: []string{"per-source/per-contact autonomy settings"}},
+		{ID: "risk-scoring", Name: "Risk scoring engine", Status: "implemented", Implemented: []string{"legal/financial/public/destructive risk scoring", "approval reason surfaced"}, Next: []string{"weighted project/client/irreversibility risk model"}},
+		{ID: "evidence-linking", Name: "Evidence and source linking engine", Status: "implemented", Implemented: []string{"source link table", "evidence claim table", "unsupported claim review flag"}, Next: []string{"claim-source precision checks against extracted snippets"}},
+		{ID: "deadline-detection", Name: "Deadline detection engine", Status: "partial", Implemented: []string{"today/tomorrow/urgent detection", "due dates", "check reminder checklist items"}, Next: []string{"date parser for letters, PDFs, and calendar phrases"}},
+		{ID: "follow-up", Name: "Follow-up engine", Status: "implemented", Implemented: []string{"open loop records", "follow-up date", "dashboard due-open-loop queue"}, Next: []string{"calendar reminder adapter and message draft generation"}},
+		{ID: "waiting-state", Name: "Waiting-state engine", Status: "implemented", Implemented: []string{"blocked/waiting states", "responsible party", "waiting-for reason"}, Next: []string{"automatic Trello On-Hold transitions"}},
+		{ID: "delegation", Name: "Delegation engine", Status: "partial", Implemented: []string{"proposal/options records", "checklist output suitable for VA/developer handoff"}, Next: []string{"dedicated delegation package templates"}},
+		{ID: "proposal", Name: "Proposal yes-no engine", Status: "implemented", Implemented: []string{"recommended action records", "option sets by task type"}, Next: []string{"approve/edit/reject proposal actions"}},
+		{ID: "communication-drafting", Name: "Communication drafting engine", Status: "partial", Implemented: []string{"task type and approval gates", "formal legal/publishing/developer workflow hints"}, Next: []string{"recipient-specific tone templates and draft adapters"}},
+		{ID: "document-ingestion", Name: "Document ingestion engine", Status: "partial", Implemented: []string{"allowlisted local folder sync", "text extraction for readable files", "source provenance"}, Next: []string{"OCR, file renaming, folder movement, PDF extraction"}},
+		{ID: "duplicate-version", Name: "Duplicate and version control engine", Status: "partial", Implemented: []string{"workflow dedupe by source URI", "source item cursor/hash support"}, Next: []string{"near-duplicate and final-vs-draft detection"}},
+		{ID: "case-timeline", Name: "Case timeline engine", Status: "partial", Implemented: []string{"timestamped intake/events/transitions/claims"}, Next: []string{"project timeline API grouped by evidence"}},
+		{ID: "contradiction-detection", Name: "Contradiction detection engine", Status: "partial", Implemented: []string{"verification module has conflict statuses", "evidence claims can be reviewed"}, Next: []string{"cross-source contradiction scans"}},
+		{ID: "developer-github", Name: "Developer/GitHub engine", Status: "partial", Implemented: []string{"technical task classification", "GitHub quality gate records"}, Next: []string{"GitHub branch/commit/check adapters"}},
+		{ID: "software-quality-gate", Name: "Software quality gate engine", Status: "implemented", Implemented: []string{"test/build/readme/windows setup gates created for technical workflows"}, Next: []string{"automated repository acceptance reports"}},
+		{ID: "public-accountability", Name: "Public accountability engine", Status: "partial", Implemented: []string{"public-post approval gate", "evidence claim records", "risk-gated publishing flow"}, Next: []string{"safer wording reviewer and source-backed timeline builder"}},
+		{ID: "medium-publishing", Name: "Medium/blog publishing engine", Status: "partial", Implemented: []string{"publishing task type", "draft-only rule", "article checklist"}, Next: []string{"Medium draft adapter and image prompt workflow"}},
+		{ID: "client-operations", Name: "Client job operations engine", Status: "partial", Implemented: []string{"administrative workflow path", "deadline/priority/checklist support"}, Next: []string{"quote, travel, materials, and invoice templates"}},
+		{ID: "calendar-availability", Name: "Calendar and availability engine", Status: "partial", Implemented: []string{"scheduling classification", "deadline/check reminders"}, Next: []string{"calendar adapter and travel-time checks"}},
+		{ID: "negotiation-support", Name: "Negotiation support engine", Status: "planned", Implemented: []string{"proposal record foundation"}, Next: []string{"preferred/fallback/boundary proposal generator"}},
+		{ID: "admin-monitoring", Name: "Admin monitoring dashboard engine", Status: "implemented", Implemented: []string{"dashboard endpoint", "approvals, blocked, ready, high-risk, due open loops, missing next action"}, Next: []string{"operator notification channel"}},
+		{ID: "error-recovery", Name: "Error recovery engine", Status: "implemented", Implemented: []string{"retry backoff", "blocked after retry limit", "audit of failures"}, Next: []string{"connector-specific recovery playbooks"}},
+		{ID: "learning-corrections", Name: "Learning-from-corrections engine", Status: "partial", Implemented: []string{"approval/rejection notes", "checklist update audit", "rule for corrections feeding memory"}, Next: []string{"reviewable memory lessons from corrections"}},
+		{ID: "rules-library", Name: "Rules library engine", Status: "implemented", Implemented: []string{"persistent editable rule table", "default 14-rule safety/workflow library"}, Next: []string{"dashboard rule editor"}},
+		{ID: "multi-agent-workers", Name: "Multi-agent worker engine", Status: "partial", Implemented: []string{"single orchestrated task runner adapter", "capability separation by module"}, Next: []string{"specialized worker registry"}},
+		{ID: "next-best-action", Name: "Next best action engine", Status: "implemented", Implemented: []string{"next action field on every intake", "dashboard flags missing next actions"}, Next: []string{"project-level next-best-action rollup"}},
+		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
 	}
 }
 
@@ -482,6 +1160,84 @@ func compactTitle(value string) string {
 		return value
 	}
 	return value[:87] + "..."
+}
+
+func compact(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit <= 3 || len(value) <= limit {
+		return value
+	}
+	return value[:limit-3] + "..."
+}
+
+func parseOptionalTime(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return &parsed
+		}
+	}
+	return nil
+}
+
+func urgencyForPriority(priority int) string {
+	switch {
+	case priority >= 85:
+		return "high"
+	case priority >= 60:
+		return "medium"
+	default:
+		return "normal"
+	}
+}
+
+func driveRefForProject(projectKey string) string {
+	clean := strings.ReplaceAll(strings.TrimSpace(projectKey), "\\", "/")
+	if clean == "" {
+		return ""
+	}
+	return "Projects/" + clean
+}
+
+func reliabilityForSource(sourceType string) string {
+	switch strings.ToLower(strings.TrimSpace(sourceType)) {
+	case "email", "cloud_document", "local_folder", "github", "calendar":
+		return "direct_source"
+	case "":
+		return "unlinked"
+	default:
+		return "connected_source"
+	}
+}
+
+func splitSentences(value string) []string {
+	value = strings.NewReplacer("\n", ". ", ";", ".").Replace(value)
+	result := []string{}
+	for _, part := range strings.Split(value, ".") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func extractEntities(value string) []string {
+	result := []string{}
+	for _, word := range strings.Fields(value) {
+		word = strings.Trim(word, ".,;:()[]")
+		if len(word) > 2 && word[:1] == strings.ToUpper(word[:1]) {
+			result = append(result, word)
+		}
+	}
+	if len(result) > 20 {
+		return uniqueStrings(result[:20])
+	}
+	return uniqueStrings(result)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -503,8 +1259,55 @@ func containsAny(value string, needles ...string) bool {
 	return false
 }
 
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	result := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
 func minInt(left, right int) int {
 	return int(math.Min(float64(left), float64(right)))
+}
+
+func approvalStatus(requiresApproval bool) string {
+	if requiresApproval {
+		return "pending"
+	}
+	return "not_required"
+}
+
+func maxRetriesForAnalysis(analysis inputAnalysis) int {
+	if analysis.riskLevel == "high" || analysis.confidence < 0.6 {
+		return 1
+	}
+	if analysis.taskType == "technical" {
+		return 3
+	}
+	return 2
+}
+
+func reminderBefore(due time.Time) *time.Time {
+	reminder := due.Add(-24 * time.Hour)
+	now := time.Now().UTC()
+	if reminder.Before(now) {
+		reminder = now
+	}
+	return &reminder
+}
+
+func retryBackoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 15 * time.Minute
+	}
+	return time.Duration(attempt*attempt) * 15 * time.Minute
 }
 
 func approvalRule(approved bool) string {

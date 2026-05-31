@@ -38,8 +38,72 @@ func TestIntakeCreatesApprovalGatedLegalWorkflow(t *testing.T) {
 	if !hasApprovalChecklist(record.Checklist) {
 		t.Fatalf("expected approval-marked checklist item")
 	}
-	if len(record.Events) != 1 {
-		t.Fatalf("events = %d, want 1 audit event", len(record.Events))
+	if len(record.Intake) != 1 {
+		t.Fatalf("intake records = %d, want 1", len(record.Intake))
+	}
+	if len(record.Matches) != 1 {
+		t.Fatalf("project matches = %d, want 1", len(record.Matches))
+	}
+	if len(record.OpenLoops) != 1 {
+		t.Fatalf("open loops = %d, want 1 approval loop", len(record.OpenLoops))
+	}
+	if len(record.Proposals) != 1 {
+		t.Fatalf("proposals = %d, want 1", len(record.Proposals))
+	}
+	if len(record.QualityGates) == 0 {
+		t.Fatalf("expected quality gates")
+	}
+	if len(record.Evidence) == 0 {
+		t.Fatalf("expected evidence claims from legal/hearing input")
+	}
+	if len(record.Events) < 2 {
+		t.Fatalf("events = %d, want intake normalization and audit events", len(record.Events))
+	}
+	if len(record.SourceLinks) != 1 {
+		t.Fatalf("source links = %d, want 1", len(record.SourceLinks))
+	}
+	if len(record.Decisions) < 3 {
+		t.Fatalf("decisions = %d, want classification/priority/approval decisions", len(record.Decisions))
+	}
+	if len(record.Transitions) != 1 {
+		t.Fatalf("transitions = %d, want intake transition", len(record.Transitions))
+	}
+}
+
+func TestDashboardSurfacesQueuesAndRules(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	legal, err := service.Intake(IntakeRequest{Input: "Email from lawyer about Vivare hearing tomorrow. Draft reply only."})
+	if err != nil {
+		t.Fatalf("Intake legal: %v", err)
+	}
+	admin, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake admin: %v", err)
+	}
+	blocked, err := service.Intake(IntakeRequest{Input: "Need access, missing login credentials for local folder source."})
+	if err != nil {
+		t.Fatalf("Intake blocked: %v", err)
+	}
+
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard: %v", err)
+	}
+	if dashboard.Counts["approvals"] == 0 {
+		t.Fatalf("expected approval count, got %#v", dashboard.Counts)
+	}
+	if dashboard.Counts["ready"] == 0 {
+		t.Fatalf("expected ready count for %s, got %#v", admin.Item.ID, dashboard.Counts)
+	}
+	if dashboard.Counts["blocked"] == 0 {
+		t.Fatalf("expected blocked count for %s, got %#v", blocked.Item.ID, dashboard.Counts)
+	}
+	if len(dashboard.Rules) < 10 {
+		t.Fatalf("rules = %d, want default rulebook", len(dashboard.Rules))
+	}
+	if len(dashboard.HighRiskItems) == 0 || dashboard.HighRiskItems[0].ID != legal.Item.ID {
+		t.Fatalf("expected high-risk legal item in dashboard")
 	}
 }
 
@@ -61,6 +125,9 @@ func TestTransitionRequiresApprovalFromNeedsApprovalToReady(t *testing.T) {
 	if approved.Item.CurrentState != StateReady {
 		t.Fatalf("state = %q, want ready", approved.Item.CurrentState)
 	}
+	if approved.Item.ApprovalStatus != "approved" {
+		t.Fatalf("approval status = %q, want approved", approved.Item.ApprovalStatus)
+	}
 	if len(approved.Events) < 2 {
 		t.Fatalf("expected transition audit event")
 	}
@@ -81,6 +148,83 @@ func TestChecklistUpdateAuditsProgress(t *testing.T) {
 	}
 	if len(updated.Events) < 2 {
 		t.Fatalf("expected checklist audit event")
+	}
+}
+
+func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "plan-1",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "completed",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready", record.Item.CurrentState)
+	}
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("completed = %d, want 1: %#v", summary.Completed, summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateCompleted {
+		t.Fatalf("state = %q, want completed", updated.Item.CurrentState)
+	}
+	if updated.Item.LastTaskPlanID != "plan-1" {
+		t.Fatalf("plan id = %q, want plan-1", updated.Item.LastTaskPlanID)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("runner requests = %d, want 1", len(runner.requests))
+	}
+}
+
+func TestRunDueRetriesAndBlocksAfterLimit(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		CompletionStatus:   "review_required",
+		VerificationStatus: "needs_review",
+		FailureReason:      "unsupported claims",
+		Passed:             false,
+		ReviewRequired:     true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	item := record.Item
+	item.MaxRetries = 1
+	if _, err := repo.UpdateItem(&item); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("blocked = %d, want 1: %#v", summary.Blocked, summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked {
+		t.Fatalf("state = %q, want blocked", updated.Item.CurrentState)
+	}
+	if updated.Item.RetryCount != 1 {
+		t.Fatalf("retry count = %d, want 1", updated.Item.RetryCount)
 	}
 }
 
@@ -120,16 +264,36 @@ func hasApprovalChecklist(items []models.WorkflowChecklistItem) bool {
 }
 
 type fakeWorkflowRepo struct {
-	items     map[uuid.UUID]*models.WorkflowItem
-	checklist map[uuid.UUID][]models.WorkflowChecklistItem
-	events    map[uuid.UUID][]models.WorkflowEvent
+	items       map[uuid.UUID]*models.WorkflowItem
+	checklist   map[uuid.UUID][]models.WorkflowChecklistItem
+	intake      map[uuid.UUID][]models.WorkflowIntakeRecord
+	matches     map[uuid.UUID][]models.WorkflowProjectMatch
+	evidence    map[uuid.UUID][]models.WorkflowEvidenceClaim
+	openLoops   map[uuid.UUID][]models.WorkflowOpenLoop
+	proposals   map[uuid.UUID][]models.WorkflowProposal
+	qualityGate map[uuid.UUID][]models.WorkflowQualityGate
+	rules       map[string]models.WorkflowRule
+	transitions map[uuid.UUID][]models.WorkflowTransition
+	sourceLinks map[uuid.UUID][]models.WorkflowSourceLink
+	decisions   map[uuid.UUID][]models.WorkflowDecision
+	events      map[uuid.UUID][]models.WorkflowEvent
 }
 
 func newFakeWorkflowRepo() *fakeWorkflowRepo {
 	return &fakeWorkflowRepo{
-		items:     map[uuid.UUID]*models.WorkflowItem{},
-		checklist: map[uuid.UUID][]models.WorkflowChecklistItem{},
-		events:    map[uuid.UUID][]models.WorkflowEvent{},
+		items:       map[uuid.UUID]*models.WorkflowItem{},
+		checklist:   map[uuid.UUID][]models.WorkflowChecklistItem{},
+		intake:      map[uuid.UUID][]models.WorkflowIntakeRecord{},
+		matches:     map[uuid.UUID][]models.WorkflowProjectMatch{},
+		evidence:    map[uuid.UUID][]models.WorkflowEvidenceClaim{},
+		openLoops:   map[uuid.UUID][]models.WorkflowOpenLoop{},
+		proposals:   map[uuid.UUID][]models.WorkflowProposal{},
+		qualityGate: map[uuid.UUID][]models.WorkflowQualityGate{},
+		rules:       map[string]models.WorkflowRule{},
+		transitions: map[uuid.UUID][]models.WorkflowTransition{},
+		sourceLinks: map[uuid.UUID][]models.WorkflowSourceLink{},
+		decisions:   map[uuid.UUID][]models.WorkflowDecision{},
+		events:      map[uuid.UUID][]models.WorkflowEvent{},
 	}
 }
 
@@ -179,6 +343,33 @@ func (r *fakeWorkflowRepo) FindItems(includeArchived bool) ([]models.WorkflowIte
 	return result, nil
 }
 
+func (r *fakeWorkflowRepo) FindApprovalItems() ([]models.WorkflowItem, error) {
+	result := []models.WorkflowItem{}
+	for _, item := range r.items {
+		if item.CurrentState == StateNeedsApproval && !item.Archived {
+			result = append(result, *item)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeWorkflowRepo) FindRunnableItems(now time.Time, limit int) ([]models.WorkflowItem, error) {
+	result := []models.WorkflowItem{}
+	for _, item := range r.items {
+		if item.CurrentState != StateReady || item.Archived || item.RetryCount >= item.MaxRetries {
+			continue
+		}
+		if item.NextRunAt != nil && item.NextRunAt.After(now) {
+			continue
+		}
+		result = append(result, *item)
+	}
+	if limit > 0 && len(result) > limit {
+		return result[:limit], nil
+	}
+	return result, nil
+}
+
 func (r *fakeWorkflowRepo) CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error) {
 	if item.ID == uuid.Nil {
 		item.ID = uuid.New()
@@ -207,6 +398,174 @@ func (r *fakeWorkflowRepo) FindChecklist(workflowID uuid.UUID) ([]models.Workflo
 	return append([]models.WorkflowChecklistItem{}, r.checklist[workflowID]...), nil
 }
 
+func (r *fakeWorkflowRepo) SaveIntakeRecord(record *models.WorkflowIntakeRecord) (*models.WorkflowIntakeRecord, error) {
+	if record.ID == uuid.Nil {
+		record.ID = uuid.New()
+	}
+	record.CreatedAt = time.Now().UTC()
+	r.intake[record.WorkflowID] = append([]models.WorkflowIntakeRecord{*record}, r.intake[record.WorkflowID]...)
+	return record, nil
+}
+
+func (r *fakeWorkflowRepo) FindIntakeRecords(workflowID uuid.UUID) ([]models.WorkflowIntakeRecord, error) {
+	return append([]models.WorkflowIntakeRecord{}, r.intake[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) CreateProjectMatch(match *models.WorkflowProjectMatch) (*models.WorkflowProjectMatch, error) {
+	if match.ID == uuid.Nil {
+		match.ID = uuid.New()
+	}
+	match.CreatedAt = time.Now().UTC()
+	r.matches[match.WorkflowID] = append([]models.WorkflowProjectMatch{*match}, r.matches[match.WorkflowID]...)
+	return match, nil
+}
+
+func (r *fakeWorkflowRepo) FindProjectMatches(workflowID uuid.UUID) ([]models.WorkflowProjectMatch, error) {
+	return append([]models.WorkflowProjectMatch{}, r.matches[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) CreateEvidenceClaim(claim *models.WorkflowEvidenceClaim) (*models.WorkflowEvidenceClaim, error) {
+	if claim.ID == uuid.Nil {
+		claim.ID = uuid.New()
+	}
+	claim.CreatedAt = time.Now().UTC()
+	r.evidence[claim.WorkflowID] = append([]models.WorkflowEvidenceClaim{*claim}, r.evidence[claim.WorkflowID]...)
+	return claim, nil
+}
+
+func (r *fakeWorkflowRepo) FindEvidenceClaims(workflowID uuid.UUID) ([]models.WorkflowEvidenceClaim, error) {
+	return append([]models.WorkflowEvidenceClaim{}, r.evidence[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) CreateOpenLoop(loop *models.WorkflowOpenLoop) (*models.WorkflowOpenLoop, error) {
+	if loop.ID == uuid.Nil {
+		loop.ID = uuid.New()
+	}
+	now := time.Now().UTC()
+	loop.CreatedAt = now
+	loop.UpdatedAt = now
+	r.openLoops[loop.WorkflowID] = append([]models.WorkflowOpenLoop{*loop}, r.openLoops[loop.WorkflowID]...)
+	return loop, nil
+}
+
+func (r *fakeWorkflowRepo) UpdateOpenLoop(loop *models.WorkflowOpenLoop) (*models.WorkflowOpenLoop, error) {
+	loop.UpdatedAt = time.Now().UTC()
+	loops := r.openLoops[loop.WorkflowID]
+	for index := range loops {
+		if loops[index].ID == loop.ID {
+			loops[index] = *loop
+			r.openLoops[loop.WorkflowID] = loops
+			return loop, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (r *fakeWorkflowRepo) FindOpenLoops(workflowID uuid.UUID) ([]models.WorkflowOpenLoop, error) {
+	return append([]models.WorkflowOpenLoop{}, r.openLoops[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) FindDashboardOpenLoops(now time.Time) ([]models.WorkflowOpenLoop, error) {
+	result := []models.WorkflowOpenLoop{}
+	for _, loops := range r.openLoops {
+		for _, loop := range loops {
+			if loop.Status != "open" {
+				continue
+			}
+			if loop.FollowUpAt == nil || !loop.FollowUpAt.After(now) {
+				result = append(result, loop)
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeWorkflowRepo) CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error) {
+	if proposal.ID == uuid.Nil {
+		proposal.ID = uuid.New()
+	}
+	proposal.CreatedAt = time.Now().UTC()
+	r.proposals[proposal.WorkflowID] = append([]models.WorkflowProposal{*proposal}, r.proposals[proposal.WorkflowID]...)
+	return proposal, nil
+}
+
+func (r *fakeWorkflowRepo) FindProposals(workflowID uuid.UUID) ([]models.WorkflowProposal, error) {
+	return append([]models.WorkflowProposal{}, r.proposals[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) CreateQualityGate(gate *models.WorkflowQualityGate) (*models.WorkflowQualityGate, error) {
+	if gate.ID == uuid.Nil {
+		gate.ID = uuid.New()
+	}
+	gate.CreatedAt = time.Now().UTC()
+	r.qualityGate[gate.WorkflowID] = append([]models.WorkflowQualityGate{*gate}, r.qualityGate[gate.WorkflowID]...)
+	return gate, nil
+}
+
+func (r *fakeWorkflowRepo) FindQualityGates(workflowID uuid.UUID) ([]models.WorkflowQualityGate, error) {
+	return append([]models.WorkflowQualityGate{}, r.qualityGate[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) SaveRule(rule *models.WorkflowRule) (*models.WorkflowRule, error) {
+	if rule.ID == uuid.Nil {
+		rule.ID = uuid.New()
+	}
+	now := time.Now().UTC()
+	if rule.CreatedAt.IsZero() {
+		rule.CreatedAt = now
+	}
+	rule.UpdatedAt = now
+	r.rules[rule.RuleKey] = *rule
+	return rule, nil
+}
+
+func (r *fakeWorkflowRepo) FindRules() ([]models.WorkflowRule, error) {
+	result := []models.WorkflowRule{}
+	for _, rule := range r.rules {
+		result = append(result, rule)
+	}
+	return result, nil
+}
+
+func (r *fakeWorkflowRepo) CreateTransition(transition *models.WorkflowTransition) (*models.WorkflowTransition, error) {
+	if transition.ID == uuid.Nil {
+		transition.ID = uuid.New()
+	}
+	transition.CreatedAt = time.Now().UTC()
+	r.transitions[transition.WorkflowID] = append([]models.WorkflowTransition{*transition}, r.transitions[transition.WorkflowID]...)
+	return transition, nil
+}
+
+func (r *fakeWorkflowRepo) FindTransitions(workflowID uuid.UUID) ([]models.WorkflowTransition, error) {
+	return append([]models.WorkflowTransition{}, r.transitions[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) CreateSourceLink(link *models.WorkflowSourceLink) (*models.WorkflowSourceLink, error) {
+	if link.ID == uuid.Nil {
+		link.ID = uuid.New()
+	}
+	link.CreatedAt = time.Now().UTC()
+	r.sourceLinks[link.WorkflowID] = append([]models.WorkflowSourceLink{*link}, r.sourceLinks[link.WorkflowID]...)
+	return link, nil
+}
+
+func (r *fakeWorkflowRepo) FindSourceLinks(workflowID uuid.UUID) ([]models.WorkflowSourceLink, error) {
+	return append([]models.WorkflowSourceLink{}, r.sourceLinks[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) CreateDecision(decision *models.WorkflowDecision) (*models.WorkflowDecision, error) {
+	if decision.ID == uuid.Nil {
+		decision.ID = uuid.New()
+	}
+	decision.CreatedAt = time.Now().UTC()
+	r.decisions[decision.WorkflowID] = append([]models.WorkflowDecision{*decision}, r.decisions[decision.WorkflowID]...)
+	return decision, nil
+}
+
+func (r *fakeWorkflowRepo) FindDecisions(workflowID uuid.UUID) ([]models.WorkflowDecision, error) {
+	return append([]models.WorkflowDecision{}, r.decisions[workflowID]...), nil
+}
+
 func (r *fakeWorkflowRepo) CreateEvent(event *models.WorkflowEvent) (*models.WorkflowEvent, error) {
 	if event.ID == uuid.Nil {
 		event.ID = uuid.New()
@@ -218,4 +577,15 @@ func (r *fakeWorkflowRepo) CreateEvent(event *models.WorkflowEvent) (*models.Wor
 
 func (r *fakeWorkflowRepo) FindEvents(workflowID uuid.UUID) ([]models.WorkflowEvent, error) {
 	return append([]models.WorkflowEvent{}, r.events[workflowID]...), nil
+}
+
+type fakeTaskRunner struct {
+	result   *TaskRunResult
+	err      error
+	requests []TaskRunRequest
+}
+
+func (r *fakeTaskRunner) RunWorkflowTask(request TaskRunRequest) (*TaskRunResult, error) {
+	r.requests = append(r.requests, request)
+	return r.result, r.err
 }

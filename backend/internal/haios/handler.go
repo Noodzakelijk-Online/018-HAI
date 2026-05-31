@@ -58,6 +58,7 @@ func (h *Handler) Overview(c *gin.Context) {
 	reviewTotal := h.count(&models.VerificationClaim{}, "needs_review = ? OR status IN ?", true, []string{"unsupported", "uncertain", "conflicting", "needs_review"})
 	reviewTotal += h.count(&models.SourceExtraction{}, "uncertain = ? OR sensitive = ?", true, true)
 	reviewTotal += h.count(&models.AutomationAlert{}, "status = ?", "open")
+	reviewTotal += h.count(&models.WorkflowItem{}, "current_state IN ? OR approval_status = ?", []string{"needs_approval", "blocked"}, "pending")
 
 	c.JSON(http.StatusOK, HAIOSOverview{
 		GeneratedAt:      time.Now().UTC(),
@@ -71,6 +72,7 @@ func (h *Handler) Overview(c *gin.Context) {
 			{Label: "connected sources", Value: h.count(&models.ConnectedSource{}, "status <> ?", "revoked"), Status: statusForCount(h.count(&models.ConnectedSource{}, "status <> ?", "revoked"), "ready")},
 			{Label: "source extractions", Value: h.count(&models.SourceExtraction{}, "archived = ?", false), Status: statusForCount(h.count(&models.SourceExtraction{}, "archived = ?", false), "indexed")},
 			{Label: "workflow items", Value: h.count(&models.WorkflowItem{}, "archived = ?", false), Status: statusForCount(h.count(&models.WorkflowItem{}, "archived = ?", false), "active")},
+			{Label: "workflow approvals", Value: h.count(&models.WorkflowItem{}, "archived = ? AND current_state = ?", false, "needs_approval"), Status: statusForZero(h.count(&models.WorkflowItem{}, "archived = ? AND current_state = ?", false, "needs_approval"))},
 			{Label: "context memories", Value: h.count(&models.ContextMemory{}, "archived = ?", false), Status: statusForCount(h.count(&models.ContextMemory{}, "archived = ?", false), "available")},
 			{Label: "llm providers", Value: int64(len(llmPolicy.Providers)), Status: "configured"},
 			{Label: "verification runs", Value: h.count(&models.VerificationRun{}), Status: statusForCount(h.count(&models.VerificationRun{}), "active")},
@@ -81,7 +83,7 @@ func (h *Handler) Overview(c *gin.Context) {
 			{Name: "Knowledge", Status: "operational", Description: "Connected-source ingestion, extraction, index entries, search, and provenance.", Links: []string{"/connected-sources"}},
 			{Name: "Memory", Status: "operational", Description: "Editable local memory with retrieval, dedupe, merge, archive, export, and correction.", Links: []string{"/memory"}},
 			{Name: "Reasoning", Status: "operational", Description: "Task classifier, criteria generator, context planner, model router, workflow state machine, priority, retry, and review.", Links: []string{"/task-blueprint", "/llm-policy", "/workflow-engine"}},
-			{Name: "Execution", Status: "guarded", Description: "Automation launch, workflow checklist execution, and controlled task run surfaces exist; autonomous execution remains approval-gated.", Links: []string{"/control-center", "/task-blueprint", "/workflow-engine"}},
+			{Name: "Execution", Status: "guarded", Description: "Automation launch, workflow worker execution, retry limits, and controlled task runs exist; autonomous execution remains approval-gated.", Links: []string{"/control-center", "/task-blueprint", "/workflow-engine"}},
 			{Name: "Verification", Status: "operational", Description: "Source-grounded answers, claim checks, deterministic calculation checks, conflicts, and review statuses.", Links: []string{"/grounded-answers"}},
 			{Name: "Governance", Status: "guarded", Description: "Local-only source controls, paid budget policy, sensitive flags, workflow approvals, and audit logs.", Links: []string{"/llm-policy", "/connected-sources", "/grounded-answers", "/workflow-engine"}},
 			{Name: "Observability", Status: "operational", Description: "Health summaries, sync logs, workflow events, verification runs, routing logs, diagnostics, and review indicators.", Links: []string{"/control-center", "/connected-sources", "/grounded-answers", "/workflow-engine"}},

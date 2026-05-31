@@ -529,6 +529,14 @@ func (s *fakeSourceWorkflowService) Items(includeArchived bool) ([]models.Workfl
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) ApprovalItems() ([]models.WorkflowItem, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) Dashboard() (*workflow.WorkflowDashboard, error) {
+	return &workflow.WorkflowDashboard{}, nil
+}
+
 func (s *fakeSourceWorkflowService) Get(id uuid.UUID) (*workflow.WorkflowRecord, error) {
 	return nil, gorm.ErrRecordNotFound
 }
@@ -537,7 +545,15 @@ func (s *fakeSourceWorkflowService) Transition(id uuid.UUID, request workflow.Tr
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) ResolveApproval(id uuid.UUID, request workflow.ApprovalResolutionRequest) (*workflow.WorkflowRecord, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request workflow.ChecklistUpdateRequest) (*workflow.WorkflowRecord, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) RunDue(request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
 	return nil, nil
 }
 

@@ -3,9 +3,11 @@ import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import {
+  IWorkflowDashboard,
   IWorkflowItem,
   IWorkflowOverview,
   IWorkflowRecord,
+  IWorkflowRunSummary,
 } from '../../models/workflow.model.interface';
 import { WORKFLOW_SERVICE_TOKEN } from '../../services/workflow/workflow.service.token';
 import { IWorkflowService } from '../../services/workflow.service.interface';
@@ -17,8 +19,11 @@ import { IWorkflowService } from '../../services/workflow.service.interface';
 })
 export class WorkflowEngineComponent implements OnInit {
   overview?: IWorkflowOverview;
+  dashboard?: IWorkflowDashboard;
   items: IWorkflowItem[] = [];
+  approvalItems: IWorkflowItem[] = [];
   selected?: IWorkflowRecord;
+  runSummary?: IWorkflowRunSummary;
   includeArchived = false;
   loading = false;
   saving = false;
@@ -30,8 +35,11 @@ export class WorkflowEngineComponent implements OnInit {
     ],
     projectKey: ['Vivare dispute'],
     sourceType: ['email'],
+    sourceId: ['sample-email-1'],
     sourceUri: ['local://sample/email'],
     sourceLabel: ['Sample legal email'],
+    contentType: ['email'],
+    sender: ['lawyer@example.test'],
     trigger: ['manual_intake'],
   });
 
@@ -39,6 +47,10 @@ export class WorkflowEngineComponent implements OnInit {
     targetState: ['ready', [Validators.required]],
     message: ['Robert approved controlled workflow execution.'],
     approved: [false],
+  });
+
+  approvalForm: FormGroup = this.fb.group({
+    note: ['Robert approved controlled workflow execution.'],
   });
 
   constructor(
@@ -58,6 +70,10 @@ export class WorkflowEngineComponent implements OnInit {
       next: (overview) => (this.overview = overview),
       error: () => this.notification.error('Error', 'Failed to load workflow overview.'),
     });
+    this.workflowService.dashboard().subscribe({
+      next: (dashboard) => (this.dashboard = dashboard),
+      error: () => this.notification.error('Error', 'Failed to load workflow dashboard.'),
+    });
     this.workflowService.items(this.includeArchived).subscribe({
       next: (items) => {
         this.items = items;
@@ -68,6 +84,10 @@ export class WorkflowEngineComponent implements OnInit {
         this.loading = false;
         this.notification.error('Error', 'Failed to load workflow inbox.');
       },
+    });
+    this.workflowService.approvals().subscribe({
+      next: (items) => (this.approvalItems = items),
+      error: () => this.notification.error('Error', 'Failed to load approval queue.'),
     });
   }
 
@@ -111,6 +131,32 @@ export class WorkflowEngineComponent implements OnInit {
     });
   }
 
+  resolveApproval(item: IWorkflowItem, approved: boolean): void {
+    this.workflowService.resolveApproval(item.id, {
+      approved,
+      note: this.approvalForm.value.note,
+      actor: 'operator',
+    }).subscribe({
+      next: (record) => {
+        this.selected = record;
+        this.notification.success('Approval updated', approved ? 'Workflow approved for execution.' : 'Workflow rejected and blocked.');
+        this.refresh();
+      },
+      error: () => this.notification.error('Error', 'Failed to update workflow approval.'),
+    });
+  }
+
+  runDue(): void {
+    this.workflowService.runDue({ limit: 10 }).subscribe({
+      next: (summary) => {
+        this.runSummary = summary;
+        this.notification.success('Worker run complete', `${summary.completed} completed, ${summary.retried} retried, ${summary.blocked} blocked.`);
+        this.refresh();
+      },
+      error: () => this.notification.error('Error', 'Workflow worker run failed.'),
+    });
+  }
+
   markChecklist(itemId: string, status: string): void {
     if (!this.selected) {
       return;
@@ -119,6 +165,10 @@ export class WorkflowEngineComponent implements OnInit {
       next: (record) => (this.selected = record),
       error: () => this.notification.error('Error', 'Failed to update checklist item.'),
     });
+  }
+
+  optionLines(options?: string): string[] {
+    return (options || '').split('\n').filter((option) => !!option.trim());
   }
 
   goHome(): void {

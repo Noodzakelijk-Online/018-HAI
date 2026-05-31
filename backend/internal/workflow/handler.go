@@ -44,6 +44,24 @@ func (h *Handler) Items(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+func (h *Handler) ApprovalItems(c *gin.Context) {
+	items, err := h.service.ApprovalItems()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, items)
+}
+
+func (h *Handler) Dashboard(c *gin.Context) {
+	dashboard, err := h.service.Dashboard()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, dashboard)
+}
+
 func (h *Handler) Get(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
@@ -75,6 +93,24 @@ func (h *Handler) Transition(c *gin.Context) {
 	c.JSON(http.StatusOK, record)
 }
 
+func (h *Handler) ResolveApproval(c *gin.Context) {
+	id, ok := parseWorkflowID(c)
+	if !ok {
+		return
+	}
+	var request ApprovalResolutionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	record, err := h.service.ResolveApproval(id, request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, record)
+}
+
 func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
@@ -96,6 +132,17 @@ func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, record)
+}
+
+func (h *Handler) RunDue(c *gin.Context) {
+	var request RunDueRequest
+	_ = c.ShouldBindJSON(&request)
+	result, err := h.service.RunDue(request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) Overview(c *gin.Context) {

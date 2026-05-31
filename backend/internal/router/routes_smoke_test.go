@@ -86,10 +86,14 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 
 	workflowRoutes := r.Group("/api/v1").Group("/workflow")
 	workflowRoutes.GET("/overview", mark("workflowOverview"))
+	workflowRoutes.GET("/approvals", mark("workflowApprovals"))
+	workflowRoutes.GET("/dashboard", mark("workflowDashboard"))
 	workflowRoutes.GET("/", mark("workflowItems"))
 	workflowRoutes.POST("/intake", mark("workflowIntake"))
+	workflowRoutes.POST("/run-due", mark("workflowRunDue"))
 	workflowRoutes.GET("/:id", mark("workflowGet"))
 	workflowRoutes.POST("/:id/transition", mark("workflowTransition"))
+	workflowRoutes.POST("/:id/approval", mark("workflowApprovalResolve"))
 	workflowRoutes.PATCH("/:id/checklist/:itemId", mark("workflowChecklist"))
 
 	cases := []struct {
@@ -137,10 +141,14 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/verification/runs/abc", "verificationRunDetails"},
 		{"GET", "/api/v1/os/overview", "osOverview"},
 		{"GET", "/api/v1/workflow/overview", "workflowOverview"},
+		{"GET", "/api/v1/workflow/approvals", "workflowApprovals"},
+		{"GET", "/api/v1/workflow/dashboard", "workflowDashboard"},
 		{"GET", "/api/v1/workflow/", "workflowItems"},
 		{"POST", "/api/v1/workflow/intake", "workflowIntake"},
+		{"POST", "/api/v1/workflow/run-due", "workflowRunDue"},
 		{"GET", "/api/v1/workflow/abc", "workflowGet"},
 		{"POST", "/api/v1/workflow/abc/transition", "workflowTransition"},
+		{"POST", "/api/v1/workflow/abc/approval", "workflowApprovalResolve"},
 		{"PATCH", "/api/v1/workflow/abc/checklist/def", "workflowChecklist"},
 	}
 	for _, tc := range cases {

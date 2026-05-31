@@ -62,6 +62,16 @@ func RunMigrations(db *gorm.DB) error {
 		&models.VerificationAuditLog{},
 		&models.WorkflowItem{},
 		&models.WorkflowChecklistItem{},
+		&models.WorkflowIntakeRecord{},
+		&models.WorkflowProjectMatch{},
+		&models.WorkflowEvidenceClaim{},
+		&models.WorkflowOpenLoop{},
+		&models.WorkflowProposal{},
+		&models.WorkflowQualityGate{},
+		&models.WorkflowRule{},
+		&models.WorkflowTransition{},
+		&models.WorkflowSourceLink{},
+		&models.WorkflowDecision{},
 		&models.WorkflowEvent{},
 	); err != nil {
 		return err
