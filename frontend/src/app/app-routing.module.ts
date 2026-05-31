@@ -68,6 +68,14 @@ const routes: Routes = [
       ),
     canActivate: [authGuard],
   },
+  {
+    path: "workflow-engine",
+    loadChildren: () =>
+      import("./pages/workflow-engine/workflow-engine.module").then(
+        (m) => m.WorkflowEngineModule
+      ),
+    canActivate: [authGuard],
+  },
   // {
   //   path: 'home',
   //   loadChildren: () =>

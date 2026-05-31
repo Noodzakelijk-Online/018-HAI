@@ -3,6 +3,7 @@ package source
 import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/workflow"
 	"os"
 	"strings"
 	"testing"
@@ -185,6 +186,54 @@ func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	}
 	if run.Checked != 2 || run.Due != 0 || run.Completed != 0 || run.Skipped != 2 {
 		t.Fatalf("run = %#v, want two skipped sources", run)
+	}
+}
+
+func TestSyncCreatesWorkflowForActionableExtraction(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Legal mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode: ModeManualImport,
+		Items: []ImportItem{
+			{
+				ExternalID: "email-1",
+				Title:      "Lawyer follow-up",
+				Content:    "Follow up: draft a formal reply for the legal case before tomorrow.",
+				SourceURI:  "mailto:lawyer@example.test",
+				ItemType:   "email",
+				ProjectKey: "Vivare dispute",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(result.Extractions) != 1 {
+		t.Fatalf("extractions = %d, want 1", len(result.Extractions))
+	}
+	if len(workflowSpy.requests) != 1 {
+		t.Fatalf("workflow requests = %d, want 1", len(workflowSpy.requests))
+	}
+	request := workflowSpy.requests[0]
+	if request.ProjectKey != "Vivare dispute" {
+		t.Fatalf("ProjectKey = %q, want Vivare dispute", request.ProjectKey)
+	}
+	if request.Trigger != "source.extraction" {
+		t.Fatalf("Trigger = %q, want source.extraction", request.Trigger)
+	}
+	if !repo.hasAudit("workflow.intake_created") {
+		t.Fatalf("expected workflow intake audit record")
 	}
 }
 
@@ -463,4 +512,35 @@ func (s *fakeSourceMemoryService) Delete(id uuid.UUID) error {
 
 func (s *fakeSourceMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{Query: request.Query}, nil
+}
+
+type fakeSourceWorkflowService struct {
+	requests []workflow.IntakeRequest
+}
+
+func (s *fakeSourceWorkflowService) Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	s.requests = append(s.requests, request)
+	return &workflow.WorkflowRecord{
+		Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey},
+	}, nil
+}
+
+func (s *fakeSourceWorkflowService) Items(includeArchived bool) ([]models.WorkflowItem, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) Get(id uuid.UUID) (*workflow.WorkflowRecord, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *fakeSourceWorkflowService) Transition(id uuid.UUID, request workflow.TransitionRequest) (*workflow.WorkflowRecord, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request workflow.ChecklistUpdateRequest) (*workflow.WorkflowRecord, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) Overview() workflow.Overview {
+	return workflow.Overview{}
 }

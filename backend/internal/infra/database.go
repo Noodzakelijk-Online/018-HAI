@@ -60,6 +60,9 @@ func RunMigrations(db *gorm.DB) error {
 		&models.VerificationEvidence{},
 		&models.VerificationClaim{},
 		&models.VerificationAuditLog{},
+		&models.WorkflowItem{},
+		&models.WorkflowChecklistItem{},
+		&models.WorkflowEvent{},
 	); err != nil {
 		return err
 	}

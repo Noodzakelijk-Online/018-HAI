@@ -84,6 +84,14 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	osRoutes := r.Group("/api/v1").Group("/os")
 	osRoutes.GET("/overview", mark("osOverview"))
 
+	workflowRoutes := r.Group("/api/v1").Group("/workflow")
+	workflowRoutes.GET("/overview", mark("workflowOverview"))
+	workflowRoutes.GET("/", mark("workflowItems"))
+	workflowRoutes.POST("/intake", mark("workflowIntake"))
+	workflowRoutes.GET("/:id", mark("workflowGet"))
+	workflowRoutes.POST("/:id/transition", mark("workflowTransition"))
+	workflowRoutes.PATCH("/:id/checklist/:itemId", mark("workflowChecklist"))
+
 	cases := []struct {
 		method, path, want string
 	}{
@@ -128,6 +136,12 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/verification/runs", "verificationRuns"},
 		{"GET", "/api/v1/verification/runs/abc", "verificationRunDetails"},
 		{"GET", "/api/v1/os/overview", "osOverview"},
+		{"GET", "/api/v1/workflow/overview", "workflowOverview"},
+		{"GET", "/api/v1/workflow/", "workflowItems"},
+		{"POST", "/api/v1/workflow/intake", "workflowIntake"},
+		{"GET", "/api/v1/workflow/abc", "workflowGet"},
+		{"POST", "/api/v1/workflow/abc/transition", "workflowTransition"},
+		{"PATCH", "/api/v1/workflow/abc/checklist/def", "workflowChecklist"},
 	}
 	for _, tc := range cases {
 		hit = ""

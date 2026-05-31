@@ -2,20 +2,21 @@
 
 018-HAI is a local-first automation hub and Personal AI Operating System in progress. It combines an Angular dashboard, Go backend APIs, an IDP service, nginx gateway routing, Postgres, Redis, and Kafka into one Docker Compose based workspace.
 
-The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, source-grounded verification, and an HAI OS overview dashboard. It is not yet a fully autonomous Claw/OpenClaw-style runtime. The current engine can plan, route, gather context, import local files, verify grounded output, run controlled automation launches, and block unsafe or unsupported results; richer browser/MCP/agent runtime adapters still need to be implemented.
+The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, workflow state handling, source-grounded verification, and an HAI OS overview dashboard. It is not yet a fully autonomous Claw/OpenClaw-style runtime. The current engine can plan, route, gather context, import local files, identify actionable source extractions, create workflow items, generate checklists, gate approvals, verify grounded output, run controlled automation launches, and block unsafe or unsupported results; richer browser/MCP/agent runtime adapters still need to be implemented.
 
 ## Current Status
 
 Implemented:
 
-- Angular dashboard with pages for automations, Control Center, HAI OS, LLM Routing, Memory, Task Blueprint, Connected Sources, and Grounded Answers.
-- Go backend API with automation CRUD, launch metadata, health checks, diagnostics, LLM routing, memory, task, source, verification, and OS overview routes.
+- Angular dashboard with pages for automations, Control Center, HAI OS, LLM Routing, Memory, Task Blueprint, Connected Sources, Grounded Answers, and Workflow Engine.
+- Go backend API with automation CRUD, launch metadata, health checks, diagnostics, LLM routing, memory, task, source, workflow, verification, and OS overview routes.
 - Local Docker Compose setup for Windows 11 and general Docker Desktop use.
 - Local-first LLM routing policy with configurable providers, local/free priority, paid usage disabled by default, selected-model explanation, and routing logs.
 - Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints, with paid execution blocked unless explicitly approved by policy.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
 - Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
+- Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, blocked/waiting/completed/archive states, and audit events.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
 - CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
 
@@ -23,7 +24,7 @@ Not implemented yet:
 
 - Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
 - Full autonomous device control. Automation `launch` now has controlled adapters for API calls, allowlisted container-local scripts, and optionally Docker API container start requests, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
-- Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, and scheduled due-sync for enabled local-folder sources.
+- Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, scheduled due-sync for enabled local-folder sources, and workflow intake from extracted action items.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
 - Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
 - Production-grade secret management, migrations, RBAC hardening, and deployment configuration.
@@ -190,6 +191,15 @@ Task engine:
 - `GET /task/review-queue`
 - `POST /task/review-queue/:id/resolve`
 
+Workflow engine:
+
+- `GET /workflow/overview`
+- `GET /workflow/`
+- `POST /workflow/intake`
+- `GET /workflow/:id`
+- `POST /workflow/:id/transition`
+- `PATCH /workflow/:id/checklist/:itemId`
+
 Connected sources:
 
 - `GET /sources/connectors`
@@ -243,6 +253,43 @@ The task engine execution step is internal and evidence-grounded. Separate autom
 High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its internal context, model, verification, and memory workflow.
 
 The task engine now treats connected sources as an active preflight dependency. For requests that mention project/source/file/folder/document/repo context, or that require local/document context, it runs due scheduled source syncs before source search. This uses the same bounded local-folder scheduler path and does not force a full re-read when sources are not due.
+
+## Workflow Engine
+
+The workflow engine implements the 14 operational suggestions as a concrete backend module and dashboard page:
+
+1. Persistent workflow state machine.
+2. Event-trigger metadata and audit records.
+3. Adapter-facing source and trigger fields.
+4. Project/source context links.
+5. Approval and autonomy decision rules.
+6. Deterministic task/risk/deadline reasoning.
+7. Generated execution checklists.
+8. Deadline/risk/type priority scoring.
+9. Blocked and waiting states for exceptions.
+10. Full workflow audit trail.
+11. Human approval gates before sensitive transitions.
+12. Worker-ready lifecycle states such as `ready` and `in_progress`.
+13. Checklist correction/progress feedback events.
+14. Safety boundaries for legal, financial, public, destructive, and account-changing actions.
+
+Manual input can be sent to `POST /workflow/intake`. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Intake deduplicates by source URI so repeated syncs do not create duplicate workflow items for the same source record.
+
+Workflow states:
+
+```text
+new_input -> classified -> linked -> checklist_generated -> ready -> in_progress -> completed -> archived
+```
+
+Sensitive or unclear work branches into:
+
+```text
+needs_approval
+waiting_external_input
+blocked
+```
+
+The dashboard page at `/workflow-engine` shows the workflow inbox, capability coverage, generated checklist, validated state transitions, approval toggle, safety rules, and audit trail.
 
 ## LLM Routing Policy
 

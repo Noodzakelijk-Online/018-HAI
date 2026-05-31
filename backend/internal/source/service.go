@@ -3,6 +3,7 @@ package source
 import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/workflow"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -124,8 +125,9 @@ type Service interface {
 }
 
 type service struct {
-	repo          Repository
-	memoryService memory.Service
+	repo            Repository
+	memoryService   memory.Service
+	workflowService workflow.Service
 }
 
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
@@ -134,8 +136,12 @@ func NewService(repo Repository, memoryService memory.Service) Service {
 	return &service{repo: repo, memoryService: memoryService}
 }
 
+func NewServiceWithWorkflow(repo Repository, memoryService memory.Service, workflowService workflow.Service) Service {
+	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService}
+}
+
 func DefaultService() Service {
-	return NewService(DefaultRepository(), memory.DefaultService())
+	return NewServiceWithWorkflow(DefaultRepository(), memory.DefaultService(), workflow.DefaultService())
 }
 
 func (s *service) Connectors() ([]models.SourceConnector, error) {
@@ -294,6 +300,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			extractions = append(extractions, *extraction)
 			s.indexExtraction(extraction)
 			s.storeUsefulMemory(source, extraction)
+			s.createWorkflowFromExtraction(source, extraction)
 		}
 	}
 
@@ -647,6 +654,36 @@ func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *
 		SourceURI:   extraction.SourceURI,
 		SourceLabel: extraction.SourceLabel,
 	})
+}
+
+func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) {
+	if s.workflowService == nil {
+		return
+	}
+	taskSignal := firstNonEmpty(extraction.Tasks, extraction.FollowUps)
+	if taskSignal == "" {
+		return
+	}
+	input := strings.Join([]string{
+		firstNonEmpty(extraction.Summary, extraction.SourceLabel),
+		"Tasks: " + extraction.Tasks,
+		"Follow-ups: " + extraction.FollowUps,
+		"Dates: " + extraction.Dates,
+	}, "\n")
+	_, err := s.workflowService.Intake(workflow.IntakeRequest{
+		Input:       input,
+		ProjectKey:  extraction.ProjectKey,
+		SourceType:  source.Category,
+		SourceURI:   firstNonEmpty(extraction.SourceURI, "source-extraction://"+extraction.ID.String()),
+		SourceLabel: extraction.SourceLabel,
+		Trigger:     "source.extraction",
+		Actor:       "source-worker",
+	})
+	if err != nil {
+		s.audit(source.ID, "workflow.intake_failed", err.Error())
+		return
+	}
+	s.audit(source.ID, "workflow.intake_created", "actionable extraction sent to workflow engine")
 }
 
 func (s *service) indexExtraction(extraction *models.SourceExtraction) {

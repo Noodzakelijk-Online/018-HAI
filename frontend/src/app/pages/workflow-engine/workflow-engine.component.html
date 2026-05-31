@@ -1,0 +1,183 @@
+<section>
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <h1 class="header-content__title">Workflow Engine</h1>
+        <div class="header-content__actions">
+          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container">
+      <div class="workflow-grid">
+        <nz-card nzSize="small" nzTitle="Intake">
+          <form nz-form [formGroup]="intakeForm">
+            <nz-form-item>
+              <nz-form-label>Input</nz-form-label>
+              <nz-form-control>
+                <textarea nz-input rows="5" formControlName="input"></textarea>
+              </nz-form-control>
+            </nz-form-item>
+            <div class="form-row">
+              <input nz-input formControlName="projectKey" placeholder="Project" />
+              <input nz-input formControlName="sourceType" placeholder="Source type" />
+            </div>
+            <input nz-input formControlName="sourceUri" placeholder="Source URI" />
+            <input nz-input formControlName="sourceLabel" placeholder="Source label" />
+            <input nz-input formControlName="trigger" placeholder="Trigger" />
+            <button nz-button nzType="primary" (click)="intake()" [nzLoading]="saving">
+              Create Workflow
+            </button>
+          </form>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="14 Engine Capabilities" *ngIf="overview as data">
+          <nz-table [nzData]="data.capabilities" nzSize="small" [nzPageSize]="7">
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>Status</th>
+                <th>Implemented</th>
+                <th>Next</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let capability of data.capabilities">
+                <td>{{ capability.name }}</td>
+                <td>{{ capability.status }}</td>
+                <td>{{ capability.implemented.join(', ') }}</td>
+                <td>{{ capability.next.join(', ') }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Workflow Inbox" class="section-card">
+        <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()">
+          Include archived
+        </label>
+        <nz-empty *ngIf="!items.length" nzNotFoundContent="No workflow items."></nz-empty>
+        <nz-table *ngIf="items.length" [nzData]="items" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>State</th>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Risk</th>
+              <th>Approval</th>
+              <th>Next action</th>
+              <th>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of items">
+              <td>{{ item.priorityScore }}</td>
+              <td>{{ item.currentState }}</td>
+              <td>{{ item.title }}</td>
+              <td>{{ item.taskType }}</td>
+              <td>{{ item.riskLevel }}</td>
+              <td>{{ item.requiresApproval ? 'required' : 'not required' }}</td>
+              <td>{{ item.nextAction || '-' }}</td>
+              <td>
+                <button nz-button nzSize="small" nzType="default" (click)="open(item)">
+                  Open
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <div class="workflow-grid" *ngIf="selected as record">
+        <nz-card nzSize="small" nzTitle="Selected Workflow">
+          <p><strong>State:</strong> {{ record.item.currentState }}</p>
+          <p><strong>Project:</strong> {{ record.item.projectKey || '-' }}</p>
+          <p><strong>Autonomy:</strong> {{ record.item.autonomyLevel }}</p>
+          <p><strong>Approval reason:</strong> {{ record.item.approvalReason || '-' }}</p>
+          <p><strong>Blocked:</strong> {{ record.item.blockedReason || '-' }}</p>
+          <p><strong>Source:</strong> {{ record.item.sourceLabel || record.item.sourceUri || '-' }}</p>
+        </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Transition">
+          <form nz-form [formGroup]="transitionForm">
+            <div class="form-row">
+              <nz-select formControlName="targetState">
+                <nz-option *ngFor="let state of overview?.states || []" [nzValue]="state" [nzLabel]="state"></nz-option>
+              </nz-select>
+              <label nz-checkbox formControlName="approved">
+                Approved
+              </label>
+            </div>
+            <input nz-input formControlName="message" />
+            <button nz-button nzType="primary" (click)="transition()">Apply Transition</button>
+          </form>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Checklist" class="section-card" *ngIf="selected as record">
+        <nz-table [nzData]="record.checklist" nzSize="small" [nzPageSize]="10">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Step</th>
+              <th>Approval</th>
+              <th>Update</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of record.checklist">
+              <td>{{ item.status }}</td>
+              <td>{{ item.label }}</td>
+              <td>{{ item.requiresApproval ? 'required' : '-' }}</td>
+              <td>
+                <button nz-button nzSize="small" nzType="default" (click)="markChecklist(item.id, 'done')">Done</button>
+                <button nz-button nzSize="small" nzType="default" (click)="markChecklist(item.id, 'blocked')">Blocked</button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Audit Trail" class="section-card" *ngIf="selected as record">
+        <nz-table [nzData]="record.events" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Event</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Rule</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let event of record.events">
+              <td>{{ event.createdAt | date: 'short' }}</td>
+              <td>{{ event.eventType }}</td>
+              <td>{{ event.fromState || '-' }}</td>
+              <td>{{ event.toState || '-' }}</td>
+              <td>{{ event.ruleApplied || '-' }}</td>
+              <td>{{ event.message || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Safety Rules" class="section-card" *ngIf="overview as data">
+        <ul class="safety-list">
+          <li *ngFor="let rule of data.safetyRules">{{ rule }}</li>
+        </ul>
+      </nz-card>
+    </nz-content>
+  </nz-layout>
+</section>

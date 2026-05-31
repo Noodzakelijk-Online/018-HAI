@@ -12,6 +12,7 @@ import (
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
+	"automation-hub-backend/internal/workflow"
 
 	"github.com/gin-gonic/gin"
 	swaggerfiles "github.com/swaggo/files"
@@ -42,6 +43,7 @@ func initializeRoutes(router *gin.Engine) error {
 		source.StartScheduler(context.Background(), sourceService)
 		initializeSourceRoutes(v1, source.NewHandler(sourceService))
 		initializeVerificationRoutes(v1, verification.DefaultHandler())
+		initializeWorkflowRoutes(v1, workflow.DefaultHandler())
 		osHandler, err := haios.DefaultHandler()
 		if err != nil {
 			return err
@@ -149,5 +151,17 @@ func initializeHAIOSRoutes(apiVersion *gin.RouterGroup, osHandler *haios.Handler
 	osRoutes := apiVersion.Group("/os")
 	{
 		osRoutes.GET("/overview", osHandler.Overview)
+	}
+}
+
+func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *workflow.Handler) {
+	workflowRoutes := apiVersion.Group("/workflow")
+	{
+		workflowRoutes.GET("/overview", workflowHandler.Overview)
+		workflowRoutes.GET("/", workflowHandler.Items)
+		workflowRoutes.POST("/intake", workflowHandler.Intake)
+		workflowRoutes.GET("/:id", workflowHandler.Get)
+		workflowRoutes.POST("/:id/transition", workflowHandler.Transition)
+		workflowRoutes.PATCH("/:id/checklist/:itemId", workflowHandler.UpdateChecklistItem)
 	}
 }
