@@ -1,8 +1,12 @@
 package llm
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -34,17 +38,17 @@ var reasoningRank = map[string]int{
 }
 
 type Policy struct {
-	DailyPaidBudgetEUR              float64    `json:"dailyPaidBudgetEur"`
-	PaidCallsAllowed                bool       `json:"paidCallsAllowed"`
-	LocalModelsAllowed              bool       `json:"localModelsAllowed"`
-	FreeCloudQuotaAllowed           bool       `json:"freeCloudQuotaAllowed"`
-	LocalFirst                      bool       `json:"localFirst"`
-	CacheRepeatedPrompts            bool       `json:"cacheRepeatedPrompts"`
+	DailyPaidBudgetEUR               float64    `json:"dailyPaidBudgetEur"`
+	PaidCallsAllowed                 bool       `json:"paidCallsAllowed"`
+	LocalModelsAllowed               bool       `json:"localModelsAllowed"`
+	FreeCloudQuotaAllowed            bool       `json:"freeCloudQuotaAllowed"`
+	LocalFirst                       bool       `json:"localFirst"`
+	CacheRepeatedPrompts             bool       `json:"cacheRepeatedPrompts"`
 	RouteSimpleTasksToSmallModels    bool       `json:"routeSimpleTasksToSmallModels"`
 	RouteComplexTasksToBestFreeModel bool       `json:"routeComplexTasksToBestAvailableFreeModel"`
-	RequireApprovalBeforePaidUsage  bool       `json:"requireApprovalBeforePaidUsage"`
-	TierOrder                       []string   `json:"tierOrder"`
-	Providers                       []Provider `json:"providers"`
+	RequireApprovalBeforePaidUsage   bool       `json:"requireApprovalBeforePaidUsage"`
+	TierOrder                        []string   `json:"tierOrder"`
+	Providers                        []Provider `json:"providers"`
 }
 
 type Provider struct {
@@ -53,21 +57,23 @@ type Provider struct {
 	Enabled        bool    `json:"enabled"`
 	Local          bool    `json:"local"`
 	Paid           bool    `json:"paid"`
+	EndpointURL    string  `json:"endpointUrl,omitempty"`
+	APIKeyEnv      string  `json:"apiKeyEnv,omitempty"`
 	QuotaRemaining int     `json:"quotaRemaining"`
 	DailyBudgetEUR float64 `json:"dailyBudgetEur"`
 	Models         []Model `json:"models"`
 }
 
 type Model struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Tier                string   `json:"tier"`
-	Capabilities        []string `json:"capabilities"`
-	MaxDifficulty       int      `json:"maxDifficulty"`
-	MaxReasoning        string   `json:"maxReasoning"`
-	EstimatedCostEUR    float64  `json:"estimatedCostEur"`
-	RequiresApproval    bool     `json:"requiresApproval"`
-	Enabled             bool     `json:"enabled"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Tier             string   `json:"tier"`
+	Capabilities     []string `json:"capabilities"`
+	MaxDifficulty    int      `json:"maxDifficulty"`
+	MaxReasoning     string   `json:"maxReasoning"`
+	EstimatedCostEUR float64  `json:"estimatedCostEur"`
+	RequiresApproval bool     `json:"requiresApproval"`
+	Enabled          bool     `json:"enabled"`
 }
 
 type RouteRequest struct {
@@ -76,7 +82,7 @@ type RouteRequest struct {
 	Difficulty        int    `json:"difficulty,omitempty"`
 	RequiredReasoning string `json:"requiredReasoning,omitempty"`
 	ValidationPassed  *bool  `json:"validationPassed,omitempty"`
-	PreviousModelID    string `json:"previousModelId,omitempty"`
+	PreviousModelID   string `json:"previousModelId,omitempty"`
 }
 
 type TaskClassification struct {
@@ -96,9 +102,34 @@ type RouteDecision struct {
 	EstimatedCostEUR   float64            `json:"estimatedCostEur"`
 	RequiresApproval   bool               `json:"requiresApproval"`
 	Classification     TaskClassification `json:"classification"`
-	FallbackPath        []FallbackOption   `json:"fallbackPath"`
-	Skipped            []SkippedModel      `json:"skipped"`
+	FallbackPath       []FallbackOption   `json:"fallbackPath"`
+	Skipped            []SkippedModel     `json:"skipped"`
 	LoggedAt           time.Time          `json:"loggedAt"`
+}
+
+type GenerateRequest struct {
+	Task              string         `json:"task"`
+	SystemPrompt      string         `json:"systemPrompt,omitempty"`
+	Context           []string       `json:"context,omitempty"`
+	RouteRequest      *RouteRequest  `json:"routeRequest,omitempty"`
+	RouteDecision     *RouteDecision `json:"routeDecision,omitempty"`
+	AllowPaidApproved bool           `json:"allowPaidApproved,omitempty"`
+	Temperature       float64        `json:"temperature,omitempty"`
+	MaxTokens         int            `json:"maxTokens,omitempty"`
+}
+
+type GenerationResult struct {
+	ProviderID       string    `json:"providerId"`
+	ModelID          string    `json:"modelId"`
+	ModelName        string    `json:"modelName"`
+	Tier             string    `json:"tier"`
+	Output           string    `json:"output"`
+	Status           string    `json:"status"`
+	Reason           string    `json:"reason"`
+	EstimatedCostEUR float64   `json:"estimatedCostEur"`
+	DurationMs       int64     `json:"durationMs"`
+	FallbackPath     []string  `json:"fallbackPath"`
+	LoggedAt         time.Time `json:"loggedAt"`
 }
 
 type FallbackOption struct {
@@ -178,7 +209,7 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 		EstimatedCostEUR:   selected.model.EstimatedCostEUR,
 		RequiresApproval:   selected.model.RequiresApproval || selected.provider.Paid,
 		Classification:     classification,
-		FallbackPath:        fallbackPath(candidates[1:]),
+		FallbackPath:       fallbackPath(candidates[1:]),
 		Skipped:            skipped,
 		LoggedAt:           time.Now().UTC(),
 	}
@@ -186,6 +217,218 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 	s.addLog(decision)
 
 	return decision, nil
+}
+
+func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
+	started := time.Now().UTC()
+	decision := request.RouteDecision
+	if decision == nil || decision.SelectedModelID == "" {
+		routeRequest := RouteRequest{Task: request.Task}
+		if request.RouteRequest != nil {
+			routeRequest = *request.RouteRequest
+		}
+		routed, err := s.Route(routeRequest)
+		if err != nil {
+			return nil, err
+		}
+		decision = &routed
+	}
+	if decision.SelectedModelID == "" {
+		return &GenerationResult{
+			Status:       "skipped",
+			Reason:       "no model was selected by the routing policy",
+			DurationMs:   time.Since(started).Milliseconds(),
+			FallbackPath: fallbackLabels(decision.FallbackPath),
+			LoggedAt:     time.Now().UTC(),
+		}, nil
+	}
+
+	provider, model, ok := s.findProviderModel(decision.SelectedProviderID, decision.SelectedModelID)
+	if !ok {
+		return nil, fmt.Errorf("selected provider/model not found: %s/%s", decision.SelectedProviderID, decision.SelectedModelID)
+	}
+	if (provider.Paid || model.EstimatedCostEUR > 0 || model.Tier == TierExpensive || model.RequiresApproval) && !request.AllowPaidApproved {
+		return &GenerationResult{
+			ProviderID:       provider.ID,
+			ModelID:          model.ID,
+			ModelName:        model.Name,
+			Tier:             model.Tier,
+			Status:           "blocked",
+			Reason:           "paid or approval-required model execution is disabled until manually approved",
+			EstimatedCostEUR: model.EstimatedCostEUR,
+			DurationMs:       time.Since(started).Milliseconds(),
+			FallbackPath:     fallbackLabels(decision.FallbackPath),
+			LoggedAt:         time.Now().UTC(),
+		}, nil
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
+	if endpoint == "" {
+		return &GenerationResult{
+			ProviderID:       provider.ID,
+			ModelID:          model.ID,
+			ModelName:        model.Name,
+			Tier:             model.Tier,
+			Status:           "skipped",
+			Reason:           "selected provider has no endpoint configured",
+			EstimatedCostEUR: model.EstimatedCostEUR,
+			DurationMs:       time.Since(started).Milliseconds(),
+			FallbackPath:     fallbackLabels(decision.FallbackPath),
+			LoggedAt:         time.Now().UTC(),
+		}, nil
+	}
+
+	output, err := s.callProvider(context.Background(), provider, model, endpoint, request)
+	if err != nil {
+		return &GenerationResult{
+			ProviderID:       provider.ID,
+			ModelID:          model.ID,
+			ModelName:        model.Name,
+			Tier:             model.Tier,
+			Status:           "failed",
+			Reason:           err.Error(),
+			EstimatedCostEUR: model.EstimatedCostEUR,
+			DurationMs:       time.Since(started).Milliseconds(),
+			FallbackPath:     fallbackLabels(decision.FallbackPath),
+			LoggedAt:         time.Now().UTC(),
+		}, nil
+	}
+	return &GenerationResult{
+		ProviderID:       provider.ID,
+		ModelID:          model.ID,
+		ModelName:        model.Name,
+		Tier:             model.Tier,
+		Output:           strings.TrimSpace(output),
+		Status:           "completed",
+		Reason:           "model endpoint returned a draft; verification must still ground important claims",
+		EstimatedCostEUR: model.EstimatedCostEUR,
+		DurationMs:       time.Since(started).Milliseconds(),
+		FallbackPath:     fallbackLabels(decision.FallbackPath),
+		LoggedAt:         time.Now().UTC(),
+	}, nil
+}
+
+func (s *Service) findProviderModel(providerID, modelID string) (Provider, Model, bool) {
+	for _, provider := range s.policy.Providers {
+		if provider.ID != providerID {
+			continue
+		}
+		for _, model := range provider.Models {
+			if model.ID == modelID {
+				return provider, model, true
+			}
+		}
+	}
+	return Provider{}, Model{}, false
+}
+
+func (s *Service) callProvider(ctx context.Context, provider Provider, model Model, endpoint string, request GenerateRequest) (string, error) {
+	timeout := intEnv("LLM_GENERATION_TIMEOUT_SECONDS", 60)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+	prompt := buildPrompt(request)
+	switch provider.ID {
+	case "ollama":
+		return callOllama(ctx, endpoint, model.ID, prompt, request)
+	default:
+		return callOpenAICompatible(ctx, endpoint, provider, model.ID, prompt, request)
+	}
+}
+
+func callOllama(ctx context.Context, endpoint, modelID, prompt string, request GenerateRequest) (string, error) {
+	payload := map[string]interface{}{
+		"model":  modelID,
+		"prompt": prompt,
+		"stream": false,
+	}
+	if request.Temperature > 0 {
+		payload["options"] = map[string]interface{}{"temperature": request.Temperature}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/api/generate", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("ollama returned HTTP %d: %s", resp.StatusCode, compactOutput(raw, 500))
+	}
+	var decoded struct {
+		Response string `json:"response"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", err
+	}
+	if decoded.Error != "" {
+		return "", fmt.Errorf("%s", decoded.Error)
+	}
+	return decoded.Response, nil
+}
+
+func callOpenAICompatible(ctx context.Context, endpoint string, provider Provider, modelID, prompt string, request GenerateRequest) (string, error) {
+	maxTokens := request.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 800
+	}
+	payload := map[string]interface{}{
+		"model": modelID,
+		"messages": []map[string]string{
+			{"role": "system", "content": firstNonEmpty(request.SystemPrompt, "You are a careful local-first assistant. Use only provided context when factual grounding is required.")},
+			{"role": "user", "content": prompt},
+		},
+		"temperature": request.Temperature,
+		"max_tokens":  maxTokens,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if provider.APIKeyEnv != "" {
+		if key := strings.TrimSpace(os.Getenv(provider.APIKeyEnv)); key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("openai-compatible endpoint returned HTTP %d: %s", resp.StatusCode, compactOutput(raw, 500))
+	}
+	var decoded struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error interface{} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", err
+	}
+	if decoded.Error != nil {
+		return "", fmt.Errorf("endpoint returned error: %v", decoded.Error)
+	}
+	if len(decoded.Choices) == 0 {
+		return "", fmt.Errorf("endpoint returned no choices")
+	}
+	return decoded.Choices[0].Message.Content, nil
 }
 
 func (s *Service) addLog(decision RouteDecision) {
@@ -373,18 +616,68 @@ func fallbackPath(candidates []candidate) []FallbackOption {
 	return path
 }
 
+func fallbackLabels(options []FallbackOption) []string {
+	labels := []string{}
+	for _, option := range options {
+		labels = append(labels, option.ProviderID+"/"+option.ModelID)
+	}
+	return labels
+}
+
+func buildPrompt(request GenerateRequest) string {
+	parts := []string{}
+	if request.SystemPrompt != "" {
+		parts = append(parts, request.SystemPrompt)
+	}
+	if len(request.Context) > 0 {
+		parts = append(parts, "Relevant context:")
+		for _, item := range request.Context {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				parts = append(parts, "- "+item)
+			}
+		}
+	}
+	parts = append(parts, "Task:")
+	parts = append(parts, strings.TrimSpace(request.Task))
+	return strings.Join(parts, "\n")
+}
+
+func compactOutput(value []byte, limit int) string {
+	text := strings.Join(strings.Fields(string(value)), " ")
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "..."
+}
+
+func intEnv(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func defaultPolicy() Policy {
+	ollamaEndpoint := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
+	lmStudioEndpoint := strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
+	freeCloudEndpoint := strings.TrimSpace(os.Getenv("FREE_CLOUD_OPENAI_BASE_URL"))
 	return Policy{
-		DailyPaidBudgetEUR:              0,
-		PaidCallsAllowed:                false,
-		LocalModelsAllowed:              true,
-		FreeCloudQuotaAllowed:           true,
-		LocalFirst:                      true,
-		CacheRepeatedPrompts:            true,
+		DailyPaidBudgetEUR:               0,
+		PaidCallsAllowed:                 false,
+		LocalModelsAllowed:               true,
+		FreeCloudQuotaAllowed:            true,
+		LocalFirst:                       true,
+		CacheRepeatedPrompts:             true,
 		RouteSimpleTasksToSmallModels:    true,
 		RouteComplexTasksToBestFreeModel: true,
-		RequireApprovalBeforePaidUsage:  true,
-		TierOrder:                       []string{TierFree, TierCheap, TierAcceptable, TierHigh, TierExpensive},
+		RequireApprovalBeforePaidUsage:   true,
+		TierOrder:                        []string{TierFree, TierCheap, TierAcceptable, TierHigh, TierExpensive},
 		Providers: []Provider{
 			{
 				ID:             "ollama",
@@ -392,6 +685,7 @@ func defaultPolicy() Policy {
 				Enabled:        true,
 				Local:          true,
 				Paid:           false,
+				EndpointURL:    ollamaEndpoint,
 				QuotaRemaining: -1,
 				Models: []Model{
 					{ID: "phi3:mini", Name: "Phi small local", Tier: TierFree, Capabilities: []string{"general", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
@@ -406,6 +700,7 @@ func defaultPolicy() Policy {
 				Enabled:        true,
 				Local:          true,
 				Paid:           false,
+				EndpointURL:    lmStudioEndpoint,
 				QuotaRemaining: -1,
 				Models: []Model{
 					{ID: "openai-compatible-local", Name: "OpenAI-compatible local endpoint", Tier: TierFree, Capabilities: []string{"general", "coding", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
@@ -417,6 +712,8 @@ func defaultPolicy() Policy {
 				Enabled:        false,
 				Local:          false,
 				Paid:           false,
+				EndpointURL:    freeCloudEndpoint,
+				APIKeyEnv:      "FREE_CLOUD_API_KEY",
 				QuotaRemaining: 0,
 				Models: []Model{
 					{ID: "free-best-available", Name: "Best configured free model", Tier: TierFree, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},

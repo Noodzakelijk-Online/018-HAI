@@ -36,6 +36,20 @@ func (h *Handler) Route(c *gin.Context) {
 	c.JSON(http.StatusOK, decision)
 }
 
+func (h *Handler) Generate(c *gin.Context) {
+	var request GenerateRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.service.Generate(request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *Handler) Logs(c *gin.Context) {
 	c.JSON(http.StatusOK, h.service.Logs())
 }

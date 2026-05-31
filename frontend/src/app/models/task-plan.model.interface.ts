@@ -1,4 +1,4 @@
-import { ILLMRouteDecision } from './llm-policy.model.interface';
+import { ILLMGenerationResult, ILLMRouteDecision } from './llm-policy.model.interface';
 import { IRankedMemory } from './context-memory.model.interface';
 import { IRankedExtraction } from './connected-source.model.interface';
 import { IVerificationClaim } from './verification.model.interface';
@@ -63,6 +63,7 @@ export interface IExecutionResult {
   claims: IVerificationClaim[];
   evidenceCount: number;
   unsupportedClaims: number;
+  llmGeneration?: ILLMGenerationResult;
   actions: IExecutedAction[];
   blockedReason?: string;
 }

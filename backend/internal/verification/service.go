@@ -47,6 +47,7 @@ type AnswerRequest struct {
 	Question          string          `json:"question"`
 	ProjectKey        string          `json:"projectKey,omitempty"`
 	Mode              string          `json:"mode,omitempty"`
+	DraftAnswer       string          `json:"draftAnswer,omitempty"`
 	ExternalEvidence  []EvidenceInput `json:"externalEvidence,omitempty"`
 	IncludeSensitive  bool            `json:"includeSensitive,omitempty"`
 	HumanApproved     bool            `json:"humanApproved,omitempty"`
@@ -54,12 +55,12 @@ type AnswerRequest struct {
 }
 
 type VerificationResult struct {
-	Run              models.VerificationRun      `json:"run"`
-	Claims           []models.VerificationClaim  `json:"claims"`
-	Evidence         []models.VerificationEvidence `json:"evidence"`
-	UnsupportedClaims []models.VerificationClaim `json:"unsupportedClaims"`
-	ResearchQuestions []string                  `json:"researchQuestions"`
-	Logs             []string                    `json:"logs"`
+	Run               models.VerificationRun        `json:"run"`
+	Claims            []models.VerificationClaim    `json:"claims"`
+	Evidence          []models.VerificationEvidence `json:"evidence"`
+	UnsupportedClaims []models.VerificationClaim    `json:"unsupportedClaims"`
+	ResearchQuestions []string                      `json:"researchQuestions"`
+	Logs              []string                      `json:"logs"`
 }
 
 type Service interface {
@@ -209,6 +210,9 @@ func buildAnswer(request AnswerRequest, mode string, evidence []models.Verificat
 	if mode == ModeDraft {
 		return "Draft hypothesis: " + strings.TrimSpace(request.Question)
 	}
+	if strings.TrimSpace(request.DraftAnswer) != "" {
+		return strings.TrimSpace(request.DraftAnswer)
+	}
 	used := filterEvidence(evidence, true)
 	if len(used) == 0 {
 		return "No grounded answer can be produced because no supporting evidence was found."
@@ -230,17 +234,17 @@ func decomposeClaims(runID uuid.UUID, answer, mode string, request AnswerRequest
 			continue
 		}
 		claims = append(claims, models.VerificationClaim{
-			RunID:      runID,
+			RunID:     runID,
 			ClaimText: sentence,
-			Status:     StatusUncertain,
-			HighRisk:   highRisk(request.Question + " " + sentence),
+			Status:    StatusUncertain,
+			HighRisk:  highRisk(request.Question + " " + sentence),
 		})
 	}
 	if len(claims) == 0 {
 		claims = append(claims, models.VerificationClaim{
-			RunID:      runID,
-			ClaimText: "No answer claim was generated.",
-			Status:     StatusNeedsReview,
+			RunID:       runID,
+			ClaimText:   "No answer claim was generated.",
+			Status:      StatusNeedsReview,
 			NeedsReview: true,
 		})
 	}

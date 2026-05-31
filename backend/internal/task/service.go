@@ -129,6 +129,7 @@ type ExecutionResult struct {
 	Claims             []models.VerificationClaim `json:"claims"`
 	EvidenceCount      int                        `json:"evidenceCount"`
 	UnsupportedClaims  int                        `json:"unsupportedClaims"`
+	LLMGeneration      *llm.GenerationResult      `json:"llmGeneration,omitempty"`
 	Actions            []ExecutedAction           `json:"actions"`
 	BlockedReason      string                     `json:"blockedReason,omitempty"`
 }
@@ -459,6 +460,35 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		executedAction("memory.retrieve", "completed", request.Request, countLabel(len(plan.ContextPlan.UsedContext), "memory item"), started),
 		executedAction("source.search", "completed", request.Request, countLabel(len(plan.ContextPlan.SourceContext), "source extraction"), started),
 	)
+	draft := ""
+	generateStarted := time.Now().UTC()
+	if s.llmService != nil {
+		generation, err := s.llmService.Generate(llm.GenerateRequest{
+			Task:         plan.RealGoal,
+			SystemPrompt: "Produce a concise draft answer using only the provided context. Do not invent facts; unsupported details will be rejected by verification.",
+			Context:      generationContext(plan),
+			RouteRequest: &llm.RouteRequest{
+				Task:              plan.Request,
+				TaskType:          plan.Intake.TaskType,
+				Difficulty:        plan.Intake.Difficulty,
+				RequiredReasoning: plan.Intake.RequiredReasoning,
+			},
+			RouteDecision: &plan.ModelDecision,
+			Temperature:   0.1,
+			MaxTokens:     900,
+		})
+		if err == nil && generation != nil {
+			result.LLMGeneration = generation
+			if generation.Status == "completed" {
+				draft = generation.Output
+			}
+			result.Actions = append(result.Actions, executedAction("llm.generate", generation.Status, plan.ModelDecision.SelectedModelID, generation.Reason, generateStarted))
+			plan.Events = append(plan.Events, event("llm", "model generation "+generation.Status+": "+generation.Reason))
+		} else if err != nil {
+			result.Actions = append(result.Actions, executedAction("llm.generate", "failed", plan.ModelDecision.SelectedModelID, err.Error(), generateStarted))
+			plan.Events = append(plan.Events, event("llm", "model generation failed; falling back to source-grounded evidence synthesis"))
+		}
+	}
 
 	verifyStarted := time.Now().UTC()
 	if s.verificationService == nil {
@@ -474,6 +504,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		Question:          plan.RealGoal,
 		ProjectKey:        plan.ProjectKey,
 		Mode:              result.Mode,
+		DraftAnswer:       draft,
 		ExternalEvidence:  evidence,
 		IncludeSensitive:  false,
 		HumanApproved:     !plan.RiskAssessment.ApprovalRequired,
@@ -541,6 +572,23 @@ func evidenceFromPlan(plan *CompletionPlan) []verification.EvidenceInput {
 		})
 	}
 	return evidence
+}
+
+func generationContext(plan *CompletionPlan) []string {
+	context := []string{}
+	for _, ranked := range plan.ContextPlan.UsedContext {
+		snippet := firstNonEmpty(ranked.Memory.Summary, ranked.Memory.Content)
+		if strings.TrimSpace(snippet) != "" {
+			context = append(context, compact(snippet))
+		}
+	}
+	for _, ranked := range plan.ContextPlan.SourceContext {
+		snippet := firstNonEmpty(ranked.Extraction.Summary, ranked.Extraction.Text)
+		if strings.TrimSpace(snippet) != "" {
+			context = append(context, compact(snippet))
+		}
+	}
+	return context
 }
 
 func localGroundedResult(plan *CompletionPlan, evidence []verification.EvidenceInput) (string, []models.VerificationClaim, string) {

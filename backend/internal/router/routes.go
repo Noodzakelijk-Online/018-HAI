@@ -78,6 +78,7 @@ func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {
 	{
 		llmRoutes.GET("/policy", llmHandler.Policy)
 		llmRoutes.POST("/route", llmHandler.Route)
+		llmRoutes.POST("/generate", llmHandler.Generate)
 		llmRoutes.GET("/logs", llmHandler.Logs)
 	}
 }

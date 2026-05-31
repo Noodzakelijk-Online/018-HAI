@@ -18,6 +18,8 @@ export interface ILLMProvider {
   enabled: boolean;
   local: boolean;
   paid: boolean;
+  endpointUrl?: string;
+  apiKeyEnv?: string;
   quotaRemaining: number;
   dailyBudgetEur: number;
   models: ILLMModel[];
@@ -78,5 +80,19 @@ export interface ILLMRouteDecision {
   classification: ILLMTaskClassification;
   fallbackPath: ILLMFallbackOption[];
   skipped: ILLMSkippedModel[];
+  loggedAt: string;
+}
+
+export interface ILLMGenerationResult {
+  providerId: string;
+  modelId: string;
+  modelName: string;
+  tier: string;
+  output: string;
+  status: string;
+  reason: string;
+  estimatedCostEur: number;
+  durationMs: number;
+  fallbackPath: string[];
   loggedAt: string;
 }

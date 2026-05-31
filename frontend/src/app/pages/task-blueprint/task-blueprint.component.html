@@ -199,6 +199,8 @@
           <div>
             <p><strong>Started:</strong> {{ result.startedAt | date: 'short' }}</p>
             <p><strong>Completed:</strong> {{ result.completedAt | date: 'short' }}</p>
+            <p *ngIf="result.llmGeneration"><strong>LLM:</strong> {{ result.llmGeneration.modelName || result.llmGeneration.modelId }} ({{ result.llmGeneration.status }})</p>
+            <p *ngIf="result.llmGeneration"><strong>LLM reason:</strong> {{ result.llmGeneration.reason }}</p>
           </div>
         </div>
         <p class="output-text">{{ result.output }}</p>

@@ -12,6 +12,7 @@ Implemented:
 - Go backend API with automation CRUD, launch metadata, health checks, diagnostics, LLM routing, memory, task, source, verification, and OS overview routes.
 - Local Docker Compose setup for Windows 11 and general Docker Desktop use.
 - Local-first LLM routing policy with configurable providers, local/free priority, paid usage disabled by default, selected-model explanation, and routing logs.
+- Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints, with paid execution blocked unless explicitly approved by policy.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
 - Connected-source registry with manual import, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
@@ -24,7 +25,7 @@ Not implemented yet:
 - Full autonomous device control. Automation `launch` now has controlled adapters for API calls, allowlisted container-local scripts, and optionally Docker API container start requests, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
 - Real OAuth connectors, webhook sync, scheduled sync workers, or local folder watchers. The connected-source layer is ready for adapters, but the operational path today is manual/import-driven.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
-- Direct model inference. The LLM module routes to a provider/model and explains why; task output is currently produced by the grounded verification/evidence workflow, not by calling Ollama or a cloud LLM.
+- Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
 - Production-grade secret management, migrations, RBAC hardening, and deployment configuration.
 
 ## Repository Layout
@@ -153,6 +154,7 @@ LLM routing:
 
 - `GET /llm/policy`
 - `POST /llm/route`
+- `POST /llm/generate`
 - `GET /llm/logs`
 
 Memory:
@@ -247,7 +249,13 @@ Configuration:
 - `LLM_POLICY_JSON` can replace the policy.
 - `LLM_PROVIDERS_JSON` can replace the provider/model list.
 
-The default provider list includes local Ollama-style entries and free/freemium placeholders. Routing is implemented; provider invocation is not.
+The default provider list includes Ollama, LM Studio/OpenAI-compatible local servers, free-cloud placeholders, and paid placeholders. Provider invocation is implemented for:
+
+- Ollama: set `OLLAMA_BASE_URL`, for example `http://host.docker.internal:11434` when Docker needs to reach Ollama on the Windows host.
+- LM Studio or llama.cpp OpenAI-compatible servers: set `LM_STUDIO_BASE_URL`, for example `http://host.docker.internal:1234`.
+- Free OpenAI-compatible quota providers: set `FREE_CLOUD_OPENAI_BASE_URL` and `FREE_CLOUD_API_KEY`, then enable/configure that provider through `LLM_PROVIDERS_JSON`.
+
+Task execution can use a configured model endpoint to produce a draft, but the draft is still passed through source-grounded verification before the task can be marked complete. If no endpoint is configured or reachable, the engine falls back to evidence-based synthesis and review behavior.
 
 ## Memory System
 
