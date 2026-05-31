@@ -86,9 +86,13 @@ services:
       AUTOMATION_SCRIPT_TIMEOUT_SECONDS: ${AUTOMATION_SCRIPT_TIMEOUT_SECONDS}
       AUTOMATION_DOCKER_CONTROL_ENABLED: ${AUTOMATION_DOCKER_CONTROL_ENABLED}
       AUTOMATION_DOCKER_SOCKET: ${AUTOMATION_DOCKER_SOCKET}
+      CONNECTED_SOURCE_LOCAL_ROOT: ${CONNECTED_SOURCE_LOCAL_ROOT}
+      CONNECTED_SOURCE_FILE_LIMIT: ${CONNECTED_SOURCE_FILE_LIMIT}
+      CONNECTED_SOURCE_MAX_BYTES: ${CONNECTED_SOURCE_MAX_BYTES}
     volumes:
       - ./images:/root/images
       - ./automation-scripts:/root/automation-scripts:ro
+      - ./connected-sources:/root/connected-sources:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${SERVER_PORT}'"]
       interval: 10s

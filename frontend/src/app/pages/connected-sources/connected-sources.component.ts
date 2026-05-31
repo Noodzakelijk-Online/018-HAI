@@ -46,6 +46,15 @@ export class ConnectedSourcesComponent implements OnInit {
     content: ['Decision: use connected sources as structured context. Follow up: verify extracted context before task planning.', [Validators.required]],
   });
 
+  folderForm: FormGroup = this.fb.group({
+    sourceId: ['', [Validators.required]],
+    mode: ['incremental_sync'],
+    projectKey: ['018-HAI'],
+    folderPath: ['.', [Validators.required]],
+    limit: [100],
+    maxBytes: [1048576],
+  });
+
   searchForm: FormGroup = this.fb.group({
     query: ['connected sources decisions follow up', [Validators.required]],
     projectKey: ['018-HAI'],
@@ -76,6 +85,10 @@ export class ConnectedSourcesComponent implements OnInit {
         this.sources = sources;
         if (!this.importForm.value.sourceId && sources.length) {
           this.importForm.patchValue({ sourceId: sources[0].id });
+        }
+        if (!this.folderForm.value.sourceId && sources.length) {
+          const localFolder = sources.find((source) => source.connectorKey === 'local-folder');
+          this.folderForm.patchValue({ sourceId: (localFolder || sources[0]).id });
         }
         this.loading = false;
       },
@@ -144,6 +157,33 @@ export class ConnectedSourcesComponent implements OnInit {
         error: () => {
           this.syncing = false;
           this.notification.error('Error', 'Sync failed.');
+        },
+      });
+  }
+
+  syncFolder(): void {
+    if (this.folderForm.invalid) {
+      return;
+    }
+    this.syncing = true;
+    this.sourceService
+      .sync(this.folderForm.value.sourceId, {
+        mode: this.folderForm.value.mode,
+        items: [],
+        folderPath: this.folderForm.value.folderPath,
+        projectKey: this.folderForm.value.projectKey,
+        limit: Number(this.folderForm.value.limit || 100),
+        maxBytes: Number(this.folderForm.value.maxBytes || 1048576),
+      })
+      .subscribe({
+        next: (result) => {
+          this.syncing = false;
+          this.notification.success('Folder synced', `${result.job.itemsSeen} files scanned and extracted.`);
+          this.refresh();
+        },
+        error: () => {
+          this.syncing = false;
+          this.notification.error('Error', 'Folder sync failed.');
         },
       });
   }

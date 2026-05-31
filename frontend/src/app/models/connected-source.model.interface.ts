@@ -51,6 +51,10 @@ export interface IImportItem {
 export interface IImportRequest {
   mode?: string;
   items: IImportItem[];
+  folderPath?: string;
+  projectKey?: string;
+  limit?: number;
+  maxBytes?: number;
 }
 
 export interface ISourceSyncJob {

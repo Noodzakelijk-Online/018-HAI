@@ -5,7 +5,10 @@ import (
 	"automation-hub-backend/internal/models"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -55,14 +58,18 @@ type ImportItem struct {
 }
 
 type ImportRequest struct {
-	Mode  string       `json:"mode,omitempty"`
-	Items []ImportItem `json:"items"`
+	Mode       string       `json:"mode,omitempty"`
+	Items      []ImportItem `json:"items"`
+	FolderPath string       `json:"folderPath,omitempty"`
+	ProjectKey string       `json:"projectKey,omitempty"`
+	Limit      int          `json:"limit,omitempty"`
+	MaxBytes   int64        `json:"maxBytes,omitempty"`
 }
 
 type SyncResult struct {
-	Job         models.SourceSyncJob    `json:"job"`
+	Job         models.SourceSyncJob      `json:"job"`
 	Extractions []models.SourceExtraction `json:"extractions"`
-	Message     string                  `json:"message"`
+	Message     string                    `json:"message"`
 }
 
 type SearchRequest struct {
@@ -106,6 +113,8 @@ type service struct {
 	repo          Repository
 	memoryService memory.Service
 }
+
+var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 
 func NewService(repo Repository, memoryService memory.Service) Service {
 	return &service{repo: repo, memoryService: memoryService}
@@ -223,7 +232,20 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	extractions := []models.SourceExtraction{}
 	added := 0
 	updated := 0
-	for index, item := range request.Items {
+	items := request.Items
+	if len(items) == 0 && source.ConnectorKey == "local-folder" {
+		items, err = s.localFolderItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	for index, item := range items {
 		if shouldExclude(source.ExcludePatterns, item.Title+" "+item.SourceURI) {
 			continue
 		}
@@ -246,11 +268,11 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 
 	now := time.Now().UTC()
 	source.LastSyncedAt = &now
-	source.Cursor = fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(request.Items))
+	source.Cursor = fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(items))
 	_, _ = s.repo.UpdateSource(source)
 	job.Status = "completed"
 	job.CursorAfter = source.Cursor
-	job.ItemsSeen = len(request.Items)
+	job.ItemsSeen = len(items)
 	job.ItemsAdded = added
 	job.ItemsUpdated = updated
 	job.Message = "sync completed with cached extraction and provenance links"
@@ -417,6 +439,72 @@ func (s *service) DeleteExtraction(id uuid.UUID) error {
 
 func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
 	return s.repo.FindAuditLogs(sourceID)
+}
+
+func (s *service) localFolderItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	root := firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources")
+	folder, err := resolveAllowedFolder(root, request.FolderPath)
+	if err != nil {
+		return nil, err
+	}
+	limit := firstPositiveInt(request.Limit, envInt("CONNECTED_SOURCE_FILE_LIMIT", 100))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	maxBytes := firstPositiveInt64(request.MaxBytes, envInt64("CONNECTED_SOURCE_MAX_BYTES", 1024*1024))
+	if maxBytes <= 0 || maxBytes > 10*1024*1024 {
+		maxBytes = 1024 * 1024
+	}
+	includeAfter := time.Time{}
+	if request.Mode != ModeHistoricalBackfill && source.LastSyncedAt != nil {
+		includeAfter = *source.LastSyncedAt
+	}
+	items := []ImportItem{}
+	err = filepath.WalkDir(folder, func(path string, entry os.DirEntry, errWalk error) error {
+		if errWalk != nil {
+			return nil
+		}
+		if len(items) >= limit {
+			return errLocalFolderLimitReached
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if path != folder && shouldExclude(source.ExcludePatterns, name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if shouldExclude(source.ExcludePatterns, path) || !isReadableLocalFile(path) {
+			return nil
+		}
+		info, errInfo := entry.Info()
+		if errInfo != nil {
+			return nil
+		}
+		if !includeAfter.IsZero() && !info.ModTime().After(includeAfter) {
+			return nil
+		}
+		content, errRead := readLocalTextFile(path, maxBytes)
+		if errRead != nil || strings.TrimSpace(content) == "" {
+			return nil
+		}
+		rel, _ := filepath.Rel(folder, path)
+		items = append(items, ImportItem{
+			ExternalID: "file:" + filepath.ToSlash(rel),
+			Title:      filepath.ToSlash(rel),
+			Content:    content,
+			SourceURI:  "file://" + filepath.ToSlash(path),
+			ItemType:   localFileContentType(path),
+			ProjectKey: request.ProjectKey,
+			Metadata:   fmt.Sprintf("size=%d;modified=%s", info.Size(), info.ModTime().UTC().Format(time.RFC3339)),
+		})
+		return nil
+	})
+	if err != nil && err != errLocalFolderLimitReached {
+		return nil, err
+	}
+	s.audit(source.ID, "source.local_folder_scanned", fmt.Sprintf("scanned %d files from %s", len(items), folder))
+	return items, nil
 }
 
 func (s *service) ensureConnectors() error {
@@ -702,6 +790,24 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstPositiveInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
 func containsAny(value string, needles ...string) bool {
 	for _, needle := range needles {
 		if strings.Contains(value, needle) {
@@ -756,4 +862,102 @@ func recencyScore(value time.Time) float64 {
 		return 0.05
 	}
 	return 1 - (days / 100)
+}
+
+func envInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt64(key string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	var parsed int64
+	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func resolveAllowedFolder(root, requested string) (string, error) {
+	rootAbs, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return "", err
+	}
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		requested = "."
+	}
+	if strings.ContainsAny(requested, "\r\n\x00") {
+		return "", fmt.Errorf("folder path contains invalid characters")
+	}
+	var folderAbs string
+	if filepath.IsAbs(requested) {
+		folderAbs, err = filepath.Abs(filepath.Clean(requested))
+	} else {
+		folderAbs, err = filepath.Abs(filepath.Join(rootAbs, filepath.Clean(requested)))
+	}
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(rootAbs, folderAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("folder path must stay inside allowlisted root %s", rootAbs)
+	}
+	info, err := os.Stat(folderAbs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("folder path is not a directory")
+	}
+	return folderAbs, nil
+}
+
+func readLocalTextFile(path string, maxBytes int64) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(content)) > maxBytes {
+		content = content[:maxBytes]
+	}
+	if strings.Contains(string(content), "\x00") {
+		return "", fmt.Errorf("binary file skipped")
+	}
+	return string(content), nil
+}
+
+func isReadableLocalFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".yaml", ".yml", ".log":
+		return true
+	default:
+		return false
+	}
+}
+
+func localFileContentType(path string) string {
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	if ext == "" {
+		return "local_file"
+	}
+	return "local_file_" + ext
 }

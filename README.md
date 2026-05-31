@@ -2,7 +2,7 @@
 
 018-HAI is a local-first automation hub and Personal AI Operating System in progress. It combines an Angular dashboard, Go backend APIs, an IDP service, nginx gateway routing, Postgres, Redis, and Kafka into one Docker Compose based workspace.
 
-The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, source-grounded verification, and an HAI OS overview dashboard. It is not yet a fully autonomous Claw/OpenClaw-style runtime. The current engine can plan, route, gather context, verify grounded output, and block unsafe or unsupported results; true local script/Docker/browser/MCP execution adapters still need to be implemented.
+The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, source-grounded verification, and an HAI OS overview dashboard. It is not yet a fully autonomous Claw/OpenClaw-style runtime. The current engine can plan, route, gather context, import local files, verify grounded output, run controlled automation launches, and block unsafe or unsupported results; richer browser/MCP/agent runtime adapters still need to be implemented.
 
 ## Current Status
 
@@ -15,7 +15,7 @@ Implemented:
 - Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints, with paid execution blocked unless explicitly approved by policy.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
-- Connected-source registry with manual import, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
+- Connected-source registry with manual import, allowlisted local-folder sync, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
 - CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
 
@@ -23,7 +23,7 @@ Not implemented yet:
 
 - Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
 - Full autonomous device control. Automation `launch` now has controlled adapters for API calls, allowlisted container-local scripts, and optionally Docker API container start requests, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
-- Real OAuth connectors, webhook sync, scheduled sync workers, or local folder watchers. The connected-source layer is ready for adapters, but the operational path today is manual/import-driven.
+- Real OAuth connectors, webhook sync, scheduled sync workers, or local folder watchers. The operational connected-source paths today are manual import and allowlisted local-folder scanning.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
 - Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
 - Production-grade secret management, migrations, RBAC hardening, and deployment configuration.
@@ -38,6 +38,7 @@ Not implemented yet:
 |-- nginx-config/            Gateway nginx config
 |-- nginx-config-manager/    Go service for nginx route config updates
 |-- automation-scripts/      Allowlisted scripts mounted read-only into backend
+|-- connected-sources/       Allowlisted local files mounted read-only for ingestion
 |-- generic-auto/            Placeholder generic automation service
 |-- gate/                    Gateway-related legacy/config files
 |-- kafka/                   Kafka-related config area
@@ -100,6 +101,15 @@ docker compose --env-file .env.local -f docker-compose.local.yml config
 ```
 
 If port 80 is already in use, change the nginx port mapping in `docker-compose.local.yml` from `"80:80"` to another host port, for example `"8088:80"`, then open `http://localhost:8088`.
+
+Local folder ingestion:
+
+1. Place text-like files under `connected-sources/`.
+2. In the dashboard, open Connected Sources.
+3. Connect a `Selected local folders` source if one does not exist.
+4. Use Local Folder Sync with a folder path relative to `connected-sources/`, for example `.`.
+
+The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. Supported file types are `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`.
 
 ## Developer Checks
 
@@ -223,7 +233,7 @@ The task success engine follows a completion-first loop:
 12. Queue unresolved or risky work for review.
 13. Store useful lessons only after verified completion.
 
-The current execution step is internal and evidence-grounded. It does not yet run shell commands, send emails, change accounts, post publicly, delete files, or control the local machine.
+The task engine execution step is internal and evidence-grounded. Separate automation launch adapters can call bounded API targets, run a single allowlisted container-local script, or start a Docker container when Docker control is deliberately enabled. The system still does not send emails, change accounts, post publicly, delete files, or broadly control the local machine.
 
 ## LLM Routing Policy
 
@@ -278,6 +288,7 @@ The source layer treats connected accounts and imports as structured context sou
 - Connector registry.
 - Source registry.
 - Manual import/sync.
+- Local folder scanning from the read-only `./connected-sources` mount.
 - Raw item metadata.
 - Text extraction and summaries.
 - Entity/date/task/decision/follow-up fields.
@@ -285,6 +296,13 @@ The source layer treats connected accounts and imports as structured context sou
 - Source provenance links.
 - Audit logs.
 - Pause, resume, revoke, reindex, correct, archive, and delete actions.
+
+Local folder sync is bounded by:
+
+- `CONNECTED_SOURCE_LOCAL_ROOT`, default `/root/connected-sources`.
+- `CONNECTED_SOURCE_FILE_LIMIT`, default `100`, hard-capped at `500`.
+- `CONNECTED_SOURCE_MAX_BYTES`, default `1048576`, hard-capped at `10485760`.
+- Incremental sync based on `LastSyncedAt`, unless mode is `historical_backfill`.
 
 Supported categories are represented for email, calendars, contacts/cloud documents, project boards, GitHub, local folders, and future connectors. Real account adapters must be added behind the existing service/repository interfaces.
 

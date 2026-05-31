@@ -84,6 +84,40 @@
             </button>
           </form>
         </nz-card>
+
+        <nz-card nzSize="small" nzTitle="Local Folder Sync">
+          <form nz-form [formGroup]="folderForm">
+            <nz-form-item>
+              <nz-form-label>Source</nz-form-label>
+              <nz-form-control>
+                <nz-select formControlName="sourceId">
+                  <nz-option
+                    *ngFor="let source of sources"
+                    [nzValue]="source.id"
+                    [nzLabel]="source.name"
+                  ></nz-option>
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+            <div class="form-row">
+              <input nz-input formControlName="mode" />
+              <input nz-input formControlName="projectKey" />
+            </div>
+            <nz-form-item>
+              <nz-form-label>Folder</nz-form-label>
+              <nz-form-control>
+                <input nz-input formControlName="folderPath" placeholder="Relative to allowlisted connected-source root" />
+              </nz-form-control>
+            </nz-form-item>
+            <div class="form-row">
+              <input nz-input type="number" formControlName="limit" />
+              <input nz-input type="number" formControlName="maxBytes" />
+            </div>
+            <button nz-button nzType="primary" (click)="syncFolder()" [nzLoading]="syncing">
+              Scan Folder
+            </button>
+          </form>
+        </nz-card>
       </div>
 
       <nz-card nzTitle="Connected Sources" class="section-card">
