@@ -76,6 +76,7 @@
           <p><strong>Level:</strong> {{ p.riskAssessment.level }}</p>
           <p><strong>Allowed now:</strong> {{ p.riskAssessment.allowedNow ? 'yes' : 'no' }}</p>
           <p><strong>Approval:</strong> {{ p.riskAssessment.approvalRequired ? 'required' : 'not required' }}</p>
+          <p><strong>Approved:</strong> {{ p.riskAssessment.approvalGranted ? 'yes' : 'no' }}</p>
           <ul>
             <li *ngFor="let reason of p.riskAssessment.reasons">{{ reason }}</li>
           </ul>
@@ -313,6 +314,8 @@
               <th>Priority</th>
               <th>Reason</th>
               <th>Status</th>
+              <th>Task</th>
+              <th nzWidth="190px">Decision</th>
             </tr>
           </thead>
           <tbody>
@@ -321,6 +324,29 @@
               <td>{{ item.priority }}</td>
               <td>{{ item.reason }}</td>
               <td>{{ item.status }}</td>
+              <td>{{ item.request.request }}</td>
+              <td>
+                <button
+                  nz-button
+                  nzSize="small"
+                  nzType="primary"
+                  (click)="resolveReviewItem(item, true)"
+                  [disabled]="item.status !== 'open'"
+                  [nzLoading]="resolvingReviewId === item.id"
+                >
+                  Approve
+                </button>
+                <button
+                  nz-button
+                  nzSize="small"
+                  nzType="default"
+                  (click)="resolveReviewItem(item, false)"
+                  [disabled]="item.status !== 'open'"
+                  [nzLoading]="resolvingReviewId === item.id"
+                >
+                  Reject
+                </button>
+              </td>
             </tr>
           </tbody>
         </nz-table>

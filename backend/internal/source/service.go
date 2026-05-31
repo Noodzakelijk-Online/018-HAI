@@ -27,24 +27,28 @@ const (
 )
 
 type CreateSourceRequest struct {
-	ConnectorKey    string   `json:"connectorKey"`
-	Name            string   `json:"name"`
-	Category        string   `json:"category,omitempty"`
-	Enabled         bool     `json:"enabled"`
-	LocalOnly       bool     `json:"localOnly"`
-	SyncFrequency   string   `json:"syncFrequency,omitempty"`
-	IngestionModes  []string `json:"ingestionModes,omitempty"`
-	Permissions     []string `json:"permissions,omitempty"`
-	ExcludePatterns []string `json:"excludePatterns,omitempty"`
+	ConnectorKey      string   `json:"connectorKey"`
+	Name              string   `json:"name"`
+	Category          string   `json:"category,omitempty"`
+	Enabled           bool     `json:"enabled"`
+	LocalOnly         bool     `json:"localOnly"`
+	SyncFrequency     string   `json:"syncFrequency,omitempty"`
+	SyncTarget        string   `json:"syncTarget,omitempty"`
+	DefaultProjectKey string   `json:"defaultProjectKey,omitempty"`
+	IngestionModes    []string `json:"ingestionModes,omitempty"`
+	Permissions       []string `json:"permissions,omitempty"`
+	ExcludePatterns   []string `json:"excludePatterns,omitempty"`
 }
 
 type UpdateSourceRequest struct {
-	Name            string   `json:"name,omitempty"`
-	Enabled         *bool    `json:"enabled,omitempty"`
-	LocalOnly       *bool    `json:"localOnly,omitempty"`
-	SyncFrequency   string   `json:"syncFrequency,omitempty"`
-	Permissions     []string `json:"permissions,omitempty"`
-	ExcludePatterns []string `json:"excludePatterns,omitempty"`
+	Name              string   `json:"name,omitempty"`
+	Enabled           *bool    `json:"enabled,omitempty"`
+	LocalOnly         *bool    `json:"localOnly,omitempty"`
+	SyncFrequency     string   `json:"syncFrequency,omitempty"`
+	SyncTarget        *string  `json:"syncTarget,omitempty"`
+	DefaultProjectKey *string  `json:"defaultProjectKey,omitempty"`
+	Permissions       []string `json:"permissions,omitempty"`
+	ExcludePatterns   []string `json:"excludePatterns,omitempty"`
 }
 
 type ImportItem struct {
@@ -92,12 +96,22 @@ type SearchResult struct {
 	Explanation string             `json:"explanation"`
 }
 
+type ScheduledSyncRun struct {
+	Checked   int      `json:"checked"`
+	Due       int      `json:"due"`
+	Completed int      `json:"completed"`
+	Failed    int      `json:"failed"`
+	Skipped   int      `json:"skipped"`
+	Messages  []string `json:"messages"`
+}
+
 type Service interface {
 	Connectors() ([]models.SourceConnector, error)
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
 	UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*models.ConnectedSource, error)
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
+	RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 	Reindex(sourceID uuid.UUID) (*SyncResult, error)
 	Pause(sourceID uuid.UUID, paused bool) (*models.ConnectedSource, error)
 	Revoke(sourceID uuid.UUID) (*models.ConnectedSource, error)
@@ -148,16 +162,21 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		return nil, fmt.Errorf("category is required")
 	}
 	source := &models.ConnectedSource{
-		ConnectorKey:    connectorKey,
-		Name:            name,
-		Category:        category,
-		Enabled:         request.Enabled,
-		LocalOnly:       request.LocalOnly,
-		SyncFrequency:   firstNonEmpty(request.SyncFrequency, "manual"),
-		IngestionModes:  joinValues(defaultModes(request.IngestionModes)),
-		Permissions:     joinValues(minimalPermissions(category, request.Permissions)),
-		ExcludePatterns: joinValues(request.ExcludePatterns),
-		Status:          "active",
+		ConnectorKey:      connectorKey,
+		Name:              name,
+		Category:          category,
+		Enabled:           request.Enabled,
+		LocalOnly:         request.LocalOnly,
+		SyncFrequency:     firstNonEmpty(request.SyncFrequency, "manual"),
+		SyncTarget:        strings.TrimSpace(request.SyncTarget),
+		DefaultProjectKey: strings.TrimSpace(request.DefaultProjectKey),
+		IngestionModes:    joinValues(defaultModes(request.IngestionModes)),
+		Permissions:       joinValues(minimalPermissions(category, request.Permissions)),
+		ExcludePatterns:   joinValues(request.ExcludePatterns),
+		Status:            "active",
+	}
+	if connectorKey == "local-folder" && source.SyncTarget == "" {
+		source.SyncTarget = "."
 	}
 	if !request.Enabled {
 		source.Status = "paused"
@@ -191,6 +210,12 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 	if request.SyncFrequency != "" {
 		source.SyncFrequency = request.SyncFrequency
 	}
+	if request.SyncTarget != nil {
+		source.SyncTarget = strings.TrimSpace(*request.SyncTarget)
+	}
+	if request.DefaultProjectKey != nil {
+		source.DefaultProjectKey = strings.TrimSpace(*request.DefaultProjectKey)
+	}
 	if request.Permissions != nil {
 		source.Permissions = joinValues(minimalPermissions(source.Category, request.Permissions))
 	}
@@ -215,6 +240,12 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
+	}
+	if source.ConnectorKey == "local-folder" {
+		request.FolderPath = firstNonEmpty(request.FolderPath, source.SyncTarget, ".")
+		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
+		source.SyncTarget = request.FolderPath
+		source.DefaultProjectKey = request.ProjectKey
 	}
 	mode := firstNonEmpty(request.Mode, ModeManualImport)
 	started := time.Now().UTC()
@@ -282,6 +313,38 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, "source.synced", job.Message)
 	}
 	return &SyncResult{Job: *job, Extractions: extractions, Message: job.Message}, err
+}
+
+func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error) {
+	sources, err := s.repo.FindSources(false)
+	if err != nil {
+		return nil, err
+	}
+	run := &ScheduledSyncRun{Checked: len(sources)}
+	for _, source := range sources {
+		due, reason := scheduledSourceDue(source, now)
+		if !due {
+			run.Skipped++
+			if reason != "" {
+				run.Messages = append(run.Messages, fmt.Sprintf("%s skipped: %s", source.Name, reason))
+			}
+			continue
+		}
+		run.Due++
+		result, errSync := s.Sync(source.ID, ImportRequest{
+			Mode:       ModeScheduledSync,
+			FolderPath: source.SyncTarget,
+			ProjectKey: source.DefaultProjectKey,
+		})
+		if errSync != nil {
+			run.Failed++
+			run.Messages = append(run.Messages, fmt.Sprintf("%s failed: %s", source.Name, errSync.Error()))
+			continue
+		}
+		run.Completed++
+		run.Messages = append(run.Messages, fmt.Sprintf("%s synced: %d seen, %d added, %d updated", source.Name, result.Job.ItemsSeen, result.Job.ItemsAdded, result.Job.ItemsUpdated))
+	}
+	return run, nil
 }
 
 func (s *service) Reindex(sourceID uuid.UUID) (*SyncResult, error) {
@@ -620,7 +683,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "cloud-documents", Name: "Cloud drives and documents", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
 		{ConnectorKey: "project-board", Name: "Trello and project boards", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
 		{ConnectorKey: "github", Name: "GitHub repositories and issues", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
-		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true},
+		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true},
 	}
 }
 
@@ -680,6 +743,42 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 		parts = append(parts, "source linked")
 	}
 	return score, strings.Join(parts, ", ")
+}
+
+func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
+	if source.ConnectorKey != "local-folder" {
+		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
+	}
+	interval, ok := parseSyncFrequency(source.SyncFrequency)
+	if !ok {
+		return false, "sync frequency is manual or unsupported"
+	}
+	if source.LastSyncedAt == nil {
+		return true, ""
+	}
+	if now.Sub(*source.LastSyncedAt) >= interval {
+		return true, ""
+	}
+	return false, "not due yet"
+}
+
+func parseSyncFrequency(value string) (time.Duration, bool) {
+	clean := strings.TrimSpace(strings.ToLower(value))
+	switch clean {
+	case "", "manual", "off", "disabled", "none":
+		return 0, false
+	case "hourly":
+		return time.Hour, true
+	case "daily":
+		return 24 * time.Hour, true
+	case "weekly":
+		return 7 * 24 * time.Hour, true
+	}
+	duration, err := time.ParseDuration(clean)
+	if err != nil || duration < time.Minute {
+		return 0, false
+	}
+	return duration, true
 }
 
 func extractEntities(text string) []string {

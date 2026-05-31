@@ -9,6 +9,7 @@ import {
   ISourceSearchRequest,
   ISourceSearchResult,
   ISourceSyncResult,
+  IScheduledSyncRun,
 } from '../models/connected-source.model.interface';
 
 export interface IConnectedSourceService {
@@ -16,6 +17,7 @@ export interface IConnectedSourceService {
   sources(includeDisabled: boolean): Observable<IConnectedSource[]>;
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource>;
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult>;
+  runDueScheduledSyncs(): Observable<IScheduledSyncRun>;
   reindex(sourceId: string): Observable<ISourceSyncResult>;
   pause(sourceId: string): Observable<IConnectedSource>;
   resume(sourceId: string): Observable<IConnectedSource>;

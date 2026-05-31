@@ -110,6 +110,84 @@ func TestSyncLocalFolderBlocksTraversalOutsideAllowlistedRoot(t *testing.T) {
 	}
 }
 
+func TestRunDueScheduledSyncsRunsDueLocalFolderSource(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root+"/scheduled.md", "Decision: scheduled source sync should run without a dashboard click. Follow up: keep the folder allowlist enforced.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      "local-folder",
+		Name:              "Scheduled local folder",
+		Category:          "local_folder",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		SyncFrequency:     "1m",
+		SyncTarget:        ".",
+		DefaultProjectKey: "018-HAI",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	run, err := service.RunDueScheduledSyncs(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("RunDueScheduledSyncs: %v", err)
+	}
+	if run.Checked != 1 || run.Due != 1 || run.Completed != 1 || run.Failed != 0 {
+		t.Fatalf("run = %#v, want one completed due sync", run)
+	}
+	if len(repo.extractions) != 1 {
+		t.Fatalf("extractions = %d, want 1", len(repo.extractions))
+	}
+	updated, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if updated.LastSyncedAt == nil {
+		t.Fatalf("expected LastSyncedAt to be updated")
+	}
+	if !repo.hasAudit("source.synced") {
+		t.Fatalf("expected scheduled sync audit record")
+	}
+}
+
+func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
+	lastSync := time.Now().UTC()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{
+			ID:            uuid.New(),
+			ConnectorKey:  "local-folder",
+			Name:          "Manual folder",
+			Category:      "local_folder",
+			Enabled:       true,
+			LocalOnly:     true,
+			Status:        "active",
+			SyncFrequency: "manual",
+		},
+		&models.ConnectedSource{
+			ID:            uuid.New(),
+			ConnectorKey:  "local-folder",
+			Name:          "Fresh folder",
+			Category:      "local_folder",
+			Enabled:       true,
+			LocalOnly:     true,
+			Status:        "active",
+			SyncFrequency: "1h",
+			LastSyncedAt:  &lastSync,
+		},
+	)
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	run, err := service.RunDueScheduledSyncs(lastSync.Add(10 * time.Minute))
+	if err != nil {
+		t.Fatalf("RunDueScheduledSyncs: %v", err)
+	}
+	if run.Checked != 2 || run.Due != 0 || run.Completed != 0 || run.Skipped != 2 {
+		t.Fatalf("run = %#v, want two skipped sources", run)
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {

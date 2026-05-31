@@ -12,6 +12,7 @@ import {
   ISourceSearchRequest,
   ISourceSearchResult,
   ISourceSyncResult,
+  IScheduledSyncRun,
 } from '../../models/connected-source.model.interface';
 
 @Injectable({
@@ -38,6 +39,10 @@ export class ConnectedSourceService implements IConnectedSourceService {
 
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult> {
     return this.http.post<ISourceSyncResult>(`${this.apiUrl}/${sourceId}/sync`, request);
+  }
+
+  runDueScheduledSyncs(): Observable<IScheduledSyncRun> {
+    return this.http.post<IScheduledSyncRun>(`${this.apiUrl}/sync-due`, {});
   }
 
   reindex(sourceId: string): Observable<ISourceSyncResult> {

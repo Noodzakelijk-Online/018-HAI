@@ -1,0 +1,78 @@
+package source
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"sync/atomic"
+	"time"
+)
+
+type Scheduler struct {
+	service  Service
+	interval time.Duration
+	running  atomic.Bool
+}
+
+func NewScheduler(service Service, interval time.Duration) *Scheduler {
+	if interval < 15*time.Second {
+		interval = time.Minute
+	}
+	return &Scheduler{service: service, interval: interval}
+}
+
+func StartScheduler(ctx context.Context, service Service) {
+	if !schedulerEnabled() {
+		return
+	}
+	scheduler := NewScheduler(service, schedulerInterval())
+	go scheduler.Start(ctx)
+}
+
+func (s *Scheduler) Start(ctx context.Context) {
+	s.runOnce()
+	ticker := time.NewTicker(s.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runOnce()
+		}
+	}
+}
+
+func (s *Scheduler) runOnce() {
+	if !s.running.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.running.Store(false)
+	result, err := s.service.RunDueScheduledSyncs(time.Now().UTC())
+	if err != nil {
+		log.Printf("source scheduler failed: %v", err)
+		return
+	}
+	if result.Due > 0 || result.Failed > 0 {
+		log.Printf("source scheduler checked=%d due=%d completed=%d failed=%d", result.Checked, result.Due, result.Completed, result.Failed)
+	}
+}
+
+func schedulerEnabled() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("SOURCE_SCHEDULER_ENABLED")))
+	return value == "" || value == "true" || value == "1" || value == "yes"
+}
+
+func schedulerInterval() time.Duration {
+	value := strings.TrimSpace(os.Getenv("SOURCE_SCHEDULER_INTERVAL_SECONDS"))
+	if value == "" {
+		return time.Minute
+	}
+	var seconds int64
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 15 {
+		return time.Minute
+	}
+	return time.Duration(seconds) * time.Second
+}

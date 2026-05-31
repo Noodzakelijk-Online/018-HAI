@@ -17,6 +17,8 @@ export interface IConnectedSource {
   enabled: boolean;
   localOnly: boolean;
   syncFrequency: string;
+  syncTarget?: string;
+  defaultProjectKey?: string;
   ingestionModes: string;
   permissions: string;
   excludePatterns: string;
@@ -33,6 +35,8 @@ export interface ICreateSourceRequest {
   enabled: boolean;
   localOnly: boolean;
   syncFrequency?: string;
+  syncTarget?: string;
+  defaultProjectKey?: string;
   ingestionModes?: string[];
   permissions?: string[];
   excludePatterns?: string[];
@@ -95,6 +99,15 @@ export interface ISourceSyncResult {
   job: ISourceSyncJob;
   extractions: ISourceExtraction[];
   message: string;
+}
+
+export interface IScheduledSyncRun {
+  checked: number;
+  due: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  messages: string[];
 }
 
 export interface ISourceSearchRequest {

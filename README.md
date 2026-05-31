@@ -15,7 +15,7 @@ Implemented:
 - Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints, with paid execution blocked unless explicitly approved by policy.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
-- Connected-source registry with manual import, allowlisted local-folder sync, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
+- Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
 - CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
 
@@ -23,7 +23,7 @@ Not implemented yet:
 
 - Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
 - Full autonomous device control. Automation `launch` now has controlled adapters for API calls, allowlisted container-local scripts, and optionally Docker API container start requests, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
-- Real OAuth connectors, webhook sync, scheduled sync workers, or local folder watchers. The operational connected-source paths today are manual import and allowlisted local-folder scanning.
+- Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, and scheduled due-sync for enabled local-folder sources.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
 - Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
 - Production-grade secret management, migrations, RBAC hardening, and deployment configuration.
@@ -111,6 +111,8 @@ Local folder ingestion:
 
 The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. Supported file types are `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`.
 
+For recurring local-folder ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`. Only the local-folder adapter is scheduled today; other connector categories stay registered until real adapters are implemented.
+
 ## Developer Checks
 
 Backend:
@@ -186,6 +188,7 @@ Task engine:
 - `POST /task/success`
 - `GET /task/logs`
 - `GET /task/review-queue`
+- `POST /task/review-queue/:id/resolve`
 
 Connected sources:
 
@@ -194,6 +197,7 @@ Connected sources:
 - `POST /sources/`
 - `PATCH /sources/:id`
 - `POST /sources/:id/sync`
+- `POST /sources/sync-due`
 - `POST /sources/:id/reindex`
 - `POST /sources/:id/pause`
 - `POST /sources/:id/resume`
@@ -234,6 +238,8 @@ The task success engine follows a completion-first loop:
 13. Store useful lessons only after verified completion.
 
 The task engine execution step is internal and evidence-grounded. Separate automation launch adapters can call bounded API targets, run a single allowlisted container-local script, or start a Docker container when Docker control is deliberately enabled. The system still does not send emails, change accounts, post publicly, delete files, or broadly control the local machine.
+
+High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its internal context, model, verification, and memory workflow.
 
 ## LLM Routing Policy
 
@@ -289,6 +295,7 @@ The source layer treats connected accounts and imports as structured context sou
 - Source registry.
 - Manual import/sync.
 - Local folder scanning from the read-only `./connected-sources` mount.
+- Scheduled due-sync for enabled local-folder sources with non-manual sync frequencies.
 - Raw item metadata.
 - Text extraction and summaries.
 - Entity/date/task/decision/follow-up fields.
@@ -302,6 +309,8 @@ Local folder sync is bounded by:
 - `CONNECTED_SOURCE_LOCAL_ROOT`, default `/root/connected-sources`.
 - `CONNECTED_SOURCE_FILE_LIMIT`, default `100`, hard-capped at `500`.
 - `CONNECTED_SOURCE_MAX_BYTES`, default `1048576`, hard-capped at `10485760`.
+- `SOURCE_SCHEDULER_ENABLED`, default `true`.
+- `SOURCE_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
 - Incremental sync based on `LastSyncedAt`, unless mode is `historical_backfill`.
 
 Supported categories are represented for email, calendars, contacts/cloud documents, project boards, GitHub, local folders, and future connectors. Real account adapters must be added behind the existing service/repository interfaces.

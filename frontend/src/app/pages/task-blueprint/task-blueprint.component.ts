@@ -20,6 +20,7 @@ export class TaskBlueprintComponent implements OnInit {
   reviewQueue: IReviewQueueItem[] = [];
   loading = false;
   running = false;
+  resolvingReviewId = '';
 
   planForm: FormGroup = this.fb.group({
     request: [
@@ -113,6 +114,35 @@ export class TaskBlueprintComponent implements OnInit {
       next: (items) => (this.reviewQueue = items),
       error: () => (this.reviewQueue = []),
     });
+  }
+
+  resolveReviewItem(item: IReviewQueueItem, approved: boolean): void {
+    this.resolvingReviewId = item.id;
+    this.taskPlanService
+      .resolveReviewItem(item.id, {
+        approved,
+        note: approved
+          ? 'Approved from Task Blueprint review queue.'
+          : 'Rejected from Task Blueprint review queue.',
+      })
+      .subscribe({
+        next: (result) => {
+          this.resolvingReviewId = '';
+          if (result.plan) {
+            this.plan = result.plan;
+          }
+          this.notification.success(
+            approved ? 'Review approved' : 'Review rejected',
+            result.plan ? 'The approved task was re-run through the success engine.' : 'The task remains blocked.'
+          );
+          this.loadLogs();
+          this.loadReviewQueue();
+        },
+        error: () => {
+          this.resolvingReviewId = '';
+          this.notification.error('Error', 'Failed to resolve review item.');
+        },
+      });
   }
 
   goHome(): void {

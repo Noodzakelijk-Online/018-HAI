@@ -1,6 +1,8 @@
 package router
 
 import (
+	"context"
+
 	"automation-hub-backend/docs"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/config"
@@ -36,7 +38,9 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeLLMRoutes(v1, llmHandler)
 		initializeMemoryRoutes(v1, memory.DefaultHandler())
-		initializeSourceRoutes(v1, source.DefaultHandler())
+		sourceService := source.DefaultService()
+		source.StartScheduler(context.Background(), sourceService)
+		initializeSourceRoutes(v1, source.NewHandler(sourceService))
 		initializeVerificationRoutes(v1, verification.DefaultHandler())
 		osHandler, err := haios.DefaultHandler()
 		if err != nil {
@@ -105,6 +109,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.GET("/", sourceHandler.Sources)
 		sourceRoutes.POST("/", sourceHandler.CreateSource)
 		sourceRoutes.POST("/search", sourceHandler.Search)
+		sourceRoutes.POST("/sync-due", sourceHandler.RunDueScheduledSyncs)
 		sourceRoutes.GET("/extractions", sourceHandler.Extractions)
 		sourceRoutes.GET("/audit-logs", sourceHandler.AuditLogs)
 		sourceRoutes.PATCH("/extractions/:id", sourceHandler.UpdateExtraction)
@@ -127,6 +132,7 @@ func initializeTaskRoutes(apiVersion *gin.RouterGroup, taskHandler *task.Handler
 		taskRoutes.POST("/success", taskHandler.Run)
 		taskRoutes.GET("/logs", taskHandler.Logs)
 		taskRoutes.GET("/review-queue", taskHandler.ReviewQueue)
+		taskRoutes.POST("/review-queue/:id/resolve", taskHandler.ResolveReviewItem)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -13,8 +14,12 @@ type Handler struct {
 	service Service
 }
 
+func NewHandler(service Service) *Handler {
+	return &Handler{service: service}
+}
+
 func DefaultHandler() *Handler {
-	return &Handler{service: DefaultService()}
+	return NewHandler(DefaultService())
 }
 
 func (h *Handler) Connectors(c *gin.Context) {
@@ -94,6 +99,15 @@ func (h *Handler) Reindex(c *gin.Context) {
 	result, err := h.service.Reindex(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) RunDueScheduledSyncs(c *gin.Context) {
+	result, err := h.service.RunDueScheduledSyncs(time.Now().UTC())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)

@@ -8,6 +8,8 @@ export interface ITaskPlanRequest {
   projectKey?: string;
   successCriteria?: string[];
   executeAllowed?: boolean;
+  humanApproved?: boolean;
+  approvalNote?: string;
 }
 
 export interface IIntakeAnalysis {
@@ -87,6 +89,7 @@ export interface ITaskStep {
 export interface IRiskAssessment {
   level: string;
   approvalRequired: boolean;
+  approvalGranted: boolean;
   reasons: string[];
   allowedNow: boolean;
 }
@@ -111,10 +114,24 @@ export interface IRetryPolicy {
 export interface IReviewQueueItem {
   id: string;
   taskId: string;
+  request: ITaskPlanRequest;
   reason: string;
   priority: string;
   status: string;
+  decision?: string;
+  resolutionNote?: string;
   createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface IApprovalDecision {
+  approved: boolean;
+  note?: string;
+}
+
+export interface IReviewResolutionResult {
+  item: IReviewQueueItem;
+  plan?: ICompletionPlan;
 }
 
 export interface ITaskEvent {

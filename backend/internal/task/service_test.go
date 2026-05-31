@@ -74,6 +74,43 @@ func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	}
 }
 
+func TestResolveReviewItemApprovesAndRunsTask(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService, err := llm.NewServiceFromEnv()
+	if err != nil {
+		t.Fatalf("NewServiceFromEnv: %v", err)
+	}
+	service := NewService(mem, llmService)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:    "Send a public posting after approval",
+		ProjectKey: "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.ReviewQueueItem == nil {
+		t.Fatalf("expected review queue item")
+	}
+
+	result, err := service.ResolveReviewItem(plan.ReviewQueueItem.ID, ApprovalDecision{
+		Approved: true,
+		Note:     "Operator approved controlled internal execution only.",
+	})
+	if err != nil {
+		t.Fatalf("ResolveReviewItem: %v", err)
+	}
+	if result.Item.Decision != "approved" {
+		t.Fatalf("decision = %q, want approved", result.Item.Decision)
+	}
+	if result.Plan == nil {
+		t.Fatalf("expected approved item to rerun task")
+	}
+	if !result.Plan.RiskAssessment.ApprovalGranted {
+		t.Fatalf("expected approval to be reflected in risk assessment")
+	}
+}
+
 func TestRunValidatedTaskStoresLesson(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService, err := llm.NewServiceFromEnv()

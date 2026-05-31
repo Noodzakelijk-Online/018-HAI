@@ -3,8 +3,10 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ITaskPlanService } from '../task-plan.service.interface';
 import {
+  IApprovalDecision,
   ICompletionPlan,
   IReviewQueueItem,
+  IReviewResolutionResult,
   ITaskPlanRequest,
 } from '../../models/task-plan.model.interface';
 
@@ -30,5 +32,9 @@ export class TaskPlanService implements ITaskPlanService {
 
   reviewQueue(): Observable<IReviewQueueItem[]> {
     return this.http.get<IReviewQueueItem[]>(`${this.apiUrl}/review-queue`);
+  }
+
+  resolveReviewItem(id: string, decision: IApprovalDecision): Observable<IReviewResolutionResult> {
+    return this.http.post<IReviewResolutionResult>(`${this.apiUrl}/review-queue/${id}/resolve`, decision);
   }
 }

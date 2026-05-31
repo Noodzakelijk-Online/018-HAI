@@ -56,12 +56,14 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	tasks.POST("/success", mark("taskRun"))
 	tasks.GET("/logs", mark("taskLogs"))
 	tasks.GET("/review-queue", mark("taskReviewQueue"))
+	tasks.POST("/review-queue/:id/resolve", mark("taskReviewResolve"))
 
 	sources := r.Group("/api/v1").Group("/sources")
 	sources.GET("/connectors", mark("sourceConnectors"))
 	sources.GET("/", mark("sourceList"))
 	sources.POST("/", mark("sourceCreate"))
 	sources.POST("/search", mark("sourceSearch"))
+	sources.POST("/sync-due", mark("sourceSyncDue"))
 	sources.GET("/extractions", mark("sourceExtractions"))
 	sources.GET("/audit-logs", mark("sourceAuditLogs"))
 	sources.PATCH("/extractions/:id", mark("sourceExtractionUpdate"))
@@ -105,10 +107,12 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/task/success", "taskRun"},
 		{"GET", "/api/v1/task/logs", "taskLogs"},
 		{"GET", "/api/v1/task/review-queue", "taskReviewQueue"},
+		{"POST", "/api/v1/task/review-queue/abc/resolve", "taskReviewResolve"},
 		{"GET", "/api/v1/sources/connectors", "sourceConnectors"},
 		{"GET", "/api/v1/sources/", "sourceList"},
 		{"POST", "/api/v1/sources/", "sourceCreate"},
 		{"POST", "/api/v1/sources/search", "sourceSearch"},
+		{"POST", "/api/v1/sources/sync-due", "sourceSyncDue"},
 		{"GET", "/api/v1/sources/extractions", "sourceExtractions"},
 		{"GET", "/api/v1/sources/audit-logs", "sourceAuditLogs"},
 		{"PATCH", "/api/v1/sources/extractions/abc", "sourceExtractionUpdate"},

@@ -62,3 +62,22 @@ func (h *Handler) Logs(c *gin.Context) {
 func (h *Handler) ReviewQueue(c *gin.Context) {
 	c.JSON(http.StatusOK, h.service.ReviewQueue())
 }
+
+func (h *Handler) ResolveReviewItem(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "review item id is required"})
+		return
+	}
+	var decision ApprovalDecision
+	if err := c.ShouldBindJSON(&decision); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.service.ResolveReviewItem(id, decision)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}

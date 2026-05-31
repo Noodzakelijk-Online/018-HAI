@@ -47,6 +47,10 @@
               </nz-form-item>
               <label nz-checkbox formControlName="localOnly">Local only</label>
             </div>
+            <div class="form-row">
+              <input nz-input formControlName="syncTarget" placeholder="Folder target, e.g. ." />
+              <input nz-input formControlName="defaultProjectKey" placeholder="Project key" />
+            </div>
             <nz-form-item>
               <nz-form-label>Exclude</nz-form-label>
               <nz-form-control>
@@ -116,6 +120,9 @@
             <button nz-button nzType="primary" (click)="syncFolder()" [nzLoading]="syncing">
               Scan Folder
             </button>
+            <button nz-button nzType="default" (click)="runDueScheduledSyncs()" [nzLoading]="syncing">
+              Run Due Scheduled Syncs
+            </button>
           </form>
         </nz-card>
       </div>
@@ -129,6 +136,7 @@
               <th>Category</th>
               <th>Status</th>
               <th>Local</th>
+              <th>Target</th>
               <th>Last sync</th>
               <th nzWidth="300px">Actions</th>
             </tr>
@@ -139,6 +147,7 @@
               <td>{{ source.category }}</td>
               <td>{{ source.status }}</td>
               <td>{{ source.localOnly ? 'yes' : 'no' }}</td>
+              <td>{{ source.syncTarget || '-' }}</td>
               <td>{{ source.lastSyncedAt ? (source.lastSyncedAt | date: 'short') : '-' }}</td>
               <td>
                 <button *ngIf="source.enabled" nz-button nzSize="small" nzType="default" (click)="pause(source)">Pause</button>

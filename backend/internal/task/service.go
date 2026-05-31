@@ -1,15 +1,17 @@
 package task
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/verification"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -19,6 +21,8 @@ type IntakeRequest struct {
 	ProjectKey      string   `json:"projectKey,omitempty"`
 	SuccessCriteria []string `json:"successCriteria,omitempty"`
 	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
+	HumanApproved   bool     `json:"humanApproved,omitempty"`
+	ApprovalNote    string   `json:"approvalNote,omitempty"`
 }
 
 type IntakeAnalysis struct {
@@ -75,6 +79,7 @@ type TaskStep struct {
 type RiskAssessment struct {
 	Level            string   `json:"level"`
 	ApprovalRequired bool     `json:"approvalRequired"`
+	ApprovalGranted  bool     `json:"approvalGranted"`
 	Reasons          []string `json:"reasons"`
 	AllowedNow       bool     `json:"allowedNow"`
 }
@@ -97,12 +102,26 @@ type RetryPolicy struct {
 }
 
 type ReviewQueueItem struct {
-	ID        string    `json:"id"`
-	TaskID    string    `json:"taskId"`
-	Reason    string    `json:"reason"`
-	Priority  string    `json:"priority"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID             string        `json:"id"`
+	TaskID         string        `json:"taskId"`
+	Request        IntakeRequest `json:"request"`
+	Reason         string        `json:"reason"`
+	Priority       string        `json:"priority"`
+	Status         string        `json:"status"`
+	Decision       string        `json:"decision,omitempty"`
+	ResolutionNote string        `json:"resolutionNote,omitempty"`
+	CreatedAt      time.Time     `json:"createdAt"`
+	ResolvedAt     *time.Time    `json:"resolvedAt,omitempty"`
+}
+
+type ApprovalDecision struct {
+	Approved bool   `json:"approved"`
+	Note     string `json:"note,omitempty"`
+}
+
+type ReviewResolutionResult struct {
+	Item ReviewQueueItem `json:"item"`
+	Plan *CompletionPlan `json:"plan,omitempty"`
 }
 
 type TaskEvent struct {
@@ -172,6 +191,7 @@ type Service interface {
 	Run(request IntakeRequest) (*CompletionPlan, error)
 	Logs() []CompletionPlan
 	ReviewQueue() []ReviewQueueItem
+	ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
 }
 
 type service struct {
@@ -243,7 +263,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.ValidationResult.Passed = false
 		plan.ValidationResult.Status = "blocked"
 		plan.ValidationResult.NextAction = "human review required before execution"
-		item := newReviewItem(plan.ID, "approval required before task execution", plan.RiskAssessment.Level)
+		item := newReviewItem(plan.ID, "approval required before task execution", plan.RiskAssessment.Level, request)
 		plan.ReviewQueueItem = &item
 		s.addReviewItem(item)
 	} else if plan.ValidationResult.Passed {
@@ -281,13 +301,13 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 			plan.CompletionStatus = "retry_needed"
 		} else {
 			plan.CompletionStatus = "review_required"
-			item := newReviewItem(plan.ID, "validation failed after retry", "medium")
+			item := newReviewItem(plan.ID, "validation failed after retry", "medium", request)
 			plan.ReviewQueueItem = &item
 			s.addReviewItem(item)
 		}
 	} else {
 		plan.CompletionStatus = "review_required"
-		item := newReviewItem(plan.ID, "validation failed after available attempts", "medium")
+		item := newReviewItem(plan.ID, "validation failed after available attempts", "medium", request)
 		plan.ReviewQueueItem = &item
 		s.addReviewItem(item)
 	}
@@ -318,7 +338,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	}
 
 	toolDecision := routeTools(intake)
-	risk := assessRisk(intake, request.ExecuteAllowed)
+	risk := assessRisk(intake, request.ExecuteAllowed, request.HumanApproved)
 	steps := buildTaskSteps(intake, toolDecision, risk)
 	validationPlan := buildValidationPlan(intake)
 	memoryProposals := proposeMemoryUpdates(request, intake)
@@ -360,6 +380,9 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 		},
 		CompletionStatus: "planned",
 	}
+	if request.HumanApproved {
+		plan.Events = append(plan.Events, event("approval", "human approval recorded: "+compact(request.ApprovalNote)))
+	}
 
 	if runMode {
 		plan.Events = append(plan.Events, event("execution", "only allowed low-risk planning and verification steps were executed"))
@@ -388,6 +411,62 @@ func (s *service) ReviewQueue() []ReviewQueueItem {
 	copied := make([]ReviewQueueItem, len(s.reviewQueue))
 	copy(copied, s.reviewQueue)
 	return copied
+}
+
+func (s *service) ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	s.mu.Lock()
+	index := -1
+	var item ReviewQueueItem
+	for i := range s.reviewQueue {
+		if s.reviewQueue[i].ID == id {
+			index = i
+			item = s.reviewQueue[i]
+			break
+		}
+	}
+	if index < 0 {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("review item not found")
+	}
+	if item.Status != "open" {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("review item is already resolved")
+	}
+	now := time.Now().UTC()
+	item.ResolvedAt = &now
+	item.ResolutionNote = strings.TrimSpace(decision.Note)
+	if !decision.Approved {
+		item.Status = "rejected"
+		item.Decision = "rejected"
+		s.reviewQueue[index] = item
+		s.mu.Unlock()
+		return &ReviewResolutionResult{Item: item}, nil
+	}
+	item.Status = "approved"
+	item.Decision = "approved"
+	s.reviewQueue[index] = item
+	approvedRequest := item.Request
+	approvedRequest.ExecuteAllowed = true
+	approvedRequest.HumanApproved = true
+	approvedRequest.ApprovalNote = item.ResolutionNote
+	s.mu.Unlock()
+
+	plan, err := s.Run(approvedRequest)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	completedAt := time.Now().UTC()
+	item.Status = "completed"
+	item.ResolvedAt = &completedAt
+	for i := range s.reviewQueue {
+		if s.reviewQueue[i].ID == item.ID {
+			s.reviewQueue[i] = item
+			break
+		}
+	}
+	s.mu.Unlock()
+	return &ReviewResolutionResult{Item: item, Plan: plan}, nil
 }
 
 func (s *service) addLog(plan CompletionPlan) {
@@ -507,7 +586,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		DraftAnswer:       draft,
 		ExternalEvidence:  evidence,
 		IncludeSensitive:  false,
-		HumanApproved:     !plan.RiskAssessment.ApprovalRequired,
+		HumanApproved:     plan.RiskAssessment.ApprovalGranted || !plan.RiskAssessment.ApprovalRequired,
 		AllowMemoryUpdate: false,
 	})
 	if err != nil {
@@ -802,12 +881,17 @@ func routeTools(intake IntakeAnalysis) ToolRouteDecision {
 	}
 }
 
-func assessRisk(intake IntakeAnalysis, executeAllowed bool) RiskAssessment {
+func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) RiskAssessment {
 	reasons := []string{"read-only planning is allowed"}
 	allowed := true
+	approvalGranted := false
 	if intake.NeedsApproval {
 		reasons = append(reasons, "request contains high-risk action terms")
-		allowed = false
+		approvalGranted = executeAllowed && humanApproved
+		allowed = approvalGranted
+		if approvalGranted {
+			reasons = append(reasons, "human approval recorded for this run")
+		}
 	}
 	if intake.NeedsLocalExecution {
 		reasons = append(reasons, "local execution is constrained to non-destructive steps")
@@ -821,6 +905,7 @@ func assessRisk(intake IntakeAnalysis, executeAllowed bool) RiskAssessment {
 	return RiskAssessment{
 		Level:            intake.RiskLevel,
 		ApprovalRequired: intake.NeedsApproval,
+		ApprovalGranted:  approvalGranted,
 		Reasons:          reasons,
 		AllowedNow:       allowed && (!intake.NeedsTools || executeAllowed || !intake.NeedsLocalExecution),
 	}
@@ -835,7 +920,7 @@ func buildTaskSteps(intake IntakeAnalysis, tools ToolRouteDecision, risk RiskAss
 		{ID: "plan", Name: "Create plan", Purpose: "sequence safe actions and validation", Allowed: true, Status: "planned"},
 		{ID: "risk", Name: "Check risk and approvals", Purpose: "block risky actions before execution", Allowed: true, Status: "planned"},
 	}
-	blockedHighRisk := len(tools.BlockedTools) > 0 && risk.ApprovalRequired
+	blockedHighRisk := len(tools.BlockedTools) > 0 && risk.ApprovalRequired && !risk.ApprovalGranted
 	executionAllowed := risk.AllowedNow && !blockedHighRisk
 	steps = append(steps,
 		TaskStep{ID: "execute", Name: "Execute allowed steps", Purpose: "perform only approved or low-risk actions", Allowed: executionAllowed, RequiresApproval: !executionAllowed, Status: "planned"},
@@ -894,7 +979,7 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 	if len(plan.ToolDecision.SelectedTools) == 0 {
 		failures = append(failures, "no tools were selected")
 	}
-	if plan.RiskAssessment.ApprovalRequired {
+	if plan.RiskAssessment.ApprovalRequired && !plan.RiskAssessment.ApprovalGranted {
 		failures = append(failures, "approval is required before execution")
 	}
 	if attempt > 0 {
@@ -1006,7 +1091,7 @@ func inferSuccessCriteria(taskType string, needsTools bool) []string {
 	return criteria
 }
 
-func newReviewItem(taskID, reason, risk string) ReviewQueueItem {
+func newReviewItem(taskID, reason, risk string, request IntakeRequest) ReviewQueueItem {
 	priority := "normal"
 	if risk == "high" {
 		priority = "high"
@@ -1014,6 +1099,7 @@ func newReviewItem(taskID, reason, risk string) ReviewQueueItem {
 	return ReviewQueueItem{
 		ID:        uuid.New().String(),
 		TaskID:    taskID,
+		Request:   request,
 		Reason:    reason,
 		Priority:  priority,
 		Status:    "open",

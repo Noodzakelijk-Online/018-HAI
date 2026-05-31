@@ -33,6 +33,8 @@ export class ConnectedSourcesComponent implements OnInit {
     name: ['Robert email import', [Validators.required]],
     localOnly: [true],
     syncFrequency: ['manual'],
+    syncTarget: ['.'],
+    defaultProjectKey: ['018-HAI'],
     excludePatterns: ['spam,trash'],
   });
 
@@ -116,6 +118,8 @@ export class ConnectedSourcesComponent implements OnInit {
         enabled: true,
         localOnly: this.sourceForm.value.localOnly,
         syncFrequency: this.sourceForm.value.syncFrequency,
+        syncTarget: this.sourceForm.value.syncTarget,
+        defaultProjectKey: this.sourceForm.value.defaultProjectKey,
         excludePatterns: String(this.sourceForm.value.excludePatterns || '')
           .split(',')
           .map((item) => item.trim())
@@ -178,7 +182,7 @@ export class ConnectedSourcesComponent implements OnInit {
       .subscribe({
         next: (result) => {
           this.syncing = false;
-          this.notification.success('Folder synced', `${result.job.itemsSeen} files scanned and extracted.`);
+          this.notification.success('Folder synced', `${result.job.itemsSeen} files scanned and extracted. Target saved for scheduled sync.`);
           this.refresh();
         },
         error: () => {
@@ -186,6 +190,24 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notification.error('Error', 'Folder sync failed.');
         },
       });
+  }
+
+  runDueScheduledSyncs(): void {
+    this.syncing = true;
+    this.sourceService.runDueScheduledSyncs().subscribe({
+      next: (result) => {
+        this.syncing = false;
+        this.notification.success(
+          'Scheduled sync checked',
+          `${result.completed} completed, ${result.failed} failed, ${result.skipped} skipped.`
+        );
+        this.refresh();
+      },
+      error: () => {
+        this.syncing = false;
+        this.notification.error('Error', 'Scheduled sync check failed.');
+      },
+    });
   }
 
   search(): void {
