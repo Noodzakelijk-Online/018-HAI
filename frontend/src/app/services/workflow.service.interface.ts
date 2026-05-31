@@ -5,7 +5,9 @@ import {
   IWorkflowDashboard,
   IWorkflowIntakeRequest,
   IWorkflowItem,
+  IWorkflowOpenLoopRunSummary,
   IWorkflowOverview,
+  IWorkflowProposalResolutionRequest,
   IWorkflowRecord,
   IWorkflowRunDueRequest,
   IWorkflowRunSummary,
@@ -21,6 +23,8 @@ export interface IWorkflowService {
   get(id: string): Observable<IWorkflowRecord>;
   transition(id: string, request: IWorkflowTransitionRequest): Observable<IWorkflowRecord>;
   resolveApproval(id: string, request: IWorkflowApprovalResolutionRequest): Observable<IWorkflowRecord>;
+  resolveProposal(id: string, proposalId: string, request: IWorkflowProposalResolutionRequest): Observable<IWorkflowRecord>;
   updateChecklistItem(id: string, itemId: string, request: IWorkflowChecklistUpdateRequest): Observable<IWorkflowRecord>;
   runDue(request: IWorkflowRunDueRequest): Observable<IWorkflowRunSummary>;
+  runDueOpenLoops(request: IWorkflowRunDueRequest): Observable<IWorkflowOpenLoopRunSummary>;
 }

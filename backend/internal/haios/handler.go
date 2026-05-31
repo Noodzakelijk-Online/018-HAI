@@ -55,10 +55,14 @@ func (h *Handler) Overview(c *gin.Context) {
 		return
 	}
 	llmPolicy := policy.Policy()
+	now := time.Now().UTC()
 	reviewTotal := h.count(&models.VerificationClaim{}, "needs_review = ? OR status IN ?", true, []string{"unsupported", "uncertain", "conflicting", "needs_review"})
 	reviewTotal += h.count(&models.SourceExtraction{}, "uncertain = ? OR sensitive = ?", true, true)
 	reviewTotal += h.count(&models.AutomationAlert{}, "status = ?", "open")
 	reviewTotal += h.count(&models.WorkflowItem{}, "current_state IN ? OR approval_status = ?", []string{"needs_approval", "blocked"}, "pending")
+	reviewTotal += h.count(&models.WorkflowProposal{}, "status = ?", "open")
+	reviewTotal += h.count(&models.WorkflowQualityGate{}, "status IN ?", []string{"needs_review", "failed"})
+	reviewTotal += h.count(&models.WorkflowOpenLoop{}, "status = ? AND (follow_up_at IS NULL OR follow_up_at <= ?)", "open", now)
 
 	c.JSON(http.StatusOK, HAIOSOverview{
 		GeneratedAt:      time.Now().UTC(),
@@ -73,6 +77,8 @@ func (h *Handler) Overview(c *gin.Context) {
 			{Label: "source extractions", Value: h.count(&models.SourceExtraction{}, "archived = ?", false), Status: statusForCount(h.count(&models.SourceExtraction{}, "archived = ?", false), "indexed")},
 			{Label: "workflow items", Value: h.count(&models.WorkflowItem{}, "archived = ?", false), Status: statusForCount(h.count(&models.WorkflowItem{}, "archived = ?", false), "active")},
 			{Label: "workflow approvals", Value: h.count(&models.WorkflowItem{}, "archived = ? AND current_state = ?", false, "needs_approval"), Status: statusForZero(h.count(&models.WorkflowItem{}, "archived = ? AND current_state = ?", false, "needs_approval"))},
+			{Label: "due open loops", Value: h.count(&models.WorkflowOpenLoop{}, "status = ? AND (follow_up_at IS NULL OR follow_up_at <= ?)", "open", now), Status: statusForZero(h.count(&models.WorkflowOpenLoop{}, "status = ? AND (follow_up_at IS NULL OR follow_up_at <= ?)", "open", now))},
+			{Label: "quality gates needing review", Value: h.count(&models.WorkflowQualityGate{}, "status IN ?", []string{"needs_review", "failed"}), Status: statusForZero(h.count(&models.WorkflowQualityGate{}, "status IN ?", []string{"needs_review", "failed"}))},
 			{Label: "context memories", Value: h.count(&models.ContextMemory{}, "archived = ?", false), Status: statusForCount(h.count(&models.ContextMemory{}, "archived = ?", false), "available")},
 			{Label: "llm providers", Value: int64(len(llmPolicy.Providers)), Status: "configured"},
 			{Label: "verification runs", Value: h.count(&models.VerificationRun{}), Status: statusForCount(h.count(&models.VerificationRun{}), "active")},

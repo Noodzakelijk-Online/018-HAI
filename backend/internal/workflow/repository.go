@@ -32,8 +32,10 @@ type Repository interface {
 	FindOpenLoops(workflowID uuid.UUID) ([]models.WorkflowOpenLoop, error)
 	FindDashboardOpenLoops(now time.Time) ([]models.WorkflowOpenLoop, error)
 	CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
+	UpdateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
 	FindProposals(workflowID uuid.UUID) ([]models.WorkflowProposal, error)
 	CreateQualityGate(gate *models.WorkflowQualityGate) (*models.WorkflowQualityGate, error)
+	UpdateQualityGate(gate *models.WorkflowQualityGate) (*models.WorkflowQualityGate, error)
 	FindQualityGates(workflowID uuid.UUID) ([]models.WorkflowQualityGate, error)
 	SaveRule(rule *models.WorkflowRule) (*models.WorkflowRule, error)
 	FindRules() ([]models.WorkflowRule, error)
@@ -227,6 +229,13 @@ func (r *GormRepository) CreateProposal(proposal *models.WorkflowProposal) (*mod
 	return proposal, nil
 }
 
+func (r *GormRepository) UpdateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error) {
+	if err := r.DB.Save(proposal).Error; err != nil {
+		return nil, err
+	}
+	return proposal, nil
+}
+
 func (r *GormRepository) FindProposals(workflowID uuid.UUID) ([]models.WorkflowProposal, error) {
 	var proposals []models.WorkflowProposal
 	err := r.DB.Where("workflow_id = ?", workflowID).Order("created_at desc").Find(&proposals).Error
@@ -240,6 +249,13 @@ func (r *GormRepository) CreateQualityGate(gate *models.WorkflowQualityGate) (*m
 	return gate, nil
 }
 
+func (r *GormRepository) UpdateQualityGate(gate *models.WorkflowQualityGate) (*models.WorkflowQualityGate, error) {
+	if err := r.DB.Save(gate).Error; err != nil {
+		return nil, err
+	}
+	return gate, nil
+}
+
 func (r *GormRepository) FindQualityGates(workflowID uuid.UUID) ([]models.WorkflowQualityGate, error) {
 	var gates []models.WorkflowQualityGate
 	err := r.DB.Where("workflow_id = ?", workflowID).Order("created_at desc").Find(&gates).Error
@@ -247,10 +263,22 @@ func (r *GormRepository) FindQualityGates(workflowID uuid.UUID) ([]models.Workfl
 }
 
 func (r *GormRepository) SaveRule(rule *models.WorkflowRule) (*models.WorkflowRule, error) {
+	var existing models.WorkflowRule
 	if rule.ID == uuid.Nil {
-		var existing models.WorkflowRule
-		if err := r.DB.Where("rule_key = ?", rule.RuleKey).First(&existing).Error; err == nil {
+		err := r.DB.Where("rule_key = ?", rule.RuleKey).First(&existing).Error
+		if err == nil {
 			rule.ID = existing.ID
+			if rule.CreatedAt.IsZero() {
+				rule.CreatedAt = existing.CreatedAt
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	} else if rule.CreatedAt.IsZero() {
+		if err := r.DB.First(&existing, "id = ?", rule.ID).Error; err == nil {
+			rule.CreatedAt = existing.CreatedAt
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
 	}
 	if err := r.DB.Save(rule).Error; err != nil {

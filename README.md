@@ -199,9 +199,11 @@ Workflow engine:
 - `GET /workflow/`
 - `POST /workflow/intake`
 - `POST /workflow/run-due`
+- `POST /workflow/open-loops/run-due`
 - `GET /workflow/:id`
 - `POST /workflow/:id/transition`
 - `POST /workflow/:id/approval`
+- `POST /workflow/:id/proposals/:proposalId/resolve`
 - `PATCH /workflow/:id/checklist/:itemId`
 
 Connected sources:
@@ -274,8 +276,10 @@ The workflow engine now implements the first real operational slice of the perso
 10. Creates software quality gates for developer/GitHub work such as commits, tests, README/setup, and Windows 11 run path.
 11. Runs low-risk or approved ready workflows through the task engine worker.
 12. Uses durable retry counters, backoff, and blocked-after-limit behavior.
-13. Marks completion only when the task engine returns a validated result.
-14. Surfaces operational monitoring for approvals, blocked work, ready work, high-risk items, due open loops, missing next actions, and safety rules.
+13. Runs due open loops into follow-up proposals, checklist steps, and approval gates.
+14. Resolves proposal decisions into workflow state changes.
+15. Evaluates quality gates before verified completion.
+16. Surfaces operational monitoring for approvals, blocked work, ready work, high-risk items, due open loops, missing next actions, and safety rules.
 
 Manual input can be sent to `POST /workflow/intake`. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Intake deduplicates by source URI so repeated syncs do not create duplicate workflow items for the same source record.
 
@@ -293,7 +297,9 @@ The workflow layer now stores operational history in separate tables:
 - `WorkflowQualityGate` stores acceptance checks for developer, legal, publishing, and verification workflows.
 - `WorkflowRule` stores the default editable safety/workflow rulebook.
 
-Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. The worker moves items through `ready -> in_progress -> completed` only when the task engine returns a validated result. Failed worker attempts increment durable retry counters, schedule a later retry, and block the workflow after the retry limit. High-risk items remain in `needs_approval` until approved from `/workflow/approvals` or the dashboard approval queue.
+Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. The worker moves items through `ready -> in_progress -> completed` only when the task engine returns a validated result and mandatory quality gates pass. Failed worker attempts increment durable retry counters, schedule a later retry, and block the workflow after the retry limit. High-risk items remain in `needs_approval` until approved from `/workflow/approvals`, a resolved proposal, or the dashboard approval queue.
+
+Due open loops can be processed with `POST /workflow/open-loops/run-due`. This creates a follow-up checklist item and proposal. High-risk or Robert-owned follow-ups are moved into approval review; low-risk unblocked follow-ups can be made worker-ready. Already blocked workflows stay blocked and keep their blocker while receiving a follow-up proposal. Proposal decisions can be resolved through `POST /workflow/:id/proposals/:proposalId/resolve`, which records the decision and can approve, reject/block, or send the workflow back for changes. Completed or archived workflows reject further proposal changes.
 
 Workflow states:
 
@@ -309,7 +315,7 @@ waiting_external_input
 blocked
 ```
 
-The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, due open loops, approval queue with approve/reject buttons, worker run control, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposals, quality gates, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
+The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, due open loops, approval queue with approve/reject buttons, worker and follow-up controls, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposal decision buttons, quality gate status, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
 
 ## LLM Routing Policy
 

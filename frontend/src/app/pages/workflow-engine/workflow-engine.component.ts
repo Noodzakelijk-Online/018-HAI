@@ -5,6 +5,7 @@ import { NzNotificationService } from 'ng-zorro-antd/notification';
 import {
   IWorkflowDashboard,
   IWorkflowItem,
+  IWorkflowOpenLoopRunSummary,
   IWorkflowOverview,
   IWorkflowRecord,
   IWorkflowRunSummary,
@@ -24,6 +25,7 @@ export class WorkflowEngineComponent implements OnInit {
   approvalItems: IWorkflowItem[] = [];
   selected?: IWorkflowRecord;
   runSummary?: IWorkflowRunSummary;
+  openLoopRunSummary?: IWorkflowOpenLoopRunSummary;
   includeArchived = false;
   loading = false;
   saving = false;
@@ -154,6 +156,47 @@ export class WorkflowEngineComponent implements OnInit {
         this.refresh();
       },
       error: () => this.notification.error('Error', 'Workflow worker run failed.'),
+    });
+  }
+
+  runDueOpenLoops(): void {
+    this.workflowService.runDueOpenLoops({ limit: 10 }).subscribe({
+      next: (summary) => {
+        this.openLoopRunSummary = summary;
+        this.notification.success('Open loops processed', `${summary.triggered} triggered, ${summary.resolved} resolved.`);
+        this.refresh();
+      },
+      error: () => this.notification.error('Error', 'Open-loop worker run failed.'),
+    });
+  }
+
+  resolveProposal(
+    proposalId: string,
+    status: 'approved' | 'changes_requested' | 'rejected',
+    selectedOption?: string,
+  ): void {
+    if (!this.selected) {
+      return;
+    }
+    const approved = status === 'approved';
+    const noteByStatus: Record<string, string> = {
+      approved: 'Proposal approved from dashboard.',
+      changes_requested: 'Proposal needs changes from dashboard.',
+      rejected: 'Proposal rejected from dashboard.',
+    };
+    this.workflowService.resolveProposal(this.selected.item.id, proposalId, {
+      approved,
+      status,
+      selectedOption,
+      note: noteByStatus[status],
+      actor: 'operator',
+    }).subscribe({
+      next: (record) => {
+        this.selected = record;
+        this.notification.success('Proposal updated', noteByStatus[status]);
+        this.refresh();
+      },
+      error: () => this.notification.error('Error', 'Failed to update proposal.'),
     });
   }
 

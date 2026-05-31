@@ -549,11 +549,19 @@ func (s *fakeSourceWorkflowService) ResolveApproval(id uuid.UUID, request workfl
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request workflow.ProposalResolutionRequest) (*workflow.WorkflowRecord, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request workflow.ChecklistUpdateRequest) (*workflow.WorkflowRecord, error) {
 	return nil, nil
 }
 
 func (s *fakeSourceWorkflowService) RunDue(request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
 	return nil, nil
 }
 

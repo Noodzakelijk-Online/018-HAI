@@ -12,6 +12,10 @@
             <i nz-icon nzType="play-circle" nzTheme="outline"></i>
             Run Worker
           </button>
+          <button nz-button nzType="default" (click)="runDueOpenLoops()">
+            <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
+            Run Follow-ups
+          </button>
           <button nz-button nzType="default" (click)="goHome()">
             <i nz-icon nzType="appstore" nzTheme="outline"></i>
             Automations
@@ -87,6 +91,7 @@
                   <th>Waiting for</th>
                   <th>Responsible</th>
                   <th>Follow-up</th>
+                  <th>Status</th>
                   <th>Next action</th>
                 </tr>
               </thead>
@@ -95,6 +100,7 @@
                   <td>{{ loop.waitingFor }}</td>
                   <td>{{ loop.responsibleParty }}</td>
                   <td>{{ (loop.followUpAt | date: 'short') || '-' }}</td>
+                  <td>{{ loop.status }}</td>
                   <td>{{ loop.nextAction }}</td>
                 </tr>
               </tbody>
@@ -311,6 +317,7 @@
                 <th>Responsible</th>
                 <th>Waiting for</th>
                 <th>Follow-up</th>
+                <th>Status</th>
                 <th>Next action</th>
               </tr>
             </thead>
@@ -319,6 +326,7 @@
                 <td>{{ loop.responsibleParty }}</td>
                 <td>{{ loop.waitingFor }}</td>
                 <td>{{ (loop.followUpAt | date: 'short') || '-' }}</td>
+                <td>{{ loop.status }}</td>
                 <td>{{ loop.nextAction }}</td>
               </tr>
             </tbody>
@@ -334,6 +342,7 @@
                 <th>Recommended action</th>
                 <th>Options</th>
                 <th>Status</th>
+                <th>Decision</th>
               </tr>
             </thead>
             <tbody>
@@ -341,8 +350,38 @@
                 <td>{{ proposal.recommendedAction }}</td>
                 <td>
                   <div *ngFor="let option of optionLines(proposal.options)">{{ option }}</div>
+                  <small *ngIf="proposal.selectedOption">Selected: {{ proposal.selectedOption }}</small>
                 </td>
-                <td>{{ proposal.status }}</td>
+                <td>{{ proposal.status }}<br /><small>{{ proposal.resolutionNote || '' }}</small></td>
+                <td>
+                  <button
+                    nz-button
+                    nzSize="small"
+                    nzType="primary"
+                    [disabled]="proposal.status !== 'open'"
+                    (click)="resolveProposal(proposal.id, 'approved', optionLines(proposal.options)[0])"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    nz-button
+                    nzSize="small"
+                    nzType="default"
+                    [disabled]="proposal.status !== 'open'"
+                    (click)="resolveProposal(proposal.id, 'changes_requested', 'Request changes')"
+                  >
+                    Changes
+                  </button>
+                  <button
+                    nz-button
+                    nzSize="small"
+                    nzDanger
+                    [disabled]="proposal.status !== 'open'"
+                    (click)="resolveProposal(proposal.id, 'rejected', 'Reject proposal')"
+                  >
+                    Reject
+                  </button>
+                </td>
               </tr>
             </tbody>
           </nz-table>
@@ -463,6 +502,31 @@
               <td>{{ result.state }}</td>
               <td>{{ result.attempts }}</td>
               <td>{{ result.verificationStatus || '-' }}</td>
+              <td>{{ result.message || '-' }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Follow-up Result" class="section-card" *ngIf="openLoopRunSummary as summary">
+        <p>
+          Checked {{ summary.checked }},
+          triggered {{ summary.triggered }},
+          resolved {{ summary.resolved }},
+          skipped {{ summary.skipped }}.
+        </p>
+        <nz-table [nzData]="summary.results" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>State</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let result of summary.results">
+              <td>{{ result.status }}</td>
+              <td>{{ result.state || '-' }}</td>
               <td>{{ result.message || '-' }}</td>
             </tr>
           </tbody>

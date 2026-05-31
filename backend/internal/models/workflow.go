@@ -106,12 +106,17 @@ type WorkflowOpenLoop struct {
 }
 
 type WorkflowProposal struct {
-	ID                uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
-	WorkflowID        uuid.UUID `gorm:"type:uuid;index;not null" json:"workflowId"`
-	RecommendedAction string    `gorm:"type:text;not null" json:"recommendedAction"`
-	Options           string    `gorm:"type:text" json:"options,omitempty"`
-	Status            string    `gorm:"type:varchar(50);index" json:"status"`
-	CreatedAt         time.Time `json:"createdAt"`
+	ID                uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID        uuid.UUID  `gorm:"type:uuid;index;not null" json:"workflowId"`
+	RecommendedAction string     `gorm:"type:text;not null" json:"recommendedAction"`
+	Options           string     `gorm:"type:text" json:"options,omitempty"`
+	SelectedOption    string     `gorm:"type:text" json:"selectedOption,omitempty"`
+	ResolutionNote    string     `gorm:"type:text" json:"resolutionNote,omitempty"`
+	ResolvedBy        string     `gorm:"type:varchar(120)" json:"resolvedBy,omitempty"`
+	ResolvedAt        *time.Time `gorm:"index" json:"resolvedAt,omitempty"`
+	Status            string     `gorm:"type:varchar(50);index" json:"status"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 type WorkflowQualityGate struct {
@@ -121,6 +126,7 @@ type WorkflowQualityGate struct {
 	Status     string    `gorm:"type:varchar(50);index;not null" json:"status"`
 	Reason     string    `gorm:"type:text" json:"reason,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 type WorkflowRule struct {

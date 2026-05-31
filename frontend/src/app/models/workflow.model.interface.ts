@@ -102,8 +102,13 @@ export interface IWorkflowProposal {
   workflowId: string;
   recommendedAction: string;
   options?: string;
+  selectedOption?: string;
+  resolutionNote?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
   status: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface IWorkflowQualityGate {
@@ -113,6 +118,7 @@ export interface IWorkflowQualityGate {
   status: string;
   reason?: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface IWorkflowRule {
@@ -221,6 +227,14 @@ export interface IWorkflowApprovalResolutionRequest {
   actor?: string;
 }
 
+export interface IWorkflowProposalResolutionRequest {
+  status?: string;
+  approved?: boolean;
+  selectedOption?: string;
+  note?: string;
+  actor?: string;
+}
+
 export interface IWorkflowRunDueRequest {
   limit?: number;
 }
@@ -242,6 +256,22 @@ export interface IWorkflowRunSummary {
   blocked: number;
   skipped: number;
   results: IWorkflowRunResult[];
+}
+
+export interface IWorkflowOpenLoopRunResult {
+  workflowId: string;
+  openLoopId: string;
+  status: string;
+  state?: string;
+  message?: string;
+}
+
+export interface IWorkflowOpenLoopRunSummary {
+  checked: number;
+  triggered: number;
+  resolved: number;
+  skipped: number;
+  results: IWorkflowOpenLoopRunResult[];
 }
 
 export interface IWorkflowCapability {

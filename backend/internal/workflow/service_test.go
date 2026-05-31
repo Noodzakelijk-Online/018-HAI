@@ -133,6 +133,159 @@ func TestTransitionRequiresApprovalFromNeedsApprovalToReady(t *testing.T) {
 	}
 }
 
+func TestResolveProposalApprovesWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Publish public Medium article from Trello card"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	approved, err := service.ResolveProposal(record.Item.ID, record.Proposals[0].ID, ProposalResolutionRequest{
+		Approved:       true,
+		SelectedOption: "Approve draft-only workflow",
+		Note:           "Robert approved draft preparation only.",
+		Actor:          "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveProposal: %v", err)
+	}
+	if approved.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready", approved.Item.CurrentState)
+	}
+	if approved.Item.ApprovalStatus != "approved" {
+		t.Fatalf("approval status = %q, want approved", approved.Item.ApprovalStatus)
+	}
+	if approved.Proposals[0].Status != "approved" {
+		t.Fatalf("proposal status = %q, want approved", approved.Proposals[0].Status)
+	}
+}
+
+func TestResolveProposalDefaultsToChangesRequested(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	updated, err := service.ResolveProposal(record.Item.ID, record.Proposals[0].ID, ProposalResolutionRequest{
+		Note:  "Needs more detail before execution.",
+		Actor: "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveProposal: %v", err)
+	}
+	if updated.Proposals[0].Status != "changes_requested" {
+		t.Fatalf("proposal status = %q, want changes_requested", updated.Proposals[0].Status)
+	}
+	if updated.Item.CurrentState != StateWaitingInput {
+		t.Fatalf("state = %q, want waiting_external_input", updated.Item.CurrentState)
+	}
+}
+
+func TestResolveProposalRejectsClosedWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "plan-closed",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "completed",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if _, err := service.RunDue(RunDueRequest{Limit: 5}); err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if _, err := service.ResolveProposal(record.Item.ID, record.Proposals[0].ID, ProposalResolutionRequest{Approved: true}); err == nil {
+		t.Fatalf("expected closed workflow proposal resolution to fail")
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateCompleted {
+		t.Fatalf("state = %q, want completed", updated.Item.CurrentState)
+	}
+	if updated.Proposals[0].Status != "open" {
+		t.Fatalf("proposal status = %q, want unchanged open", updated.Proposals[0].Status)
+	}
+}
+
+func TestRunDueOpenLoopsCreatesFollowUpProposal(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Email from lawyer about Vivare hearing tomorrow. Draft reply only."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	loops := repo.openLoops[record.Item.ID]
+	if len(loops) == 0 {
+		t.Fatalf("expected intake open loop")
+	}
+	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
+	repo.openLoops[record.Item.ID] = loops
+
+	summary, err := service.RunDueOpenLoops(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDueOpenLoops: %v", err)
+	}
+	if summary.Triggered != 1 {
+		t.Fatalf("triggered = %d, want 1: %#v", summary.Triggered, summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(updated.Proposals) < 2 {
+		t.Fatalf("proposals = %d, want follow-up proposal added", len(updated.Proposals))
+	}
+	if updated.OpenLoops[0].Status != "triggered" {
+		t.Fatalf("open loop status = %q, want triggered", updated.OpenLoops[0].Status)
+	}
+	if updated.Item.CurrentState != StateNeedsApproval {
+		t.Fatalf("state = %q, want needs approval for legal follow-up", updated.Item.CurrentState)
+	}
+}
+
+func TestRunDueOpenLoopsKeepsBlockedWorkflowBlocked(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Need access, missing login credentials for local folder source."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	loops := repo.openLoops[record.Item.ID]
+	if len(loops) == 0 {
+		t.Fatalf("expected intake open loop")
+	}
+	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
+	repo.openLoops[record.Item.ID] = loops
+
+	summary, err := service.RunDueOpenLoops(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDueOpenLoops: %v", err)
+	}
+	if summary.Triggered != 1 {
+		t.Fatalf("triggered = %d, want 1: %#v", summary.Triggered, summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked {
+		t.Fatalf("state = %q, want blocked", updated.Item.CurrentState)
+	}
+	if updated.Item.BlockedReason != "missing information or access" {
+		t.Fatalf("blocked reason = %q, want original blocker", updated.Item.BlockedReason)
+	}
+	if updated.OpenLoops[0].Status != "triggered" {
+		t.Fatalf("open loop status = %q, want triggered", updated.OpenLoops[0].Status)
+	}
+}
+
 func TestChecklistUpdateAuditsProgress(t *testing.T) {
 	service := NewService(newFakeWorkflowRepo())
 	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for Docker build issue"})
@@ -187,6 +340,65 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 	if len(runner.requests) != 1 {
 		t.Fatalf("runner requests = %d, want 1", len(runner.requests))
+	}
+	if !hasGateStatus(updated.QualityGates, "verification before completion", "passed") {
+		t.Fatalf("expected verification quality gate to pass")
+	}
+}
+
+func TestRunDueBlocksTechnicalWorkflowWhenQualityEvidenceMissing(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "plan-tech",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "completed",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Review GitHub developer claim that code feature is done"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Retried != 1 {
+		t.Fatalf("retried = %d, want 1: %#v", summary.Retried, summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready after scheduled retry", updated.Item.CurrentState)
+	}
+	if updated.Item.LastWorkerError == "" {
+		t.Fatalf("expected quality gate failure reason")
+	}
+	if !hasGateStatus(updated.QualityGates, "tests or build evidence", "needs_review") {
+		t.Fatalf("expected tests/build gate to need review")
+	}
+}
+
+func TestDefaultRulesPreserveCreatedAtAcrossUpserts(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	first := service.Overview()
+	firstRule, ok := findRule(first.Rules, "approval.legal_external")
+	if !ok {
+		t.Fatalf("expected default rule")
+	}
+	second := service.Overview()
+	secondRule, ok := findRule(second.Rules, "approval.legal_external")
+	if !ok {
+		t.Fatalf("expected default rule on second overview")
+	}
+	if !firstRule.CreatedAt.Equal(secondRule.CreatedAt) {
+		t.Fatalf("created at changed from %s to %s", firstRule.CreatedAt, secondRule.CreatedAt)
+	}
+	if firstRule.ID != secondRule.ID {
+		t.Fatalf("rule ID changed from %s to %s", firstRule.ID, secondRule.ID)
 	}
 }
 
@@ -261,6 +473,28 @@ func hasApprovalChecklist(items []models.WorkflowChecklistItem) bool {
 		}
 	}
 	return false
+}
+
+func hasGateStatus(gates []models.WorkflowQualityGate, gateName, status string) bool {
+	for _, gate := range gates {
+		if gate.Gate == gateName && gate.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func findRule(rules []models.WorkflowRule, ruleKey string) (models.WorkflowRule, bool) {
+	for _, rule := range rules {
+		if rule.RuleKey == ruleKey {
+			return rule, true
+		}
+	}
+	return models.WorkflowRule{}, false
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
 }
 
 type fakeWorkflowRepo struct {
@@ -484,9 +718,24 @@ func (r *fakeWorkflowRepo) CreateProposal(proposal *models.WorkflowProposal) (*m
 	if proposal.ID == uuid.Nil {
 		proposal.ID = uuid.New()
 	}
-	proposal.CreatedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	proposal.CreatedAt = now
+	proposal.UpdatedAt = now
 	r.proposals[proposal.WorkflowID] = append([]models.WorkflowProposal{*proposal}, r.proposals[proposal.WorkflowID]...)
 	return proposal, nil
+}
+
+func (r *fakeWorkflowRepo) UpdateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error) {
+	proposal.UpdatedAt = time.Now().UTC()
+	proposals := r.proposals[proposal.WorkflowID]
+	for index := range proposals {
+		if proposals[index].ID == proposal.ID {
+			proposals[index] = *proposal
+			r.proposals[proposal.WorkflowID] = proposals
+			return proposal, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *fakeWorkflowRepo) FindProposals(workflowID uuid.UUID) ([]models.WorkflowProposal, error) {
@@ -497,9 +746,24 @@ func (r *fakeWorkflowRepo) CreateQualityGate(gate *models.WorkflowQualityGate) (
 	if gate.ID == uuid.Nil {
 		gate.ID = uuid.New()
 	}
-	gate.CreatedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	gate.CreatedAt = now
+	gate.UpdatedAt = now
 	r.qualityGate[gate.WorkflowID] = append([]models.WorkflowQualityGate{*gate}, r.qualityGate[gate.WorkflowID]...)
 	return gate, nil
+}
+
+func (r *fakeWorkflowRepo) UpdateQualityGate(gate *models.WorkflowQualityGate) (*models.WorkflowQualityGate, error) {
+	gate.UpdatedAt = time.Now().UTC()
+	gates := r.qualityGate[gate.WorkflowID]
+	for index := range gates {
+		if gates[index].ID == gate.ID {
+			gates[index] = *gate
+			r.qualityGate[gate.WorkflowID] = gates
+			return gate, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *fakeWorkflowRepo) FindQualityGates(workflowID uuid.UUID) ([]models.WorkflowQualityGate, error) {
@@ -507,12 +771,21 @@ func (r *fakeWorkflowRepo) FindQualityGates(workflowID uuid.UUID) ([]models.Work
 }
 
 func (r *fakeWorkflowRepo) SaveRule(rule *models.WorkflowRule) (*models.WorkflowRule, error) {
+	existing, exists := r.rules[rule.RuleKey]
 	if rule.ID == uuid.Nil {
-		rule.ID = uuid.New()
+		if exists {
+			rule.ID = existing.ID
+		} else {
+			rule.ID = uuid.New()
+		}
 	}
 	now := time.Now().UTC()
 	if rule.CreatedAt.IsZero() {
-		rule.CreatedAt = now
+		if exists {
+			rule.CreatedAt = existing.CreatedAt
+		} else {
+			rule.CreatedAt = now
+		}
 	}
 	rule.UpdatedAt = now
 	r.rules[rule.RuleKey] = *rule

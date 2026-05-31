@@ -168,9 +168,11 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.GET("/", workflowHandler.Items)
 		workflowRoutes.POST("/intake", workflowHandler.Intake)
 		workflowRoutes.POST("/run-due", workflowHandler.RunDue)
+		workflowRoutes.POST("/open-loops/run-due", workflowHandler.RunDueOpenLoops)
 		workflowRoutes.GET("/:id", workflowHandler.Get)
 		workflowRoutes.POST("/:id/transition", workflowHandler.Transition)
 		workflowRoutes.POST("/:id/approval", workflowHandler.ResolveApproval)
+		workflowRoutes.POST("/:id/proposals/:proposalId/resolve", workflowHandler.ResolveProposal)
 		workflowRoutes.PATCH("/:id/checklist/:itemId", workflowHandler.UpdateChecklistItem)
 	}
 }

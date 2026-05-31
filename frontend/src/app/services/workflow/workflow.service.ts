@@ -8,7 +8,9 @@ import {
   IWorkflowDashboard,
   IWorkflowIntakeRequest,
   IWorkflowItem,
+  IWorkflowOpenLoopRunSummary,
   IWorkflowOverview,
+  IWorkflowProposalResolutionRequest,
   IWorkflowRecord,
   IWorkflowRunDueRequest,
   IWorkflowRunSummary,
@@ -57,6 +59,14 @@ export class WorkflowService implements IWorkflowService {
     return this.http.post<IWorkflowRecord>(`${this.apiUrl}/${id}/approval`, request);
   }
 
+  resolveProposal(
+    id: string,
+    proposalId: string,
+    request: IWorkflowProposalResolutionRequest
+  ): Observable<IWorkflowRecord> {
+    return this.http.post<IWorkflowRecord>(`${this.apiUrl}/${id}/proposals/${proposalId}/resolve`, request);
+  }
+
   updateChecklistItem(
     id: string,
     itemId: string,
@@ -67,5 +77,9 @@ export class WorkflowService implements IWorkflowService {
 
   runDue(request: IWorkflowRunDueRequest): Observable<IWorkflowRunSummary> {
     return this.http.post<IWorkflowRunSummary>(`${this.apiUrl}/run-due`, request);
+  }
+
+  runDueOpenLoops(request: IWorkflowRunDueRequest): Observable<IWorkflowOpenLoopRunSummary> {
+    return this.http.post<IWorkflowOpenLoopRunSummary>(`${this.apiUrl}/open-loops/run-due`, request);
   }
 }

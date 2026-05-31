@@ -111,6 +111,29 @@ func (h *Handler) ResolveApproval(c *gin.Context) {
 	c.JSON(http.StatusOK, record)
 }
 
+func (h *Handler) ResolveProposal(c *gin.Context) {
+	id, ok := parseWorkflowID(c)
+	if !ok {
+		return
+	}
+	proposalID, err := uuid.Parse(c.Param("proposalId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proposal id"})
+		return
+	}
+	var request ProposalResolutionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	record, err := h.service.ResolveProposal(id, proposalID, request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, record)
+}
+
 func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
@@ -138,6 +161,17 @@ func (h *Handler) RunDue(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
 	result, err := h.service.RunDue(request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) RunDueOpenLoops(c *gin.Context) {
+	var request RunDueRequest
+	_ = c.ShouldBindJSON(&request)
+	result, err := h.service.RunDueOpenLoops(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

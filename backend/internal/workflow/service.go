@@ -60,6 +60,14 @@ type RunDueRequest struct {
 	Limit int `json:"limit,omitempty"`
 }
 
+type ProposalResolutionRequest struct {
+	Status         string `json:"status,omitempty"`
+	Approved       bool   `json:"approved,omitempty"`
+	SelectedOption string `json:"selectedOption,omitempty"`
+	Note           string `json:"note,omitempty"`
+	Actor          string `json:"actor,omitempty"`
+}
+
 type TaskRunRequest struct {
 	WorkflowID    string `json:"workflowId"`
 	Request       string `json:"request"`
@@ -99,6 +107,22 @@ type WorkflowRunSummary struct {
 	Blocked   int                 `json:"blocked"`
 	Skipped   int                 `json:"skipped"`
 	Results   []WorkflowRunResult `json:"results"`
+}
+
+type OpenLoopRunResult struct {
+	WorkflowID uuid.UUID `json:"workflowId"`
+	OpenLoopID uuid.UUID `json:"openLoopId"`
+	Status     string    `json:"status"`
+	State      string    `json:"state,omitempty"`
+	Message    string    `json:"message,omitempty"`
+}
+
+type OpenLoopRunSummary struct {
+	Checked   int                 `json:"checked"`
+	Triggered int                 `json:"triggered"`
+	Resolved  int                 `json:"resolved"`
+	Skipped   int                 `json:"skipped"`
+	Results   []OpenLoopRunResult `json:"results"`
 }
 
 type WorkflowRecord struct {
@@ -150,8 +174,10 @@ type Service interface {
 	Get(id uuid.UUID) (*WorkflowRecord, error)
 	Transition(id uuid.UUID, request TransitionRequest) (*WorkflowRecord, error)
 	ResolveApproval(id uuid.UUID, request ApprovalResolutionRequest) (*WorkflowRecord, error)
+	ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request ProposalResolutionRequest) (*WorkflowRecord, error)
 	UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
+	RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error)
 	Overview() Overview
 }
 
@@ -497,6 +523,91 @@ func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionReques
 	return s.Get(updated.ID)
 }
 
+func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request ProposalResolutionRequest) (*WorkflowRecord, error) {
+	item, err := s.repo.FindItem(id)
+	if err != nil {
+		return nil, err
+	}
+	proposals, err := s.repo.FindProposals(id)
+	if err != nil {
+		return nil, err
+	}
+	var proposal *models.WorkflowProposal
+	for index := range proposals {
+		if proposals[index].ID == proposalID {
+			proposal = &proposals[index]
+			break
+		}
+	}
+	if proposal == nil {
+		return nil, fmt.Errorf("proposal not found")
+	}
+	if proposal.Status != "open" {
+		return nil, fmt.Errorf("proposal is already resolved")
+	}
+	if item.Archived || item.CurrentState == StateArchived || item.CurrentState == StateCompleted {
+		return nil, fmt.Errorf("closed workflows cannot resolve proposals")
+	}
+
+	status, err := normalizeProposalStatus(request)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	proposal.Status = status
+	proposal.SelectedOption = strings.TrimSpace(request.SelectedOption)
+	proposal.ResolutionNote = strings.TrimSpace(request.Note)
+	proposal.ResolvedBy = firstNonEmpty(request.Actor, "operator")
+	proposal.ResolvedAt = &now
+	if _, err := s.repo.UpdateProposal(proposal); err != nil {
+		return nil, err
+	}
+	s.decide(id, "proposal", status, firstNonEmpty(request.Note, proposal.RecommendedAction), "proposal/yes-no engine", status == "approved", firstNonEmpty(request.Actor, "operator"))
+	s.audit(id, "workflow.proposal", "", item.CurrentState, "proposal "+status+": "+proposal.RecommendedAction, "proposal_resolution", "proposal/yes-no engine", item.SourceURI, firstNonEmpty(request.Actor, "operator"))
+
+	switch status {
+	case "approved":
+		if item.CurrentState == StateNeedsApproval || item.RequiresApproval {
+			return s.ResolveApproval(id, ApprovalResolutionRequest{
+				Approved: true,
+				Note:     firstNonEmpty(request.Note, proposal.RecommendedAction),
+				Actor:    firstNonEmpty(request.Actor, "operator"),
+			})
+		}
+		if item.CurrentState == StateBlocked || item.CurrentState == StateWaitingInput {
+			from := item.CurrentState
+			item.CurrentState = StateReady
+			item.BlockedReason = ""
+			item.NextAction = "execute approved proposal through workflow worker"
+			if _, err := s.repo.UpdateItem(item); err != nil {
+				return nil, err
+			}
+			s.recordTransition(item.ID, from, StateReady, "proposal_resolution", firstNonEmpty(request.Actor, "operator"), true, firstNonEmpty(request.Note, "proposal approved"))
+			s.audit(item.ID, "workflow.transition", from, StateReady, "proposal approved and workflow made ready", "proposal_resolution", "proposal approved", item.SourceURI, firstNonEmpty(request.Actor, "operator"))
+		}
+	case "changes_requested":
+		from := item.CurrentState
+		item.CurrentState = StateWaitingInput
+		item.NextAction = firstNonEmpty(request.Note, "apply requested proposal changes")
+		item.BlockedReason = ""
+		if _, err := s.repo.UpdateItem(item); err != nil {
+			return nil, err
+		}
+		s.recordTransition(item.ID, from, StateWaitingInput, "proposal_resolution", firstNonEmpty(request.Actor, "operator"), false, item.NextAction)
+	case "rejected":
+		from := item.CurrentState
+		item.CurrentState = StateBlocked
+		item.ApprovalStatus = "rejected"
+		item.BlockedReason = firstNonEmpty(request.Note, "proposal rejected")
+		item.NextAction = "review rejected proposal before continuing"
+		if _, err := s.repo.UpdateItem(item); err != nil {
+			return nil, err
+		}
+		s.recordTransition(item.ID, from, StateBlocked, "proposal_resolution", firstNonEmpty(request.Actor, "operator"), false, item.BlockedReason)
+	}
+	return s.Get(id)
+}
+
 func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error) {
 	checklist, err := s.repo.FindChecklist(id)
 	if err != nil {
@@ -521,7 +632,7 @@ func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request Ch
 }
 
 func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
-	items, err := s.repo.FindRunnableItems(time.Now().UTC(), request.Limit)
+	items, err := s.repo.FindRunnableItems(time.Now().UTC(), normalizeRunLimit(request.Limit))
 	if err != nil {
 		return nil, err
 	}
@@ -544,6 +655,104 @@ func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 		}
 	}
 	return summary, nil
+}
+
+func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error) {
+	loops, err := s.repo.FindDashboardOpenLoops(time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	limit := normalizeRunLimit(request.Limit)
+	if limit < len(loops) {
+		loops = loops[:limit]
+	}
+	summary := &OpenLoopRunSummary{
+		Checked: len(loops),
+		Results: []OpenLoopRunResult{},
+	}
+	for _, loop := range loops {
+		result := s.runOpenLoop(loop)
+		summary.Results = append(summary.Results, result)
+		switch result.Status {
+		case "triggered":
+			summary.Triggered++
+		case "resolved":
+			summary.Resolved++
+		default:
+			summary.Skipped++
+		}
+	}
+	return summary, nil
+}
+
+func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
+	if loop.Status != "open" {
+		return OpenLoopRunResult{WorkflowID: loop.WorkflowID, OpenLoopID: loop.ID, Status: "skipped", Message: "open loop is no longer open"}
+	}
+	item, err := s.repo.FindItem(loop.WorkflowID)
+	if err != nil {
+		return OpenLoopRunResult{WorkflowID: loop.WorkflowID, OpenLoopID: loop.ID, Status: "skipped", Message: "workflow item not found"}
+	}
+	if item.Archived || item.CurrentState == StateArchived || item.CurrentState == StateCompleted {
+		loop.Status = "resolved"
+		if _, err := s.repo.UpdateOpenLoop(&loop); err != nil {
+			return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to resolve closed workflow open loop: " + err.Error()}
+		}
+		s.decide(item.ID, "open_loop", "resolved", "workflow already completed or archived", "follow-up engine", false, "workflow-followup")
+		s.audit(item.ID, "workflow.open_loop", item.CurrentState, item.CurrentState, "open loop resolved because workflow is closed", "followup_worker", "follow-up engine", item.SourceURI, "workflow-followup")
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "resolved", State: item.CurrentState, Message: "workflow already closed"}
+	}
+
+	checklistLabel := "Resolve due open loop: " + compact(loop.WaitingFor, 160)
+	if _, err := s.repo.CreateChecklistItem(&models.WorkflowChecklistItem{
+		WorkflowID:       item.ID,
+		Label:            checklistLabel,
+		Status:           "open",
+		Position:         950,
+		RequiresApproval: item.RequiresApproval || item.RiskLevel == "high" || loop.ResponsibleParty == "Robert",
+		DueAt:            loop.FollowUpAt,
+	}); err != nil {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to create follow-up checklist step: " + err.Error()}
+	}
+	if _, err := s.repo.CreateProposal(&models.WorkflowProposal{
+		WorkflowID:        item.ID,
+		RecommendedAction: "Follow-up due: " + firstNonEmpty(loop.NextAction, loop.WaitingFor),
+		Options:           strings.Join(followUpOptions(item, loop), "\n"),
+		Status:            "open",
+	}); err != nil {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to create follow-up proposal: " + err.Error()}
+	}
+
+	from := item.CurrentState
+	if item.CurrentState == StateBlocked {
+		item.NextAction = "review due follow-up proposal when blocker is cleared"
+		item.BlockedReason = firstNonEmpty(item.BlockedReason, "due follow-up is blocked")
+	} else if item.RiskLevel == "high" || item.RequiresApproval || loop.ResponsibleParty == "Robert" {
+		item.CurrentState = StateNeedsApproval
+		item.RequiresApproval = true
+		item.ApprovalStatus = "pending"
+		item.ApprovalReason = firstNonEmpty(item.ApprovalReason, "due open loop requires Robert decision")
+		item.NextAction = "review due follow-up proposal"
+	} else if item.CurrentState == StateWaitingInput {
+		item.CurrentState = StateReady
+		item.BlockedReason = ""
+		item.NextAction = "execute due follow-up through workflow worker"
+	} else {
+		item.NextAction = "execute due follow-up through workflow worker"
+	}
+	if _, err := s.repo.UpdateItem(item); err != nil {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: from, Message: "failed to update workflow after follow-up trigger: " + err.Error()}
+	}
+	if from != item.CurrentState {
+		s.recordTransition(item.ID, from, item.CurrentState, "followup_worker", "workflow-followup", false, "due open loop triggered next action")
+	}
+	loop.Status = "triggered"
+	if _, err := s.repo.UpdateOpenLoop(&loop); err != nil {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to mark open loop triggered: " + err.Error()}
+	}
+	s.decide(item.ID, "open_loop", "triggered", loop.WaitingFor, "follow-up engine", false, "workflow-followup")
+	s.audit(item.ID, "workflow.open_loop", from, item.CurrentState, "due open loop created proposal and checklist step", "followup_worker", "follow-up engine", item.SourceURI, "workflow-followup")
+	return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "triggered", State: item.CurrentState, Message: "proposal and checklist step created"}
 }
 
 func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
@@ -592,7 +801,8 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 	}
 	item.LastTaskPlanID = runResult.PlanID
 	item.VerificationStatus = runResult.VerificationStatus
-	if runResult.Passed && !runResult.ReviewRequired {
+	gateResult := s.evaluateQualityGates(item, runResult)
+	if runResult.Passed && !runResult.ReviewRequired && gateResult.Passed {
 		completed := time.Now().UTC()
 		item.CurrentState = StateCompleted
 		item.CompletedAt = &completed
@@ -612,10 +822,16 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 	if runResult.ReviewRequired {
 		reason = firstNonEmpty(reason, "task engine requested review")
 	}
+	if !gateResult.Passed {
+		reason = firstNonEmpty(strings.Join(gateResult.Failures, "; "), reason)
+	}
 	return s.handleRunFailure(&item, reason, runResult.VerificationStatus)
 }
 
 func (s *service) handleRunFailure(item *models.WorkflowItem, reason, verificationStatus string) WorkflowRunResult {
+	if verificationStatus == "" || containsAny(strings.ToLower(verificationStatus), "fail", "needs_review", "unsupported", "blocked") {
+		s.markQualityGate(item.ID, "verification before completion", "failed", firstNonEmpty(reason, "worker validation failed"))
+	}
 	item.RetryCount++
 	item.VerificationStatus = verificationStatus
 	item.LastWorkerError = reason
@@ -640,6 +856,103 @@ func (s *service) handleRunFailure(item *models.WorkflowItem, reason, verificati
 	s.decide(item.ID, "retry", "exhausted", reason, fmt.Sprintf("retry limit reached at %d attempts", attempts), false, "workflow-worker")
 	s.audit(item.ID, "workflow.worker_blocked", StateInProgress, StateBlocked, reason, "worker_retry_exhausted", "retry limit reached", item.SourceURI, "workflow-worker")
 	return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: attempts, VerificationStatus: verificationStatus, Message: reason}
+}
+
+type qualityGateRunResult struct {
+	Passed   bool
+	Failures []string
+}
+
+func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *TaskRunResult) qualityGateRunResult {
+	result := qualityGateRunResult{Passed: true}
+	gates, err := s.repo.FindQualityGates(item.ID)
+	if err != nil {
+		return result
+	}
+	sourceLinks, _ := s.repo.FindSourceLinks(item.ID)
+	evidence, _ := s.repo.FindEvidenceClaims(item.ID)
+	output := strings.ToLower(firstNonEmpty(runResult.Output, runResult.FailureReason, runResult.VerificationStatus, runResult.CompletionStatus))
+
+	for _, gate := range gates {
+		status := "passed"
+		reason := "quality gate satisfied"
+		mandatory := false
+		switch strings.ToLower(gate.Gate) {
+		case "source provenance":
+			if item.SourceURI == "" && len(sourceLinks) == 0 {
+				status = "needs_review"
+				reason = "no source link is attached; acceptable for manual low-risk intake but not source-grounded work"
+			}
+		case "verification before completion":
+			mandatory = true
+			if !runResult.Passed || runResult.ReviewRequired {
+				status = "failed"
+				reason = firstNonEmpty(runResult.FailureReason, "task result was not verified")
+			} else {
+				reason = firstNonEmpty(runResult.VerificationStatus, "task validation passed")
+			}
+		case "human approval":
+			mandatory = item.RequiresApproval
+			if item.RequiresApproval && item.ApprovalStatus != "approved" {
+				status = "needs_review"
+				reason = "human approval has not been recorded"
+			} else {
+				reason = "approval not required or already recorded"
+			}
+		case "evidence-linked claims":
+			mandatory = len(evidence) > 0
+			if hasEvidenceNeedingReview(evidence) {
+				status = "needs_review"
+				reason = "one or more extracted claims lack usable source support"
+			} else if len(evidence) == 0 {
+				status = "needs_review"
+				reason = "no extracted claims were found for this workflow"
+			} else {
+				reason = "all extracted evidence claims are source-linked"
+			}
+		case "github commit exists":
+			mandatory = item.TaskType == "technical"
+			status, reason = keywordGate(output, []string{"commit", "branch", "github", "pull request", "pr"}, "task output does not mention GitHub branch/commit evidence")
+		case "tests or build evidence":
+			mandatory = item.TaskType == "technical"
+			status, reason = keywordGate(output, []string{"test", "tests", "build", "passed"}, "task output does not mention test/build evidence")
+		case "readme/setup updated":
+			mandatory = item.TaskType == "technical"
+			status, reason = keywordGate(output, []string{"readme", "setup", "docs", "documentation"}, "task output does not mention setup or README evidence")
+		case "windows 11 operational path":
+			mandatory = item.TaskType == "technical"
+			status, reason = keywordGate(output, []string{"windows", "docker compose", "local", "operational"}, "task output does not mention a Windows/local operational path")
+		}
+		gate.Status = status
+		gate.Reason = reason
+		_, _ = s.repo.UpdateQualityGate(&gate)
+		if mandatory && status != "passed" {
+			result.Passed = false
+			result.Failures = append(result.Failures, gate.Gate+": "+reason)
+		}
+	}
+	if result.Passed {
+		s.decide(item.ID, "quality_gates", "passed", "mandatory quality gates passed", "completion engine", item.ApprovalStatus == "approved", "workflow-worker")
+	} else {
+		s.decide(item.ID, "quality_gates", "needs_review", strings.Join(result.Failures, "; "), "completion engine", false, "workflow-worker")
+	}
+	return result
+}
+
+func (s *service) markQualityGate(workflowID uuid.UUID, gateName, status, reason string) {
+	gates, err := s.repo.FindQualityGates(workflowID)
+	if err != nil {
+		return
+	}
+	for _, gate := range gates {
+		if !strings.EqualFold(gate.Gate, gateName) {
+			continue
+		}
+		gate.Status = status
+		gate.Reason = reason
+		_, _ = s.repo.UpdateQualityGate(&gate)
+		return
+	}
 }
 
 func (s *service) Overview() Overview {
@@ -1077,6 +1390,50 @@ func transitionAllowed(from, to string, approved bool) bool {
 	return false
 }
 
+func normalizeProposalStatus(request ProposalResolutionRequest) (string, error) {
+	status := strings.ToLower(strings.TrimSpace(request.Status))
+	switch status {
+	case "approved", "rejected", "changes_requested":
+		return status, nil
+	case "":
+	default:
+		return "", fmt.Errorf("unsupported proposal status")
+	}
+	if request.Approved {
+		return "approved", nil
+	}
+	decisionText := strings.ToLower(request.SelectedOption + " " + request.Note)
+	if strings.Contains(decisionText, "reject") || strings.Contains(decisionText, "block") || strings.Contains(decisionText, "do not") {
+		return "rejected", nil
+	}
+	return "changes_requested", nil
+}
+
+func followUpOptions(item *models.WorkflowItem, loop models.WorkflowOpenLoop) []string {
+	if item.RiskLevel == "high" || item.RequiresApproval || loop.ResponsibleParty == "Robert" {
+		return []string{"Approve follow-up draft", "Request safer wording", "Add evidence/context first", "Keep blocked"}
+	}
+	return []string{"Run follow-up automatically", "Draft only", "Wait longer", "Close open loop"}
+}
+
+func hasEvidenceNeedingReview(evidence []models.WorkflowEvidenceClaim) bool {
+	for _, claim := range evidence {
+		if claim.NeedsReview || claim.SourceURI == "" || claim.Status == "unsupported" || claim.Status == "needs_review" {
+			return true
+		}
+	}
+	return false
+}
+
+func keywordGate(value string, keywords []string, missingReason string) (string, string) {
+	for _, keyword := range keywords {
+		if strings.Contains(value, keyword) {
+			return "passed", "task output mentions " + keyword
+		}
+	}
+	return "needs_review", missingReason
+}
+
 func defaultWorkflowRules() []models.WorkflowRule {
 	return []models.WorkflowRule{
 		{RuleKey: "approval.legal_external", Name: "Legal and government communication is draft-only", Description: "Legal, government, insurance, housing association, and lawyer messages must be drafted and held for Robert approval before sending.", Category: "approval", Enabled: true},
@@ -1094,6 +1451,16 @@ func defaultWorkflowRules() []models.WorkflowRule {
 		{RuleKey: "content.medium_draft_only", Name: "Medium articles are draft-only", Description: "Article workflows may draft, format, and attach a draft link, but publishing remains approval-gated.", Category: "content", Enabled: true},
 		{RuleKey: "learning.corrections_feed_memory", Name: "Corrections become future rules or memory", Description: "Rejected drafts, project corrections, and tone changes should become reviewable lessons instead of unbounded raw memory.", Category: "learning", Enabled: true},
 	}
+}
+
+func normalizeRunLimit(limit int) int {
+	if limit <= 0 {
+		return 10
+	}
+	if limit > 50 {
+		return 50
+	}
+	return limit
 }
 
 func limitWorkflowItems(items []models.WorkflowItem, limit int) []models.WorkflowItem {
@@ -1128,17 +1495,17 @@ func engineCapabilities() []EngineCapability {
 		{ID: "risk-scoring", Name: "Risk scoring engine", Status: "implemented", Implemented: []string{"legal/financial/public/destructive risk scoring", "approval reason surfaced"}, Next: []string{"weighted project/client/irreversibility risk model"}},
 		{ID: "evidence-linking", Name: "Evidence and source linking engine", Status: "implemented", Implemented: []string{"source link table", "evidence claim table", "unsupported claim review flag"}, Next: []string{"claim-source precision checks against extracted snippets"}},
 		{ID: "deadline-detection", Name: "Deadline detection engine", Status: "partial", Implemented: []string{"today/tomorrow/urgent detection", "due dates", "check reminder checklist items"}, Next: []string{"date parser for letters, PDFs, and calendar phrases"}},
-		{ID: "follow-up", Name: "Follow-up engine", Status: "implemented", Implemented: []string{"open loop records", "follow-up date", "dashboard due-open-loop queue"}, Next: []string{"calendar reminder adapter and message draft generation"}},
+		{ID: "follow-up", Name: "Follow-up engine", Status: "implemented", Implemented: []string{"open loop records", "follow-up date", "dashboard due-open-loop queue", "due follow-up worker creates proposals and checklist steps"}, Next: []string{"calendar reminder adapter and message draft generation"}},
 		{ID: "waiting-state", Name: "Waiting-state engine", Status: "implemented", Implemented: []string{"blocked/waiting states", "responsible party", "waiting-for reason"}, Next: []string{"automatic Trello On-Hold transitions"}},
 		{ID: "delegation", Name: "Delegation engine", Status: "partial", Implemented: []string{"proposal/options records", "checklist output suitable for VA/developer handoff"}, Next: []string{"dedicated delegation package templates"}},
-		{ID: "proposal", Name: "Proposal yes-no engine", Status: "implemented", Implemented: []string{"recommended action records", "option sets by task type"}, Next: []string{"approve/edit/reject proposal actions"}},
+		{ID: "proposal", Name: "Proposal yes-no engine", Status: "implemented", Implemented: []string{"recommended action records", "option sets by task type", "approval/change/rejection resolution updates workflow state"}, Next: []string{"proposal editing with custom option text"}},
 		{ID: "communication-drafting", Name: "Communication drafting engine", Status: "partial", Implemented: []string{"task type and approval gates", "formal legal/publishing/developer workflow hints"}, Next: []string{"recipient-specific tone templates and draft adapters"}},
 		{ID: "document-ingestion", Name: "Document ingestion engine", Status: "partial", Implemented: []string{"allowlisted local folder sync", "text extraction for readable files", "source provenance"}, Next: []string{"OCR, file renaming, folder movement, PDF extraction"}},
 		{ID: "duplicate-version", Name: "Duplicate and version control engine", Status: "partial", Implemented: []string{"workflow dedupe by source URI", "source item cursor/hash support"}, Next: []string{"near-duplicate and final-vs-draft detection"}},
 		{ID: "case-timeline", Name: "Case timeline engine", Status: "partial", Implemented: []string{"timestamped intake/events/transitions/claims"}, Next: []string{"project timeline API grouped by evidence"}},
 		{ID: "contradiction-detection", Name: "Contradiction detection engine", Status: "partial", Implemented: []string{"verification module has conflict statuses", "evidence claims can be reviewed"}, Next: []string{"cross-source contradiction scans"}},
 		{ID: "developer-github", Name: "Developer/GitHub engine", Status: "partial", Implemented: []string{"technical task classification", "GitHub quality gate records"}, Next: []string{"GitHub branch/commit/check adapters"}},
-		{ID: "software-quality-gate", Name: "Software quality gate engine", Status: "implemented", Implemented: []string{"test/build/readme/windows setup gates created for technical workflows"}, Next: []string{"automated repository acceptance reports"}},
+		{ID: "software-quality-gate", Name: "Software quality gate engine", Status: "implemented", Implemented: []string{"test/build/readme/windows setup gates created for technical workflows", "mandatory technical gates can block completion"}, Next: []string{"automated repository acceptance reports"}},
 		{ID: "public-accountability", Name: "Public accountability engine", Status: "partial", Implemented: []string{"public-post approval gate", "evidence claim records", "risk-gated publishing flow"}, Next: []string{"safer wording reviewer and source-backed timeline builder"}},
 		{ID: "medium-publishing", Name: "Medium/blog publishing engine", Status: "partial", Implemented: []string{"publishing task type", "draft-only rule", "article checklist"}, Next: []string{"Medium draft adapter and image prompt workflow"}},
 		{ID: "client-operations", Name: "Client job operations engine", Status: "partial", Implemented: []string{"administrative workflow path", "deadline/priority/checklist support"}, Next: []string{"quote, travel, materials, and invoice templates"}},
@@ -1150,7 +1517,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "rules-library", Name: "Rules library engine", Status: "implemented", Implemented: []string{"persistent editable rule table", "default 14-rule safety/workflow library"}, Next: []string{"dashboard rule editor"}},
 		{ID: "multi-agent-workers", Name: "Multi-agent worker engine", Status: "partial", Implemented: []string{"single orchestrated task runner adapter", "capability separation by module"}, Next: []string{"specialized worker registry"}},
 		{ID: "next-best-action", Name: "Next best action engine", Status: "implemented", Implemented: []string{"next action field on every intake", "dashboard flags missing next actions"}, Next: []string{"project-level next-best-action rollup"}},
-		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
+		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "quality-gate validation", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
 	}
 }
 
