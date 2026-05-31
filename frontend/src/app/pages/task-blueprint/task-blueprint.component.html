@@ -111,6 +111,13 @@
       </nz-card>
 
       <nz-card nzTitle="Connected-Source Context" *ngIf="plan as p" class="section-card">
+        <p *ngIf="p.contextPlan.sourceRefreshExplanation">{{ p.contextPlan.sourceRefreshExplanation }}</p>
+        <div class="plan-grid" *ngIf="p.contextPlan.sourceRefresh as refresh">
+          <p><strong>Checked:</strong> {{ refresh.checked }}</p>
+          <p><strong>Due:</strong> {{ refresh.due }}</p>
+          <p><strong>Completed:</strong> {{ refresh.completed }}</p>
+          <p><strong>Failed:</strong> {{ refresh.failed }}</p>
+        </div>
         <nz-empty *ngIf="!p.contextPlan.sourceContext.length" nzNotFoundContent="No connected-source context was loaded."></nz-empty>
         <nz-table *ngIf="p.contextPlan.sourceContext.length" [nzData]="p.contextPlan.sourceContext" nzSize="small" [nzPageSize]="5">
           <thead>

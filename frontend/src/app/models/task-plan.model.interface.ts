@@ -1,6 +1,6 @@
 import { ILLMGenerationResult, ILLMRouteDecision } from './llm-policy.model.interface';
 import { IRankedMemory } from './context-memory.model.interface';
-import { IRankedExtraction } from './connected-source.model.interface';
+import { IRankedExtraction, IScheduledSyncRun } from './connected-source.model.interface';
 import { IVerificationClaim } from './verification.model.interface';
 
 export interface ITaskPlanRequest {
@@ -31,6 +31,8 @@ export interface IContextPlan {
   strategy: string[];
   usedContext: IRankedMemory[];
   sourceContext: IRankedExtraction[];
+  sourceRefresh?: IScheduledSyncRun;
+  sourceRefreshExplanation?: string;
   explanation: string;
 }
 

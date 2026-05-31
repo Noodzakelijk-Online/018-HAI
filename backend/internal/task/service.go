@@ -41,10 +41,12 @@ type IntakeAnalysis struct {
 }
 
 type ContextPlan struct {
-	Strategy      []string                  `json:"strategy"`
-	UsedContext   []memory.RankedMemory     `json:"usedContext"`
-	SourceContext []source.RankedExtraction `json:"sourceContext"`
-	Explanation   string                    `json:"explanation"`
+	Strategy                 []string                  `json:"strategy"`
+	UsedContext              []memory.RankedMemory     `json:"usedContext"`
+	SourceContext            []source.RankedExtraction `json:"sourceContext"`
+	SourceRefresh            *source.ScheduledSyncRun  `json:"sourceRefresh,omitempty"`
+	SourceRefreshExplanation string                    `json:"sourceRefreshExplanation,omitempty"`
+	Explanation              string                    `json:"explanation"`
 }
 
 type ValidationPlan struct {
@@ -318,6 +320,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 
 func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
 	intake := analyzeIntake(request)
+	sourceRefresh, sourceRefreshExplanation := s.refreshSourcesForTask(request, intake)
 	contextResult, err := s.memoryService.Retrieve(memory.RetrieveRequest{
 		Query:      request.Request,
 		ProjectKey: request.ProjectKey,
@@ -354,12 +357,15 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 				"filter by project key when provided",
 				"rank by keyword relevance, recency, confidence, and project match",
 				"load only top relevant memories",
+				"refresh due connected sources when the task likely depends on project, local, or document context",
 				"check connected-source extractions before task planning",
 				"preserve source references on returned memories",
 			},
-			UsedContext:   contextResult.UsedContext,
-			SourceContext: sourceContext,
-			Explanation:   contextResult.Explanation + " " + sourceExplanation,
+			UsedContext:              contextResult.UsedContext,
+			SourceContext:            sourceContext,
+			SourceRefresh:            sourceRefresh,
+			SourceRefreshExplanation: sourceRefreshExplanation,
+			Explanation:              strings.TrimSpace(contextResult.Explanation + " " + sourceRefreshExplanation + " " + sourceExplanation),
 		},
 		ModelDecision:         modelDecision,
 		ToolDecision:          toolDecision,
@@ -373,6 +379,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 		LessonsLearned:        proposeLessons(request, intake, toolDecision),
 		Events: []TaskEvent{
 			event("intake", "request classified and real goal inferred"),
+			event("source-refresh", sourceRefreshExplanation),
 			event("context", contextResult.Explanation),
 			event("routing", modelDecision.Reason),
 			event("tool-routing", toolDecision.Reason),
@@ -719,6 +726,28 @@ func countLabel(count int, label string) string {
 		return "1 " + label
 	}
 	return strconv.Itoa(count) + " " + label + "s"
+}
+
+func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnalysis) (*source.ScheduledSyncRun, string) {
+	if s.sourceService == nil {
+		return nil, "Connected-source refresh is not configured."
+	}
+	if !shouldRefreshSourcesForTask(request, intake) {
+		return nil, "Connected-source refresh skipped because the task does not appear to need source-backed context."
+	}
+	result, err := s.sourceService.RunDueScheduledSyncs(time.Now().UTC())
+	if err != nil {
+		return nil, "Connected-source refresh failed before context retrieval: " + err.Error()
+	}
+	return result, fmt.Sprintf("Connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped)
+}
+
+func shouldRefreshSourcesForTask(request IntakeRequest, intake IntakeAnalysis) bool {
+	text := strings.ToLower(request.Request + " " + request.ProjectKey)
+	if intake.NeedsDocuments || intake.NeedsLocalExecution {
+		return true
+	}
+	return containsAny(text, "source", "context", "project", "file", "folder", "document", "github", "email", "calendar", "trello", "board", "repo")
 }
 
 func unsupportedClaimCount(claims []models.VerificationClaim) int {

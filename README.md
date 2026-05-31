@@ -226,20 +226,23 @@ The task success engine follows a completion-first loop:
 1. Classify the request.
 2. Infer the real goal.
 3. Define success criteria.
-4. Retrieve relevant memory and connected-source context.
-5. Route a suitable model by capability and cost policy.
-6. Route tools and mark unsafe tools as blocked.
-7. Apply risk and approval gates.
-8. Execute only currently allowed internal steps.
-9. Produce a grounded execution result.
-10. Verify claims against evidence.
-11. Retry or escalate when validation fails.
-12. Queue unresolved or risky work for review.
-13. Store useful lessons only after verified completion.
+4. Refresh due connected sources when the request likely depends on project, file, document, or local context.
+5. Retrieve relevant memory and connected-source context.
+6. Route a suitable model by capability and cost policy.
+7. Route tools and mark unsafe tools as blocked.
+8. Apply risk and approval gates.
+9. Execute only currently allowed internal steps.
+10. Produce a grounded execution result.
+11. Verify claims against evidence.
+12. Retry or escalate when validation fails.
+13. Queue unresolved or risky work for review.
+14. Store useful lessons only after verified completion.
 
 The task engine execution step is internal and evidence-grounded. Separate automation launch adapters can call bounded API targets, run a single allowlisted container-local script, or start a Docker container when Docker control is deliberately enabled. The system still does not send emails, change accounts, post publicly, delete files, or broadly control the local machine.
 
 High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its internal context, model, verification, and memory workflow.
+
+The task engine now treats connected sources as an active preflight dependency. For requests that mention project/source/file/folder/document/repo context, or that require local/document context, it runs due scheduled source syncs before source search. This uses the same bounded local-folder scheduler path and does not force a full re-read when sources are not due.
 
 ## LLM Routing Policy
 
