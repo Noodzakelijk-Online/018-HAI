@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"automation-hub-backend/internal/config"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -166,5 +168,69 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		if hit != tc.want {
 			t.Fatalf("%s %s -> handler %q, want %q", tc.method, tc.path, hit, tc.want)
 		}
+	}
+}
+
+func TestBackendAPIKeyMiddlewareDisabledWithoutKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := config.AppConfig.BackendAPIKey
+	t.Cleanup(func() { config.AppConfig.BackendAPIKey = previous })
+	config.AppConfig.BackendAPIKey = ""
+
+	r := gin.New()
+	r.Use(backendAPIKeyMiddleware())
+	r.GET("/protected", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+}
+
+func TestBackendAPIKeyMiddlewareBlocksMissingKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := config.AppConfig.BackendAPIKey
+	t.Cleanup(func() { config.AppConfig.BackendAPIKey = previous })
+	config.AppConfig.BackendAPIKey = "secret"
+
+	r := gin.New()
+	r.Use(backendAPIKeyMiddleware())
+	r.GET("/protected", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestBackendAPIKeyMiddlewareAllowsMatchingKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := config.AppConfig.BackendAPIKey
+	t.Cleanup(func() { config.AppConfig.BackendAPIKey = previous })
+	config.AppConfig.BackendAPIKey = "secret"
+
+	r := gin.New()
+	r.Use(backendAPIKeyMiddleware())
+	r.GET("/protected", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set(backendAPIKeyHeader, "secret")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
 	}
 }

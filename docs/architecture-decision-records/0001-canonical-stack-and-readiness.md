@@ -39,6 +39,7 @@ Concrete application of this policy:
 - LLM providers are selectable only when enabled, configured with an absolute endpoint, credential-ready when required, and not blocked by endpoint safety rules. Provider calls do not follow redirects.
 - Account/source connectors without real OAuth/API adapters remain disabled `not_implemented` contracts. The current operational source adapter is `local-folder`.
 - Scheduled sync must not pretend unsupported connectors are live. It may process operational local-folder sources and explicit manual import payloads only.
+- Backend engine APIs must stay behind the gateway and can additionally require a shared backend key. The local gateway injects `X-HAI-Backend-Key` after IDP authentication when `BACKEND_API_SHARED_KEY` is configured.
 
 ## Controlled Runtime Safety Baseline
 

@@ -2,6 +2,10 @@ package router
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"net/http"
+	"strings"
 
 	"automation-hub-backend/docs"
 	"automation-hub-backend/internal/automation"
@@ -28,6 +32,7 @@ func initializeRoutes(router *gin.Engine) error {
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"
 	docs.SwaggerInfo.BasePath = relativePathV1
 	v1 := router.Group(relativePathV1)
+	v1.Use(backendAPIKeyMiddleware())
 	{
 		autoHandler := automation.DefaultHandler()
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -62,6 +67,28 @@ func initializeRoutes(router *gin.Engine) error {
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+const backendAPIKeyHeader = "X-HAI-Backend-Key"
+
+func backendAPIKeyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		expected := strings.TrimSpace(config.AppConfig.BackendAPIKey)
+		if expected == "" || c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+
+		provided := strings.TrimSpace(c.GetHeader(backendAPIKeyHeader))
+		providedHash := sha256.Sum256([]byte(provided))
+		expectedHash := sha256.Sum256([]byte(expected))
+		if subtle.ConstantTimeCompare(providedHash[:], expectedHash[:]) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "backend API key required"})
+			return
+		}
+
+		c.Next()
+	}
 }
 
 func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *automation.Handler) error {

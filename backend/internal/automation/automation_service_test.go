@@ -1,14 +1,18 @@
 package automation
 
 import (
-	"automation-hub-backend/internal/events"
-	"automation-hub-backend/internal/models"
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/events"
+	"automation-hub-backend/internal/models"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -56,6 +60,63 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	}
 }
 
+func TestResolveImagePathRejectsTraversal(t *testing.T) {
+	previousDir := config.AppConfig.ImageSaveDir
+	previousExtensions := config.AppConfig.ImageExtensions
+	t.Cleanup(func() {
+		config.AppConfig.ImageSaveDir = previousDir
+		config.AppConfig.ImageExtensions = previousExtensions
+	})
+	config.AppConfig.ImageSaveDir = t.TempDir()
+	config.AppConfig.ImageExtensions = []string{".png", ".jpg", ".jpeg"}
+
+	if _, err := resolveImagePath("../secret.png"); err == nil {
+		t.Fatalf("expected traversal image path to be rejected")
+	}
+	if _, err := resolveImagePath(`folder\secret.png`); err == nil {
+		t.Fatalf("expected backslash image path to be rejected")
+	}
+}
+
+func TestResolveImagePathAllowsSingleGeneratedFileName(t *testing.T) {
+	previousDir := config.AppConfig.ImageSaveDir
+	previousExtensions := config.AppConfig.ImageExtensions
+	t.Cleanup(func() {
+		config.AppConfig.ImageSaveDir = previousDir
+		config.AppConfig.ImageExtensions = previousExtensions
+	})
+	config.AppConfig.ImageSaveDir = t.TempDir()
+	config.AppConfig.ImageExtensions = []string{".png", ".jpg", ".jpeg"}
+
+	path, err := resolveImagePath("123e4567-e89b-12d3-a456-426614174000.png")
+	if err != nil {
+		t.Fatalf("resolveImagePath: %v", err)
+	}
+	rel, err := filepath.Rel(config.AppConfig.ImageSaveDir, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		t.Fatalf("path = %q, want inside %q", path, config.AppConfig.ImageSaveDir)
+	}
+}
+
+func TestProcessImageFileRejectsCorruptImage(t *testing.T) {
+	previousDir := config.AppConfig.ImageSaveDir
+	previousExtensions := config.AppConfig.ImageExtensions
+	previousMaxSize := config.AppConfig.ImageMaxSize
+	t.Cleanup(func() {
+		config.AppConfig.ImageSaveDir = previousDir
+		config.AppConfig.ImageExtensions = previousExtensions
+		config.AppConfig.ImageMaxSize = previousMaxSize
+	})
+	config.AppConfig.ImageSaveDir = t.TempDir()
+	config.AppConfig.ImageExtensions = []string{".gif"}
+	config.AppConfig.ImageMaxSize = 1024
+
+	file := testMultipartFileHeader(t, "imageFile", "bad.gif", []byte("GIF89a"))
+	if _, err := (&service{}).processImageFile(file); err == nil {
+		t.Fatalf("expected corrupt image to be rejected")
+	}
+}
+
 func TestCreateRejectsUnsafeHostForGeneratedNginxConfig(t *testing.T) {
 	repo := newFakeAutomationRepo(&models.Automation{ID: uuid.New(), Name: "Existing", URLPath: "existing", Host: "backend", Port: 80})
 	service := NewService(repo, events.Publisher{})
@@ -71,6 +132,32 @@ func TestCreateRejectsUnsafeHostForGeneratedNginxConfig(t *testing.T) {
 	if created != nil {
 		t.Fatalf("created = %#v, want nil", created)
 	}
+}
+
+func testMultipartFileHeader(t *testing.T, fieldName, fileName string, content []byte) *multipart.FileHeader {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	if err := request.ParseMultipartForm(1024 * 1024); err != nil {
+		t.Fatalf("ParseMultipartForm: %v", err)
+	}
+	files := request.MultipartForm.File[fieldName]
+	if len(files) != 1 {
+		t.Fatalf("files[%s] length = %d, want 1", fieldName, len(files))
+	}
+	return files[0]
 }
 
 func TestHealthCheckBlocksHTTPOutsideAllowlist(t *testing.T) {

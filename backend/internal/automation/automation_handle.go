@@ -1,14 +1,16 @@
 package automation
 
 import (
-	"automation-hub-backend/internal/config"
-	"automation-hub-backend/internal/models"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+
+	"automation-hub-backend/internal/models"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -27,7 +29,19 @@ func DefaultHandler() *Handler {
 
 func (h *Handler) ImageHandler(c *gin.Context) {
 	imageName := c.Param("imageName")
-	imagePath := config.AppConfig.ImageSaveDir + "/" + imageName
+	imagePath, err := resolveImagePath(imageName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if _, err := os.Stat(imagePath); err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Image not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	c.File(imagePath)
 }

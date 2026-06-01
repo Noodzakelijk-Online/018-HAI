@@ -24,6 +24,7 @@ Implemented:
 - Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
 - Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, source links, decision records, transition records, durable retry limits, task-engine worker execution, verification-gated completion, and audit events.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
+- Backend API shared-key gate for local gateway traffic. When `BACKEND_API_SHARED_KEY` is set, `/api/v1` backend routes require `X-HAI-Backend-Key`; the checked-in local nginx config injects that header after IDP auth.
 - CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
 - Nginx config-manager hardening: Kafka automation events are revalidated before config writes, config file paths are constrained to the configured directory, public routes use the generated URL path instead of the upstream host, and Docker-socket reload is disabled by default.
 
@@ -90,6 +91,8 @@ Password: ChangeMe123!
 ```
 
 Change `FIRST_RUN_ADMIN_PASSWORD` in `.env.local` before first start for a real local install. If the Postgres data folders already exist, changing first-run values will not rewrite the existing account.
+
+Change `BACKEND_API_SHARED_KEY` before a real local install and update the matching `X-HAI-Backend-Key` value in `nginx-config/nginx.conf`. The backend enforces this key only when it is non-empty; the gateway also still requires IDP authentication before proxying backend routes.
 
 Local service ports:
 
@@ -466,7 +469,7 @@ This project is intended to gain local execution power, so safety should be desi
 - IDP and nginx-config-manager are separate Go services.
 - Database schema changes currently rely on Gorm `AutoMigrate` plus `init.sql`; a production migration system is still needed.
 - Docker Compose local mode uses one Kafka broker plus Zookeeper.
-- The local gateway expects backend and IDP routes under `/api`.
+- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, and `/api/v1/workflow`.
 - Do not rely on committed `.env` files for new work. Use `.env.example` -> `.env.local`.
 - Do not commit generated database directories, uploaded images, frontend `dist`, `node_modules`, local caches, or Docker state.
 - Keep UI changes consistent with the existing Angular/ng-zorro dashboard style.

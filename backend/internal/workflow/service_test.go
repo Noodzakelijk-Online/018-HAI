@@ -1,9 +1,10 @@
 package workflow
 
 import (
-	"automation-hub-backend/internal/models"
 	"testing"
 	"time"
+
+	"automation-hub-backend/internal/models"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -130,6 +131,70 @@ func TestTransitionRequiresApprovalFromNeedsApprovalToReady(t *testing.T) {
 	}
 	if len(approved.Events) < 2 {
 		t.Fatalf("expected transition audit event")
+	}
+}
+
+func TestTransitionRequiresApprovalForBlockedApprovalWorkflowToReady(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Email from lawyer about legal hearing. Draft formal reply."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	item := record.Item
+	item.CurrentState = StateBlocked
+	item.RequiresApproval = true
+	item.ApprovalStatus = "pending"
+	if _, err := repo.UpdateItem(&item); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+
+	if _, err := service.Transition(record.Item.ID, TransitionRequest{TargetState: StateReady}); err == nil {
+		t.Fatalf("expected blocked approval-required workflow to require approval before ready")
+	}
+	approved, err := service.Transition(record.Item.ID, TransitionRequest{TargetState: StateReady, Approved: true, Message: "Robert approved controlled draft preparation"})
+	if err != nil {
+		t.Fatalf("Transition approved: %v", err)
+	}
+	if approved.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready", approved.Item.CurrentState)
+	}
+	if approved.Item.ApprovalStatus != "approved" {
+		t.Fatalf("approval status = %q, want approved", approved.Item.ApprovalStatus)
+	}
+}
+
+func TestRunDueSkipsReadyApprovalWorkflowWithoutApproval(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "plan-approval",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "completed",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Email from lawyer about legal hearing. Draft formal reply."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	item := record.Item
+	item.CurrentState = StateReady
+	item.RequiresApproval = true
+	item.ApprovalStatus = "pending"
+	if _, err := repo.UpdateItem(&item); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Checked != 0 {
+		t.Fatalf("checked = %d, want 0 for unapproved ready workflow", summary.Checked)
+	}
+	if len(runner.requests) != 0 {
+		t.Fatalf("runner requests = %d, want 0", len(runner.requests))
 	}
 }
 
@@ -591,6 +656,9 @@ func (r *fakeWorkflowRepo) FindRunnableItems(now time.Time, limit int) ([]models
 	result := []models.WorkflowItem{}
 	for _, item := range r.items {
 		if item.CurrentState != StateReady || item.Archived || item.RetryCount >= item.MaxRetries {
+			continue
+		}
+		if item.RequiresApproval && item.ApprovalStatus != "approved" {
 			continue
 		}
 		if item.NextRunAt != nil && item.NextRunAt.After(now) {

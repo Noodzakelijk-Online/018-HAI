@@ -914,6 +914,7 @@ func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) 
 	reasons := []string{"read-only planning is allowed"}
 	allowed := true
 	approvalGranted := false
+	needsExplicitExecution := intake.NeedsTools || intake.NeedsLocalExecution
 	if intake.NeedsApproval {
 		reasons = append(reasons, "request contains high-risk action terms")
 		approvalGranted = executeAllowed && humanApproved
@@ -931,12 +932,16 @@ func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) 
 	if !executeAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
 		reasons = append(reasons, "execution not requested; plan remains non-executing")
 	}
+	allowedNow := allowed
+	if needsExplicitExecution && !executeAllowed {
+		allowedNow = false
+	}
 	return RiskAssessment{
 		Level:            intake.RiskLevel,
 		ApprovalRequired: intake.NeedsApproval,
 		ApprovalGranted:  approvalGranted,
 		Reasons:          reasons,
-		AllowedNow:       allowed && (!intake.NeedsTools || executeAllowed || !intake.NeedsLocalExecution),
+		AllowedNow:       allowedNow,
 	}
 }
 

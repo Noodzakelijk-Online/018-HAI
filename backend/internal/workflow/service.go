@@ -456,6 +456,9 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 	if target == "" {
 		return nil, fmt.Errorf("targetState is required")
 	}
+	if target == StateReady && item.RequiresApproval && item.ApprovalStatus != "approved" && !request.Approved {
+		return nil, fmt.Errorf("approval is required before workflow can become ready")
+	}
 	if !transitionAllowed(item.CurrentState, target, request.Approved) {
 		return nil, fmt.Errorf("transition from %s to %s is not allowed", item.CurrentState, target)
 	}
@@ -758,6 +761,20 @@ func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
 func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 	if item.MaxRetries <= 0 {
 		item.MaxRetries = 2
+	}
+	if item.RequiresApproval && item.ApprovalStatus != "approved" {
+		message := "approval is required before worker execution"
+		item.CurrentState = StateNeedsApproval
+		item.BlockedReason = ""
+		item.NextAction = "review and approve workflow before execution"
+		item.ApprovalStatus = "pending"
+		item.LastWorkerError = message
+		if updated, err := s.repo.UpdateItem(&item); err == nil && updated != nil {
+			s.recordTransition(updated.ID, StateReady, StateNeedsApproval, "worker_guard", "workflow-worker", false, message)
+			s.decide(updated.ID, "worker_execution", "blocked", message, "approval guard", false, "workflow-worker")
+			s.audit(updated.ID, "workflow.worker_blocked", StateReady, StateNeedsApproval, message, "worker_guard", "approval guard", updated.SourceURI, "workflow-worker")
+		}
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateNeedsApproval, Attempts: item.RetryCount, Message: message}
 	}
 	if s.taskRunner == nil {
 		message := "task runner is not configured"

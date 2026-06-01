@@ -23,6 +23,7 @@ const (
 	imageSaveDir     string = "IMAGE_SAVE_DIR"
 	kafkaBrokers     string = "KAFKA_BROKERS"
 	kafkaTopic       string = "KAFKA_TOPIC"
+	backendAPIKey    string = "BACKEND_API_SHARED_KEY"
 )
 
 type Configuration struct {
@@ -40,6 +41,7 @@ type Configuration struct {
 	ImageSaveDir    string
 	Brokers         []string
 	Topic           string
+	BackendAPIKey   string
 }
 
 var AppConfig Configuration
@@ -71,6 +73,7 @@ func Init() {
 		ImageSaveDir:    getEnvString(imageSaveDir, "images"),
 		Brokers:         kafkaBrokersList,
 		Topic:           getEnvString(kafkaTopic, "automation-events"),
+		BackendAPIKey:   getEnvString(backendAPIKey, ""),
 	}
 	ensureImageDirExists()
 }

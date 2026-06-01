@@ -1,15 +1,9 @@
 package automation
 
 import (
-	"automation-hub-backend/internal/config"
-	"automation-hub-backend/internal/events"
-	"automation-hub-backend/internal/models"
-	"automation-hub-backend/internal/util"
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
 	"image"
 	"io"
 	"log"
@@ -23,6 +17,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/events"
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/util"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 const (
@@ -755,14 +757,17 @@ func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
 	log.Println("After opening source file")
 
 	buffer := make([]byte, 512)
-	_, err = src.Read(buffer)
-	if err != nil {
+	bytesRead, err := src.Read(buffer)
+	if err != nil && err != io.EOF {
 		return "", err
+	}
+	if bytesRead == 0 {
+		return "", fmt.Errorf("file is empty")
 	}
 
 	log.Println("After reading buffer")
 
-	fileType := http.DetectContentType(buffer)
+	fileType := http.DetectContentType(buffer[:bytesRead])
 	if !strings.HasPrefix(fileType, "image/") {
 		return "", fmt.Errorf("file is not an image")
 	}
@@ -780,7 +785,7 @@ func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
 
 	_, _, err = image.Decode(src)
 	if err != nil {
-		//return "", fmt.Errorf("corrupted image: %v", err)
+		return "", fmt.Errorf("corrupted image: %w", err)
 	}
 
 	_, err = src.Seek(0, 0)
@@ -789,14 +794,21 @@ func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
 	}
 
 	newFileName := uuid.New().String() + ext
-	fullPath := config.AppConfig.ImageSaveDir + "/" + newFileName
+	fullPath, err := resolveImagePath(newFileName)
+	if err != nil {
+		return "", err
+	}
 	dst, err := os.Create(fullPath)
 	if err != nil {
-		fmt.Printf("Failed to create file %s: %v", dst.Name(), err)
+		fmt.Printf("Failed to create file %s: %v", fullPath, err)
 		return "", err
 	}
 	defer dst.Close()
-	fmt.Printf("Buffer content: %x\n", buffer[:100]) // Print first 100 bytes
+	sampleSize := bytesRead
+	if sampleSize > 100 {
+		sampleSize = 100
+	}
+	fmt.Printf("Buffer content: %x\n", buffer[:sampleSize])
 	log.Printf("File path: %s", fullPath)
 
 	log.Println("Before copying file")
@@ -814,17 +826,49 @@ func (s *service) deleteImage(imageName string) error {
 	if imageName == "" {
 		return nil
 	}
-	imagePath := config.AppConfig.ImageSaveDir + "/" + imageName
+	imagePath, err := resolveImagePath(imageName)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
 		return nil
 	}
 	return os.Remove(imagePath)
 }
 
+func resolveImagePath(imageName string) (string, error) {
+	imageName = strings.TrimSpace(imageName)
+	if imageName == "" {
+		return "", fmt.Errorf("image name is required")
+	}
+	if strings.ContainsAny(imageName, `/\`) || strings.Contains(imageName, "..") || imageName != filepath.Base(imageName) {
+		return "", fmt.Errorf("image name must be a single safe file name")
+	}
+	if ext := strings.ToLower(filepath.Ext(imageName)); ext == "" || !contains(config.AppConfig.ImageExtensions, ext) {
+		return "", fmt.Errorf("image extension is not allowed")
+	}
+	if strings.TrimSpace(config.AppConfig.ImageSaveDir) == "" {
+		return "", fmt.Errorf("image upload directory is not configured")
+	}
+	root, err := filepath.Abs(filepath.Clean(config.AppConfig.ImageSaveDir))
+	if err != nil {
+		return "", err
+	}
+	imagePath := filepath.Join(root, imageName)
+	rel, err := filepath.Rel(root, imagePath)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("image path must stay inside upload directory")
+	}
+	return imagePath, nil
+}
+
 func contains(slice []string, str string) bool {
-	str = strings.ToLower(str)
+	str = strings.ToLower(strings.TrimSpace(str))
 	for _, v := range slice {
-		if v == str {
+		if strings.ToLower(strings.TrimSpace(v)) == str {
 			return true
 		}
 	}

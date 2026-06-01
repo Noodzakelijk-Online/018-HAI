@@ -1,12 +1,13 @@
 package task
 
 import (
+	"testing"
+	"time"
+
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/source"
-	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -96,6 +97,30 @@ func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	}
 	if len(service.ReviewQueue()) == 0 {
 		t.Fatalf("expected service review queue entry")
+	}
+}
+
+func TestRunWithoutExecutionPermissionQueuesReviewForToolWork(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	service := NewService(mem, llmService)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:    "Run local Docker build and tests for the project",
+		ProjectKey: "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if plan.CompletionStatus != "review_required" {
+		t.Fatalf("status = %q, want review_required", plan.CompletionStatus)
+	}
+	if plan.ExecutionResult != nil {
+		t.Fatalf("execution result = %#v, want nil when execution was not explicitly allowed", plan.ExecutionResult)
+	}
+	if len(service.ReviewQueue()) == 0 {
+		t.Fatalf("expected review queue entry")
 	}
 }
 

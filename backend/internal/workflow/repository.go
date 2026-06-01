@@ -125,6 +125,7 @@ func (r *GormRepository) FindRunnableItems(now time.Time, limit int) ([]models.W
 	var items []models.WorkflowItem
 	err := r.DB.
 		Where("archived = ? AND current_state = ? AND retry_count < CASE WHEN max_retries <= 0 THEN 2 ELSE max_retries END", false, StateReady).
+		Where("requires_approval = ? OR approval_status = ?", false, "approved").
 		Where("next_run_at IS NULL OR next_run_at <= ?", now).
 		Order("priority_score desc, updated_at asc").
 		Limit(limit).
