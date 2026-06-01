@@ -47,12 +47,14 @@ Server-side execution must stay conservative:
 - API launches are host-allowlisted by `AUTOMATION_API_ALLOWED_HOSTS`.
 - Link-local, metadata, or unspecified API targets are blocked by default.
 - API launches do not follow redirects.
+- Health checks are server-side network actions and must use the same allowlist/no-redirect posture.
 - Script execution is disabled unless `AUTOMATION_SCRIPT_EXECUTION_ENABLED=true`.
 - Script targets must stay inside `AUTOMATION_SCRIPT_DIR`, including after symlink resolution.
 - Scripts run with a minimal environment. Extra environment variables require explicit `AUTOMATION_SCRIPT_ENV_ALLOWLIST` entries.
 - Docker control is disabled unless `AUTOMATION_DOCKER_CONTROL_ENABLED=true`.
 - Docker targets must be listed in `AUTOMATION_DOCKER_ALLOWED_CONTAINERS`.
 - Unsupported runtime types must block and audit the reason.
+- Containers should not receive `/var/run/docker.sock` by default. Any Docker socket mount must be deliberate, documented, and tied to a constrained action path.
 
 This runtime layer is not a broad desktop, browser, MCP, or Claw/OpenClaw agent runtime yet.
 

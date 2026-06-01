@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -52,6 +53,113 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	}
 	if len(repo.launchEvents) != 1 {
 		t.Fatalf("expected launch event to be persisted")
+	}
+}
+
+func TestCreateRejectsUnsafeHostForGeneratedNginxConfig(t *testing.T) {
+	repo := newFakeAutomationRepo(&models.Automation{ID: uuid.New(), Name: "Existing", URLPath: "existing", Host: "backend", Port: 80})
+	service := NewService(repo, events.Publisher{})
+
+	created, err := service.Create(&models.Automation{
+		Name: "Unsafe Host",
+		Host: "backend;\nproxy_pass http://example.com;",
+		Port: 80,
+	})
+	if err == nil {
+		t.Fatalf("expected unsafe host validation error")
+	}
+	if created != nil {
+		t.Fatalf("created = %#v, want nil", created)
+	}
+}
+
+func TestHealthCheckBlocksHTTPOutsideAllowlist(t *testing.T) {
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:                 id,
+		Name:               "External Health",
+		URLPath:            "external-health",
+		Host:               "example.com",
+		Port:               80,
+		HealthCheckType:    "http",
+		HealthCheckURL:     "http://example.com/health",
+		ExpectedHTTPStatus: http.StatusOK,
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.RunHealthCheck(id)
+	if err != nil {
+		t.Fatalf("RunHealthCheck: %v", err)
+	}
+	if result.Status == "healthy" {
+		t.Fatalf("status = %q, want blocked health check failure", result.Status)
+	}
+	if !strings.Contains(result.FailureReason, "not allowlisted") {
+		t.Fatalf("failureReason = %q, want allowlist failure", result.FailureReason)
+	}
+}
+
+func TestHealthCheckBlocksTCPOutsideAllowlist(t *testing.T) {
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:              id,
+		Name:            "External TCP Health",
+		URLPath:         "external-tcp-health",
+		Host:            "example.com",
+		Port:            443,
+		HealthCheckType: "tcp",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.RunHealthCheck(id)
+	if err != nil {
+		t.Fatalf("RunHealthCheck: %v", err)
+	}
+	if result.Status == "healthy" {
+		t.Fatalf("status = %q, want blocked health check failure", result.Status)
+	}
+	if !strings.Contains(result.FailureReason, "not allowlisted") {
+		t.Fatalf("failureReason = %q, want allowlist failure", result.FailureReason)
+	}
+}
+
+func TestHealthCheckDoesNotFollowHTTPRedirect(t *testing.T) {
+	redirectCalled := false
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectCalled = true
+	}))
+	defer redirectTarget.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer server.Close()
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:                 id,
+		Name:               "Redirect Health",
+		URLPath:            "redirect-health",
+		Host:               "localhost",
+		Port:               8080,
+		HealthCheckType:    "http",
+		HealthCheckURL:     server.URL,
+		ExpectedHTTPStatus: http.StatusOK,
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.RunHealthCheck(id)
+	if err != nil {
+		t.Fatalf("RunHealthCheck: %v", err)
+	}
+	if redirectCalled {
+		t.Fatalf("redirect target was called; health checks must not follow redirects")
+	}
+	if result.Status == "healthy" {
+		t.Fatalf("status = %q, want failed redirect status", result.Status)
+	}
+	if !strings.Contains(result.FailureReason, "unexpected HTTP status") {
+		t.Fatalf("failureReason = %q, want unexpected HTTP status", result.FailureReason)
 	}
 }
 

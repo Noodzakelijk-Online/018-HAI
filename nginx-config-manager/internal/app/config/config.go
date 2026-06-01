@@ -11,6 +11,7 @@ const (
 	configDir      string = "CONFIG_DIR"
 	kafkaBrokers   string = "KAFKA_BROKERS"
 	kafkaTopic     string = "KAFKA_TOPIC"
+	reloadEnabled  string = "NGINX_RELOAD_ENABLED"
 )
 
 type Configuration struct {
@@ -18,6 +19,7 @@ type Configuration struct {
 	NginxContainer string
 	Brokers        []string
 	Topic          string
+	ReloadEnabled  bool
 }
 
 var AppConfig Configuration
@@ -29,6 +31,7 @@ func Init() {
 		NginxContainer: getEnvString(nginxContainer, "gateway"),
 		Brokers:        kafkaBrokersList,
 		Topic:          getEnvString(kafkaTopic, "automation-events"),
+		ReloadEnabled:  getEnvBool(reloadEnabled, false),
 	}
 }
 
@@ -43,4 +46,21 @@ func getEnvString(key string, defaultValue string) string {
 	}
 	log.Printf("Using default value for %s: %s", key, defaultValue)
 	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	value, exists := os.LookupEnv(key)
+	if !exists {
+		log.Printf("Using default value for %s: %v", key, defaultValue)
+		return defaultValue
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		log.Printf("Invalid boolean for %s: %s. Using default: %v", key, value, defaultValue)
+		return defaultValue
+	}
 }

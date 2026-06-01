@@ -5,6 +5,7 @@ import (
 	"github.com/google/uuid"
 	jsoniter "github.com/json-iterator/go"
 	"mime/multipart"
+	"strings"
 	"time"
 )
 
@@ -57,6 +58,9 @@ func (a *Automation) Validate() error {
 	if len(a.URLPath) > 255 {
 		return fmt.Errorf("urlPath is too long, maximum length is 255 characters")
 	}
+	if !safeAutomationSlug(a.URLPath) {
+		return fmt.Errorf("urlPath must contain only letters, numbers, and hyphens")
+	}
 	if len(a.Image) > 255 {
 		return fmt.Errorf("image name is too long, maximum length is 255 characters")
 	}
@@ -66,6 +70,9 @@ func (a *Automation) Validate() error {
 	if len(a.Host) > 50 {
 		return fmt.Errorf("hostname is too long, maximum length is 50 characters")
 	}
+	if !safeAutomationHost(a.Host) {
+		return fmt.Errorf("hostname must be a DNS name or IPv4-style host without schemes, slashes, spaces, or template characters")
+	}
 	if a.Port <= 0 || a.Port > 65535 {
 		return fmt.Errorf("error: Port %d is not valid", a.Port)
 	}
@@ -73,4 +80,32 @@ func (a *Automation) Validate() error {
 		return fmt.Errorf("position cannot be negative")
 	}
 	return nil
+}
+
+func safeAutomationSlug(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "-") || strings.HasSuffix(value, "-") {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func safeAutomationHost(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || strings.Contains(value, "..") {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }

@@ -321,6 +321,11 @@ func (s *service) RunHealthCheck(id uuid.UUID) (*HealthResult, error) {
 	switch checkType {
 	case "tcp":
 		target = fmt.Sprintf("%s:%d", automation.Host, automation.Port)
+		if reason := networkTargetBlockedReason(automation.Host, "AUTOMATION_HEALTH_ALLOWED_HOSTS", defaultAPILaunchAllowedHosts, "AUTOMATION_HEALTH_ALLOW_LINK_LOCAL"); reason != "" {
+			status = classifyFailure(automation.ConsecutiveFailures + 1)
+			failureReason = reason
+			break
+		}
 		conn, errDial := net.DialTimeout("tcp", target, 5*time.Second)
 		if errDial != nil {
 			status = classifyFailure(automation.ConsecutiveFailures + 1)
@@ -336,7 +341,18 @@ func (s *service) RunHealthCheck(id uuid.UUID) (*HealthResult, error) {
 		if target == "" {
 			target = fmt.Sprintf("http://%s:%d", automation.Host, automation.Port)
 		}
-		client := &http.Client{Timeout: 10 * time.Second}
+		parsed, errParse := url.Parse(target)
+		if errParse != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			status = classifyFailure(automation.ConsecutiveFailures + 1)
+			failureReason = "health check target must be an absolute http or https URL"
+			break
+		}
+		if reason := networkTargetBlockedReason(parsed.Hostname(), "AUTOMATION_HEALTH_ALLOWED_HOSTS", defaultAPILaunchAllowedHosts, "AUTOMATION_HEALTH_ALLOW_LINK_LOCAL"); reason != "" {
+			status = classifyFailure(automation.ConsecutiveFailures + 1)
+			failureReason = reason
+			break
+		}
+		client := noRedirectHTTPClient(10 * time.Second)
 		resp, errGet := client.Get(target)
 		if errGet != nil {
 			status = classifyFailure(automation.ConsecutiveFailures + 1)
@@ -569,12 +585,7 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 	if method != http.MethodGet && method != http.MethodPost {
 		return blockedLaunch("API launch supports only GET or POST without a request body", started, append(audit, "api method rejected"))
 	}
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := noRedirectHTTPClient(10 * time.Second)
 	req, err := http.NewRequest(method, target, nil)
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "api request creation failed"))
@@ -1044,6 +1055,25 @@ func tokenAllowed(value string, allowed map[string]bool) bool {
 		return false
 	}
 	return allowed["*"] || allowed[value]
+}
+
+func noRedirectHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func networkTargetBlockedReason(host, allowedHostsEnv, fallbackAllowedHosts, allowLinkLocalEnv string) string {
+	if !hostAllowed(host, allowedCSVEnv(allowedHostsEnv, fallbackAllowedHosts)) {
+		return fmt.Sprintf("network target host %s is not allowlisted; set %s deliberately to enable this target", host, allowedHostsEnv)
+	}
+	if unsafeAPILaunchHost(host) && !envEnabled(allowLinkLocalEnv) {
+		return "network target uses link-local, metadata, or unspecified address space"
+	}
+	return ""
 }
 
 func safeScriptEnvironment(automation *models.Automation) []string {

@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -35,6 +36,9 @@ func manageConfig(action ConfigAction, auto entities.Automation) error {
 	case Remove:
 		err = removeConfig(auto.URLPath)
 	case Update:
+		if auto.OldUrlPath == "" {
+			return fmt.Errorf("oldUrlPath is required for update events")
+		}
 		err = updateConfig(auto)
 	default:
 		return fmt.Errorf("invalid action")
@@ -49,7 +53,10 @@ func manageConfig(action ConfigAction, auto entities.Automation) error {
 
 func addConfig(auto entities.Automation) error {
 
-	filePath := filepath.Join(config.AppConfig.ConfigDir, auto.URLPath+".conf")
+	filePath, err := configPath(auto.URLPath)
+	if err != nil {
+		return err
+	}
 	tmpl, err := template.New("config").Parse(configTemplate)
 	if err != nil {
 		return err
@@ -70,7 +77,10 @@ func addConfig(auto entities.Automation) error {
 }
 
 func removeConfig(name string) error {
-	filePath := filepath.Join(config.AppConfig.ConfigDir, name+".conf")
+	filePath, err := configPath(name)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return fmt.Errorf("config %s not found", name)
 	}
@@ -85,6 +95,10 @@ func updateConfig(auto entities.Automation) error {
 }
 
 func reloadNginx() error {
+	if !config.AppConfig.ReloadEnabled {
+		log.Println("NGINX_RELOAD_ENABLED=false; config written but nginx reload skipped")
+		return nil
+	}
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return err
@@ -94,11 +108,34 @@ func reloadNginx() error {
 	return cli.ContainerKill(context.Background(), config.AppConfig.NginxContainer, "HUP")
 }
 
+func configPath(name string) (string, error) {
+	base, err := filepath.Abs(filepath.Clean(config.AppConfig.ConfigDir))
+	if err != nil {
+		return "", err
+	}
+	target, err := filepath.Abs(filepath.Join(base, name+".conf"))
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("config path must stay inside %s", base)
+	}
+	return target, nil
+}
+
 func processMessage(msg *sarama.ConsumerMessage) {
 	var event entities.AutomationEvent
 	err := json.Unmarshal(msg.Value, &event)
 	if err != nil {
 		log.Printf("Failed to unmarshal message: %v", err)
+		return
+	}
+	if event.Automation == nil {
+		log.Printf("Ignoring %s event without automation payload", event.Type)
 		return
 	}
 
