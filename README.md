@@ -4,6 +4,12 @@
 
 The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, workflow state handling, source-grounded verification, and an HAI OS overview dashboard. It is not yet a fully autonomous Claw/OpenClaw-style runtime. The current engine can plan, route, gather context, import local files, identify actionable source extractions, create workflow items, generate checklists, gate approvals, verify grounded output, run controlled automation launches, and block unsafe or unsupported results; richer browser/MCP/agent runtime adapters still need to be implemented.
 
+## Canonical Stack Decision
+
+The canonical product stack is this Codex-built Go backend, Angular dashboard, Postgres persistence, and Docker Compose local runtime. The Manus React/tRPC/MySQL implementation should be treated as reference material only. Useful Manus behavior should be ported into this stack deliberately, not developed as a parallel product.
+
+This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-canonical-stack-and-readiness.md). The dashboard HAI OS page also exposes real-world readiness gates so internal AI logic is not mistaken for proven external integration behavior.
+
 ## Current Status
 
 Implemented:
@@ -23,7 +29,7 @@ Implemented:
 Not implemented yet:
 
 - Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
-- Full autonomous device control. Automation `launch` now has controlled adapters for API calls, allowlisted container-local scripts, and optionally Docker API container start requests, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
+- Full autonomous device control. Automation `launch` now has guarded adapters for host-allowlisted API calls, explicitly enabled allowlisted container-local scripts, and optionally Docker API container start requests for allowlisted containers, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
 - Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, scheduled due-sync for enabled local-folder sources, and workflow intake from extracted action items.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
 - Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
@@ -412,7 +418,7 @@ The automation control layer provides:
 - Automation CRUD.
 - Runtime/launch metadata fields.
 - Launch button and `POST /automation/:id/launch`.
-- Controlled launch execution for API targets, allowlisted scripts, and optionally Docker API container starts.
+- Guarded launch execution for host-allowlisted API targets, explicitly enabled allowlisted scripts, and optionally Docker API starts for allowlisted containers.
 - Persisted launch events shown in diagnostics.
 - HTTP/TCP/manual/disabled health check modes.
 - Persisted health events.
@@ -424,9 +430,9 @@ The automation control layer provides:
 Runtime behavior:
 
 - `browser_url`: prepares a target for client-side opening; no server-side device action is performed.
-- `api`: sends a bounded GET or POST request to an absolute `http` or `https` target. Prefix the target with `GET ` or `POST ` to select the method; default is POST.
-- `script`: executes a single script file without shell expansion. The target must resolve inside `AUTOMATION_SCRIPT_DIR`, mounted from `./automation-scripts` in local Compose.
-- `docker_service`: blocked by default. It can send a Docker Engine API start request only when `AUTOMATION_DOCKER_CONTROL_ENABLED=true` and the Docker socket is deliberately mounted/configured.
+- `api`: sends a bounded GET or POST request to an absolute `http` or `https` target. Prefix the target with `GET ` or `POST ` to select the method; default is POST. The host must be present in `AUTOMATION_API_ALLOWED_HOSTS`. Link-local, metadata, and unspecified IP targets are blocked by default.
+- `script`: blocked by default. It executes a single script file without shell expansion only when `AUTOMATION_SCRIPT_EXECUTION_ENABLED=true`. The target must resolve inside `AUTOMATION_SCRIPT_DIR`, including after symlink resolution.
+- `docker_service`: blocked by default. It can send a Docker Engine API start request only when `AUTOMATION_DOCKER_CONTROL_ENABLED=true`, the Docker socket is deliberately mounted/configured, and the target container is listed in `AUTOMATION_DOCKER_ALLOWED_CONTAINERS`.
 
 Current limitation: OpenClaw/QwenPaw/MCP/browser/desktop agent runtimes are still blocked until explicit adapters and approval policies are added.
 

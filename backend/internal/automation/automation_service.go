@@ -25,6 +25,10 @@ import (
 	"time"
 )
 
+const (
+	defaultAPILaunchAllowedHosts = "localhost,127.0.0.1,::1,backend,frontend,gateway,generic-auto,idp"
+)
+
 type HealthResult struct {
 	AutomationID        uuid.UUID `json:"automationId"`
 	Status              string    `json:"status"`
@@ -554,6 +558,13 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return blockedLaunch("API launch target must be an absolute http or https URL", started, append(audit, "api target rejected"))
 	}
+	host := parsed.Hostname()
+	if !hostAllowed(host, allowedCSVEnv("AUTOMATION_API_ALLOWED_HOSTS", defaultAPILaunchAllowedHosts)) {
+		return blockedLaunch("API launch host is not allowlisted; set AUTOMATION_API_ALLOWED_HOSTS deliberately to enable this target", started, append(audit, "api host rejected by allowlist"))
+	}
+	if unsafeAPILaunchHost(host) && !envEnabled("AUTOMATION_API_ALLOW_LINK_LOCAL") {
+		return blockedLaunch("API launch target uses link-local, metadata, or unspecified address space", started, append(audit, "api network target rejected"))
+	}
 	if method != http.MethodGet && method != http.MethodPost {
 		return blockedLaunch("API launch supports only GET or POST without a request body", started, append(audit, "api method rejected"))
 	}
@@ -591,6 +602,9 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 }
 
 func (s *service) executeScriptLaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
+	if !envEnabled("AUTOMATION_SCRIPT_EXECUTION_ENABLED") {
+		return blockedLaunch("Script execution is disabled; set AUTOMATION_SCRIPT_EXECUTION_ENABLED=true only after reviewing the allowlisted script folder", started, append(audit, "script execution blocked by policy"))
+	}
 	root := firstNonEmpty(os.Getenv("AUTOMATION_SCRIPT_DIR"), "/root/automation-scripts")
 	scriptPath, err := resolveAllowedScriptPath(root, automation.LaunchTarget)
 	if err != nil {
@@ -657,6 +671,9 @@ func (s *service) executeDockerLaunch(automation *models.Automation, started tim
 	containerName := strings.TrimSpace(firstNonEmpty(automation.ServiceName, automation.LaunchTarget))
 	if containerName == "" {
 		return blockedLaunch("Docker launch requires serviceName or launchTarget", started, append(audit, "docker target missing"))
+	}
+	if !tokenAllowed(containerName, allowedCSVEnv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "")) {
+		return blockedLaunch("Docker container is not allowlisted; set AUTOMATION_DOCKER_ALLOWED_CONTAINERS deliberately to enable this target", started, append(audit, "docker target rejected by allowlist"))
 	}
 	socketPath := firstNonEmpty(os.Getenv("AUTOMATION_DOCKER_SOCKET"), "/var/run/docker.sock")
 	transport := &http.Transport{
@@ -900,6 +917,14 @@ func resolveAllowedScriptPath(root, target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	rootResolved, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("script allowlist folder is not accessible: %w", err)
+	}
+	rootAbs, err = filepath.Abs(rootResolved)
+	if err != nil {
+		return "", err
+	}
 	target = strings.TrimSpace(target)
 	if strings.ContainsAny(target, "\r\n\x00") {
 		return "", fmt.Errorf("script launch target contains invalid characters")
@@ -919,6 +944,20 @@ func resolveAllowedScriptPath(root, target string) (string, error) {
 	}
 	if rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("script target must stay inside allowlisted folder %s", rootAbs)
+	}
+	if resolvedTarget, err := filepath.EvalSymlinks(targetAbs); err == nil {
+		resolvedAbs, err := filepath.Abs(resolvedTarget)
+		if err != nil {
+			return "", err
+		}
+		rel, err = filepath.Rel(rootAbs, resolvedAbs)
+		if err != nil {
+			return "", err
+		}
+		if rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." || filepath.IsAbs(rel) {
+			return "", fmt.Errorf("script target must not resolve outside allowlisted folder %s", rootAbs)
+		}
+		targetAbs = resolvedAbs
 	}
 	return targetAbs, nil
 }
@@ -961,4 +1000,48 @@ func intEnv(name string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func envEnabled(name string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	return value == "true" || value == "1" || value == "yes"
+}
+
+func allowedCSVEnv(name, fallback string) map[string]bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		raw = fallback
+	}
+	allowed := map[string]bool{}
+	for _, token := range strings.Split(raw, ",") {
+		token = strings.ToLower(strings.TrimSpace(token))
+		if token != "" {
+			allowed[token] = true
+		}
+	}
+	return allowed
+}
+
+func hostAllowed(host string, allowed map[string]bool) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	return allowed["*"] || allowed[host]
+}
+
+func tokenAllowed(value string, allowed map[string]bool) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return false
+	}
+	return allowed["*"] || allowed[value]
+}
+
+func unsafeAPILaunchHost(host string) bool {
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	return ip.IsUnspecified() || ip.IsLinkLocalUnicast()
 }

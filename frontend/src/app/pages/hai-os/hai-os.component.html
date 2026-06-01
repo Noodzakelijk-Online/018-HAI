@@ -36,6 +36,26 @@
         </nz-card>
       </div>
 
+      <nz-card nzTitle="Product Stack" class="section-card">
+        <p><strong>Canonical:</strong> {{ os.canonicalStack }}</p>
+        <nz-table [nzData]="os.referenceStacks" nzSize="small" [nzPageSize]="5">
+          <thead>
+            <tr>
+              <th>Reference</th>
+              <th>Status</th>
+              <th>Use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let stack of os.referenceStacks">
+              <td>{{ stack.name }}</td>
+              <td>{{ stack.status }}</td>
+              <td>{{ stack.use }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
       <nz-card nzTitle="System Metrics" class="section-card">
         <div class="metric-grid">
           <button
@@ -77,6 +97,27 @@
                   {{ link }}
                 </button>
               </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Real-World Readiness" class="section-card">
+        <nz-table [nzData]="os.readinessGates" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Status</th>
+              <th>Evidence</th>
+              <th>Next</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let gate of os.readinessGates">
+              <td>{{ gate.name }}</td>
+              <td>{{ gate.status }}</td>
+              <td>{{ gate.evidence }}</td>
+              <td>{{ gate.next }}</td>
             </tr>
           </tbody>
         </nz-table>

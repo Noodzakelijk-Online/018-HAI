@@ -61,6 +61,7 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho script-ok\n"), 0755); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
 
 	id := uuid.New()
@@ -87,8 +88,42 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	}
 }
 
+func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "launch.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho script-ok\n"), 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "false")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Script Automation",
+		URLPath:      "script-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "script",
+		LaunchTarget: "launch.sh",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if !result.RequiresApproval {
+		t.Fatalf("expected disabled script execution to require approval")
+	}
+}
+
 func TestLaunchBlocksScriptOutsideAllowlist(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
 
 	id := uuid.New()
@@ -112,6 +147,43 @@ func TestLaunchBlocksScriptOutsideAllowlist(t *testing.T) {
 	}
 	if !result.RequiresApproval {
 		t.Fatalf("expected blocked script to require approval")
+	}
+}
+
+func TestLaunchBlocksScriptSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.sh")
+	if err := os.WriteFile(outside, []byte("#!/bin/sh\necho outside\n"), 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	link := filepath.Join(dir, "link.sh")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink not available on this platform: %v", err)
+	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Blocked Script",
+		URLPath:      "blocked-script",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "script",
+		LaunchTarget: "link.sh",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if result.Output != "" {
+		t.Fatalf("output = %q, want no script output", result.Output)
 	}
 }
 
@@ -139,6 +211,83 @@ func TestLaunchBlocksDockerWhenPolicyDisabled(t *testing.T) {
 	}
 	if len(repo.launchEvents) != 1 {
 		t.Fatalf("expected blocked launch to be audited")
+	}
+}
+
+func TestLaunchBlocksDockerWhenContainerNotAllowlisted(t *testing.T) {
+	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
+	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Docker Automation",
+		URLPath:      "docker-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "docker_service",
+		LaunchTarget: "dangerous-container",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if !result.RequiresApproval {
+		t.Fatalf("expected blocked docker launch to require approval")
+	}
+}
+
+func TestLaunchBlocksAPITargetOutsideAllowlist(t *testing.T) {
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "External API Automation",
+		URLPath:      "external-api-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "api",
+		LaunchTarget: "POST https://example.com/start",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if !result.RequiresApproval {
+		t.Fatalf("expected blocked API launch to require approval")
+	}
+}
+
+func TestLaunchBlocksAPILinkLocalTarget(t *testing.T) {
+	t.Setenv("AUTOMATION_API_ALLOWED_HOSTS", "169.254.169.254")
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Metadata API Automation",
+		URLPath:      "metadata-api-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "api",
+		LaunchTarget: "POST http://169.254.169.254/latest/meta-data",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
 	}
 }
 

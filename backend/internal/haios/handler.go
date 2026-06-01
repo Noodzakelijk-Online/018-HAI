@@ -5,6 +5,8 @@ import (
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/models"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,16 +26,32 @@ type PlaneStatus struct {
 	Links       []string `json:"links"`
 }
 
+type ReferenceStackStatus struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Use    string `json:"use"`
+}
+
+type ReadinessGate struct {
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Evidence string `json:"evidence"`
+	Next     string `json:"next"`
+}
+
 type HAIOSOverview struct {
-	GeneratedAt       time.Time     `json:"generatedAt"`
-	LocalFirst        bool          `json:"localFirst"`
-	CompletionFirst   bool          `json:"completionFirst"`
-	PaidBudgetEUR     float64       `json:"paidBudgetEur"`
-	PaidUsageAllowed  bool          `json:"paidUsageAllowed"`
-	Metrics           []Metric      `json:"metrics"`
-	Planes            []PlaneStatus `json:"planes"`
-	NeedsReviewTotal  int64         `json:"needsReviewTotal"`
-	EmergencyStopNote string        `json:"emergencyStopNote"`
+	GeneratedAt       time.Time              `json:"generatedAt"`
+	CanonicalStack    string                 `json:"canonicalStack"`
+	ReferenceStacks   []ReferenceStackStatus `json:"referenceStacks"`
+	LocalFirst        bool                   `json:"localFirst"`
+	CompletionFirst   bool                   `json:"completionFirst"`
+	PaidBudgetEUR     float64                `json:"paidBudgetEur"`
+	PaidUsageAllowed  bool                   `json:"paidUsageAllowed"`
+	Metrics           []Metric               `json:"metrics"`
+	Planes            []PlaneStatus          `json:"planes"`
+	ReadinessGates    []ReadinessGate        `json:"readinessGates"`
+	NeedsReviewTotal  int64                  `json:"needsReviewTotal"`
+	EmergencyStopNote string                 `json:"emergencyStopNote"`
 }
 
 type Handler struct {
@@ -65,7 +83,11 @@ func (h *Handler) Overview(c *gin.Context) {
 	reviewTotal += h.count(&models.WorkflowOpenLoop{}, "status = ? AND (follow_up_at IS NULL OR follow_up_at <= ?)", "open", now)
 
 	c.JSON(http.StatusOK, HAIOSOverview{
-		GeneratedAt:      time.Now().UTC(),
+		GeneratedAt:    time.Now().UTC(),
+		CanonicalStack: "Codex Go backend + Angular dashboard + Postgres is the canonical product stack",
+		ReferenceStacks: []ReferenceStackStatus{
+			{Name: "Manus React/tRPC/MySQL", Status: "reference_only", Use: "Use as a product/UX reference and port only deliberately selected behavior into the canonical Go/Angular stack."},
+		},
 		LocalFirst:       true,
 		CompletionFirst:  true,
 		PaidBudgetEUR:    llmPolicy.DailyPaidBudgetEUR,
@@ -86,14 +108,15 @@ func (h *Handler) Overview(c *gin.Context) {
 		},
 		Planes: []PlaneStatus{
 			{Name: "Control", Status: "operational", Description: "Dashboard, automation registry, health, workflow inbox, policy, and queues.", Links: []string{"/home", "/control-center", "/workflow-engine"}},
-			{Name: "Knowledge", Status: "operational", Description: "Connected-source ingestion, extraction, index entries, search, and provenance.", Links: []string{"/connected-sources"}},
+			{Name: "Knowledge", Status: "partial", Description: "Local-folder ingestion is operational; real OAuth email/calendar/Drive/Trello/GitHub adapters are not yet wired end-to-end.", Links: []string{"/connected-sources"}},
 			{Name: "Memory", Status: "operational", Description: "Editable local memory with retrieval, dedupe, merge, archive, export, and correction.", Links: []string{"/memory"}},
 			{Name: "Reasoning", Status: "operational", Description: "Task classifier, criteria generator, context planner, model router, workflow state machine, priority, retry, and review.", Links: []string{"/task-blueprint", "/llm-policy", "/workflow-engine"}},
 			{Name: "Execution", Status: "guarded", Description: "Automation launch, workflow worker execution, retry limits, and controlled task runs exist; autonomous execution remains approval-gated.", Links: []string{"/control-center", "/task-blueprint", "/workflow-engine"}},
-			{Name: "Verification", Status: "operational", Description: "Source-grounded answers, claim checks, deterministic calculation checks, conflicts, and review statuses.", Links: []string{"/grounded-answers"}},
+			{Name: "Verification", Status: "partial", Description: "Claim/status checks exist, but real-world correctness still depends on connected sources and live provider validation.", Links: []string{"/grounded-answers"}},
 			{Name: "Governance", Status: "guarded", Description: "Local-only source controls, paid budget policy, sensitive flags, workflow approvals, and audit logs.", Links: []string{"/llm-policy", "/connected-sources", "/grounded-answers", "/workflow-engine"}},
 			{Name: "Observability", Status: "operational", Description: "Health summaries, sync logs, workflow events, verification runs, routing logs, diagnostics, and review indicators.", Links: []string{"/control-center", "/connected-sources", "/grounded-answers", "/workflow-engine"}},
 		},
+		ReadinessGates:    readinessGates(llmPolicy),
 		NeedsReviewTotal:  reviewTotal,
 		EmergencyStopNote: "Pause sources, revoke access, keep paid usage disabled, and block high-risk task execution until human approval is recorded.",
 	})
@@ -121,4 +144,98 @@ func statusForZero(value int64) string {
 		return "clear"
 	}
 	return "needs_review"
+}
+
+func readinessGates(policy llm.Policy) []ReadinessGate {
+	return []ReadinessGate{
+		{
+			Name:     "Canonical stack selected",
+			Status:   "decided",
+			Evidence: "Go/Angular/Postgres is canonical; Manus React/tRPC/MySQL is reference-only.",
+			Next:     "Port useful Manus behavior through explicit issues instead of running two competing products.",
+		},
+		{
+			Name:     "Live LLM provider configured",
+			Status:   statusForBool(liveProviderConfigured(policy), "configured", "not_configured"),
+			Evidence: liveProviderEvidence(policy),
+			Next:     "Connect Ollama, LM Studio, or a configured free OpenAI-compatible endpoint and run provider smoke tests.",
+		},
+		{
+			Name:     "Real account connectors",
+			Status:   "partial",
+			Evidence: "Manual import and local-folder sync are implemented; OAuth email/calendar/Drive/Trello/GitHub adapters remain connector contracts.",
+			Next:     "Implement one real OAuth connector at a time with incremental sync, provenance, and delete/revoke behavior.",
+		},
+		{
+			Name:     "Controlled runtime execution safety",
+			Status:   runtimeSafetyStatus(),
+			Evidence: runtimeSafetyEvidence(),
+			Next:     "Keep script/Docker execution disabled until targets are allowlisted and reviewed; keep link-local API targets blocked.",
+		},
+		{
+			Name:     "External correctness proof",
+			Status:   "unproven",
+			Evidence: "Unit tests cover internal consistency; live provider/source fixtures and end-to-end account workflows are still required.",
+			Next:     "Add integration tests against a local Ollama server, seeded local source folders, and one real account connector sandbox.",
+		},
+	}
+}
+
+func liveProviderConfigured(policy llm.Policy) bool {
+	for _, provider := range policy.Providers {
+		if !provider.Enabled || strings.TrimSpace(provider.EndpointURL) == "" {
+			continue
+		}
+		if provider.APIKeyEnv == "" || strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func liveProviderEvidence(policy llm.Policy) string {
+	configured := []string{}
+	for _, provider := range policy.Providers {
+		if !provider.Enabled || strings.TrimSpace(provider.EndpointURL) == "" {
+			continue
+		}
+		if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
+			continue
+		}
+		configured = append(configured, provider.Name)
+	}
+	if len(configured) == 0 {
+		return "No enabled provider has a reachable endpoint configured in environment."
+	}
+	return "Configured provider endpoints: " + strings.Join(configured, ", ")
+}
+
+func runtimeSafetyStatus() string {
+	if strings.EqualFold(os.Getenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED"), "true") || strings.EqualFold(os.Getenv("AUTOMATION_DOCKER_CONTROL_ENABLED"), "true") {
+		return "guarded_enabled"
+	}
+	return "guarded_disabled"
+}
+
+func runtimeSafetyEvidence() string {
+	parts := []string{
+		"API launches require AUTOMATION_API_ALLOWED_HOSTS and reject link-local/metadata targets by default.",
+		"Script execution enabled: " + boolWord(strings.EqualFold(os.Getenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED"), "true")),
+		"Docker control enabled: " + boolWord(strings.EqualFold(os.Getenv("AUTOMATION_DOCKER_CONTROL_ENABLED"), "true")),
+	}
+	return strings.Join(parts, " ")
+}
+
+func statusForBool(value bool, positive, negative string) string {
+	if value {
+		return positive
+	}
+	return negative
+}
+
+func boolWord(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
