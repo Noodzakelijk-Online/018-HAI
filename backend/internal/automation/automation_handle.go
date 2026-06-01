@@ -2,7 +2,6 @@ package automation
 
 import (
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -90,13 +89,6 @@ func (h *Handler) Create(c *gin.Context) {
 	file, _ := c.FormFile("imageFile")
 	if file != nil {
 		automation.ImageFile = file
-	}
-
-	// REMOVE THIS
-	if automation.ImageFile != nil {
-		log.Printf("Received image file: %s with size: %d bytes", automation.ImageFile.Filename, automation.ImageFile.Size)
-	} else {
-		log.Println("No image file received")
 	}
 
 	newAutomation, err := h.service.Create(&automation)

@@ -82,10 +82,6 @@ export class HomeComponent implements OnInit {
   drop(event: CdkDragDrop<string[]>) {
     const id1 = this.automations[event.previousIndex].id
     const id2 = this.automations[event.currentIndex].id
-    console.log('id1', id1)
-    console.log('id2', id2)
-    console.log('previousIndex', event.previousIndex)
-    console.log('currentIndex', event.currentIndex)
 
     if (!id1 || !id2 || id1 === id2) {
       return
@@ -96,8 +92,6 @@ export class HomeComponent implements OnInit {
   }
 
   handleFormDataAutomationSubmitted(automation: IAutomationModel) {
-    console.log('automation pré sending to service front: ', automation)
-    console.log('imageFile: ', automation.imageFile)
     if (this.automationModal.isUpdate) {
       this.automationsService.updateAutomation(automation).subscribe({
         next: () => {
@@ -163,7 +157,6 @@ export class HomeComponent implements OnInit {
   }
 
   handleProfileCancel(): void {
-    console.log('Profile form cancel')
     this.isProfileVisible = false
     this.profileForm.reset()
     if (this.userSubscription) {

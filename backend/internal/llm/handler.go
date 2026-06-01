@@ -42,6 +42,9 @@ func (h *Handler) Generate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Public API callers may request generation, but paid-model approval must
+	// come from a server-side approval workflow, not a client-supplied flag.
+	request.AllowPaidApproved = false
 	result, err := h.service.Generate(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

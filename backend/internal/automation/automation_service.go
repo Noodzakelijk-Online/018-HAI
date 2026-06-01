@@ -736,14 +736,11 @@ func (s *service) executeDockerLaunch(automation *models.Automation, started tim
 }
 
 func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
-	log.Println("Starting processImageFile function")
 	if file.Size > config.AppConfig.ImageMaxSize {
 		return "", fmt.Errorf("image is too large (%d). Max size is %d Mb", file.Size, config.AppConfig.ImageMaxSize)
 	}
 
 	ext := filepath.Ext(file.Filename)
-	fmt.Printf("Filename: %s, Extracted Extension: %s\n", file.Filename, ext)
-
 	if !contains(config.AppConfig.ImageExtensions, ext) {
 		return "", fmt.Errorf("invalid image extension. Allowed extensions are: %v", config.AppConfig.ImageExtensions)
 	}
@@ -754,7 +751,6 @@ func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
 		return "", err
 	}
 	defer src.Close()
-	log.Println("After opening source file")
 
 	buffer := make([]byte, 512)
 	bytesRead, err := src.Read(buffer)
@@ -764,8 +760,6 @@ func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
 	if bytesRead == 0 {
 		return "", fmt.Errorf("file is empty")
 	}
-
-	log.Println("After reading buffer")
 
 	fileType := http.DetectContentType(buffer[:bytesRead])
 	if !strings.HasPrefix(fileType, "image/") {
@@ -780,8 +774,6 @@ func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
-	log.Println("After seeking to start of source file")
 
 	_, _, err = image.Decode(src)
 	if err != nil {
@@ -800,25 +792,16 @@ func (s *service) processImageFile(file *multipart.FileHeader) (string, error) {
 	}
 	dst, err := os.Create(fullPath)
 	if err != nil {
-		fmt.Printf("Failed to create file %s: %v", fullPath, err)
 		return "", err
 	}
 	defer dst.Close()
-	sampleSize := bytesRead
-	if sampleSize > 100 {
-		sampleSize = 100
-	}
-	fmt.Printf("Buffer content: %x\n", buffer[:sampleSize])
-	log.Printf("File path: %s", fullPath)
-
-	log.Println("Before copying file")
 
 	n, err := io.Copy(dst, src)
 	if err != nil {
 		log.Printf("Failed to copy file: %v", err)
 		return "", err
 	}
-	log.Printf("Copied %d bytes to %s", n, dst.Name())
+	log.Printf("Processed automation image upload: %d bytes stored", n)
 	return newFileName, nil
 }
 

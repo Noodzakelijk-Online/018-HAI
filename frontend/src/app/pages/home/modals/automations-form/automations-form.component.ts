@@ -65,28 +65,20 @@ export class AutomationsFormComponent implements OnInit {
     })
   }
 
-  beforeUpload = (file: NzUploadFile, fileList: NzUploadFile[]): boolean => {
+  beforeUpload = (file: NzUploadFile): boolean => {
     this.selectedImage = file as unknown as File
-    console.log('file in beforeUpload: ', this.selectedImage)
-    return false // Impede o envio automático
+    return false
   }
 
-  handleImageUpload({ file, fileList }: NzUploadChangeParam): void {
-    this.selectedImage = file.originFileObj // Armazene o objeto de arquivo original
-    console.log('status: ', file.status)
-    console.log('file: ', file)
-    console.log('file - selectedImage: ', this.selectedImage)
+  handleImageUpload({ file }: NzUploadChangeParam): void {
+    this.selectedImage = file.originFileObj
     const status = file.status
-    if (status !== 'uploading') {
-      console.log(file, fileList)
-    }
     if (status === 'done') {
       this.notification.create(
         'success',
         'Upload Successful',
         `${file.name} image uploaded successfully.`
       )
-      console.log('status done : ', file)
       //this.automationForm.get('image')?.setValue(file.response.imagePath);
     } else if (status === 'error') {
       this.notification.create(
@@ -98,7 +90,6 @@ export class AutomationsFormComponent implements OnInit {
   }
 
   onSubmit(): void {
-    console.log('imageFile in onSubmit: ', this.selectedImage)
     if (!this.automationForm.valid) {
       for (const i in this.automationForm.controls) {
         this.automationForm.controls[i].markAsDirty()

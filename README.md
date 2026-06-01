@@ -159,7 +159,7 @@ Known warning: the Angular production build currently exceeds the initial bundle
 
 ## Main API Areas
 
-All backend routes are served under `/api/v1` through the gateway.
+All backend routes are served under `/api/v1` through the gateway. The local nginx config only proxies the exact backend namespaces, or paths below them, to the backend; unknown `/api/v1/...` paths fall through to the IDP route instead of being broadly forwarded.
 
 Automation:
 
@@ -359,7 +359,7 @@ The default provider list includes Ollama, LM Studio/OpenAI-compatible local ser
 
 Task execution can use a configured model endpoint to produce a draft, but the draft is still passed through source-grounded verification before the task can be marked complete. If no endpoint is configured or reachable, the engine falls back to evidence-based synthesis and review behavior.
 
-Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls do not follow redirects. The dashboard shows configured, disabled, blocked, and missing-key states so placeholder providers are not mistaken for live integrations.
+Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls do not follow redirects. Client requests to `/llm/generate` cannot approve paid or approval-required model use by setting request JSON; paid approval must be implemented as a server-side approval workflow before paid generation is allowed. The dashboard shows configured, disabled, blocked, and missing-key states so placeholder providers are not mistaken for live integrations.
 
 ## Memory System
 
@@ -469,7 +469,7 @@ This project is intended to gain local execution power, so safety should be desi
 - IDP and nginx-config-manager are separate Go services.
 - Database schema changes currently rely on Gorm `AutoMigrate` plus `init.sql`; a production migration system is still needed.
 - Docker Compose local mode uses one Kafka broker plus Zookeeper.
-- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, and `/api/v1/workflow`.
+- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed only under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, and `/api/v1/workflow`.
 - Do not rely on committed `.env` files for new work. Use `.env.example` -> `.env.local`.
 - Do not commit generated database directories, uploaded images, frontend `dist`, `node_modules`, local caches, or Docker state.
 - Keep UI changes consistent with the existing Angular/ng-zorro dashboard style.
