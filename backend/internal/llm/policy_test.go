@@ -8,7 +8,7 @@ import (
 )
 
 func TestRouteSkipsWeakFreeModelForCodingTask(t *testing.T) {
-	service := &Service{policy: defaultPolicy()}
+	service := &Service{policy: testPolicyWithLocalEndpoints()}
 
 	decision, err := service.Route(RouteRequest{Task: "Fix a Go API bug and explain the compile failure"})
 	if err != nil {
@@ -27,7 +27,7 @@ func TestRouteSkipsWeakFreeModelForCodingTask(t *testing.T) {
 }
 
 func TestRouteMovesPastPreviousModelAfterValidationFailure(t *testing.T) {
-	service := &Service{policy: defaultPolicy()}
+	service := &Service{policy: testPolicyWithLocalEndpoints()}
 	validationPassed := false
 
 	decision, err := service.Route(RouteRequest{
@@ -48,7 +48,7 @@ func TestRouteMovesPastPreviousModelAfterValidationFailure(t *testing.T) {
 }
 
 func TestPaidProviderDisabledByDefault(t *testing.T) {
-	service := &Service{policy: defaultPolicy()}
+	service := &Service{policy: testPolicyWithLocalEndpoints()}
 
 	decision, err := service.Route(RouteRequest{
 		Task:              "Handle a legal financial medical decision with verification",
@@ -69,8 +69,60 @@ func TestPaidProviderDisabledByDefault(t *testing.T) {
 	}
 }
 
+func TestRouteSkipsProvidersWithoutConfiguredEndpoints(t *testing.T) {
+	service := &Service{policy: testPolicyWithoutEndpoints()}
+
+	decision, err := service.Route(RouteRequest{Task: "Summarize this short note"})
+	if err != nil {
+		t.Fatalf("Route returned error: %v", err)
+	}
+
+	if decision.SelectedModelID != "" {
+		t.Fatalf("selected %q even though no provider endpoint is configured", decision.SelectedModelID)
+	}
+	if len(decision.Skipped) == 0 {
+		t.Fatalf("expected skipped models to explain missing provider endpoints")
+	}
+}
+
+func TestPolicyMarksUnconfiguredProviders(t *testing.T) {
+	service := &Service{policy: testPolicyWithoutEndpoints()}
+	policy := service.Policy()
+
+	if policy.Providers[0].Configured {
+		t.Fatalf("ollama provider should not be configured without OLLAMA_BASE_URL")
+	}
+	if policy.Providers[0].ReadinessStatus != "not_configured" {
+		t.Fatalf("readiness = %q, want not_configured", policy.Providers[0].ReadinessStatus)
+	}
+}
+
+func TestRouteBlocksLinkLocalProviderEndpointByDefault(t *testing.T) {
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = "http://169.254.169.254"
+	service := &Service{policy: annotatePolicyReadiness(policy)}
+
+	decision, err := service.Route(RouteRequest{Task: "Summarize this short note"})
+	if err != nil {
+		t.Fatalf("Route returned error: %v", err)
+	}
+	if decision.SelectedModelID != "" {
+		t.Fatalf("selected %q for blocked link-local provider", decision.SelectedModelID)
+	}
+	foundBlocked := false
+	for _, skipped := range decision.Skipped {
+		if skipped.ProviderID == "ollama" && skipped.Reason == "provider endpoint uses link-local, metadata, or unspecified address space" {
+			foundBlocked = true
+			break
+		}
+	}
+	if !foundBlocked {
+		t.Fatalf("expected link-local provider skip reason, got %#v", decision.Skipped)
+	}
+}
+
 func TestLocalModelsAllowedPolicyIsEnforced(t *testing.T) {
-	policy := defaultPolicy()
+	policy := testPolicyWithLocalEndpoints()
 	policy.LocalModelsAllowed = false
 	service := &Service{policy: policy}
 
@@ -103,7 +155,7 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	policy := defaultPolicy()
+	policy := testPolicyWithoutEndpoints()
 	policy.Providers[0].EndpointURL = server.URL
 	service := &Service{policy: policy}
 
@@ -127,6 +179,57 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 	}
 }
 
+func TestGenerateDoesNotFollowProviderRedirect(t *testing.T) {
+	redirectCalled := false
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectCalled = true
+	}))
+	defer redirectTarget.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	service := &Service{policy: policy}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Summarize this short note",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "ollama",
+			SelectedModelID:    "phi3:mini",
+			SelectedModelName:  "Phi small local",
+			Tier:               TierFree,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if redirectCalled {
+		t.Fatalf("redirect target was called; provider calls must not follow redirects")
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+}
+
+func testPolicyWithLocalEndpoints() Policy {
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = "http://localhost:11434"
+	policy.Providers[1].EndpointURL = "http://localhost:1234"
+	return annotatePolicyReadiness(policy)
+}
+
+func testPolicyWithoutEndpoints() Policy {
+	policy := defaultPolicy()
+	for index := range policy.Providers {
+		policy.Providers[index].EndpointURL = ""
+	}
+	return annotatePolicyReadiness(policy)
+}
+
 func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -140,7 +243,7 @@ func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	policy := defaultPolicy()
+	policy := testPolicyWithoutEndpoints()
 	policy.Providers[1].EndpointURL = server.URL
 	service := &Service{policy: policy}
 
@@ -165,7 +268,7 @@ func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 }
 
 func TestGenerateBlocksPaidWithoutApproval(t *testing.T) {
-	policy := defaultPolicy()
+	policy := testPolicyWithoutEndpoints()
 	policy.Providers[3].Enabled = true
 	policy.Providers[3].EndpointURL = "http://example.invalid"
 	policy.PaidCallsAllowed = true

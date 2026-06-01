@@ -55,6 +55,41 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	}
 }
 
+func TestLaunchDoesNotFollowAPIRedirect(t *testing.T) {
+	redirectCalled := false
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectCalled = true
+	}))
+	defer redirectTarget.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer server.Close()
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:                 id,
+		Name:               "Redirect API Automation",
+		URLPath:            "redirect-api-automation",
+		LaunchType:         "api",
+		LaunchTarget:       server.URL,
+		ExpectedHTTPStatus: http.StatusOK,
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if redirectCalled {
+		t.Fatalf("redirect target was called; API launch must not follow redirects")
+	}
+	if result.Status != "failed" || result.ExitCode != http.StatusFound {
+		t.Fatalf("status/exit = %q/%d, want failed/%d", result.Status, result.ExitCode, http.StatusFound)
+	}
+}
+
 func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "launch.sh")
@@ -85,6 +120,40 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	}
 	if result.Output != "script-ok" {
 		t.Fatalf("output = %q, want script-ok", result.Output)
+	}
+}
+
+func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "env.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nif [ -n \"$SECRET_TOKEN\" ]; then echo leaked; else echo clean; fi\n"), 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("SECRET_TOKEN", "must-not-leak")
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Script Automation",
+		URLPath:      "script-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "script",
+		LaunchTarget: "env.sh",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status = %q, want completed: %s", result.Status, result.Message)
+	}
+	if result.Output != "clean" {
+		t.Fatalf("output = %q, want clean", result.Output)
 	}
 }
 

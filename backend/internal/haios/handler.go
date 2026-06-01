@@ -183,10 +183,7 @@ func readinessGates(policy llm.Policy) []ReadinessGate {
 
 func liveProviderConfigured(policy llm.Policy) bool {
 	for _, provider := range policy.Providers {
-		if !provider.Enabled || strings.TrimSpace(provider.EndpointURL) == "" {
-			continue
-		}
-		if provider.APIKeyEnv == "" || strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) != "" {
+		if provider.Enabled && provider.Configured {
 			return true
 		}
 	}
@@ -196,16 +193,12 @@ func liveProviderConfigured(policy llm.Policy) bool {
 func liveProviderEvidence(policy llm.Policy) string {
 	configured := []string{}
 	for _, provider := range policy.Providers {
-		if !provider.Enabled || strings.TrimSpace(provider.EndpointURL) == "" {
-			continue
+		if provider.Enabled && provider.Configured {
+			configured = append(configured, provider.Name)
 		}
-		if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
-			continue
-		}
-		configured = append(configured, provider.Name)
 	}
 	if len(configured) == 0 {
-		return "No enabled provider has a reachable endpoint configured in environment."
+		return "No enabled provider has a configured endpoint and required credentials."
 	}
 	return "Configured provider endpoints: " + strings.Join(configured, ", ")
 }

@@ -111,6 +111,42 @@ func TestSyncLocalFolderBlocksTraversalOutsideAllowlistedRoot(t *testing.T) {
 	}
 }
 
+func TestSyncLocalFolderSkipsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outsideRoot := t.TempDir()
+	writeTestFile(t, outsideRoot+"/secret.md", "Decision: this outside file must not be ingested.")
+	if err := os.Symlink(outsideRoot+"/secret.md", root+"/secret-link.md"); err != nil {
+		t.Skipf("symlink not available on this platform: %v", err)
+	}
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "local-folder",
+		Name:         "Local project folder",
+		Category:     "local_folder",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode:       ModeHistoricalBackfill,
+		FolderPath: ".",
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 0 {
+		t.Fatalf("ItemsSeen = %d, want symlink skipped", result.Job.ItemsSeen)
+	}
+	if !repo.hasAudit("source.local_folder_symlink_skipped") {
+		t.Fatalf("expected symlink skip audit record")
+	}
+}
+
 func TestRunDueScheduledSyncsRunsDueLocalFolderSource(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root+"/scheduled.md", "Decision: scheduled source sync should run without a dashboard click. Follow up: keep the folder allowlist enforced.")
@@ -186,6 +222,68 @@ func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	}
 	if run.Checked != 2 || run.Due != 0 || run.Completed != 0 || run.Skipped != 2 {
 		t.Fatalf("run = %#v, want two skipped sources", run)
+	}
+}
+
+func TestConnectorsMarkOnlyLocalFolderOperational(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	connectors, err := service.Connectors()
+	if err != nil {
+		t.Fatalf("Connectors: %v", err)
+	}
+	foundLocal := false
+	foundEmail := false
+	for _, connector := range connectors {
+		switch connector.ConnectorKey {
+		case "local-folder":
+			foundLocal = true
+			if !connector.Enabled || connector.AdapterStatus != "operational" {
+				t.Fatalf("local-folder connector = %#v, want operational enabled", connector)
+			}
+		case "email":
+			foundEmail = true
+			if connector.Enabled || connector.AdapterStatus != "not_implemented" {
+				t.Fatalf("email connector = %#v, want disabled not_implemented", connector)
+			}
+		}
+	}
+	if !foundLocal || !foundEmail {
+		t.Fatalf("expected local and email connectors, got %#v", connectors)
+	}
+}
+
+func TestCreateSourceRejectsUnimplementedConnector(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	source, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "email",
+		Name:          "Robert email",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "manual",
+	})
+	if err == nil {
+		t.Fatalf("expected unimplemented connector error")
+	}
+	if source != nil {
+		t.Fatalf("source = %#v, want nil", source)
+	}
+}
+
+func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	source, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "local-folder",
+		Name:          "Local folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "manual",
+		SyncTarget:    ".",
+	})
+	if err != nil {
+		t.Fatalf("CreateSource: %v", err)
+	}
+	if source.ConnectorKey != "local-folder" || !source.Enabled {
+		t.Fatalf("source = %#v, want enabled local-folder", source)
 	}
 }
 
@@ -268,9 +366,23 @@ func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
 }
 
 func (r *fakeSourceRepo) SaveConnector(connector *models.SourceConnector) (*models.SourceConnector, error) {
+	existing, exists := r.connectors[connector.ConnectorKey]
 	if connector.ID == uuid.Nil {
-		connector.ID = uuid.New()
+		if exists {
+			connector.ID = existing.ID
+		} else {
+			connector.ID = uuid.New()
+		}
 	}
+	now := time.Now().UTC()
+	if connector.CreatedAt.IsZero() {
+		if exists {
+			connector.CreatedAt = existing.CreatedAt
+		} else {
+			connector.CreatedAt = now
+		}
+	}
+	connector.UpdatedAt = now
 	r.connectors[connector.ConnectorKey] = *connector
 	return connector, nil
 }

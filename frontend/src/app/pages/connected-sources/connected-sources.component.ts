@@ -29,8 +29,8 @@ export class ConnectedSourcesComponent implements OnInit {
   syncing = false;
 
   sourceForm: FormGroup = this.fb.group({
-    connectorKey: ['email', [Validators.required]],
-    name: ['Robert email import', [Validators.required]],
+    connectorKey: ['local-folder', [Validators.required]],
+    name: ['Selected local folder', [Validators.required]],
     localOnly: [true],
     syncFrequency: ['manual'],
     syncTarget: ['.'],
@@ -130,7 +130,7 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
           this.refresh();
         },
-        error: () => this.notification.error('Error', 'Failed to connect source.'),
+        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to connect source.'),
       });
   }
 
@@ -163,6 +163,11 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notification.error('Error', 'Sync failed.');
         },
       });
+  }
+
+  connectorLabel(connector: ISourceConnector): string {
+    const status = connector.adapterStatus || (connector.enabled ? 'operational' : 'not_implemented');
+    return `${connector.name} (${status})`;
   }
 
   syncFolder(): void {

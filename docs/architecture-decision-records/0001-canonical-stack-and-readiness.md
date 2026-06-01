@@ -26,6 +26,7 @@ Internal unit tests prove code consistency only. They do not prove real-world co
 A feature may be shown as operational only when it has:
 
 - A real adapter, not only a registry entry or placeholder.
+- Explicit readiness state in the API/UI when the adapter or provider is disabled, unconfigured, missing credentials, blocked, or not implemented.
 - A persisted audit trail.
 - Failure behavior that blocks or reviews instead of silently succeeding.
 - Source provenance where factual claims are involved.
@@ -33,14 +34,22 @@ A feature may be shown as operational only when it has:
 
 Until then, the dashboard and README must label the feature as partial, guarded, reference-only, or unproven.
 
+Concrete application of this policy:
+
+- LLM providers are selectable only when enabled, configured with an absolute endpoint, credential-ready when required, and not blocked by endpoint safety rules. Provider calls do not follow redirects.
+- Account/source connectors without real OAuth/API adapters remain disabled `not_implemented` contracts. The current operational source adapter is `local-folder`.
+- Scheduled sync must not pretend unsupported connectors are live. It may process operational local-folder sources and explicit manual import payloads only.
+
 ## Controlled Runtime Safety Baseline
 
 Server-side execution must stay conservative:
 
 - API launches are host-allowlisted by `AUTOMATION_API_ALLOWED_HOSTS`.
 - Link-local, metadata, or unspecified API targets are blocked by default.
+- API launches do not follow redirects.
 - Script execution is disabled unless `AUTOMATION_SCRIPT_EXECUTION_ENABLED=true`.
 - Script targets must stay inside `AUTOMATION_SCRIPT_DIR`, including after symlink resolution.
+- Scripts run with a minimal environment. Extra environment variables require explicit `AUTOMATION_SCRIPT_ENV_ALLOWLIST` entries.
 - Docker control is disabled unless `AUTOMATION_DOCKER_CONTROL_ENABLED=true`.
 - Docker targets must be listed in `AUTOMATION_DOCKER_ALLOWED_CONTAINERS`.
 - Unsupported runtime types must block and audit the reason.

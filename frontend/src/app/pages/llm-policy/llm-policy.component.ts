@@ -98,6 +98,9 @@ export class LLMPolicyComponent implements OnInit {
     if (!provider.enabled) {
       return 'disabled';
     }
+    if (!provider.configured) {
+      return provider.readinessStatus || 'not configured';
+    }
     if (provider.paid) {
       return 'paid';
     }
@@ -110,6 +113,9 @@ export class LLMPolicyComponent implements OnInit {
   providerColor(provider: ILLMProvider): string {
     if (!provider.enabled) {
       return 'default';
+    }
+    if (!provider.configured) {
+      return 'orange';
     }
     if (provider.paid) {
       return 'red';

@@ -14,10 +14,7 @@ import (
 
 func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 	mem := &fakeMemoryService{}
-	llmService, err := llm.NewServiceFromEnv()
-	if err != nil {
-		t.Fatalf("NewServiceFromEnv: %v", err)
-	}
+	llmService := newTaskTestLLMService(t)
 	service := NewService(mem, llmService)
 
 	plan, err := service.Plan(IntakeRequest{
@@ -51,10 +48,7 @@ func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	mem := &fakeMemoryService{}
 	src := &fakeTaskSourceService{}
-	llmService, err := llm.NewServiceFromEnv()
-	if err != nil {
-		t.Fatalf("NewServiceFromEnv: %v", err)
-	}
+	llmService := newTaskTestLLMService(t)
 	service := NewService(mem, llmService, src)
 
 	plan, err := service.Plan(IntakeRequest{
@@ -83,10 +77,7 @@ func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 
 func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	mem := &fakeMemoryService{}
-	llmService, err := llm.NewServiceFromEnv()
-	if err != nil {
-		t.Fatalf("NewServiceFromEnv: %v", err)
-	}
+	llmService := newTaskTestLLMService(t)
 	service := NewService(mem, llmService)
 
 	plan, err := service.Run(IntakeRequest{
@@ -110,10 +101,7 @@ func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 
 func TestResolveReviewItemApprovesAndRunsTask(t *testing.T) {
 	mem := &fakeMemoryService{}
-	llmService, err := llm.NewServiceFromEnv()
-	if err != nil {
-		t.Fatalf("NewServiceFromEnv: %v", err)
-	}
+	llmService := newTaskTestLLMService(t)
 	service := NewService(mem, llmService)
 
 	plan, err := service.Run(IntakeRequest{
@@ -147,10 +135,7 @@ func TestResolveReviewItemApprovesAndRunsTask(t *testing.T) {
 
 func TestRunValidatedTaskStoresLesson(t *testing.T) {
 	mem := &fakeMemoryService{}
-	llmService, err := llm.NewServiceFromEnv()
-	if err != nil {
-		t.Fatalf("NewServiceFromEnv: %v", err)
-	}
+	llmService := newTaskTestLLMService(t)
 	service := NewService(mem, llmService)
 
 	plan, err := service.Run(IntakeRequest{
@@ -170,6 +155,20 @@ func TestRunValidatedTaskStoresLesson(t *testing.T) {
 	if len(plan.StoredMemoryIDs) == 0 {
 		t.Fatalf("expected stored lesson memory")
 	}
+}
+
+func newTaskTestLLMService(t *testing.T) *llm.Service {
+	t.Helper()
+	t.Setenv("LLM_PROVIDERS_JSON", "")
+	t.Setenv("LLM_POLICY_JSON", "")
+	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+	t.Setenv("LM_STUDIO_BASE_URL", "")
+	t.Setenv("FREE_CLOUD_OPENAI_BASE_URL", "")
+	llmService, err := llm.NewServiceFromEnv()
+	if err != nil {
+		t.Fatalf("NewServiceFromEnv: %v", err)
+	}
+	return llmService
 }
 
 type fakeMemoryService struct{}

@@ -20,6 +20,9 @@ export interface ILLMProvider {
   paid: boolean;
   endpointUrl?: string;
   apiKeyEnv?: string;
+  configured: boolean;
+  readinessStatus?: string;
+  readinessReason?: string;
   quotaRemaining: number;
   dailyBudgetEur: number;
   models: ILLMModel[];

@@ -14,7 +14,9 @@ type SourceConnector struct {
 	SupportedModes   string    `gorm:"type:varchar(512)" json:"supportedModes"`
 	RequiredScopes   string    `gorm:"type:varchar(512)" json:"requiredScopes"`
 	LocalOnlyCapable bool      `gorm:"default:true" json:"localOnlyCapable"`
-	Enabled          bool      `gorm:"default:true;index" json:"enabled"`
+	Enabled          bool      `gorm:"default:false;index" json:"enabled"`
+	AdapterStatus    string    `gorm:"type:varchar(80);default:'not_implemented';index" json:"adapterStatus,omitempty"`
+	StatusReason     string    `gorm:"type:text" json:"statusReason,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 }

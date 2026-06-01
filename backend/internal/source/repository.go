@@ -3,6 +3,7 @@ package source
 import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
+	"errors"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -48,13 +49,27 @@ func DefaultRepository() Repository {
 }
 
 func (r *GormRepository) SaveConnector(connector *models.SourceConnector) (*models.SourceConnector, error) {
+	var existing models.SourceConnector
 	if connector.ID == uuid.Nil {
-		var existing models.SourceConnector
-		if err := r.DB.Where("connector_key = ?", connector.ConnectorKey).First(&existing).Error; err == nil {
+		err := r.DB.Where("connector_key = ?", connector.ConnectorKey).First(&existing).Error
+		if err == nil {
 			connector.ID = existing.ID
+			if connector.CreatedAt.IsZero() {
+				connector.CreatedAt = existing.CreatedAt
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		} else {
+			connector.ID = uuid.New()
+		}
+	} else if connector.CreatedAt.IsZero() {
+		if err := r.DB.First(&existing, "id = ?", connector.ID).Error; err == nil {
+			connector.CreatedAt = existing.CreatedAt
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
 	}
-	if err := r.DB.Save(connector).Error; err != nil {
+	if err := r.DB.Select("*").Save(connector).Error; err != nil {
 		return nil, err
 	}
 	return connector, nil

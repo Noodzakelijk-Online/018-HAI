@@ -27,11 +27,15 @@
                   <nz-option
                     *ngFor="let connector of connectors"
                     [nzValue]="connector.connectorKey"
-                    [nzLabel]="connector.name"
+                    [nzLabel]="connectorLabel(connector)"
+                    [nzDisabled]="!connector.enabled"
                   ></nz-option>
                 </nz-select>
               </nz-form-control>
             </nz-form-item>
+            <p *ngIf="connectors.length" class="muted">
+              Only operational connectors can be connected. OAuth/API connectors are shown as reference until their adapters are implemented.
+            </p>
             <nz-form-item>
               <nz-form-label>Name</nz-form-label>
               <nz-form-control>

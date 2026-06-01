@@ -17,11 +17,11 @@ Implemented:
 - Angular dashboard with pages for automations, Control Center, HAI OS, LLM Routing, Memory, Task Blueprint, Connected Sources, Grounded Answers, and Workflow Engine.
 - Go backend API with automation CRUD, launch metadata, health checks, diagnostics, LLM routing, memory, task, source, workflow, verification, and OS overview routes.
 - Local Docker Compose setup for Windows 11 and general Docker Desktop use.
-- Local-first LLM routing policy with configurable providers, local/free priority, paid usage disabled by default, selected-model explanation, and routing logs.
-- Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints, with paid execution blocked unless explicitly approved by policy.
+- Local-first LLM routing policy with configurable providers, local/free priority, paid usage disabled by default, provider readiness checks, selected-model explanation, and routing logs.
+- Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints. Unconfigured providers are skipped, unsafe link-local endpoints are blocked by default, and paid execution is blocked unless explicitly approved by policy.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
-- Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, and audit logs.
+- Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
 - Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, source links, decision records, transition records, durable retry limits, task-engine worker execution, verification-gated completion, and audit events.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
 - CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
@@ -30,7 +30,7 @@ Not implemented yet:
 
 - Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
 - Full autonomous device control. Automation `launch` now has guarded adapters for host-allowlisted API calls, explicitly enabled allowlisted container-local scripts, and optionally Docker API container start requests for allowlisted containers, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
-- Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, scheduled due-sync for enabled local-folder sources, and workflow intake from extracted action items.
+- Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, scheduled due-sync for enabled local-folder sources, and workflow intake from extracted action items. Email, calendar, cloud/document, project-board, and GitHub connectors are registered as disabled `not_implemented` adapter contracts until real adapters are added.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
 - Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
 - Production-grade secret management, migrations, RBAC hardening, and deployment configuration.
@@ -355,6 +355,8 @@ The default provider list includes Ollama, LM Studio/OpenAI-compatible local ser
 
 Task execution can use a configured model endpoint to produce a draft, but the draft is still passed through source-grounded verification before the task can be marked complete. If no endpoint is configured or reachable, the engine falls back to evidence-based synthesis and review behavior.
 
+Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls do not follow redirects. The dashboard shows configured, disabled, blocked, and missing-key states so placeholder providers are not mistaken for live integrations.
+
 ## Memory System
 
 The memory layer is local by default and is intended to stay compact:
@@ -395,7 +397,7 @@ Local folder sync is bounded by:
 - `SOURCE_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
 - Incremental sync based on `LastSyncedAt`, unless mode is `historical_backfill`.
 
-Supported categories are represented for email, calendars, contacts/cloud documents, project boards, GitHub, local folders, and future connectors. Real account adapters must be added behind the existing service/repository interfaces.
+Supported categories are represented for email, calendars, contacts/cloud documents, project boards, GitHub, local folders, and future connectors. Only `local-folder` is currently operational. Real account adapters must be added behind the existing service/repository interfaces before those connectors can be enabled or scheduled.
 
 ## Verification and Grounded Answers
 
@@ -430,8 +432,8 @@ The automation control layer provides:
 Runtime behavior:
 
 - `browser_url`: prepares a target for client-side opening; no server-side device action is performed.
-- `api`: sends a bounded GET or POST request to an absolute `http` or `https` target. Prefix the target with `GET ` or `POST ` to select the method; default is POST. The host must be present in `AUTOMATION_API_ALLOWED_HOSTS`. Link-local, metadata, and unspecified IP targets are blocked by default.
-- `script`: blocked by default. It executes a single script file without shell expansion only when `AUTOMATION_SCRIPT_EXECUTION_ENABLED=true`. The target must resolve inside `AUTOMATION_SCRIPT_DIR`, including after symlink resolution.
+- `api`: sends a bounded GET or POST request to an absolute `http` or `https` target. Prefix the target with `GET ` or `POST ` to select the method; default is POST. The host must be present in `AUTOMATION_API_ALLOWED_HOSTS`. Link-local, metadata, and unspecified IP targets are blocked by default. Redirects are not followed, so an allowlisted target cannot bounce the backend into an unreviewed destination.
+- `script`: blocked by default. It executes a single script file without shell expansion only when `AUTOMATION_SCRIPT_EXECUTION_ENABLED=true`. The target must resolve inside `AUTOMATION_SCRIPT_DIR`, including after symlink resolution. Scripts run from their own folder with a minimal environment; add specific variables to `AUTOMATION_SCRIPT_ENV_ALLOWLIST` only when a reviewed script needs them.
 - `docker_service`: blocked by default. It can send a Docker Engine API start request only when `AUTOMATION_DOCKER_CONTROL_ENABLED=true`, the Docker socket is deliberately mounted/configured, and the target container is listed in `AUTOMATION_DOCKER_ALLOWED_CONTAINERS`.
 
 Current limitation: OpenClaw/QwenPaw/MCP/browser/desktop agent runtimes are still blocked until explicit adapters and approval policies are added.

@@ -559,7 +559,8 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 		return blockedLaunch("API launch target must be an absolute http or https URL", started, append(audit, "api target rejected"))
 	}
 	host := parsed.Hostname()
-	if !hostAllowed(host, allowedCSVEnv("AUTOMATION_API_ALLOWED_HOSTS", defaultAPILaunchAllowedHosts)) {
+	allowedHosts := allowedCSVEnv("AUTOMATION_API_ALLOWED_HOSTS", defaultAPILaunchAllowedHosts)
+	if !hostAllowed(host, allowedHosts) {
 		return blockedLaunch("API launch host is not allowlisted; set AUTOMATION_API_ALLOWED_HOSTS deliberately to enable this target", started, append(audit, "api host rejected by allowlist"))
 	}
 	if unsafeAPILaunchHost(host) && !envEnabled("AUTOMATION_API_ALLOW_LINK_LOCAL") {
@@ -568,7 +569,12 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 	if method != http.MethodGet && method != http.MethodPost {
 		return blockedLaunch("API launch supports only GET or POST without a request body", started, append(audit, "api method rejected"))
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	req, err := http.NewRequest(method, target, nil)
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "api request creation failed"))
@@ -621,6 +627,8 @@ func (s *service) executeScriptLaunch(automation *models.Automation, started tim
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, scriptPath)
+	cmd.Dir = filepath.Dir(scriptPath)
+	cmd.Env = safeScriptEnvironment(automation)
 	output, err := cmd.CombinedOutput()
 	outputText := trimOutput(output, 4096)
 	if ctx.Err() == context.DeadlineExceeded {
@@ -1036,6 +1044,41 @@ func tokenAllowed(value string, allowed map[string]bool) bool {
 		return false
 	}
 	return allowed["*"] || allowed[value]
+}
+
+func safeScriptEnvironment(automation *models.Automation) []string {
+	env := []string{
+		"HAI_AUTOMATION_ID=" + automation.ID.String(),
+		"HAI_AUTOMATION_NAME=" + automation.Name,
+	}
+	if path := strings.TrimSpace(os.Getenv("PATH")); path != "" {
+		env = append(env, "PATH="+path)
+	}
+	for _, key := range strings.Split(os.Getenv("AUTOMATION_SCRIPT_ENV_ALLOWLIST"), ",") {
+		key = strings.TrimSpace(key)
+		if !validEnvKey(key) {
+			continue
+		}
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
+}
+
+func validEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for index, r := range key {
+		letter := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+		digit := r >= '0' && r <= '9'
+		if letter || index > 0 && (digit || r == '_') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func unsafeAPILaunchHost(host string) bool {

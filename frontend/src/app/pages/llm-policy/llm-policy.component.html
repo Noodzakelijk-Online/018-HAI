@@ -71,6 +71,9 @@
                 <nz-tag [nzColor]="providerColor(provider)">
                   {{ providerStatus(provider) }}
                 </nz-tag>
+                <div *ngIf="provider.readinessReason">
+                  <small>{{ provider.readinessReason }}</small>
+                </div>
               </td>
               <td>{{ provider.quotaRemaining < 0 ? 'unlimited local' : provider.quotaRemaining }}</td>
               <td>EUR {{ provider.dailyBudgetEur || 0 }}</td>

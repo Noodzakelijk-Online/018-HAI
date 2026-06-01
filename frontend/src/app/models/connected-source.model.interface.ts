@@ -7,6 +7,8 @@ export interface ISourceConnector {
   requiredScopes: string;
   localOnlyCapable: boolean;
   enabled: boolean;
+  adapterStatus?: string;
+  statusReason?: string;
 }
 
 export interface IConnectedSource {

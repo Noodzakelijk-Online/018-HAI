@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -52,16 +54,19 @@ type Policy struct {
 }
 
 type Provider struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	Enabled        bool    `json:"enabled"`
-	Local          bool    `json:"local"`
-	Paid           bool    `json:"paid"`
-	EndpointURL    string  `json:"endpointUrl,omitempty"`
-	APIKeyEnv      string  `json:"apiKeyEnv,omitempty"`
-	QuotaRemaining int     `json:"quotaRemaining"`
-	DailyBudgetEUR float64 `json:"dailyBudgetEur"`
-	Models         []Model `json:"models"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Enabled         bool    `json:"enabled"`
+	Local           bool    `json:"local"`
+	Paid            bool    `json:"paid"`
+	EndpointURL     string  `json:"endpointUrl,omitempty"`
+	APIKeyEnv       string  `json:"apiKeyEnv,omitempty"`
+	Configured      bool    `json:"configured"`
+	ReadinessStatus string  `json:"readinessStatus,omitempty"`
+	ReadinessReason string  `json:"readinessReason,omitempty"`
+	QuotaRemaining  int     `json:"quotaRemaining"`
+	DailyBudgetEUR  float64 `json:"dailyBudgetEur"`
+	Models          []Model `json:"models"`
 }
 
 type Model struct {
@@ -169,11 +174,12 @@ func NewServiceFromEnv() (*Service, error) {
 		}
 	}
 
+	policy = annotatePolicyReadiness(policy)
 	return &Service{policy: policy, logs: []RouteDecision{}}, nil
 }
 
 func (s *Service) Policy() Policy {
-	return s.policy
+	return annotatePolicyReadiness(s.policy)
 }
 
 func (s *Service) Logs() []RouteDecision {
@@ -262,14 +268,15 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 		}, nil
 	}
 	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
-	if endpoint == "" {
+	readiness := providerRuntimeReadiness(provider)
+	if !readiness.configured {
 		return &GenerationResult{
 			ProviderID:       provider.ID,
 			ModelID:          model.ID,
 			ModelName:        model.Name,
 			Tier:             model.Tier,
-			Status:           "skipped",
-			Reason:           "selected provider has no endpoint configured",
+			Status:           generationStatusForReadiness(readiness.status),
+			Reason:           readiness.reason,
 			EstimatedCostEUR: model.EstimatedCostEUR,
 			DurationMs:       time.Since(started).Milliseconds(),
 			FallbackPath:     fallbackLabels(decision.FallbackPath),
@@ -352,7 +359,7 @@ func callOllama(ctx context.Context, endpoint, modelID, prompt string, request G
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := noRedirectHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -402,7 +409,7 @@ func callOpenAICompatible(ctx context.Context, endpoint string, provider Provide
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := noRedirectHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -472,6 +479,19 @@ func (s *Service) candidates(classification TaskClassification, request RouteReq
 		if !provider.Local && !provider.Paid && provider.QuotaRemaining <= 0 && !s.policy.FreeCloudQuotaAllowed {
 			for _, model := range provider.Models {
 				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: "free cloud quota unavailable"})
+			}
+			continue
+		}
+		if !provider.Local && !provider.Paid && provider.QuotaRemaining == 0 {
+			for _, model := range provider.Models {
+				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: "free cloud quota exhausted or unknown"})
+			}
+			continue
+		}
+		readiness := providerRuntimeReadiness(provider)
+		if !readiness.configured {
+			for _, model := range provider.Models {
+				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: readiness.reason})
 			}
 			continue
 		}
@@ -622,6 +642,69 @@ func fallbackLabels(options []FallbackOption) []string {
 		labels = append(labels, option.ProviderID+"/"+option.ModelID)
 	}
 	return labels
+}
+
+type providerReadiness struct {
+	configured bool
+	status     string
+	reason     string
+}
+
+func annotatePolicyReadiness(policy Policy) Policy {
+	for index := range policy.Providers {
+		readiness := providerRuntimeReadiness(policy.Providers[index])
+		policy.Providers[index].Configured = readiness.configured
+		policy.Providers[index].ReadinessStatus = readiness.status
+		policy.Providers[index].ReadinessReason = readiness.reason
+	}
+	return policy
+}
+
+func providerRuntimeReadiness(provider Provider) providerReadiness {
+	if !provider.Enabled {
+		return providerReadiness{configured: false, status: "disabled", reason: "provider disabled"}
+	}
+	endpoint := strings.TrimSpace(provider.EndpointURL)
+	if endpoint == "" {
+		return providerReadiness{configured: false, status: "not_configured", reason: "provider endpoint is not configured"}
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return providerReadiness{configured: false, status: "invalid_endpoint", reason: "provider endpoint must be an absolute http or https URL"}
+	}
+	host := parsed.Hostname()
+	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
+		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
+	}
+	if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
+		return providerReadiness{configured: false, status: "missing_api_key", reason: "required API key environment variable " + provider.APIKeyEnv + " is not set"}
+	}
+	return providerReadiness{configured: true, status: "configured", reason: "provider endpoint and required credentials are configured"}
+}
+
+func generationStatusForReadiness(status string) string {
+	switch status {
+	case "blocked_endpoint":
+		return "blocked"
+	default:
+		return "skipped"
+	}
+}
+
+func unsafeEndpointHost(host string) bool {
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	return ip.IsUnspecified() || ip.IsLinkLocalUnicast()
+}
+
+func noRedirectHTTPClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func buildPrompt(request GenerateRequest) string {

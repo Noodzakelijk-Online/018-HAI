@@ -163,7 +163,14 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 	if connectorKey == "" {
 		return nil, fmt.Errorf("connectorKey is required")
 	}
-	category := firstNonEmpty(request.Category, categoryForConnector(connectorKey))
+	connector, err := s.connectorByKey(connectorKey)
+	if err != nil {
+		return nil, err
+	}
+	if !connector.Enabled || connector.AdapterStatus != "operational" {
+		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
+	}
+	category := firstNonEmpty(request.Category, connector.Category)
 	if category == "" {
 		return nil, fmt.Errorf("category is required")
 	}
@@ -246,6 +253,9 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
+	}
+	if source.ConnectorKey != "local-folder" && len(request.Items) == 0 {
+		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
 	}
 	if source.ConnectorKey == "local-folder" {
 		request.FolderPath = firstNonEmpty(request.FolderPath, source.SyncTarget, ".")
@@ -538,6 +548,10 @@ func (s *service) localFolderItems(source *models.ConnectedSource, request Impor
 			return errLocalFolderLimitReached
 		}
 		name := entry.Name()
+		if entry.Type()&os.ModeSymlink != 0 {
+			s.audit(source.ID, "source.local_folder_symlink_skipped", fmt.Sprintf("skipped symlink %s", path))
+			return nil
+		}
 		if entry.IsDir() {
 			if path != folder && shouldExclude(source.ExcludePatterns, name) {
 				return filepath.SkipDir
@@ -585,6 +599,19 @@ func (s *service) ensureConnectors() error {
 		}
 	}
 	return nil
+}
+
+func (s *service) connectorByKey(connectorKey string) (models.SourceConnector, error) {
+	connectors, err := s.repo.FindConnectors()
+	if err != nil {
+		return models.SourceConnector{}, err
+	}
+	for _, connector := range connectors {
+		if connector.ConnectorKey == connectorKey {
+			return connector, nil
+		}
+	}
+	return models.SourceConnector{}, fmt.Errorf("connector %s is not registered", connectorKey)
 }
 
 func (s *service) upsertRawItem(source *models.ConnectedSource, item ImportItem, index int) (*models.SourceRawItem, bool, error) {
@@ -714,13 +741,14 @@ func (s *service) audit(sourceID uuid.UUID, action, message string) {
 
 func defaultConnectors() []models.SourceConnector {
 	modes := joinValues([]string{ModeManualImport, ModeScheduledSync, ModeWebhookSync, ModeHistoricalBackfill, ModeIncrementalSync})
+	notImplemented := "connector contract only; real OAuth/API adapter is not implemented in this stack yet"
 	return []models.SourceConnector{
-		{ConnectorKey: "email", Name: "Email accounts", Category: "email", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
-		{ConnectorKey: "calendar", Name: "Calendars", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
-		{ConnectorKey: "cloud-documents", Name: "Cloud drives and documents", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
-		{ConnectorKey: "project-board", Name: "Trello and project boards", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
-		{ConnectorKey: "github", Name: "GitHub repositories and issues", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true},
-		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true},
+		{ConnectorKey: "email", Name: "Email accounts", Category: "email", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
+		{ConnectorKey: "calendar", Name: "Calendars", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
+		{ConnectorKey: "cloud-documents", Name: "Cloud drives and documents", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
+		{ConnectorKey: "project-board", Name: "Trello and project boards", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
+		{ConnectorKey: "github", Name: "GitHub repositories and issues", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
+		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "manual and scheduled local-folder ingestion are implemented"},
 	}
 }
 
@@ -1029,6 +1057,14 @@ func resolveAllowedFolder(root, requested string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	rootResolved, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("connected-source root is not accessible: %w", err)
+	}
+	rootAbs, err = filepath.Abs(rootResolved)
+	if err != nil {
+		return "", err
+	}
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
 		requested = "."
@@ -1058,6 +1094,21 @@ func resolveAllowedFolder(root, requested string) (string, error) {
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("folder path is not a directory")
+	}
+	folderResolved, err := filepath.EvalSymlinks(folderAbs)
+	if err != nil {
+		return "", fmt.Errorf("folder path is not accessible: %w", err)
+	}
+	folderAbs, err = filepath.Abs(folderResolved)
+	if err != nil {
+		return "", err
+	}
+	rel, err = filepath.Rel(rootAbs, folderAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("folder path must not resolve outside allowlisted root %s", rootAbs)
 	}
 	return folderAbs, nil
 }
