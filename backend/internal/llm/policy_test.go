@@ -340,6 +340,17 @@ func testPolicyWithoutEndpoints() Policy {
 	return annotatePolicyReadiness(policy)
 }
 
+func providerIndex(t *testing.T, policy Policy, providerID string) int {
+	t.Helper()
+	for index, provider := range policy.Providers {
+		if provider.ID == providerID {
+			return index
+		}
+	}
+	t.Fatalf("provider %q not found in policy", providerID)
+	return -1
+}
+
 func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -379,8 +390,9 @@ func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 
 func TestGenerateBlocksPaidWithoutApproval(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
-	policy.Providers[3].Enabled = true
-	policy.Providers[3].EndpointURL = "http://example.invalid"
+	paidIndex := providerIndex(t, policy, "paid-provider")
+	policy.Providers[paidIndex].Enabled = true
+	policy.Providers[paidIndex].EndpointURL = "http://example.invalid"
 	policy.PaidCallsAllowed = true
 	policy.DailyPaidBudgetEUR = 1
 	service := &Service{policy: policy}
@@ -399,5 +411,99 @@ func TestGenerateBlocksPaidWithoutApproval(t *testing.T) {
 	}
 	if result.Status != "blocked" {
 		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+}
+
+func TestDefaultPolicyIncludesOdysseusWhenConfigured(t *testing.T) {
+	t.Setenv("ODYSSEUS_BASE_URL", "http://localhost:8080")
+	t.Setenv("ODYSSEUS_API_TOKEN", "test-token")
+
+	policy := defaultPolicy()
+	odysseusIndex := providerIndex(t, policy, "odysseus")
+	provider := policy.Providers[odysseusIndex]
+
+	if provider.EndpointURL != "http://localhost:8080" {
+		t.Fatalf("endpoint = %q, want configured Odysseus URL", provider.EndpointURL)
+	}
+	if provider.APIKeyEnv != "ODYSSEUS_API_TOKEN" {
+		t.Fatalf("apiKeyEnv = %q, want ODYSSEUS_API_TOKEN", provider.APIKeyEnv)
+	}
+	if len(provider.Models) != 1 || !provider.Models[0].RequiresApproval {
+		t.Fatalf("Odysseus workspace model must be approval-required: %#v", provider.Models)
+	}
+}
+
+func TestProbeProvidersChecksOdysseusHealthWithOptionalToken(t *testing.T) {
+	t.Setenv("ODYSSEUS_API_TOKEN", "test-token")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/health" {
+			t.Fatalf("path = %s, want /api/health", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	odysseusIndex := providerIndex(t, policy, "odysseus")
+	policy.Providers[odysseusIndex].EndpointURL = server.URL
+	policy.Providers[odysseusIndex].APIKeyEnv = "ODYSSEUS_API_TOKEN"
+	service := &Service{policy: policy}
+
+	results := service.ProbeProviders()
+	var odysseusProbe ProviderProbeResult
+	for _, result := range results {
+		if result.ProviderID == "odysseus" {
+			odysseusProbe = result
+			break
+		}
+	}
+	if odysseusProbe.ProviderID == "" {
+		t.Fatalf("Odysseus probe not returned: %#v", results)
+	}
+	if odysseusProbe.Status != "live" {
+		t.Fatalf("status = %q, want live: %s", odysseusProbe.Status, odysseusProbe.Reason)
+	}
+	if !strings.Contains(odysseusProbe.Reason, "execution remains approval-gated") {
+		t.Fatalf("probe reason should document execution gate: %s", odysseusProbe.Reason)
+	}
+}
+
+func TestGenerateBlocksOdysseusExecutionEvenWhenInternallyApproved(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "should not execute"})
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	odysseusIndex := providerIndex(t, policy, "odysseus")
+	policy.Providers[odysseusIndex].EndpointURL = server.URL
+	service := &Service{policy: policy}
+
+	result, err := service.Generate(GenerateRequest{
+		Task:              "Let Odysseus run this autonomous agent task",
+		AllowPaidApproved: true,
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "odysseus",
+			SelectedModelID:    "odysseus-workspace-agent",
+			SelectedModelName:  "Odysseus workspace agent",
+			Tier:               TierFree,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if called {
+		t.Fatalf("Odysseus endpoint was called despite execution guard")
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if !strings.Contains(result.Reason, "discovery and health probing only") {
+		t.Fatalf("reason = %q, want discovery-only guard", result.Reason)
 	}
 }

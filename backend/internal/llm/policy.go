@@ -314,6 +314,20 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			LoggedAt:         time.Now().UTC(),
 		}, nil
 	}
+	if provider.ID == "odysseus" {
+		return &GenerationResult{
+			ProviderID:       provider.ID,
+			ModelID:          model.ID,
+			ModelName:        model.Name,
+			Tier:             model.Tier,
+			Status:           "blocked",
+			Reason:           odysseusExecutionBlockedReason(),
+			EstimatedCostEUR: model.EstimatedCostEUR,
+			DurationMs:       time.Since(started).Milliseconds(),
+			FallbackPath:     fallbackLabels(decision.FallbackPath),
+			LoggedAt:         time.Now().UTC(),
+		}, nil
+	}
 
 	output, err := s.callProvider(context.Background(), provider, model, endpoint, request)
 	if err != nil {
@@ -367,6 +381,8 @@ func (s *Service) callProvider(ctx context.Context, provider Provider, model Mod
 	switch provider.ID {
 	case "ollama":
 		return callOllama(ctx, endpoint, model.ID, prompt, request)
+	case "odysseus":
+		return "", fmt.Errorf(odysseusExecutionBlockedReason())
 	default:
 		return callOpenAICompatible(ctx, endpoint, provider, model.ID, prompt, request)
 	}
@@ -392,6 +408,9 @@ func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
 		result.Reason = "paid provider probe is blocked until server-side paid approval exists"
 		result.RequiresReview = true
 		return result
+	}
+	if provider.ID == "odysseus" {
+		return probeOdysseusProvider(provider, result, started)
 	}
 
 	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
@@ -439,6 +458,63 @@ func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
 	} else {
 		result.Reason = "provider endpoint responded; model count was not available"
 	}
+	return result
+}
+
+func probeOdysseusProvider(provider Provider, result ProviderProbeResult, started time.Time) ProviderProbeResult {
+	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
+	paths := []string{"/api/health", "/health", "/api/v1/health", "/"}
+	lastReason := ""
+
+	for _, path := range paths {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(intEnv("LLM_PROVIDER_PROBE_TIMEOUT_SECONDS", 5))*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+path, nil)
+		if err != nil {
+			cancel()
+			result.Status = "failed"
+			result.Reason = safety.RedactSecrets(err.Error())
+			return result
+		}
+		req.Header.Set("User-Agent", "018-HAI-Odysseus-Probe/1.0")
+		if provider.APIKeyEnv != "" {
+			if key := strings.TrimSpace(os.Getenv(provider.APIKeyEnv)); key != "" {
+				req.Header.Set("Authorization", "Bearer "+key)
+			}
+		}
+		resp, err := noRedirectHTTPClient().Do(req)
+		result.DurationMs = time.Since(started).Milliseconds()
+		cancel()
+		if err != nil {
+			lastReason = safety.RedactSecrets(err.Error())
+			continue
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+		_ = resp.Body.Close()
+		result.HTTPStatus = resp.StatusCode
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			result.Status = "auth_required"
+			result.Reason = fmt.Sprintf("Odysseus endpoint responded with HTTP %d at %s; configure ODYSSEUS_API_TOKEN if auth is enabled", resp.StatusCode, path)
+			result.RequiresReview = true
+			return result
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			result.Status = "failed"
+			result.Reason = fmt.Sprintf("Odysseus probe at %s returned redirect HTTP %d; redirects are not followed", path, resp.StatusCode)
+			result.RequiresReview = true
+			return result
+		}
+		if resp.StatusCode < 300 {
+			result.Live = true
+			result.Status = "live"
+			result.ModelsSeen = countProbeModels(provider, raw)
+			result.Reason = fmt.Sprintf("Odysseus workspace is reachable via %s; workspace-agent execution remains approval-gated and disabled until a reviewed task adapter exists", path)
+			return result
+		}
+		lastReason = fmt.Sprintf("Odysseus probe at %s returned HTTP %d: %s", path, resp.StatusCode, compactOutput(raw, 300))
+	}
+
+	result.Status = "failed"
+	result.Reason = firstNonEmpty(lastReason, "Odysseus endpoint did not respond on known health paths")
 	return result
 }
 
@@ -869,6 +945,11 @@ func intEnv(name string, fallback int) int {
 func defaultPolicy() Policy {
 	ollamaEndpoint := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
 	lmStudioEndpoint := strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
+	odysseusEndpoint := strings.TrimSpace(os.Getenv("ODYSSEUS_BASE_URL"))
+	odysseusAPIKeyEnv := ""
+	if strings.TrimSpace(os.Getenv("ODYSSEUS_API_TOKEN")) != "" {
+		odysseusAPIKeyEnv = "ODYSSEUS_API_TOKEN"
+	}
 	freeCloudEndpoint := strings.TrimSpace(os.Getenv("FREE_CLOUD_OPENAI_BASE_URL"))
 	return Policy{
 		DailyPaidBudgetEUR:               0,
@@ -910,6 +991,19 @@ func defaultPolicy() Policy {
 				},
 			},
 			{
+				ID:             "odysseus",
+				Name:           "Odysseus AI Workspace",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    odysseusEndpoint,
+				APIKeyEnv:      odysseusAPIKeyEnv,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: "odysseus-workspace-agent", Name: "Odysseus workspace agent", Tier: TierFree, Capabilities: []string{"general", "planning", "verification", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", RequiresApproval: true, Enabled: true},
+				},
+			},
+			{
 				ID:             "free-cloud",
 				Name:           "Configured free cloud quota",
 				Enabled:        false,
@@ -936,6 +1030,10 @@ func defaultPolicy() Policy {
 			},
 		},
 	}
+}
+
+func odysseusExecutionBlockedReason() string {
+	return "Odysseus workspace is connected for discovery and health probing only; agent task execution must go through a reviewed controlled runtime adapter and approval queue before HAI may invoke Odysseus tools"
 }
 
 func hasCapability(capabilities []string, capability string) bool {

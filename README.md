@@ -19,6 +19,7 @@ Implemented:
 - Local Docker Compose setup for Windows 11 and general Docker Desktop use.
 - Local-first LLM routing policy with configurable providers, local/free priority, paid usage disabled by default, provider readiness checks, selected-model explanation, and routing logs.
 - Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints. Unconfigured providers are skipped, unsafe link-local endpoints are blocked by default, and paid execution is blocked unless explicitly approved by policy.
+- Guarded Odysseus workspace connector. HAI can show Odysseus in provider/runtime configuration and run live readiness probes against a configured local Odysseus URL, but Odysseus agent/tool execution is blocked until a reviewed task adapter and approval workflow are implemented.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
 - Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
@@ -30,7 +31,7 @@ Implemented:
 
 Not implemented yet:
 
-- Real Claw-compatible agent runtime adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
+- Real Claw-compatible task execution adapters for OpenClaw, QwenPaw, Odysseus, AnythingLLM, Khoj, LibreChat, Agent Zero, MCP tools, browser automation, and richer API/tool workflows.
 - Full autonomous device control. Automation `launch` now has guarded adapters for host-allowlisted API calls, explicitly enabled allowlisted container-local scripts, and optionally Docker API container start requests for allowlisted containers, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
 - Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, scheduled due-sync for enabled local-folder sources, and workflow intake from extracted action items. Email, calendar, cloud/document, project-board, and GitHub connectors are registered as disabled `not_implemented` adapter contracts until real adapters are added.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
@@ -352,15 +353,18 @@ Configuration:
 - `LLM_POLICY_JSON` can replace the policy.
 - `LLM_PROVIDERS_JSON` can replace the provider/model list.
 
-The default provider list includes Ollama, LM Studio/OpenAI-compatible local servers, free-cloud placeholders, and paid placeholders. Provider invocation is implemented for:
+The default provider list includes Ollama, LM Studio/OpenAI-compatible local servers, Odysseus workspace probing, free-cloud placeholders, and paid placeholders. Provider invocation is implemented for:
 
 - Ollama: set `OLLAMA_BASE_URL`, for example `http://host.docker.internal:11434` when Docker needs to reach Ollama on the Windows host.
 - LM Studio or llama.cpp OpenAI-compatible servers: set `LM_STUDIO_BASE_URL`, for example `http://host.docker.internal:1234`.
+- Odysseus: set `ODYSSEUS_BASE_URL`, for example `http://host.docker.internal:8080` when Docker needs to reach an Odysseus instance on the Windows host. Set `ODYSSEUS_API_TOKEN` only when Odysseus auth/API tokens are enabled. HAI probes common Odysseus health/UI paths and reports auth-required separately, but Odysseus workspace-agent task execution remains blocked until a reviewed controlled runtime adapter exists.
 - Free OpenAI-compatible quota providers: set `FREE_CLOUD_OPENAI_BASE_URL` and `FREE_CLOUD_API_KEY`, then enable/configure that provider through `LLM_PROVIDERS_JSON`.
 
 Task execution can use a configured model endpoint to produce a draft, but the draft is still passed through source-grounded verification before the task can be marked complete. If no endpoint is configured or reachable, the engine falls back to evidence-based synthesis and review behavior.
 
-Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls and provider probes do not follow redirects. `GET /api/v1/llm/probes` performs a live, bounded readiness check against configured local/free providers (`/api/tags` for Ollama and `/v1/models` for OpenAI-compatible endpoints) so configuration can be separated from real endpoint availability. Client requests to `/llm/generate` cannot approve paid or approval-required model use by setting request JSON; paid approval must be implemented as a server-side approval workflow before paid generation is allowed. The dashboard shows configured, disabled, blocked, missing-key, and live-probe states so placeholder providers are not mistaken for live integrations.
+Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls and provider probes do not follow redirects. `GET /api/v1/llm/probes` performs a live, bounded readiness check against configured local/free providers (`/api/tags` for Ollama, `/v1/models` for OpenAI-compatible endpoints, and health/UI paths for Odysseus) so configuration can be separated from real endpoint availability. Client requests to `/llm/generate` cannot approve paid or approval-required model use by setting request JSON; paid approval must be implemented as a server-side approval workflow before paid generation is allowed. The dashboard shows configured, disabled, blocked, missing-key, auth-required, and live-probe states so placeholder providers are not mistaken for live integrations.
+
+Odysseus upstream reference: [pewdiepie-archdaemon/odysseus](https://github.com/pewdiepie-archdaemon/odysseus). The upstream project describes a self-hosted AI workspace with local models, agents, MCP, local tools, browser use, files, memory, email, and calendar features. Because those features can cross HAI's safety boundary, HAI currently treats Odysseus as a reachable workspace/runtime candidate, not as an unrestricted executor.
 
 Controlled runtime outputs and LLM provider error bodies are redacted for common secrets before they are stored or returned in operational logs. Script execution still remains disabled by default and runs with a minimal environment when enabled.
 
@@ -453,7 +457,7 @@ Automation health checks are also treated as server-side network actions. HTTP a
 
 The nginx config-manager no longer receives `/var/run/docker.sock` in `docker-compose.local.yml` by default. It can write generated route config files, but nginx reload via Docker API is skipped unless `NGINX_RELOAD_ENABLED=true` and the operator deliberately restores a reviewed Docker socket mount.
 
-Current limitation: OpenClaw/QwenPaw/MCP/browser/desktop agent runtimes are still blocked until explicit adapters and approval policies are added.
+Current limitation: OpenClaw/QwenPaw/Odysseus/MCP/browser/desktop agent runtimes are still blocked until explicit task-execution adapters and approval policies are added. For Odysseus running on the Windows host, set `ODYSSEUS_BASE_URL` for provider probing; only add `host.docker.internal` to `AUTOMATION_API_ALLOWED_HOSTS` or `AUTOMATION_HEALTH_ALLOWED_HOSTS` after reviewing the exact controlled launch or health target.
 
 ## Safety Rules for Developers
 

@@ -24,8 +24,9 @@ func TestGenerateHandlerIgnoresClientPaidApprovalFlag(t *testing.T) {
 	defer server.Close()
 
 	policy := testPolicyWithoutEndpoints()
-	policy.Providers[3].Enabled = true
-	policy.Providers[3].EndpointURL = server.URL
+	paidIndex := providerIndex(t, policy, "paid-provider")
+	policy.Providers[paidIndex].Enabled = true
+	policy.Providers[paidIndex].EndpointURL = server.URL
 	policy.PaidCallsAllowed = true
 	policy.DailyPaidBudgetEUR = 1
 	handler := &Handler{service: &Service{policy: policy}}
