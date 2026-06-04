@@ -8,6 +8,10 @@
             <i nz-icon nzType="reload" nzTheme="outline"></i>
             Refresh
           </button>
+          <button nz-button nzType="default" (click)="probeProviders()" [nzLoading]="probing">
+            <i nz-icon nzType="api" nzTheme="outline"></i>
+            Probe Providers
+          </button>
           <button nz-button nzType="default" (click)="goHome()">
             <i nz-icon nzType="appstore" nzTheme="outline"></i>
             Automations
@@ -87,6 +91,33 @@
                   </nz-tag>
                 </div>
               </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Live Provider Probes" class="section-card" *ngIf="probes.length">
+        <nz-table [nzData]="probes" nzSize="small" [nzPageSize]="10">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>HTTP</th>
+              <th>Models</th>
+              <th>Latency</th>
+              <th>Checked</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let probe of probes">
+              <td>{{ probe.providerName }}</td>
+              <td><nz-tag [nzColor]="probeColor(probe)">{{ probe.status }}</nz-tag></td>
+              <td>{{ probe.httpStatus || '-' }}</td>
+              <td>{{ probe.modelsSeen || 0 }}</td>
+              <td>{{ probe.durationMs }} ms</td>
+              <td>{{ probe.checkedAt | date: 'short' }}</td>
+              <td>{{ probe.reason }}</td>
             </tr>
           </tbody>
         </nz-table>

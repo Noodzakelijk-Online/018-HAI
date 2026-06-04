@@ -5,6 +5,7 @@ import { NzNotificationService } from 'ng-zorro-antd/notification';
 import {
   ILLMPolicy,
   ILLMProvider,
+  ILLMProviderProbe,
   ILLMRouteDecision,
 } from '../../models/llm-policy.model.interface';
 import { LLM_POLICY_SERVICE_TOKEN } from '../../services/llm-policy/llm-policy.service.token';
@@ -17,9 +18,11 @@ import { ILLMPolicyService } from '../../services/llm-policy.service.interface';
 })
 export class LLMPolicyComponent implements OnInit {
   policy?: ILLMPolicy;
+  probes: ILLMProviderProbe[] = [];
   logs: ILLMRouteDecision[] = [];
   decision?: ILLMRouteDecision;
   loading = false;
+  probing = false;
   routing = false;
   routeForm: FormGroup = this.fb.group({
     task: [
@@ -55,6 +58,21 @@ export class LLMPolicyComponent implements OnInit {
       },
     });
     this.loadLogs();
+  }
+
+  probeProviders(): void {
+    this.probing = true;
+    this.llmPolicyService.probeProviders().subscribe({
+      next: (probes) => {
+        this.probes = probes;
+        this.probing = false;
+      },
+      error: () => {
+        this.probes = [];
+        this.probing = false;
+        this.notification.error('Error', 'Failed to probe configured LLM providers.');
+      },
+    });
   }
 
   routeTask(): void {
@@ -124,6 +142,19 @@ export class LLMPolicyComponent implements OnInit {
       return 'green';
     }
     return 'blue';
+  }
+
+  probeColor(probe: ILLMProviderProbe): string {
+    if (probe.live) {
+      return 'green';
+    }
+    if (probe.requiresReview) {
+      return 'orange';
+    }
+    if (probe.status === 'disabled' || probe.status === 'not_configured') {
+      return 'default';
+    }
+    return 'red';
   }
 
   tierColor(tier?: string): string {

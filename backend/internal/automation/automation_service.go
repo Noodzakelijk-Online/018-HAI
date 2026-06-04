@@ -21,6 +21,7 @@ import (
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/util"
 
 	"github.com/google/uuid"
@@ -188,7 +189,6 @@ func (s *service) Update(automation *models.Automation) (*models.Automation, err
 
 	if automation.ImageFile != nil {
 		newFileName, errIf := s.processImageFile(automation.ImageFile)
-		log.Printf("Image processed and saved as: %s", newFileName)
 		if errIf != nil {
 			return nil, errIf
 		}
@@ -453,7 +453,7 @@ func (s *service) Launch(id uuid.UUID) (*LaunchResult, error) {
 	execution := s.executeLaunch(automation, launchedAt)
 	automation.LastLaunchAt = &launchedAt
 	if execution.Status == "failed" || execution.Status == "blocked" {
-		automation.LastFailureReason = execution.Message
+		automation.LastFailureReason = safety.RedactSecrets(execution.Message)
 	}
 	if _, errUpdate := s.repo.Update(automation); errUpdate != nil {
 		return nil, errUpdate
@@ -462,10 +462,10 @@ func (s *service) Launch(id uuid.UUID) (*LaunchResult, error) {
 		AutomationID: automation.ID,
 		RuntimeType:  automation.RuntimeType,
 		LaunchType:   automation.LaunchType,
-		Target:       automation.LaunchTarget,
+		Target:       redactLaunchTarget(automation.LaunchTarget),
 		Status:       execution.Status,
-		Message:      execution.Message,
-		Output:       execution.Output,
+		Message:      safety.RedactSecrets(execution.Message),
+		Output:       safety.RedactSecrets(execution.Output),
 		ExitCode:     execution.ExitCode,
 		DurationMs:   execution.DurationMs,
 		StartedAt:    launchedAt,
@@ -478,10 +478,10 @@ func (s *service) Launch(id uuid.UUID) (*LaunchResult, error) {
 		AutomationID:     automation.ID,
 		RuntimeType:      automation.RuntimeType,
 		LaunchType:       automation.LaunchType,
-		Target:           automation.LaunchTarget,
+		Target:           redactLaunchTarget(automation.LaunchTarget),
 		Status:           execution.Status,
-		Message:          execution.Message,
-		Output:           execution.Output,
+		Message:          safety.RedactSecrets(execution.Message),
+		Output:           safety.RedactSecrets(execution.Output),
 		ExitCode:         execution.ExitCode,
 		DurationMs:       execution.DurationMs,
 		RequiresApproval: execution.RequiresApproval,
@@ -544,6 +544,9 @@ func (s *service) executeLaunch(automation *models.Automation, started time.Time
 		"automation configuration loaded",
 		"runtime safety policy evaluated",
 	}
+	if safety.EmergencyStopActive() {
+		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop blocked runtime launch"))
+	}
 	switch launchType {
 	case "browser_url":
 		return launchExecution{
@@ -600,7 +603,7 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	status := "completed"
-	message := fmt.Sprintf("%s %s returned HTTP %d", method, target, resp.StatusCode)
+	message := fmt.Sprintf("%s %s returned HTTP %d", method, safety.RedactURL(target), resp.StatusCode)
 	expected := automation.ExpectedHTTPStatus
 	if expected > 0 {
 		if resp.StatusCode != expected {
@@ -613,7 +616,7 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 	return launchExecution{
 		Status:      status,
 		Message:     message,
-		Output:      strings.TrimSpace(string(body)),
+		Output:      trimOutput(body, 4096),
 		ExitCode:    resp.StatusCode,
 		DurationMs:  time.Since(started).Milliseconds(),
 		AuditEvents: append(audit, "api request executed", "response captured with bounded output"),
@@ -955,6 +958,14 @@ func parseLaunchMethodTarget(value, defaultMethod string) (string, string) {
 	return defaultMethod, trimmed
 }
 
+func redactLaunchTarget(value string) string {
+	method, target := parseLaunchMethodTarget(value, "")
+	if method != "" && target != "" {
+		return method + " " + safety.RedactURL(target)
+	}
+	return safety.RedactURL(value)
+}
+
 func resolveAllowedScriptPath(root, target string) (string, error) {
 	if strings.TrimSpace(target) == "" {
 		return "", fmt.Errorf("script launch target is required")
@@ -1022,7 +1033,7 @@ func blockedLaunch(message string, started time.Time, audit []string) launchExec
 func failedLaunch(message string, started time.Time, audit []string) launchExecution {
 	return launchExecution{
 		Status:      "failed",
-		Message:     message,
+		Message:     safety.RedactSecrets(message),
 		ExitCode:    -1,
 		DurationMs:  time.Since(started).Milliseconds(),
 		AuditEvents: audit,
@@ -1033,7 +1044,7 @@ func trimOutput(output []byte, limit int64) string {
 	if int64(len(output)) > limit {
 		output = output[:limit]
 	}
-	return strings.TrimSpace(string(output))
+	return strings.TrimSpace(safety.RedactSecrets(string(output)))
 }
 
 func intEnv(name string, fallback int) int {
@@ -1107,9 +1118,7 @@ func safeScriptEnvironment(automation *models.Automation) []string {
 	env := []string{
 		"HAI_AUTOMATION_ID=" + automation.ID.String(),
 		"HAI_AUTOMATION_NAME=" + automation.Name,
-	}
-	if path := strings.TrimSpace(os.Getenv("PATH")); path != "" {
-		env = append(env, "PATH="+path)
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	for _, key := range strings.Split(os.Getenv("AUTOMATION_SCRIPT_ENV_ALLOWLIST"), ",") {
 		key = strings.TrimSpace(key)

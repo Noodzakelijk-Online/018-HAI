@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { ILLMPolicyService } from '../llm-policy.service.interface';
 import {
   ILLMPolicy,
+  ILLMProviderProbe,
   ILLMRouteDecision,
   ILLMRouteRequest,
 } from '../../models/llm-policy.model.interface';
@@ -18,6 +19,10 @@ export class LLMPolicyService implements ILLMPolicyService {
 
   getPolicy(): Observable<ILLMPolicy> {
     return this.http.get<ILLMPolicy>(`${this.apiUrl}/policy`);
+  }
+
+  probeProviders(): Observable<ILLMProviderProbe[]> {
+    return this.http.get<ILLMProviderProbe[]>(`${this.apiUrl}/probes`);
   }
 
   routeTask(request: ILLMRouteRequest): Observable<ILLMRouteDecision> {

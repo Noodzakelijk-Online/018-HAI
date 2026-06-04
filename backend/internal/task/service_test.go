@@ -100,6 +100,32 @@ func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	}
 }
 
+func TestRunBlocksExecutionWhenEmergencyStopActive(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	service := NewService(mem, llmService)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Create a low-risk admin checklist",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+		HumanApproved:  true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" {
+		t.Fatalf("status = %q, want review_required", plan.CompletionStatus)
+	}
+	if plan.ExecutionResult == nil || plan.ExecutionResult.BlockedReason == "" {
+		t.Fatalf("expected blocked execution result, got %#v", plan.ExecutionResult)
+	}
+	if plan.ReviewQueueItem == nil {
+		t.Fatalf("expected review queue item")
+	}
+}
+
 func TestRunWithoutExecutionPermissionQueuesReviewForToolWork(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)

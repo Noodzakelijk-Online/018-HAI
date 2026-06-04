@@ -352,6 +352,39 @@ func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
 	}
 }
 
+func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "leak.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'token=super-secret-token'\n"), 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Script Automation",
+		URLPath:      "script-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "script",
+		LaunchTarget: "leak.sh",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if strings.Contains(result.Output, "super-secret-token") {
+		t.Fatalf("script output leaked secret: %s", result.Output)
+	}
+	if len(repo.launchEvents) != 1 || strings.Contains(repo.launchEvents[0].Output, "super-secret-token") {
+		t.Fatalf("launch event leaked secret: %#v", repo.launchEvents)
+	}
+}
+
 func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "launch.sh")
@@ -478,6 +511,36 @@ func TestLaunchBlocksDockerWhenPolicyDisabled(t *testing.T) {
 	}
 }
 
+func TestLaunchBlocksWhenEmergencyStopActive(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Emergency Automation",
+		URLPath:      "emergency-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "browser_url",
+		LaunchTarget: "http://localhost:8080",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if !result.RequiresApproval {
+		t.Fatalf("emergency stop block should require review")
+	}
+	if len(repo.launchEvents) != 1 || repo.launchEvents[0].Status != "blocked" {
+		t.Fatalf("expected blocked launch event, got %#v", repo.launchEvents)
+	}
+}
+
 func TestLaunchBlocksDockerWhenContainerNotAllowlisted(t *testing.T) {
 	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
 	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
@@ -552,6 +615,36 @@ func TestLaunchBlocksAPILinkLocalTarget(t *testing.T) {
 	}
 	if result.Status != "blocked" {
 		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+}
+
+func TestLaunchRedactsAPITargetAndResponseSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("password=hunter2"))
+	}))
+	defer server.Close()
+	t.Setenv("AUTOMATION_API_ALLOWED_HOSTS", "127.0.0.1")
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "API Automation",
+		URLPath:      "api-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "api",
+		LaunchTarget: "POST " + server.URL + "/start?token=super-secret-token",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	for _, value := range []string{result.Target, result.Message, result.Output, repo.launchEvents[0].Target, repo.launchEvents[0].Message, repo.launchEvents[0].Output} {
+		if strings.Contains(value, "super-secret-token") || strings.Contains(value, "hunter2") {
+			t.Fatalf("launch leaked secret in %q", value)
+		}
 	}
 }
 

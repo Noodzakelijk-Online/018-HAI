@@ -28,6 +28,20 @@ export interface ILLMProvider {
   models: ILLMModel[];
 }
 
+export interface ILLMProviderProbe {
+  providerId: string;
+  providerName: string;
+  status: string;
+  reason: string;
+  endpointUrl?: string;
+  httpStatus?: number;
+  modelsSeen: number;
+  durationMs: number;
+  live: boolean;
+  requiresReview: boolean;
+  checkedAt: string;
+}
+
 export interface ILLMModel {
   id: string;
   name: string;

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"fmt"
 	"math"
 	"sort"
@@ -643,6 +644,16 @@ func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 		Checked: len(items),
 		Results: []WorkflowRunResult{},
 	}
+	if safety.EmergencyStopActive() {
+		reason := safety.EmergencyStopReason()
+		for _, item := range items {
+			summary.Blocked++
+			summary.Results = append(summary.Results, WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: item.CurrentState, Attempts: item.RetryCount, Message: reason})
+			s.decide(item.ID, "worker_execution", "blocked", reason, "emergency stop", false, "workflow-worker")
+			s.audit(item.ID, "workflow.worker_blocked", item.CurrentState, item.CurrentState, reason, "emergency_stop", "emergency stop", item.SourceURI, "workflow-worker")
+		}
+		return summary, nil
+	}
 	for _, item := range items {
 		result := s.runWorkflowItem(item)
 		summary.Results = append(summary.Results, result)
@@ -672,6 +683,16 @@ func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, e
 	summary := &OpenLoopRunSummary{
 		Checked: len(loops),
 		Results: []OpenLoopRunResult{},
+	}
+	if safety.EmergencyStopActive() {
+		reason := safety.EmergencyStopReason()
+		for _, loop := range loops {
+			summary.Skipped++
+			summary.Results = append(summary.Results, OpenLoopRunResult{WorkflowID: loop.WorkflowID, OpenLoopID: loop.ID, Status: "skipped", Message: reason})
+			s.decide(loop.WorkflowID, "open_loop", "blocked", reason, "emergency stop", false, "workflow-followup")
+			s.audit(loop.WorkflowID, "workflow.open_loop_blocked", "", "", reason, "emergency_stop", "emergency stop", "", "workflow-followup")
+		}
+		return summary, nil
 	}
 	for _, loop := range loops {
 		result := s.runOpenLoop(loop)

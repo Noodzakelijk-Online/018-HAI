@@ -587,7 +587,7 @@ func (s *service) localFolderItems(source *models.ConnectedSource, request Impor
 	if err != nil && err != errLocalFolderLimitReached {
 		return nil, err
 	}
-	s.audit(source.ID, "source.local_folder_scanned", fmt.Sprintf("scanned %d files from %s", len(items), folder))
+	s.audit(source.ID, "source.local_folder_scanned", fmt.Sprintf("scanned %d files from selected local-folder source", len(items)))
 	return items, nil
 }
 

@@ -36,5 +36,7 @@ export interface IHAIOSOverview {
   planes: IHAIOSPlane[];
   readinessGates: IHAIOSReadinessGate[];
   needsReviewTotal: number;
+  emergencyStop: boolean;
+  emergencyStopReason: string;
   emergencyStopNote: string;
 }

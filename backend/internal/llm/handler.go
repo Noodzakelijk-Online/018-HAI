@@ -22,6 +22,10 @@ func (h *Handler) Policy(c *gin.Context) {
 	c.JSON(http.StatusOK, h.service.Policy())
 }
 
+func (h *Handler) ProviderProbes(c *gin.Context) {
+	c.JSON(http.StatusOK, h.service.ProbeProviders())
+}
+
 func (h *Handler) Route(c *gin.Context) {
 	var request RouteRequest
 	if err := c.ShouldBindJSON(&request); err != nil {

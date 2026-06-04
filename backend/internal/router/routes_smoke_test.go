@@ -48,6 +48,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 
 	llmRoutes := r.Group("/api/v1").Group("/llm")
 	llmRoutes.GET("/policy", mark("llmPolicy"))
+	llmRoutes.GET("/probes", mark("llmProbes"))
 	llmRoutes.POST("/route", mark("llmRoute"))
 	llmRoutes.POST("/generate", mark("llmGenerate"))
 	llmRoutes.GET("/logs", mark("llmLogs"))
@@ -115,6 +116,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/memory/export", "memoryExport"},
 		{"GET", "/api/v1/memory/abc", "memoryGet"},
 		{"GET", "/api/v1/llm/policy", "llmPolicy"},
+		{"GET", "/api/v1/llm/probes", "llmProbes"},
 		{"POST", "/api/v1/llm/route", "llmRoute"},
 		{"POST", "/api/v1/llm/generate", "llmGenerate"},
 		{"GET", "/api/v1/llm/logs", "llmLogs"},

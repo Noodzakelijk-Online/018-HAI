@@ -36,7 +36,8 @@ Until then, the dashboard and README must label the feature as partial, guarded,
 
 Concrete application of this policy:
 
-- LLM providers are selectable only when enabled, configured with an absolute endpoint, credential-ready when required, and not blocked by endpoint safety rules. Provider calls do not follow redirects.
+- LLM providers are selectable only when enabled, configured with an absolute endpoint, credential-ready when required, and not blocked by endpoint safety rules. Provider calls and live probes do not follow redirects.
+- LLM provider configuration is not enough to claim real-world readiness. Configured local/free providers should pass a bounded live probe before being treated as available for real work.
 - Account/source connectors without real OAuth/API adapters remain disabled `not_implemented` contracts. The current operational source adapter is `local-folder`.
 - Scheduled sync must not pretend unsupported connectors are live. It may process operational local-folder sources and explicit manual import payloads only.
 - Backend engine APIs must stay behind the gateway and can additionally require a shared backend key. The local gateway injects `X-HAI-Backend-Key` after IDP authentication when `BACKEND_API_SHARED_KEY` is configured, and only exact backend API namespaces are proxied to the backend.
@@ -53,6 +54,8 @@ Server-side execution must stay conservative:
 - Script execution is disabled unless `AUTOMATION_SCRIPT_EXECUTION_ENABLED=true`.
 - Script targets must stay inside `AUTOMATION_SCRIPT_DIR`, including after symlink resolution.
 - Scripts run with a minimal environment. Extra environment variables require explicit `AUTOMATION_SCRIPT_ENV_ALLOWLIST` entries.
+- Runtime output and provider error bodies must be redacted for common secret patterns before being stored in operational logs.
+- `HAI_EMERGENCY_STOP=true` must block model generation, automation launches, task execution, workflow workers, and follow-up workers while leaving planning, dashboards, and review queues visible.
 - Docker control is disabled unless `AUTOMATION_DOCKER_CONTROL_ENABLED=true`.
 - Docker targets must be listed in `AUTOMATION_DOCKER_ALLOWED_CONTAINERS`.
 - Unsupported runtime types must block and audit the reason.

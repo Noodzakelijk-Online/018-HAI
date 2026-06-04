@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"automation-hub-backend/internal/safety"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -137,6 +138,20 @@ type GenerationResult struct {
 	LoggedAt         time.Time `json:"loggedAt"`
 }
 
+type ProviderProbeResult struct {
+	ProviderID     string    `json:"providerId"`
+	ProviderName   string    `json:"providerName"`
+	Status         string    `json:"status"`
+	Reason         string    `json:"reason"`
+	EndpointURL    string    `json:"endpointUrl,omitempty"`
+	HTTPStatus     int       `json:"httpStatus,omitempty"`
+	ModelsSeen     int       `json:"modelsSeen"`
+	DurationMs     int64     `json:"durationMs"`
+	Live           bool      `json:"live"`
+	RequiresReview bool      `json:"requiresReview"`
+	CheckedAt      time.Time `json:"checkedAt"`
+}
+
 type FallbackOption struct {
 	ProviderID       string  `json:"providerId"`
 	ModelID          string  `json:"modelId"`
@@ -191,6 +206,14 @@ func (s *Service) Logs() []RouteDecision {
 	return copied
 }
 
+func (s *Service) ProbeProviders() []ProviderProbeResult {
+	results := []ProviderProbeResult{}
+	for _, provider := range s.Policy().Providers {
+		results = append(results, probeProvider(provider, s.policy))
+	}
+	return results
+}
+
 func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 	classification := classifyTask(request)
 	candidates, skipped := s.candidates(classification, request)
@@ -227,6 +250,14 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 
 func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 	started := time.Now().UTC()
+	if safety.EmergencyStopActive() {
+		return &GenerationResult{
+			Status:     "blocked",
+			Reason:     safety.EmergencyStopReason(),
+			DurationMs: time.Since(started).Milliseconds(),
+			LoggedAt:   time.Now().UTC(),
+		}, nil
+	}
 	decision := request.RouteDecision
 	if decision == nil || decision.SelectedModelID == "" {
 		routeRequest := RouteRequest{Task: request.Task}
@@ -292,7 +323,7 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			ModelName:        model.Name,
 			Tier:             model.Tier,
 			Status:           "failed",
-			Reason:           err.Error(),
+			Reason:           safety.RedactSecrets(err.Error()),
 			EstimatedCostEUR: model.EstimatedCostEUR,
 			DurationMs:       time.Since(started).Milliseconds(),
 			FallbackPath:     fallbackLabels(decision.FallbackPath),
@@ -304,7 +335,7 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 		ModelID:          model.ID,
 		ModelName:        model.Name,
 		Tier:             model.Tier,
-		Output:           strings.TrimSpace(output),
+		Output:           safety.RedactSecrets(strings.TrimSpace(output)),
 		Status:           "completed",
 		Reason:           "model endpoint returned a draft; verification must still ground important claims",
 		EstimatedCostEUR: model.EstimatedCostEUR,
@@ -339,6 +370,95 @@ func (s *Service) callProvider(ctx context.Context, provider Provider, model Mod
 	default:
 		return callOpenAICompatible(ctx, endpoint, provider, model.ID, prompt, request)
 	}
+}
+
+func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
+	started := time.Now().UTC()
+	result := ProviderProbeResult{
+		ProviderID:   provider.ID,
+		ProviderName: provider.Name,
+		EndpointURL:  safety.RedactURL(provider.EndpointURL),
+		CheckedAt:    started,
+	}
+	readiness := providerRuntimeReadiness(provider)
+	if !readiness.configured {
+		result.Status = readiness.status
+		result.Reason = readiness.reason
+		result.RequiresReview = readiness.status == "blocked_endpoint" || readiness.status == "invalid_endpoint"
+		return result
+	}
+	if provider.Paid && (!policy.PaidCallsAllowed || policy.RequireApprovalBeforePaidUsage) {
+		result.Status = "blocked"
+		result.Reason = "paid provider probe is blocked until server-side paid approval exists"
+		result.RequiresReview = true
+		return result
+	}
+
+	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
+	probePath := "/v1/models"
+	if provider.ID == "ollama" {
+		probePath = "/api/tags"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(intEnv("LLM_PROVIDER_PROBE_TIMEOUT_SECONDS", 5))*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+probePath, nil)
+	if err != nil {
+		result.Status = "failed"
+		result.Reason = safety.RedactSecrets(err.Error())
+		return result
+	}
+	req.Header.Set("User-Agent", "018-HAI-Provider-Probe/1.0")
+	if provider.APIKeyEnv != "" {
+		if key := strings.TrimSpace(os.Getenv(provider.APIKeyEnv)); key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+	}
+	resp, err := noRedirectHTTPClient().Do(req)
+	result.DurationMs = time.Since(started).Milliseconds()
+	if err != nil {
+		result.Status = "failed"
+		result.Reason = safety.RedactSecrets(err.Error())
+		return result
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	result.HTTPStatus = resp.StatusCode
+	if resp.StatusCode >= 300 {
+		result.Status = "failed"
+		result.Reason = fmt.Sprintf("probe returned HTTP %d: %s", resp.StatusCode, compactOutput(raw, 300))
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			result.RequiresReview = true
+		}
+		return result
+	}
+	result.ModelsSeen = countProbeModels(provider, raw)
+	result.Live = true
+	result.Status = "live"
+	if result.ModelsSeen > 0 {
+		result.Reason = fmt.Sprintf("provider endpoint responded and reported %d model(s)", result.ModelsSeen)
+	} else {
+		result.Reason = "provider endpoint responded; model count was not available"
+	}
+	return result
+}
+
+func countProbeModels(provider Provider, raw []byte) int {
+	if provider.ID == "ollama" {
+		var decoded struct {
+			Models []interface{} `json:"models"`
+		}
+		if err := json.Unmarshal(raw, &decoded); err == nil {
+			return len(decoded.Models)
+		}
+		return 0
+	}
+	var decoded struct {
+		Data []interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		return len(decoded.Data)
+	}
+	return 0
 }
 
 func callOllama(ctx context.Context, endpoint, modelID, prompt string, request GenerateRequest) (string, error) {
@@ -727,7 +847,7 @@ func buildPrompt(request GenerateRequest) string {
 }
 
 func compactOutput(value []byte, limit int) string {
-	text := strings.Join(strings.Fields(string(value)), " ")
+	text := strings.Join(strings.Fields(safety.RedactSecrets(string(value))), " ")
 	if len(text) <= limit {
 		return text
 	}

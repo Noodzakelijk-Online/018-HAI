@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -212,6 +213,115 @@ func TestGenerateDoesNotFollowProviderRedirect(t *testing.T) {
 	}
 	if result.Status != "failed" {
 		t.Fatalf("status = %q, want failed", result.Status)
+	}
+}
+
+func TestProbeProvidersChecksOllamaTags(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			t.Fatalf("path = %s, want /api/tags", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"models": []map[string]string{{"name": "phi3:mini"}},
+		})
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	service := &Service{policy: policy}
+
+	results := service.ProbeProviders()
+	if results[0].Status != "live" {
+		t.Fatalf("status = %q, want live: %s", results[0].Status, results[0].Reason)
+	}
+	if results[0].ModelsSeen != 1 {
+		t.Fatalf("models seen = %d, want 1", results[0].ModelsSeen)
+	}
+}
+
+func TestProbeProvidersDoesNotFollowRedirects(t *testing.T) {
+	redirectCalled := false
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectCalled = true
+	}))
+	defer redirectTarget.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	service := &Service{policy: policy}
+
+	results := service.ProbeProviders()
+	if redirectCalled {
+		t.Fatalf("probe followed redirect target")
+	}
+	if results[0].Status != "failed" || !results[0].RequiresReview {
+		t.Fatalf("probe status/review = %q/%v, want failed/review", results[0].Status, results[0].RequiresReview)
+	}
+}
+
+func TestGenerateRedactsProviderErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "token=super-secret-token", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	service := &Service{policy: policy}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Summarize this short note",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "ollama",
+			SelectedModelID:    "phi3:mini",
+			SelectedModelName:  "Phi small local",
+			Tier:               TierFree,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.Contains(result.Reason, "super-secret-token") {
+		t.Fatalf("provider error leaked secret: %s", result.Reason)
+	}
+}
+
+func TestGenerateBlocksWhenEmergencyStopActive(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_ = json.NewEncoder(w).Encode(map[string]string{"response": "should not run"})
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	service := &Service{policy: policy}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Summarize this short note",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "ollama",
+			SelectedModelID:    "phi3:mini",
+			SelectedModelName:  "Phi small local",
+			Tier:               TierFree,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if called {
+		t.Fatalf("provider endpoint was called while emergency stop was active")
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
 	}
 }
 

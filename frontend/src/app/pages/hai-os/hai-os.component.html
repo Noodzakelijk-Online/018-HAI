@@ -34,6 +34,10 @@
           <strong>Needs review</strong>
           <span>{{ os.needsReviewTotal }}</span>
         </nz-card>
+        <nz-card nzSize="small">
+          <strong>Emergency stop</strong>
+          <span>{{ os.emergencyStop ? 'active' : 'clear' }}</span>
+        </nz-card>
       </div>
 
       <nz-card nzTitle="Product Stack" class="section-card">
@@ -124,6 +128,11 @@
       </nz-card>
 
       <nz-card nzTitle="Governance" class="section-card">
+        <p>
+          Emergency stop:
+          <strong>{{ os.emergencyStop ? 'active' : 'clear' }}</strong>
+        </p>
+        <p><strong>Stop reason:</strong> {{ os.emergencyStopReason }}</p>
         <p>{{ os.emergencyStopNote }}</p>
         <p>
           Paid usage allowed:

@@ -176,6 +176,7 @@ Automation:
 LLM routing:
 
 - `GET /llm/policy`
+- `GET /llm/probes`
 - `POST /llm/route`
 - `POST /llm/generate`
 - `GET /llm/logs`
@@ -359,7 +360,15 @@ The default provider list includes Ollama, LM Studio/OpenAI-compatible local ser
 
 Task execution can use a configured model endpoint to produce a draft, but the draft is still passed through source-grounded verification before the task can be marked complete. If no endpoint is configured or reachable, the engine falls back to evidence-based synthesis and review behavior.
 
-Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls do not follow redirects. Client requests to `/llm/generate` cannot approve paid or approval-required model use by setting request JSON; paid approval must be implemented as a server-side approval workflow before paid generation is allowed. The dashboard shows configured, disabled, blocked, and missing-key states so placeholder providers are not mistaken for live integrations.
+Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls and provider probes do not follow redirects. `GET /api/v1/llm/probes` performs a live, bounded readiness check against configured local/free providers (`/api/tags` for Ollama and `/v1/models` for OpenAI-compatible endpoints) so configuration can be separated from real endpoint availability. Client requests to `/llm/generate` cannot approve paid or approval-required model use by setting request JSON; paid approval must be implemented as a server-side approval workflow before paid generation is allowed. The dashboard shows configured, disabled, blocked, missing-key, and live-probe states so placeholder providers are not mistaken for live integrations.
+
+Controlled runtime outputs and LLM provider error bodies are redacted for common secrets before they are stored or returned in operational logs. Script execution still remains disabled by default and runs with a minimal environment when enabled.
+
+Emergency stop:
+
+- Set `HAI_EMERGENCY_STOP=true` to block LLM generation, automation launches, task execution, workflow workers, and follow-up workers.
+- Optional: set `HAI_EMERGENCY_STOP_REASON` to show a redacted operator reason in the HAI OS overview.
+- Planning, policy inspection, dashboards, and review queues remain visible so blocked work can still be inspected.
 
 ## Memory System
 

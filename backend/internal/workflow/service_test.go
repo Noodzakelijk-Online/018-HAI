@@ -315,6 +315,37 @@ func TestRunDueOpenLoopsCreatesFollowUpProposal(t *testing.T) {
 	}
 }
 
+func TestRunDueOpenLoopsSkipsWhenEmergencyStopActive(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Email from lawyer about Vivare hearing tomorrow. Draft reply only."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	loops := repo.openLoops[record.Item.ID]
+	if len(loops) == 0 {
+		t.Fatalf("expected intake open loop")
+	}
+	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
+	repo.openLoops[record.Item.ID] = loops
+
+	summary, err := service.RunDueOpenLoops(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDueOpenLoops: %v", err)
+	}
+	if summary.Skipped != 1 || summary.Triggered != 0 {
+		t.Fatalf("summary = %#v, want one skipped and no triggered loops", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.OpenLoops[0].Status != "open" {
+		t.Fatalf("open loop status = %q, want open", updated.OpenLoops[0].Status)
+	}
+}
+
 func TestRunDueOpenLoopsKeepsBlockedWorkflowBlocked(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	service := NewService(repo)
@@ -408,6 +439,35 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 	if !hasGateStatus(updated.QualityGates, "verification before completion", "passed") {
 		t.Fatalf("expected verification quality gate to pass")
+	}
+}
+
+func TestRunDueBlocksWorkflowWhenEmergencyStopActive(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{Passed: true}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("blocked = %d, want 1: %#v", summary.Blocked, summary)
+	}
+	if len(runner.requests) != 0 {
+		t.Fatalf("task runner was called while emergency stop was active")
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready because emergency stop should not consume the item", updated.Item.CurrentState)
 	}
 }
 

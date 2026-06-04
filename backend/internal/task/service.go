@@ -10,6 +10,7 @@ import (
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/verification"
 
@@ -249,6 +250,35 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 }
 
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
+	if safety.EmergencyStopActive() {
+		request.ExecuteAllowed = false
+		request.HumanApproved = false
+		plan, err := s.buildPlan(request, false)
+		if err != nil {
+			return nil, err
+		}
+		reason := safety.EmergencyStopReason()
+		started := time.Now().UTC()
+		plan.ExecutionResult = &ExecutionResult{
+			StartedAt:     started,
+			CompletedAt:   started,
+			Mode:          "blocked",
+			Output:        "Execution was blocked by emergency stop.",
+			BlockedReason: reason,
+			Actions:       []ExecutedAction{executedAction("governance.emergency_stop", "blocked", plan.Request, reason, started)},
+		}
+		plan.ValidationResult.Passed = false
+		plan.ValidationResult.Status = "blocked"
+		plan.ValidationResult.Failures = append(plan.ValidationResult.Failures, reason)
+		plan.ValidationResult.NextAction = "clear emergency stop before autonomous execution"
+		plan.CompletionStatus = "review_required"
+		plan.Events = append(plan.Events, event("governance", reason))
+		item := newReviewItem(plan.ID, reason, "high", request)
+		plan.ReviewQueueItem = &item
+		s.addReviewItem(item)
+		s.addLog(*plan)
+		return plan, nil
+	}
 	plan, err := s.buildPlan(request, true)
 	if err != nil {
 		return nil, err

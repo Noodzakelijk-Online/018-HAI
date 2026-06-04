@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"net/http"
 	"os"
 	"strings"
@@ -40,18 +41,20 @@ type ReadinessGate struct {
 }
 
 type HAIOSOverview struct {
-	GeneratedAt       time.Time              `json:"generatedAt"`
-	CanonicalStack    string                 `json:"canonicalStack"`
-	ReferenceStacks   []ReferenceStackStatus `json:"referenceStacks"`
-	LocalFirst        bool                   `json:"localFirst"`
-	CompletionFirst   bool                   `json:"completionFirst"`
-	PaidBudgetEUR     float64                `json:"paidBudgetEur"`
-	PaidUsageAllowed  bool                   `json:"paidUsageAllowed"`
-	Metrics           []Metric               `json:"metrics"`
-	Planes            []PlaneStatus          `json:"planes"`
-	ReadinessGates    []ReadinessGate        `json:"readinessGates"`
-	NeedsReviewTotal  int64                  `json:"needsReviewTotal"`
-	EmergencyStopNote string                 `json:"emergencyStopNote"`
+	GeneratedAt         time.Time              `json:"generatedAt"`
+	CanonicalStack      string                 `json:"canonicalStack"`
+	ReferenceStacks     []ReferenceStackStatus `json:"referenceStacks"`
+	LocalFirst          bool                   `json:"localFirst"`
+	CompletionFirst     bool                   `json:"completionFirst"`
+	PaidBudgetEUR       float64                `json:"paidBudgetEur"`
+	PaidUsageAllowed    bool                   `json:"paidUsageAllowed"`
+	Metrics             []Metric               `json:"metrics"`
+	Planes              []PlaneStatus          `json:"planes"`
+	ReadinessGates      []ReadinessGate        `json:"readinessGates"`
+	NeedsReviewTotal    int64                  `json:"needsReviewTotal"`
+	EmergencyStop       bool                   `json:"emergencyStop"`
+	EmergencyStopReason string                 `json:"emergencyStopReason"`
+	EmergencyStopNote   string                 `json:"emergencyStopNote"`
 }
 
 type Handler struct {
@@ -81,6 +84,11 @@ func (h *Handler) Overview(c *gin.Context) {
 	reviewTotal += h.count(&models.WorkflowProposal{}, "status = ?", "open")
 	reviewTotal += h.count(&models.WorkflowQualityGate{}, "status IN ?", []string{"needs_review", "failed"})
 	reviewTotal += h.count(&models.WorkflowOpenLoop{}, "status = ? AND (follow_up_at IS NULL OR follow_up_at <= ?)", "open", now)
+	emergencyActive := safety.EmergencyStopActive()
+	emergencyReason := "emergency stop is clear"
+	if emergencyActive {
+		emergencyReason = safety.EmergencyStopReason()
+	}
 
 	c.JSON(http.StatusOK, HAIOSOverview{
 		GeneratedAt:    time.Now().UTC(),
@@ -116,9 +124,11 @@ func (h *Handler) Overview(c *gin.Context) {
 			{Name: "Governance", Status: "guarded", Description: "Local-only source controls, paid budget policy, sensitive flags, workflow approvals, and audit logs.", Links: []string{"/llm-policy", "/connected-sources", "/grounded-answers", "/workflow-engine"}},
 			{Name: "Observability", Status: "operational", Description: "Health summaries, sync logs, workflow events, verification runs, routing logs, diagnostics, and review indicators.", Links: []string{"/control-center", "/connected-sources", "/grounded-answers", "/workflow-engine"}},
 		},
-		ReadinessGates:    readinessGates(llmPolicy),
-		NeedsReviewTotal:  reviewTotal,
-		EmergencyStopNote: "Pause sources, revoke access, keep paid usage disabled, and block high-risk task execution until human approval is recorded.",
+		ReadinessGates:      readinessGates(llmPolicy),
+		NeedsReviewTotal:    reviewTotal,
+		EmergencyStop:       emergencyActive,
+		EmergencyStopReason: emergencyReason,
+		EmergencyStopNote:   "Set HAI_EMERGENCY_STOP=true to block model generation, automation launches, task execution, workflow workers, and follow-up workers while keeping planning and review visible.",
 	})
 }
 
@@ -173,6 +183,12 @@ func readinessGates(policy llm.Policy) []ReadinessGate {
 			Next:     "Keep script/Docker execution disabled until targets are allowlisted and reviewed; keep link-local API targets blocked.",
 		},
 		{
+			Name:     "Emergency stop",
+			Status:   statusForBool(safety.EmergencyStopActive(), "active", "clear"),
+			Evidence: emergencyStopEvidence(),
+			Next:     "Use HAI_EMERGENCY_STOP=true during incidents; clear it only after reviewing blocked work.",
+		},
+		{
 			Name:     "External correctness proof",
 			Status:   "unproven",
 			Evidence: "Unit tests cover internal consistency; live provider/source fixtures and end-to-end account workflows are still required.",
@@ -217,6 +233,13 @@ func runtimeSafetyEvidence() string {
 		"Docker control enabled: " + boolWord(strings.EqualFold(os.Getenv("AUTOMATION_DOCKER_CONTROL_ENABLED"), "true")),
 	}
 	return strings.Join(parts, " ")
+}
+
+func emergencyStopEvidence() string {
+	if safety.EmergencyStopActive() {
+		return safety.EmergencyStopReason()
+	}
+	return "Emergency stop is clear; autonomous execution still remains approval-gated by risk policy."
 }
 
 func statusForBool(value bool, positive, negative string) string {
