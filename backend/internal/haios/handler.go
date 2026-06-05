@@ -110,7 +110,7 @@ func (h *Handler) Overview(c *gin.Context) {
 			{Label: "due open loops", Value: h.count(&models.WorkflowOpenLoop{}, "status = ? AND (follow_up_at IS NULL OR follow_up_at <= ?)", "open", now), Status: statusForZero(h.count(&models.WorkflowOpenLoop{}, "status = ? AND (follow_up_at IS NULL OR follow_up_at <= ?)", "open", now))},
 			{Label: "quality gates needing review", Value: h.count(&models.WorkflowQualityGate{}, "status IN ?", []string{"needs_review", "failed"}), Status: statusForZero(h.count(&models.WorkflowQualityGate{}, "status IN ?", []string{"needs_review", "failed"}))},
 			{Label: "context memories", Value: h.count(&models.ContextMemory{}, "archived = ?", false), Status: statusForCount(h.count(&models.ContextMemory{}, "archived = ?", false), "available")},
-			{Label: "llm providers", Value: int64(len(llmPolicy.Providers)), Status: "configured"},
+			{Label: "llm providers", Value: int64(len(llmPolicy.Providers)), Status: statusForBool(liveProviderConfigured(llmPolicy), "executable", "no_executable")},
 			{Label: "verification runs", Value: h.count(&models.VerificationRun{}), Status: statusForCount(h.count(&models.VerificationRun{}), "active")},
 			{Label: "needs review", Value: reviewTotal, Status: statusForZero(reviewTotal)},
 		},
@@ -205,7 +205,7 @@ func readinessGates(policy llm.Policy) []ReadinessGate {
 
 func liveProviderConfigured(policy llm.Policy) bool {
 	for _, provider := range policy.Providers {
-		if provider.Enabled && provider.Configured {
+		if providerHasExecutableNoApprovalModel(provider, policy) {
 			return true
 		}
 	}
@@ -214,15 +214,58 @@ func liveProviderConfigured(policy llm.Policy) bool {
 
 func liveProviderEvidence(policy llm.Policy) string {
 	configured := []string{}
+	notExecutable := []string{}
 	for _, provider := range policy.Providers {
-		if provider.Enabled && provider.Configured {
+		if providerHasExecutableNoApprovalModel(provider, policy) {
 			configured = append(configured, provider.Name)
+			continue
+		}
+		if provider.Enabled && provider.Configured && providerHasEnabledModel(provider) {
+			notExecutable = append(notExecutable, provider.Name)
 		}
 	}
 	if len(configured) == 0 {
-		return "No enabled provider has a configured endpoint and required credentials."
+		message := "No enabled provider has a configured endpoint with a no-approval executable model."
+		if len(notExecutable) > 0 {
+			message += " Configured but not executable under current approval, local-model, budget, or quota policy: " + strings.Join(notExecutable, ", ") + "."
+		}
+		return message
 	}
-	return "Configured provider endpoints: " + strings.Join(configured, ", ")
+	message := "Configured executable provider endpoints: " + strings.Join(configured, ", ") + "."
+	if len(notExecutable) > 0 {
+		message += " Configured but non-executable providers are tracked separately: " + strings.Join(notExecutable, ", ") + "."
+	}
+	return message
+}
+
+func providerHasExecutableNoApprovalModel(provider llm.Provider, policy llm.Policy) bool {
+	if !provider.Enabled || !provider.Configured || provider.Paid {
+		return false
+	}
+	if provider.Local && !policy.LocalModelsAllowed {
+		return false
+	}
+	if !provider.Local && provider.QuotaRemaining == 0 {
+		return false
+	}
+	if !provider.Local && !policy.FreeCloudQuotaAllowed {
+		return false
+	}
+	for _, model := range provider.Models {
+		if model.Enabled && !model.RequiresApproval && model.EstimatedCostEUR <= 0 && model.Tier != llm.TierExpensive {
+			return true
+		}
+	}
+	return false
+}
+
+func providerHasEnabledModel(provider llm.Provider) bool {
+	for _, model := range provider.Models {
+		if model.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 func runtimeSafetyStatus() string {
