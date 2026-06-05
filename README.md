@@ -24,6 +24,7 @@ Implemented:
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
 - Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
 - Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, source links, decision records, transition records, durable retry limits, task-engine worker execution, verification-gated completion, and audit events.
+- Guarded workflow scheduler that periodically runs due workflow items and due open-loop follow-ups through the existing approval-gated workflow/task engines.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
 - Backend API shared-key gate for local gateway traffic. When `BACKEND_API_SHARED_KEY` is set, `/api/v1` backend routes require `X-HAI-Backend-Key`; the checked-in local nginx config injects that header after IDP auth.
 - CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
@@ -454,6 +455,14 @@ Runtime behavior:
 - `docker_service`: blocked by default. It can send a Docker Engine API start request only when `AUTOMATION_DOCKER_CONTROL_ENABLED=true`, the Docker socket is deliberately mounted/configured, and the target container is listed in `AUTOMATION_DOCKER_ALLOWED_CONTAINERS`.
 
 Automation health checks are also treated as server-side network actions. HTTP and TCP health-check targets must use hosts allowed by `AUTOMATION_HEALTH_ALLOWED_HOSTS`, link-local/metadata targets are blocked unless `AUTOMATION_HEALTH_ALLOW_LINK_LOCAL=true`, and HTTP redirects are not followed.
+
+Workflow autonomy:
+
+- `WORKFLOW_SCHEDULER_ENABLED`, default `true`, runs the workflow scheduler in the backend.
+- `WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED`, default `true`, lets the scheduler trigger due follow-up proposals before running ready workflow items.
+- `WORKFLOW_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
+- `WORKFLOW_SCHEDULER_RUN_LIMIT`, default `5`, capped at `50`.
+- The scheduler uses the same workflow service as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, retry limits remain durable, and completion still requires task/verification success.
 
 The nginx config-manager no longer receives `/var/run/docker.sock` in `docker-compose.local.yml` by default. It can write generated route config files, but nginx reload via Docker API is skipped unless `NGINX_RELOAD_ENABLED=true` and the operator deliberately restores a reviewed Docker socket mount.
 

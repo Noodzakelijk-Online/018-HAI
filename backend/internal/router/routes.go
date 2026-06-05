@@ -53,7 +53,9 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
-		initializeWorkflowRoutes(v1, workflow.NewHandler(workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner)))
+		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner)
+		workflow.StartScheduler(context.Background(), workflowService)
+		initializeWorkflowRoutes(v1, workflow.NewHandler(workflowService))
 		osHandler, err := haios.DefaultHandler()
 		if err != nil {
 			return err

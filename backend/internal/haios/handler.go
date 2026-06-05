@@ -183,6 +183,12 @@ func readinessGates(policy llm.Policy) []ReadinessGate {
 			Next:     "Keep script/Docker execution disabled until targets are allowlisted and reviewed; keep link-local API targets blocked.",
 		},
 		{
+			Name:     "Autonomous workflow scheduler",
+			Status:   workflowSchedulerStatus(),
+			Evidence: workflowSchedulerEvidence(),
+			Next:     "Keep run limits low, review blocked/approval queues, and use emergency stop during incidents.",
+		},
+		{
 			Name:     "Emergency stop",
 			Status:   statusForBool(safety.EmergencyStopActive(), "active", "clear"),
 			Evidence: emergencyStopEvidence(),
@@ -231,6 +237,33 @@ func runtimeSafetyEvidence() string {
 		"API launches require AUTOMATION_API_ALLOWED_HOSTS and reject link-local/metadata targets by default.",
 		"Script execution enabled: " + boolWord(strings.EqualFold(os.Getenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED"), "true")),
 		"Docker control enabled: " + boolWord(strings.EqualFold(os.Getenv("AUTOMATION_DOCKER_CONTROL_ENABLED"), "true")),
+	}
+	return strings.Join(parts, " ")
+}
+
+func workflowSchedulerStatus() string {
+	if strings.EqualFold(os.Getenv("WORKFLOW_SCHEDULER_ENABLED"), "false") {
+		return "paused"
+	}
+	return "guarded_enabled"
+}
+
+func workflowSchedulerEvidence() string {
+	enabled := !strings.EqualFold(os.Getenv("WORKFLOW_SCHEDULER_ENABLED"), "false")
+	openLoopsEnabled := !strings.EqualFold(os.Getenv("WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED"), "false")
+	limit := strings.TrimSpace(os.Getenv("WORKFLOW_SCHEDULER_RUN_LIMIT"))
+	if limit == "" {
+		limit = "5"
+	}
+	interval := strings.TrimSpace(os.Getenv("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"))
+	if interval == "" {
+		interval = "60"
+	}
+	parts := []string{
+		"Workflow scheduler enabled: " + boolWord(enabled),
+		"Open-loop pass enabled: " + boolWord(openLoopsEnabled),
+		"Interval seconds: " + interval,
+		"Run limit per tick: " + limit,
 	}
 	return strings.Join(parts, " ")
 }
