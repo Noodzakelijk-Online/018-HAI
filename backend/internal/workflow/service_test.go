@@ -165,6 +165,19 @@ func TestTransitionRequiresApprovalForBlockedApprovalWorkflowToReady(t *testing.
 	}
 }
 
+func TestTransitionRejectsManualCompletion(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	if _, err := service.Transition(record.Item.ID, TransitionRequest{TargetState: StateCompleted, Message: "looks done"}); err == nil {
+		t.Fatalf("expected manual completion to be rejected")
+	}
+}
+
 func TestRunDueSkipsReadyApprovalWorkflowWithoutApproval(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	runner := &fakeTaskRunner{result: &TaskRunResult{
@@ -610,6 +623,185 @@ func TestRecoverStaleWorkflowClaimBlocksUnknownOutcome(t *testing.T) {
 	if !strings.Contains(updated.Item.BlockedReason, "outcome is unknown") {
 		t.Fatalf("blocked reason = %q, want unknown-outcome review", updated.Item.BlockedReason)
 	}
+	if updated.Item.RecoveryStatus != RecoveryNeedsReview {
+		t.Fatalf("recovery status = %q, want needs_review", updated.Item.RecoveryStatus)
+	}
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard: %v", err)
+	}
+	if dashboard.Counts["interruptedReview"] != 1 {
+		t.Fatalf("interrupted review count = %d, want 1", dashboard.Counts["interruptedReview"])
+	}
+}
+
+func TestInterruptedExecutionCannotBypassReview(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record := recoverInterruptedWorkflow(t, repo, service, "Create Trello checklist for low risk admin work")
+
+	if _, err := service.Transition(record.Item.ID, TransitionRequest{TargetState: StateReady}); err == nil {
+		t.Fatalf("expected generic transition to reject interrupted workflow")
+	}
+	if _, err := service.ResolveApproval(record.Item.ID, ApprovalResolutionRequest{Approved: true, Note: "approve"}); err == nil {
+		t.Fatalf("expected approval resolution to reject interrupted workflow")
+	}
+	if _, err := service.ResolveProposal(record.Item.ID, record.Proposals[0].ID, ProposalResolutionRequest{Approved: true}); err == nil {
+		t.Fatalf("expected proposal resolution to reject interrupted workflow")
+	}
+}
+
+func TestResolveInterruptedExecutionRetryMakesLowRiskWorkflowReady(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record := recoverInterruptedWorkflow(t, repo, service, "Create Trello checklist for low risk admin work")
+
+	updated, err := service.ResolveInterruptedExecution(record.Item.ID, InterruptedExecutionResolutionRequest{
+		Decision: "retry",
+		Note:     "Checked Trello and no checklist was created by the interrupted attempt.",
+		Actor:    "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveInterruptedExecution: %v", err)
+	}
+	if updated.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready", updated.Item.CurrentState)
+	}
+	if updated.Item.RecoveryStatus != RecoveryRetryConfirmed {
+		t.Fatalf("recovery status = %q, want retry_confirmed", updated.Item.RecoveryStatus)
+	}
+	if updated.Item.BlockedReason != "" || updated.Item.LastWorkerError != "" {
+		t.Fatalf("resolved retry retained active error: %#v", updated.Item)
+	}
+	if !hasDecision(updated.Decisions, "interrupted_execution", "retry") {
+		t.Fatalf("expected interrupted-execution retry decision")
+	}
+}
+
+func TestResolveInterruptedExecutionRetryRequiresFreshApprovalForHighRiskWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record := recoverInterruptedWorkflow(t, repo, service, "Email lawyer about legal hearing and draft formal reply.")
+
+	updated, err := service.ResolveInterruptedExecution(record.Item.ID, InterruptedExecutionResolutionRequest{
+		Decision: "retry",
+		Note:     "Checked sent mail and confirmed that no message was sent.",
+		Actor:    "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveInterruptedExecution: %v", err)
+	}
+	if updated.Item.CurrentState != StateNeedsApproval {
+		t.Fatalf("state = %q, want needs_approval", updated.Item.CurrentState)
+	}
+	if updated.Item.ApprovalStatus != "pending" {
+		t.Fatalf("approval status = %q, want pending", updated.Item.ApprovalStatus)
+	}
+	if updated.Item.MaxRetries <= updated.Item.RetryCount {
+		t.Fatalf("operator-approved retry has no remaining attempt: %d/%d", updated.Item.RetryCount, updated.Item.MaxRetries)
+	}
+}
+
+func TestInterruptedExecutionRetryCompletesThroughWorker(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "recovery-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "verified completion after controlled retry",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record := recoverInterruptedWorkflow(t, repo, service, "Create Trello checklist for low risk admin work")
+	retried, err := service.ResolveInterruptedExecution(record.Item.ID, InterruptedExecutionResolutionRequest{
+		Decision: "retry",
+		Note:     "Checked Trello and confirmed the interrupted attempt created no checklist.",
+		Actor:    "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveInterruptedExecution: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("summary = %#v, want controlled retry completion", summary)
+	}
+	completed, err := service.Get(retried.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if completed.Item.RecoveryStatus != RecoveryCompletedAfterRetry {
+		t.Fatalf("recovery status = %q, want completed_after_retry", completed.Item.RecoveryStatus)
+	}
+}
+
+func TestResolveInterruptedExecutionCompletionRequiresEvidence(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record := recoverInterruptedWorkflow(t, repo, service, "Create Trello checklist for low risk admin work")
+
+	if _, err := service.ResolveInterruptedExecution(record.Item.ID, InterruptedExecutionResolutionRequest{
+		Decision: "confirm_completed",
+		Note:     "The checklist exists.",
+	}); err == nil {
+		t.Fatalf("expected completion without evidence URI to fail")
+	}
+}
+
+func TestResolveInterruptedExecutionCompletesWithEvidence(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record := recoverInterruptedWorkflow(t, repo, service, "Create Trello checklist for low risk admin work")
+
+	updated, err := service.ResolveInterruptedExecution(record.Item.ID, InterruptedExecutionResolutionRequest{
+		Decision:      "confirm_completed",
+		Note:          "Verified the expected checklist exists and contains the requested items.",
+		EvidenceURI:   "https://trello.example/card/123",
+		EvidenceLabel: "Trello checklist",
+		Actor:         "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveInterruptedExecution: %v", err)
+	}
+	if updated.Item.CurrentState != StateCompleted || updated.Item.CompletedAt == nil {
+		t.Fatalf("workflow was not completed: %#v", updated.Item)
+	}
+	if updated.Item.RecoveryStatus != RecoveryCompletionConfirmed || updated.Item.VerificationStatus != "human_approved" {
+		t.Fatalf("recovery verification not recorded: %#v", updated.Item)
+	}
+	if !hasSourceRelationship(updated.SourceLinks, "completion_evidence") {
+		t.Fatalf("expected completion evidence source link")
+	}
+	if !hasEvidenceStatus(updated.Evidence, "human_approved") {
+		t.Fatalf("expected human-approved evidence claim")
+	}
+	if !hasGateStatus(updated.QualityGates, "verification before completion", "passed") {
+		t.Fatalf("expected passed completion verification gate")
+	}
+}
+
+func TestResolveInterruptedExecutionKeepBlockedRecordsReview(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record := recoverInterruptedWorkflow(t, repo, service, "Create Trello checklist for low risk admin work")
+
+	updated, err := service.ResolveInterruptedExecution(record.Item.ID, InterruptedExecutionResolutionRequest{
+		Decision: "keep_blocked",
+		Note:     "The external system is unavailable, so side effects cannot be confirmed yet.",
+		Actor:    "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveInterruptedExecution: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked || updated.Item.RecoveryStatus != RecoveryNeedsReview {
+		t.Fatalf("workflow should remain in interrupted review: %#v", updated.Item)
+	}
+	if updated.Item.RecoveryNote == "" {
+		t.Fatalf("expected operator review note")
+	}
 }
 
 func TestRecoverStaleClaimsLeavesActiveWorkflowLeaseOwned(t *testing.T) {
@@ -953,6 +1145,67 @@ func hasGateStatus(gates []models.WorkflowQualityGate, gateName, status string) 
 	return false
 }
 
+func hasDecision(decisions []models.WorkflowDecision, decisionType, decision string) bool {
+	for _, item := range decisions {
+		if item.DecisionType == decisionType && item.Decision == decision {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSourceRelationship(links []models.WorkflowSourceLink, relationship string) bool {
+	for _, link := range links {
+		if link.Relationship == relationship {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEvidenceStatus(evidence []models.WorkflowEvidenceClaim, status string) bool {
+	for _, claim := range evidence {
+		if claim.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func recoverInterruptedWorkflow(t *testing.T, repo *fakeWorkflowRepo, service Service, input string) *WorkflowRecord {
+	t.Helper()
+	record, err := service.Intake(IntakeRequest{Input: input})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.RequiresApproval {
+		record, err = service.ResolveApproval(record.Item.ID, ApprovalResolutionRequest{
+			Approved: true,
+			Note:     "Initial controlled execution approved for test.",
+			Actor:    "Robert",
+		})
+		if err != nil {
+			t.Fatalf("ResolveApproval: %v", err)
+		}
+	}
+	claimedAt := time.Now().UTC().Add(-2 * time.Minute)
+	claimed, acquired, err := repo.ClaimRunnableItem(record.Item.ID, "expired-workflow-claim", claimedAt, claimedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ClaimRunnableItem: %v", err)
+	}
+	if !acquired || claimed == nil {
+		t.Fatalf("expected workflow claim")
+	}
+	if _, err := service.RecoverStaleClaims(RunDueRequest{Limit: 5}); err != nil {
+		t.Fatalf("RecoverStaleClaims: %v", err)
+	}
+	recovered, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get recovered workflow: %v", err)
+	}
+	return recovered
+}
+
 func findRule(rules []models.WorkflowRule, ruleKey string) (models.WorkflowRule, bool) {
 	for _, rule := range rules {
 		if rule.RuleKey == ruleKey {
@@ -1160,6 +1413,8 @@ func (r *fakeWorkflowRepo) RecoverExpiredWorkflowClaim(item models.WorkflowItem,
 	stored.BlockedReason = "worker lease expired; execution outcome is unknown and requires human review"
 	stored.NextAction = "review external side effects before retrying interrupted workflow"
 	stored.LastWorkerError = stored.BlockedReason
+	stored.RecoveryStatus = RecoveryNeedsReview
+	stored.RecoveryNote = ""
 	stored.RetryCount++
 	stored.NextRunAt = nil
 	stored.WorkerClaimID = ""

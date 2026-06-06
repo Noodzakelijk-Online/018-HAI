@@ -34,6 +34,8 @@ type WorkflowItem struct {
 	WorkerLeaseUntil   *time.Time `gorm:"index" json:"workerLeaseUntil,omitempty"`
 	CompletedAt        *time.Time `gorm:"index" json:"completedAt,omitempty"`
 	VerificationStatus string     `gorm:"type:varchar(80);index" json:"verificationStatus,omitempty"`
+	RecoveryStatus     string     `gorm:"type:varchar(80);index" json:"recoveryStatus,omitempty"`
+	RecoveryNote       string     `gorm:"type:text" json:"recoveryNote,omitempty"`
 	LastTaskPlanID     string     `gorm:"type:varchar(120)" json:"lastTaskPlanId,omitempty"`
 	LastWorkerError    string     `gorm:"type:text" json:"lastWorkerError,omitempty"`
 	Archived           bool       `gorm:"default:false;index" json:"archived"`

@@ -5,6 +5,7 @@ import {
   IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
   IWorkflowIntakeRequest,
+  IWorkflowInterruptedExecutionResolutionRequest,
   IWorkflowItem,
   IWorkflowOpenLoopRunSummary,
   IWorkflowOverview,
@@ -24,6 +25,7 @@ export interface IWorkflowService {
   get(id: string): Observable<IWorkflowRecord>;
   transition(id: string, request: IWorkflowTransitionRequest): Observable<IWorkflowRecord>;
   resolveApproval(id: string, request: IWorkflowApprovalResolutionRequest): Observable<IWorkflowRecord>;
+  resolveInterruptedExecution(id: string, request: IWorkflowInterruptedExecutionResolutionRequest): Observable<IWorkflowRecord>;
   resolveProposal(id: string, proposalId: string, request: IWorkflowProposalResolutionRequest): Observable<IWorkflowRecord>;
   updateChecklistItem(id: string, itemId: string, request: IWorkflowChecklistUpdateRequest): Observable<IWorkflowRecord>;
   recoverStaleClaims(request: IWorkflowRunDueRequest): Observable<IWorkflowClaimRecoverySummary>;

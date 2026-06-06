@@ -315,7 +315,9 @@ Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. Ea
 
 Due open loops can be processed with `POST /workflow/open-loops/run-due`. Due follow-ups are also atomically leased before creating checklist or proposal records, preventing duplicate follow-up artifacts when multiple workers poll together. Follow-up checklist and proposal creation is idempotent, so a partial failure can release or recover the lease and retry without duplicating records. High-risk or Robert-owned follow-ups are moved into approval review; low-risk unblocked follow-ups can be made worker-ready. Already blocked workflows stay blocked and keep their blocker while receiving a follow-up proposal. Proposal decisions can be resolved through `POST /workflow/:id/proposals/:proposalId/resolve`, which records the decision and can approve, reject/block, or send the workflow back for changes. Completed or archived workflows reject further proposal changes.
 
-The scheduler runs stale-claim recovery before each execution pass. Expired workflow execution leases are moved to `blocked` review because external side effects may already have occurred and blind retrying could duplicate them. Expired open-loop leases are safely reopened because that path is idempotent. Pre-lease `in_progress`/`processing` rows are migrated through the same policy after one lease window. Operators can also run this explicitly with `POST /workflow/recover-stale` or the **Recover Stale** dashboard action.
+The scheduler runs stale-claim recovery before each execution pass. Expired workflow execution leases are moved to `blocked` review with a durable `recoveryStatus=needs_review` because external side effects may already have occurred and blind retrying could duplicate them. Expired open-loop leases are safely reopened because that path is idempotent. Pre-lease `in_progress`/`processing` rows are migrated through the same policy after one lease window. Operators can also run this explicitly with `POST /workflow/recover-stale` or the **Recover Stale** dashboard action.
+
+Interrupted executions must be resolved through `POST /workflow/:id/interruption/resolve`. The operator can confirm that no side effects occurred and grant one additional controlled retry, keep the item blocked with a review note, or confirm completion with linked evidence. High-risk retries return to fresh approval review. Evidence-backed completion records a source link, evidence claim, decision, transition, audit event, and passed verification gate. Generic transitions, proposal decisions, and approval actions cannot bypass an unresolved interruption, and generic state changes cannot mark work complete outside the verification engine.
 
 Workflow states:
 
@@ -331,7 +333,7 @@ waiting_external_input
 blocked
 ```
 
-The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, expired claim counts, due open loops, approval queue with approve/reject buttons, worker, follow-up, and stale-claim recovery controls, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposal decision buttons, quality gate status, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
+The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, expired claim and interrupted-review counts, due open loops, approval queue with approve/reject buttons, worker, follow-up, and stale-claim recovery controls, structured interrupted-execution resolution, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposal decision buttons, quality gate status, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
 
 ## LLM Routing Policy
 

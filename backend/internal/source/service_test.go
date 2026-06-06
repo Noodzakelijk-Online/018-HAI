@@ -661,6 +661,10 @@ func (s *fakeSourceWorkflowService) ResolveApproval(id uuid.UUID, request workfl
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) ResolveInterruptedExecution(id uuid.UUID, request workflow.InterruptedExecutionResolutionRequest) (*workflow.WorkflowRecord, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request workflow.ProposalResolutionRequest) (*workflow.WorkflowRecord, error) {
 	return nil, nil
 }

@@ -25,6 +25,8 @@ export interface IWorkflowItem {
   workerLeaseUntil?: string;
   completedAt?: string;
   verificationStatus?: string;
+  recoveryStatus?: string;
+  recoveryNote?: string;
   lastTaskPlanId?: string;
   lastWorkerError?: string;
   archived: boolean;
@@ -225,6 +227,14 @@ export interface IWorkflowChecklistUpdateRequest {
 export interface IWorkflowApprovalResolutionRequest {
   approved: boolean;
   note?: string;
+  actor?: string;
+}
+
+export interface IWorkflowInterruptedExecutionResolutionRequest {
+  decision: 'retry' | 'confirm_completed' | 'keep_blocked';
+  note: string;
+  evidenceUri?: string;
+  evidenceLabel?: string;
   actor?: string;
 }
 

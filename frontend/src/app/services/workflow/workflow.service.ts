@@ -8,6 +8,7 @@ import {
   IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
   IWorkflowIntakeRequest,
+  IWorkflowInterruptedExecutionResolutionRequest,
   IWorkflowItem,
   IWorkflowOpenLoopRunSummary,
   IWorkflowOverview,
@@ -58,6 +59,13 @@ export class WorkflowService implements IWorkflowService {
 
   resolveApproval(id: string, request: IWorkflowApprovalResolutionRequest): Observable<IWorkflowRecord> {
     return this.http.post<IWorkflowRecord>(`${this.apiUrl}/${id}/approval`, request);
+  }
+
+  resolveInterruptedExecution(
+    id: string,
+    request: IWorkflowInterruptedExecutionResolutionRequest
+  ): Observable<IWorkflowRecord> {
+    return this.http.post<IWorkflowRecord>(`${this.apiUrl}/${id}/interruption/resolve`, request);
   }
 
   resolveProposal(

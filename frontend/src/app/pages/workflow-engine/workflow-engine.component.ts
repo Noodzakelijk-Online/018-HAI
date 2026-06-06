@@ -56,6 +56,13 @@ export class WorkflowEngineComponent implements OnInit {
     note: ['Robert approved controlled workflow execution.'],
   });
 
+  interruptionForm: FormGroup = this.fb.group({
+    decision: ['retry', [Validators.required]],
+    note: ['', [Validators.required]],
+    evidenceUri: [''],
+    evidenceLabel: [''],
+  });
+
   constructor(
     private fb: FormBuilder,
     @Inject(WORKFLOW_SERVICE_TOKEN) private workflowService: IWorkflowService,
@@ -146,6 +153,33 @@ export class WorkflowEngineComponent implements OnInit {
         this.refresh();
       },
       error: () => this.notification.error('Error', 'Failed to update workflow approval.'),
+    });
+  }
+
+  resolveInterruptedExecution(): void {
+    if (!this.selected || this.interruptionForm.invalid) {
+      return;
+    }
+    const request = {
+      ...this.interruptionForm.value,
+      actor: 'operator',
+    };
+    if (request.decision === 'confirm_completed' && !request.evidenceUri?.trim()) {
+      this.notification.error('Evidence required', 'Add a source URI before confirming completion.');
+      return;
+    }
+    this.saving = true;
+    this.workflowService.resolveInterruptedExecution(this.selected.item.id, request).subscribe({
+      next: (record) => {
+        this.selected = record;
+        this.saving = false;
+        this.notification.success('Interruption resolved', `Recovery decision recorded: ${request.decision}.`);
+        this.refresh();
+      },
+      error: () => {
+        this.saving = false;
+        this.notification.error('Resolution blocked', 'The interrupted execution could not be resolved.');
+      },
     });
   }
 

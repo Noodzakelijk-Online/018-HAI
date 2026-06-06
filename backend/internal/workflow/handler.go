@@ -114,6 +114,25 @@ func (h *Handler) ResolveApproval(c *gin.Context) {
 	c.JSON(http.StatusOK, record)
 }
 
+func (h *Handler) ResolveInterruptedExecution(c *gin.Context) {
+	id, ok := parseWorkflowID(c)
+	if !ok {
+		return
+	}
+	var request InterruptedExecutionResolutionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	request.Actor = "operator"
+	record, err := h.service.ResolveInterruptedExecution(id, request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, record)
+}
+
 func (h *Handler) ResolveProposal(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {

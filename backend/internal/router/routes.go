@@ -200,6 +200,7 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.GET("/:id", workflowHandler.Get)
 		workflowRoutes.POST("/:id/transition", workflowHandler.Transition)
 		workflowRoutes.POST("/:id/approval", workflowHandler.ResolveApproval)
+		workflowRoutes.POST("/:id/interruption/resolve", workflowHandler.ResolveInterruptedExecution)
 		workflowRoutes.POST("/:id/proposals/:proposalId/resolve", workflowHandler.ResolveProposal)
 		workflowRoutes.PATCH("/:id/checklist/:itemId", workflowHandler.UpdateChecklistItem)
 	}

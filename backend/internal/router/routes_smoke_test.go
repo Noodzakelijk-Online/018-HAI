@@ -99,6 +99,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	workflowRoutes.GET("/:id", mark("workflowGet"))
 	workflowRoutes.POST("/:id/transition", mark("workflowTransition"))
 	workflowRoutes.POST("/:id/approval", mark("workflowApprovalResolve"))
+	workflowRoutes.POST("/:id/interruption/resolve", mark("workflowInterruptionResolve"))
 	workflowRoutes.POST("/:id/proposals/:proposalId/resolve", mark("workflowProposalResolve"))
 	workflowRoutes.PATCH("/:id/checklist/:itemId", mark("workflowChecklist"))
 
@@ -158,6 +159,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/workflow/abc", "workflowGet"},
 		{"POST", "/api/v1/workflow/abc/transition", "workflowTransition"},
 		{"POST", "/api/v1/workflow/abc/approval", "workflowApprovalResolve"},
+		{"POST", "/api/v1/workflow/abc/interruption/resolve", "workflowInterruptionResolve"},
 		{"POST", "/api/v1/workflow/abc/proposals/def/resolve", "workflowProposalResolve"},
 		{"PATCH", "/api/v1/workflow/abc/checklist/def", "workflowChecklist"},
 	}

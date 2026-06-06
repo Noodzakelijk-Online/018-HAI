@@ -24,6 +24,11 @@ const (
 	StateCompleted          = "completed"
 	StateArchived           = "archived"
 	StateBlocked            = "blocked"
+
+	RecoveryNeedsReview         = "needs_review"
+	RecoveryRetryConfirmed      = "retry_confirmed"
+	RecoveryCompletionConfirmed = "completion_confirmed"
+	RecoveryCompletedAfterRetry = "completed_after_retry"
 )
 
 type IntakeRequest struct {
@@ -55,6 +60,14 @@ type ApprovalResolutionRequest struct {
 	Approved bool   `json:"approved"`
 	Note     string `json:"note,omitempty"`
 	Actor    string `json:"actor,omitempty"`
+}
+
+type InterruptedExecutionResolutionRequest struct {
+	Decision      string `json:"decision"`
+	Note          string `json:"note"`
+	EvidenceURI   string `json:"evidenceUri,omitempty"`
+	EvidenceLabel string `json:"evidenceLabel,omitempty"`
+	Actor         string `json:"actor,omitempty"`
 }
 
 type RunDueRequest struct {
@@ -191,6 +204,7 @@ type Service interface {
 	Get(id uuid.UUID) (*WorkflowRecord, error)
 	Transition(id uuid.UUID, request TransitionRequest) (*WorkflowRecord, error)
 	ResolveApproval(id uuid.UUID, request ApprovalResolutionRequest) (*WorkflowRecord, error)
+	ResolveInterruptedExecution(id uuid.UUID, request InterruptedExecutionResolutionRequest) (*WorkflowRecord, error)
 	ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request ProposalResolutionRequest) (*WorkflowRecord, error)
 	UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error)
 	RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error)
@@ -388,6 +402,7 @@ func (s *service) Dashboard() (*WorkflowDashboard, error) {
 			"dueOpenLoops":           int64(len(openLoops)),
 			"expiredWorkflowClaims":  int64(len(expiredWorkflowClaims)),
 			"expiredOpenLoopClaims":  int64(len(expiredOpenLoopClaims)),
+			"interruptedReview":      0,
 		},
 		ApprovalItems: approvalItems,
 		DueOpenLoops:  openLoops,
@@ -405,6 +420,9 @@ func (s *service) Dashboard() (*WorkflowDashboard, error) {
 		if item.RiskLevel == "high" {
 			dashboard.HighRiskItems = append(dashboard.HighRiskItems, item)
 			dashboard.Counts["highRisk"]++
+		}
+		if item.RecoveryStatus == RecoveryNeedsReview {
+			dashboard.Counts["interruptedReview"]++
 		}
 		if strings.TrimSpace(item.NextAction) == "" && item.CurrentState != StateArchived {
 			dashboard.ItemsWithoutNextAction = append(dashboard.ItemsWithoutNextAction, item)
@@ -485,6 +503,12 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 	if target == "" {
 		return nil, fmt.Errorf("targetState is required")
 	}
+	if target == StateCompleted {
+		return nil, fmt.Errorf("manual completion is not allowed; completion requires verified worker output or interrupted-execution resolution")
+	}
+	if item.RecoveryStatus == RecoveryNeedsReview && target != StateBlocked {
+		return nil, fmt.Errorf("interrupted execution must be resolved before changing workflow state")
+	}
 	if target == StateReady && item.RequiresApproval && item.ApprovalStatus != "approved" && !request.Approved {
 		return nil, fmt.Errorf("approval is required before workflow can become ready")
 	}
@@ -528,6 +552,13 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 }
 
 func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionRequest) (*WorkflowRecord, error) {
+	item, err := s.repo.FindItem(id)
+	if err != nil {
+		return nil, err
+	}
+	if item.RecoveryStatus == RecoveryNeedsReview {
+		return nil, fmt.Errorf("interrupted execution must be resolved before approval can continue")
+	}
 	if request.Approved {
 		return s.Transition(id, TransitionRequest{
 			TargetState: StateReady,
@@ -535,10 +566,6 @@ func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionReques
 			Approved:    true,
 			Actor:       firstNonEmpty(request.Actor, "operator"),
 		})
-	}
-	item, err := s.repo.FindItem(id)
-	if err != nil {
-		return nil, err
 	}
 	from := item.CurrentState
 	item.CurrentState = StateBlocked
@@ -552,6 +579,105 @@ func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionReques
 	s.recordTransition(updated.ID, from, StateBlocked, "approval_resolution", firstNonEmpty(request.Actor, "operator"), false, updated.BlockedReason)
 	s.decide(updated.ID, "approval", "rejected", updated.BlockedReason, "manual approval gate", false, firstNonEmpty(request.Actor, "operator"))
 	s.audit(updated.ID, "workflow.approval", from, StateBlocked, updated.BlockedReason, "approval_resolution", "human approval rejected", updated.SourceURI, firstNonEmpty(request.Actor, "operator"))
+	return s.Get(updated.ID)
+}
+
+func (s *service) ResolveInterruptedExecution(id uuid.UUID, request InterruptedExecutionResolutionRequest) (*WorkflowRecord, error) {
+	item, err := s.repo.FindItem(id)
+	if err != nil {
+		return nil, err
+	}
+	if item.CurrentState != StateBlocked || item.RecoveryStatus != RecoveryNeedsReview {
+		return nil, fmt.Errorf("workflow does not have an interrupted execution awaiting review")
+	}
+
+	decision := strings.ToLower(strings.TrimSpace(request.Decision))
+	note := strings.TrimSpace(request.Note)
+	actor := firstNonEmpty(request.Actor, "operator")
+	if note == "" {
+		return nil, fmt.Errorf("note is required to resolve interrupted execution")
+	}
+
+	from := item.CurrentState
+	switch decision {
+	case "retry":
+		item.RecoveryStatus = RecoveryRetryConfirmed
+		item.RecoveryNote = note
+		item.BlockedReason = ""
+		item.LastWorkerError = ""
+		item.CompletedAt = nil
+		item.VerificationStatus = ""
+		item.NextRunAt = nil
+		if item.MaxRetries <= item.RetryCount {
+			item.MaxRetries = item.RetryCount + 1
+		}
+		if item.RequiresApproval {
+			item.CurrentState = StateNeedsApproval
+			item.ApprovalStatus = "pending"
+			item.ApprovalReason = "interrupted high-risk execution requires fresh approval before retry"
+			item.NextAction = "approve controlled retry after confirming prior side effects did not occur"
+		} else {
+			item.CurrentState = StateReady
+			item.NextAction = "retry interrupted workflow after operator side-effect review"
+		}
+	case "confirm_completed":
+		evidenceURI := strings.TrimSpace(request.EvidenceURI)
+		if evidenceURI == "" {
+			return nil, fmt.Errorf("evidenceUri is required to confirm interrupted execution completed")
+		}
+		evidenceLabel := firstNonEmpty(request.EvidenceLabel, "Interrupted execution completion evidence")
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID:   item.ID,
+			SourceType:   "recovery_evidence",
+			SourceURI:    evidenceURI,
+			SourceLabel:  evidenceLabel,
+			Relationship: "completion_evidence",
+		}); err != nil {
+			return nil, fmt.Errorf("store completion evidence link: %w", err)
+		}
+		if _, err := s.repo.CreateEvidenceClaim(&models.WorkflowEvidenceClaim{
+			WorkflowID:  item.ID,
+			ClaimText:   note,
+			SourceURI:   evidenceURI,
+			SourceLabel: evidenceLabel,
+			Reliability: "operator_attestation",
+			Status:      "human_approved",
+			NeedsReview: false,
+		}); err != nil {
+			return nil, fmt.Errorf("store completion evidence claim: %w", err)
+		}
+		if err := s.requireQualityGate(item.ID, "verification before completion", "passed", "operator confirmed interrupted execution outcome with linked evidence"); err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		item.CurrentState = StateCompleted
+		item.CompletedAt = &now
+		item.RecoveryStatus = RecoveryCompletionConfirmed
+		item.RecoveryNote = note
+		item.VerificationStatus = "human_approved"
+		item.BlockedReason = ""
+		item.LastWorkerError = ""
+		item.NextRunAt = nil
+		item.NextAction = "review completion summary and archive when appropriate"
+	case "keep_blocked":
+		item.RecoveryNote = note
+		item.BlockedReason = "interrupted execution remains blocked after operator review"
+		item.NextAction = note
+	default:
+		return nil, fmt.Errorf("decision must be retry, confirm_completed, or keep_blocked")
+	}
+
+	updated, err := s.repo.UpdateItem(item)
+	if err != nil {
+		return nil, err
+	}
+	approved := decision == "confirm_completed"
+	s.recordTransition(updated.ID, from, updated.CurrentState, "interrupted_execution_resolution", actor, approved, note)
+	s.decide(updated.ID, "interrupted_execution", decision, note, "unknown external side effects require explicit operator resolution", approved, actor)
+	s.audit(updated.ID, "workflow.interruption_resolved", from, updated.CurrentState, note, "interrupted_execution_resolution", decision, firstNonEmpty(request.EvidenceURI, updated.SourceURI), actor)
+	if decision == "confirm_completed" {
+		s.markChecklistProgress(updated.ID, "Verify completion before closing")
+	}
 	return s.Get(updated.ID)
 }
 
@@ -579,6 +705,9 @@ func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request Pr
 	}
 	if item.Archived || item.CurrentState == StateArchived || item.CurrentState == StateCompleted {
 		return nil, fmt.Errorf("closed workflows cannot resolve proposals")
+	}
+	if item.RecoveryStatus == RecoveryNeedsReview {
+		return nil, fmt.Errorf("interrupted execution must be resolved before proposals can change workflow state")
 	}
 
 	status, err := normalizeProposalStatus(request)
@@ -1046,6 +1175,9 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	if runResult.Passed && !runResult.ReviewRequired && gateResult.Passed {
 		completed := time.Now().UTC()
 		item.CurrentState = StateCompleted
+		if item.RecoveryStatus == RecoveryRetryConfirmed {
+			item.RecoveryStatus = RecoveryCompletedAfterRetry
+		}
 		item.CompletedAt = &completed
 		item.NextRunAt = nil
 		item.LastWorkerError = ""
@@ -1256,6 +1388,33 @@ func (s *service) markQualityGate(workflowID uuid.UUID, gateName, status, reason
 	}
 }
 
+func (s *service) requireQualityGate(workflowID uuid.UUID, gateName, status, reason string) error {
+	gates, err := s.repo.FindQualityGates(workflowID)
+	if err != nil {
+		return fmt.Errorf("load quality gates: %w", err)
+	}
+	for _, gate := range gates {
+		if !strings.EqualFold(gate.Gate, gateName) {
+			continue
+		}
+		gate.Status = status
+		gate.Reason = reason
+		if _, err := s.repo.UpdateQualityGate(&gate); err != nil {
+			return fmt.Errorf("update quality gate: %w", err)
+		}
+		return nil
+	}
+	if _, err := s.repo.CreateQualityGate(&models.WorkflowQualityGate{
+		WorkflowID: workflowID,
+		Gate:       gateName,
+		Status:     status,
+		Reason:     reason,
+	}); err != nil {
+		return fmt.Errorf("create quality gate: %w", err)
+	}
+	return nil
+}
+
 func (s *service) Overview() Overview {
 	rules := s.ensureDefaultRules()
 	return Overview{
@@ -1264,6 +1423,7 @@ func (s *service) Overview() Overview {
 			"legal, government, insurance, lawyer, financial, account-change, deletion, and public-posting workflows require approval",
 			"low-risk administrative checklist generation may run automatically",
 			"workflow worker retries are capped and failed items are blocked for review",
+			"interrupted execution cannot retry or complete until an operator resolves unknown side effects",
 			"blocked workflows must record a reason and next action",
 			"completion requires checklist and verification evidence before archive",
 		},
@@ -1799,7 +1959,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "ai-reasoning", Name: "AI reasoning layer", Status: "partial", Implemented: []string{"deterministic classification fallback", "task type/risk/priority extraction"}, Next: []string{"LLM structured extractor with schema validation"}},
 		{ID: "checklists", Name: "Checklist generation", Status: "implemented", Implemented: []string{"type-specific checklist templates", "approval-marked checklist steps"}, Next: []string{"learned checklist templates"}},
 		{ID: "priority", Name: "Priority engine", Status: "implemented", Implemented: []string{"deadline/risk/type scoring", "priority-sorted inbox"}, Next: []string{"waiting-time and client importance scoring"}},
-		{ID: "exceptions", Name: "Exception and escalation logic", Status: "implemented", Implemented: []string{"blocked state", "missing-info detection", "durable retry limits", "unknown-outcome recovery review"}, Next: []string{"operator notification channels"}},
+		{ID: "exceptions", Name: "Exception and escalation logic", Status: "implemented", Implemented: []string{"blocked state", "missing-info detection", "durable retry limits", "structured unknown-outcome recovery review"}, Next: []string{"operator notification channels"}},
 		{ID: "audit", Name: "Audit trail and traceability", Status: "implemented", Implemented: []string{"workflow events", "separate transitions", "decision records", "source links"}, Next: []string{"cross-module trace IDs"}},
 		{ID: "approval-gates", Name: "Human approval gates", Status: "implemented", Implemented: []string{"approval queue", "approve/reject buttons", "approval-only transitions", "approval checklist steps"}, Next: []string{"per-action approval scopes"}},
 		{ID: "worker-queue", Name: "Worker/queue system", Status: "implemented", Implemented: []string{"durable retry counters", "ready/in-progress/completed/blocked lifecycle", "task-engine execution adapter", "background scheduler", "owned renewable claims"}, Next: []string{"multi-node queue metrics"}},
@@ -1831,12 +1991,12 @@ func engineCapabilities() []EngineCapability {
 		{ID: "calendar-availability", Name: "Calendar and availability engine", Status: "partial", Implemented: []string{"scheduling classification", "deadline/check reminders"}, Next: []string{"calendar adapter and travel-time checks"}},
 		{ID: "negotiation-support", Name: "Negotiation support engine", Status: "planned", Implemented: []string{"proposal record foundation"}, Next: []string{"preferred/fallback/boundary proposal generator"}},
 		{ID: "admin-monitoring", Name: "Admin monitoring dashboard engine", Status: "implemented", Implemented: []string{"dashboard endpoint", "approvals, blocked, ready, high-risk, due open loops, missing next action"}, Next: []string{"operator notification channel"}},
-		{ID: "error-recovery", Name: "Error recovery engine", Status: "implemented", Implemented: []string{"retry backoff", "blocked after retry limit", "audit of failures", "expired lease recovery", "idempotent follow-up replay"}, Next: []string{"connector-specific recovery playbooks"}},
+		{ID: "error-recovery", Name: "Error recovery engine", Status: "implemented", Implemented: []string{"retry backoff", "blocked after retry limit", "expired lease recovery", "operator-confirmed retry", "evidence-backed interrupted completion", "idempotent follow-up replay"}, Next: []string{"connector-specific recovery playbooks"}},
 		{ID: "learning-corrections", Name: "Learning-from-corrections engine", Status: "partial", Implemented: []string{"approval/rejection notes", "checklist update audit", "rule for corrections feeding memory"}, Next: []string{"reviewable memory lessons from corrections"}},
 		{ID: "rules-library", Name: "Rules library engine", Status: "implemented", Implemented: []string{"persistent editable rule table", "default 14-rule safety/workflow library"}, Next: []string{"dashboard rule editor"}},
 		{ID: "multi-agent-workers", Name: "Multi-agent worker engine", Status: "partial", Implemented: []string{"single orchestrated task runner adapter", "capability separation by module"}, Next: []string{"specialized worker registry"}},
 		{ID: "next-best-action", Name: "Next best action engine", Status: "implemented", Implemented: []string{"next action field on every intake", "dashboard flags missing next actions"}, Next: []string{"project-level next-best-action rollup"}},
-		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "quality-gate validation", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
+		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "manual-completion bypass prevention", "evidence-backed interruption resolution", "quality-gate validation", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
 	}
 }
 

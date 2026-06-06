@@ -89,6 +89,7 @@
             <p><strong>Due open loops:</strong> {{ monitor.counts['dueOpenLoops'] || 0 }}</p>
             <p><strong>Expired workflow claims:</strong> {{ monitor.counts['expiredWorkflowClaims'] || 0 }}</p>
             <p><strong>Expired follow-up claims:</strong> {{ monitor.counts['expiredOpenLoopClaims'] || 0 }}</p>
+            <p><strong>Interrupted reviews:</strong> {{ monitor.counts['interruptedReview'] || 0 }}</p>
           </div>
           <div>
             <nz-table [nzData]="monitor.dueOpenLoops" nzSize="small" [nzPageSize]="4">
@@ -200,6 +201,8 @@
           <p><strong>Blocked:</strong> {{ record.item.blockedReason || '-' }}</p>
           <p><strong>Retry:</strong> {{ record.item.retryCount }}/{{ record.item.maxRetries }}</p>
           <p><strong>Verification:</strong> {{ record.item.verificationStatus || '-' }}</p>
+          <p><strong>Recovery:</strong> {{ record.item.recoveryStatus || '-' }}</p>
+          <p><strong>Recovery note:</strong> {{ record.item.recoveryNote || '-' }}</p>
           <p><strong>Next run:</strong> {{ (record.item.nextRunAt | date: 'short') || '-' }}</p>
           <p><strong>Worker lease:</strong> {{ (record.item.workerLeaseUntil | date: 'short') || '-' }}</p>
           <p><strong>Last task plan:</strong> {{ record.item.lastTaskPlanId || '-' }}</p>
@@ -215,10 +218,49 @@
               </nz-select>
             </div>
             <input nz-input formControlName="message" />
-            <button nz-button nzType="primary" (click)="transition()">Apply Transition</button>
+            <button
+              nz-button
+              nzType="primary"
+              (click)="transition()"
+              [disabled]="record.item.recoveryStatus === 'needs_review'"
+            >
+              Apply Transition
+            </button>
           </form>
         </nz-card>
       </div>
+
+      <nz-card
+        nzTitle="Interrupted Execution Review"
+        class="section-card recovery-review"
+        *ngIf="selected?.item?.recoveryStatus === 'needs_review'"
+      >
+        <form nz-form [formGroup]="interruptionForm">
+          <nz-form-item>
+            <nz-form-label>Decision</nz-form-label>
+            <nz-form-control>
+              <nz-select formControlName="decision">
+                <nz-option nzValue="retry" nzLabel="Retry after side-effect check"></nz-option>
+                <nz-option nzValue="confirm_completed" nzLabel="Confirm completed with evidence"></nz-option>
+                <nz-option nzValue="keep_blocked" nzLabel="Keep blocked"></nz-option>
+              </nz-select>
+            </nz-form-control>
+          </nz-form-item>
+          <textarea
+            nz-input
+            rows="3"
+            formControlName="note"
+            placeholder="Record what external systems were checked and what was found"
+          ></textarea>
+          <div class="form-row" *ngIf="interruptionForm.value.decision === 'confirm_completed'">
+            <input nz-input formControlName="evidenceUri" placeholder="Completion evidence URI" />
+            <input nz-input formControlName="evidenceLabel" placeholder="Evidence label" />
+          </div>
+          <button nz-button nzType="primary" (click)="resolveInterruptedExecution()" [nzLoading]="saving">
+            Record Recovery Decision
+          </button>
+        </form>
+      </nz-card>
 
       <nz-card nzTitle="Checklist" class="section-card" *ngIf="selected as record">
         <nz-table [nzData]="record.checklist" nzSize="small" [nzPageSize]="10">
