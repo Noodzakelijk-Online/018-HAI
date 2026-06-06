@@ -39,20 +39,21 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
-		llmHandler, err := llm.DefaultHandler()
+		llmService, err := llm.NewServiceFromEnv()
 		if err != nil {
 			return err
 		}
+		llmHandler := llm.NewHandler(llmService)
 		initializeLLMRoutes(v1, llmHandler)
-		initializeMemoryRoutes(v1, memory.DefaultHandler())
-		sourceService := source.DefaultService()
+		memoryService := memory.DefaultService()
+		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
+		sourceService := source.NewServiceWithWorkflow(source.DefaultRepository(), memoryService, workflow.DefaultService())
 		source.StartScheduler(context.Background(), sourceService)
 		initializeSourceRoutes(v1, source.NewHandler(sourceService))
-		initializeVerificationRoutes(v1, verification.DefaultHandler())
-		workflowRunner, err := workflowtask.DefaultRunner()
-		if err != nil {
-			return err
-		}
+		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService)
+		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
+		taskService := task.NewServiceWithEngines(memoryService, llmService, sourceService, verificationService)
+		workflowRunner := workflowtask.NewRunner(taskService)
 		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner)
 		workflow.StartScheduler(context.Background(), workflowService)
 		initializeWorkflowRoutes(v1, workflow.NewHandler(workflowService))
@@ -61,11 +62,7 @@ func initializeRoutes(router *gin.Engine) error {
 			return err
 		}
 		initializeHAIOSRoutes(v1, osHandler)
-		taskHandler, err := task.DefaultHandler()
-		if err != nil {
-			return err
-		}
-		initializeTaskRoutes(v1, taskHandler)
+		initializeTaskRoutes(v1, task.NewHandler(taskService))
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil

@@ -10,12 +10,16 @@ type Handler struct {
 	service Service
 }
 
+func NewHandler(service Service) *Handler {
+	return &Handler{service: service}
+}
+
 func DefaultHandler() (*Handler, error) {
 	service, err := DefaultService()
 	if err != nil {
 		return nil, err
 	}
-	return &Handler{service: service}, nil
+	return NewHandler(service), nil
 }
 
 func (h *Handler) Plan(c *gin.Context) {

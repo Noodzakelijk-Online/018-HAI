@@ -11,8 +11,12 @@ type Handler struct {
 	service Service
 }
 
+func NewHandler(service Service) *Handler {
+	return &Handler{service: service}
+}
+
 func DefaultHandler() *Handler {
-	return &Handler{service: DefaultService()}
+	return NewHandler(DefaultService())
 }
 
 func (h *Handler) Answer(c *gin.Context) {
