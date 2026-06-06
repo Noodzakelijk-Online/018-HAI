@@ -762,8 +762,8 @@ func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, e
 }
 
 func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
-	if loop.Status != "open" {
-		return OpenLoopRunResult{WorkflowID: loop.WorkflowID, OpenLoopID: loop.ID, Status: "skipped", Message: "open loop is no longer open"}
+	if loop.Status != "processing" {
+		return OpenLoopRunResult{WorkflowID: loop.WorkflowID, OpenLoopID: loop.ID, Status: "skipped", Message: "open loop does not hold an active processing claim"}
 	}
 	item, err := s.repo.FindItem(loop.WorkflowID)
 	if err != nil {

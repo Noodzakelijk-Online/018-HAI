@@ -398,6 +398,17 @@ func TestRunDueOpenLoopsSkipsOpenLoopClaimedByAnotherWorker(t *testing.T) {
 	loops := repo.openLoops[record.Item.ID]
 	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
 	repo.openLoops[record.Item.ID] = loops
+	claimed, acquired, err := repo.ClaimDueOpenLoop(loops[0].ID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("ClaimDueOpenLoop: %v", err)
+	}
+	if !acquired || claimed == nil || claimed.Status != "processing" {
+		t.Fatalf("claim = %#v, acquired = %t, want processing claim", claimed, acquired)
+	}
+	claimed.Status = "open"
+	if _, err := repo.UpdateOpenLoop(claimed); err != nil {
+		t.Fatalf("release test claim: %v", err)
+	}
 	repo.rejectOpenLoopClaims = true
 
 	summary, err := service.RunDueOpenLoops(RunDueRequest{Limit: 5})
