@@ -475,6 +475,7 @@ This project is intended to gain local execution power, so safety should be desi
 
 - Keep read-only behavior as the default.
 - Require approval for email sending, legal/government actions, financial actions, account changes, public posting, deletion, destructive file changes, and broad local execution.
+- Never treat client-supplied `humanApproved` or generic-transition `approved` fields as approval provenance. Public task/verification handlers clear those fields, and approval-required workflows must use the dedicated approval queue endpoint.
 - Use allowlists for tools, folders, runtime adapters, and network targets.
 - Redact secrets in logs, prompts, memory, and verification evidence.
 - Preserve source provenance for extracted facts.

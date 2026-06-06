@@ -206,9 +206,6 @@
               <nz-select formControlName="targetState">
                 <nz-option *ngFor="let state of overview?.states || []" [nzValue]="state" [nzLabel]="state"></nz-option>
               </nz-select>
-              <label nz-checkbox formControlName="approved">
-                Approved
-              </label>
             </div>
             <input nz-input formControlName="message" />
             <button nz-button nzType="primary" (click)="transition()">Apply Transition</button>

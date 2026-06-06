@@ -29,6 +29,9 @@ func (h *Handler) Answer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "question is required"})
 		return
 	}
+	// Approval provenance must come from a server-side approval workflow,
+	// never from a caller asserting approval in request JSON.
+	request.HumanApproved = false
 	result, err := h.service.Answer(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

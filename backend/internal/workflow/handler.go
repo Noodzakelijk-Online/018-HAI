@@ -85,6 +85,9 @@ func (h *Handler) Transition(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Generic state transitions cannot establish approval provenance.
+	// Approval-required workflows must use ResolveApproval.
+	request.Approved = false
 	record, err := h.service.Transition(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

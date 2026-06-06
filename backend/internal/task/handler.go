@@ -32,6 +32,9 @@ func (h *Handler) Plan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "request is required"})
 		return
 	}
+	request.ExecuteAllowed = false
+	request.HumanApproved = false
+	request.ApprovalNote = ""
 	plan, err := h.service.Plan(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -51,6 +54,8 @@ func (h *Handler) Run(c *gin.Context) {
 		return
 	}
 	request.ExecuteAllowed = true
+	request.HumanApproved = false
+	request.ApprovalNote = ""
 	plan, err := h.service.Run(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

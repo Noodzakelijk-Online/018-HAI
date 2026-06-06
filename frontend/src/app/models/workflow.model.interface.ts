@@ -213,7 +213,6 @@ export interface IWorkflowIntakeRequest {
 export interface IWorkflowTransitionRequest {
   targetState: string;
   message?: string;
-  approved?: boolean;
   actor?: string;
 }
 

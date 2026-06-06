@@ -47,8 +47,7 @@ export class WorkflowEngineComponent implements OnInit {
 
   transitionForm: FormGroup = this.fb.group({
     targetState: ['ready', [Validators.required]],
-    message: ['Robert approved controlled workflow execution.'],
-    approved: [false],
+    message: ['Move workflow to the selected state.'],
   });
 
   approvalForm: FormGroup = this.fb.group({
