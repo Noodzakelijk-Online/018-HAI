@@ -302,11 +302,16 @@ func workflowSchedulerEvidence() string {
 	if interval == "" {
 		interval = "60"
 	}
+	lease := strings.TrimSpace(os.Getenv("WORKFLOW_CLAIM_LEASE_SECONDS"))
+	if lease == "" {
+		lease = "900"
+	}
 	parts := []string{
 		"Workflow scheduler enabled: " + boolWord(enabled),
 		"Open-loop pass enabled: " + boolWord(openLoopsEnabled),
 		"Interval seconds: " + interval,
 		"Run limit per tick: " + limit,
+		"Claim lease seconds: " + lease,
 	}
 	return strings.Join(parts, " ")
 }

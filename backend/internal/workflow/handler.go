@@ -171,6 +171,17 @@ func (h *Handler) RunDue(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *Handler) RecoverStaleClaims(c *gin.Context) {
+	var request RunDueRequest
+	_ = c.ShouldBindJSON(&request)
+	result, err := h.service.RecoverStaleClaims(request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)

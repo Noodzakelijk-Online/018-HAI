@@ -30,6 +30,8 @@ type WorkflowItem struct {
 	MaxRetries         int        `gorm:"default:2" json:"maxRetries"`
 	NextRunAt          *time.Time `gorm:"index" json:"nextRunAt,omitempty"`
 	LastRunAt          *time.Time `json:"lastRunAt,omitempty"`
+	WorkerClaimID      string     `gorm:"type:varchar(64);index" json:"-"`
+	WorkerLeaseUntil   *time.Time `gorm:"index" json:"workerLeaseUntil,omitempty"`
 	CompletedAt        *time.Time `gorm:"index" json:"completedAt,omitempty"`
 	VerificationStatus string     `gorm:"type:varchar(80);index" json:"verificationStatus,omitempty"`
 	LastTaskPlanID     string     `gorm:"type:varchar(120)" json:"lastTaskPlanId,omitempty"`
@@ -101,6 +103,8 @@ type WorkflowOpenLoop struct {
 	NextAction       string     `gorm:"type:text" json:"nextAction"`
 	FollowUpAt       *time.Time `gorm:"index" json:"followUpAt,omitempty"`
 	Status           string     `gorm:"type:varchar(50);index" json:"status"`
+	ClaimID          string     `gorm:"type:varchar(64);index" json:"-"`
+	LeaseUntil       *time.Time `gorm:"index" json:"leaseUntil,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }

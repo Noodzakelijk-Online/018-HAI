@@ -18,7 +18,11 @@ type Repository interface {
 	FindItems(includeArchived bool) ([]models.WorkflowItem, error)
 	FindApprovalItems() ([]models.WorkflowItem, error)
 	FindRunnableItems(now time.Time, limit int) ([]models.WorkflowItem, error)
-	ClaimRunnableItem(id uuid.UUID, now time.Time) (*models.WorkflowItem, bool, error)
+	ClaimRunnableItem(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error)
+	RenewRunnableItemClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error)
+	UpdateClaimedItem(item *models.WorkflowItem, claimID string) (*models.WorkflowItem, bool, error)
+	FindExpiredWorkflowClaims(now time.Time, limit int) ([]models.WorkflowItem, error)
+	RecoverExpiredWorkflowClaim(item models.WorkflowItem, now time.Time) (*models.WorkflowItem, bool, error)
 	CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
 	UpdateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
 	FindChecklist(workflowID uuid.UUID) ([]models.WorkflowChecklistItem, error)
@@ -32,7 +36,11 @@ type Repository interface {
 	UpdateOpenLoop(loop *models.WorkflowOpenLoop) (*models.WorkflowOpenLoop, error)
 	FindOpenLoops(workflowID uuid.UUID) ([]models.WorkflowOpenLoop, error)
 	FindDashboardOpenLoops(now time.Time) ([]models.WorkflowOpenLoop, error)
-	ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*models.WorkflowOpenLoop, bool, error)
+	ClaimDueOpenLoop(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error)
+	RenewOpenLoopClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error)
+	UpdateClaimedOpenLoop(loop *models.WorkflowOpenLoop, claimID string) (*models.WorkflowOpenLoop, bool, error)
+	FindExpiredOpenLoopClaims(now time.Time, limit int) ([]models.WorkflowOpenLoop, error)
+	RecoverExpiredOpenLoopClaim(loop models.WorkflowOpenLoop, now time.Time) (*models.WorkflowOpenLoop, bool, error)
 	CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
 	UpdateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
 	FindProposals(workflowID uuid.UUID) ([]models.WorkflowProposal, error)
@@ -135,7 +143,7 @@ func (r *GormRepository) FindRunnableItems(now time.Time, limit int) ([]models.W
 	return items, err
 }
 
-func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, now time.Time) (*models.WorkflowItem, bool, error) {
+func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error) {
 	result := r.DB.
 		Model(&models.WorkflowItem{}).
 		Where("id = ? AND archived = ? AND current_state = ? AND retry_count < CASE WHEN max_retries <= 0 THEN 2 ELSE max_retries END", id, false, StateReady).
@@ -146,6 +154,8 @@ func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, now time.Time) (*models
 			"last_run_at":       now,
 			"next_action":       "task engine is executing claimed workflow item",
 			"last_worker_error": "",
+			"worker_claim_id":   claimID,
+			"worker_lease_until": leaseUntil,
 			"updated_at":        now,
 		})
 	if result.Error != nil {
@@ -159,6 +169,100 @@ func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, now time.Time) (*models
 		return nil, false, err
 	}
 	return item, true, nil
+}
+
+func (r *GormRepository) RenewRunnableItemClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error) {
+	result := r.DB.
+		Model(&models.WorkflowItem{}).
+		Where("id = ? AND current_state = ? AND worker_claim_id = ?", id, StateInProgress, claimID).
+		Updates(map[string]interface{}{
+			"worker_lease_until": leaseUntil,
+			"updated_at":         time.Now().UTC(),
+		})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *GormRepository) UpdateClaimedItem(item *models.WorkflowItem, claimID string) (*models.WorkflowItem, bool, error) {
+	now := time.Now().UTC()
+	result := r.DB.
+		Model(&models.WorkflowItem{}).
+		Where("id = ? AND current_state = ? AND worker_claim_id = ?", item.ID, StateInProgress, claimID).
+		Updates(map[string]interface{}{
+			"current_state":       item.CurrentState,
+			"approval_status":     item.ApprovalStatus,
+			"blocked_reason":      item.BlockedReason,
+			"next_action":         item.NextAction,
+			"retry_count":         item.RetryCount,
+			"max_retries":         item.MaxRetries,
+			"next_run_at":         item.NextRunAt,
+			"last_run_at":         item.LastRunAt,
+			"completed_at":        item.CompletedAt,
+			"verification_status": item.VerificationStatus,
+			"last_task_plan_id":   item.LastTaskPlanID,
+			"last_worker_error":   item.LastWorkerError,
+			"worker_claim_id":     "",
+			"worker_lease_until":  nil,
+			"updated_at":          now,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	updated, err := r.FindItem(item.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	return updated, true, nil
+}
+
+func (r *GormRepository) FindExpiredWorkflowClaims(now time.Time, limit int) ([]models.WorkflowItem, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	legacyBefore := now.Add(-claimLeaseDuration())
+	var items []models.WorkflowItem
+	err := r.DB.
+		Where("archived = ? AND current_state = ?", false, StateInProgress).
+		Where("(worker_claim_id <> ? AND worker_lease_until IS NOT NULL AND worker_lease_until <= ?) OR ((worker_claim_id = ? OR worker_claim_id IS NULL) AND worker_lease_until IS NULL AND last_run_at IS NOT NULL AND last_run_at <= ?)", "", now, "", legacyBefore).
+		Order("worker_lease_until asc").
+		Limit(limit).
+		Find(&items).Error
+	return items, err
+}
+
+func (r *GormRepository) RecoverExpiredWorkflowClaim(item models.WorkflowItem, now time.Time) (*models.WorkflowItem, bool, error) {
+	reason := "worker lease expired; execution outcome is unknown and requires human review"
+	query := r.DB.Model(&models.WorkflowItem{}).Where("id = ? AND current_state = ?", item.ID, StateInProgress)
+	if item.WorkerClaimID == "" {
+		query = query.Where("(worker_claim_id = ? OR worker_claim_id IS NULL) AND worker_lease_until IS NULL AND last_run_at IS NOT NULL AND last_run_at <= ?", "", now.Add(-claimLeaseDuration()))
+	} else {
+		query = query.Where("worker_claim_id = ? AND worker_lease_until <= ?", item.WorkerClaimID, now)
+	}
+	result := query.
+		Updates(map[string]interface{}{
+			"current_state":      StateBlocked,
+			"blocked_reason":     reason,
+			"next_action":        "review external side effects before retrying interrupted workflow",
+			"last_worker_error":  reason,
+			"retry_count":        gorm.Expr("retry_count + 1"),
+			"next_run_at":        nil,
+			"worker_claim_id":    "",
+			"worker_lease_until": nil,
+			"updated_at":         now,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	updated, err := r.FindItem(item.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	return updated, true, nil
 }
 
 func (r *GormRepository) CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error) {
@@ -251,14 +355,16 @@ func (r *GormRepository) FindDashboardOpenLoops(now time.Time) ([]models.Workflo
 	return loops, err
 }
 
-func (r *GormRepository) ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*models.WorkflowOpenLoop, bool, error) {
+func (r *GormRepository) ClaimDueOpenLoop(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error) {
 	result := r.DB.
 		Model(&models.WorkflowOpenLoop{}).
 		Where("id = ? AND status = ?", id, "open").
 		Where("follow_up_at IS NULL OR follow_up_at <= ?", now).
 		Updates(map[string]interface{}{
-			"status":     "processing",
-			"updated_at": now,
+			"status":      "processing",
+			"claim_id":    claimID,
+			"lease_until": leaseUntil,
+			"updated_at":  now,
 		})
 	if result.Error != nil {
 		return nil, false, result.Error
@@ -271,6 +377,83 @@ func (r *GormRepository) ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*models.
 		return nil, false, err
 	}
 	return &loop, true, nil
+}
+
+func (r *GormRepository) RenewOpenLoopClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error) {
+	result := r.DB.
+		Model(&models.WorkflowOpenLoop{}).
+		Where("id = ? AND status = ? AND claim_id = ?", id, "processing", claimID).
+		Updates(map[string]interface{}{
+			"lease_until": leaseUntil,
+			"updated_at":  time.Now().UTC(),
+		})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *GormRepository) UpdateClaimedOpenLoop(loop *models.WorkflowOpenLoop, claimID string) (*models.WorkflowOpenLoop, bool, error) {
+	now := time.Now().UTC()
+	result := r.DB.
+		Model(&models.WorkflowOpenLoop{}).
+		Where("id = ? AND status = ? AND claim_id = ?", loop.ID, "processing", claimID).
+		Updates(map[string]interface{}{
+			"status":      loop.Status,
+			"claim_id":    "",
+			"lease_until": nil,
+			"updated_at":  now,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	var updated models.WorkflowOpenLoop
+	if err := r.DB.First(&updated, "id = ?", loop.ID).Error; err != nil {
+		return nil, false, err
+	}
+	return &updated, true, nil
+}
+
+func (r *GormRepository) FindExpiredOpenLoopClaims(now time.Time, limit int) ([]models.WorkflowOpenLoop, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	legacyBefore := now.Add(-claimLeaseDuration())
+	var loops []models.WorkflowOpenLoop
+	err := r.DB.
+		Where("status = ?", "processing").
+		Where("(claim_id <> ? AND lease_until IS NOT NULL AND lease_until <= ?) OR ((claim_id = ? OR claim_id IS NULL) AND lease_until IS NULL AND updated_at <= ?)", "", now, "", legacyBefore).
+		Order("lease_until asc").
+		Limit(limit).
+		Find(&loops).Error
+	return loops, err
+}
+
+func (r *GormRepository) RecoverExpiredOpenLoopClaim(loop models.WorkflowOpenLoop, now time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	query := r.DB.Model(&models.WorkflowOpenLoop{}).Where("id = ? AND status = ?", loop.ID, "processing")
+	if loop.ClaimID == "" {
+		query = query.Where("(claim_id = ? OR claim_id IS NULL) AND lease_until IS NULL AND updated_at <= ?", "", now.Add(-claimLeaseDuration()))
+	} else {
+		query = query.Where("claim_id = ? AND lease_until <= ?", loop.ClaimID, now)
+	}
+	result := query.
+		Updates(map[string]interface{}{
+			"status":      "open",
+			"claim_id":    "",
+			"lease_until": nil,
+			"updated_at":  now,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	var updated models.WorkflowOpenLoop
+	if err := r.DB.First(&updated, "id = ?", loop.ID).Error; err != nil {
+		return nil, false, err
+	}
+	return &updated, true, nil
 }
 
 func (r *GormRepository) CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error) {

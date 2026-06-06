@@ -14,8 +14,8 @@ func TestWorkflowSchedulerRunsOpenLoopsBeforeRunnableItems(t *testing.T) {
 
 	scheduler.runOnce()
 
-	if got := service.calls; len(got) != 2 || got[0] != "open-loops" || got[1] != "run-due" {
-		t.Fatalf("calls = %#v, want open-loops then run-due", got)
+	if got := service.calls; len(got) != 3 || got[0] != "recover" || got[1] != "open-loops" || got[2] != "run-due" {
+		t.Fatalf("calls = %#v, want recover, open-loops, then run-due", got)
 	}
 	if service.openLoopLimit != 3 || service.runDueLimit != 3 {
 		t.Fatalf("limits = open-loop %d run-due %d, want 3", service.openLoopLimit, service.runDueLimit)
@@ -29,8 +29,8 @@ func TestWorkflowSchedulerCanDisableOpenLoopPass(t *testing.T) {
 
 	scheduler.runOnce()
 
-	if got := service.calls; len(got) != 1 || got[0] != "run-due" {
-		t.Fatalf("calls = %#v, want only run-due", got)
+	if got := service.calls; len(got) != 2 || got[0] != "recover" || got[1] != "run-due" {
+		t.Fatalf("calls = %#v, want recover then run-due", got)
 	}
 }
 
@@ -45,12 +45,36 @@ func TestWorkflowSchedulerLimitDefaultsAndCaps(t *testing.T) {
 	}
 }
 
+func TestWorkflowClaimLeaseDefaultsAndBounds(t *testing.T) {
+	t.Setenv("WORKFLOW_CLAIM_LEASE_SECONDS", "")
+	if got := claimLeaseDuration(); got != 15*time.Minute {
+		t.Fatalf("default lease = %s, want 15m", got)
+	}
+	t.Setenv("WORKFLOW_CLAIM_LEASE_SECONDS", "30")
+	if got := claimLeaseDuration(); got != 15*time.Minute {
+		t.Fatalf("short lease = %s, want safe default 15m", got)
+	}
+	t.Setenv("WORKFLOW_CLAIM_LEASE_SECONDS", "120")
+	if got := claimLeaseDuration(); got != 2*time.Minute {
+		t.Fatalf("configured lease = %s, want 2m", got)
+	}
+	t.Setenv("WORKFLOW_CLAIM_LEASE_SECONDS", "999999")
+	if got := claimLeaseDuration(); got != 24*time.Hour {
+		t.Fatalf("capped lease = %s, want 24h", got)
+	}
+}
+
 type fakeScheduledWorkflowService struct {
 	calls          []string
 	openLoopLimit  int
 	runDueLimit    int
 	openLoopResult *OpenLoopRunSummary
 	runDueResult   *WorkflowRunSummary
+}
+
+func (s *fakeScheduledWorkflowService) RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error) {
+	s.calls = append(s.calls, "recover")
+	return &ClaimRecoverySummary{}, nil
 }
 
 func (s *fakeScheduledWorkflowService) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {

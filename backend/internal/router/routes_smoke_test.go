@@ -93,6 +93,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	workflowRoutes.GET("/dashboard", mark("workflowDashboard"))
 	workflowRoutes.GET("/", mark("workflowItems"))
 	workflowRoutes.POST("/intake", mark("workflowIntake"))
+	workflowRoutes.POST("/recover-stale", mark("workflowRecoverStale"))
 	workflowRoutes.POST("/run-due", mark("workflowRunDue"))
 	workflowRoutes.POST("/open-loops/run-due", mark("workflowOpenLoopRunDue"))
 	workflowRoutes.GET("/:id", mark("workflowGet"))
@@ -151,6 +152,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/workflow/dashboard", "workflowDashboard"},
 		{"GET", "/api/v1/workflow/", "workflowItems"},
 		{"POST", "/api/v1/workflow/intake", "workflowIntake"},
+		{"POST", "/api/v1/workflow/recover-stale", "workflowRecoverStale"},
 		{"POST", "/api/v1/workflow/run-due", "workflowRunDue"},
 		{"POST", "/api/v1/workflow/open-loops/run-due", "workflowOpenLoopRunDue"},
 		{"GET", "/api/v1/workflow/abc", "workflowGet"},

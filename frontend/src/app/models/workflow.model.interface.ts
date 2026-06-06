@@ -22,6 +22,7 @@ export interface IWorkflowItem {
   maxRetries: number;
   nextRunAt?: string;
   lastRunAt?: string;
+  workerLeaseUntil?: string;
   completedAt?: string;
   verificationStatus?: string;
   lastTaskPlanId?: string;
@@ -93,6 +94,7 @@ export interface IWorkflowOpenLoop {
   nextAction: string;
   followUpAt?: string;
   status: string;
+  leaseUntil?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -271,6 +273,22 @@ export interface IWorkflowOpenLoopRunSummary {
   resolved: number;
   skipped: number;
   results: IWorkflowOpenLoopRunResult[];
+}
+
+export interface IWorkflowClaimRecoveryResult {
+  workflowId: string;
+  openLoopId?: string;
+  type: string;
+  status: string;
+  message: string;
+}
+
+export interface IWorkflowClaimRecoverySummary {
+  checked: number;
+  workflowsBlocked: number;
+  openLoopsReopened: number;
+  skipped: number;
+  results: IWorkflowClaimRecoveryResult[];
 }
 
 export interface IWorkflowCapability {

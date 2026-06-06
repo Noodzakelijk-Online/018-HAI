@@ -2,6 +2,7 @@ import { Observable } from 'rxjs';
 import {
   IWorkflowApprovalResolutionRequest,
   IWorkflowChecklistUpdateRequest,
+  IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
   IWorkflowIntakeRequest,
   IWorkflowItem,
@@ -25,6 +26,7 @@ export interface IWorkflowService {
   resolveApproval(id: string, request: IWorkflowApprovalResolutionRequest): Observable<IWorkflowRecord>;
   resolveProposal(id: string, proposalId: string, request: IWorkflowProposalResolutionRequest): Observable<IWorkflowRecord>;
   updateChecklistItem(id: string, itemId: string, request: IWorkflowChecklistUpdateRequest): Observable<IWorkflowRecord>;
+  recoverStaleClaims(request: IWorkflowRunDueRequest): Observable<IWorkflowClaimRecoverySummary>;
   runDue(request: IWorkflowRunDueRequest): Observable<IWorkflowRunSummary>;
   runDueOpenLoops(request: IWorkflowRunDueRequest): Observable<IWorkflowOpenLoopRunSummary>;
 }

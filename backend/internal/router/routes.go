@@ -194,6 +194,7 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.GET("/dashboard", workflowHandler.Dashboard)
 		workflowRoutes.GET("/", workflowHandler.Items)
 		workflowRoutes.POST("/intake", workflowHandler.Intake)
+		workflowRoutes.POST("/recover-stale", workflowHandler.RecoverStaleClaims)
 		workflowRoutes.POST("/run-due", workflowHandler.RunDue)
 		workflowRoutes.POST("/open-loops/run-due", workflowHandler.RunDueOpenLoops)
 		workflowRoutes.GET("/:id", workflowHandler.Get)

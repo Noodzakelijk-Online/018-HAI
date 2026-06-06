@@ -398,7 +398,8 @@ func TestRunDueOpenLoopsSkipsOpenLoopClaimedByAnotherWorker(t *testing.T) {
 	loops := repo.openLoops[record.Item.ID]
 	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
 	repo.openLoops[record.Item.ID] = loops
-	claimed, acquired, err := repo.ClaimDueOpenLoop(loops[0].ID, time.Now().UTC())
+	claimedAt := time.Now().UTC()
+	claimed, acquired, err := repo.ClaimDueOpenLoop(loops[0].ID, "test-claim", claimedAt, claimedAt.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("ClaimDueOpenLoop: %v", err)
 	}
@@ -406,6 +407,8 @@ func TestRunDueOpenLoopsSkipsOpenLoopClaimedByAnotherWorker(t *testing.T) {
 		t.Fatalf("claim = %#v, acquired = %t, want processing claim", claimed, acquired)
 	}
 	claimed.Status = "open"
+	claimed.ClaimID = ""
+	claimed.LeaseUntil = nil
 	if _, err := repo.UpdateOpenLoop(claimed); err != nil {
 		t.Fatalf("release test claim: %v", err)
 	}
@@ -568,6 +571,157 @@ func TestRunDueSkipsWorkflowClaimedByAnotherWorker(t *testing.T) {
 	}
 }
 
+func TestRecoverStaleWorkflowClaimBlocksUnknownOutcome(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	claimedAt := time.Now().UTC().Add(-2 * time.Minute)
+	claimed, acquired, err := repo.ClaimRunnableItem(record.Item.ID, "expired-workflow-claim", claimedAt, claimedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ClaimRunnableItem: %v", err)
+	}
+	if !acquired || claimed == nil {
+		t.Fatalf("expected workflow claim")
+	}
+
+	summary, err := service.RecoverStaleClaims(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RecoverStaleClaims: %v", err)
+	}
+	if summary.WorkflowsBlocked != 1 {
+		t.Fatalf("summary = %#v, want one blocked workflow", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked {
+		t.Fatalf("state = %q, want blocked", updated.Item.CurrentState)
+	}
+	if updated.Item.WorkerClaimID != "" || updated.Item.WorkerLeaseUntil != nil {
+		t.Fatalf("expired claim was not cleared: %#v", updated.Item)
+	}
+	if updated.Item.RetryCount != 1 {
+		t.Fatalf("retry count = %d, want interrupted attempt recorded", updated.Item.RetryCount)
+	}
+	if !strings.Contains(updated.Item.BlockedReason, "outcome is unknown") {
+		t.Fatalf("blocked reason = %q, want unknown-outcome review", updated.Item.BlockedReason)
+	}
+}
+
+func TestRecoverStaleClaimsLeavesActiveWorkflowLeaseOwned(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	claimedAt := time.Now().UTC()
+	claimed, acquired, err := repo.ClaimRunnableItem(record.Item.ID, "active-workflow-claim", claimedAt, claimedAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ClaimRunnableItem: %v", err)
+	}
+	if !acquired || claimed == nil {
+		t.Fatalf("expected workflow claim")
+	}
+
+	summary, err := service.RecoverStaleClaims(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RecoverStaleClaims: %v", err)
+	}
+	if summary.Checked != 0 || summary.WorkflowsBlocked != 0 {
+		t.Fatalf("summary = %#v, active lease must not be recovered", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateInProgress || updated.Item.WorkerClaimID != "active-workflow-claim" {
+		t.Fatalf("active claim changed: %#v", updated.Item)
+	}
+}
+
+func TestRecoverStaleOpenLoopClaimReopensIdempotentFollowUp(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Waiting for a client response; follow up tomorrow."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	loops := repo.openLoops[record.Item.ID]
+	if len(loops) == 0 {
+		t.Fatalf("expected an open loop")
+	}
+	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
+	repo.openLoops[record.Item.ID] = loops
+	claimedAt := time.Now().UTC().Add(-2 * time.Minute)
+	claimed, acquired, err := repo.ClaimDueOpenLoop(loops[0].ID, "expired-open-loop-claim", claimedAt, claimedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ClaimDueOpenLoop: %v", err)
+	}
+	if !acquired || claimed == nil {
+		t.Fatalf("expected open-loop claim")
+	}
+
+	summary, err := service.RecoverStaleClaims(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RecoverStaleClaims: %v", err)
+	}
+	if summary.OpenLoopsReopened != 1 {
+		t.Fatalf("summary = %#v, want one reopened open loop", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.OpenLoops[0].Status != "open" || updated.OpenLoops[0].ClaimID != "" || updated.OpenLoops[0].LeaseUntil != nil {
+		t.Fatalf("open-loop claim was not safely reopened: %#v", updated.OpenLoops[0])
+	}
+}
+
+func TestRecoverStaleClaimsMigratesLegacyUnownedRows(t *testing.T) {
+	t.Setenv("WORKFLOW_CLAIM_LEASE_SECONDS", "60")
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Waiting for a client response; follow up tomorrow."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	legacyTime := time.Now().UTC().Add(-2 * time.Minute)
+	item := repo.items[record.Item.ID]
+	item.CurrentState = StateInProgress
+	item.LastRunAt = timePtr(legacyTime)
+	item.WorkerClaimID = ""
+	item.WorkerLeaseUntil = nil
+	loops := repo.openLoops[record.Item.ID]
+	if len(loops) == 0 {
+		t.Fatalf("expected an open loop")
+	}
+	loops[0].Status = "processing"
+	loops[0].ClaimID = ""
+	loops[0].LeaseUntil = nil
+	loops[0].UpdatedAt = legacyTime
+	repo.openLoops[record.Item.ID] = loops
+
+	summary, err := service.RecoverStaleClaims(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RecoverStaleClaims: %v", err)
+	}
+	if summary.WorkflowsBlocked != 1 || summary.OpenLoopsReopened != 1 {
+		t.Fatalf("summary = %#v, want legacy workflow blocked and open loop reopened", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked || updated.OpenLoops[0].Status != "open" {
+		t.Fatalf("legacy rows were not recovered: item=%#v loop=%#v", updated.Item, updated.OpenLoops[0])
+	}
+}
+
 func TestRunDueRecoversTaskRunnerPanicIntoRetry(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	runner := &fakeTaskRunner{panicValue: "provider adapter crashed"}
@@ -593,6 +747,42 @@ func TestRunDueRecoversTaskRunnerPanicIntoRetry(t *testing.T) {
 	}
 	if !strings.Contains(updated.Item.LastWorkerError, "panic recovered") {
 		t.Fatalf("last worker error = %q, want recovered panic", updated.Item.LastWorkerError)
+	}
+}
+
+func TestRunDueCannotPersistResultAfterClaimOwnershipChanges(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	var workflowID uuid.UUID
+	runner := &fakeTaskRunner{
+		result: &TaskRunResult{
+			CompletionStatus:   "validated",
+			VerificationStatus: "verified",
+			Passed:             true,
+		},
+		onRun: func(request TaskRunRequest) {
+			repo.items[workflowID].WorkerClaimID = "replacement-worker"
+		},
+	}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	workflowID = record.Item.ID
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Blocked != 1 || summary.Completed != 0 {
+		t.Fatalf("summary = %#v, lost claim must not complete workflow", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateInProgress || updated.Item.WorkerClaimID != "replacement-worker" {
+		t.Fatalf("stale worker overwrote replacement claim: %#v", updated.Item)
 	}
 }
 
@@ -888,7 +1078,7 @@ func (r *fakeWorkflowRepo) FindRunnableItems(now time.Time, limit int) ([]models
 	return result, nil
 }
 
-func (r *fakeWorkflowRepo) ClaimRunnableItem(id uuid.UUID, now time.Time) (*models.WorkflowItem, bool, error) {
+func (r *fakeWorkflowRepo) ClaimRunnableItem(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error) {
 	if r.rejectWorkflowClaims {
 		return nil, false, nil
 	}
@@ -906,8 +1096,76 @@ func (r *fakeWorkflowRepo) ClaimRunnableItem(id uuid.UUID, now time.Time) (*mode
 	item.LastRunAt = timePtr(now)
 	item.NextAction = "task engine is executing claimed workflow item"
 	item.LastWorkerError = ""
+	item.WorkerClaimID = claimID
+	item.WorkerLeaseUntil = timePtr(leaseUntil)
 	item.UpdatedAt = now
 	copied := *item
+	return &copied, true, nil
+}
+
+func (r *fakeWorkflowRepo) RenewRunnableItemClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error) {
+	item, ok := r.items[id]
+	if !ok || item.CurrentState != StateInProgress || item.WorkerClaimID != claimID {
+		return false, nil
+	}
+	item.WorkerLeaseUntil = timePtr(leaseUntil)
+	item.UpdatedAt = time.Now().UTC()
+	return true, nil
+}
+
+func (r *fakeWorkflowRepo) UpdateClaimedItem(item *models.WorkflowItem, claimID string) (*models.WorkflowItem, bool, error) {
+	stored, ok := r.items[item.ID]
+	if !ok || stored.CurrentState != StateInProgress || stored.WorkerClaimID != claimID {
+		return nil, false, nil
+	}
+	copied := *item
+	copied.WorkerClaimID = ""
+	copied.WorkerLeaseUntil = nil
+	copied.UpdatedAt = time.Now().UTC()
+	r.items[item.ID] = &copied
+	result := copied
+	return &result, true, nil
+}
+
+func (r *fakeWorkflowRepo) FindExpiredWorkflowClaims(now time.Time, limit int) ([]models.WorkflowItem, error) {
+	result := []models.WorkflowItem{}
+	for _, item := range r.items {
+		if item.CurrentState != StateInProgress {
+			continue
+		}
+		expiredLease := item.WorkerClaimID != "" && item.WorkerLeaseUntil != nil && !item.WorkerLeaseUntil.After(now)
+		expiredLegacyClaim := item.WorkerClaimID == "" && item.WorkerLeaseUntil == nil && item.LastRunAt != nil && !item.LastRunAt.After(now.Add(-claimLeaseDuration()))
+		if !expiredLease && !expiredLegacyClaim {
+			continue
+		}
+		result = append(result, *item)
+	}
+	if limit > 0 && len(result) > limit {
+		return result[:limit], nil
+	}
+	return result, nil
+}
+
+func (r *fakeWorkflowRepo) RecoverExpiredWorkflowClaim(item models.WorkflowItem, now time.Time) (*models.WorkflowItem, bool, error) {
+	stored, ok := r.items[item.ID]
+	if !ok || stored.CurrentState != StateInProgress || stored.WorkerClaimID != item.WorkerClaimID {
+		return nil, false, nil
+	}
+	expiredLease := stored.WorkerClaimID != "" && stored.WorkerLeaseUntil != nil && !stored.WorkerLeaseUntil.After(now)
+	expiredLegacyClaim := stored.WorkerClaimID == "" && stored.WorkerLeaseUntil == nil && stored.LastRunAt != nil && !stored.LastRunAt.After(now.Add(-claimLeaseDuration()))
+	if !expiredLease && !expiredLegacyClaim {
+		return nil, false, nil
+	}
+	stored.CurrentState = StateBlocked
+	stored.BlockedReason = "worker lease expired; execution outcome is unknown and requires human review"
+	stored.NextAction = "review external side effects before retrying interrupted workflow"
+	stored.LastWorkerError = stored.BlockedReason
+	stored.RetryCount++
+	stored.NextRunAt = nil
+	stored.WorkerClaimID = ""
+	stored.WorkerLeaseUntil = nil
+	stored.UpdatedAt = now
+	copied := *stored
 	return &copied, true, nil
 }
 
@@ -1021,7 +1279,7 @@ func (r *fakeWorkflowRepo) FindDashboardOpenLoops(now time.Time) ([]models.Workf
 	return result, nil
 }
 
-func (r *fakeWorkflowRepo) ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*models.WorkflowOpenLoop, bool, error) {
+func (r *fakeWorkflowRepo) ClaimDueOpenLoop(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error) {
 	if r.rejectOpenLoopClaims {
 		return nil, false, nil
 	}
@@ -1034,9 +1292,90 @@ func (r *fakeWorkflowRepo) ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*model
 				return nil, false, nil
 			}
 			loops[index].Status = "processing"
+			loops[index].ClaimID = claimID
+			loops[index].LeaseUntil = timePtr(leaseUntil)
 			loops[index].UpdatedAt = now
 			r.openLoops[workflowID] = loops
 			copied := loops[index]
+			return &copied, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (r *fakeWorkflowRepo) RenewOpenLoopClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error) {
+	for workflowID, loops := range r.openLoops {
+		for index := range loops {
+			if loops[index].ID != id || loops[index].Status != "processing" || loops[index].ClaimID != claimID {
+				continue
+			}
+			loops[index].LeaseUntil = timePtr(leaseUntil)
+			loops[index].UpdatedAt = time.Now().UTC()
+			r.openLoops[workflowID] = loops
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *fakeWorkflowRepo) UpdateClaimedOpenLoop(loop *models.WorkflowOpenLoop, claimID string) (*models.WorkflowOpenLoop, bool, error) {
+	for workflowID, loops := range r.openLoops {
+		for index := range loops {
+			stored := &loops[index]
+			if stored.ID != loop.ID || stored.Status != "processing" || stored.ClaimID != claimID {
+				continue
+			}
+			stored.Status = loop.Status
+			stored.ClaimID = ""
+			stored.LeaseUntil = nil
+			stored.UpdatedAt = time.Now().UTC()
+			r.openLoops[workflowID] = loops
+			copied := *stored
+			return &copied, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (r *fakeWorkflowRepo) FindExpiredOpenLoopClaims(now time.Time, limit int) ([]models.WorkflowOpenLoop, error) {
+	result := []models.WorkflowOpenLoop{}
+	for _, loops := range r.openLoops {
+		for _, loop := range loops {
+			if loop.Status != "processing" {
+				continue
+			}
+			expiredLease := loop.ClaimID != "" && loop.LeaseUntil != nil && !loop.LeaseUntil.After(now)
+			expiredLegacyClaim := loop.ClaimID == "" && loop.LeaseUntil == nil && !loop.UpdatedAt.After(now.Add(-claimLeaseDuration()))
+			if !expiredLease && !expiredLegacyClaim {
+				continue
+			}
+			result = append(result, loop)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		return result[:limit], nil
+	}
+	return result, nil
+}
+
+func (r *fakeWorkflowRepo) RecoverExpiredOpenLoopClaim(loop models.WorkflowOpenLoop, now time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	for workflowID, loops := range r.openLoops {
+		for index := range loops {
+			stored := &loops[index]
+			if stored.ID != loop.ID || stored.Status != "processing" || stored.ClaimID != loop.ClaimID {
+				continue
+			}
+			expiredLease := stored.ClaimID != "" && stored.LeaseUntil != nil && !stored.LeaseUntil.After(now)
+			expiredLegacyClaim := stored.ClaimID == "" && stored.LeaseUntil == nil && !stored.UpdatedAt.After(now.Add(-claimLeaseDuration()))
+			if !expiredLease && !expiredLegacyClaim {
+				continue
+			}
+			stored.Status = "open"
+			stored.ClaimID = ""
+			stored.LeaseUntil = nil
+			stored.UpdatedAt = now
+			r.openLoops[workflowID] = loops
+			copied := *stored
 			return &copied, true, nil
 		}
 	}
@@ -1186,10 +1525,14 @@ type fakeTaskRunner struct {
 	err        error
 	requests   []TaskRunRequest
 	panicValue interface{}
+	onRun      func(TaskRunRequest)
 }
 
 func (r *fakeTaskRunner) RunWorkflowTask(request TaskRunRequest) (*TaskRunResult, error) {
 	r.requests = append(r.requests, request)
+	if r.onRun != nil {
+		r.onRun(request)
+	}
 	if r.panicValue != nil {
 		panic(r.panicValue)
 	}

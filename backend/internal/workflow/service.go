@@ -126,6 +126,22 @@ type OpenLoopRunSummary struct {
 	Results   []OpenLoopRunResult `json:"results"`
 }
 
+type ClaimRecoveryResult struct {
+	WorkflowID uuid.UUID `json:"workflowId"`
+	OpenLoopID uuid.UUID `json:"openLoopId,omitempty"`
+	Type       string    `json:"type"`
+	Status     string    `json:"status"`
+	Message    string    `json:"message"`
+}
+
+type ClaimRecoverySummary struct {
+	Checked           int                   `json:"checked"`
+	WorkflowsBlocked  int                   `json:"workflowsBlocked"`
+	OpenLoopsReopened int                   `json:"openLoopsReopened"`
+	Skipped           int                   `json:"skipped"`
+	Results           []ClaimRecoveryResult `json:"results"`
+}
+
 type WorkflowRecord struct {
 	Item         models.WorkflowItem            `json:"item"`
 	Checklist    []models.WorkflowChecklistItem `json:"checklist"`
@@ -177,6 +193,7 @@ type Service interface {
 	ResolveApproval(id uuid.UUID, request ApprovalResolutionRequest) (*WorkflowRecord, error)
 	ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request ProposalResolutionRequest) (*WorkflowRecord, error)
 	UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error)
+	RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
 	RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error)
 	Overview() Overview
@@ -343,7 +360,16 @@ func (s *service) Dashboard() (*WorkflowDashboard, error) {
 	if err != nil {
 		return nil, err
 	}
-	openLoops, err := s.repo.FindDashboardOpenLoops(time.Now().UTC())
+	now := time.Now().UTC()
+	openLoops, err := s.repo.FindDashboardOpenLoops(now)
+	if err != nil {
+		return nil, err
+	}
+	expiredWorkflowClaims, err := s.repo.FindExpiredWorkflowClaims(now, 50)
+	if err != nil {
+		return nil, err
+	}
+	expiredOpenLoopClaims, err := s.repo.FindExpiredOpenLoopClaims(now, 50)
 	if err != nil {
 		return nil, err
 	}
@@ -360,6 +386,8 @@ func (s *service) Dashboard() (*WorkflowDashboard, error) {
 			"highRisk":               0,
 			"itemsWithoutNextAction": 0,
 			"dueOpenLoops":           int64(len(openLoops)),
+			"expiredWorkflowClaims":  int64(len(expiredWorkflowClaims)),
+			"expiredOpenLoopClaims":  int64(len(expiredOpenLoopClaims)),
 		},
 		ApprovalItems: approvalItems,
 		DueOpenLoops:  openLoops,
@@ -635,6 +663,94 @@ func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request Ch
 	return nil, fmt.Errorf("checklist item not found")
 }
 
+func (s *service) RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error) {
+	now := time.Now().UTC()
+	limit := normalizeRunLimit(request.Limit)
+	items, err := s.repo.FindExpiredWorkflowClaims(now, limit)
+	if err != nil {
+		return nil, err
+	}
+	loops, err := s.repo.FindExpiredOpenLoopClaims(now, limit)
+	if err != nil {
+		return nil, err
+	}
+	summary := &ClaimRecoverySummary{
+		Checked: len(items) + len(loops),
+		Results: []ClaimRecoveryResult{},
+	}
+	for _, item := range items {
+		recovered, changed, recoverErr := s.repo.RecoverExpiredWorkflowClaim(item, now)
+		if recoverErr != nil {
+			summary.Skipped++
+			summary.Results = append(summary.Results, ClaimRecoveryResult{
+				WorkflowID: item.ID,
+				Type:       "workflow",
+				Status:     "skipped",
+				Message:    recoverErr.Error(),
+			})
+			continue
+		}
+		if !changed || recovered == nil {
+			summary.Skipped++
+			summary.Results = append(summary.Results, ClaimRecoveryResult{
+				WorkflowID: item.ID,
+				Type:       "workflow",
+				Status:     "skipped",
+				Message:    "workflow claim was renewed or recovered by another worker",
+			})
+			continue
+		}
+		summary.WorkflowsBlocked++
+		message := "expired workflow claim moved to review because execution outcome is unknown"
+		summary.Results = append(summary.Results, ClaimRecoveryResult{
+			WorkflowID: recovered.ID,
+			Type:       "workflow",
+			Status:     "blocked",
+			Message:    message,
+		})
+		s.recordTransition(recovered.ID, StateInProgress, StateBlocked, "worker_lease_expired", "workflow-recovery", recovered.ApprovalStatus == "approved", message)
+		s.decide(recovered.ID, "worker_recovery", "blocked", message, "unknown external side effects require human review", false, "workflow-recovery")
+		s.audit(recovered.ID, "workflow.worker_recovered", StateInProgress, StateBlocked, message, "worker_lease_expired", "claim lease recovery", recovered.SourceURI, "workflow-recovery")
+	}
+	for _, loop := range loops {
+		recovered, changed, recoverErr := s.repo.RecoverExpiredOpenLoopClaim(loop, now)
+		if recoverErr != nil {
+			summary.Skipped++
+			summary.Results = append(summary.Results, ClaimRecoveryResult{
+				WorkflowID: loop.WorkflowID,
+				OpenLoopID: loop.ID,
+				Type:       "open_loop",
+				Status:     "skipped",
+				Message:    recoverErr.Error(),
+			})
+			continue
+		}
+		if !changed || recovered == nil {
+			summary.Skipped++
+			summary.Results = append(summary.Results, ClaimRecoveryResult{
+				WorkflowID: loop.WorkflowID,
+				OpenLoopID: loop.ID,
+				Type:       "open_loop",
+				Status:     "skipped",
+				Message:    "open-loop claim was recovered by another worker",
+			})
+			continue
+		}
+		summary.OpenLoopsReopened++
+		message := "expired idempotent follow-up claim reopened for retry"
+		summary.Results = append(summary.Results, ClaimRecoveryResult{
+			WorkflowID: recovered.WorkflowID,
+			OpenLoopID: recovered.ID,
+			Type:       "open_loop",
+			Status:     "reopened",
+			Message:    message,
+		})
+		s.decide(recovered.WorkflowID, "open_loop_recovery", "reopened", message, "idempotent follow-up artifacts", false, "workflow-recovery")
+		s.audit(recovered.WorkflowID, "workflow.open_loop_recovered", "", "", message, "open_loop_lease_expired", "claim lease recovery", "", "workflow-recovery")
+	}
+	return summary, nil
+}
+
 func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 	items, err := s.repo.FindRunnableItems(time.Now().UTC(), normalizeRunLimit(request.Limit))
 	if err != nil {
@@ -655,7 +771,9 @@ func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 		return summary, nil
 	}
 	for _, item := range items {
-		claimed, acquired, claimErr := s.repo.ClaimRunnableItem(item.ID, time.Now().UTC())
+		claimedAt := time.Now().UTC()
+		claimID := uuid.NewString()
+		claimed, acquired, claimErr := s.repo.ClaimRunnableItem(item.ID, claimID, claimedAt, claimedAt.Add(claimLeaseDuration()))
 		if claimErr != nil {
 			summary.Blocked++
 			summary.Results = append(summary.Results, WorkflowRunResult{
@@ -680,7 +798,7 @@ func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 		}
 		s.recordTransition(claimed.ID, StateReady, StateInProgress, "worker_claim", "workflow-worker", claimed.ApprovalStatus == "approved", "worker atomically claimed runnable workflow")
 		s.audit(claimed.ID, "workflow.worker_started", StateReady, StateInProgress, "worker atomically claimed runnable workflow", "worker_claim", "single-consumer execution claim", claimed.SourceURI, "workflow-worker")
-		result := s.runWorkflowItem(*claimed)
+		result := s.runWorkflowItem(*claimed, claimID)
 		summary.Results = append(summary.Results, result)
 		switch result.Status {
 		case "completed":
@@ -720,7 +838,9 @@ func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, e
 		return summary, nil
 	}
 	for _, loop := range loops {
-		claimed, acquired, claimErr := s.repo.ClaimDueOpenLoop(loop.ID, time.Now().UTC())
+		claimedAt := time.Now().UTC()
+		claimID := uuid.NewString()
+		claimed, acquired, claimErr := s.repo.ClaimDueOpenLoop(loop.ID, claimID, claimedAt, claimedAt.Add(claimLeaseDuration()))
 		if claimErr != nil {
 			summary.Skipped++
 			summary.Results = append(summary.Results, OpenLoopRunResult{
@@ -741,11 +861,15 @@ func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, e
 			})
 			continue
 		}
-		result := s.runOpenLoop(*claimed)
+		result := s.runOpenLoop(*claimed, claimID)
 		if result.Status == "skipped" {
 			claimed.Status = "open"
-			if _, releaseErr := s.repo.UpdateOpenLoop(claimed); releaseErr != nil {
+			claimed.ClaimID = ""
+			claimed.LeaseUntil = nil
+			if _, owned, releaseErr := s.repo.UpdateClaimedOpenLoop(claimed, claimID); releaseErr != nil {
 				result.Message = firstNonEmpty(result.Message, "follow-up processing failed") + "; failed to release open-loop claim: " + releaseErr.Error()
+			} else if !owned {
+				result.Message = firstNonEmpty(result.Message, "follow-up processing failed") + "; open-loop claim was already lost"
 			}
 		}
 		summary.Results = append(summary.Results, result)
@@ -761,7 +885,7 @@ func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, e
 	return summary, nil
 }
 
-func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
+func (s *service) runOpenLoop(loop models.WorkflowOpenLoop, claimID string) OpenLoopRunResult {
 	if loop.Status != "processing" {
 		return OpenLoopRunResult{WorkflowID: loop.WorkflowID, OpenLoopID: loop.ID, Status: "skipped", Message: "open loop does not hold an active processing claim"}
 	}
@@ -771,8 +895,12 @@ func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
 	}
 	if item.Archived || item.CurrentState == StateArchived || item.CurrentState == StateCompleted {
 		loop.Status = "resolved"
-		if _, err := s.repo.UpdateOpenLoop(&loop); err != nil {
+		loop.ClaimID = ""
+		loop.LeaseUntil = nil
+		if _, owned, err := s.repo.UpdateClaimedOpenLoop(&loop, claimID); err != nil {
 			return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to resolve closed workflow open loop: " + err.Error()}
+		} else if !owned {
+			return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "open-loop claim was lost before resolution"}
 		}
 		s.decide(item.ID, "open_loop", "resolved", "workflow already completed or archived", "follow-up engine", false, "workflow-followup")
 		s.audit(item.ID, "workflow.open_loop", item.CurrentState, item.CurrentState, "open loop resolved because workflow is closed", "followup_worker", "follow-up engine", item.SourceURI, "workflow-followup")
@@ -829,6 +957,13 @@ func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
 	} else {
 		item.NextAction = "execute due follow-up through workflow worker"
 	}
+	owned, renewErr := s.repo.RenewOpenLoopClaim(loop.ID, claimID, time.Now().UTC().Add(claimLeaseDuration()))
+	if renewErr != nil {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: from, Message: "failed to confirm open-loop claim: " + renewErr.Error()}
+	}
+	if !owned {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: from, Message: "open-loop claim was lost before workflow update"}
+	}
 	if _, err := s.repo.UpdateItem(item); err != nil {
 		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: from, Message: "failed to update workflow after follow-up trigger: " + err.Error()}
 	}
@@ -836,15 +971,19 @@ func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
 		s.recordTransition(item.ID, from, item.CurrentState, "followup_worker", "workflow-followup", false, "due open loop triggered next action")
 	}
 	loop.Status = "triggered"
-	if _, err := s.repo.UpdateOpenLoop(&loop); err != nil {
+	loop.ClaimID = ""
+	loop.LeaseUntil = nil
+	if _, owned, err := s.repo.UpdateClaimedOpenLoop(&loop, claimID); err != nil {
 		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to mark open loop triggered: " + err.Error()}
+	} else if !owned {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "open-loop claim was lost before trigger completion"}
 	}
 	s.decide(item.ID, "open_loop", "triggered", loop.WaitingFor, "follow-up engine", false, "workflow-followup")
 	s.audit(item.ID, "workflow.open_loop", from, item.CurrentState, "due open loop created proposal and checklist step", "followup_worker", "follow-up engine", item.SourceURI, "workflow-followup")
 	return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "triggered", State: item.CurrentState, Message: "proposal and checklist step created"}
 }
 
-func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
+func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) WorkflowRunResult {
 	if item.MaxRetries <= 0 {
 		item.MaxRetries = 2
 	}
@@ -856,11 +995,16 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 		item.NextAction = "review and approve workflow before execution"
 		item.ApprovalStatus = "pending"
 		item.LastWorkerError = message
-		if updated, err := s.repo.UpdateItem(&item); err == nil && updated != nil {
-			s.recordTransition(updated.ID, from, StateNeedsApproval, "worker_guard", "workflow-worker", false, message)
-			s.decide(updated.ID, "worker_execution", "blocked", message, "approval guard after claim", false, "workflow-worker")
-			s.audit(updated.ID, "workflow.worker_blocked", from, StateNeedsApproval, message, "worker_guard", "approval guard after claim", updated.SourceURI, "workflow-worker")
+		updated, owned, err := s.repo.UpdateClaimedItem(&item, claimID)
+		if err != nil {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: from, Attempts: item.RetryCount, Message: err.Error()}
 		}
+		if !owned || updated == nil {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, Message: "worker claim was lost before approval guard could be persisted"}
+		}
+		s.recordTransition(updated.ID, from, StateNeedsApproval, "worker_guard", "workflow-worker", false, message)
+		s.decide(updated.ID, "worker_execution", "blocked", message, "approval guard after claim", false, "workflow-worker")
+		s.audit(updated.ID, "workflow.worker_blocked", from, StateNeedsApproval, message, "worker_guard", "approval guard after claim", updated.SourceURI, "workflow-worker")
 		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateNeedsApproval, Attempts: item.RetryCount, Message: message}
 	}
 	if s.taskRunner == nil {
@@ -870,16 +1014,20 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 		item.BlockedReason = message
 		item.NextAction = "configure task runner adapter before worker execution"
 		item.LastWorkerError = message
-		updated, _ := s.repo.UpdateItem(&item)
-		if updated != nil {
-			s.recordTransition(updated.ID, from, StateBlocked, "worker", "workflow-worker", false, message)
-			s.decide(updated.ID, "worker_execution", "blocked", message, "task runner dependency check", false, "workflow-worker")
-			s.audit(updated.ID, "workflow.worker", from, StateBlocked, message, "worker", "task runner missing", updated.SourceURI, "workflow-worker")
+		updated, owned, err := s.repo.UpdateClaimedItem(&item, claimID)
+		if err != nil {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: from, Attempts: item.RetryCount, Message: err.Error()}
 		}
+		if !owned || updated == nil {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, Message: "worker claim was lost before missing-runner state could be persisted"}
+		}
+		s.recordTransition(updated.ID, from, StateBlocked, "worker", "workflow-worker", false, message)
+		s.decide(updated.ID, "worker_execution", "blocked", message, "task runner dependency check", false, "workflow-worker")
+		s.audit(updated.ID, "workflow.worker", from, StateBlocked, message, "worker", "task runner missing", updated.SourceURI, "workflow-worker")
 		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, Message: message}
 	}
 
-	runResult, err := s.runTaskSafely(TaskRunRequest{
+	runResult, err := s.runTaskWithLease(item.ID, claimID, TaskRunRequest{
 		WorkflowID:    item.ID.String(),
 		Request:       item.Description,
 		ProjectKey:    item.ProjectKey,
@@ -887,10 +1035,10 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 		ApprovalNote:  item.ApprovalReason,
 	})
 	if err != nil {
-		return s.handleRunFailure(&item, "task engine failed: "+err.Error(), "")
+		return s.handleRunFailure(&item, claimID, "task engine failed: "+err.Error(), "")
 	}
 	if runResult == nil {
-		return s.handleRunFailure(&item, "task engine returned no result", "")
+		return s.handleRunFailure(&item, claimID, "task engine returned no result", "")
 	}
 	item.LastTaskPlanID = runResult.PlanID
 	item.VerificationStatus = runResult.VerificationStatus
@@ -902,8 +1050,10 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 		item.NextRunAt = nil
 		item.LastWorkerError = ""
 		item.NextAction = "write completion summary and archive when reviewed"
-		if _, err := s.repo.UpdateItem(&item); err != nil {
+		if _, owned, err := s.repo.UpdateClaimedItem(&item, claimID); err != nil {
 			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: err.Error()}
+		} else if !owned {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "worker claim was lost before completion could be persisted"}
 		}
 		s.recordTransition(item.ID, StateInProgress, StateCompleted, "worker", "workflow-worker", item.ApprovalStatus == "approved", "task engine result verified workflow completion")
 		s.decide(item.ID, "verification_completion", "completed", "verification accepted task engine result", firstNonEmpty(runResult.VerificationStatus, "validation passed"), item.ApprovalStatus == "approved", "workflow-worker")
@@ -918,7 +1068,7 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 	if !gateResult.Passed {
 		reason = firstNonEmpty(strings.Join(gateResult.Failures, "; "), reason)
 	}
-	return s.handleRunFailure(&item, reason, runResult.VerificationStatus)
+	return s.handleRunFailure(&item, claimID, reason, runResult.VerificationStatus)
 }
 
 func (s *service) runTaskSafely(request TaskRunRequest) (result *TaskRunResult, err error) {
@@ -931,7 +1081,47 @@ func (s *service) runTaskSafely(request TaskRunRequest) (result *TaskRunResult, 
 	return s.taskRunner.RunWorkflowTask(request)
 }
 
-func (s *service) handleRunFailure(item *models.WorkflowItem, reason, verificationStatus string) WorkflowRunResult {
+func (s *service) runTaskWithLease(itemID uuid.UUID, claimID string, request TaskRunRequest) (*TaskRunResult, error) {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		interval := claimLeaseDuration() / 3
+		if interval < 15*time.Second {
+			interval = 15 * time.Second
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				leaseUntil := time.Now().UTC().Add(claimLeaseDuration())
+				owned, err := s.repo.RenewRunnableItemClaim(itemID, claimID, leaseUntil)
+				if err != nil || !owned {
+					return
+				}
+			}
+		}
+	}()
+	result, err := s.runTaskSafely(request)
+	close(stop)
+	<-done
+	if err != nil {
+		return nil, err
+	}
+	owned, renewErr := s.repo.RenewRunnableItemClaim(itemID, claimID, time.Now().UTC().Add(claimLeaseDuration()))
+	if renewErr != nil {
+		return nil, fmt.Errorf("failed to confirm worker claim after task execution: %w", renewErr)
+	}
+	if !owned {
+		return nil, fmt.Errorf("worker claim was lost during task execution")
+	}
+	return result, nil
+}
+
+func (s *service) handleRunFailure(item *models.WorkflowItem, claimID, reason, verificationStatus string) WorkflowRunResult {
 	if verificationStatus == "" || containsAny(strings.ToLower(verificationStatus), "fail", "needs_review", "unsupported", "blocked") {
 		s.markQualityGate(item.ID, "verification before completion", "failed", firstNonEmpty(reason, "worker validation failed"))
 	}
@@ -944,7 +1134,11 @@ func (s *service) handleRunFailure(item *models.WorkflowItem, reason, verificati
 		item.CurrentState = StateReady
 		item.NextRunAt = &next
 		item.NextAction = "retry scheduled after worker validation failure"
-		_, _ = s.repo.UpdateItem(item)
+		if _, owned, err := s.repo.UpdateClaimedItem(item, claimID); err != nil {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: attempts, VerificationStatus: verificationStatus, Message: err.Error()}
+		} else if !owned {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: attempts, VerificationStatus: verificationStatus, Message: "worker claim was lost before retry could be scheduled"}
+		}
 		s.recordTransition(item.ID, StateInProgress, StateReady, "worker_retry", "workflow-worker", item.ApprovalStatus == "approved", reason)
 		s.decide(item.ID, "retry", "scheduled", reason, fmt.Sprintf("retry %d of %d", attempts, item.MaxRetries), false, "workflow-worker")
 		s.audit(item.ID, "workflow.worker_retry", StateInProgress, StateReady, reason, "worker_retry", "retry scheduled with durable counter", item.SourceURI, "workflow-worker")
@@ -954,7 +1148,11 @@ func (s *service) handleRunFailure(item *models.WorkflowItem, reason, verificati
 	item.BlockedReason = reason
 	item.NextAction = "human review required after retry limit"
 	item.NextRunAt = nil
-	_, _ = s.repo.UpdateItem(item)
+	if _, owned, err := s.repo.UpdateClaimedItem(item, claimID); err != nil {
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: attempts, VerificationStatus: verificationStatus, Message: err.Error()}
+	} else if !owned {
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: attempts, VerificationStatus: verificationStatus, Message: "worker claim was lost before failure could be persisted"}
+	}
 	s.recordTransition(item.ID, StateInProgress, StateBlocked, "worker_retry_exhausted", "workflow-worker", item.ApprovalStatus == "approved", reason)
 	s.decide(item.ID, "retry", "exhausted", reason, fmt.Sprintf("retry limit reached at %d attempts", attempts), false, "workflow-worker")
 	s.audit(item.ID, "workflow.worker_blocked", StateInProgress, StateBlocked, reason, "worker_retry_exhausted", "retry limit reached", item.SourceURI, "workflow-worker")
@@ -1601,10 +1799,10 @@ func engineCapabilities() []EngineCapability {
 		{ID: "ai-reasoning", Name: "AI reasoning layer", Status: "partial", Implemented: []string{"deterministic classification fallback", "task type/risk/priority extraction"}, Next: []string{"LLM structured extractor with schema validation"}},
 		{ID: "checklists", Name: "Checklist generation", Status: "implemented", Implemented: []string{"type-specific checklist templates", "approval-marked checklist steps"}, Next: []string{"learned checklist templates"}},
 		{ID: "priority", Name: "Priority engine", Status: "implemented", Implemented: []string{"deadline/risk/type scoring", "priority-sorted inbox"}, Next: []string{"waiting-time and client importance scoring"}},
-		{ID: "exceptions", Name: "Exception and escalation logic", Status: "implemented", Implemented: []string{"blocked state", "missing-info detection", "durable retry limits"}, Next: []string{"operator notification channels"}},
+		{ID: "exceptions", Name: "Exception and escalation logic", Status: "implemented", Implemented: []string{"blocked state", "missing-info detection", "durable retry limits", "unknown-outcome recovery review"}, Next: []string{"operator notification channels"}},
 		{ID: "audit", Name: "Audit trail and traceability", Status: "implemented", Implemented: []string{"workflow events", "separate transitions", "decision records", "source links"}, Next: []string{"cross-module trace IDs"}},
 		{ID: "approval-gates", Name: "Human approval gates", Status: "implemented", Implemented: []string{"approval queue", "approve/reject buttons", "approval-only transitions", "approval checklist steps"}, Next: []string{"per-action approval scopes"}},
-		{ID: "worker-queue", Name: "Worker/queue system", Status: "implemented", Implemented: []string{"durable retry counters", "ready/in-progress/completed/blocked lifecycle", "task-engine execution adapter"}, Next: []string{"background scheduler process"}},
+		{ID: "worker-queue", Name: "Worker/queue system", Status: "implemented", Implemented: []string{"durable retry counters", "ready/in-progress/completed/blocked lifecycle", "task-engine execution adapter", "background scheduler", "owned renewable claims"}, Next: []string{"multi-node queue metrics"}},
 		{ID: "feedback", Name: "Feedback loop", Status: "partial", Implemented: []string{"checklist correction events", "resolution notes"}, Next: []string{"store rejected draft/tone preferences into memory"}},
 		{ID: "safety", Name: "Safety boundaries", Status: "implemented", Implemented: []string{"never-send/publish/delete/spend without approval rules", "approval reason surfaced"}, Next: []string{"policy editor"}},
 		{ID: "universal-intake", Name: "Universal intake engine", Status: "implemented", Implemented: []string{"manual/source intake request", "source id/type/content/sender metadata", "normalized intake records"}, Next: []string{"connector webhooks and voice/screenshot intake"}},
@@ -1633,7 +1831,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "calendar-availability", Name: "Calendar and availability engine", Status: "partial", Implemented: []string{"scheduling classification", "deadline/check reminders"}, Next: []string{"calendar adapter and travel-time checks"}},
 		{ID: "negotiation-support", Name: "Negotiation support engine", Status: "planned", Implemented: []string{"proposal record foundation"}, Next: []string{"preferred/fallback/boundary proposal generator"}},
 		{ID: "admin-monitoring", Name: "Admin monitoring dashboard engine", Status: "implemented", Implemented: []string{"dashboard endpoint", "approvals, blocked, ready, high-risk, due open loops, missing next action"}, Next: []string{"operator notification channel"}},
-		{ID: "error-recovery", Name: "Error recovery engine", Status: "implemented", Implemented: []string{"retry backoff", "blocked after retry limit", "audit of failures"}, Next: []string{"connector-specific recovery playbooks"}},
+		{ID: "error-recovery", Name: "Error recovery engine", Status: "implemented", Implemented: []string{"retry backoff", "blocked after retry limit", "audit of failures", "expired lease recovery", "idempotent follow-up replay"}, Next: []string{"connector-specific recovery playbooks"}},
 		{ID: "learning-corrections", Name: "Learning-from-corrections engine", Status: "partial", Implemented: []string{"approval/rejection notes", "checklist update audit", "rule for corrections feeding memory"}, Next: []string{"reviewable memory lessons from corrections"}},
 		{ID: "rules-library", Name: "Rules library engine", Status: "implemented", Implemented: []string{"persistent editable rule table", "default 14-rule safety/workflow library"}, Next: []string{"dashboard rule editor"}},
 		{ID: "multi-agent-workers", Name: "Multi-agent worker engine", Status: "partial", Implemented: []string{"single orchestrated task runner adapter", "capability separation by module"}, Next: []string{"specialized worker registry"}},

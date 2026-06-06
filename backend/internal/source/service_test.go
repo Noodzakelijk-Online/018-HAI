@@ -669,6 +669,10 @@ func (s *fakeSourceWorkflowService) UpdateChecklistItem(id uuid.UUID, itemID uui
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) RecoverStaleClaims(request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) RunDue(request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
 	return nil, nil
 }

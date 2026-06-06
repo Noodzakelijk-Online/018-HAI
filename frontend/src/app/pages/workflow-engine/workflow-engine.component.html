@@ -16,6 +16,10 @@
             <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
             Run Follow-ups
           </button>
+          <button nz-button nzType="default" (click)="recoverStaleClaims()">
+            <i nz-icon nzType="sync" nzTheme="outline"></i>
+            Recover Stale
+          </button>
           <button nz-button nzType="default" (click)="goHome()">
             <i nz-icon nzType="appstore" nzTheme="outline"></i>
             Automations
@@ -83,6 +87,8 @@
             <p><strong>Blocked:</strong> {{ monitor.counts['blocked'] || 0 }}</p>
             <p><strong>High risk:</strong> {{ monitor.counts['highRisk'] || 0 }}</p>
             <p><strong>Due open loops:</strong> {{ monitor.counts['dueOpenLoops'] || 0 }}</p>
+            <p><strong>Expired workflow claims:</strong> {{ monitor.counts['expiredWorkflowClaims'] || 0 }}</p>
+            <p><strong>Expired follow-up claims:</strong> {{ monitor.counts['expiredOpenLoopClaims'] || 0 }}</p>
           </div>
           <div>
             <nz-table [nzData]="monitor.dueOpenLoops" nzSize="small" [nzPageSize]="4">
@@ -195,6 +201,7 @@
           <p><strong>Retry:</strong> {{ record.item.retryCount }}/{{ record.item.maxRetries }}</p>
           <p><strong>Verification:</strong> {{ record.item.verificationStatus || '-' }}</p>
           <p><strong>Next run:</strong> {{ (record.item.nextRunAt | date: 'short') || '-' }}</p>
+          <p><strong>Worker lease:</strong> {{ (record.item.workerLeaseUntil | date: 'short') || '-' }}</p>
           <p><strong>Last task plan:</strong> {{ record.item.lastTaskPlanId || '-' }}</p>
           <p><strong>Worker error:</strong> {{ record.item.lastWorkerError || '-' }}</p>
           <p><strong>Source:</strong> {{ record.item.sourceLabel || record.item.sourceUri || '-' }}</p>

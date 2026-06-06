@@ -3,6 +3,7 @@ import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import {
+  IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
   IWorkflowItem,
   IWorkflowOpenLoopRunSummary,
@@ -26,6 +27,7 @@ export class WorkflowEngineComponent implements OnInit {
   selected?: IWorkflowRecord;
   runSummary?: IWorkflowRunSummary;
   openLoopRunSummary?: IWorkflowOpenLoopRunSummary;
+  recoverySummary?: IWorkflowClaimRecoverySummary;
   includeArchived = false;
   loading = false;
   saving = false;
@@ -155,6 +157,20 @@ export class WorkflowEngineComponent implements OnInit {
         this.refresh();
       },
       error: () => this.notification.error('Error', 'Workflow worker run failed.'),
+    });
+  }
+
+  recoverStaleClaims(): void {
+    this.workflowService.recoverStaleClaims({ limit: 50 }).subscribe({
+      next: (summary) => {
+        this.recoverySummary = summary;
+        this.notification.success(
+          'Claim recovery complete',
+          `${summary.workflowsBlocked} workflows blocked for review, ${summary.openLoopsReopened} follow-ups reopened.`
+        );
+        this.refresh();
+      },
+      error: () => this.notification.error('Error', 'Stale claim recovery failed.'),
     });
   }
 

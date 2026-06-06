@@ -311,9 +311,11 @@ The workflow layer now stores operational history in separate tables:
 - `WorkflowQualityGate` stores acceptance checks for developer, legal, publishing, and verification workflows.
 - `WorkflowRule` stores the default editable safety/workflow rulebook.
 
-Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. Each worker must first atomically claim an item by moving it from `ready` to `in_progress`; concurrent scheduler or API workers therefore cannot execute the same item from the same queue state. The worker completes the item only when the task engine returns a validated result and mandatory quality gates pass. Failed worker attempts, including recovered task-runner panics, increment durable retry counters, schedule a later retry, and block the workflow after the retry limit. High-risk items remain in `needs_approval` until approved from `/workflow/approvals`, a resolved proposal, or the dashboard approval queue.
+Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. Each worker must first atomically claim an item by moving it from `ready` to `in_progress` with a unique claim ID and renewable lease; concurrent scheduler or API workers therefore cannot execute the same item from the same queue state or persist results owned by another worker. The worker completes the item only when the task engine returns a validated result and mandatory quality gates pass. Failed worker attempts, including recovered task-runner panics, increment durable retry counters, schedule a later retry, and block the workflow after the retry limit. High-risk items remain in `needs_approval` until approved from `/workflow/approvals`, a resolved proposal, or the dashboard approval queue.
 
-Due open loops can be processed with `POST /workflow/open-loops/run-due`. Due follow-ups are also atomically claimed before creating checklist or proposal records, preventing duplicate follow-up artifacts when multiple workers poll together. Follow-up checklist and proposal creation is idempotent, so a partial failure can release the claim and retry without duplicating records. High-risk or Robert-owned follow-ups are moved into approval review; low-risk unblocked follow-ups can be made worker-ready. Already blocked workflows stay blocked and keep their blocker while receiving a follow-up proposal. Proposal decisions can be resolved through `POST /workflow/:id/proposals/:proposalId/resolve`, which records the decision and can approve, reject/block, or send the workflow back for changes. Completed or archived workflows reject further proposal changes.
+Due open loops can be processed with `POST /workflow/open-loops/run-due`. Due follow-ups are also atomically leased before creating checklist or proposal records, preventing duplicate follow-up artifacts when multiple workers poll together. Follow-up checklist and proposal creation is idempotent, so a partial failure can release or recover the lease and retry without duplicating records. High-risk or Robert-owned follow-ups are moved into approval review; low-risk unblocked follow-ups can be made worker-ready. Already blocked workflows stay blocked and keep their blocker while receiving a follow-up proposal. Proposal decisions can be resolved through `POST /workflow/:id/proposals/:proposalId/resolve`, which records the decision and can approve, reject/block, or send the workflow back for changes. Completed or archived workflows reject further proposal changes.
+
+The scheduler runs stale-claim recovery before each execution pass. Expired workflow execution leases are moved to `blocked` review because external side effects may already have occurred and blind retrying could duplicate them. Expired open-loop leases are safely reopened because that path is idempotent. Pre-lease `in_progress`/`processing` rows are migrated through the same policy after one lease window. Operators can also run this explicitly with `POST /workflow/recover-stale` or the **Recover Stale** dashboard action.
 
 Workflow states:
 
@@ -329,7 +331,7 @@ waiting_external_input
 blocked
 ```
 
-The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, due open loops, approval queue with approve/reject buttons, worker and follow-up controls, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposal decision buttons, quality gate status, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
+The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, expired claim counts, due open loops, approval queue with approve/reject buttons, worker, follow-up, and stale-claim recovery controls, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposal decision buttons, quality gate status, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
 
 ## LLM Routing Policy
 
@@ -463,7 +465,8 @@ Workflow autonomy:
 - `WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED`, default `true`, lets the scheduler trigger due follow-up proposals before running ready workflow items.
 - `WORKFLOW_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
 - `WORKFLOW_SCHEDULER_RUN_LIMIT`, default `5`, capped at `50`.
-- The scheduler uses the same workflow service as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, atomic claims prevent duplicate concurrent execution, task-runner panics enter normal retry handling, retry limits remain durable, and completion still requires task/verification success.
+- `WORKFLOW_CLAIM_LEASE_SECONDS`, default `900`, minimum `60`, capped at `86400`. Active task workers renew the lease every third of this duration.
+- The scheduler uses the same workflow service as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, owned leases prevent duplicate concurrent execution and stale result writes, task-runner panics enter normal retry handling, retry limits remain durable, and completion still requires task/verification success.
 
 The nginx config-manager no longer receives `/var/run/docker.sock` in `docker-compose.local.yml` by default. It can write generated route config files, but nginx reload via Docker API is skipped unless `NGINX_RELOAD_ENABLED=true` and the operator deliberately restores a reviewed Docker socket mount.
 

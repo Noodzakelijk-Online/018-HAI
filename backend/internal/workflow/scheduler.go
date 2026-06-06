@@ -11,6 +11,7 @@ import (
 )
 
 type ScheduledWorkflowService interface {
+	RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
 	RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error)
 }
@@ -61,6 +62,12 @@ func (s *Scheduler) runOnce() {
 	defer s.running.Store(false)
 
 	request := RunDueRequest{Limit: s.limit}
+	recovery, err := s.service.RecoverStaleClaims(request)
+	if err != nil {
+		log.Printf("workflow claim recovery failed: %v", err)
+	} else if recovery != nil && (recovery.WorkflowsBlocked > 0 || recovery.OpenLoopsReopened > 0 || recovery.Skipped > 0) {
+		log.Printf("workflow claim recovery checked=%d workflows_blocked=%d open_loops_reopened=%d skipped=%d", recovery.Checked, recovery.WorkflowsBlocked, recovery.OpenLoopsReopened, recovery.Skipped)
+	}
 	if schedulerEnabled("WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED", true) {
 		openLoops, err := s.service.RunDueOpenLoops(request)
 		if err != nil {
@@ -113,4 +120,19 @@ func schedulerLimit() int {
 		return 50
 	}
 	return parsed
+}
+
+func claimLeaseDuration() time.Duration {
+	value := strings.TrimSpace(os.Getenv("WORKFLOW_CLAIM_LEASE_SECONDS"))
+	if value == "" {
+		return 15 * time.Minute
+	}
+	var seconds int64
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 60 {
+		return 15 * time.Minute
+	}
+	if seconds > int64((24 * time.Hour).Seconds()) {
+		return 24 * time.Hour
+	}
+	return time.Duration(seconds) * time.Second
 }

@@ -5,6 +5,7 @@ import { IWorkflowService } from '../workflow.service.interface';
 import {
   IWorkflowApprovalResolutionRequest,
   IWorkflowChecklistUpdateRequest,
+  IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
   IWorkflowIntakeRequest,
   IWorkflowItem,
@@ -73,6 +74,10 @@ export class WorkflowService implements IWorkflowService {
     request: IWorkflowChecklistUpdateRequest
   ): Observable<IWorkflowRecord> {
     return this.http.patch<IWorkflowRecord>(`${this.apiUrl}/${id}/checklist/${itemId}`, request);
+  }
+
+  recoverStaleClaims(request: IWorkflowRunDueRequest): Observable<IWorkflowClaimRecoverySummary> {
+    return this.http.post<IWorkflowClaimRecoverySummary>(`${this.apiUrl}/recover-stale`, request);
   }
 
   runDue(request: IWorkflowRunDueRequest): Observable<IWorkflowRunSummary> {
