@@ -655,7 +655,32 @@ func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 		return summary, nil
 	}
 	for _, item := range items {
-		result := s.runWorkflowItem(item)
+		claimed, acquired, claimErr := s.repo.ClaimRunnableItem(item.ID, time.Now().UTC())
+		if claimErr != nil {
+			summary.Blocked++
+			summary.Results = append(summary.Results, WorkflowRunResult{
+				WorkflowID: item.ID,
+				Status:     "blocked",
+				State:      item.CurrentState,
+				Attempts:   item.RetryCount,
+				Message:    "failed to claim runnable workflow: " + claimErr.Error(),
+			})
+			continue
+		}
+		if !acquired || claimed == nil {
+			summary.Skipped++
+			summary.Results = append(summary.Results, WorkflowRunResult{
+				WorkflowID: item.ID,
+				Status:     "skipped",
+				State:      item.CurrentState,
+				Attempts:   item.RetryCount,
+				Message:    "workflow was already claimed or is no longer runnable",
+			})
+			continue
+		}
+		s.recordTransition(claimed.ID, StateReady, StateInProgress, "worker_claim", "workflow-worker", claimed.ApprovalStatus == "approved", "worker atomically claimed runnable workflow")
+		s.audit(claimed.ID, "workflow.worker_started", StateReady, StateInProgress, "worker atomically claimed runnable workflow", "worker_claim", "single-consumer execution claim", claimed.SourceURI, "workflow-worker")
+		result := s.runWorkflowItem(*claimed)
 		summary.Results = append(summary.Results, result)
 		switch result.Status {
 		case "completed":
@@ -695,7 +720,34 @@ func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, e
 		return summary, nil
 	}
 	for _, loop := range loops {
-		result := s.runOpenLoop(loop)
+		claimed, acquired, claimErr := s.repo.ClaimDueOpenLoop(loop.ID, time.Now().UTC())
+		if claimErr != nil {
+			summary.Skipped++
+			summary.Results = append(summary.Results, OpenLoopRunResult{
+				WorkflowID: loop.WorkflowID,
+				OpenLoopID: loop.ID,
+				Status:     "skipped",
+				Message:    "failed to claim due open loop: " + claimErr.Error(),
+			})
+			continue
+		}
+		if !acquired || claimed == nil {
+			summary.Skipped++
+			summary.Results = append(summary.Results, OpenLoopRunResult{
+				WorkflowID: loop.WorkflowID,
+				OpenLoopID: loop.ID,
+				Status:     "skipped",
+				Message:    "open loop was already claimed or is no longer due",
+			})
+			continue
+		}
+		result := s.runOpenLoop(*claimed)
+		if result.Status == "skipped" {
+			claimed.Status = "open"
+			if _, releaseErr := s.repo.UpdateOpenLoop(claimed); releaseErr != nil {
+				result.Message = firstNonEmpty(result.Message, "follow-up processing failed") + "; failed to release open-loop claim: " + releaseErr.Error()
+			}
+		}
 		summary.Results = append(summary.Results, result)
 		switch result.Status {
 		case "triggered":
@@ -728,23 +780,36 @@ func (s *service) runOpenLoop(loop models.WorkflowOpenLoop) OpenLoopRunResult {
 	}
 
 	checklistLabel := "Resolve due open loop: " + compact(loop.WaitingFor, 160)
-	if _, err := s.repo.CreateChecklistItem(&models.WorkflowChecklistItem{
-		WorkflowID:       item.ID,
-		Label:            checklistLabel,
-		Status:           "open",
-		Position:         950,
-		RequiresApproval: item.RequiresApproval || item.RiskLevel == "high" || loop.ResponsibleParty == "Robert",
-		DueAt:            loop.FollowUpAt,
-	}); err != nil {
-		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to create follow-up checklist step: " + err.Error()}
+	checklist, err := s.repo.FindChecklist(item.ID)
+	if err != nil {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to inspect existing follow-up checklist steps: " + err.Error()}
 	}
-	if _, err := s.repo.CreateProposal(&models.WorkflowProposal{
-		WorkflowID:        item.ID,
-		RecommendedAction: "Follow-up due: " + firstNonEmpty(loop.NextAction, loop.WaitingFor),
-		Options:           strings.Join(followUpOptions(item, loop), "\n"),
-		Status:            "open",
-	}); err != nil {
-		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to create follow-up proposal: " + err.Error()}
+	if !hasChecklistLabel(checklist, checklistLabel) {
+		if _, err := s.repo.CreateChecklistItem(&models.WorkflowChecklistItem{
+			WorkflowID:       item.ID,
+			Label:            checklistLabel,
+			Status:           "open",
+			Position:         950,
+			RequiresApproval: item.RequiresApproval || item.RiskLevel == "high" || loop.ResponsibleParty == "Robert",
+			DueAt:            loop.FollowUpAt,
+		}); err != nil {
+			return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to create follow-up checklist step: " + err.Error()}
+		}
+	}
+	recommendedAction := "Follow-up due: " + firstNonEmpty(loop.NextAction, loop.WaitingFor)
+	proposals, err := s.repo.FindProposals(item.ID)
+	if err != nil {
+		return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to inspect existing follow-up proposals: " + err.Error()}
+	}
+	if !hasProposalAction(proposals, recommendedAction) {
+		if _, err := s.repo.CreateProposal(&models.WorkflowProposal{
+			WorkflowID:        item.ID,
+			RecommendedAction: recommendedAction,
+			Options:           strings.Join(followUpOptions(item, loop), "\n"),
+			Status:            "open",
+		}); err != nil {
+			return OpenLoopRunResult{WorkflowID: item.ID, OpenLoopID: loop.ID, Status: "skipped", State: item.CurrentState, Message: "failed to create follow-up proposal: " + err.Error()}
+		}
 	}
 
 	from := item.CurrentState
@@ -785,46 +850,36 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 	}
 	if item.RequiresApproval && item.ApprovalStatus != "approved" {
 		message := "approval is required before worker execution"
+		from := item.CurrentState
 		item.CurrentState = StateNeedsApproval
 		item.BlockedReason = ""
 		item.NextAction = "review and approve workflow before execution"
 		item.ApprovalStatus = "pending"
 		item.LastWorkerError = message
 		if updated, err := s.repo.UpdateItem(&item); err == nil && updated != nil {
-			s.recordTransition(updated.ID, StateReady, StateNeedsApproval, "worker_guard", "workflow-worker", false, message)
-			s.decide(updated.ID, "worker_execution", "blocked", message, "approval guard", false, "workflow-worker")
-			s.audit(updated.ID, "workflow.worker_blocked", StateReady, StateNeedsApproval, message, "worker_guard", "approval guard", updated.SourceURI, "workflow-worker")
+			s.recordTransition(updated.ID, from, StateNeedsApproval, "worker_guard", "workflow-worker", false, message)
+			s.decide(updated.ID, "worker_execution", "blocked", message, "approval guard after claim", false, "workflow-worker")
+			s.audit(updated.ID, "workflow.worker_blocked", from, StateNeedsApproval, message, "worker_guard", "approval guard after claim", updated.SourceURI, "workflow-worker")
 		}
 		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateNeedsApproval, Attempts: item.RetryCount, Message: message}
 	}
 	if s.taskRunner == nil {
 		message := "task runner is not configured"
+		from := item.CurrentState
 		item.CurrentState = StateBlocked
 		item.BlockedReason = message
 		item.NextAction = "configure task runner adapter before worker execution"
 		item.LastWorkerError = message
 		updated, _ := s.repo.UpdateItem(&item)
 		if updated != nil {
-			s.recordTransition(updated.ID, StateReady, StateBlocked, "worker", "workflow-worker", false, message)
+			s.recordTransition(updated.ID, from, StateBlocked, "worker", "workflow-worker", false, message)
 			s.decide(updated.ID, "worker_execution", "blocked", message, "task runner dependency check", false, "workflow-worker")
-			s.audit(updated.ID, "workflow.worker", StateReady, StateBlocked, message, "worker", "task runner missing", updated.SourceURI, "workflow-worker")
+			s.audit(updated.ID, "workflow.worker", from, StateBlocked, message, "worker", "task runner missing", updated.SourceURI, "workflow-worker")
 		}
 		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, Message: message}
 	}
 
-	now := time.Now().UTC()
-	from := item.CurrentState
-	item.CurrentState = StateInProgress
-	item.LastRunAt = &now
-	item.NextAction = "task engine is executing approved workflow item"
-	item.LastWorkerError = ""
-	if _, err := s.repo.UpdateItem(&item); err != nil {
-		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: from, Attempts: item.RetryCount, Message: err.Error()}
-	}
-	s.recordTransition(item.ID, from, StateInProgress, "worker", "workflow-worker", item.ApprovalStatus == "approved", "worker claimed runnable workflow")
-	s.audit(item.ID, "workflow.worker_started", from, StateInProgress, "worker claimed runnable workflow", "worker", "durable worker execution", item.SourceURI, "workflow-worker")
-
-	runResult, err := s.taskRunner.RunWorkflowTask(TaskRunRequest{
+	runResult, err := s.runTaskSafely(TaskRunRequest{
 		WorkflowID:    item.ID.String(),
 		Request:       item.Description,
 		ProjectKey:    item.ProjectKey,
@@ -864,6 +919,16 @@ func (s *service) runWorkflowItem(item models.WorkflowItem) WorkflowRunResult {
 		reason = firstNonEmpty(strings.Join(gateResult.Failures, "; "), reason)
 	}
 	return s.handleRunFailure(&item, reason, runResult.VerificationStatus)
+}
+
+func (s *service) runTaskSafely(request TaskRunRequest) (result *TaskRunResult, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = nil
+			err = fmt.Errorf("task runner panic recovered: %v", recovered)
+		}
+	}()
+	return s.taskRunner.RunWorkflowTask(request)
 }
 
 func (s *service) handleRunFailure(item *models.WorkflowItem, reason, verificationStatus string) WorkflowRunResult {
@@ -1452,6 +1517,24 @@ func followUpOptions(item *models.WorkflowItem, loop models.WorkflowOpenLoop) []
 		return []string{"Approve follow-up draft", "Request safer wording", "Add evidence/context first", "Keep blocked"}
 	}
 	return []string{"Run follow-up automatically", "Draft only", "Wait longer", "Close open loop"}
+}
+
+func hasChecklistLabel(items []models.WorkflowChecklistItem, label string) bool {
+	for _, item := range items {
+		if item.Label == label {
+			return true
+		}
+	}
+	return false
+}
+
+func hasProposalAction(proposals []models.WorkflowProposal, action string) bool {
+	for _, proposal := range proposals {
+		if proposal.RecommendedAction == action {
+			return true
+		}
+	}
+	return false
 }
 
 func hasEvidenceNeedingReview(evidence []models.WorkflowEvidenceClaim) bool {

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -382,6 +383,87 @@ func TestRunDueOpenLoopsKeepsBlockedWorkflowBlocked(t *testing.T) {
 	}
 }
 
+func TestRunDueOpenLoopsSkipsOpenLoopClaimedByAnotherWorker(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{
+		Input: "Waiting for a client response; follow up tomorrow.",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if len(record.OpenLoops) == 0 {
+		t.Fatalf("expected an open loop")
+	}
+	loops := repo.openLoops[record.Item.ID]
+	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
+	repo.openLoops[record.Item.ID] = loops
+	repo.rejectOpenLoopClaims = true
+
+	summary, err := service.RunDueOpenLoops(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDueOpenLoops: %v", err)
+	}
+	if summary.Skipped != 1 || summary.Triggered != 0 {
+		t.Fatalf("summary = %#v, want one skipped and no triggered follow-up", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(updated.Proposals) != len(record.Proposals) || len(updated.Checklist) != len(record.Checklist) {
+		t.Fatalf("claim rejection created duplicate follow-up artifacts")
+	}
+}
+
+func TestRunDueOpenLoopsReusesExistingFollowUpArtifacts(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Email from lawyer about Vivare hearing tomorrow. Draft reply only."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	loops := repo.openLoops[record.Item.ID]
+	if len(loops) == 0 {
+		t.Fatalf("expected an open loop")
+	}
+	loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
+	repo.openLoops[record.Item.ID] = loops
+	checklistLabel := "Resolve due open loop: " + compact(loops[0].WaitingFor, 160)
+	recommendedAction := "Follow-up due: " + firstNonEmpty(loops[0].NextAction, loops[0].WaitingFor)
+	if _, err := repo.CreateChecklistItem(&models.WorkflowChecklistItem{
+		WorkflowID: record.Item.ID,
+		Label:      checklistLabel,
+		Status:     "open",
+	}); err != nil {
+		t.Fatalf("CreateChecklistItem: %v", err)
+	}
+	if _, err := repo.CreateProposal(&models.WorkflowProposal{
+		WorkflowID:        record.Item.ID,
+		RecommendedAction: recommendedAction,
+		Status:            "open",
+	}); err != nil {
+		t.Fatalf("CreateProposal: %v", err)
+	}
+	checklistCount := len(repo.checklist[record.Item.ID])
+	proposalCount := len(repo.proposals[record.Item.ID])
+
+	summary, err := service.RunDueOpenLoops(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDueOpenLoops: %v", err)
+	}
+	if summary.Triggered != 1 {
+		t.Fatalf("summary = %#v, want one triggered follow-up", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(updated.Checklist) != checklistCount || len(updated.Proposals) != proposalCount {
+		t.Fatalf("existing follow-up artifacts were duplicated")
+	}
+}
+
 func TestChecklistUpdateAuditsProgress(t *testing.T) {
 	service := NewService(newFakeWorkflowRepo())
 	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for Docker build issue"})
@@ -439,6 +521,67 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 	if !hasGateStatus(updated.QualityGates, "verification before completion", "passed") {
 		t.Fatalf("expected verification quality gate to pass")
+	}
+}
+
+func TestRunDueSkipsWorkflowClaimedByAnotherWorker(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	repo.rejectWorkflowClaims = true
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Skipped != 1 || summary.Completed != 0 {
+		t.Fatalf("summary = %#v, want one skipped and no completed workflow", summary)
+	}
+	if len(runner.requests) != 0 {
+		t.Fatalf("task runner executed an unclaimed workflow")
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready after claim rejection", updated.Item.CurrentState)
+	}
+}
+
+func TestRunDueRecoversTaskRunnerPanicIntoRetry(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{panicValue: "provider adapter crashed"}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Retried != 1 {
+		t.Fatalf("summary = %#v, want one scheduled retry", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready for retry", updated.Item.CurrentState)
+	}
+	if !strings.Contains(updated.Item.LastWorkerError, "panic recovered") {
+		t.Fatalf("last worker error = %q, want recovered panic", updated.Item.LastWorkerError)
 	}
 }
 
@@ -623,19 +766,21 @@ func timePtr(value time.Time) *time.Time {
 }
 
 type fakeWorkflowRepo struct {
-	items       map[uuid.UUID]*models.WorkflowItem
-	checklist   map[uuid.UUID][]models.WorkflowChecklistItem
-	intake      map[uuid.UUID][]models.WorkflowIntakeRecord
-	matches     map[uuid.UUID][]models.WorkflowProjectMatch
-	evidence    map[uuid.UUID][]models.WorkflowEvidenceClaim
-	openLoops   map[uuid.UUID][]models.WorkflowOpenLoop
-	proposals   map[uuid.UUID][]models.WorkflowProposal
-	qualityGate map[uuid.UUID][]models.WorkflowQualityGate
-	rules       map[string]models.WorkflowRule
-	transitions map[uuid.UUID][]models.WorkflowTransition
-	sourceLinks map[uuid.UUID][]models.WorkflowSourceLink
-	decisions   map[uuid.UUID][]models.WorkflowDecision
-	events      map[uuid.UUID][]models.WorkflowEvent
+	items                map[uuid.UUID]*models.WorkflowItem
+	checklist            map[uuid.UUID][]models.WorkflowChecklistItem
+	intake               map[uuid.UUID][]models.WorkflowIntakeRecord
+	matches              map[uuid.UUID][]models.WorkflowProjectMatch
+	evidence             map[uuid.UUID][]models.WorkflowEvidenceClaim
+	openLoops            map[uuid.UUID][]models.WorkflowOpenLoop
+	proposals            map[uuid.UUID][]models.WorkflowProposal
+	qualityGate          map[uuid.UUID][]models.WorkflowQualityGate
+	rules                map[string]models.WorkflowRule
+	transitions          map[uuid.UUID][]models.WorkflowTransition
+	sourceLinks          map[uuid.UUID][]models.WorkflowSourceLink
+	decisions            map[uuid.UUID][]models.WorkflowDecision
+	events               map[uuid.UUID][]models.WorkflowEvent
+	rejectWorkflowClaims bool
+	rejectOpenLoopClaims bool
 }
 
 func newFakeWorkflowRepo() *fakeWorkflowRepo {
@@ -730,6 +875,29 @@ func (r *fakeWorkflowRepo) FindRunnableItems(now time.Time, limit int) ([]models
 		return result[:limit], nil
 	}
 	return result, nil
+}
+
+func (r *fakeWorkflowRepo) ClaimRunnableItem(id uuid.UUID, now time.Time) (*models.WorkflowItem, bool, error) {
+	if r.rejectWorkflowClaims {
+		return nil, false, nil
+	}
+	item, ok := r.items[id]
+	if !ok || item.Archived || item.CurrentState != StateReady || item.RetryCount >= item.MaxRetries {
+		return nil, false, nil
+	}
+	if item.RequiresApproval && item.ApprovalStatus != "approved" {
+		return nil, false, nil
+	}
+	if item.NextRunAt != nil && item.NextRunAt.After(now) {
+		return nil, false, nil
+	}
+	item.CurrentState = StateInProgress
+	item.LastRunAt = timePtr(now)
+	item.NextAction = "task engine is executing claimed workflow item"
+	item.LastWorkerError = ""
+	item.UpdatedAt = now
+	copied := *item
+	return &copied, true, nil
 }
 
 func (r *fakeWorkflowRepo) CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error) {
@@ -840,6 +1008,28 @@ func (r *fakeWorkflowRepo) FindDashboardOpenLoops(now time.Time) ([]models.Workf
 		}
 	}
 	return result, nil
+}
+
+func (r *fakeWorkflowRepo) ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	if r.rejectOpenLoopClaims {
+		return nil, false, nil
+	}
+	for workflowID, loops := range r.openLoops {
+		for index := range loops {
+			if loops[index].ID != id || loops[index].Status != "open" {
+				continue
+			}
+			if loops[index].FollowUpAt != nil && loops[index].FollowUpAt.After(now) {
+				return nil, false, nil
+			}
+			loops[index].Status = "processing"
+			loops[index].UpdatedAt = now
+			r.openLoops[workflowID] = loops
+			copied := loops[index]
+			return &copied, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 func (r *fakeWorkflowRepo) CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error) {
@@ -981,12 +1171,16 @@ func (r *fakeWorkflowRepo) FindEvents(workflowID uuid.UUID) ([]models.WorkflowEv
 }
 
 type fakeTaskRunner struct {
-	result   *TaskRunResult
-	err      error
-	requests []TaskRunRequest
+	result     *TaskRunResult
+	err        error
+	requests   []TaskRunRequest
+	panicValue interface{}
 }
 
 func (r *fakeTaskRunner) RunWorkflowTask(request TaskRunRequest) (*TaskRunResult, error) {
 	r.requests = append(r.requests, request)
+	if r.panicValue != nil {
+		panic(r.panicValue)
+	}
 	return r.result, r.err
 }

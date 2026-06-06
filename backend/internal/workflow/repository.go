@@ -18,6 +18,7 @@ type Repository interface {
 	FindItems(includeArchived bool) ([]models.WorkflowItem, error)
 	FindApprovalItems() ([]models.WorkflowItem, error)
 	FindRunnableItems(now time.Time, limit int) ([]models.WorkflowItem, error)
+	ClaimRunnableItem(id uuid.UUID, now time.Time) (*models.WorkflowItem, bool, error)
 	CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
 	UpdateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
 	FindChecklist(workflowID uuid.UUID) ([]models.WorkflowChecklistItem, error)
@@ -31,6 +32,7 @@ type Repository interface {
 	UpdateOpenLoop(loop *models.WorkflowOpenLoop) (*models.WorkflowOpenLoop, error)
 	FindOpenLoops(workflowID uuid.UUID) ([]models.WorkflowOpenLoop, error)
 	FindDashboardOpenLoops(now time.Time) ([]models.WorkflowOpenLoop, error)
+	ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*models.WorkflowOpenLoop, bool, error)
 	CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
 	UpdateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
 	FindProposals(workflowID uuid.UUID) ([]models.WorkflowProposal, error)
@@ -133,6 +135,32 @@ func (r *GormRepository) FindRunnableItems(now time.Time, limit int) ([]models.W
 	return items, err
 }
 
+func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, now time.Time) (*models.WorkflowItem, bool, error) {
+	result := r.DB.
+		Model(&models.WorkflowItem{}).
+		Where("id = ? AND archived = ? AND current_state = ? AND retry_count < CASE WHEN max_retries <= 0 THEN 2 ELSE max_retries END", id, false, StateReady).
+		Where("requires_approval = ? OR approval_status = ?", false, "approved").
+		Where("next_run_at IS NULL OR next_run_at <= ?", now).
+		Updates(map[string]interface{}{
+			"current_state":     StateInProgress,
+			"last_run_at":       now,
+			"next_action":       "task engine is executing claimed workflow item",
+			"last_worker_error": "",
+			"updated_at":        now,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	item, err := r.FindItem(id)
+	if err != nil {
+		return nil, false, err
+	}
+	return item, true, nil
+}
+
 func (r *GormRepository) CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error) {
 	if err := r.DB.Create(item).Error; err != nil {
 		return nil, err
@@ -221,6 +249,28 @@ func (r *GormRepository) FindDashboardOpenLoops(now time.Time) ([]models.Workflo
 		Limit(50).
 		Find(&loops).Error
 	return loops, err
+}
+
+func (r *GormRepository) ClaimDueOpenLoop(id uuid.UUID, now time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	result := r.DB.
+		Model(&models.WorkflowOpenLoop{}).
+		Where("id = ? AND status = ?", id, "open").
+		Where("follow_up_at IS NULL OR follow_up_at <= ?", now).
+		Updates(map[string]interface{}{
+			"status":     "processing",
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	var loop models.WorkflowOpenLoop
+	if err := r.DB.First(&loop, "id = ?", id).Error; err != nil {
+		return nil, false, err
+	}
+	return &loop, true, nil
 }
 
 func (r *GormRepository) CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error) {
