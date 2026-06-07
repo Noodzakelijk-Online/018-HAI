@@ -32,17 +32,18 @@ const (
 )
 
 type IntakeRequest struct {
-	Input       string `json:"input"`
-	ProjectKey  string `json:"projectKey,omitempty"`
-	SourceType  string `json:"sourceType,omitempty"`
-	SourceID    string `json:"sourceId,omitempty"`
-	SourceURI   string `json:"sourceUri,omitempty"`
-	SourceLabel string `json:"sourceLabel,omitempty"`
-	ContentType string `json:"contentType,omitempty"`
-	Sender      string `json:"sender,omitempty"`
-	ReceivedAt  string `json:"receivedAt,omitempty"`
-	Trigger     string `json:"trigger,omitempty"`
-	Actor       string `json:"actor,omitempty"`
+	Input        string `json:"input"`
+	ProjectKey   string `json:"projectKey,omitempty"`
+	AutomationID string `json:"automationId,omitempty"`
+	SourceType   string `json:"sourceType,omitempty"`
+	SourceID     string `json:"sourceId,omitempty"`
+	SourceURI    string `json:"sourceUri,omitempty"`
+	SourceLabel  string `json:"sourceLabel,omitempty"`
+	ContentType  string `json:"contentType,omitempty"`
+	Sender       string `json:"sender,omitempty"`
+	ReceivedAt   string `json:"receivedAt,omitempty"`
+	Trigger      string `json:"trigger,omitempty"`
+	Actor        string `json:"actor,omitempty"`
 }
 
 type TransitionRequest struct {
@@ -86,18 +87,20 @@ type TaskRunRequest struct {
 	WorkflowID    string `json:"workflowId"`
 	Request       string `json:"request"`
 	ProjectKey    string `json:"projectKey,omitempty"`
+	AutomationID  string `json:"automationId,omitempty"`
 	HumanApproved bool   `json:"humanApproved"`
 	ApprovalNote  string `json:"approvalNote,omitempty"`
 }
 
 type TaskRunResult struct {
-	PlanID             string `json:"planId,omitempty"`
-	CompletionStatus   string `json:"completionStatus"`
-	VerificationStatus string `json:"verificationStatus"`
-	Output             string `json:"output,omitempty"`
-	FailureReason      string `json:"failureReason,omitempty"`
-	Passed             bool   `json:"passed"`
-	ReviewRequired     bool   `json:"reviewRequired"`
+	PlanID                 string `json:"planId,omitempty"`
+	CompletionStatus       string `json:"completionStatus"`
+	VerificationStatus     string `json:"verificationStatus"`
+	Output                 string `json:"output,omitempty"`
+	FailureReason          string `json:"failureReason,omitempty"`
+	Passed                 bool   `json:"passed"`
+	ReviewRequired         bool   `json:"reviewRequired"`
+	ExternalActionExecuted bool   `json:"externalActionExecuted"`
 }
 
 type TaskRunner interface {
@@ -252,6 +255,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		Title:            analysis.title,
 		Description:      input,
 		ProjectKey:       projectKey,
+		AutomationID:     strings.TrimSpace(request.AutomationID),
 		CurrentState:     analysis.initialState,
 		TaskType:         analysis.taskType,
 		RiskLevel:        analysis.riskLevel,
@@ -1160,6 +1164,7 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		WorkflowID:    item.ID.String(),
 		Request:       item.Description,
 		ProjectKey:    item.ProjectKey,
+		AutomationID:  item.AutomationID,
 		HumanApproved: !item.RequiresApproval || item.ApprovalStatus == "approved",
 		ApprovalNote:  item.ApprovalReason,
 	})
@@ -1171,6 +1176,10 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	}
 	item.LastTaskPlanID = runResult.PlanID
 	item.VerificationStatus = runResult.VerificationStatus
+	if runResult.ReviewRequired {
+		reason := firstNonEmpty(runResult.FailureReason, "task engine requires human review")
+		return s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
+	}
 	gateResult := s.evaluateQualityGates(item, runResult)
 	if runResult.Passed && !runResult.ReviewRequired && gateResult.Passed {
 		completed := time.Now().UTC()
@@ -1194,11 +1203,12 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		return WorkflowRunResult{WorkflowID: item.ID, Status: "completed", State: StateCompleted, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "verified completion"}
 	}
 	reason := firstNonEmpty(runResult.FailureReason, "task engine validation did not pass")
-	if runResult.ReviewRequired {
-		reason = firstNonEmpty(reason, "task engine requested review")
-	}
 	if !gateResult.Passed {
 		reason = firstNonEmpty(strings.Join(gateResult.Failures, "; "), reason)
+	}
+	if runResult.ExternalActionExecuted {
+		reason = "controlled runtime action executed, but completion validation failed; review evidence before any retry: " + reason
+		return s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
 	}
 	return s.handleRunFailure(&item, claimID, reason, runResult.VerificationStatus)
 }
@@ -1294,6 +1304,28 @@ func (s *service) handleRunFailure(item *models.WorkflowItem, claimID, reason, v
 type qualityGateRunResult struct {
 	Passed   bool
 	Failures []string
+}
+
+func (s *service) handleRunReviewRequired(item *models.WorkflowItem, claimID, reason, verificationStatus string) WorkflowRunResult {
+	item.RetryCount++
+	item.CurrentState = StateBlocked
+	item.BlockedReason = firstNonEmpty(reason, "task engine requires human review")
+	item.NextAction = "review task execution evidence and resolve the blocker before retrying"
+	item.NextRunAt = nil
+	item.LastWorkerError = item.BlockedReason
+	item.VerificationStatus = verificationStatus
+	s.markQualityGate(item.ID, "verification before completion", "needs_review", item.BlockedReason)
+	updated, owned, err := s.repo.UpdateClaimedItem(item, claimID)
+	if err != nil {
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: item.RetryCount, VerificationStatus: verificationStatus, Message: err.Error()}
+	}
+	if !owned || updated == nil {
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, VerificationStatus: verificationStatus, Message: "worker claim was lost before review-required state could be persisted"}
+	}
+	s.recordTransition(item.ID, StateInProgress, StateBlocked, "worker_review_required", "workflow-worker", item.ApprovalStatus == "approved", item.BlockedReason)
+	s.decide(item.ID, "worker_execution", "needs_review", item.BlockedReason, "task engine explicitly required human review", false, "workflow-worker")
+	s.audit(item.ID, "workflow.worker_review_required", StateInProgress, StateBlocked, item.BlockedReason, "worker_review_required", "non-retryable review gate", item.SourceURI, "workflow-worker")
+	return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, VerificationStatus: verificationStatus, Message: item.BlockedReason}
 }
 
 func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *TaskRunResult) qualityGateRunResult {
@@ -1962,7 +1994,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "exceptions", Name: "Exception and escalation logic", Status: "implemented", Implemented: []string{"blocked state", "missing-info detection", "durable retry limits", "structured unknown-outcome recovery review"}, Next: []string{"operator notification channels"}},
 		{ID: "audit", Name: "Audit trail and traceability", Status: "implemented", Implemented: []string{"workflow events", "separate transitions", "decision records", "source links"}, Next: []string{"cross-module trace IDs"}},
 		{ID: "approval-gates", Name: "Human approval gates", Status: "implemented", Implemented: []string{"approval queue", "approve/reject buttons", "approval-only transitions", "approval checklist steps"}, Next: []string{"per-action approval scopes"}},
-		{ID: "worker-queue", Name: "Worker/queue system", Status: "implemented", Implemented: []string{"durable retry counters", "ready/in-progress/completed/blocked lifecycle", "task-engine execution adapter", "background scheduler", "owned renewable claims"}, Next: []string{"multi-node queue metrics"}},
+		{ID: "worker-queue", Name: "Worker/queue system", Status: "implemented", Implemented: []string{"durable retry counters", "ready/in-progress/completed/blocked lifecycle", "controlled automation execution adapter", "background scheduler", "owned renewable claims", "non-idempotent retry guard"}, Next: []string{"multi-node queue metrics"}},
 		{ID: "feedback", Name: "Feedback loop", Status: "partial", Implemented: []string{"checklist correction events", "resolution notes"}, Next: []string{"store rejected draft/tone preferences into memory"}},
 		{ID: "safety", Name: "Safety boundaries", Status: "implemented", Implemented: []string{"never-send/publish/delete/spend without approval rules", "approval reason surfaced"}, Next: []string{"policy editor"}},
 		{ID: "universal-intake", Name: "Universal intake engine", Status: "implemented", Implemented: []string{"manual/source intake request", "source id/type/content/sender metadata", "normalized intake records"}, Next: []string{"connector webhooks and voice/screenshot intake"}},
@@ -1996,7 +2028,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "rules-library", Name: "Rules library engine", Status: "implemented", Implemented: []string{"persistent editable rule table", "default 14-rule safety/workflow library"}, Next: []string{"dashboard rule editor"}},
 		{ID: "multi-agent-workers", Name: "Multi-agent worker engine", Status: "partial", Implemented: []string{"single orchestrated task runner adapter", "capability separation by module"}, Next: []string{"specialized worker registry"}},
 		{ID: "next-best-action", Name: "Next best action engine", Status: "implemented", Implemented: []string{"next action field on every intake", "dashboard flags missing next actions"}, Next: []string{"project-level next-best-action rollup"}},
-		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "manual-completion bypass prevention", "evidence-backed interruption resolution", "quality-gate validation", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
+		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "controlled runtime evidence gate", "manual-completion bypass prevention", "evidence-backed interruption resolution", "quality-gate validation", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
 	}
 }
 

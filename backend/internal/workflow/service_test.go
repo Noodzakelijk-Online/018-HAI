@@ -1043,6 +1043,46 @@ func TestRunDueBlocksTechnicalWorkflowWhenQualityEvidenceMissing(t *testing.T) {
 	}
 }
 
+func TestRunDueDoesNotRepeatCompletedExternalActionAfterQualityGateFailure(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:                "plan-runtime-quality-review",
+		CompletionStatus:      "validated",
+		VerificationStatus:    "verified",
+		Output:                "runtime completed",
+		Passed:                true,
+		ExternalActionExecuted: true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{
+		Input:        "Review GitHub developer claim and run tests",
+		AutomationID: uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	item := record.Item
+	item.MaxRetries = 3
+	if _, err := repo.UpdateItem(&item); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Blocked != 1 || summary.Retried != 0 {
+		t.Fatalf("summary = %#v, completed external action must not auto-retry", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !strings.Contains(updated.Item.BlockedReason, "review evidence before any retry") {
+		t.Fatalf("blocked reason = %q, want explicit duplicate-action protection", updated.Item.BlockedReason)
+	}
+}
+
 func TestDefaultRulesPreserveCreatedAtAcrossUpserts(t *testing.T) {
 	service := NewService(newFakeWorkflowRepo())
 	first := service.Overview()
@@ -1098,6 +1138,72 @@ func TestRunDueRetriesAndBlocksAfterLimit(t *testing.T) {
 	}
 	if updated.Item.RetryCount != 1 {
 		t.Fatalf("retry count = %d, want 1", updated.Item.RetryCount)
+	}
+}
+
+func TestRunDueBlocksReviewRequiredTaskWithoutAutomaticRetry(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		CompletionStatus:   "review_required",
+		VerificationStatus: "needs_review",
+		FailureReason:      "controlled runtime execution requires operator review",
+		Passed:             false,
+		ReviewRequired:     true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Run local script tests", AutomationID: uuid.NewString()})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	item := record.Item
+	item.MaxRetries = 3
+	if _, err := repo.UpdateItem(&item); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Blocked != 1 || summary.Retried != 0 {
+		t.Fatalf("summary = %#v, review-required task must block without retry", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked || updated.Item.NextRunAt != nil {
+		t.Fatalf("review-required workflow was scheduled again: %#v", updated.Item)
+	}
+	if updated.Item.RetryCount != 1 {
+		t.Fatalf("attempt count = %d, want 1", updated.Item.RetryCount)
+	}
+}
+
+func TestWorkflowWorkerPassesConfiguredAutomationID(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "automation-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "runtime completed",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	automationID := uuid.NewString()
+	_, err := service.Intake(IntakeRequest{
+		Input:        "Run local script and verify completion",
+		ProjectKey:   "018-HAI",
+		AutomationID: automationID,
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if _, err := service.RunDue(RunDueRequest{Limit: 5}); err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if len(runner.requests) != 1 || runner.requests[0].AutomationID != automationID {
+		t.Fatalf("task runner requests = %#v, automation ID was not propagated", runner.requests)
 	}
 }
 

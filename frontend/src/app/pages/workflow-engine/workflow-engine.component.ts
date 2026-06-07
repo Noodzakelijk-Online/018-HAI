@@ -38,6 +38,7 @@ export class WorkflowEngineComponent implements OnInit {
       [Validators.required],
     ],
     projectKey: ['Vivare dispute'],
+    automationId: [''],
     sourceType: ['email'],
     sourceId: ['sample-email-1'],
     sourceUri: ['local://sample/email'],

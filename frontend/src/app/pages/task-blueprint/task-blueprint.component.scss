@@ -37,6 +37,17 @@
   width: 100%;
 }
 
+.runtime-evidence {
+  border-top: 1px solid #f0f0f0;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.runtime-evidence h3 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;

@@ -3,6 +3,7 @@ export interface IWorkflowItem {
   title: string;
   description?: string;
   projectKey?: string;
+  automationId?: string;
   currentState: string;
   taskType: string;
   riskLevel: string;
@@ -203,6 +204,7 @@ export interface IWorkflowRecord {
 export interface IWorkflowIntakeRequest {
   input: string;
   projectKey?: string;
+  automationId?: string;
   sourceType?: string;
   sourceId?: string;
   sourceUri?: string;

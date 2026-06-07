@@ -11,6 +11,7 @@ type WorkflowItem struct {
 	Title              string     `gorm:"type:varchar(512);index;not null" json:"title"`
 	Description        string     `gorm:"type:text" json:"description,omitempty"`
 	ProjectKey         string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`
+	AutomationID       string     `gorm:"type:varchar(64);index" json:"automationId,omitempty"`
 	CurrentState       string     `gorm:"type:varchar(80);index;not null" json:"currentState"`
 	TaskType           string     `gorm:"type:varchar(80);index" json:"taskType"`
 	RiskLevel          string     `gorm:"type:varchar(80);index" json:"riskLevel"`

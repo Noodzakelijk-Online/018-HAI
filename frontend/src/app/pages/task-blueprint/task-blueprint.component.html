@@ -28,6 +28,12 @@
             </nz-form-control>
           </nz-form-item>
           <nz-form-item>
+            <nz-form-label>Automation ID</nz-form-label>
+            <nz-form-control>
+              <input nz-input formControlName="automationId" placeholder="Required only for controlled runtime execution" />
+            </nz-form-control>
+          </nz-form-item>
+          <nz-form-item>
             <nz-form-label>Success criteria</nz-form-label>
             <nz-form-control>
               <textarea nz-input rows="3" formControlName="successCriteria" placeholder="One criterion per line"></textarea>
@@ -203,6 +209,8 @@
             <p><strong>Evidence used:</strong> {{ result.evidenceCount }}</p>
             <p><strong>Unsupported claims:</strong> {{ result.unsupportedClaims }}</p>
             <p *ngIf="result.blockedReason"><strong>Blocked:</strong> {{ result.blockedReason }}</p>
+            <p *ngIf="result.toolExecution"><strong>Runtime status:</strong> {{ result.toolExecution.status }}</p>
+            <p *ngIf="result.toolExecution"><strong>Automation:</strong> {{ result.toolExecution.automationId }}</p>
           </div>
           <div>
             <p><strong>Started:</strong> {{ result.startedAt | date: 'short' }}</p>
@@ -212,6 +220,24 @@
           </div>
         </div>
         <p class="output-text">{{ result.output }}</p>
+
+        <section class="runtime-evidence" *ngIf="result.toolExecution as tool">
+          <h3>Controlled Runtime Evidence</h3>
+          <div class="plan-grid">
+            <div>
+              <p><strong>Runtime:</strong> {{ tool.runtimeType || tool.launchType }}</p>
+              <p><strong>Status:</strong> {{ tool.status }}</p>
+              <p><strong>Exit code:</strong> {{ tool.exitCode }}</p>
+            </div>
+            <div>
+              <p><strong>Duration:</strong> {{ tool.durationMs }} ms</p>
+              <p><strong>Executed:</strong> {{ tool.executedAt | date: 'short' }}</p>
+              <p><strong>Target:</strong> {{ tool.target || '-' }}</p>
+            </div>
+          </div>
+          <p>{{ tool.message || '-' }}</p>
+          <p class="output-text">{{ tool.output || '-' }}</p>
+        </section>
 
         <nz-table *ngIf="result.actions.length" [nzData]="result.actions" nzSize="small" [nzPageSize]="5">
           <thead>

@@ -34,7 +34,8 @@ func initializeRoutes(router *gin.Engine) error {
 	v1 := router.Group(relativePathV1)
 	v1.Use(backendAPIKeyMiddleware())
 	{
-		autoHandler := automation.DefaultHandler()
+		automationService := automation.DefaultService()
+		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
 			return err
@@ -52,7 +53,13 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeSourceRoutes(v1, source.NewHandler(sourceService))
 		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService)
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
-		taskService := task.NewServiceWithEngines(memoryService, llmService, sourceService, verificationService)
+		taskService := task.NewServiceWithEngines(
+			memoryService,
+			llmService,
+			sourceService,
+			verificationService,
+			task.NewAutomationToolExecutor(automationService),
+		)
 		workflowRunner := workflowtask.NewRunner(taskService)
 		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner)
 		workflow.StartScheduler(context.Background(), workflowService)

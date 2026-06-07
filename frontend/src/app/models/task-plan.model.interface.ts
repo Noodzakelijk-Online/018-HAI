@@ -6,6 +6,7 @@ import { IVerificationClaim } from './verification.model.interface';
 export interface ITaskPlanRequest {
   request: string;
   projectKey?: string;
+  automationId?: string;
   successCriteria?: string[];
   executeAllowed?: boolean;
   humanApproved?: boolean;
@@ -68,8 +69,24 @@ export interface IExecutionResult {
   evidenceCount: number;
   unsupportedClaims: number;
   llmGeneration?: ILLMGenerationResult;
+  toolExecution?: IToolExecutionResult;
   actions: IExecutedAction[];
   blockedReason?: string;
+}
+
+export interface IToolExecutionResult {
+  automationId: string;
+  runtimeType?: string;
+  launchType: string;
+  target?: string;
+  status: string;
+  message?: string;
+  output?: string;
+  exitCode: number;
+  durationMs: number;
+  requiresApproval: boolean;
+  auditEvents: string[];
+  executedAt: string;
 }
 
 export interface IToolRouteDecision {

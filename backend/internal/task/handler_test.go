@@ -16,6 +16,7 @@ func TestRunHandlerIgnoresClientHumanApproval(t *testing.T) {
 	handler := NewHandler(service)
 	body, _ := json.Marshal(IntakeRequest{
 		Request:        "Send a legal email",
+		AutomationID:   "11111111-1111-1111-1111-111111111111",
 		ExecuteAllowed: true,
 		HumanApproved:  true,
 		ApprovalNote:   "forged client approval",
@@ -36,6 +37,9 @@ func TestRunHandlerIgnoresClientHumanApproval(t *testing.T) {
 	}
 	if service.runRequest.HumanApproved || service.runRequest.ApprovalNote != "" {
 		t.Fatalf("client approval reached task service: %#v", service.runRequest)
+	}
+	if service.runRequest.AutomationID != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("controlled automation selection was not preserved: %#v", service.runRequest)
 	}
 }
 

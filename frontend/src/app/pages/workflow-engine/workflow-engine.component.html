@@ -40,6 +40,7 @@
             </nz-form-item>
             <div class="form-row">
               <input nz-input formControlName="projectKey" placeholder="Project" />
+              <input nz-input formControlName="automationId" placeholder="Controlled automation ID" />
               <input nz-input formControlName="sourceType" placeholder="Source type" />
             </div>
             <div class="form-row">
@@ -195,6 +196,7 @@
         <nz-card nzSize="small" nzTitle="Selected Workflow">
           <p><strong>State:</strong> {{ record.item.currentState }}</p>
           <p><strong>Project:</strong> {{ record.item.projectKey || '-' }}</p>
+          <p><strong>Automation:</strong> {{ record.item.automationId || '-' }}</p>
           <p><strong>Autonomy:</strong> {{ record.item.autonomyLevel }}</p>
           <p><strong>Approval reason:</strong> {{ record.item.approvalReason || '-' }}</p>
           <p><strong>Approval status:</strong> {{ record.item.approvalStatus || '-' }}</p>

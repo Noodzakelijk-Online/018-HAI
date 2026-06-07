@@ -8,6 +8,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/verification"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -43,6 +44,20 @@ func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 	}
 	if len(plan.ToolDecision.SelectedTools) == 0 {
 		t.Fatalf("expected tool routing decision")
+	}
+}
+
+func TestAnalyzeIntakeDoesNotRequireRuntimeForAPIExplanation(t *testing.T) {
+	analysis := analyzeIntake(IntakeRequest{Request: "Explain the API architecture and compare routing options"})
+	if analysis.NeedsTools || analysis.NeedsLocalExecution {
+		t.Fatalf("analysis-only request incorrectly requires runtime execution: %#v", analysis)
+	}
+}
+
+func TestAnalyzeIntakeRequiresRuntimeForTechnicalImplementation(t *testing.T) {
+	analysis := analyzeIntake(IntakeRequest{Request: "Implement API code and run repository tests"})
+	if !analysis.NeedsTools || !analysis.NeedsLocalExecution {
+		t.Fatalf("implementation request did not require controlled local execution: %#v", analysis)
 	}
 }
 
@@ -208,6 +223,143 @@ func TestRunValidatedTaskStoresLesson(t *testing.T) {
 	}
 }
 
+func TestRunToolTaskRequiresConfiguredControlledRuntime(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	service := NewService(mem, llmService)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		AutomationID:   uuid.NewString(),
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" {
+		t.Fatalf("status = %q, want review_required", plan.CompletionStatus)
+	}
+	if plan.ExecutionResult == nil || plan.ExecutionResult.BlockedReason != "controlled runtime executor is not configured" {
+		t.Fatalf("unexpected execution result: %#v", plan.ExecutionResult)
+	}
+	if plan.RetryPolicy.RetryAvailable {
+		t.Fatalf("configuration blockers must not be retried automatically")
+	}
+}
+
+func TestRunToolTaskExecutesConfiguredAutomation(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "validated" {
+		t.Fatalf("status = %q, want validated: %#v", plan.CompletionStatus, plan.ValidationResult)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("runtime calls = %d, want 1", executor.calls)
+	}
+	if plan.ExecutionResult == nil || plan.ExecutionResult.ToolExecution == nil {
+		t.Fatalf("expected persisted runtime evidence")
+	}
+}
+
+func TestRunToolTaskBlocksNilRuntimeResult(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{}
+	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		AutomationID:   uuid.NewString(),
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.ExecutionResult == nil {
+		t.Fatalf("nil runtime result was not blocked: %#v", plan)
+	}
+	if plan.ExecutionResult.BlockedReason != "controlled runtime execution returned no result" {
+		t.Fatalf("blocked reason = %q", plan.ExecutionResult.BlockedReason)
+	}
+}
+
+func TestValidationRetryReusesSuccessfulRuntimeExecution(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	verifier := &sequencedVerificationService{
+		statuses: []string{verification.StatusNeedsReview, verification.StatusSourceSupported},
+	}
+	service := NewServiceWithEngines(mem, llmService, nil, verifier, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests and verify the result",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "validated" || plan.RetryPolicy.CurrentAttempt != 2 {
+		t.Fatalf("retry did not validate: status=%q retry=%#v", plan.CompletionStatus, plan.RetryPolicy)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("runtime executed %d times, want exactly once", executor.calls)
+	}
+	if !hasTaskAction(plan.ExecutionResult.Actions, "automation.launch", "reused") {
+		t.Fatalf("expected retry to record reused runtime evidence")
+	}
+}
+
+func TestApprovedReviewIsNotFalselyCompletedWhenRuntimeStillBlocked(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	service := NewService(mem, llmService)
+	plan, err := service.Run(IntakeRequest{
+		Request:      "Delete account data by running a local script",
+		ProjectKey:   "018-HAI",
+		AutomationID: uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	result, err := service.ResolveReviewItem(plan.ReviewQueueItem.ID, ApprovalDecision{
+		Approved: true,
+		Note:     "Approved only for the configured controlled runtime.",
+	})
+	if err != nil {
+		t.Fatalf("ResolveReviewItem: %v", err)
+	}
+	if result.Item.Status != "needs_review" {
+		t.Fatalf("review status = %q, want needs_review", result.Item.Status)
+	}
+	if result.Plan == nil || result.Plan.CompletionStatus != "review_required" {
+		t.Fatalf("blocked approved task was falsely completed: %#v", result.Plan)
+	}
+	if queue := service.ReviewQueue(); len(queue) != 1 {
+		t.Fatalf("blocked approval created duplicate review items: %#v", queue)
+	}
+	if _, err := service.ResolveReviewItem(result.Item.ID, ApprovalDecision{Approved: false, Note: "Reject until runtime is configured."}); err != nil {
+		t.Fatalf("needs_review item could not be resolved again: %v", err)
+	}
+}
+
 func newTaskTestLLMService(t *testing.T) *llm.Service {
 	t.Helper()
 	t.Setenv("LLM_PROVIDERS_JSON", "")
@@ -223,6 +375,83 @@ func newTaskTestLLMService(t *testing.T) *llm.Service {
 }
 
 type fakeMemoryService struct{}
+
+type fakeToolExecutor struct {
+	result   *ToolExecutionResult
+	err      error
+	calls    int
+	requests []ToolExecutionRequest
+}
+
+func (f *fakeToolExecutor) Execute(request ToolExecutionRequest) (*ToolExecutionResult, error) {
+	f.calls++
+	f.requests = append(f.requests, request)
+	return f.result, f.err
+}
+
+func completedToolResult() *ToolExecutionResult {
+	return &ToolExecutionResult{
+		AutomationID: uuid.NewString(),
+		RuntimeType:  "script",
+		LaunchType:   "script",
+		Target:       "verify-project.sh",
+		Status:       "completed",
+		Message:      "script completed",
+		Output:       "build and tests passed",
+		ExitCode:     0,
+		DurationMs:   25,
+		AuditEvents:  []string{"script executed without shell"},
+		ExecutedAt:   time.Now().UTC(),
+	}
+}
+
+type sequencedVerificationService struct {
+	statuses []string
+	calls    int
+}
+
+func (s *sequencedVerificationService) Answer(request verification.AnswerRequest) (*verification.VerificationResult, error) {
+	status := verification.StatusSourceSupported
+	if s.calls < len(s.statuses) {
+		status = s.statuses[s.calls]
+	}
+	s.calls++
+	run := models.VerificationRun{
+		ID:       uuid.New(),
+		Answer:   "controlled runtime evidence checked",
+		Status:   status,
+		Question: request.Question,
+	}
+	claims := []models.VerificationClaim{{
+		ID:          uuid.New(),
+		ClaimText:   "controlled runtime evidence checked",
+		Status:      status,
+		Confidence:  0.9,
+		NeedsReview: status == verification.StatusNeedsReview,
+	}}
+	result := &verification.VerificationResult{Run: run, Claims: claims}
+	if status == verification.StatusNeedsReview {
+		result.UnsupportedClaims = claims
+	}
+	return result, nil
+}
+
+func (s *sequencedVerificationService) Runs() ([]models.VerificationRun, error) {
+	return nil, nil
+}
+
+func (s *sequencedVerificationService) RunDetails(id uuid.UUID) (*verification.VerificationResult, error) {
+	return nil, nil
+}
+
+func hasTaskAction(actions []ExecutedAction, name, status string) bool {
+	for _, action := range actions {
+		if action.Name == name && action.Status == status {
+			return true
+		}
+	}
+	return false
+}
 
 func (fakeMemoryService) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
 	return &models.ContextMemory{

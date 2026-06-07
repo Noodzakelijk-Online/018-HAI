@@ -26,6 +26,7 @@ func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.Tas
 	plan, err := r.service.Run(task.IntakeRequest{
 		Request:        request.Request,
 		ProjectKey:     request.ProjectKey,
+		AutomationID:   request.AutomationID,
 		ExecuteAllowed: true,
 		HumanApproved:  request.HumanApproved,
 		ApprovalNote:   request.ApprovalNote,
@@ -43,6 +44,7 @@ func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.Tas
 	if plan.ExecutionResult != nil {
 		result.VerificationStatus = plan.ExecutionResult.VerificationStatus
 		result.Output = plan.ExecutionResult.Output
+		result.ExternalActionExecuted = plan.ExecutionResult.ToolExecution != nil && plan.ExecutionResult.ToolExecution.Status == "completed"
 		if plan.ExecutionResult.BlockedReason != "" {
 			result.FailureReason = plan.ExecutionResult.BlockedReason
 		}

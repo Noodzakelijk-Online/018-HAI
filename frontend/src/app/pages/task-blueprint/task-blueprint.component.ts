@@ -28,6 +28,7 @@ export class TaskBlueprintComponent implements OnInit {
       [Validators.required],
     ],
     projectKey: ['018-HAI'],
+    automationId: [''],
     successCriteria: [''],
   });
 
@@ -57,6 +58,7 @@ export class TaskBlueprintComponent implements OnInit {
       .plan({
         request: this.planForm.value.request,
         projectKey: this.planForm.value.projectKey,
+        automationId: this.planForm.value.automationId,
         successCriteria: this.criteria(),
       })
       .subscribe({
@@ -85,6 +87,7 @@ export class TaskBlueprintComponent implements OnInit {
       .run({
         request: this.planForm.value.request,
         projectKey: this.planForm.value.projectKey,
+        automationId: this.planForm.value.automationId,
         successCriteria: this.criteria(),
         executeAllowed: true,
       })

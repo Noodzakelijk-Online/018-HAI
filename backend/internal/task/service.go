@@ -6,7 +6,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
+	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
@@ -20,10 +22,12 @@ import (
 type IntakeRequest struct {
 	Request         string   `json:"request"`
 	ProjectKey      string   `json:"projectKey,omitempty"`
+	AutomationID    string   `json:"automationId,omitempty"`
 	SuccessCriteria []string `json:"successCriteria,omitempty"`
 	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
 	HumanApproved   bool     `json:"humanApproved,omitempty"`
 	ApprovalNote    string   `json:"approvalNote,omitempty"`
+	reviewItemID    string
 }
 
 type IntakeAnalysis struct {
@@ -142,6 +146,32 @@ type ExecutedAction struct {
 	EndedAt   time.Time `json:"endedAt"`
 }
 
+type ToolExecutionRequest struct {
+	AutomationID  string `json:"automationId"`
+	Task          string `json:"task"`
+	ProjectKey    string `json:"projectKey,omitempty"`
+	HumanApproved bool   `json:"humanApproved"`
+}
+
+type ToolExecutionResult struct {
+	AutomationID     string    `json:"automationId"`
+	RuntimeType      string    `json:"runtimeType,omitempty"`
+	LaunchType       string    `json:"launchType"`
+	Target           string    `json:"target,omitempty"`
+	Status           string    `json:"status"`
+	Message          string    `json:"message,omitempty"`
+	Output           string    `json:"output,omitempty"`
+	ExitCode         int       `json:"exitCode"`
+	DurationMs       int64     `json:"durationMs"`
+	RequiresApproval bool      `json:"requiresApproval"`
+	AuditEvents      []string  `json:"auditEvents"`
+	ExecutedAt       time.Time `json:"executedAt"`
+}
+
+type ToolExecutor interface {
+	Execute(request ToolExecutionRequest) (*ToolExecutionResult, error)
+}
+
 type ExecutionResult struct {
 	StartedAt          time.Time                  `json:"startedAt"`
 	CompletedAt        time.Time                  `json:"completedAt"`
@@ -152,6 +182,7 @@ type ExecutionResult struct {
 	EvidenceCount      int                        `json:"evidenceCount"`
 	UnsupportedClaims  int                        `json:"unsupportedClaims"`
 	LLMGeneration      *llm.GenerationResult      `json:"llmGeneration,omitempty"`
+	ToolExecution      *ToolExecutionResult       `json:"toolExecution,omitempty"`
 	Actions            []ExecutedAction           `json:"actions"`
 	BlockedReason      string                     `json:"blockedReason,omitempty"`
 }
@@ -202,6 +233,7 @@ type service struct {
 	sourceService       source.Service
 	verificationService verification.Service
 	llmService          *llm.Service
+	toolExecutor        ToolExecutor
 	mu                  sync.Mutex
 	logs                []CompletionPlan
 	reviewQueue         []ReviewQueueItem
@@ -221,12 +253,17 @@ func NewService(memoryService memory.Service, llmService *llm.Service, sourceSer
 	}
 }
 
-func NewServiceWithEngines(memoryService memory.Service, llmService *llm.Service, sourceService source.Service, verificationService verification.Service) Service {
+func NewServiceWithEngines(memoryService memory.Service, llmService *llm.Service, sourceService source.Service, verificationService verification.Service, toolExecutors ...ToolExecutor) Service {
+	var toolExecutor ToolExecutor
+	if len(toolExecutors) > 0 {
+		toolExecutor = toolExecutors[0]
+	}
 	return &service{
 		memoryService:       memoryService,
 		sourceService:       sourceService,
 		verificationService: verificationService,
 		llmService:          llmService,
+		toolExecutor:        toolExecutor,
 		logs:                []CompletionPlan{},
 		reviewQueue:         []ReviewQueueItem{},
 	}
@@ -237,7 +274,13 @@ func DefaultService() (Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewServiceWithEngines(memory.DefaultService(), llmService, source.DefaultService(), verification.DefaultService()), nil
+	return NewServiceWithEngines(
+		memory.DefaultService(),
+		llmService,
+		source.DefaultService(),
+		verification.DefaultService(),
+		NewAutomationToolExecutor(automation.DefaultService()),
+	), nil
 }
 
 func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
@@ -273,9 +316,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.ValidationResult.NextAction = "clear emergency stop before autonomous execution"
 		plan.CompletionStatus = "review_required"
 		plan.Events = append(plan.Events, event("governance", reason))
-		item := newReviewItem(plan.ID, reason, "high", request)
-		plan.ReviewQueueItem = &item
-		s.addReviewItem(item)
+		s.attachReviewItem(plan, reason, "high", request)
 		s.addLog(*plan)
 		return plan, nil
 	}
@@ -295,9 +336,14 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.ValidationResult.Passed = false
 		plan.ValidationResult.Status = "blocked"
 		plan.ValidationResult.NextAction = "human review required before execution"
-		item := newReviewItem(plan.ID, "approval required before task execution", plan.RiskAssessment.Level, request)
-		plan.ReviewQueueItem = &item
-		s.addReviewItem(item)
+		s.attachReviewItem(plan, "approval required before task execution", plan.RiskAssessment.Level, request)
+	} else if plan.ExecutionResult != nil && plan.ExecutionResult.BlockedReason != "" {
+		plan.CompletionStatus = "review_required"
+		plan.ValidationResult.Passed = false
+		plan.ValidationResult.Status = "blocked"
+		plan.ValidationResult.NextAction = "resolve the execution blocker before retrying"
+		plan.RetryPolicy.RetryAvailable = false
+		s.attachReviewItem(plan, plan.ExecutionResult.BlockedReason, plan.RiskAssessment.Level, request)
 	} else if plan.ValidationResult.Passed {
 		plan.CompletionStatus = "validated"
 		plan.ValidationResult.Status = "passed"
@@ -333,15 +379,11 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 			plan.CompletionStatus = "retry_needed"
 		} else {
 			plan.CompletionStatus = "review_required"
-			item := newReviewItem(plan.ID, "validation failed after retry", "medium", request)
-			plan.ReviewQueueItem = &item
-			s.addReviewItem(item)
+			s.attachReviewItem(plan, "validation failed after retry", "medium", request)
 		}
 	} else {
 		plan.CompletionStatus = "review_required"
-		item := newReviewItem(plan.ID, "validation failed after available attempts", "medium", request)
-		plan.ReviewQueueItem = &item
-		s.addReviewItem(item)
+		s.attachReviewItem(plan, "validation failed after available attempts", "medium", request)
 	}
 
 	s.addLog(*plan)
@@ -465,7 +507,7 @@ func (s *service) ResolveReviewItem(id string, decision ApprovalDecision) (*Revi
 		s.mu.Unlock()
 		return nil, fmt.Errorf("review item not found")
 	}
-	if item.Status != "open" {
+	if item.Status != "open" && item.Status != "needs_review" {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("review item is already resolved")
 	}
@@ -486,6 +528,7 @@ func (s *service) ResolveReviewItem(id string, decision ApprovalDecision) (*Revi
 	approvedRequest.ExecuteAllowed = true
 	approvedRequest.HumanApproved = true
 	approvedRequest.ApprovalNote = item.ResolutionNote
+	approvedRequest.reviewItemID = item.ID
 	s.mu.Unlock()
 
 	plan, err := s.Run(approvedRequest)
@@ -494,8 +537,17 @@ func (s *service) ResolveReviewItem(id string, decision ApprovalDecision) (*Revi
 	}
 	s.mu.Lock()
 	completedAt := time.Now().UTC()
-	item.Status = "completed"
-	item.ResolvedAt = &completedAt
+	if plan.CompletionStatus == "validated" {
+		item.Status = "completed"
+		item.ResolvedAt = &completedAt
+	} else {
+		item.Status = "needs_review"
+		item.ResolvedAt = nil
+		if plan.ReviewQueueItem != nil && plan.ReviewQueueItem.ID == item.ID {
+			item.Reason = plan.ReviewQueueItem.Reason
+		}
+	}
+	plan.ReviewQueueItem = &item
 	for i := range s.reviewQueue {
 		if s.reviewQueue[i].ID == item.ID {
 			s.reviewQueue[i] = item
@@ -520,6 +572,43 @@ func (s *service) addReviewItem(item ReviewQueueItem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.reviewQueue = append([]ReviewQueueItem{item}, s.reviewQueue...)
+	if len(s.reviewQueue) > 50 {
+		s.reviewQueue = s.reviewQueue[:50]
+	}
+}
+
+func (s *service) attachReviewItem(plan *CompletionPlan, reason, risk string, request IntakeRequest) {
+	if request.reviewItemID == "" {
+		item := newReviewItem(plan.ID, reason, risk, request)
+		plan.ReviewQueueItem = &item
+		s.addReviewItem(item)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.reviewQueue {
+		if s.reviewQueue[i].ID != request.reviewItemID {
+			continue
+		}
+		item := s.reviewQueue[i]
+		item.TaskID = plan.ID
+		item.Request = request
+		item.Reason = reason
+		item.Priority = "normal"
+		if risk == "high" {
+			item.Priority = "high"
+		}
+		item.Status = "needs_review"
+		item.ResolvedAt = nil
+		s.reviewQueue[i] = item
+		plan.ReviewQueueItem = &item
+		return
+	}
+
+	item := newReviewItem(plan.ID, reason, risk, request)
+	plan.ReviewQueueItem = &item
 	s.reviewQueue = append([]ReviewQueueItem{item}, s.reviewQueue...)
 	if len(s.reviewQueue) > 50 {
 		s.reviewQueue = s.reviewQueue[:50]
@@ -571,6 +660,48 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	}
 
 	evidence := evidenceFromPlan(plan)
+	if plan.Intake.NeedsTools || plan.Intake.NeedsLocalExecution {
+		toolStarted := time.Now().UTC()
+		toolResult := completedToolExecution(plan.ExecutionResult)
+		if toolResult != nil {
+			result.ToolExecution = toolResult
+			result.Actions = append(result.Actions, executedAction(
+				"automation.launch",
+				"reused",
+				toolResult.AutomationID,
+				"reused successful runtime evidence without repeating external execution",
+				toolStarted,
+			))
+			plan.Events = append(plan.Events, event("execution", "reused successful controlled-runtime evidence during validation retry"))
+		} else {
+			if s.toolExecutor == nil {
+				return blockExecution(result, "controlled runtime executor is not configured", plan, toolStarted)
+			}
+			if strings.TrimSpace(request.AutomationID) == "" {
+				return blockExecution(result, "task requires controlled runtime execution but no automationId was provided", plan, toolStarted)
+			}
+			executed, err := s.toolExecutor.Execute(ToolExecutionRequest{
+				AutomationID:  request.AutomationID,
+				Task:          plan.RealGoal,
+				ProjectKey:    plan.ProjectKey,
+				HumanApproved: plan.RiskAssessment.ApprovalGranted || !plan.RiskAssessment.ApprovalRequired,
+			})
+			if err != nil {
+				return blockExecution(result, "controlled runtime execution failed: "+err.Error(), plan, toolStarted)
+			}
+			if executed == nil {
+				return blockExecution(result, "controlled runtime execution returned no result", plan, toolStarted)
+			}
+			result.ToolExecution = executed
+			result.Actions = append(result.Actions, executedAction("automation.launch", executed.Status, executed.AutomationID, firstNonEmpty(executed.Output, executed.Message), toolStarted))
+			plan.Events = append(plan.Events, event("execution", "controlled automation runtime returned status "+executed.Status))
+			if executed.Status != "completed" {
+				reason := firstNonEmpty(executed.Message, "controlled runtime did not complete successfully")
+				return blockExecution(result, reason, plan, toolStarted)
+			}
+		}
+		evidence = append(evidence, toolExecutionEvidence(result.ToolExecution))
+	}
 	result.EvidenceCount = len(evidence)
 	result.Actions = append(result.Actions,
 		executedAction("memory.retrieve", "completed", request.Request, countLabel(len(plan.ContextPlan.UsedContext), "memory item"), started),
@@ -579,10 +710,14 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	draft := ""
 	generateStarted := time.Now().UTC()
 	if s.llmService != nil {
+		context := generationContext(plan)
+		if result.ToolExecution != nil {
+			context = append(context, toolExecutionSnippet(result.ToolExecution))
+		}
 		generation, err := s.llmService.Generate(llm.GenerateRequest{
 			Task:         plan.RealGoal,
 			SystemPrompt: "Produce a concise draft answer using only the provided context. Do not invent facts; unsupported details will be rejected by verification.",
-			Context:      generationContext(plan),
+			Context:      context,
 			RouteRequest: &llm.RouteRequest{
 				Task:              plan.Request,
 				TaskType:          plan.Intake.TaskType,
@@ -644,6 +779,46 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	result.Actions = append(result.Actions, executedAction("verification.answer", "completed", request.Request, verificationResult.Run.Status, verifyStarted))
 	plan.Events = append(plan.Events, event("verification", "claims were checked against retrieved evidence before completion"))
 	return result
+}
+
+func completedToolExecution(previous *ExecutionResult) *ToolExecutionResult {
+	if previous == nil || previous.ToolExecution == nil || previous.ToolExecution.Status != "completed" {
+		return nil
+	}
+	copied := *previous.ToolExecution
+	copied.AuditEvents = append([]string{}, previous.ToolExecution.AuditEvents...)
+	return &copied
+}
+
+func blockExecution(result *ExecutionResult, reason string, plan *CompletionPlan, started time.Time) *ExecutionResult {
+	result.CompletedAt = time.Now().UTC()
+	result.Output = "Execution stopped before completion: " + reason
+	result.VerificationStatus = verification.StatusNeedsReview
+	result.BlockedReason = reason
+	if len(result.Actions) == 0 || result.Actions[len(result.Actions)-1].Name != "automation.launch" {
+		result.Actions = append(result.Actions, executedAction("automation.launch", "blocked", plan.Request, reason, started))
+	}
+	plan.Events = append(plan.Events, event("execution", reason))
+	return result
+}
+
+func toolExecutionEvidence(result *ToolExecutionResult) verification.EvidenceInput {
+	return verification.EvidenceInput{
+		SourceType:  "controlled_runtime",
+		SourceID:    result.AutomationID,
+		SourceURI:   "automation://" + result.AutomationID,
+		SourceLabel: firstNonEmpty(result.RuntimeType, result.LaunchType, "controlled automation runtime"),
+		Snippet:     toolExecutionSnippet(result),
+		Authority:   "deterministic_runtime",
+		Primary:     true,
+	}
+}
+
+func toolExecutionSnippet(result *ToolExecutionResult) string {
+	if result == nil {
+		return ""
+	}
+	return compact(firstNonEmpty(result.Output, result.Message, "controlled runtime completed successfully"))
 }
 
 func executionMode(plan *CompletionPlan, request IntakeRequest) string {
@@ -813,10 +988,10 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 	risk := "low"
 	reasons := []string{"default completion-first intake"}
 
-	needsTools := containsAny(text, "run", "execute", "test", "build", "deploy", "docker", "script", "api")
+	needsTools := requiresControlledExecution(text)
 	needsDocs := containsAny(text, "document", "pdf", "spreadsheet", "slides", "docx")
 	needsWeb := containsAny(text, "latest", "current", "today", "web", "browse", "search")
-	needsLocal := containsAny(text, "local", "file", "repo", "docker", "windows", "build", "test")
+	needsLocal := needsTools && containsWordOrPhrase(text, "local", "file", "files", "repo", "repository", "docker", "windows", "code", "build", "test", "tests", "script", "command", "commit", "push")
 
 	if containsAny(text, "code", "bug", "api", "compile", "build", "test") {
 		taskType = "coding"
@@ -1050,6 +1225,13 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 		if plan.ExecutionResult == nil {
 			failures = append(failures, "no execution result was produced")
 		} else {
+			if plan.Intake.NeedsTools || plan.Intake.NeedsLocalExecution {
+				if plan.ExecutionResult.ToolExecution == nil {
+					failures = append(failures, "required controlled runtime execution did not run")
+				} else if plan.ExecutionResult.ToolExecution.Status != "completed" {
+					failures = append(failures, "controlled runtime execution did not complete: "+plan.ExecutionResult.ToolExecution.Status)
+				}
+			}
 			if strings.TrimSpace(plan.ExecutionResult.Output) == "" {
 				failures = append(failures, "execution produced no output")
 			}
@@ -1185,6 +1367,36 @@ func event(stage, message string) TaskEvent {
 func containsAny(value string, needles ...string) bool {
 	for _, needle := range needles {
 		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func requiresControlledExecution(value string) bool {
+	if containsWordOrPhrase(value, "run", "execute", "deploy", "install", "launch", "invoke") {
+		return true
+	}
+	action := containsWordOrPhrase(value,
+		"add", "apply", "build", "call", "change", "commit", "create", "delete", "fix",
+		"implement", "merge", "modify", "move", "post", "publish", "push", "rename",
+		"send", "start", "update", "write",
+	)
+	target := containsWordOrPhrase(value,
+		"account", "api", "build", "code", "command", "deployment", "docker", "email",
+		"file", "files", "message", "post", "posting", "repo", "repository", "request",
+		"script", "test", "tests",
+	)
+	return action && target
+}
+
+func containsWordOrPhrase(value string, terms ...string) bool {
+	normalized := " " + strings.Join(strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	}), " ") + " "
+	for _, term := range terms {
+		normalizedTerm := strings.Join(strings.Fields(strings.ToLower(term)), " ")
+		if normalizedTerm != "" && strings.Contains(normalized, " "+normalizedTerm+" ") {
 			return true
 		}
 	}

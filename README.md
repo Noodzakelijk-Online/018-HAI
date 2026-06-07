@@ -261,16 +261,18 @@ The task success engine follows a completion-first loop:
 6. Route a suitable model by capability and cost policy.
 7. Route tools and mark unsafe tools as blocked.
 8. Apply risk and approval gates.
-9. Execute only currently allowed internal steps.
-10. Produce a grounded execution result.
-11. Verify claims against evidence.
+9. Execute only currently allowed internal steps or an explicitly selected controlled automation.
+10. Capture deterministic runtime output as execution evidence.
+11. Produce and verify a grounded execution result.
 12. Retry or escalate when validation fails.
 13. Queue unresolved or risky work for review.
 14. Store useful lessons only after verified completion.
 
-The task engine execution step is internal and evidence-grounded. Separate automation launch adapters can call bounded API targets, run a single allowlisted container-local script, or start a Docker container when Docker control is deliberately enabled. The system still does not send emails, change accounts, post publicly, delete files, or broadly control the local machine.
+Tasks that require tools or local execution can no longer complete from generated text alone. Action-oriented execution requests must provide an `automationId` that identifies a registered automation; analysis-only requests that merely discuss an API, test strategy, or architecture do not trigger runtime execution. The task engine calls the shared controlled automation service, captures its bounded API/script/Docker launch result, adds that deterministic result to verification evidence, and requires a `completed` runtime status before completion. Missing, blocked, failed, or unconfigured runtime execution goes to review without blind retries. If answer verification needs a stronger model after a successful launch, the retry reuses the captured runtime evidence instead of executing the external action again.
 
-High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its internal context, model, verification, and memory workflow.
+The automation launch adapters can call bounded API targets, run a single allowlisted container-local script, or start a Docker container when Docker control is deliberately enabled. The system still does not send emails, change accounts, post publicly, delete files, or broadly control the local machine unless a separately reviewed adapter and approval policy is implemented.
+
+High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. An approved review item is marked completed only when the rerun is actually validated; unresolved runtime or verification blockers reuse the original queue item as actionable `needs_review` work instead of creating duplicate reviews. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its configured automation, context, model, verification, and memory workflow.
 
 The task engine now treats connected sources as an active preflight dependency. For requests that mention project/source/file/folder/document/repo context, or that require local/document context, it runs due scheduled source syncs before source search. This uses the same bounded local-folder scheduler path and does not force a full re-read when sources are not due.
 
@@ -311,7 +313,7 @@ The workflow layer now stores operational history in separate tables:
 - `WorkflowQualityGate` stores acceptance checks for developer, legal, publishing, and verification workflows.
 - `WorkflowRule` stores the default editable safety/workflow rulebook.
 
-Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. Each worker must first atomically claim an item by moving it from `ready` to `in_progress` with a unique claim ID and renewable lease; concurrent scheduler or API workers therefore cannot execute the same item from the same queue state or persist results owned by another worker. The worker completes the item only when the task engine returns a validated result and mandatory quality gates pass. Failed worker attempts, including recovered task-runner panics, increment durable retry counters, schedule a later retry, and block the workflow after the retry limit. High-risk items remain in `needs_approval` until approved from `/workflow/approvals`, a resolved proposal, or the dashboard approval queue.
+Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. Each worker must first atomically claim an item by moving it from `ready` to `in_progress` with a unique claim ID and renewable lease; concurrent scheduler or API workers therefore cannot execute the same item from the same queue state or persist results owned by another worker. Workflows can store an `automationId`, which is passed through the workflow worker into the task engine for controlled execution. The worker completes the item only when the runtime action, task verification, and mandatory quality gates pass. Transient engine failures use durable retry counters and backoff, while explicit `review_required` results block immediately rather than repeating a potentially non-idempotent action. High-risk items remain in `needs_approval` until approved from `/workflow/approvals`, a resolved proposal, or the dashboard approval queue.
 
 Due open loops can be processed with `POST /workflow/open-loops/run-due`. Due follow-ups are also atomically leased before creating checklist or proposal records, preventing duplicate follow-up artifacts when multiple workers poll together. Follow-up checklist and proposal creation is idempotent, so a partial failure can release or recover the lease and retry without duplicating records. High-risk or Robert-owned follow-ups are moved into approval review; low-risk unblocked follow-ups can be made worker-ready. Already blocked workflows stay blocked and keep their blocker while receiving a follow-up proposal. Proposal decisions can be resolved through `POST /workflow/:id/proposals/:proposalId/resolve`, which records the decision and can approve, reject/block, or send the workflow back for changes. Completed or archived workflows reject further proposal changes.
 
@@ -468,7 +470,7 @@ Workflow autonomy:
 - `WORKFLOW_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
 - `WORKFLOW_SCHEDULER_RUN_LIMIT`, default `5`, capped at `50`.
 - `WORKFLOW_CLAIM_LEASE_SECONDS`, default `900`, minimum `60`, capped at `86400`. Active task workers renew the lease every third of this duration.
-- The scheduler uses the same workflow service as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, owned leases prevent duplicate concurrent execution and stale result writes, task-runner panics enter normal retry handling, retry limits remain durable, and completion still requires task/verification success.
+- The scheduler uses the same workflow, task, verification, and controlled automation services as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, owned leases prevent duplicate concurrent execution and stale result writes, task-runner panics enter normal retry handling, review-required runtime outcomes do not auto-retry, and completion requires runtime plus verification success.
 
 The nginx config-manager no longer receives `/var/run/docker.sock` in `docker-compose.local.yml` by default. It can write generated route config files, but nginx reload via Docker API is skipped unless `NGINX_RELOAD_ENABLED=true` and the operator deliberately restores a reviewed Docker socket mount.
 
