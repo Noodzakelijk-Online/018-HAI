@@ -14,6 +14,7 @@ type Repository interface {
 	CreateItem(item *models.WorkflowItem) (*models.WorkflowItem, error)
 	UpdateItem(item *models.WorkflowItem) (*models.WorkflowItem, error)
 	FindItem(id uuid.UUID) (*models.WorkflowItem, error)
+	FindActiveItemBySourceIdentity(sourceType, sourceID string) (*models.WorkflowItem, error)
 	FindActiveItemBySourceURI(sourceURI string) (*models.WorkflowItem, error)
 	FindItems(includeArchived bool) ([]models.WorkflowItem, error)
 	FindApprovalItems() ([]models.WorkflowItem, error)
@@ -92,6 +93,23 @@ func (r *GormRepository) UpdateItem(item *models.WorkflowItem) (*models.Workflow
 func (r *GormRepository) FindItem(id uuid.UUID) (*models.WorkflowItem, error) {
 	var item models.WorkflowItem
 	if err := r.DB.First(&item, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *GormRepository) FindActiveItemBySourceIdentity(sourceType, sourceID string) (*models.WorkflowItem, error) {
+	var item models.WorkflowItem
+	err := r.DB.Where(
+		"source_type = ? AND source_id = ? AND archived = ?",
+		sourceType,
+		sourceID,
+		false,
+	).Order("updated_at desc").First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	return &item, nil

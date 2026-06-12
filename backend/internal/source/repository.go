@@ -199,6 +199,20 @@ func (r *GormRepository) DeleteExtraction(id uuid.UUID) error {
 }
 
 func (r *GormRepository) SaveIndexEntry(entry *models.SourceIndexEntry) (*models.SourceIndexEntry, error) {
+	if entry.ID == uuid.Nil {
+		var existing models.SourceIndexEntry
+		err := r.DB.Where(
+			"extraction_id = ? AND index_type = ?",
+			entry.ExtractionID,
+			entry.IndexType,
+		).First(&existing).Error
+		if err == nil {
+			entry.ID = existing.ID
+			entry.CreatedAt = existing.CreatedAt
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
 	if err := r.DB.Save(entry).Error; err != nil {
 		return nil, err
 	}

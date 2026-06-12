@@ -67,6 +67,7 @@ type SourceRawItem struct {
 	ItemType    string    `gorm:"type:varchar(80);index" json:"itemType"`
 	Title       string    `gorm:"type:varchar(512)" json:"title"`
 	SourceURI   string    `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
+	Content     string    `gorm:"type:text" json:"content,omitempty"`
 	Metadata    string    `gorm:"type:text" json:"metadata,omitempty"`
 	ContentHash string    `gorm:"type:varchar(64);index" json:"contentHash,omitempty"`
 	FetchedAt   time.Time `json:"fetchedAt"`

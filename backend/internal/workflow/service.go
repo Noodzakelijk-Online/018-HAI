@@ -32,18 +32,20 @@ const (
 )
 
 type IntakeRequest struct {
-	Input        string `json:"input"`
-	ProjectKey   string `json:"projectKey,omitempty"`
-	AutomationID string `json:"automationId,omitempty"`
-	SourceType   string `json:"sourceType,omitempty"`
-	SourceID     string `json:"sourceId,omitempty"`
-	SourceURI    string `json:"sourceUri,omitempty"`
-	SourceLabel  string `json:"sourceLabel,omitempty"`
-	ContentType  string `json:"contentType,omitempty"`
-	Sender       string `json:"sender,omitempty"`
-	ReceivedAt   string `json:"receivedAt,omitempty"`
-	Trigger      string `json:"trigger,omitempty"`
-	Actor        string `json:"actor,omitempty"`
+	Input          string `json:"input"`
+	ProjectKey     string `json:"projectKey,omitempty"`
+	AutomationID   string `json:"automationId,omitempty"`
+	SourceType     string `json:"sourceType,omitempty"`
+	SourceID       string `json:"sourceId,omitempty"`
+	SourceURI      string `json:"sourceUri,omitempty"`
+	SourceLabel    string `json:"sourceLabel,omitempty"`
+	ContentType    string `json:"contentType,omitempty"`
+	Sender         string `json:"sender,omitempty"`
+	ReceivedAt     string `json:"receivedAt,omitempty"`
+	Trigger        string `json:"trigger,omitempty"`
+	Actor          string `json:"actor,omitempty"`
+	RequiresReview bool   `json:"requiresReview,omitempty"`
+	ReviewReason   string `json:"reviewReason,omitempty"`
 }
 
 type TransitionRequest struct {
@@ -210,6 +212,7 @@ type Service interface {
 	ResolveInterruptedExecution(id uuid.UUID, request InterruptedExecutionResolutionRequest) (*WorkflowRecord, error)
 	ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request ProposalResolutionRequest) (*WorkflowRecord, error)
 	UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error)
+	RetractSource(sourceType, sourceID, reason string) error
 	RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
 	RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error)
@@ -239,7 +242,18 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		return nil, fmt.Errorf("input is required")
 	}
 	_ = s.ensureDefaultRules()
-	if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
+	sourceType := strings.TrimSpace(request.SourceType)
+	sourceID := strings.TrimSpace(request.SourceID)
+	if sourceType != "" && sourceID != "" {
+		existing, err := s.repo.FindActiveItemBySourceIdentity(sourceType, sourceID)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			s.audit(existing.ID, "workflow.intake_deduped", "", existing.CurrentState, "existing workflow reused for source record", request.Trigger, "source identity deduplication", request.SourceURI, firstNonEmpty(request.Actor, "engine"))
+			return s.Get(existing.ID)
+		}
+	} else if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
 		existing, err := s.repo.FindActiveItemBySourceURI(sourceURI)
 		if err != nil {
 			return nil, err
@@ -250,6 +264,18 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		}
 	}
 	analysis := analyzeInput(request)
+	if request.RequiresReview {
+		analysis.requiresApproval = true
+		analysis.approvalReason = firstNonEmpty(strings.TrimSpace(request.ReviewReason), "connected-source extraction requires human review")
+		analysis.autonomyLevel = "approve_before_execute"
+		analysis.initialState = StateNeedsApproval
+		analysis.nextAction = "review and confirm the connected-source extraction before execution"
+		analysis.confidence = math.Min(analysis.confidence, 0.49)
+		if analysis.riskLevel == "low" {
+			analysis.riskLevel = "medium"
+		}
+		analysis.ruleApplied += "; explicit connected-source review gate"
+	}
 	projectKey := firstNonEmpty(request.ProjectKey, analysis.projectKey)
 	item := &models.WorkflowItem{
 		Title:            analysis.title,
@@ -267,7 +293,8 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		ApprovalReason:   analysis.approvalReason,
 		BlockedReason:    analysis.blockedReason,
 		NextAction:       analysis.nextAction,
-		SourceType:       strings.TrimSpace(request.SourceType),
+		SourceType:       sourceType,
+		SourceID:         sourceID,
 		SourceURI:        strings.TrimSpace(request.SourceURI),
 		SourceLabel:      strings.TrimSpace(request.SourceLabel),
 		DueAt:            analysis.dueAt,
@@ -366,6 +393,41 @@ func (s *service) Items(includeArchived bool) ([]models.WorkflowItem, error) {
 
 func (s *service) ApprovalItems() ([]models.WorkflowItem, error) {
 	return s.repo.FindApprovalItems()
+}
+
+func (s *service) RetractSource(sourceType, sourceID, reason string) error {
+	sourceType = strings.TrimSpace(sourceType)
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceType == "" || sourceID == "" {
+		return fmt.Errorf("source type and source id are required")
+	}
+	item, err := s.repo.FindActiveItemBySourceIdentity(sourceType, sourceID)
+	if err != nil || item == nil {
+		return err
+	}
+	reason = firstNonEmpty(strings.TrimSpace(reason), "source record was retracted")
+	if item.CurrentState == StateInProgress {
+		return fmt.Errorf("source workflow is currently in progress and requires interruption review before retraction")
+	}
+	if item.CurrentState == StateCompleted || item.CurrentState == StateArchived {
+		s.audit(item.ID, "workflow.source_retracted_after_completion", item.CurrentState, item.CurrentState, reason, "source_retraction", "completed workflow retained for audit", item.SourceURI, "source-worker")
+		return nil
+	}
+	from := item.CurrentState
+	item.CurrentState = StateBlocked
+	item.BlockedReason = reason
+	item.NextAction = "review the retracted source record before any further execution"
+	item.NextRunAt = nil
+	item.WorkerClaimID = ""
+	item.WorkerLeaseUntil = nil
+	item.VerificationStatus = "needs_review"
+	if _, err := s.repo.UpdateItem(item); err != nil {
+		return err
+	}
+	s.recordTransition(item.ID, from, StateBlocked, "source_retraction", "source-worker", false, reason)
+	s.decide(item.ID, "source_retraction", "blocked", reason, "source-derived work must stop when its evidence is retracted", false, "source-worker")
+	s.audit(item.ID, "workflow.source_retracted", from, StateBlocked, reason, "source_retraction", "source identity retraction", item.SourceURI, "source-worker")
+	return nil
 }
 
 func (s *service) Dashboard() (*WorkflowDashboard, error) {
@@ -1984,7 +2046,7 @@ func limitWorkflowItems(items []models.WorkflowItem, limit int) []models.Workflo
 func engineCapabilities() []EngineCapability {
 	return []EngineCapability{
 		{ID: "state-machine", Name: "Workflow state machine", Status: "implemented", Implemented: []string{"persistent workflow states", "validated transitions", "blocked/waiting/completed/archive states"}, Next: []string{"per-project custom states"}},
-		{ID: "event-triggers", Name: "Event-driven trigger logic", Status: "implemented", Implemented: []string{"intake trigger field", "audit trigger log", "connected-source extraction creates workflow candidates"}, Next: []string{"webhook workers per connector"}},
+		{ID: "event-triggers", Name: "Event-driven trigger logic", Status: "implemented", Implemented: []string{"intake trigger field", "audit trigger log", "connected-source extraction creates workflow candidates", "stable source-record deduplication", "source retraction blocks stale work"}, Next: []string{"webhook workers per connector"}},
 		{ID: "adapters", Name: "Integration adapter layer", Status: "partial", Implemented: []string{"adapter capability names", "source-local-folder path", "task-engine runner adapter"}, Next: []string{"Gmail/Trello/Drive concrete adapters"}},
 		{ID: "context-memory", Name: "Context and memory layer", Status: "implemented", Implemented: []string{"project key", "separate source links", "memory/task/source retrieval"}, Next: []string{"project dossier projection"}},
 		{ID: "decision-rules", Name: "Autonomous decision rules", Status: "implemented", Implemented: []string{"separate decision records", "approval rules", "autonomy levels", "blocked reasons", "next action"}, Next: []string{"configurable per-contact rules"}},
@@ -1996,7 +2058,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "approval-gates", Name: "Human approval gates", Status: "implemented", Implemented: []string{"approval queue", "approve/reject buttons", "approval-only transitions", "approval checklist steps"}, Next: []string{"per-action approval scopes"}},
 		{ID: "worker-queue", Name: "Worker/queue system", Status: "implemented", Implemented: []string{"durable retry counters", "ready/in-progress/completed/blocked lifecycle", "controlled automation execution adapter", "background scheduler", "owned renewable claims", "non-idempotent retry guard"}, Next: []string{"multi-node queue metrics"}},
 		{ID: "feedback", Name: "Feedback loop", Status: "partial", Implemented: []string{"checklist correction events", "resolution notes"}, Next: []string{"store rejected draft/tone preferences into memory"}},
-		{ID: "safety", Name: "Safety boundaries", Status: "implemented", Implemented: []string{"never-send/publish/delete/spend without approval rules", "approval reason surfaced"}, Next: []string{"policy editor"}},
+		{ID: "safety", Name: "Safety boundaries", Status: "implemented", Implemented: []string{"never-send/publish/delete/spend without approval rules", "approval reason surfaced", "uncertain and sensitive source extractions require review", "in-progress source work cannot be silently retracted"}, Next: []string{"policy editor"}},
 		{ID: "universal-intake", Name: "Universal intake engine", Status: "implemented", Implemented: []string{"manual/source intake request", "source id/type/content/sender metadata", "normalized intake records"}, Next: []string{"connector webhooks and voice/screenshot intake"}},
 		{ID: "project-matching", Name: "Project matching engine", Status: "implemented", Implemented: []string{"project match records", "keyword/project heuristics", "trello and drive reference hints"}, Next: []string{"semantic matching against connected-source index"}},
 		{ID: "context-builder", Name: "Context builder engine", Status: "partial", Implemented: []string{"project key", "source provenance", "memory/source modules available"}, Next: []string{"project dossier projection with people, deadlines, documents, and open questions"}},

@@ -378,7 +378,7 @@ func (s *service) Reindex(sourceID uuid.UUID) (*SyncResult, error) {
 		request.Items = append(request.Items, ImportItem{
 			ExternalID: item.ExternalID,
 			Title:      item.Title,
-			Content:    item.Metadata,
+			Content:    firstNonEmpty(item.Content, item.Metadata),
 			SourceURI:  item.SourceURI,
 			ItemType:   item.ItemType,
 			ProjectKey: item.ProjectKey,
@@ -387,7 +387,7 @@ func (s *service) Reindex(sourceID uuid.UUID) (*SyncResult, error) {
 	}
 	result, err := s.Sync(source.ID, request)
 	if err == nil {
-		s.audit(sourceID, "source.reindexed", "source re-indexed from cached raw metadata")
+		s.audit(sourceID, "source.reindexed", "source re-indexed from cached raw content")
 	}
 	return result, err
 }
@@ -489,9 +489,16 @@ func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction
 	extraction.FollowUps = request.FollowUps
 	extraction.Sensitive = request.Sensitive
 	extraction.Uncertain = request.Uncertain
+	if firstNonEmpty(extraction.Tasks, extraction.FollowUps) == "" {
+		if err := s.retractWorkflowForExtraction(extraction, "corrected extraction no longer contains an actionable task or follow-up"); err != nil {
+			return nil, err
+		}
+	}
 	updated, err := s.repo.SaveExtraction(extraction)
-	if err == nil {
+	if err == nil && updated != nil {
 		s.audit(extraction.SourceID, "extraction.corrected", "operator corrected extraction")
+		s.indexExtraction(updated)
+		s.reconcileWorkflowFromExtraction(updated)
 	}
 	return updated, err
 }
@@ -500,6 +507,11 @@ func (s *service) ArchiveExtraction(id uuid.UUID, archived bool) (*models.Source
 	extraction, err := s.repo.FindExtraction(id)
 	if err != nil {
 		return nil, err
+	}
+	if archived {
+		if err := s.retractWorkflowForExtraction(extraction, "source extraction was archived by the operator"); err != nil {
+			return nil, err
+		}
 	}
 	extraction.Archived = archived
 	updated, err := s.repo.SaveExtraction(extraction)
@@ -511,9 +523,13 @@ func (s *service) ArchiveExtraction(id uuid.UUID, archived bool) (*models.Source
 
 func (s *service) DeleteExtraction(id uuid.UUID) error {
 	extraction, err := s.repo.FindExtraction(id)
-	if err == nil {
-		s.audit(extraction.SourceID, "extraction.deleted", "operator deleted extraction")
+	if err != nil {
+		return err
 	}
+	if err := s.retractWorkflowForExtraction(extraction, "source extraction was deleted by the operator"); err != nil {
+		return err
+	}
+	s.audit(extraction.SourceID, "extraction.deleted", "operator deleted extraction")
 	return s.repo.DeleteExtraction(id)
 }
 
@@ -633,7 +649,8 @@ func (s *service) upsertRawItem(source *models.ConnectedSource, item ImportItem,
 	existing.ItemType = firstNonEmpty(item.ItemType, source.Category)
 	existing.Title = item.Title
 	existing.SourceURI = item.SourceURI
-	existing.Metadata = item.Content
+	existing.Content = item.Content
+	existing.Metadata = item.Metadata
 	existing.ContentHash = hashText(item.Title + "|" + item.Content)
 	raw, err := s.repo.SaveRawItem(existing)
 	return raw, added, err
@@ -698,19 +715,56 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		"Dates: " + extraction.Dates,
 	}, "\n")
 	_, err := s.workflowService.Intake(workflow.IntakeRequest{
-		Input:       input,
-		ProjectKey:  extraction.ProjectKey,
-		SourceType:  source.Category,
-		SourceURI:   firstNonEmpty(extraction.SourceURI, "source-extraction://"+extraction.ID.String()),
-		SourceLabel: extraction.SourceLabel,
-		Trigger:     "source.extraction",
-		Actor:       "source-worker",
+		Input:          input,
+		ProjectKey:     extraction.ProjectKey,
+		SourceType:     source.Category,
+		SourceID:       extraction.ID.String(),
+		SourceURI:      firstNonEmpty(extraction.SourceURI, "source-extraction://"+extraction.ID.String()),
+		SourceLabel:    extraction.SourceLabel,
+		Trigger:        "source.extraction",
+		Actor:          "source-worker",
+		RequiresReview: extraction.Uncertain || extraction.Sensitive,
+		ReviewReason:   extractionReviewReason(extraction),
 	})
 	if err != nil {
 		s.audit(source.ID, "workflow.intake_failed", err.Error())
 		return
 	}
 	s.audit(source.ID, "workflow.intake_created", "actionable extraction sent to workflow engine")
+}
+
+func extractionReviewReason(extraction *models.SourceExtraction) string {
+	reasons := []string{}
+	if extraction.Uncertain {
+		reasons = append(reasons, "extraction is uncertain")
+	}
+	if extraction.Sensitive {
+		reasons = append(reasons, "extraction contains sensitive content")
+	}
+	return strings.Join(reasons, "; ")
+}
+
+func (s *service) reconcileWorkflowFromExtraction(extraction *models.SourceExtraction) {
+	if firstNonEmpty(extraction.Tasks, extraction.FollowUps) == "" {
+		return
+	}
+	source, err := s.repo.FindSource(extraction.SourceID)
+	if err != nil {
+		s.audit(extraction.SourceID, "workflow.reconcile_failed", err.Error())
+		return
+	}
+	s.createWorkflowFromExtraction(source, extraction)
+}
+
+func (s *service) retractWorkflowForExtraction(extraction *models.SourceExtraction, reason string) error {
+	if s.workflowService == nil {
+		return nil
+	}
+	source, err := s.repo.FindSource(extraction.SourceID)
+	if err != nil {
+		return err
+	}
+	return s.workflowService.RetractSource(source.Category, extraction.ID.String(), reason)
 }
 
 func (s *service) indexExtraction(extraction *models.SourceExtraction) {

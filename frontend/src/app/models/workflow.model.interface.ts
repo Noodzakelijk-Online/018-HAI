@@ -16,6 +16,7 @@ export interface IWorkflowItem {
   blockedReason?: string;
   nextAction?: string;
   sourceType?: string;
+  sourceId?: string;
   sourceUri?: string;
   sourceLabel?: string;
   dueAt?: string;
@@ -205,6 +206,8 @@ export interface IWorkflowIntakeRequest {
   input: string;
   projectKey?: string;
   automationId?: string;
+  requiresReview?: boolean;
+  reviewReason?: string;
   sourceType?: string;
   sourceId?: string;
   sourceUri?: string;

@@ -1233,6 +1233,114 @@ func TestIntakeDeduplicatesBySourceURI(t *testing.T) {
 	}
 }
 
+func TestIntakeUsesSourceRecordIdentityBeforeSharedURI(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	first, err := service.Intake(IntakeRequest{
+		Input:      "Follow up: prepare the first project record.",
+		SourceType: "email",
+		SourceID:   "message-1",
+		SourceURI:  "mailto:shared@example.test",
+	})
+	if err != nil {
+		t.Fatalf("Intake first: %v", err)
+	}
+	second, err := service.Intake(IntakeRequest{
+		Input:      "Follow up: prepare the second project record.",
+		SourceType: "email",
+		SourceID:   "message-2",
+		SourceURI:  "mailto:shared@example.test",
+	})
+	if err != nil {
+		t.Fatalf("Intake second: %v", err)
+	}
+	if first.Item.ID == second.Item.ID {
+		t.Fatalf("separate source records sharing a URI were incorrectly deduplicated")
+	}
+
+	repeated, err := service.Intake(IntakeRequest{
+		Input:      "Updated text for the first project record.",
+		SourceType: "email",
+		SourceID:   "message-1",
+		SourceURI:  "mailto:changed@example.test",
+	})
+	if err != nil {
+		t.Fatalf("Intake repeated: %v", err)
+	}
+	if repeated.Item.ID != first.Item.ID {
+		t.Fatalf("stable source identity did not deduplicate repeated record")
+	}
+}
+
+func TestIntakeExplicitReviewGatePreventsAutonomousReadyState(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	record, err := service.Intake(IntakeRequest{
+		Input:          "Todo: contact the project owner.",
+		SourceType:     "email",
+		SourceID:       "uncertain-message",
+		RequiresReview: true,
+		ReviewReason:   "extraction is uncertain",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.CurrentState != StateNeedsApproval || !record.Item.RequiresApproval {
+		t.Fatalf("review-gated source record entered autonomous queue: %#v", record.Item)
+	}
+	if record.Item.ApprovalReason != "extraction is uncertain" || record.Item.AutonomyLevel != "approve_before_execute" {
+		t.Fatalf("review reason was not preserved: %#v", record.Item)
+	}
+}
+
+func TestRetractSourceBlocksPendingSourceDerivedWorkflow(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Follow up: prepare the project checklist.",
+		SourceType: "email",
+		SourceID:   "message-to-retract",
+		SourceURI:  "local://message-to-retract",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.CurrentState != StateReady {
+		t.Fatalf("initial state = %q, want ready", record.Item.CurrentState)
+	}
+	if err := service.RetractSource("email", "message-to-retract", "operator deleted the extraction"); err != nil {
+		t.Fatalf("RetractSource: %v", err)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked || updated.Item.VerificationStatus != "needs_review" {
+		t.Fatalf("retracted workflow remained executable: %#v", updated.Item)
+	}
+	if !hasDecision(updated.Decisions, "source_retraction", "blocked") {
+		t.Fatalf("source retraction decision was not recorded")
+	}
+}
+
+func TestRetractSourceRefusesWorkflowCurrentlyExecuting(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Follow up: prepare the project checklist.",
+		SourceType: "email",
+		SourceID:   "message-in-progress",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	item := record.Item
+	item.CurrentState = StateInProgress
+	if _, err := repo.UpdateItem(&item); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+	if err := service.RetractSource("email", "message-in-progress", "operator deleted the extraction"); err == nil {
+		t.Fatalf("expected in-progress source workflow retraction to require interruption review")
+	}
+}
+
 func hasApprovalChecklist(items []models.WorkflowChecklistItem) bool {
 	for _, item := range items {
 		if item.RequiresApproval {
@@ -1385,6 +1493,16 @@ func (r *fakeWorkflowRepo) FindItem(id uuid.UUID) (*models.WorkflowItem, error) 
 	}
 	copied := *item
 	return &copied, nil
+}
+
+func (r *fakeWorkflowRepo) FindActiveItemBySourceIdentity(sourceType, sourceID string) (*models.WorkflowItem, error) {
+	for _, item := range r.items {
+		if item.SourceType == sourceType && item.SourceID == sourceID && !item.Archived {
+			copied := *item
+			return &copied, nil
+		}
+	}
+	return nil, nil
 }
 
 func (r *fakeWorkflowRepo) FindActiveItemBySourceURI(sourceURI string) (*models.WorkflowItem, error) {

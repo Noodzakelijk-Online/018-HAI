@@ -24,6 +24,7 @@ type WorkflowItem struct {
 	BlockedReason      string     `gorm:"type:text" json:"blockedReason,omitempty"`
 	NextAction         string     `gorm:"type:text" json:"nextAction,omitempty"`
 	SourceType         string     `gorm:"type:varchar(80);index" json:"sourceType,omitempty"`
+	SourceID           string     `gorm:"type:varchar(120);index" json:"sourceId,omitempty"`
 	SourceURI          string     `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
 	SourceLabel        string     `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
 	DueAt              *time.Time `gorm:"index" json:"dueAt,omitempty"`

@@ -297,7 +297,9 @@ The workflow engine now implements the first real operational slice of the perso
 15. Evaluates quality gates before verified completion.
 16. Surfaces operational monitoring for approvals, blocked work, ready work, high-risk items, due open loops, missing next actions, and safety rules.
 
-Manual input can be sent to `POST /workflow/intake`. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Intake deduplicates by source URI so repeated syncs do not create duplicate workflow items for the same source record.
+Manual input can be sent to `POST /workflow/intake`. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Source-derived intake deduplicates first by stable source type plus extraction identity, then falls back to source URI for older/manual callers. Separate records may therefore share a mailbox, sender, document, or board URI without collapsing into one workflow. Uncertain or sensitive extractions are forced into `needs_approval` rather than entering the autonomous ready queue.
+
+Raw connected-source content and connector metadata are stored separately. Reindexing uses the cached content while preserving metadata, and keyword/vector index entries are updated idempotently instead of duplicated. Correcting an extraction reindexes it and reconciles its workflow candidate. Archiving, deleting, or removing all actionable tasks from an extraction retracts the pending source-derived workflow into a blocked review state; an in-progress workflow must first use interrupted-execution review so source deletion cannot hide a possibly executed action.
 
 The workflow layer now stores operational history in separate tables:
 

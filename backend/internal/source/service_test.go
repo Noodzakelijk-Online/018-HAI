@@ -330,8 +330,182 @@ func TestSyncCreatesWorkflowForActionableExtraction(t *testing.T) {
 	if request.Trigger != "source.extraction" {
 		t.Fatalf("Trigger = %q, want source.extraction", request.Trigger)
 	}
+	if request.SourceID != result.Extractions[0].ID.String() {
+		t.Fatalf("SourceID = %q, want stable extraction identity", request.SourceID)
+	}
 	if !repo.hasAudit("workflow.intake_created") {
 		t.Fatalf("expected workflow intake audit record")
+	}
+}
+
+func TestSyncCreatesSeparateWorkflowCandidatesForSharedSourceURI(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode: ModeManualImport,
+		Items: []ImportItem{
+			{ExternalID: "message-1", Title: "First", Content: "Follow up: prepare the first detailed project checklist for review.", SourceURI: "mailto:shared@example.test"},
+			{ExternalID: "message-2", Title: "Second", Content: "Follow up: prepare the second detailed project checklist for review.", SourceURI: "mailto:shared@example.test"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(workflowSpy.requests) != 2 || len(result.Extractions) != 2 {
+		t.Fatalf("workflow requests=%d extractions=%d, want 2", len(workflowSpy.requests), len(result.Extractions))
+	}
+	if workflowSpy.requests[0].SourceID == workflowSpy.requests[1].SourceID {
+		t.Fatalf("separate source records received the same workflow identity")
+	}
+}
+
+func TestSyncRoutesUncertainActionableExtractionToReview(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+
+	_, err := service.Sync(sourceID, ImportRequest{
+		Items: []ImportItem{{ExternalID: "short", Title: "Short", Content: "Todo: call.", SourceURI: "local://short"}},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(workflowSpy.requests) != 1 || !workflowSpy.requests[0].RequiresReview {
+		t.Fatalf("uncertain extraction was not review gated: %#v", workflowSpy.requests)
+	}
+	if !strings.Contains(workflowSpy.requests[0].ReviewReason, "uncertain") {
+		t.Fatalf("review reason = %q", workflowSpy.requests[0].ReviewReason)
+	}
+}
+
+func TestReindexUsesCachedRawContentAndPreservesMetadata(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Imported records",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	content := "Decision: preserve cached source content. Follow up: verify the reindex result."
+	metadata := `{"threadId":"thread-1"}`
+
+	if _, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-1",
+		Title:      "Reindex record",
+		Content:    content,
+		Metadata:   metadata,
+	}}}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	rawItems, err := repo.FindRawItems(sourceID)
+	if err != nil || len(rawItems) != 1 {
+		t.Fatalf("FindRawItems: items=%#v err=%v", rawItems, err)
+	}
+	if rawItems[0].Content != content || rawItems[0].Metadata != metadata {
+		t.Fatalf("raw cache mixed content and metadata: %#v", rawItems[0])
+	}
+
+	result, err := service.Reindex(sourceID)
+	if err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+	if len(result.Extractions) != 1 || result.Extractions[0].Text != content {
+		t.Fatalf("reindex did not use cached content: %#v", result.Extractions)
+	}
+	if len(repo.index) != 2 {
+		t.Fatalf("reindex created duplicate index rows: %#v", repo.index)
+	}
+	rawItems, _ = repo.FindRawItems(sourceID)
+	if rawItems[0].Metadata != metadata {
+		t.Fatalf("reindex overwrote raw metadata: %#v", rawItems[0])
+	}
+}
+
+func TestArchiveExtractionRetractsPendingWorkflowCandidate(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-archive",
+		Title:      "Archive",
+		Content:    "Follow up: prepare the detailed project checklist for review.",
+		SourceURI:  "local://archive",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	extractionID := result.Extractions[0].ID
+	if _, err := service.ArchiveExtraction(extractionID, true); err != nil {
+		t.Fatalf("ArchiveExtraction: %v", err)
+	}
+	if len(workflowSpy.retractions) != 1 || workflowSpy.retractions[0].sourceID != extractionID.String() {
+		t.Fatalf("workflow retractions = %#v", workflowSpy.retractions)
+	}
+}
+
+func TestCorrectingAwayActionableFieldsRetractsWorkflowCandidate(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-correct",
+		Title:      "Correction",
+		Content:    "Follow up: prepare the detailed project checklist for review.",
+		SourceURI:  "local://correction",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	extraction := result.Extractions[0]
+	extraction.Tasks = ""
+	extraction.FollowUps = ""
+	if _, err := service.UpdateExtraction(extraction.ID, extraction); err != nil {
+		t.Fatalf("UpdateExtraction: %v", err)
+	}
+	if len(workflowSpy.retractions) != 1 || workflowSpy.retractions[0].sourceID != extraction.ID.String() {
+		t.Fatalf("workflow retractions = %#v", workflowSpy.retractions)
 	}
 }
 
@@ -549,9 +723,21 @@ func (r *fakeSourceRepo) DeleteExtraction(id uuid.UUID) error {
 }
 
 func (r *fakeSourceRepo) SaveIndexEntry(entry *models.SourceIndexEntry) (*models.SourceIndexEntry, error) {
+	for index := range r.index {
+		if r.index[index].ExtractionID == entry.ExtractionID && r.index[index].IndexType == entry.IndexType {
+			entry.ID = r.index[index].ID
+			entry.CreatedAt = r.index[index].CreatedAt
+			entry.UpdatedAt = time.Now().UTC()
+			r.index[index] = *entry
+			return entry, nil
+		}
+	}
 	if entry.ID == uuid.Nil {
 		entry.ID = uuid.New()
 	}
+	now := time.Now().UTC()
+	entry.CreatedAt = now
+	entry.UpdatedAt = now
 	r.index = append(r.index, *entry)
 	return entry, nil
 }
@@ -627,7 +813,14 @@ func (s *fakeSourceMemoryService) Retrieve(request memory.RetrieveRequest) (*mem
 }
 
 type fakeSourceWorkflowService struct {
-	requests []workflow.IntakeRequest
+	requests    []workflow.IntakeRequest
+	retractions []sourceWorkflowRetraction
+}
+
+type sourceWorkflowRetraction struct {
+	sourceType string
+	sourceID   string
+	reason     string
 }
 
 func (s *fakeSourceWorkflowService) Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
@@ -671,6 +864,11 @@ func (s *fakeSourceWorkflowService) ResolveProposal(id uuid.UUID, proposalID uui
 
 func (s *fakeSourceWorkflowService) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request workflow.ChecklistUpdateRequest) (*workflow.WorkflowRecord, error) {
 	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) RetractSource(sourceType, sourceID, reason string) error {
+	s.retractions = append(s.retractions, sourceWorkflowRetraction{sourceType: sourceType, sourceID: sourceID, reason: reason})
+	return nil
 }
 
 func (s *fakeSourceWorkflowService) RecoverStaleClaims(request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {
