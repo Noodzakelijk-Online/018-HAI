@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/workflow"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,6 +77,7 @@ type SyncResult struct {
 	Job         models.SourceSyncJob      `json:"job"`
 	Extractions []models.SourceExtraction `json:"extractions"`
 	Message     string                    `json:"message"`
+	Errors      []string                  `json:"errors,omitempty"`
 }
 
 type SearchRequest struct {
@@ -128,16 +131,21 @@ type service struct {
 	repo            Repository
 	memoryService   memory.Service
 	workflowService workflow.Service
+	syncMu          sync.Mutex
+	activeSyncs     map[uuid.UUID]bool
 }
 
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
+var ErrSyncInProgress = errors.New("source sync is already in progress")
+
+const maxSyncErrorDetails = 20
 
 func NewService(repo Repository, memoryService memory.Service) Service {
-	return &service{repo: repo, memoryService: memoryService}
+	return &service{repo: repo, memoryService: memoryService, activeSyncs: map[uuid.UUID]bool{}}
 }
 
 func NewServiceWithWorkflow(repo Repository, memoryService memory.Service, workflowService workflow.Service) Service {
-	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService}
+	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService, activeSyncs: map[uuid.UUID]bool{}}
 }
 
 func DefaultService() Service {
@@ -247,6 +255,11 @@ func (s *service) Sources(includeDisabled bool) ([]models.ConnectedSource, error
 }
 
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	if !s.beginSync(sourceID) {
+		return nil, ErrSyncInProgress
+	}
+	defer s.endSync(sourceID)
+
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
 		return nil, err
@@ -279,6 +292,14 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	extractions := []models.SourceExtraction{}
 	added := 0
 	updated := 0
+	failed := 0
+	itemErrors := []string{}
+	recordFailure := func(item ImportItem, stage string, err error) {
+		failed++
+		if len(itemErrors) < maxSyncErrorDetails {
+			itemErrors = append(itemErrors, itemFailure(item, stage, err))
+		}
+	}
 	items := request.Items
 	if len(items) == 0 && source.ConnectorKey == "local-folder" {
 		items, err = s.localFolderItems(source, request)
@@ -298,6 +319,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 		raw, wasAdded, errItem := s.upsertRawItem(source, item, index)
 		if errItem != nil {
+			recordFailure(item, "raw item persistence failed", errItem)
 			continue
 		}
 		if wasAdded {
@@ -306,30 +328,61 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			updated++
 		}
 		extraction, errExtract := s.extractAndStore(source, raw, item.Content)
-		if errExtract == nil {
-			extractions = append(extractions, *extraction)
-			s.indexExtraction(extraction)
-			s.storeUsefulMemory(source, extraction)
-			s.createWorkflowFromExtraction(source, extraction)
+		if errExtract != nil {
+			recordFailure(item, "extraction failed", errExtract)
+			continue
 		}
+		if errIndex := s.indexExtraction(extraction); errIndex != nil {
+			recordFailure(item, "index update failed", errIndex)
+			continue
+		}
+		if errWorkflow := s.createWorkflowFromExtraction(source, extraction); errWorkflow != nil {
+			recordFailure(item, "workflow intake failed", errWorkflow)
+			continue
+		}
+		extractions = append(extractions, *extraction)
+		s.storeUsefulMemory(source, extraction)
 	}
 
 	now := time.Now().UTC()
-	source.LastSyncedAt = &now
-	source.Cursor = fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(items))
-	_, _ = s.repo.UpdateSource(source)
-	job.Status = "completed"
-	job.CursorAfter = source.Cursor
 	job.ItemsSeen = len(items)
 	job.ItemsAdded = added
 	job.ItemsUpdated = updated
-	job.Message = "sync completed with cached extraction and provenance links"
+	job.ItemsFailed = failed
+	job.CursorAfter = source.Cursor
+	if failed == 0 {
+		source.LastSyncedAt = &now
+		source.Cursor = fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(items))
+		job.Status = "completed"
+		job.CursorAfter = source.Cursor
+		job.Message = "sync completed with cached extraction and provenance links"
+	} else if len(extractions) > 0 {
+		job.Status = "partial_failure"
+		job.Message = fmt.Sprintf("sync partially completed; %d item(s) failed and the cursor was retained for retry", failed)
+	} else {
+		job.Status = "failed"
+		job.Message = fmt.Sprintf("sync failed; %d item(s) failed and the cursor was retained for retry", failed)
+	}
+	if _, errSource := s.repo.UpdateSource(source); errSource != nil {
+		failed++
+		job.ItemsFailed = failed
+		job.Status = "failed"
+		job.CursorAfter = job.CursorBefore
+		job.Message = "sync result could not update source state; cursor was not confirmed"
+		if len(itemErrors) < maxSyncErrorDetails {
+			itemErrors = append(itemErrors, "source state update failed: "+compact(errSource.Error(), 220))
+		}
+	}
 	job.CompletedAt = &now
 	job, err = s.repo.UpdateSyncJob(job)
 	if err == nil {
-		s.audit(sourceID, "source.synced", job.Message)
+		action := "source.synced"
+		if job.Status != "completed" {
+			action = "source.sync_partial_failure"
+		}
+		s.audit(sourceID, action, job.Message)
 	}
-	return &SyncResult{Job: *job, Extractions: extractions, Message: job.Message}, err
+	return &SyncResult{Job: *job, Extractions: extractions, Message: job.Message, Errors: itemErrors}, err
 }
 
 func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error) {
@@ -354,8 +407,18 @@ func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 			ProjectKey: source.DefaultProjectKey,
 		})
 		if errSync != nil {
+			if errors.Is(errSync, ErrSyncInProgress) {
+				run.Skipped++
+				run.Messages = append(run.Messages, fmt.Sprintf("%s skipped: sync already in progress", source.Name))
+				continue
+			}
 			run.Failed++
 			run.Messages = append(run.Messages, fmt.Sprintf("%s failed: %s", source.Name, errSync.Error()))
+			continue
+		}
+		if result.Job.Status != "completed" {
+			run.Failed++
+			run.Messages = append(run.Messages, fmt.Sprintf("%s %s: %d seen, %d failed", source.Name, result.Job.Status, result.Job.ItemsSeen, result.Job.ItemsFailed))
 			continue
 		}
 		run.Completed++
@@ -497,8 +560,12 @@ func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction
 	updated, err := s.repo.SaveExtraction(extraction)
 	if err == nil && updated != nil {
 		s.audit(extraction.SourceID, "extraction.corrected", "operator corrected extraction")
-		s.indexExtraction(updated)
-		s.reconcileWorkflowFromExtraction(updated)
+		if errIndex := s.indexExtraction(updated); errIndex != nil {
+			return updated, fmt.Errorf("extraction corrected but index update failed: %w", errIndex)
+		}
+		if errWorkflow := s.reconcileWorkflowFromExtraction(updated); errWorkflow != nil {
+			return updated, fmt.Errorf("extraction corrected but workflow reconciliation failed: %w", errWorkflow)
+		}
 	}
 	return updated, err
 }
@@ -700,13 +767,13 @@ func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *
 	})
 }
 
-func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) {
+func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) error {
 	if s.workflowService == nil {
-		return
+		return nil
 	}
 	taskSignal := firstNonEmpty(extraction.Tasks, extraction.FollowUps)
 	if taskSignal == "" {
-		return
+		return nil
 	}
 	input := strings.Join([]string{
 		firstNonEmpty(extraction.Summary, extraction.SourceLabel),
@@ -728,9 +795,10 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 	})
 	if err != nil {
 		s.audit(source.ID, "workflow.intake_failed", err.Error())
-		return
+		return err
 	}
 	s.audit(source.ID, "workflow.intake_created", "actionable extraction sent to workflow engine")
+	return nil
 }
 
 func extractionReviewReason(extraction *models.SourceExtraction) string {
@@ -744,16 +812,20 @@ func extractionReviewReason(extraction *models.SourceExtraction) string {
 	return strings.Join(reasons, "; ")
 }
 
-func (s *service) reconcileWorkflowFromExtraction(extraction *models.SourceExtraction) {
+func (s *service) reconcileWorkflowFromExtraction(extraction *models.SourceExtraction) error {
 	if firstNonEmpty(extraction.Tasks, extraction.FollowUps) == "" {
-		return
+		return nil
 	}
 	source, err := s.repo.FindSource(extraction.SourceID)
 	if err != nil {
 		s.audit(extraction.SourceID, "workflow.reconcile_failed", err.Error())
-		return
+		return err
 	}
-	s.createWorkflowFromExtraction(source, extraction)
+	if err := s.createWorkflowFromExtraction(source, extraction); err != nil {
+		s.audit(extraction.SourceID, "workflow.reconcile_failed", err.Error())
+		return err
+	}
+	return nil
 }
 
 func (s *service) retractWorkflowForExtraction(extraction *models.SourceExtraction, reason string) error {
@@ -767,22 +839,51 @@ func (s *service) retractWorkflowForExtraction(extraction *models.SourceExtracti
 	return s.workflowService.RetractSource(source.Category, extraction.ID.String(), reason)
 }
 
-func (s *service) indexExtraction(extraction *models.SourceExtraction) {
+func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	keywords := strings.Join(mapKeys(tokenSet(extraction.Text+" "+extraction.Summary+" "+extraction.Entities+" "+extraction.Tasks)), ",")
-	_, _ = s.repo.SaveIndexEntry(&models.SourceIndexEntry{
+	if _, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
 		SourceID:     extraction.SourceID,
 		ExtractionID: extraction.ID,
 		ProjectKey:   extraction.ProjectKey,
 		IndexType:    "keyword",
 		Keywords:     keywords,
-	})
-	_, _ = s.repo.SaveIndexEntry(&models.SourceIndexEntry{
+	}); err != nil {
+		return err
+	}
+	if _, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
 		SourceID:     extraction.SourceID,
 		ExtractionID: extraction.ID,
 		ProjectKey:   extraction.ProjectKey,
 		IndexType:    "vector_ref",
 		VectorRef:    "local-vector-pending:" + extraction.ID.String(),
-	})
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *service) beginSync(sourceID uuid.UUID) bool {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.activeSyncs == nil {
+		s.activeSyncs = map[uuid.UUID]bool{}
+	}
+	if s.activeSyncs[sourceID] {
+		return false
+	}
+	s.activeSyncs[sourceID] = true
+	return true
+}
+
+func (s *service) endSync(sourceID uuid.UUID) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	delete(s.activeSyncs, sourceID)
+}
+
+func itemFailure(item ImportItem, stage string, err error) string {
+	label := firstNonEmpty(item.ExternalID, item.Title, "unknown item")
+	return compact(fmt.Sprintf("%s: %s: %v", label, stage, err), 320)
 }
 
 func (s *service) audit(sourceID uuid.UUID, action, message string) {

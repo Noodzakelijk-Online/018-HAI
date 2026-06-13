@@ -52,6 +52,7 @@ type SourceSyncJob struct {
 	ItemsSeen    int        `json:"itemsSeen"`
 	ItemsAdded   int        `json:"itemsAdded"`
 	ItemsUpdated int        `json:"itemsUpdated"`
+	ItemsFailed  int        `json:"itemsFailed"`
 	Message      string     `gorm:"type:text" json:"message,omitempty"`
 	StartedAt    time.Time  `json:"startedAt"`
 	CompletedAt  *time.Time `json:"completedAt,omitempty"`

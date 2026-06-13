@@ -8,6 +8,7 @@ import {
   ISourceConnector,
   ISourceExtraction,
   ISourceSearchResult,
+  ISourceSyncResult,
 } from '../../models/connected-source.model.interface';
 import { CONNECTED_SOURCE_SERVICE_TOKEN } from '../../services/connected-source/connected-source.service.token';
 import { IConnectedSourceService } from '../../services/connected-source.service.interface';
@@ -153,9 +154,9 @@ export class ConnectedSourcesComponent implements OnInit {
         ],
       })
       .subscribe({
-        next: () => {
+        next: (result) => {
           this.syncing = false;
-          this.notification.success('Synced', 'Item extracted with provenance.');
+          this.notifySyncResult('Item sync', result);
           this.refresh();
         },
         error: () => {
@@ -187,7 +188,7 @@ export class ConnectedSourcesComponent implements OnInit {
       .subscribe({
         next: (result) => {
           this.syncing = false;
-          this.notification.success('Folder synced', `${result.job.itemsSeen} files scanned and extracted. Target saved for scheduled sync.`);
+          this.notifySyncResult('Folder sync', result);
           this.refresh();
         },
         error: () => {
@@ -202,10 +203,12 @@ export class ConnectedSourcesComponent implements OnInit {
     this.sourceService.runDueScheduledSyncs().subscribe({
       next: (result) => {
         this.syncing = false;
-        this.notification.success(
-          'Scheduled sync checked',
-          `${result.completed} completed, ${result.failed} failed, ${result.skipped} skipped.`
-        );
+        const summary = `${result.completed} completed, ${result.failed} failed, ${result.skipped} skipped.`;
+        if (result.failed > 0) {
+          this.notification.warning('Scheduled sync requires attention', summary);
+        } else {
+          this.notification.success('Scheduled sync checked', summary);
+        }
         this.refresh();
       },
       error: () => {
@@ -213,6 +216,15 @@ export class ConnectedSourcesComponent implements OnInit {
         this.notification.error('Error', 'Scheduled sync check failed.');
       },
     });
+  }
+
+  private notifySyncResult(label: string, result: ISourceSyncResult): void {
+    const summary = `${result.job.itemsSeen} seen, ${result.job.itemsFailed || 0} failed. ${result.message}`;
+    if (result.job.status === 'completed') {
+      this.notification.success(label, summary);
+      return;
+    }
+    this.notification.warning(`${label} requires attention`, summary);
   }
 
   search(): void {

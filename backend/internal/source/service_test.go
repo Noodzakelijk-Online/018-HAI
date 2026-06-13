@@ -4,6 +4,8 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/workflow"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -335,6 +337,168 @@ func TestSyncCreatesWorkflowForActionableExtraction(t *testing.T) {
 	}
 	if !repo.hasAudit("workflow.intake_created") {
 		t.Fatalf("expected workflow intake audit record")
+	}
+}
+
+func TestSyncRetainsCursorWhenWorkflowIntakePartiallyFails(t *testing.T) {
+	lastSync := time.Now().UTC().Add(-time.Hour)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+		Cursor:       "cursor-before",
+		LastSyncedAt: &lastSync,
+	})
+	workflowSpy := &fakeSourceWorkflowService{intakeErr: errors.New("workflow database unavailable")}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{
+		{
+			ExternalID: "context-only",
+			Title:      "Background",
+			Content:    "A sufficiently long informational record describing confirmed project context and background details.",
+		},
+		{
+			ExternalID: "actionable",
+			Title:      "Action",
+			Content:    "Follow up: prepare a detailed project checklist and confirm the result with the project owner.",
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.Status != "partial_failure" || result.Job.ItemsFailed != 1 {
+		t.Fatalf("job = %#v, want one partial failure", result.Job)
+	}
+	if result.Job.CursorAfter != "cursor-before" || len(result.Errors) != 1 {
+		t.Fatalf("cursor/errors = %q/%#v, want retained cursor and error detail", result.Job.CursorAfter, result.Errors)
+	}
+	updated, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if updated.Cursor != "cursor-before" || updated.LastSyncedAt == nil || !updated.LastSyncedAt.Equal(lastSync) {
+		t.Fatalf("partial failure advanced source state: %#v", updated)
+	}
+	if !repo.hasAudit("source.sync_partial_failure") {
+		t.Fatalf("expected partial failure audit record")
+	}
+}
+
+func TestSyncCapsReturnedFailureDetails(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{intakeErr: errors.New("workflow unavailable")}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	items := make([]ImportItem, maxSyncErrorDetails+5)
+	for index := range items {
+		items[index] = ImportItem{
+			ExternalID: fmt.Sprintf("actionable-%d", index),
+			Title:      "Action",
+			Content:    "Follow up: prepare a detailed project checklist and confirm the result with the project owner.",
+		}
+	}
+
+	result, err := service.Sync(sourceID, ImportRequest{Items: items})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsFailed != len(items) {
+		t.Fatalf("failed count = %d, want %d", result.Job.ItemsFailed, len(items))
+	}
+	if len(result.Errors) != maxSyncErrorDetails {
+		t.Fatalf("error details = %d, want cap %d", len(result.Errors), maxSyncErrorDetails)
+	}
+}
+
+func TestScheduledSyncCountsPartialResultAsFailed(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root+"/action.md", "Follow up: prepare a detailed project checklist and confirm the result with the project owner.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:            sourceID,
+		ConnectorKey:  "local-folder",
+		Name:          "Scheduled folder",
+		Category:      "local_folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+		SyncFrequency: "1m",
+		SyncTarget:    ".",
+	})
+	workflowSpy := &fakeSourceWorkflowService{intakeErr: errors.New("workflow unavailable")}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+
+	run, err := service.RunDueScheduledSyncs(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("RunDueScheduledSyncs: %v", err)
+	}
+	if run.Completed != 0 || run.Failed != 1 {
+		t.Fatalf("run = %#v, want failed scheduled sync", run)
+	}
+	updated, _ := repo.FindSource(sourceID)
+	if updated.LastSyncedAt != nil || updated.Cursor != "" {
+		t.Fatalf("failed scheduled sync advanced source state: %#v", updated)
+	}
+}
+
+func TestSyncRejectsOverlappingRunForSameSource(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	workflowSpy := &fakeSourceWorkflowService{intakeStarted: started, intakeRelease: release}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	firstDone := make(chan error, 1)
+
+	go func() {
+		_, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+			ExternalID: "first",
+			Title:      "First",
+			Content:    "Follow up: prepare a detailed project checklist and confirm the result with the project owner.",
+		}}})
+		firstDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("first sync did not reach workflow intake")
+	}
+
+	_, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "second",
+		Title:      "Second",
+		Content:    "Follow up: prepare another detailed project checklist.",
+	}}})
+	if !errors.Is(err, ErrSyncInProgress) {
+		t.Fatalf("overlapping sync error = %v, want ErrSyncInProgress", err)
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first Sync: %v", err)
 	}
 }
 
@@ -813,8 +977,11 @@ func (s *fakeSourceMemoryService) Retrieve(request memory.RetrieveRequest) (*mem
 }
 
 type fakeSourceWorkflowService struct {
-	requests    []workflow.IntakeRequest
-	retractions []sourceWorkflowRetraction
+	requests      []workflow.IntakeRequest
+	retractions   []sourceWorkflowRetraction
+	intakeErr     error
+	intakeStarted chan struct{}
+	intakeRelease chan struct{}
 }
 
 type sourceWorkflowRetraction struct {
@@ -825,6 +992,16 @@ type sourceWorkflowRetraction struct {
 
 func (s *fakeSourceWorkflowService) Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	s.requests = append(s.requests, request)
+	if s.intakeStarted != nil {
+		close(s.intakeStarted)
+		s.intakeStarted = nil
+	}
+	if s.intakeRelease != nil {
+		<-s.intakeRelease
+	}
+	if s.intakeErr != nil {
+		return nil, s.intakeErr
+	}
 	return &workflow.WorkflowRecord{
 		Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey},
 	}, nil

@@ -301,6 +301,8 @@ Manual input can be sent to `POST /workflow/intake`. Connected-source sync also 
 
 Raw connected-source content and connector metadata are stored separately. Reindexing uses the cached content while preserving metadata, and keyword/vector index entries are updated idempotently instead of duplicated. Correcting an extraction reindexes it and reconciles its workflow candidate. Archiving, deleting, or removing all actionable tasks from an extraction retracts the pending source-derived workflow into a blocked review state; an in-progress workflow must first use interrupted-execution review so source deletion cannot hide a possibly executed action.
 
+Source sync completion is all-or-retry at the cursor boundary. Item persistence, extraction, index, or required workflow-intake failures are recorded in `itemsFailed` with bounded error details. A partially successful job is stored as `partial_failure`, scheduled sync reports it as failed, and `LastSyncedAt` plus the cursor remain unchanged so the next incremental run retries the missing work. Concurrent sync requests for the same source are rejected within the local process instead of racing and duplicating autonomous workflow candidates.
+
 The workflow layer now stores operational history in separate tables:
 
 - `WorkflowTransition` records every state change.

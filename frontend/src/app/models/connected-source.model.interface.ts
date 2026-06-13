@@ -71,6 +71,7 @@ export interface ISourceSyncJob {
   itemsSeen: number;
   itemsAdded: number;
   itemsUpdated: number;
+  itemsFailed: number;
   message?: string;
   startedAt: string;
   completedAt?: string;
@@ -101,6 +102,7 @@ export interface ISourceSyncResult {
   job: ISourceSyncJob;
   extractions: ISourceExtraction[];
   message: string;
+  errors?: string[];
 }
 
 export interface IScheduledSyncRun {

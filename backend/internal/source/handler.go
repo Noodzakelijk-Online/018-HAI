@@ -2,6 +2,7 @@ package source
 
 import (
 	"automation-hub-backend/internal/models"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -85,6 +86,10 @@ func (h *Handler) Sync(c *gin.Context) {
 	}
 	result, err := h.service.Sync(id, request)
 	if err != nil {
+		if errors.Is(err, ErrSyncInProgress) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -98,6 +103,10 @@ func (h *Handler) Reindex(c *gin.Context) {
 	}
 	result, err := h.service.Reindex(id)
 	if err != nil {
+		if errors.Is(err, ErrSyncInProgress) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
