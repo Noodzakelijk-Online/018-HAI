@@ -46,6 +46,15 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	m.GET("/export", mark("memoryExport"))
 	m.GET("/:id", mark("memoryGet"))
 
+	memoryEngineRoutes := r.Group("/api/v1").Group("/memory-engine")
+	memoryEngineRoutes.POST("/import", mark("memoryEngineImport"))
+	memoryEngineRoutes.GET("/dashboard", mark("memoryEngineDashboard"))
+	memoryEngineRoutes.POST("/search", mark("memoryEngineSearch"))
+	memoryEngineRoutes.GET("/conversations", mark("memoryEngineConversations"))
+	memoryEngineRoutes.GET("/conversations/:id", mark("memoryEngineConversation"))
+	memoryEngineRoutes.DELETE("/conversations/:id", mark("memoryEngineConversationDelete"))
+	memoryEngineRoutes.GET("/insights", mark("memoryEngineInsights"))
+
 	llmRoutes := r.Group("/api/v1").Group("/llm")
 	llmRoutes.GET("/policy", mark("llmPolicy"))
 	llmRoutes.GET("/probes", mark("llmProbes"))
@@ -117,6 +126,13 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/memory/retrieve", "memoryRetrieve"},
 		{"GET", "/api/v1/memory/export", "memoryExport"},
 		{"GET", "/api/v1/memory/abc", "memoryGet"},
+		{"POST", "/api/v1/memory-engine/import", "memoryEngineImport"},
+		{"GET", "/api/v1/memory-engine/dashboard", "memoryEngineDashboard"},
+		{"POST", "/api/v1/memory-engine/search", "memoryEngineSearch"},
+		{"GET", "/api/v1/memory-engine/conversations", "memoryEngineConversations"},
+		{"GET", "/api/v1/memory-engine/conversations/abc", "memoryEngineConversation"},
+		{"DELETE", "/api/v1/memory-engine/conversations/abc", "memoryEngineConversationDelete"},
+		{"GET", "/api/v1/memory-engine/insights", "memoryEngineInsights"},
 		{"GET", "/api/v1/llm/policy", "llmPolicy"},
 		{"GET", "/api/v1/llm/probes", "llmProbes"},
 		{"POST", "/api/v1/llm/route", "llmRoute"},
@@ -195,6 +211,42 @@ func TestBackendAPIKeyMiddlewareDisabledWithoutKey(t *testing.T) {
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+}
+
+func TestLocalCaptureCORSAllowsExtensionPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(localCaptureCORSMiddleware())
+	r.POST("/api/v1/memory-engine/import", func(c *gin.Context) {
+		c.Status(http.StatusCreated)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/memory-engine/import", nil)
+	req.Header.Set("Origin", "chrome-extension://example-extension")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "chrome-extension://example-extension" {
+		t.Fatalf("allow origin = %q", got)
+	}
+}
+
+func TestLocalCaptureCORSRejectsUntrustedPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(localCaptureCORSMiddleware())
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/memory-engine/import", nil)
+	req.Header.Set("Origin", "https://attacker.example")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
 	}
 }
 

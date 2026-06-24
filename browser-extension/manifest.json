@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "HAI Private Chat Capture",
+  "version": "0.1.0",
+  "description": "Capture the currently open conversation from Robert's own AI accounts into the local HAI memory engine.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://copilot.microsoft.com/*",
+    "https://chat.deepseek.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Capture current AI conversation"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://chat.deepseek.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -673,6 +673,47 @@ func TestCorrectingAwayActionableFieldsRetractsWorkflowCandidate(t *testing.T) {
 	}
 }
 
+func TestCorrectingActionableExtractionReconcilesRevisedWorkflowInput(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-revised",
+		Title:      "Correction",
+		Content:    "Follow up: prepare the original project checklist.",
+		SourceURI:  "local://revised-correction",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	extraction := result.Extractions[0]
+	extraction.Tasks = "prepare the revised evidence checklist"
+	extraction.FollowUps = "ask Robert to review the revised checklist"
+	if _, err := service.UpdateExtraction(extraction.ID, extraction); err != nil {
+		t.Fatalf("UpdateExtraction: %v", err)
+	}
+	if len(workflowSpy.requests) != 2 {
+		t.Fatalf("workflow intake requests = %d, want original and revised input", len(workflowSpy.requests))
+	}
+	original := workflowSpy.requests[0]
+	revised := workflowSpy.requests[1]
+	if revised.SourceID != original.SourceID || revised.SourceID != extraction.ID.String() {
+		t.Fatalf("revised workflow lost stable source identity: %#v", workflowSpy.requests)
+	}
+	if revised.Input == original.Input || !strings.Contains(revised.Input, "revised evidence checklist") {
+		t.Fatalf("revised workflow input was not reconciled: %q", revised.Input)
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {

@@ -24,6 +24,7 @@ const (
 	kafkaBrokers     string = "KAFKA_BROKERS"
 	kafkaTopic       string = "KAFKA_TOPIC"
 	backendAPIKey    string = "BACKEND_API_SHARED_KEY"
+	memoryEngineKey  string = "HAI_MEMORY_ENCRYPTION_KEY"
 )
 
 type Configuration struct {
@@ -42,6 +43,7 @@ type Configuration struct {
 	Brokers         []string
 	Topic           string
 	BackendAPIKey   string
+	MemoryEngineKey string
 }
 
 var AppConfig Configuration
@@ -74,6 +76,7 @@ func Init() {
 		Brokers:         kafkaBrokersList,
 		Topic:           getEnvString(kafkaTopic, "automation-events"),
 		BackendAPIKey:   getEnvString(backendAPIKey, ""),
+		MemoryEngineKey: getEnvString(memoryEngineKey, ""),
 	}
 	ensureImageDirExists()
 }

@@ -27,6 +27,7 @@ type WorkflowItem struct {
 	SourceID           string     `gorm:"type:varchar(120);index" json:"sourceId,omitempty"`
 	SourceURI          string     `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
 	SourceLabel        string     `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
+	SourceRevision     string     `gorm:"type:varchar(64);index" json:"sourceRevision,omitempty"`
 	DueAt              *time.Time `gorm:"index" json:"dueAt,omitempty"`
 	RetryCount         int        `gorm:"default:0;index" json:"retryCount"`
 	MaxRetries         int        `gorm:"default:2" json:"maxRetries"`

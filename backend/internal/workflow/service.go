@@ -3,6 +3,7 @@ package workflow
 import (
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"sort"
@@ -244,23 +245,30 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	_ = s.ensureDefaultRules()
 	sourceType := strings.TrimSpace(request.SourceType)
 	sourceID := strings.TrimSpace(request.SourceID)
+	sourceRevision := workflowSourceRevision(request, input)
+	var existing *models.WorkflowItem
+	var dedupeRule string
+	var err error
 	if sourceType != "" && sourceID != "" {
-		existing, err := s.repo.FindActiveItemBySourceIdentity(sourceType, sourceID)
+		existing, err = s.repo.FindActiveItemBySourceIdentity(sourceType, sourceID)
 		if err != nil {
 			return nil, err
 		}
-		if existing != nil {
-			s.audit(existing.ID, "workflow.intake_deduped", "", existing.CurrentState, "existing workflow reused for source record", request.Trigger, "source identity deduplication", request.SourceURI, firstNonEmpty(request.Actor, "engine"))
-			return s.Get(existing.ID)
-		}
+		dedupeRule = "source identity deduplication"
 	} else if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
-		existing, err := s.repo.FindActiveItemBySourceURI(sourceURI)
+		existing, err = s.repo.FindActiveItemBySourceURI(sourceURI)
 		if err != nil {
 			return nil, err
 		}
-		if existing != nil {
-			s.audit(existing.ID, "workflow.intake_deduped", "", existing.CurrentState, "existing workflow reused for source item", request.Trigger, "source URI deduplication", sourceURI, firstNonEmpty(request.Actor, "engine"))
+		dedupeRule = "source URI deduplication"
+	}
+	if existing != nil {
+		if existing.SourceRevision == sourceRevision {
+			s.audit(existing.ID, "workflow.intake_deduped", "", existing.CurrentState, "existing workflow reused for unchanged source revision", request.Trigger, dedupeRule, request.SourceURI, firstNonEmpty(request.Actor, "engine"))
 			return s.Get(existing.ID)
+		}
+		if err := s.supersedeSourceWorkflow(existing, request, sourceRevision); err != nil {
+			return nil, err
 		}
 	}
 	analysis := analyzeInput(request)
@@ -297,6 +305,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		SourceID:         sourceID,
 		SourceURI:        strings.TrimSpace(request.SourceURI),
 		SourceLabel:      strings.TrimSpace(request.SourceLabel),
+		SourceRevision:   sourceRevision,
 		DueAt:            analysis.dueAt,
 		MaxRetries:       maxRetriesForAnalysis(analysis),
 	}
@@ -385,6 +394,28 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	}
 	s.audit(created.ID, "workflow.intake", "", created.CurrentState, "input classified and workflow state initialized", request.Trigger, analysis.ruleApplied, request.SourceURI, firstNonEmpty(request.Actor, "engine"))
 	return s.Get(created.ID)
+}
+
+func (s *service) supersedeSourceWorkflow(item *models.WorkflowItem, request IntakeRequest, sourceRevision string) error {
+	if item.CurrentState == StateInProgress || item.WorkerClaimID != "" {
+		return fmt.Errorf("source workflow is currently in progress and cannot be superseded until execution review is complete")
+	}
+	from := item.CurrentState
+	item.CurrentState = StateArchived
+	item.Archived = true
+	item.NextAction = "superseded by revised source content"
+	item.NextRunAt = nil
+	item.WorkerClaimID = ""
+	item.WorkerLeaseUntil = nil
+	if _, err := s.repo.UpdateItem(item); err != nil {
+		return err
+	}
+	actor := firstNonEmpty(request.Actor, "engine")
+	reason := "source content or review requirements changed; prior workflow and approval scope were superseded"
+	s.recordTransition(item.ID, from, StateArchived, "source_revision", actor, false, reason)
+	s.decide(item.ID, "source_revision", "superseded", reason, "immutable source workflow revisions", false, actor)
+	s.audit(item.ID, "workflow.source_superseded", from, StateArchived, reason, "source_revision", compact(sourceRevision, 16), request.SourceURI, actor)
+	return nil
 }
 
 func (s *service) Items(includeArchived bool) ([]models.WorkflowItem, error) {
@@ -2074,7 +2105,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "proposal", Name: "Proposal yes-no engine", Status: "implemented", Implemented: []string{"recommended action records", "option sets by task type", "approval/change/rejection resolution updates workflow state"}, Next: []string{"proposal editing with custom option text"}},
 		{ID: "communication-drafting", Name: "Communication drafting engine", Status: "partial", Implemented: []string{"task type and approval gates", "formal legal/publishing/developer workflow hints"}, Next: []string{"recipient-specific tone templates and draft adapters"}},
 		{ID: "document-ingestion", Name: "Document ingestion engine", Status: "partial", Implemented: []string{"allowlisted local folder sync", "text extraction for readable files", "source provenance"}, Next: []string{"OCR, file renaming, folder movement, PDF extraction"}},
-		{ID: "duplicate-version", Name: "Duplicate and version control engine", Status: "partial", Implemented: []string{"workflow dedupe by source URI", "source item cursor/hash support"}, Next: []string{"near-duplicate and final-vs-draft detection"}},
+		{ID: "duplicate-version", Name: "Duplicate and version control engine", Status: "partial", Implemented: []string{"stable source-identity deduplication", "immutable workflow revision hashes", "changed source revisions supersede stale workflows and approvals", "source item cursor/hash support"}, Next: []string{"near-duplicate and final-vs-draft detection"}},
 		{ID: "case-timeline", Name: "Case timeline engine", Status: "partial", Implemented: []string{"timestamped intake/events/transitions/claims"}, Next: []string{"project timeline API grouped by evidence"}},
 		{ID: "contradiction-detection", Name: "Contradiction detection engine", Status: "partial", Implemented: []string{"verification module has conflict statuses", "evidence claims can be reviewed"}, Next: []string{"cross-source contradiction scans"}},
 		{ID: "developer-github", Name: "Developer/GitHub engine", Status: "partial", Implemented: []string{"technical task classification", "GitHub quality gate records"}, Next: []string{"GitHub branch/commit/check adapters"}},
@@ -2092,6 +2123,30 @@ func engineCapabilities() []EngineCapability {
 		{ID: "next-best-action", Name: "Next best action engine", Status: "implemented", Implemented: []string{"next action field on every intake", "dashboard flags missing next actions"}, Next: []string{"project-level next-best-action rollup"}},
 		{ID: "completion", Name: "Completion engine", Status: "implemented", Implemented: []string{"verification-gated completion", "controlled runtime evidence gate", "manual-completion bypass prevention", "evidence-backed interruption resolution", "quality-gate validation", "completion timestamp", "archive state"}, Next: []string{"completion summary generator and archive package"}},
 	}
+}
+
+func workflowSourceRevision(request IntakeRequest, input string) string {
+	if strings.TrimSpace(request.SourceType) == "" &&
+		strings.TrimSpace(request.SourceID) == "" &&
+		strings.TrimSpace(request.SourceURI) == "" {
+		return ""
+	}
+	canonical := strings.Join([]string{
+		strings.TrimSpace(input),
+		strings.TrimSpace(request.ProjectKey),
+		strings.TrimSpace(request.AutomationID),
+		strings.TrimSpace(request.SourceType),
+		strings.TrimSpace(request.SourceID),
+		strings.TrimSpace(request.SourceURI),
+		strings.TrimSpace(request.SourceLabel),
+		strings.TrimSpace(request.ContentType),
+		strings.TrimSpace(request.Sender),
+		strings.TrimSpace(request.ReceivedAt),
+		fmt.Sprintf("%t", request.RequiresReview),
+		strings.TrimSpace(request.ReviewReason),
+	}, "\x1f")
+	sum := sha256.Sum256([]byte(canonical))
+	return fmt.Sprintf("%x", sum)
 }
 
 func compactTitle(value string) string {

@@ -13,6 +13,7 @@ import (
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
+	"automation-hub-backend/internal/memoryengine"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
@@ -64,6 +65,17 @@ func initializeRoutes(router *gin.Engine) error {
 		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner)
 		workflow.StartScheduler(context.Background(), workflowService)
 		initializeWorkflowRoutes(v1, workflow.NewHandler(workflowService))
+		memoryEngineSecret := config.AppConfig.MemoryEngineKey
+		if strings.TrimSpace(memoryEngineSecret) == "" {
+			memoryEngineSecret = config.AppConfig.BackendAPIKey
+		}
+		memoryEngineService := memoryengine.NewService(
+			memoryengine.DefaultRepository(),
+			memoryService,
+			workflowService,
+			memoryEngineSecret,
+		)
+		initializeMemoryEngineRoutes(v1, memoryengine.NewHandler(memoryEngineService))
 		osHandler, err := haios.DefaultHandler()
 		if err != nil {
 			return err
@@ -73,6 +85,31 @@ func initializeRoutes(router *gin.Engine) error {
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+func localCaptureCORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := strings.TrimSpace(c.GetHeader("Origin"))
+		allowed := strings.HasPrefix(origin, "chrome-extension://") ||
+			strings.HasPrefix(origin, "moz-extension://") ||
+			strings.HasPrefix(origin, "http://localhost:") ||
+			strings.HasPrefix(origin, "http://127.0.0.1:")
+		if origin != "" && allowed {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, X-HAI-Backend-Key")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		}
+		if c.Request.Method == http.MethodOptions {
+			if !allowed {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	}
 }
 
 const backendAPIKeyHeader = "X-HAI-Backend-Key"
@@ -140,6 +177,19 @@ func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.H
 		memoryRoutes.POST("/:id/archive", memoryHandler.Archive)
 		memoryRoutes.POST("/:id/restore", memoryHandler.Restore)
 		memoryRoutes.DELETE("/:id", memoryHandler.Delete)
+	}
+}
+
+func initializeMemoryEngineRoutes(apiVersion *gin.RouterGroup, handler *memoryengine.Handler) {
+	routes := apiVersion.Group("/memory-engine")
+	{
+		routes.POST("/import", handler.Import)
+		routes.GET("/dashboard", handler.Dashboard)
+		routes.POST("/search", handler.Search)
+		routes.GET("/conversations", handler.Conversations)
+		routes.GET("/conversations/:id", handler.Conversation)
+		routes.DELETE("/conversations/:id", handler.DeleteConversation)
+		routes.GET("/insights", handler.Insights)
 	}
 }
 

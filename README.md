@@ -297,11 +297,28 @@ The workflow engine now implements the first real operational slice of the perso
 15. Evaluates quality gates before verified completion.
 16. Surfaces operational monitoring for approvals, blocked work, ready work, high-risk items, due open loops, missing next actions, and safety rules.
 
-Manual input can be sent to `POST /workflow/intake`. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Source-derived intake deduplicates first by stable source type plus extraction identity, then falls back to source URI for older/manual callers. Separate records may therefore share a mailbox, sender, document, or board URI without collapsing into one workflow. Uncertain or sensitive extractions are forced into `needs_approval` rather than entering the autonomous ready queue.
+Manual input can be sent to `POST /workflow/intake`. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Source-derived intake deduplicates first by stable source type plus extraction identity, then falls back to source URI for older/manual callers. Each source workflow stores a deterministic revision hash over its executable content, provenance, project, and review requirements. An unchanged revision reuses the active workflow; a changed revision archives the prior workflow and builds a fresh checklist, evidence set, quality gates, and approval state. This prevents corrected source data from inheriting stale instructions or a human approval granted to an earlier version. In-progress workflows cannot be superseded until their execution outcome is reviewed. Separate records may therefore share a mailbox, sender, document, or board URI without collapsing into one workflow. Uncertain or sensitive extractions are forced into `needs_approval` rather than entering the autonomous ready queue.
 
 Raw connected-source content and connector metadata are stored separately. Reindexing uses the cached content while preserving metadata, and keyword/vector index entries are updated idempotently instead of duplicated. Correcting an extraction reindexes it and reconciles its workflow candidate. Archiving, deleting, or removing all actionable tasks from an extraction retracts the pending source-derived workflow into a blocked review state; an in-progress workflow must first use interrupted-execution review so source deletion cannot hide a possibly executed action.
 
 Source sync completion is all-or-retry at the cursor boundary. Item persistence, extraction, index, or required workflow-intake failures are recorded in `itemsFailed` with bounded error details. A partially successful job is stored as `partial_failure`, scheduled sync reports it as failed, and `LastSyncedAt` plus the cursor remain unchanged so the next incremental run retries the missing work. Concurrent sync requests for the same source are rejected within the local process instead of racing and duplicating autonomous workflow candidates.
+
+## HAI Memory Engine and Command Dashboard
+
+The canonical Go/Angular application now includes a private AI-conversation memory path:
+
+- `POST /api/v1/memory-engine/import` accepts a user-authorized capture from ChatGPT, Gemini, Copilot, or DeepSeek.
+- Raw conversation payloads are encrypted with AES-GCM before PostgreSQL storage. Set `HAI_MEMORY_ENCRYPTION_KEY`; local Compose falls back to the backend shared key only when the dedicated key is empty.
+- Imports are deduplicated by platform, thread identity, and content hash. Changed threads create a new archive revision.
+- Indexed operational facts are secret-redacted and separated into decisions, actions, risks, rules, and contradictions.
+- Stable, verified facts feed the existing context-memory retrieval layer.
+- Extracted actions feed the existing workflow engine and retain source links. Risky, uncertain, or Robert-owned actions require review.
+- `/command-dashboard` shows Needs Robert, VA-ready work, open loops, contradictions, project status, recent decisions, search results, and encrypted archive metadata.
+- The raw archive can be inspected or deleted through authenticated API routes. Deleting an archive also deletes its extracted operational facts.
+
+The private Chrome/Edge extension lives in `browser-extension/`. Load it as an unpacked extension, keep the default local endpoint `http://127.0.0.1:7070/api/v1/memory-engine/import`, enter `BACKEND_API_SHARED_KEY`, open one of Robert's own AI conversation pages, and click **Capture current conversation**. The extension reads only the currently open thread after that explicit click. It does not read cookies, passwords, local storage, hidden account data, or unrelated pages, and it sends requests with `credentials: omit`.
+
+Browser DOM selectors can change when providers redesign their chat pages. A failed capture is reported rather than silently treated as complete. Account-wide historical backfill should use official exports where available; automatic sidebar traversal is intentionally not enabled because it is brittle and can trigger platform limits.
 
 The workflow layer now stores operational history in separate tables:
 

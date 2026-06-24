@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HAI Capture</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header>
+      <strong>HAI Chat Capture</strong>
+      <span id="platform">Checking page</span>
+    </header>
+
+    <label>
+      HAI endpoint
+      <input id="endpoint" type="url" value="http://127.0.0.1:7070/api/v1/memory-engine/import">
+    </label>
+    <label>
+      Backend key
+      <input id="backendKey" type="password" autocomplete="off">
+    </label>
+    <label>
+      Project
+      <input id="projectKey" type="text" placeholder="018-HAI">
+    </label>
+
+    <button id="capture" type="button">Capture current conversation</button>
+    <p id="status" role="status"></p>
+    <small>Only the open thread is read. Cookies, passwords, and browser storage are never captured.</small>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

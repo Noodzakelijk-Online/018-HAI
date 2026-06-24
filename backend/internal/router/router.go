@@ -8,6 +8,7 @@ import (
 func Initialize() error {
 	// initialize Router
 	router := gin.Default()
+	router.Use(localCaptureCORSMiddleware())
 
 	// initialize routes
 	err := initializeRoutes(router)

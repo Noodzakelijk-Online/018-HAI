@@ -369,9 +369,12 @@ func (r *GormRepository) FindOpenLoops(workflowID uuid.UUID) ([]models.WorkflowO
 func (r *GormRepository) FindDashboardOpenLoops(now time.Time) ([]models.WorkflowOpenLoop, error) {
 	var loops []models.WorkflowOpenLoop
 	err := r.DB.
-		Where("status = ?", "open").
-		Where("follow_up_at IS NULL OR follow_up_at <= ?", now).
-		Order("follow_up_at asc NULLS LAST, updated_at desc").
+		Table("workflow_open_loops").
+		Joins("JOIN workflow_items ON workflow_items.id = workflow_open_loops.workflow_id").
+		Where("workflow_open_loops.status = ?", "open").
+		Where("workflow_open_loops.follow_up_at IS NULL OR workflow_open_loops.follow_up_at <= ?", now).
+		Where("workflow_items.archived = ? AND workflow_items.current_state NOT IN ?", false, []string{StateArchived, StateCompleted}).
+		Order("workflow_open_loops.follow_up_at asc NULLS LAST, workflow_open_loops.updated_at desc").
 		Limit(50).
 		Find(&loops).Error
 	return loops, err
@@ -382,6 +385,11 @@ func (r *GormRepository) ClaimDueOpenLoop(id uuid.UUID, claimID string, now time
 		Model(&models.WorkflowOpenLoop{}).
 		Where("id = ? AND status = ?", id, "open").
 		Where("follow_up_at IS NULL OR follow_up_at <= ?", now).
+		Where(
+			"EXISTS (SELECT 1 FROM workflow_items WHERE workflow_items.id = workflow_open_loops.workflow_id AND workflow_items.archived = ? AND workflow_items.current_state NOT IN ?)",
+			false,
+			[]string{StateArchived, StateCompleted},
+		).
 		Updates(map[string]interface{}{
 			"status":      "processing",
 			"claim_id":    claimID,

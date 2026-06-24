@@ -49,6 +49,8 @@ func RunMigrations(db *gorm.DB) error {
 		&models.AutomationIncident{},
 		&models.AutomationSLO{},
 		&models.ContextMemory{},
+		&models.AIConversationArchive{},
+		&models.AIMemoryInsight{},
 		&models.SourceConnector{},
 		&models.ConnectedSource{},
 		&models.SourceSyncJob{},

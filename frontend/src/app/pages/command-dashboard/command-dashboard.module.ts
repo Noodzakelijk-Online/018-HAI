@@ -1,0 +1,36 @@
+import { CommonModule } from '@angular/common';
+import { NgModule } from '@angular/core';
+import { ReactiveFormsModule } from '@angular/forms';
+import { RouterModule, Routes } from '@angular/router';
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzCardModule } from 'ng-zorro-antd/card';
+import { NzIconModule } from 'ng-zorro-antd/icon';
+import { NzInputModule } from 'ng-zorro-antd/input';
+import { NzLayoutModule } from 'ng-zorro-antd/layout';
+import { NzListModule } from 'ng-zorro-antd/list';
+import { NzNotificationModule } from 'ng-zorro-antd/notification';
+import { NzTableModule } from 'ng-zorro-antd/table';
+import { CommandDashboardComponent } from './command-dashboard.component';
+import { MEMORY_ENGINE_SERVICE_TOKEN } from '../../services/memory-engine/memory-engine.service.token';
+import { MemoryEngineService } from '../../services/memory-engine/memory-engine.service';
+
+const routes: Routes = [{ path: '', component: CommandDashboardComponent }];
+
+@NgModule({
+  declarations: [CommandDashboardComponent],
+  imports: [
+    CommonModule,
+    ReactiveFormsModule,
+    RouterModule.forChild(routes),
+    NzButtonModule,
+    NzCardModule,
+    NzIconModule,
+    NzInputModule,
+    NzLayoutModule,
+    NzListModule,
+    NzNotificationModule,
+    NzTableModule,
+  ],
+  providers: [{ provide: MEMORY_ENGINE_SERVICE_TOKEN, useClass: MemoryEngineService }],
+})
+export class CommandDashboardModule {}

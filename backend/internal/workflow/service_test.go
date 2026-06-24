@@ -1233,8 +1233,9 @@ func TestIntakeDeduplicatesBySourceURI(t *testing.T) {
 	}
 }
 
-func TestIntakeUsesSourceRecordIdentityBeforeSharedURI(t *testing.T) {
-	service := NewService(newFakeWorkflowRepo())
+func TestIntakeUsesSourceRecordIdentityBeforeSharedURIAndSupersedesChanges(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
 	first, err := service.Intake(IntakeRequest{
 		Input:      "Follow up: prepare the first project record.",
 		SourceType: "email",
@@ -1266,8 +1267,134 @@ func TestIntakeUsesSourceRecordIdentityBeforeSharedURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Intake repeated: %v", err)
 	}
-	if repeated.Item.ID != first.Item.ID {
-		t.Fatalf("stable source identity did not deduplicate repeated record")
+	if repeated.Item.ID == first.Item.ID {
+		t.Fatalf("changed source revision reused stale workflow")
+	}
+	archived, err := repo.FindItem(first.Item.ID)
+	if err != nil {
+		t.Fatalf("FindItem superseded: %v", err)
+	}
+	if !archived.Archived || archived.CurrentState != StateArchived {
+		t.Fatalf("prior workflow was not archived: %#v", archived)
+	}
+	if repeated.Item.SourceURI != "mailto:changed@example.test" || repeated.Item.Description != "Updated text for the first project record." {
+		t.Fatalf("new workflow did not use revised source content: %#v", repeated.Item)
+	}
+	if !hasDecision(repeated.Decisions, "classification", repeated.Item.TaskType) {
+		t.Fatalf("new source revision was not freshly classified")
+	}
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard: %v", err)
+	}
+	for _, loop := range dashboard.DueOpenLoops {
+		if loop.WorkflowID == first.Item.ID {
+			t.Fatalf("superseded workflow remained in due open-loop queue")
+		}
+	}
+}
+
+func TestIntakeDeduplicatesUnchangedSourceRevision(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	request := IntakeRequest{
+		Input:          "Follow up: prepare the first project record.",
+		ProjectKey:     "018-HAI",
+		SourceType:     "email",
+		SourceID:       "message-unchanged",
+		SourceURI:      "mailto:project@example.test",
+		SourceLabel:    "Project message",
+		RequiresReview: true,
+		ReviewReason:   "extraction is uncertain",
+	}
+	first, err := service.Intake(request)
+	if err != nil {
+		t.Fatalf("Intake first: %v", err)
+	}
+	second, err := service.Intake(request)
+	if err != nil {
+		t.Fatalf("Intake second: %v", err)
+	}
+	if first.Item.ID != second.Item.ID {
+		t.Fatalf("unchanged revision created duplicate workflow")
+	}
+	if first.Item.SourceRevision == "" || second.Item.SourceRevision != first.Item.SourceRevision {
+		t.Fatalf("source revision was not stable: %q/%q", first.Item.SourceRevision, second.Item.SourceRevision)
+	}
+}
+
+func TestChangedSourceReviewStatusInvalidatesPriorApproval(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	first, err := service.Intake(IntakeRequest{
+		Input:          "Email the lawyer with the prepared evidence summary.",
+		SourceType:     "email",
+		SourceID:       "legal-message",
+		RequiresReview: true,
+		ReviewReason:   "extraction is uncertain",
+	})
+	if err != nil {
+		t.Fatalf("Intake first: %v", err)
+	}
+	approved, err := service.ResolveApproval(first.Item.ID, ApprovalResolutionRequest{
+		Approved: true,
+		Note:     "Approved this exact draft.",
+	})
+	if err != nil {
+		t.Fatalf("ResolveApproval: %v", err)
+	}
+	if approved.Item.ApprovalStatus != "approved" {
+		t.Fatalf("first approval was not recorded")
+	}
+
+	revised, err := service.Intake(IntakeRequest{
+		Input:          "Email the lawyer with the revised evidence summary and additional request.",
+		SourceType:     "email",
+		SourceID:       "legal-message",
+		RequiresReview: true,
+		ReviewReason:   "extraction contains sensitive content",
+	})
+	if err != nil {
+		t.Fatalf("Intake revised: %v", err)
+	}
+	if revised.Item.ID == first.Item.ID {
+		t.Fatalf("revised instructions retained the approved workflow")
+	}
+	if revised.Item.ApprovalStatus != "pending" || revised.Item.CurrentState != StateNeedsApproval {
+		t.Fatalf("revised workflow inherited stale approval: %#v", revised.Item)
+	}
+	old, _ := repo.FindItem(first.Item.ID)
+	if !old.Archived {
+		t.Fatalf("approved prior revision was not preserved as archived history")
+	}
+}
+
+func TestChangedSourceCannotSupersedeInProgressWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	first, err := service.Intake(IntakeRequest{
+		Input:      "Follow up: prepare the project record.",
+		SourceType: "email",
+		SourceID:   "active-message",
+	})
+	if err != nil {
+		t.Fatalf("Intake first: %v", err)
+	}
+	item := first.Item
+	item.CurrentState = StateInProgress
+	item.WorkerClaimID = "active-worker"
+	if _, err := repo.UpdateItem(&item); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+	if _, err := service.Intake(IntakeRequest{
+		Input:      "Follow up: replace the project record while it is running.",
+		SourceType: "email",
+		SourceID:   "active-message",
+	}); err == nil {
+		t.Fatalf("changed source superseded an in-progress workflow")
+	}
+	stored, _ := repo.FindItem(first.Item.ID)
+	if stored.Archived || stored.CurrentState != StateInProgress || stored.WorkerClaimID != "active-worker" {
+		t.Fatalf("in-progress workflow changed after rejected supersession: %#v", stored)
 	}
 }
 
@@ -1745,7 +1872,11 @@ func (r *fakeWorkflowRepo) FindOpenLoops(workflowID uuid.UUID) ([]models.Workflo
 
 func (r *fakeWorkflowRepo) FindDashboardOpenLoops(now time.Time) ([]models.WorkflowOpenLoop, error) {
 	result := []models.WorkflowOpenLoop{}
-	for _, loops := range r.openLoops {
+	for workflowID, loops := range r.openLoops {
+		item := r.items[workflowID]
+		if item == nil || item.Archived || item.CurrentState == StateArchived || item.CurrentState == StateCompleted {
+			continue
+		}
 		for _, loop := range loops {
 			if loop.Status != "open" {
 				continue
@@ -1763,6 +1894,10 @@ func (r *fakeWorkflowRepo) ClaimDueOpenLoop(id uuid.UUID, claimID string, now ti
 		return nil, false, nil
 	}
 	for workflowID, loops := range r.openLoops {
+		item := r.items[workflowID]
+		if item == nil || item.Archived || item.CurrentState == StateArchived || item.CurrentState == StateCompleted {
+			continue
+		}
 		for index := range loops {
 			if loops[index].ID != id || loops[index].Status != "open" {
 				continue

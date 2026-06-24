@@ -1,0 +1,215 @@
+<section class="command-page">
+  <nz-layout>
+    <nz-header class="header-container">
+      <div class="header-content">
+        <div>
+          <h1>HAI Command Dashboard</h1>
+          <span>Operational memory from Robert's connected AI conversations</span>
+        </div>
+        <div class="header-actions">
+          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+          <button nz-button nzType="default" (click)="goHome()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </div>
+    </nz-header>
+
+    <nz-content class="content-container" *ngIf="dashboard as view">
+      <div class="status-strip">
+        <div class="metric">
+          <span>Encrypted conversations</span>
+          <strong>{{ view.conversationCount }}</strong>
+        </div>
+        <div class="metric">
+          <span>Operational facts</span>
+          <strong>{{ view.insightCount }}</strong>
+        </div>
+        <div class="metric alert">
+          <span>Needs Robert</span>
+          <strong>{{ view.needsRobert.length }}</strong>
+        </div>
+        <div class="metric">
+          <span>VA-ready</span>
+          <strong>{{ view.delegateToVA.length }}</strong>
+        </div>
+        <div class="metric warning">
+          <span>Contradictions</span>
+          <strong>{{ view.contradictions.length }}</strong>
+        </div>
+      </div>
+
+      <div class="command-grid">
+        <nz-card nzTitle="Needs Robert" [nzExtra]="workflowLink">
+          <nz-table [nzData]="view.needsRobert" nzSize="small" [nzPageSize]="6">
+            <thead>
+              <tr>
+                <th>Decision</th>
+                <th>Risk</th>
+                <th>Project</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let item of view.needsRobert">
+                <td>{{ item.title }}</td>
+                <td>{{ item.riskLevel }}</td>
+                <td>{{ item.projectKey || '-' }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+          <ng-template #workflowLink>
+            <button nz-button nzSize="small" nzType="default" (click)="openWorkflow()">
+              <i nz-icon nzType="check-square" nzTheme="outline"></i>
+            </button>
+          </ng-template>
+        </nz-card>
+
+        <nz-card nzTitle="Delegate to VA">
+          <nz-list nzSize="small">
+            <nz-list-item *ngFor="let item of view.delegateToVA">
+              <div class="list-copy">
+                <strong>{{ item.text }}</strong>
+                <span>{{ item.projectKey || 'Unassigned project' }} · {{ item.sourceLabel }}</span>
+              </div>
+              <button nz-button nzType="text" (click)="openSource(item.sourceUri)">
+                <i nz-icon nzType="link" nzTheme="outline"></i>
+              </button>
+            </nz-list-item>
+          </nz-list>
+        </nz-card>
+
+        <nz-card nzTitle="Open Loops">
+          <nz-list nzSize="small">
+            <nz-list-item *ngFor="let loop of view.openLoops">
+              <div class="list-copy">
+                <strong>{{ loop.waitingFor }}</strong>
+                <span>{{ loop.nextAction }} · {{ loop.responsibleParty }}</span>
+              </div>
+            </nz-list-item>
+          </nz-list>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Search Memory" class="full-band">
+        <form [formGroup]="searchForm" class="search-bar" (ngSubmit)="search()">
+          <input nz-input formControlName="query" placeholder="What did we decide about...">
+          <input nz-input formControlName="projectKey" placeholder="Project filter">
+          <button nz-button nzType="primary" type="submit" [nzLoading]="searching">
+            <i nz-icon nzType="search" nzTheme="outline"></i>
+            Search
+          </button>
+        </form>
+        <div class="search-results" *ngIf="searchResult as result">
+          <p>{{ result.memory.explanation }}</p>
+          <div class="result-grid">
+            <article *ngFor="let fact of result.facts">
+              <span>{{ fact.kind }} · {{ fact.projectKey || 'unassigned' }}</span>
+              <strong>{{ fact.text }}</strong>
+              <button nz-button nzType="link" (click)="openSource(fact.sourceUri)">Open source</button>
+            </article>
+            <article *ngFor="let context of result.memory.usedContext">
+              <span>memory · score {{ context.score }}</span>
+              <strong>{{ context.memory.summary || context.memory.content }}</strong>
+              <button nz-button nzType="link" (click)="openSource(context.memory.sourceUri)">Open source</button>
+            </article>
+          </div>
+        </div>
+      </nz-card>
+
+      <div class="command-grid lower-grid">
+        <nz-card nzTitle="Recent Decisions">
+          <nz-list nzSize="small">
+            <nz-list-item *ngFor="let item of view.recentDecisions">
+              <div class="list-copy">
+                <strong>{{ item.text }}</strong>
+                <span>{{ item.projectKey || 'Unassigned' }} · confidence {{ item.confidence | percent }}</span>
+              </div>
+              <button nz-button nzType="text" (click)="openSource(item.sourceUri)">
+                <i nz-icon nzType="link" nzTheme="outline"></i>
+              </button>
+            </nz-list-item>
+          </nz-list>
+        </nz-card>
+
+        <nz-card nzTitle="Contradictions">
+          <nz-list nzSize="small">
+            <nz-list-item *ngFor="let item of view.contradictions">
+              <div class="list-copy">
+                <strong>{{ item.text }}</strong>
+                <span>{{ item.sourceLabel }} · review required</span>
+              </div>
+              <button nz-button nzType="text" (click)="openSource(item.sourceUri)">
+                <i nz-icon nzType="warning" nzTheme="outline"></i>
+              </button>
+            </nz-list-item>
+          </nz-list>
+        </nz-card>
+
+        <nz-card nzTitle="Project Map">
+          <nz-table [nzData]="view.projects" nzSize="small" [nzPageSize]="7">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Open</th>
+                <th>Decisions</th>
+                <th>Risks</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let project of view.projects">
+                <td>{{ project.projectKey }}</td>
+                <td>{{ project.open }}</td>
+                <td>{{ project.decisions }}</td>
+                <td>{{ project.risks }}</td>
+              </tr>
+            </tbody>
+          </nz-table>
+        </nz-card>
+      </div>
+
+      <nz-card nzTitle="Encrypted Raw Archive" class="full-band">
+        <nz-table [nzData]="view.recentArchives" nzSize="small" [nzPageSize]="10">
+          <thead>
+            <tr>
+              <th>Platform</th>
+              <th>Thread</th>
+              <th>Revision</th>
+              <th>Messages</th>
+              <th>Captured</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let archive of view.recentArchives">
+              <td>{{ archive.platform }}</td>
+              <td>
+                <strong>{{ archive.title }}</strong>
+                <small>{{ archive.preview }}</small>
+              </td>
+              <td>{{ archive.revision }}</td>
+              <td>{{ archive.messageCount }}</td>
+              <td>{{ archive.capturedAt | date: 'short' }}</td>
+              <td class="row-actions">
+                <button nz-button nzType="text" (click)="openSource(archive.sourceUri)">
+                  <i nz-icon nzType="link" nzTheme="outline"></i>
+                </button>
+                <button nz-button nzType="text" nzDanger (click)="deleteArchive(archive.id, archive.title)">
+                  <i nz-icon nzType="delete" nzTheme="outline"></i>
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
+      <div class="warning-band">
+        <strong>Capture controls</strong>
+        <span *ngFor="let warning of view.warnings">{{ warning }}</span>
+      </div>
+    </nz-content>
+  </nz-layout>
+</section>

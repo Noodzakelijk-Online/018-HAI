@@ -19,6 +19,7 @@ export interface IWorkflowItem {
   sourceId?: string;
   sourceUri?: string;
   sourceLabel?: string;
+  sourceRevision?: string;
   dueAt?: string;
   retryCount: number;
   maxRetries: number;

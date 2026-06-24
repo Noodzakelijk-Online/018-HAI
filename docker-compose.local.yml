@@ -66,6 +66,7 @@ services:
       SERVER_PORT: ${SERVER_PORT}
       BASE_URL: ${BASE_URL}
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
+      HAI_MEMORY_ENCRYPTION_KEY: ${HAI_MEMORY_ENCRYPTION_KEY}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${AUTOMATION_DB_NAME}
@@ -107,6 +108,8 @@ services:
       WORKFLOW_SCHEDULER_INTERVAL_SECONDS: ${WORKFLOW_SCHEDULER_INTERVAL_SECONDS}
       WORKFLOW_SCHEDULER_RUN_LIMIT: ${WORKFLOW_SCHEDULER_RUN_LIMIT}
       WORKFLOW_CLAIM_LEASE_SECONDS: ${WORKFLOW_CLAIM_LEASE_SECONDS}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT}:${SERVER_PORT}"
     volumes:
       - ./images:/root/images
       - ./automation-scripts:/root/automation-scripts:ro
@@ -145,6 +148,12 @@ services:
     container_name: gateway
     hostname: gateway
     restart: unless-stopped
+    environment:
+      BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
+    command:
+      - /bin/sh
+      - -c
+      - envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
     depends_on:
       frontend:
         condition: service_healthy
@@ -155,7 +164,8 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ./nginx-config:/etc/nginx:ro
+      - ./nginx-config/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
       interval: 10s

@@ -17,6 +17,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "command-dashboard",
+    loadChildren: () =>
+      import("./pages/command-dashboard/command-dashboard.module").then(
+        (m) => m.CommandDashboardModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "hai-os",
     loadChildren: () =>
       import("./pages/hai-os/hai-os.module").then((m) => m.HAIOSModule),
