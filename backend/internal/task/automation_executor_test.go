@@ -55,3 +55,7 @@ type fakeAutomationLauncher struct {
 func (f *fakeAutomationLauncher) Launch(id uuid.UUID) (*automation.LaunchResult, error) {
 	return f.result, f.err
 }
+
+func (f *fakeAutomationLauncher) LaunchTask(id uuid.UUID, request automation.TaskLaunchRequest) (*automation.LaunchResult, error) {
+	return f.result, f.err
+}

@@ -1,3 +1,8 @@
+.command-page {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 .header-container {
   background: #fff;
   border-bottom: 1px solid #dfe3e8;
@@ -77,6 +82,61 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.runtime-band {
+  border: 1px solid #d0d5dd;
+  background: #fff;
+}
+
+.section-heading {
+  align-items: center;
+  border-bottom: 1px solid #e4e7ec;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.section-heading h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.section-heading span,
+.runtime-row small {
+  color: #667085;
+  display: block;
+}
+
+.runtime-table {
+  overflow-x: auto;
+}
+
+.runtime-row {
+  align-items: start;
+  border-bottom: 1px solid #f0f2f5;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(190px, 1.2fr) minmax(150px, 0.8fr) minmax(180px, 1fr) minmax(280px, 2fr);
+  min-width: 1050px;
+  padding: 13px 16px;
+}
+
+.runtime-row:last-child {
+  border-bottom: 0;
+}
+
+.runtime-header {
+  background: #f8fafc;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.runtime-row strong,
+.capability-copy {
+  overflow-wrap: anywhere;
+}
+
 .command-grid > nz-card,
 .full-band {
   min-width: 0;
@@ -152,6 +212,12 @@ td small {
   .command-grid {
     grid-template-columns: 1fr;
   }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -162,6 +228,11 @@ td small {
 
   .content-container {
     padding: 14px;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    width: 100%;
   }
 
   .status-strip,

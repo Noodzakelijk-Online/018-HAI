@@ -11,6 +11,10 @@
             <i nz-icon nzType="reload" nzTheme="outline"></i>
             Refresh
           </button>
+          <button nz-button nzType="default" (click)="refreshRuntimes()" [nzLoading]="runtimeLoading">
+            <i nz-icon nzType="api" nzTheme="outline"></i>
+            Runtime health
+          </button>
           <button nz-button nzType="default" (click)="goHome()">
             <i nz-icon nzType="appstore" nzTheme="outline"></i>
             Automations
@@ -42,6 +46,48 @@
           <strong>{{ view.contradictions.length }}</strong>
         </div>
       </div>
+
+      <section class="runtime-band">
+        <div class="section-heading">
+          <div>
+            <h2>Controlled Agent Runtimes</h2>
+            <span>Hermes and Odysseus execute only through approved task workflows.</span>
+          </div>
+          <strong>{{ runtimes.length }} registered</strong>
+        </div>
+        <div class="runtime-table">
+          <div class="runtime-row runtime-header">
+            <span>Runtime</span>
+            <span>Status</span>
+            <span>Execution</span>
+            <span>Safety</span>
+            <span>Capabilities</span>
+          </div>
+          <div class="runtime-row" *ngFor="let runtime of runtimes">
+            <div>
+              <strong>{{ runtime.name }}</strong>
+              <small>{{ runtime.endpoint || 'Local configuration' }}</small>
+            </div>
+            <div>
+              <nz-tag [nzColor]="runtimeStatusType(runtime)">
+                {{ runtimeStatus(runtime) }}
+              </nz-tag>
+              <small>{{ runtimeReason(runtime) }}</small>
+            </div>
+            <div>
+              <strong>{{ runtime.executionEnabled ? 'Enabled' : 'Blocked' }}</strong>
+              <small *ngIf="runtime.missingConfiguration?.length">
+                Missing: {{ runtime.missingConfiguration?.join(', ') }}
+              </small>
+            </div>
+            <div>
+              <strong>{{ runtime.requiresApproval ? 'Approval required' : 'Policy controlled' }}</strong>
+              <small>{{ runtime.readOnlyDefault ? 'Read-only default' : 'Configured capability policy' }}</small>
+            </div>
+            <span class="capability-copy">{{ runtime.capabilities.join(' · ') }}</span>
+          </div>
+        </div>
+      </section>
 
       <div class="command-grid">
         <nz-card nzTitle="Needs Robert" [nzExtra]="workflowLink">

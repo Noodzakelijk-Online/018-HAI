@@ -2,6 +2,7 @@ package automation
 
 import (
 	"bytes"
+	"context"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/models"
@@ -541,6 +543,46 @@ func TestLaunchBlocksWhenEmergencyStopActive(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
+	id := uuid.New()
+	adapter := &fakeAgentRuntimeAdapter{}
+	registry := agentruntime.NewRegistry(adapter)
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Hermes Runtime",
+		URLPath:      "hermes-runtime",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "agent_runtime",
+		RuntimeType:  "hermes",
+		LaunchTarget: "runtime://hermes",
+	})
+	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
+
+	blocked, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if blocked.Status != "blocked" || adapter.called {
+		t.Fatalf("direct launch bypassed approval: %#v", blocked)
+	}
+
+	completed, err := service.LaunchTask(id, TaskLaunchRequest{
+		Task:          "Inspect the project and report verified completion.",
+		ProjectKey:    "018-hai",
+		HumanApproved: true,
+	})
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if completed.Status != "completed" || !adapter.called {
+		t.Fatalf("approved task did not run: %#v", completed)
+	}
+	if adapter.task.Prompt != "Inspect the project and report verified completion." || adapter.task.ProjectKey != "018-hai" {
+		t.Fatalf("task context was not propagated: %#v", adapter.task)
+	}
+}
+
 func TestLaunchBlocksDockerWhenContainerNotAllowlisted(t *testing.T) {
 	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
 	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
@@ -652,6 +694,36 @@ type fakeAutomationRepo struct {
 	automation   *models.Automation
 	launchEvents []models.AutomationLaunchEvent
 	healthEvents []models.AutomationHealthEvent
+}
+
+type fakeAgentRuntimeAdapter struct {
+	called bool
+	task   agentruntime.Task
+}
+
+func (a *fakeAgentRuntimeAdapter) Info() agentruntime.Info {
+	return agentruntime.Info{
+		ID:               "hermes",
+		Name:             "Hermes",
+		Enabled:          true,
+		Configured:       true,
+		ExecutionEnabled: true,
+		RequiresApproval: true,
+	}
+}
+
+func (a *fakeAgentRuntimeAdapter) HealthCheck(context.Context) agentruntime.Health {
+	return agentruntime.Health{RuntimeID: "hermes", Status: "ready"}
+}
+
+func (a *fakeAgentRuntimeAdapter) ExecuteTask(_ context.Context, task agentruntime.Task) agentruntime.Result {
+	a.called = true
+	a.task = task
+	return agentruntime.Result{
+		RuntimeID: "hermes",
+		Status:    "completed",
+		Output:    "verified runtime output",
+	}
 }
 
 func newFakeAutomationRepo(automation *models.Automation) *fakeAutomationRepo {

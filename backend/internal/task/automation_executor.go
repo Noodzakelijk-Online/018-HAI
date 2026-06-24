@@ -11,6 +11,7 @@ import (
 
 type automationLauncher interface {
 	Launch(id uuid.UUID) (*automation.LaunchResult, error)
+	LaunchTask(id uuid.UUID, request automation.TaskLaunchRequest) (*automation.LaunchResult, error)
 }
 
 type AutomationToolExecutor struct {
@@ -29,7 +30,11 @@ func (e *AutomationToolExecutor) Execute(request ToolExecutionRequest) (*ToolExe
 	if err != nil {
 		return nil, fmt.Errorf("automationId must be a valid UUID")
 	}
-	result, err := e.launcher.Launch(id)
+	result, err := e.launcher.LaunchTask(id, automation.TaskLaunchRequest{
+		Task:          request.Task,
+		ProjectKey:    request.ProjectKey,
+		HumanApproved: request.HumanApproved,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzListModule } from 'ng-zorro-antd/list';
 import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzTableModule } from 'ng-zorro-antd/table';
+import { NzTagModule } from 'ng-zorro-antd/tag';
 import { CommandDashboardComponent } from './command-dashboard.component';
 import { MEMORY_ENGINE_SERVICE_TOKEN } from '../../services/memory-engine/memory-engine.service.token';
 import { MemoryEngineService } from '../../services/memory-engine/memory-engine.service';
@@ -30,6 +31,7 @@ const routes: Routes = [{ path: '', component: CommandDashboardComponent }];
     NzListModule,
     NzNotificationModule,
     NzTableModule,
+    NzTagModule,
   ],
   providers: [{ provide: MEMORY_ENGINE_SERVICE_TOKEN, useClass: MemoryEngineService }],
 })

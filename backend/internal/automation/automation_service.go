@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/models"
@@ -94,6 +95,12 @@ type launchExecution struct {
 	AuditEvents      []string
 }
 
+type TaskLaunchRequest struct {
+	Task          string
+	ProjectKey    string
+	HumanApproved bool
+}
+
 type Service interface {
 	FindByID(id uuid.UUID) (*models.Automation, error)
 	Create(automation *models.Automation) (*models.Automation, error)
@@ -104,18 +111,25 @@ type Service interface {
 	RunHealthCheck(id uuid.UUID) (*HealthResult, error)
 	HealthSummary() (*HealthSummary, error)
 	Launch(id uuid.UUID) (*LaunchResult, error)
+	LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error)
 	Diagnostics(id uuid.UUID) (*DiagnosticResult, error)
 }
 
 type service struct {
-	repo      Repository
-	publisher events.Publisher
+	repo            Repository
+	publisher       events.Publisher
+	runtimeRegistry *agentruntime.Registry
 }
 
 func NewService(repo Repository, publisher events.Publisher) Service {
+	return NewServiceWithRuntimeRegistry(repo, publisher, agentruntime.DefaultRegistry())
+}
+
+func NewServiceWithRuntimeRegistry(repo Repository, publisher events.Publisher, runtimeRegistry *agentruntime.Registry) Service {
 	return &service{
-		repo:      repo,
-		publisher: publisher,
+		repo:            repo,
+		publisher:       publisher,
+		runtimeRegistry: runtimeRegistry,
 	}
 }
 
@@ -444,13 +458,21 @@ func (s *service) HealthSummary() (*HealthSummary, error) {
 }
 
 func (s *service) Launch(id uuid.UUID) (*LaunchResult, error) {
+	return s.launch(id, TaskLaunchRequest{})
+}
+
+func (s *service) LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error) {
+	return s.launch(id, request)
+}
+
+func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error) {
 	automation, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
 	s.applyAutomationDefaults(automation)
 	launchedAt := time.Now().UTC()
-	execution := s.executeLaunch(automation, launchedAt)
+	execution := s.executeLaunch(automation, request, launchedAt)
 	automation.LastLaunchAt = &launchedAt
 	if execution.Status == "failed" || execution.Status == "blocked" {
 		automation.LastFailureReason = safety.RedactSecrets(execution.Message)
@@ -534,7 +556,7 @@ func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
 	}, nil
 }
 
-func (s *service) executeLaunch(automation *models.Automation, started time.Time) launchExecution {
+func (s *service) executeLaunch(automation *models.Automation, request TaskLaunchRequest, started time.Time) launchExecution {
 	launchType := strings.ToLower(strings.TrimSpace(automation.LaunchType))
 	if launchType == "" {
 		launchType = "browser_url"
@@ -561,6 +583,8 @@ func (s *service) executeLaunch(automation *models.Automation, started time.Time
 		return s.executeScriptLaunch(automation, started, audit)
 	case "docker_service":
 		return s.executeDockerLaunch(automation, started, audit)
+	case "agent_runtime":
+		return s.executeAgentRuntime(automation, request, started, audit)
 	default:
 		return launchExecution{
 			Status:           "blocked",
@@ -570,6 +594,31 @@ func (s *service) executeLaunch(automation *models.Automation, started time.Time
 			RequiresApproval: true,
 			AuditEvents:      append(audit, "unsupported runtime blocked"),
 		}
+	}
+}
+
+func (s *service) executeAgentRuntime(automation *models.Automation, request TaskLaunchRequest, started time.Time, audit []string) launchExecution {
+	runtimeID := strings.ToLower(strings.TrimSpace(automation.RuntimeType))
+	if runtimeID != "hermes" && runtimeID != "odysseus" {
+		return blockedLaunch("agent_runtime launch type requires runtimeType hermes or odysseus", started, append(audit, "agent runtime type rejected"))
+	}
+	if s.runtimeRegistry == nil {
+		return blockedLaunch("agent runtime registry is not configured", started, append(audit, "agent runtime registry unavailable"))
+	}
+	result := s.runtimeRegistry.Execute(context.Background(), runtimeID, agentruntime.Task{
+		ID:            automation.ID.String(),
+		Prompt:        request.Task,
+		ProjectKey:    request.ProjectKey,
+		HumanApproved: request.HumanApproved,
+	})
+	return launchExecution{
+		Status:           result.Status,
+		Message:          result.Message,
+		Output:           result.Output,
+		ExitCode:         result.ExitCode,
+		DurationMs:       result.DurationMs,
+		RequiresApproval: result.Status == "blocked",
+		AuditEvents:      append(audit, result.AuditEvents...),
 	}
 }
 

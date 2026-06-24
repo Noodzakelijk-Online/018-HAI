@@ -39,6 +39,10 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	a.PATCH("/", mark("update"))
 	a.DELETE("/:id", mark("delete"))
 
+	agentRuntimes := r.Group("/api/v1").Group("/agent-runtimes")
+	agentRuntimes.GET("/", mark("agentRuntimeRegistry"))
+	agentRuntimes.GET("/health", mark("agentRuntimeHealth"))
+
 	m := r.Group("/api/v1").Group("/memory")
 	m.GET("/", mark("memoryList"))
 	m.POST("/", mark("memoryCreate"))
@@ -123,6 +127,8 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/automation/abc", "getByID"},
 		{"GET", "/api/v1/automation/images/logo.png", "image"},
 		{"GET", "/api/v1/automation/swap/1/2", "swap"},
+		{"GET", "/api/v1/agent-runtimes/", "agentRuntimeRegistry"},
+		{"GET", "/api/v1/agent-runtimes/health", "agentRuntimeHealth"},
 		{"POST", "/api/v1/memory/retrieve", "memoryRetrieve"},
 		{"GET", "/api/v1/memory/export", "memoryExport"},
 		{"GET", "/api/v1/memory/abc", "memoryGet"},

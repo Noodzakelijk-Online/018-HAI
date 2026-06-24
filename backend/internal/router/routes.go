@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/docs"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/config"
@@ -36,6 +37,9 @@ func initializeRoutes(router *gin.Engine) error {
 	v1.Use(backendAPIKeyMiddleware())
 	{
 		automationService := automation.DefaultService()
+		runtimeRegistry := agentruntime.DefaultRegistry()
+		runtimeHandler := agentruntime.NewHandler(runtimeRegistry)
+		initializeAgentRuntimeRoutes(v1, runtimeHandler)
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
@@ -85,6 +89,14 @@ func initializeRoutes(router *gin.Engine) error {
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentruntime.Handler) {
+	routes := apiVersion.Group("/agent-runtimes")
+	{
+		routes.GET("/", handler.Registry)
+		routes.GET("/health", handler.Health)
+	}
 }
 
 func localCaptureCORSMiddleware() gin.HandlerFunc {
