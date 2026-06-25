@@ -25,6 +25,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "ambient-brain",
+    loadChildren: () =>
+      import("./pages/ambient-brain/ambient-brain.module").then(
+        (m) => m.AmbientBrainModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "hai-os",
     loadChildren: () =>
       import("./pages/hai-os/hai-os.module").then((m) => m.HAIOSModule),

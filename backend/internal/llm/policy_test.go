@@ -507,3 +507,26 @@ func TestGenerateBlocksOdysseusExecutionEvenWhenInternallyApproved(t *testing.T)
 		t.Fatalf("reason = %q, want discovery-only guard", result.Reason)
 	}
 }
+
+func TestPolicyKeepsDualPathDisabledWithoutVerifiedInfrastructure(t *testing.T) {
+	t.Setenv("LLM_KV_CACHE_LOAD_STRATEGY", "dual")
+	t.Setenv("LLM_DUALPATH_INFRASTRUCTURE_VERIFIED", "false")
+	service := &Service{policy: defaultPolicy()}
+
+	infrastructure := service.Policy().InferenceInfrastructure
+	if infrastructure.KVCacheLoadStrategy != "dual" {
+		t.Fatalf("strategy = %q, want dual", infrastructure.KVCacheLoadStrategy)
+	}
+	if infrastructure.DualPathInfrastructureAvailable {
+		t.Fatalf("expected DualPath to remain unavailable without verified infrastructure")
+	}
+}
+
+func TestPolicyRejectsUnknownKVCacheStrategy(t *testing.T) {
+	t.Setenv("LLM_KV_CACHE_LOAD_STRATEGY", "pretend-fast")
+	service := &Service{policy: defaultPolicy()}
+
+	if got := service.Policy().InferenceInfrastructure.KVCacheLoadStrategy; got != "disabled" {
+		t.Fatalf("strategy = %q, want disabled", got)
+	}
+}

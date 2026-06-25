@@ -1,6 +1,6 @@
 import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import {
   IWorkflowClaimRecoverySummary,
@@ -68,11 +68,19 @@ export class WorkflowEngineComponent implements OnInit {
     private fb: FormBuilder,
     @Inject(WORKFLOW_SERVICE_TOKEN) private workflowService: IWorkflowService,
     private notification: NzNotificationService,
+    private route: ActivatedRoute,
     private router: Router
   ) {}
 
   ngOnInit(): void {
     this.refresh();
+    const workflowId = this.route.snapshot.queryParamMap.get('workflowId');
+    if (workflowId) {
+      this.workflowService.get(workflowId).subscribe({
+        next: (record) => (this.selected = record),
+        error: () => this.notification.error('Error', 'The linked workflow could not be opened.'),
+      });
+    }
   }
 
   refresh(): void {

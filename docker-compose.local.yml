@@ -122,6 +122,17 @@ services:
       WORKFLOW_SCHEDULER_INTERVAL_SECONDS: ${WORKFLOW_SCHEDULER_INTERVAL_SECONDS}
       WORKFLOW_SCHEDULER_RUN_LIMIT: ${WORKFLOW_SCHEDULER_RUN_LIMIT}
       WORKFLOW_CLAIM_LEASE_SECONDS: ${WORKFLOW_CLAIM_LEASE_SECONDS}
+      AMBIENT_SCHEDULER_ENABLED: ${AMBIENT_SCHEDULER_ENABLED}
+      AMBIENT_EXECUTION_ENABLED: ${AMBIENT_EXECUTION_ENABLED}
+      AMBIENT_SCAN_INTERVAL_SECONDS: ${AMBIENT_SCAN_INTERVAL_SECONDS}
+      AMBIENT_MINIMUM_SCORE: ${AMBIENT_MINIMUM_SCORE}
+      AMBIENT_MINIMUM_CONFIDENCE: ${AMBIENT_MINIMUM_CONFIDENCE}
+      AMBIENT_OPPORTUNITY_LIMIT: ${AMBIENT_OPPORTUNITY_LIMIT}
+      AMBIENT_EXECUTION_LIMIT: ${AMBIENT_EXECUTION_LIMIT}
+      AMBIENT_DISMISS_COOLDOWN_HOURS: ${AMBIENT_DISMISS_COOLDOWN_HOURS}
+      AMBIENT_SCAN_RETENTION: ${AMBIENT_SCAN_RETENTION}
+      LLM_KV_CACHE_LOAD_STRATEGY: ${LLM_KV_CACHE_LOAD_STRATEGY}
+      LLM_DUALPATH_INFRASTRUCTURE_VERIFIED: ${LLM_DUALPATH_INFRASTRUCTURE_VERIFIED}
     ports:
       - "127.0.0.1:${BACKEND_PORT}:${SERVER_PORT}"
     volumes:
@@ -214,7 +225,7 @@ services:
       - service-hub
 
   postgres-idp:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
     restart: unless-stopped
@@ -225,7 +236,7 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./db_data_idp:/var/lib/postgresql/data
+      - postgres-idp-data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${IDP_DB_NAME}"]
@@ -237,7 +248,7 @@ services:
       - idp-network
 
   postgres-automation:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped
@@ -248,7 +259,7 @@ services:
     ports:
       - "5434:5432"
     volumes:
-      - ./db_data_automation:/var/lib/postgresql/data
+      - postgres-automation-data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${AUTOMATION_DB_NAME}"]
@@ -349,3 +360,9 @@ networks:
   service-hub:
     name: 018-hai-service-hub
     driver: bridge
+
+volumes:
+  postgres-idp-data:
+    name: 018-hai-postgres-idp-data
+  postgres-automation-data:
+    name: 018-hai-postgres-automation-data

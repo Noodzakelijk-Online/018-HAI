@@ -10,6 +10,14 @@ export interface ILLMPolicy {
   requireApprovalBeforePaidUsage: boolean;
   tierOrder: string[];
   providers: ILLMProvider[];
+  inferenceInfrastructure: ILLMInferenceInfrastructure;
+}
+
+export interface ILLMInferenceInfrastructure {
+  kvCacheLoadStrategy: string;
+  disaggregatedServingVerified: boolean;
+  dualPathInfrastructureAvailable: boolean;
+  reason: string;
 }
 
 export interface ILLMProvider {

@@ -1,0 +1,187 @@
+import { Component, OnInit } from '@angular/core';
+import { Router } from '@angular/router';
+import { NzNotificationService } from 'ng-zorro-antd/notification';
+import {
+  IAmbientNeed,
+  IAmbientOpportunity,
+  IAmbientOverview,
+} from '../../models/ambient.model.interface';
+import { AmbientService } from '../../services/ambient.service';
+
+@Component({
+  selector: 'app-ambient-brain',
+  templateUrl: './ambient-brain.component.html',
+  styleUrls: ['./ambient-brain.component.scss'],
+})
+export class AmbientBrainComponent implements OnInit {
+  overview?: IAmbientOverview;
+  loading = false;
+  scanning = false;
+  savingNeed = '';
+  resolving = '';
+  statusFilter = 'proposed';
+
+  constructor(
+    private ambient: AmbientService,
+    private notification: NzNotificationService,
+    private router: Router
+  ) {}
+
+  ngOnInit(): void {
+    this.refresh();
+  }
+
+  refresh(): void {
+    this.loading = true;
+    this.ambient.overview().subscribe({
+      next: (overview) => {
+        this.overview = overview;
+        this.loading = false;
+      },
+      error: (error) => {
+        this.loading = false;
+        this.notification.error(
+          'Proactive brain unavailable',
+          error?.error?.error || 'Failed to load the ambient planning engine.'
+        );
+      },
+    });
+  }
+
+  runScan(): void {
+    this.scanning = true;
+    this.ambient.scan().subscribe({
+      next: (scan) => {
+        this.scanning = false;
+        this.notification.success(
+          'Ambient scan completed',
+          `${scan.opportunitiesFound} opportunities found; ${scan.deduplicated} reused without duplicating source content.`
+        );
+        this.refresh();
+      },
+      error: (error) => {
+        this.scanning = false;
+        this.notification.error(
+          'Ambient scan failed',
+          error?.error?.error || 'The scan did not complete.'
+        );
+      },
+    });
+  }
+
+  saveNeed(need: IAmbientNeed): void {
+    this.savingNeed = need.key;
+    this.ambient
+      .updateNeed(need.key, {
+        currentLevel: need.currentLevel,
+        targetLevel: need.targetLevel,
+        priorityWeight: need.priorityWeight,
+        enabled: need.enabled,
+        notes: need.notes,
+      })
+      .subscribe({
+        next: () => {
+          this.savingNeed = '';
+          this.notification.success('Need profile updated', `${need.name} was saved.`);
+        },
+        error: () => {
+          this.savingNeed = '';
+          this.notification.error('Save failed', 'The need profile could not be saved.');
+        },
+      });
+  }
+
+  accept(item: IAmbientOpportunity): void {
+    this.resolve(item, true);
+  }
+
+  dismiss(item: IAmbientOpportunity): void {
+    this.resolve(item, false);
+  }
+
+  filteredOpportunities(): IAmbientOpportunity[] {
+    return (this.overview?.opportunities || []).filter(
+      (item) => this.statusFilter === 'all' || item.status === this.statusFilter
+    );
+  }
+
+  needName(key: string): string {
+    return this.overview?.needs.find((item) => item.key === key)?.name || key;
+  }
+
+  riskColor(risk: number): string {
+    if (risk >= 70) {
+      return 'red';
+    }
+    if (risk >= 45) {
+      return 'orange';
+    }
+    return 'green';
+  }
+
+  openSource(uri?: string): void {
+    const safeUri = this.safeExternalUri(uri);
+    if (safeUri) {
+      window.open(safeUri, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    this.notification.warning(
+      'Source link not opened',
+      'Only absolute HTTP and HTTPS source links can be opened from the dashboard.'
+    );
+  }
+
+  openWorkflow(id?: string): void {
+    this.router.navigate(['/workflow-engine'], {
+      queryParams: id ? { workflowId: id } : undefined,
+    });
+  }
+
+  goHome(): void {
+    this.router.navigate(['/home']);
+  }
+
+  canOpenSource(uri?: string): boolean {
+    return this.safeExternalUri(uri) !== '';
+  }
+
+  private safeExternalUri(uri?: string): string {
+    if (!uri) {
+      return '';
+    }
+    try {
+      const parsed = new URL(uri);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+        ? parsed.toString()
+        : '';
+    } catch {
+      return '';
+    }
+  }
+
+  private resolve(item: IAmbientOpportunity, accept: boolean): void {
+    this.resolving = item.id;
+    const request = accept
+      ? this.ambient.accept(item.id)
+      : this.ambient.dismiss(item.id);
+    request.subscribe({
+      next: () => {
+        this.resolving = '';
+        this.notification.success(
+          accept ? 'Opportunity accepted' : 'Opportunity dismissed',
+          accept
+            ? 'The item is linked to the controlled workflow engine.'
+            : 'The item is hidden until its cooldown expires.'
+        );
+        this.refresh();
+      },
+      error: (error) => {
+        this.resolving = '';
+        this.notification.error(
+          'Action failed',
+          error?.error?.error || 'The opportunity could not be updated.'
+        );
+      },
+    });
+  }
+}

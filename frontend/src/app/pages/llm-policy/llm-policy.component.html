@@ -35,6 +35,9 @@
           <p><strong>Local models:</strong> {{ p.localModelsAllowed ? 'allowed' : 'disabled' }}</p>
           <p><strong>Free cloud quota:</strong> {{ p.freeCloudQuotaAllowed ? 'allowed' : 'disabled' }}</p>
           <p><strong>Paid approval:</strong> {{ p.requireApprovalBeforePaidUsage ? 'required' : 'not required' }}</p>
+          <p><strong>KV-cache path:</strong> {{ p.inferenceInfrastructure.kvCacheLoadStrategy }}</p>
+          <p><strong>DualPath ready:</strong> {{ p.inferenceInfrastructure.dualPathInfrastructureAvailable ? 'verified' : 'no' }}</p>
+          <p><small>{{ p.inferenceInfrastructure.reason }}</small></p>
         </nz-card>
 
         <nz-card nzSize="small" nzTitle="Route a Task">

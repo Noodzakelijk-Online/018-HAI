@@ -6,7 +6,7 @@ services:
   # Development overrides for easier debugging
   backend:
     ports:
-      - "7070:7070"  # Expose backend port for direct access
+      - "17070:80"  # Expose backend port for direct access
     environment:
       - GIN_MODE=debug
     volumes:

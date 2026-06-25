@@ -147,6 +147,10 @@ export class CommandDashboardComponent implements OnInit {
     this.router.navigate(['/workflow-engine']);
   }
 
+  openAmbientBrain(): void {
+    this.router.navigate(['/ambient-brain']);
+  }
+
   goHome(): void {
     this.router.navigate(['/home']);
   }

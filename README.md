@@ -25,6 +25,7 @@ Implemented:
 - Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
 - Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, source links, decision records, transition records, durable retry limits, task-engine worker execution, verification-gated completion, and audit events.
 - Guarded workflow scheduler that periodically runs due workflow items and due open-loop follow-ups through the existing approval-gated workflow/task engines.
+- Ambient proactive planning engine that continuously finds open work, ranks it against user-controlled need priorities, deduplicates repeated findings, and routes accepted proposals through the controlled workflow engine.
 - Shared backend engine instances for LLM routing, task execution, source retrieval, memory, and verification within the running API process, so workflow-worker and dashboard-initiated task decisions appear in the same in-memory task/LLM logs.
 - Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
 - Backend API shared-key gate for local gateway traffic. When `BACKEND_API_SHARED_KEY` is set, `/api/v1` backend routes require `X-HAI-Backend-Key`; the checked-in local nginx config injects that header after IDP auth.
@@ -316,7 +317,7 @@ The canonical Go/Angular application now includes a private AI-conversation memo
 - `/command-dashboard` shows Needs Robert, VA-ready work, open loops, contradictions, project status, recent decisions, search results, and encrypted archive metadata.
 - The raw archive can be inspected or deleted through authenticated API routes. Deleting an archive also deletes its extracted operational facts.
 
-The private Chrome/Edge extension lives in `browser-extension/`. Load it as an unpacked extension, keep the default local endpoint `http://127.0.0.1:7070/api/v1/memory-engine/import`, enter `BACKEND_API_SHARED_KEY`, open one of Robert's own AI conversation pages, and click **Capture current conversation**. The extension reads only the currently open thread after that explicit click. It does not read cookies, passwords, local storage, hidden account data, or unrelated pages, and it sends requests with `credentials: omit`.
+The private Chrome/Edge extension lives in `browser-extension/`. Load it as an unpacked extension, keep the default local endpoint `http://127.0.0.1:17070/api/v1/memory-engine/import`, enter `BACKEND_API_SHARED_KEY`, open one of Robert's own AI conversation pages, and click **Capture current conversation**. The extension reads only the currently open thread after that explicit click. It does not read cookies, passwords, local storage, hidden account data, or unrelated pages, and it sends requests with `credentials: omit`.
 
 Browser DOM selectors can change when providers redesign their chat pages. A failed capture is reported rather than silently treated as complete. Account-wide historical backfill should use official exports where available; automatic sidebar traversal is intentionally not enabled because it is brittle and can trigger platform limits.
 
@@ -521,6 +522,24 @@ Workflow autonomy:
 - `WORKFLOW_CLAIM_LEASE_SECONDS`, default `900`, minimum `60`, capped at `86400`. Active task workers renew the lease every third of this duration.
 - The scheduler uses the same workflow, task, verification, and controlled automation services as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, owned leases prevent duplicate concurrent execution and stale result writes, task-runner panics enter normal retry handling, review-required runtime outcomes do not auto-retry, and completion requires runtime plus verification success.
 
+Ambient proactive planning:
+
+- `/ambient-brain` reviews active workflows, approval gates, blockers, due open loops, source-linked contradictions, and delegation candidates without waiting for a prompt.
+- Each opportunity has a deterministic fingerprint, compact evidence manifest, explained score, need category, next action, source link, risk score, and approval requirement.
+- The five default need dimensions are health/capacity, safety/stability, relationships/belonging, reputation/capability, and growth/self-direction. These are user-controlled planning preferences, not diagnoses or judgments about a person's worth or status.
+- `AMBIENT_SCHEDULER_ENABLED=true` enables periodic scans.
+- `AMBIENT_EXECUTION_ENABLED=false` keeps the default suggestion-only. Enabling it only permits bounded calls into the existing workflow and open-loop workers; it cannot bypass approvals, verification, emergency stop, leases, or audit controls.
+- `AMBIENT_SCAN_INTERVAL_SECONDS`, `AMBIENT_MINIMUM_SCORE`, `AMBIENT_MINIMUM_CONFIDENCE`, `AMBIENT_OPPORTUNITY_LIMIT`, `AMBIENT_EXECUTION_LIMIT`, `AMBIENT_DISMISS_COOLDOWN_HOURS`, and `AMBIENT_SCAN_RETENTION` bound background activity and storage growth.
+- Accepting a proposal links it to the controlled workflow engine. Dismissal applies a cooldown so the same source revision does not repeatedly interrupt the operator.
+- Incremental scans reuse stable source fingerprints and store source identity, redacted URI, and revision time rather than duplicating raw source content into each scan. Scan history is pruned to the configured retention limit.
+
+DualPath KV-cache boundary:
+
+- [DualPath](https://arxiv.org/abs/2602.21548) addresses KV-cache storage bandwidth in disaggregated LLM serving. It requires separate prefill/decode engines, shared KV-cache storage, a compatible compute transfer network such as RDMA, and a global scheduler.
+- It is not a general memory compression technique and does not automatically apply to a normal Ollama or LM Studio process.
+- `LLM_KV_CACHE_LOAD_STRATEGY=disabled` and `LLM_DUALPATH_INFRASTRUCTURE_VERIFIED=false` are the safe defaults. A non-disabled strategy is only a provider capability hint until the required infrastructure is implemented and verified.
+- HAI's compact evidence manifests and incremental scans reduce application-level storage traffic independently of DualPath.
+
 The nginx config-manager no longer receives `/var/run/docker.sock` in `docker-compose.local.yml` by default. It can write generated route config files, but nginx reload via Docker API is skipped unless `NGINX_RELOAD_ENABLED=true` and the operator deliberately restores a reviewed Docker socket mount.
 
 Current limitation: OpenClaw, QwenPaw, generic MCP, browser, and desktop-agent execution still need dedicated adapters. Hermes and Odysseus are implemented, but a live end-to-end run still requires the operator to install/configure those upstream runtimes, create scoped credentials/session state, and enable the matching HAI environment flags. They are not bundled into the HAI backend image.
@@ -548,8 +567,8 @@ This project is intended to gain local execution power, so safety should be desi
 - Frontend uses Angular 16 and ng-zorro-antd.
 - IDP and nginx-config-manager are separate Go services.
 - Database schema changes currently rely on Gorm `AutoMigrate` plus `init.sql`; a production migration system is still needed.
-- Docker Compose local mode uses one Kafka broker plus Zookeeper.
-- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed only under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, and `/api/v1/workflow`.
+- Docker Compose local mode uses PostgreSQL 17 with Docker-managed named volumes, one Kafka broker, and Zookeeper. PostgreSQL data directories must never be committed or copied as ordinary Git files because required empty runtime directories are not preserved. Export and restore with `pg_dump`/`pg_restore` when migrating existing data or changing major versions.
+- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed only under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/memory-engine`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, `/api/v1/workflow`, `/api/v1/agent-runtimes`, and `/api/v1/ambient`.
 - Do not rely on committed `.env` files for new work. Use `.env.example` -> `.env.local`.
 - Do not commit generated database directories, uploaded images, frontend `dist`, `node_modules`, local caches, or Docker state.
 - Keep UI changes consistent with the existing Angular/ng-zorro dashboard style.

@@ -41,17 +41,25 @@ var reasoningRank = map[string]int{
 }
 
 type Policy struct {
-	DailyPaidBudgetEUR               float64    `json:"dailyPaidBudgetEur"`
-	PaidCallsAllowed                 bool       `json:"paidCallsAllowed"`
-	LocalModelsAllowed               bool       `json:"localModelsAllowed"`
-	FreeCloudQuotaAllowed            bool       `json:"freeCloudQuotaAllowed"`
-	LocalFirst                       bool       `json:"localFirst"`
-	CacheRepeatedPrompts             bool       `json:"cacheRepeatedPrompts"`
-	RouteSimpleTasksToSmallModels    bool       `json:"routeSimpleTasksToSmallModels"`
-	RouteComplexTasksToBestFreeModel bool       `json:"routeComplexTasksToBestAvailableFreeModel"`
-	RequireApprovalBeforePaidUsage   bool       `json:"requireApprovalBeforePaidUsage"`
-	TierOrder                        []string   `json:"tierOrder"`
-	Providers                        []Provider `json:"providers"`
+	DailyPaidBudgetEUR               float64                 `json:"dailyPaidBudgetEur"`
+	PaidCallsAllowed                 bool                    `json:"paidCallsAllowed"`
+	LocalModelsAllowed               bool                    `json:"localModelsAllowed"`
+	FreeCloudQuotaAllowed            bool                    `json:"freeCloudQuotaAllowed"`
+	LocalFirst                       bool                    `json:"localFirst"`
+	CacheRepeatedPrompts             bool                    `json:"cacheRepeatedPrompts"`
+	RouteSimpleTasksToSmallModels    bool                    `json:"routeSimpleTasksToSmallModels"`
+	RouteComplexTasksToBestFreeModel bool                    `json:"routeComplexTasksToBestAvailableFreeModel"`
+	RequireApprovalBeforePaidUsage   bool                    `json:"requireApprovalBeforePaidUsage"`
+	TierOrder                        []string                `json:"tierOrder"`
+	Providers                        []Provider              `json:"providers"`
+	InferenceInfrastructure          InferenceInfrastructure `json:"inferenceInfrastructure"`
+}
+
+type InferenceInfrastructure struct {
+	KVCacheLoadStrategy             string `json:"kvCacheLoadStrategy"`
+	DisaggregatedServingVerified    bool   `json:"disaggregatedServingVerified"`
+	DualPathInfrastructureAvailable bool   `json:"dualPathInfrastructureAvailable"`
+	Reason                          string `json:"reason"`
 }
 
 type Provider struct {
@@ -189,12 +197,42 @@ func NewServiceFromEnv() (*Service, error) {
 		}
 	}
 
-	policy = annotatePolicyReadiness(policy)
+	policy = annotateInfrastructure(annotatePolicyReadiness(policy))
 	return &Service{policy: policy, logs: []RouteDecision{}}, nil
 }
 
 func (s *Service) Policy() Policy {
-	return annotatePolicyReadiness(s.policy)
+	return annotateInfrastructure(annotatePolicyReadiness(s.policy))
+}
+
+func annotateInfrastructure(policy Policy) Policy {
+	strategy := strings.ToLower(strings.TrimSpace(os.Getenv("LLM_KV_CACHE_LOAD_STRATEGY")))
+	switch strategy {
+	case "traditional", "storage_to_prefill", "storage_to_decode", "dual", "auto":
+	default:
+		strategy = "disabled"
+	}
+	verified := envEnabled("LLM_DUALPATH_INFRASTRUCTURE_VERIFIED")
+	available := verified && (strategy == "dual" || strategy == "auto")
+	reason := "DualPath is disabled; ordinary local model servers use their native KV-cache path."
+	if strategy != "disabled" && !verified {
+		reason = "KV-cache strategy is configured as a capability hint, but disaggregated prefill/decode, shared storage, transfer network, and scheduler infrastructure are not verified."
+	}
+	if available {
+		reason = "Operator reports verified DualPath-compatible disaggregated serving infrastructure; provider/runtime telemetry must still confirm the selected data path."
+	}
+	policy.InferenceInfrastructure = InferenceInfrastructure{
+		KVCacheLoadStrategy:             strategy,
+		DisaggregatedServingVerified:    verified,
+		DualPathInfrastructureAvailable: available,
+		Reason:                          reason,
+	}
+	return policy
+}
+
+func envEnabled(name string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	return value == "1" || value == "true" || value == "yes"
 }
 
 func (s *Service) Logs() []RouteDecision {

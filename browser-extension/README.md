@@ -9,7 +9,7 @@ This unpacked Chrome/Edge extension captures the currently open conversation fro
 3. Enable developer mode.
 4. Choose **Load unpacked** and select this `browser-extension` folder.
 5. Open a supported conversation.
-6. Keep the default endpoint `http://127.0.0.1:7070/api/v1/memory-engine/import`, enter the local backend key from `.env.local`, optionally set a project, and click **Capture current conversation**.
+6. Keep the default endpoint `http://127.0.0.1:17070/api/v1/memory-engine/import`, enter the local backend key from `.env.local`, optionally set a project, and click **Capture current conversation**.
 
 The backend key is kept only in the open popup and is not persisted in browser storage.
 

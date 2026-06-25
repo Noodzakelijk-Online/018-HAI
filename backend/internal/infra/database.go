@@ -75,6 +75,9 @@ func RunMigrations(db *gorm.DB) error {
 		&models.WorkflowSourceLink{},
 		&models.WorkflowDecision{},
 		&models.WorkflowEvent{},
+		&models.AmbientNeed{},
+		&models.AmbientOpportunity{},
+		&models.AmbientScan{},
 	); err != nil {
 		return err
 	}

@@ -7,8 +7,9 @@ import (
 	"net/http"
 	"strings"
 
-	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/docs"
+	"automation-hub-backend/internal/agentruntime"
+	"automation-hub-backend/internal/ambient"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/haios"
@@ -80,6 +81,9 @@ func initializeRoutes(router *gin.Engine) error {
 			memoryEngineSecret,
 		)
 		initializeMemoryEngineRoutes(v1, memoryengine.NewHandler(memoryEngineService))
+		ambientService := ambient.NewService(ambient.DefaultRepository(), workflowService, memoryEngineService)
+		ambient.StartScheduler(context.Background(), ambientService)
+		initializeAmbientRoutes(v1, ambient.NewHandler(ambientService))
 		osHandler, err := haios.DefaultHandler()
 		if err != nil {
 			return err
@@ -89,6 +93,17 @@ func initializeRoutes(router *gin.Engine) error {
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+func initializeAmbientRoutes(apiVersion *gin.RouterGroup, handler *ambient.Handler) {
+	routes := apiVersion.Group("/ambient")
+	{
+		routes.GET("/overview", handler.Overview)
+		routes.POST("/scan", handler.Scan)
+		routes.PATCH("/needs/:key", handler.UpdateNeed)
+		routes.POST("/opportunities/:id/accept", handler.Accept)
+		routes.POST("/opportunities/:id/dismiss", handler.Dismiss)
+	}
 }
 
 func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentruntime.Handler) {

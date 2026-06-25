@@ -27,10 +27,7 @@ export class AuthService implements IAuthService {
     loggedIn() {
         return this.http.get(`${this.apiUrl}/is-user-authenticated`).pipe(
             map(() => true),
-            catchError(err => {
-                console.error(err);
-                return of(false);
-            })
+            catchError(() => of(false))
         );
     }
 }
