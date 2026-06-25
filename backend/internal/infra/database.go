@@ -78,6 +78,10 @@ func RunMigrations(db *gorm.DB) error {
 		&models.AmbientNeed{},
 		&models.AmbientOpportunity{},
 		&models.AmbientScan{},
+		&models.AutonomyWorldState{},
+		&models.AutonomyActionTrace{},
+		&models.AutonomyEvaluation{},
+		&models.AutonomyStressRun{},
 	); err != nil {
 		return err
 	}

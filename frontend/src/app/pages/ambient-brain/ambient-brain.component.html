@@ -11,6 +11,10 @@
             <i nz-icon nzType="radar-chart" nzTheme="outline"></i>
             Scan now
           </button>
+          <button nz-button nzType="default" (click)="runStressSuite()" [nzLoading]="stressTesting">
+            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+            Test guards
+          </button>
           <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
             <i nz-icon nzType="reload" nzTheme="outline"></i>
           </button>
@@ -44,6 +48,78 @@
           <strong>{{ view.policy.dualPathKvCacheMode }}</strong>
         </div>
       </div>
+
+      <section class="scan-band" *ngIf="autonomyOverview as autonomy">
+        <div class="section-heading">
+          <div>
+            <h2>Deployable Autonomy</h2>
+            <span>Execution-based outcomes are measured separately from policy-compliant completion.</span>
+          </div>
+          <nz-tag *ngIf="autonomy.recentStressRuns[0] as stress">
+            Last guard suite: {{ stress.passed }} passed / {{ stress.failed }} failed
+            · {{ stress.createdAt | date: 'short' }}
+          </nz-tag>
+        </div>
+        <div class="policy-strip">
+          <div>
+            <span>Attempts</span>
+            <strong>{{ autonomy.metrics.attempts }}</strong>
+          </div>
+          <div>
+            <span>Raw completion</span>
+            <strong>{{ percent(autonomy.metrics.rawCompletionRate) }}</strong>
+          </div>
+          <div>
+            <span>Completion under policy</span>
+            <strong>{{ percent(autonomy.metrics.policyCompletionRate) }}</strong>
+          </div>
+          <div>
+            <span>Human intervention</span>
+            <strong>{{ percent(autonomy.metrics.interventionRate) }}</strong>
+          </div>
+          <div>
+            <span>Recovery rate</span>
+            <strong>{{ percent(autonomy.metrics.recoveryRate) }}</strong>
+          </div>
+          <div>
+            <span>Average latency</span>
+            <strong>{{ autonomy.metrics.averageLatencyMillis | number: '1.0-0' }} ms</strong>
+          </div>
+        </div>
+        <nz-table [nzData]="autonomy.recentActions" nzSize="small" [nzPageSize]="6">
+          <thead>
+            <tr>
+              <th>Started</th>
+              <th>Interface</th>
+              <th>Action</th>
+              <th>Policy</th>
+              <th>Verified</th>
+              <th>Latency</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let action of autonomy.recentActions">
+              <td>{{ action.startedAt | date: 'short' }}</td>
+              <td>{{ action.interfaceType }}</td>
+              <td>{{ action.actionType }}</td>
+              <td><nz-tag>{{ action.policyDecision }}</nz-tag></td>
+              <td>{{ action.executionVerified ? 'yes' : 'no' }}</td>
+              <td>{{ action.latencyMilliseconds | number }} ms</td>
+              <td><nz-tag>{{ action.status }}</nz-tag></td>
+            </tr>
+          </tbody>
+        </nz-table>
+        <div class="warning-band">
+          <strong>{{ autonomy.decisionDiscipline.name }}</strong>
+          <span>{{ autonomy.decisionDiscipline.order.join(' → ') }}</span>
+          <span>New dependencies: {{ autonomy.decisionDiscipline.newDependenciesDefault }}</span>
+          <span>Published savings claims: {{ autonomy.decisionDiscipline.benchmarkClaims }}</span>
+        </div>
+        <div class="autonomy-warning" *ngFor="let warning of autonomy.warnings">
+          {{ warning }}
+        </div>
+      </section>
 
       <section class="needs-band">
         <div class="section-heading">

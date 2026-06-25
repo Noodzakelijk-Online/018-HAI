@@ -203,6 +203,7 @@ type CompletionPlan struct {
 	RealGoal              string                 `json:"realGoal"`
 	Intake                IntakeAnalysis         `json:"intake"`
 	ContextPlan           ContextPlan            `json:"contextPlan"`
+	MinimalityDecision    MinimalityDecision     `json:"minimalityDecision"`
 	ModelDecision         llm.RouteDecision      `json:"modelDecision"`
 	ToolDecision          ToolRouteDecision      `json:"toolDecision"`
 	Steps                 []TaskStep             `json:"steps"`
@@ -413,9 +414,10 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	}
 
 	toolDecision := routeTools(intake)
+	minimalityDecision := decideMinimality(request, intake)
 	risk := assessRisk(intake, request.ExecuteAllowed, request.HumanApproved)
-	steps := buildTaskSteps(intake, toolDecision, risk)
-	validationPlan := buildValidationPlan(intake)
+	steps := buildTaskSteps(intake, toolDecision, risk, minimalityDecision)
+	validationPlan := buildValidationPlan(intake, minimalityDecision)
 	memoryProposals := proposeMemoryUpdates(request, intake)
 	plan := &CompletionPlan{
 		ID:         uuid.New().String(),
@@ -439,6 +441,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 			SourceRefreshExplanation: sourceRefreshExplanation,
 			Explanation:              strings.TrimSpace(contextResult.Explanation + " " + sourceRefreshExplanation + " " + sourceExplanation),
 		},
+		MinimalityDecision:    minimalityDecision,
 		ModelDecision:         modelDecision,
 		ToolDecision:          toolDecision,
 		Steps:                 steps,
@@ -453,6 +456,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 			event("intake", "request classified and real goal inferred"),
 			event("source-refresh", sourceRefreshExplanation),
 			event("context", contextResult.Explanation),
+			event("minimality", minimalityDecision.SelectedLevel+": "+minimalityDecision.Reason),
 			event("routing", modelDecision.Reason),
 			event("tool-routing", toolDecision.Reason),
 			event("risk", strings.Join(risk.Reasons, "; ")),
@@ -716,7 +720,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		}
 		generation, err := s.llmService.Generate(llm.GenerateRequest{
 			Task:         plan.RealGoal,
-			SystemPrompt: "Produce a concise draft answer using only the provided context. Do not invent facts; unsupported details will be rejected by verification.",
+			SystemPrompt: "Produce a concise draft answer using only the provided context. Do not invent facts; unsupported details will be rejected by verification." + minimalitySystemContract(plan.MinimalityDecision),
 			Context:      context,
 			RouteRequest: &llm.RouteRequest{
 				Task:              plan.Request,
@@ -993,13 +997,22 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 	needsWeb := containsAny(text, "latest", "current", "today", "web", "browse", "search")
 	needsLocal := needsTools && containsWordOrPhrase(text, "local", "file", "files", "repo", "repository", "docker", "windows", "code", "build", "test", "tests", "script", "command", "commit", "push")
 
-	if containsAny(text, "code", "bug", "api", "compile", "build", "test") {
+	if containsWordOrPhrase(
+		text,
+		"code", "coding", "bug", "api", "compile", "build", "test", "tests",
+		"implement", "implementation", "refactor", "function", "package", "dependency",
+		"library", "json", "parser", "endpoint", "repository", "golang", "go",
+	) {
 		taskType = "coding"
 		difficulty = maxInt(difficulty, 3)
 		reasoning = maxReasoning(reasoning, "medium")
 		reasons = append(reasons, "coding/build terms detected")
 	}
-	if containsAny(text, "architecture", "blueprint", "multi-agent", "autonomous", "routing") {
+	if containsWordOrPhrase(
+		text,
+		"architecture", "blueprint", "multi-agent", "autonomous", "routing",
+		"new service", "new module", "new runtime", "new adapter", "new connector",
+	) {
 		taskType = "architecture"
 		difficulty = maxInt(difficulty, 4)
 		reasoning = maxReasoning(reasoning, "high")
@@ -1033,7 +1046,7 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 	}
 }
 
-func buildValidationPlan(intake IntakeAnalysis) ValidationPlan {
+func buildValidationPlan(intake IntakeAnalysis, minimality MinimalityDecision) ValidationPlan {
 	steps := []string{
 		"check every explicit success criterion",
 		"verify required fields are present",
@@ -1041,6 +1054,12 @@ func buildValidationPlan(intake IntakeAnalysis) ValidationPlan {
 	}
 	if intake.TaskType == "coding" {
 		steps = append(steps, "run applicable build and test commands")
+	}
+	if minimality.Applicable {
+		steps = append(steps,
+			"verify the implementation follows the selected YAGNI ladder rung",
+			"reject new dependencies or abstractions without explicit evidence that simpler rungs are insufficient",
+		)
 	}
 	if intake.NeedsWebAccess {
 		steps = append(steps, "verify time-sensitive claims against current sources")
@@ -1150,10 +1169,11 @@ func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) 
 	}
 }
 
-func buildTaskSteps(intake IntakeAnalysis, tools ToolRouteDecision, risk RiskAssessment) []TaskStep {
+func buildTaskSteps(intake IntakeAnalysis, tools ToolRouteDecision, risk RiskAssessment, minimality MinimalityDecision) []TaskStep {
 	steps := []TaskStep{
 		{ID: "understand", Name: "Understand request", Purpose: "identify the user's real goal", Allowed: true, Status: "planned"},
 		{ID: "criteria", Name: "Define success criteria", Purpose: "make completion measurable", Allowed: true, Status: "planned"},
+		{ID: "minimality", Name: "Apply YAGNI gate", Purpose: "select the least complex capable implementation strategy", Allowed: minimality.Necessary, RequiresApproval: !minimality.Necessary, Status: "planned"},
 		{ID: "context", Name: "Gather context", Purpose: "retrieve only relevant memories and references", Allowed: true, Status: "planned"},
 		{ID: "routing", Name: "Choose model and tools", Purpose: "select capable resources before optimizing cost", Allowed: true, Status: "planned"},
 		{ID: "plan", Name: "Create plan", Purpose: "sequence safe actions and validation", Allowed: true, Status: "planned"},
@@ -1212,11 +1232,16 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 	if plan.ModelDecision.SelectedModelID == "" {
 		failures = append(failures, "no capable model was selected")
 	}
-	if plan.ContextPlan.UsedContext == nil {
-		failures = append(failures, "context retrieval did not run")
-	}
 	if len(plan.ToolDecision.SelectedTools) == 0 {
 		failures = append(failures, "no tools were selected")
+	}
+	if plan.MinimalityDecision.Applicable {
+		if !plan.MinimalityDecision.Necessary {
+			failures = append(failures, "implementation was rejected by the necessity gate")
+		}
+		if strings.TrimSpace(plan.MinimalityDecision.SelectedLevel) == "" {
+			failures = append(failures, "minimality strategy was not selected")
+		}
 	}
 	if plan.RiskAssessment.ApprovalRequired && !plan.RiskAssessment.ApprovalGranted {
 		failures = append(failures, "approval is required before execution")

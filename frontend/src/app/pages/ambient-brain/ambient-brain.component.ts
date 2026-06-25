@@ -6,7 +6,9 @@ import {
   IAmbientOpportunity,
   IAmbientOverview,
 } from '../../models/ambient.model.interface';
+import { IAutonomyOverview } from '../../models/autonomy.model.interface';
 import { AmbientService } from '../../services/ambient.service';
+import { AutonomyService } from '../../services/autonomy.service';
 
 @Component({
   selector: 'app-ambient-brain',
@@ -15,20 +17,63 @@ import { AmbientService } from '../../services/ambient.service';
 })
 export class AmbientBrainComponent implements OnInit {
   overview?: IAmbientOverview;
+  autonomyOverview?: IAutonomyOverview;
   loading = false;
   scanning = false;
+  stressTesting = false;
   savingNeed = '';
   resolving = '';
   statusFilter = 'proposed';
 
   constructor(
     private ambient: AmbientService,
+    private autonomy: AutonomyService,
     private notification: NzNotificationService,
     private router: Router
   ) {}
 
   ngOnInit(): void {
     this.refresh();
+    this.refreshAutonomy();
+  }
+
+  refreshAutonomy(): void {
+    this.autonomy.overview().subscribe({
+      next: (overview) => {
+        this.autonomyOverview = overview;
+      },
+      error: () => {
+        this.notification.warning(
+          'Autonomy telemetry unavailable',
+          'Workflow execution metrics could not be loaded.'
+        );
+      },
+    });
+  }
+
+  runStressSuite(): void {
+    this.stressTesting = true;
+    this.autonomy.runStressSuite().subscribe({
+      next: (result) => {
+        this.stressTesting = false;
+        this.notification.success(
+          'Autonomy guards tested',
+          `${result.run.passed} passed; ${result.run.failed} failed.`
+        );
+        this.refreshAutonomy();
+      },
+      error: (error) => {
+        this.stressTesting = false;
+        this.notification.error(
+          'Stress suite failed',
+          error?.error?.error || 'The deterministic guard suite did not complete.'
+        );
+      },
+    });
+  }
+
+  percent(value: number): string {
+    return `${(value * 100).toFixed(1)}%`;
   }
 
   refresh(): void {

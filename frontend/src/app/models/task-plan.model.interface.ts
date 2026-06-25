@@ -50,6 +50,26 @@ export interface IExecutionPlan {
   auditEvents: string[];
 }
 
+export interface IMinimalityGate {
+  key: string;
+  label: string;
+  status: string;
+  evidence: string;
+}
+
+export interface IMinimalityDecision {
+  applicable: boolean;
+  necessary: boolean;
+  selectedLevel: string;
+  selectedStrategy: string;
+  reason: string;
+  ladder: IMinimalityGate[];
+  newDependenciesAllowed: boolean;
+  customArchitectureAllowed: boolean;
+  requiresRepositoryCheck: boolean;
+  benchmarkClaimsStatus: string;
+}
+
 export interface IExecutedAction {
   name: string;
   status: string;
@@ -175,6 +195,7 @@ export interface ICompletionPlan {
   realGoal: string;
   intake: IIntakeAnalysis;
   contextPlan: IContextPlan;
+  minimalityDecision: IMinimalityDecision;
   modelDecision: ILLMRouteDecision;
   toolDecision: IToolRouteDecision;
   steps: ITaskStep[];

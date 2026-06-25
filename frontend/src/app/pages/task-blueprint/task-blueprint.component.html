@@ -89,6 +89,45 @@
         </nz-card>
       </div>
 
+      <nz-card nzTitle="YAGNI Decision Gate" *ngIf="plan as p" class="section-card">
+        <div class="plan-grid">
+          <div>
+            <p><strong>Applicable:</strong> {{ p.minimalityDecision.applicable ? 'yes' : 'no' }}</p>
+            <p><strong>Necessary:</strong> {{ p.minimalityDecision.necessary ? 'yes' : 'no' }}</p>
+            <p><strong>Selected rung:</strong> {{ p.minimalityDecision.selectedLevel }}</p>
+            <p><strong>Strategy:</strong> {{ p.minimalityDecision.selectedStrategy }}</p>
+          </div>
+          <div>
+            <p><strong>New dependencies:</strong> {{ p.minimalityDecision.newDependenciesAllowed ? 'allowed' : 'blocked by default' }}</p>
+            <p><strong>Custom architecture:</strong> {{ p.minimalityDecision.customArchitectureAllowed ? 'justified by intake' : 'blocked by default' }}</p>
+            <p><strong>Repository check:</strong> {{ p.minimalityDecision.requiresRepositoryCheck ? 'required' : 'not required' }}</p>
+            <p><strong>Research status:</strong> {{ p.minimalityDecision.benchmarkClaimsStatus }}</p>
+          </div>
+        </div>
+        <p><strong>Reason:</strong> {{ p.minimalityDecision.reason }}</p>
+        <nz-table
+          *ngIf="p.minimalityDecision.ladder.length"
+          [nzData]="p.minimalityDecision.ladder"
+          nzSize="small"
+          [nzPageSize]="6"
+        >
+          <thead>
+            <tr>
+              <th>Decision</th>
+              <th>Status</th>
+              <th>Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let gate of p.minimalityDecision.ladder">
+              <td>{{ gate.label }}</td>
+              <td>{{ gate.status }}</td>
+              <td>{{ gate.evidence }}</td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </nz-card>
+
       <nz-card nzTitle="Success Criteria" *ngIf="plan as p" class="section-card">
         <ul>
           <li *ngFor="let criterion of p.intake.successCriteria">{{ criterion }}</li>

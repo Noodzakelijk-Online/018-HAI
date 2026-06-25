@@ -530,6 +530,22 @@ Ambient proactive planning:
 - `AMBIENT_SCHEDULER_ENABLED=true` enables periodic scans.
 - `AMBIENT_EXECUTION_ENABLED=false` keeps the default suggestion-only. Enabling it only permits bounded calls into the existing workflow and open-loop workers; it cannot bypass approvals, verification, emergency stop, leases, or audit controls.
 - `AMBIENT_SCAN_INTERVAL_SECONDS`, `AMBIENT_MINIMUM_SCORE`, `AMBIENT_MINIMUM_CONFIDENCE`, `AMBIENT_OPPORTUNITY_LIMIT`, `AMBIENT_EXECUTION_LIMIT`, `AMBIENT_DISMISS_COOLDOWN_HOURS`, and `AMBIENT_SCAN_RETENTION` bound background activity and storage growth.
+- `AUTONOMY_WORLD_STATE_TTL_SECONDS` defines when an execution observation becomes stale and must be refreshed. `AUTONOMY_TELEMETRY_LIMIT` bounds recent action/state records returned to the dashboard.
+
+The Proactive Brain also records execution-based autonomy telemetry for workflow worker attempts: compact world-state snapshots, typed action traces, verification status, latency, retries, human intervention, recovery, raw completion, and completion under policy. Its deterministic stress suite checks approval, stale-state, action-interface, and prompt-injection guards. These checks validate HAI's local policy boundaries; they do not substitute for provider-specific or real-world benchmark evidence.
+
+### YAGNI decision discipline
+
+Coding and architecture tasks pass through a deterministic minimality ladder before execution:
+
+1. Confirm the requested implementation needs to exist.
+2. Prefer the language standard library.
+3. Prefer native browser, operating-system, database, or platform capabilities.
+4. Reuse existing project dependencies and abstractions.
+5. Prefer a one-line or small patch.
+6. Permit narrowly scoped custom code only when earlier rungs are insufficient.
+
+The selected rung is included in task plans, model instructions, validation steps, and engine events. New dependencies and speculative abstractions are blocked by default. Public Ponytail cost/code-reduction figures are treated as unverified claims until reproduced against HAI's own tasks and telemetry.
 - Accepting a proposal links it to the controlled workflow engine. Dismissal applies a cooldown so the same source revision does not repeatedly interrupt the operator.
 - Incremental scans reuse stable source fingerprints and store source identity, redacted URI, and revision time rather than duplicating raw source content into each scan. Scan history is pruned to the configured retention limit.
 

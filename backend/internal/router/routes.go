@@ -11,6 +11,7 @@ import (
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
 	"automation-hub-backend/internal/automation"
+	"automation-hub-backend/internal/autonomy"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/llm"
@@ -84,6 +85,7 @@ func initializeRoutes(router *gin.Engine) error {
 		ambientService := ambient.NewService(ambient.DefaultRepository(), workflowService, memoryEngineService)
 		ambient.StartScheduler(context.Background(), ambientService)
 		initializeAmbientRoutes(v1, ambient.NewHandler(ambientService))
+		initializeAutonomyRoutes(v1, autonomy.NewHandler(autonomy.DefaultService()))
 		osHandler, err := haios.DefaultHandler()
 		if err != nil {
 			return err
@@ -93,6 +95,14 @@ func initializeRoutes(router *gin.Engine) error {
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+func initializeAutonomyRoutes(apiVersion *gin.RouterGroup, handler *autonomy.Handler) {
+	routes := apiVersion.Group("/autonomy")
+	{
+		routes.GET("/overview", handler.Overview)
+		routes.POST("/stress", handler.Stress)
+	}
 }
 
 func initializeAmbientRoutes(apiVersion *gin.RouterGroup, handler *ambient.Handler) {

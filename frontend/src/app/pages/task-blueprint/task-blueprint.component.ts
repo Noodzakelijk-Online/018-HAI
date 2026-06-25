@@ -63,7 +63,7 @@ export class TaskBlueprintComponent implements OnInit {
       })
       .subscribe({
         next: (plan) => {
-          this.plan = plan;
+          this.plan = this.normalizePlan(plan);
           this.loading = false;
           this.loadLogs();
         },
@@ -93,7 +93,7 @@ export class TaskBlueprintComponent implements OnInit {
       })
       .subscribe({
         next: (plan) => {
-          this.plan = plan;
+          this.plan = this.normalizePlan(plan);
           this.running = false;
           this.loadLogs();
           this.loadReviewQueue();
@@ -107,14 +107,14 @@ export class TaskBlueprintComponent implements OnInit {
 
   loadLogs(): void {
     this.taskPlanService.logs().subscribe({
-      next: (logs) => (this.logs = logs),
+      next: (logs) => (this.logs = (logs || []).map((plan) => this.normalizePlan(plan))),
       error: () => (this.logs = []),
     });
   }
 
   loadReviewQueue(): void {
     this.taskPlanService.reviewQueue().subscribe({
-      next: (items) => (this.reviewQueue = items),
+      next: (items) => (this.reviewQueue = items || []),
       error: () => (this.reviewQueue = []),
     });
   }
@@ -132,7 +132,7 @@ export class TaskBlueprintComponent implements OnInit {
         next: (result) => {
           this.resolvingReviewId = '';
           if (result.plan) {
-            this.plan = result.plan;
+            this.plan = this.normalizePlan(result.plan);
           }
           this.notification.success(
             approved ? 'Review approved' : 'Review rejected',
@@ -157,5 +157,34 @@ export class TaskBlueprintComponent implements OnInit {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
+  }
+
+  private normalizePlan(plan: ICompletionPlan): ICompletionPlan {
+    plan.modelDecision.skipped = plan.modelDecision.skipped || [];
+    plan.toolDecision.selectedTools = plan.toolDecision.selectedTools || [];
+    plan.toolDecision.skippedTools = plan.toolDecision.skippedTools || [];
+    plan.toolDecision.blockedTools = plan.toolDecision.blockedTools || [];
+    plan.minimalityDecision.ladder = plan.minimalityDecision.ladder || [];
+    plan.contextPlan.usedContext = plan.contextPlan.usedContext || [];
+    plan.contextPlan.sourceContext = plan.contextPlan.sourceContext || [];
+    plan.intake.successCriteria = plan.intake.successCriteria || [];
+    plan.steps = plan.steps || [];
+    plan.riskAssessment.reasons = plan.riskAssessment.reasons || [];
+    plan.validationPlan.steps = plan.validationPlan.steps || [];
+    plan.validationResult.checked = plan.validationResult.checked || [];
+    plan.validationResult.failures = plan.validationResult.failures || [];
+    plan.executionPlan.approvalRequiredFor = plan.executionPlan.approvalRequiredFor || [];
+    plan.executionPlan.auditEvents = plan.executionPlan.auditEvents || [];
+    plan.retryPolicy.escalationPath = plan.retryPolicy.escalationPath || [];
+    plan.retryPolicy.escalateWhen = plan.retryPolicy.escalateWhen || [];
+    plan.memoryUpdateProposals = plan.memoryUpdateProposals || [];
+    plan.lessonsLearned = plan.lessonsLearned || [];
+    plan.storedMemoryIds = plan.storedMemoryIds || [];
+    plan.events = plan.events || [];
+    if (plan.executionResult) {
+      plan.executionResult.actions = plan.executionResult.actions || [];
+      plan.executionResult.claims = plan.executionResult.claims || [];
+    }
+    return plan;
   }
 }

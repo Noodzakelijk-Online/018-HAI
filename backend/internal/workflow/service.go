@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"automation-hub-backend/internal/autonomy"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
 	"crypto/sha256"
@@ -1252,6 +1253,21 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		s.audit(updated.ID, "workflow.worker", from, StateBlocked, message, "worker", "task runner missing", updated.SourceURI, "workflow-worker")
 		return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, Message: message}
 	}
+	observedAt := time.Now().UTC()
+	if item.LastRunAt != nil {
+		observedAt = *item.LastRunAt
+	}
+	actionDecision := autonomy.ValidateAction(autonomy.ActionEnvelope{
+		InterfaceType:    autonomy.InterfaceSkillCall,
+		ActionType:       "run_workflow_task",
+		RequiresApproval: item.RequiresApproval,
+		ApprovalRecorded: !item.RequiresApproval || item.ApprovalStatus == "approved",
+		ObservationTime:  observedAt,
+		StaleAfter:       observedAt.Add(worldStateTTL()),
+	}, time.Now().UTC())
+	if actionDecision != "allowed" {
+		return s.handleRunReviewRequired(&item, claimID, "autonomy policy blocked action: "+actionDecision, "needs_review")
+	}
 
 	runResult, err := s.runTaskWithLease(item.ID, claimID, TaskRunRequest{
 		WorkflowID:    item.ID.String(),
@@ -1266,6 +1282,14 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	}
 	if runResult == nil {
 		return s.handleRunFailure(&item, claimID, "task engine returned no result", "")
+	}
+	if time.Now().UTC().After(observedAt.Add(worldStateTTL())) {
+		return s.handleRunReviewRequired(
+			&item,
+			claimID,
+			"world state expired during execution; re-observe source and external side effects before accepting completion",
+			"needs_review",
+		)
 	}
 	item.LastTaskPlanID = runResult.PlanID
 	item.VerificationStatus = runResult.VerificationStatus

@@ -168,13 +168,13 @@ func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, claimID string, now tim
 		Where("requires_approval = ? OR approval_status = ?", false, "approved").
 		Where("next_run_at IS NULL OR next_run_at <= ?", now).
 		Updates(map[string]interface{}{
-			"current_state":     StateInProgress,
-			"last_run_at":       now,
-			"next_action":       "task engine is executing claimed workflow item",
-			"last_worker_error": "",
-			"worker_claim_id":   claimID,
+			"current_state":      StateInProgress,
+			"last_run_at":        now,
+			"next_action":        "task engine is executing claimed workflow item",
+			"last_worker_error":  "",
+			"worker_claim_id":    claimID,
 			"worker_lease_until": leaseUntil,
-			"updated_at":        now,
+			"updated_at":         now,
 		})
 	if result.Error != nil {
 		return nil, false, result.Error
@@ -186,6 +186,7 @@ func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, claimID string, now tim
 	if err != nil {
 		return nil, false, err
 	}
+	r.startAutonomyAttempt(item, now)
 	return item, true, nil
 }
 
@@ -234,6 +235,7 @@ func (r *GormRepository) UpdateClaimedItem(item *models.WorkflowItem, claimID st
 	if err != nil {
 		return nil, false, err
 	}
+	r.finishAutonomyAttempt(updated, now)
 	return updated, true, nil
 }
 
