@@ -8,6 +8,7 @@ import {
   ISourceConnector,
   ISourceExtraction,
   ISourceSearchResult,
+  ISourceSyncJob,
   ISourceSyncResult,
 } from '../../models/connected-source.model.interface';
 import { CONNECTED_SOURCE_SERVICE_TOKEN } from '../../services/connected-source/connected-source.service.token';
@@ -23,6 +24,7 @@ export class ConnectedSourcesComponent implements OnInit {
   sources: IConnectedSource[] = [];
   extractions: ISourceExtraction[] = [];
   auditLogs: ISourceAuditLog[] = [];
+  syncJobs: ISourceSyncJob[] = [];
   searchResult?: ISourceSearchResult;
   includeDisabled = true;
   includeArchived = false;
@@ -102,6 +104,7 @@ export class ConnectedSourcesComponent implements OnInit {
     });
     this.loadExtractions();
     this.loadAuditLogs();
+    this.loadSyncJobs();
   }
 
   connectSource(): void {
@@ -340,6 +343,13 @@ export class ConnectedSourcesComponent implements OnInit {
     this.sourceService.auditLogs().subscribe({
       next: (logs) => (this.auditLogs = logs),
       error: () => (this.auditLogs = []),
+    });
+  }
+
+  private loadSyncJobs(): void {
+    this.sourceService.syncJobs().subscribe({
+      next: (jobs) => (this.syncJobs = jobs || []),
+      error: () => (this.syncJobs = []),
     });
   }
 }

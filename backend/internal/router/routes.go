@@ -238,6 +238,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.POST("/", sourceHandler.CreateSource)
 		sourceRoutes.POST("/search", sourceHandler.Search)
 		sourceRoutes.POST("/sync-due", sourceHandler.RunDueScheduledSyncs)
+		sourceRoutes.GET("/sync-jobs", sourceHandler.SyncJobs)
 		sourceRoutes.GET("/extractions", sourceHandler.Extractions)
 		sourceRoutes.GET("/audit-logs", sourceHandler.AuditLogs)
 		sourceRoutes.PATCH("/extractions/:id", sourceHandler.UpdateExtraction)

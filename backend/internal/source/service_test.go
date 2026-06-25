@@ -535,9 +535,46 @@ func TestScheduledSyncCountsPartialResultAsFailed(t *testing.T) {
 	if run.Completed != 0 || run.Failed != 1 {
 		t.Fatalf("run = %#v, want failed scheduled sync", run)
 	}
+	if len(workflowSpy.requests) != 2 {
+		t.Fatalf("workflow requests = %d, want extraction failure plus operational review", len(workflowSpy.requests))
+	}
+	failureWorkflow := workflowSpy.requests[len(workflowSpy.requests)-1]
+	if failureWorkflow.SourceType != "source_sync" || !failureWorkflow.RequiresReview {
+		t.Fatalf("failure workflow = %#v, want source_sync review workflow", failureWorkflow)
+	}
 	updated, _ := repo.FindSource(sourceID)
 	if updated.LastSyncedAt != nil || updated.Cursor != "" {
 		t.Fatalf("failed scheduled sync advanced source state: %#v", updated)
+	}
+}
+
+func TestSyncJobsReturnsPersistentHistory(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Imported mailbox records",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	if _, err := service.Sync(sourceID, ImportRequest{
+		Items: []ImportItem{{
+			ExternalID: "mail-1",
+			Title:      "Follow-up",
+			Content:    "Follow up: prepare the project status.",
+		}},
+	}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	jobs, err := service.SyncJobs(&sourceID)
+	if err != nil {
+		t.Fatalf("SyncJobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Status != "completed" {
+		t.Fatalf("jobs = %#v, want one completed sync job", jobs)
 	}
 }
 

@@ -341,6 +341,8 @@ The operational `json-feed` connector is the bridge between HAI and account-spec
 
 HAI sends the previous cursor as the `cursor` query parameter, persists the returned `nextCursor`, deduplicates records, extracts tasks and decisions, creates workflow candidates, updates useful memory, and records sync/audit history. The endpoint must use HTTP(S), its hostname must be explicitly listed in `CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS`, redirects are rejected, and response size and timeout are bounded. Keep provider credentials in the bridge or provider secret store, never in `syncTarget`.
 
+DNS results are checked again when the socket is opened, so an allowlisted hostname cannot redirect HAI into link-local or metadata address space through DNS rebinding. Proxy environment variables are not used for feed retrieval. Scheduled failures are persisted as sync jobs and routed into the workflow review queue, making unavailable or misconfigured sources visible operational work instead of log-only failures.
+
 Browser DOM selectors can change when providers redesign their chat pages. A failed capture is reported rather than silently treated as complete. Account-wide historical backfill should use official exports where available; automatic sidebar traversal is intentionally not enabled because it is brittle and can trigger platform limits.
 
 The workflow layer now stores operational history in separate tables:

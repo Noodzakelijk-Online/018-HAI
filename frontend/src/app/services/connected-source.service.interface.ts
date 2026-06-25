@@ -8,6 +8,7 @@ import {
   ISourceExtraction,
   ISourceSearchRequest,
   ISourceSearchResult,
+  ISourceSyncJob,
   ISourceSyncResult,
   IScheduledSyncRun,
 } from '../models/connected-source.model.interface';
@@ -15,6 +16,7 @@ import {
 export interface IConnectedSourceService {
   connectors(): Observable<ISourceConnector[]>;
   sources(includeDisabled: boolean): Observable<IConnectedSource[]>;
+  syncJobs(sourceId?: string): Observable<ISourceSyncJob[]>;
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource>;
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult>;
   runDueScheduledSyncs(): Observable<IScheduledSyncRun>;

@@ -3,8 +3,10 @@ package source
 import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -120,6 +122,7 @@ type Service interface {
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
 	UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*models.ConnectedSource, error)
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
+	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 	Reindex(sourceID uuid.UUID) (*SyncResult, error)
@@ -259,6 +262,10 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 
 func (s *service) Sources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	return s.repo.FindSources(includeDisabled)
+}
+
+func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
+	return s.repo.FindSyncJobs(sourceID)
 }
 
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
@@ -434,17 +441,48 @@ func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 			}
 			run.Failed++
 			run.Messages = append(run.Messages, fmt.Sprintf("%s failed: %s", source.Name, errSync.Error()))
+			s.createSyncFailureWorkflow(source, errSync.Error())
 			continue
 		}
 		if result.Job.Status != "completed" {
 			run.Failed++
 			run.Messages = append(run.Messages, fmt.Sprintf("%s %s: %d seen, %d failed", source.Name, result.Job.Status, result.Job.ItemsSeen, result.Job.ItemsFailed))
+			s.createSyncFailureWorkflow(source, result.Job.Message)
 			continue
 		}
 		run.Completed++
 		run.Messages = append(run.Messages, fmt.Sprintf("%s synced: %d seen, %d added, %d updated", source.Name, result.Job.ItemsSeen, result.Job.ItemsAdded, result.Job.ItemsUpdated))
 	}
 	return run, nil
+}
+
+func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reason string) {
+	if s.workflowService == nil {
+		return
+	}
+	_, err := s.workflowService.Intake(workflow.IntakeRequest{
+		Input: strings.Join([]string{
+			"Connected source sync failed for " + source.Name + ".",
+			"Connector: " + source.ConnectorKey + ".",
+			"Failure: " + compact(safety.RedactSecrets(reason), 320),
+			"Required action: inspect connector health, permissions, target availability, and retry policy before resuming autonomous ingestion.",
+		}, "\n"),
+		ProjectKey:     source.DefaultProjectKey,
+		SourceType:     "source_sync",
+		SourceID:       source.ID.String(),
+		SourceURI:      safety.RedactURL(source.SyncTarget),
+		SourceLabel:    source.Name,
+		ContentType:    "operational_failure",
+		Trigger:        "scheduled_source_sync_failed",
+		Actor:          "source-scheduler",
+		RequiresReview: true,
+		ReviewReason:   "background source ingestion failed and requires operator review",
+	})
+	if err != nil {
+		s.audit(source.ID, "source.failure_workflow_failed", compact(err.Error(), 260))
+		return
+	}
+	s.audit(source.ID, "source.failure_workflow_created", "scheduled sync failure routed to workflow review")
 }
 
 func (s *service) Reindex(sourceID uuid.UUID) (*SyncResult, error) {
@@ -1039,7 +1077,8 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 	}
 	request.Header.Set("Accept", "application/json")
 	client := &http.Client{
-		Timeout: sourceHTTPTimeout(),
+		Timeout:   sourceHTTPTimeout(),
+		Transport: sourceHTTPTransport(),
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -1111,7 +1150,33 @@ func sourceHTTPAddressBlocked(host string) bool {
 	if ip == nil {
 		return false
 	}
-	return ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.String() == "169.254.169.254"
+	return ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.String() == "169.254.169.254"
+}
+
+func sourceHTTPTransport() *http.Transport {
+	dialer := &net.Dialer{Timeout: sourceHTTPTimeout()}
+	return &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, fmt.Errorf("invalid json-feed network address: %w", err)
+			}
+			resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("resolve json-feed host: %w", err)
+			}
+			for _, candidate := range resolved {
+				if sourceHTTPAddressBlocked(candidate.IP.String()) {
+					return nil, fmt.Errorf("json-feed host resolved to blocked address space")
+				}
+			}
+			if len(resolved) == 0 {
+				return nil, fmt.Errorf("json-feed host resolved to no addresses")
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(resolved[0].IP.String(), port))
+		},
+	}
 }
 
 func sourceHTTPTimeout() time.Duration {

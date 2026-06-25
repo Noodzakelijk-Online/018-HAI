@@ -11,6 +11,7 @@ import {
   ISourceExtraction,
   ISourceSearchRequest,
   ISourceSearchResult,
+  ISourceSyncJob,
   ISourceSyncResult,
   IScheduledSyncRun,
 } from '../../models/connected-source.model.interface';
@@ -31,6 +32,14 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.get<IConnectedSource[]>(this.apiUrl + '/', {
       params: new HttpParams().set('includeDisabled', includeDisabled),
     });
+  }
+
+  syncJobs(sourceId?: string): Observable<ISourceSyncJob[]> {
+    let params = new HttpParams();
+    if (sourceId) {
+      params = params.set('sourceId', sourceId);
+    }
+    return this.http.get<ISourceSyncJob[]>(`${this.apiUrl}/sync-jobs`, { params });
   }
 
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource> {

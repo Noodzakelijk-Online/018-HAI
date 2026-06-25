@@ -56,6 +56,24 @@ func (h *Handler) Sources(c *gin.Context) {
 	c.JSON(http.StatusOK, sources)
 }
 
+func (h *Handler) SyncJobs(c *gin.Context) {
+	var sourceID *uuid.UUID
+	if raw := c.Query("sourceId"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sourceId"})
+			return
+		}
+		sourceID = &parsed
+	}
+	jobs, err := h.service.SyncJobs(sourceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, jobs)
+}
+
 func (h *Handler) UpdateSource(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {

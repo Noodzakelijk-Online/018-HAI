@@ -488,6 +488,10 @@ func (s *fakeTaskSourceService) Sources(includeDisabled bool) ([]models.Connecte
 	return nil, nil
 }
 
+func (s *fakeTaskSourceService) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
+	return nil, nil
+}
+
 func (s *fakeTaskSourceService) Sync(sourceID uuid.UUID, request source.ImportRequest) (*source.SyncResult, error) {
 	return nil, nil
 }
