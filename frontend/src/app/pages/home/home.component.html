@@ -3,15 +3,20 @@
     <nz-header class="header-container">
       <div class="header-content">
         <h1 class="header-content__title">HAI Automation Hub</h1>
-        <i
+        <button
+          type="button"
           class="header-content__menu"
+          aria-label="Open main menu"
+          title="Open main menu"
+          nz-button
+          nzType="text"
           nz-dropdown
-          nz-icon
-          nzType="menu"
           [nzDropdownMenu]="mainMenu"
-          nzTheme="outline"
+          [nzTrigger]="'click'"
           nzPlacement="bottomRight"
-        ></i>
+        >
+          <i nz-icon nzType="menu" nzTheme="outline"></i>
+        </button>
         <nz-dropdown-menu #mainMenu="nzDropdownMenu">
           <ul nz-menu>
             <li nz-menu-item (click)="showProfileModal()">

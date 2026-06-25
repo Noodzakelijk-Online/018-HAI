@@ -56,17 +56,17 @@ type ConversationDetail struct {
 }
 
 type CommandDashboard struct {
-	GeneratedAt     time.Time                    `json:"generatedAt"`
-	ConversationCount int                         `json:"conversationCount"`
-	InsightCount    int                          `json:"insightCount"`
-	NeedsRobert     []models.WorkflowItem        `json:"needsRobert"`
-	DelegateToVA    []models.AIMemoryInsight     `json:"delegateToVA"`
-	OpenLoops       []models.WorkflowOpenLoop    `json:"openLoops"`
-	Contradictions  []models.AIMemoryInsight     `json:"contradictions"`
-	RecentDecisions []models.AIMemoryInsight     `json:"recentDecisions"`
-	Projects        []ProjectSummary             `json:"projects"`
-	RecentArchives  []models.AIConversationArchive `json:"recentArchives"`
-	Warnings        []string                     `json:"warnings"`
+	GeneratedAt       time.Time                      `json:"generatedAt"`
+	ConversationCount int                            `json:"conversationCount"`
+	InsightCount      int                            `json:"insightCount"`
+	NeedsRobert       []models.WorkflowItem          `json:"needsRobert"`
+	DelegateToVA      []models.AIMemoryInsight       `json:"delegateToVA"`
+	OpenLoops         []models.WorkflowOpenLoop      `json:"openLoops"`
+	Contradictions    []models.AIMemoryInsight       `json:"contradictions"`
+	RecentDecisions   []models.AIMemoryInsight       `json:"recentDecisions"`
+	Projects          []ProjectSummary               `json:"projects"`
+	RecentArchives    []models.AIConversationArchive `json:"recentArchives"`
+	Warnings          []string                       `json:"warnings"`
 }
 
 type ProjectSummary struct {
@@ -78,8 +78,8 @@ type ProjectSummary struct {
 }
 
 type SearchResult struct {
-	Memory *memory.RetrieveResult      `json:"memory"`
-	Facts  []models.AIMemoryInsight    `json:"facts"`
+	Memory *memory.RetrieveResult   `json:"memory"`
+	Facts  []models.AIMemoryInsight `json:"facts"`
 }
 
 type Service interface {
@@ -313,9 +313,13 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 		GeneratedAt:       time.Now().UTC(),
 		ConversationCount: len(conversations),
 		InsightCount:      len(insights),
-		NeedsRobert:       workflowDashboard.ApprovalItems,
-		OpenLoops:         workflowDashboard.DueOpenLoops,
-		RecentArchives:    conversations,
+		NeedsRobert:       append([]models.WorkflowItem{}, workflowDashboard.ApprovalItems...),
+		DelegateToVA:      []models.AIMemoryInsight{},
+		OpenLoops:         append([]models.WorkflowOpenLoop{}, workflowDashboard.DueOpenLoops...),
+		Contradictions:    []models.AIMemoryInsight{},
+		RecentDecisions:   []models.AIMemoryInsight{},
+		Projects:          []ProjectSummary{},
+		RecentArchives:    append([]models.AIConversationArchive{}, conversations...),
 		Warnings: []string{
 			"Browser capture only reads the current page after an explicit click.",
 			"Passwords, tokens, and authorization values are redacted from indexed memory.",
@@ -560,9 +564,9 @@ func validateSourceURI(platform, raw string) error {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	allowed := map[string][]string{
-		"chatgpt": {"chatgpt.com", "chat.openai.com"},
-		"gemini":  {"gemini.google.com"},
-		"copilot": {"copilot.microsoft.com"},
+		"chatgpt":  {"chatgpt.com", "chat.openai.com"},
+		"gemini":   {"gemini.google.com"},
+		"copilot":  {"copilot.microsoft.com"},
 		"deepseek": {"chat.deepseek.com"},
 	}
 	for _, candidate := range allowed[platform] {

@@ -502,9 +502,13 @@ func (s *service) Dashboard() (*WorkflowDashboard, error) {
 			"expiredOpenLoopClaims":  int64(len(expiredOpenLoopClaims)),
 			"interruptedReview":      0,
 		},
-		ApprovalItems: approvalItems,
-		DueOpenLoops:  openLoops,
-		Rules:         rules,
+		ApprovalItems:          append([]models.WorkflowItem{}, approvalItems...),
+		BlockedItems:           []models.WorkflowItem{},
+		ReadyItems:             []models.WorkflowItem{},
+		HighRiskItems:          []models.WorkflowItem{},
+		ItemsWithoutNextAction: []models.WorkflowItem{},
+		DueOpenLoops:           append([]models.WorkflowOpenLoop{}, openLoops...),
+		Rules:                  append([]models.WorkflowRule{}, rules...),
 	}
 	for _, item := range items {
 		switch item.CurrentState {
