@@ -23,7 +23,7 @@
             <nz-form-item>
               <nz-form-label>Connector</nz-form-label>
               <nz-form-control>
-                <nz-select formControlName="connectorKey">
+                <nz-select formControlName="connectorKey" (ngModelChange)="connectorChanged($event)">
                   <nz-option
                     *ngFor="let connector of connectors"
                     [nzValue]="connector.connectorKey"
@@ -34,7 +34,7 @@
               </nz-form-control>
             </nz-form-item>
             <p *ngIf="connectors.length" class="muted">
-              Only operational connectors can be connected. OAuth/API connectors are shown as reference until their adapters are implemented.
+              Operational connectors include selected folders and allowlisted JSON feeds. Account-specific OAuth/API adapters remain disabled until a real provider integration is configured.
             </p>
             <nz-form-item>
               <nz-form-label>Name</nz-form-label>
@@ -52,7 +52,7 @@
               <label nz-checkbox formControlName="localOnly">Local only</label>
             </div>
             <div class="form-row">
-              <input nz-input formControlName="syncTarget" placeholder="Folder target, e.g. ." />
+              <input nz-input formControlName="syncTarget" [placeholder]="syncTargetPlaceholder()" />
               <input nz-input formControlName="defaultProjectKey" placeholder="Project key" />
             </div>
             <nz-form-item>
@@ -156,6 +156,16 @@
               <td>
                 <button *ngIf="source.enabled" nz-button nzSize="small" nzType="default" (click)="pause(source)">Pause</button>
                 <button *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzSize="small" nzType="default" (click)="resume(source)">Resume</button>
+                <button
+                  *ngIf="source.enabled && source.connectorKey === 'json-feed'"
+                  nz-button
+                  nzSize="small"
+                  nzType="primary"
+                  (click)="syncSource(source)"
+                  [nzLoading]="syncing"
+                >
+                  Sync
+                </button>
                 <button nz-button nzSize="small" nzType="default" (click)="reindex(source)">Re-index</button>
                 <button nz-button nzSize="small" nzType="link" nzDanger (click)="revoke(source)">Revoke</button>
               </td>

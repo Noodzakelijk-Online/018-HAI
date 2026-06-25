@@ -171,6 +171,53 @@ export class ConnectedSourcesComponent implements OnInit {
     return `${connector.name} (${status})`;
   }
 
+  connectorChanged(connectorKey: string): void {
+    if (connectorKey === 'json-feed') {
+      this.sourceForm.patchValue({
+        name: 'Local account JSON bridge',
+        syncFrequency: '15m',
+        syncTarget: 'http://host.docker.internal:8787/feed',
+        localOnly: true,
+      });
+      return;
+    }
+    if (connectorKey === 'local-folder') {
+      this.sourceForm.patchValue({
+        name: 'Selected local folder',
+        syncFrequency: 'manual',
+        syncTarget: '.',
+        localOnly: true,
+      });
+    }
+  }
+
+  syncTargetPlaceholder(): string {
+    return this.sourceForm.value.connectorKey === 'json-feed'
+      ? 'Allowlisted HTTP(S) JSON feed URL'
+      : 'Folder target, e.g. .';
+  }
+
+  syncSource(source: IConnectedSource): void {
+    this.syncing = true;
+    this.sourceService
+      .sync(source.id, {
+        mode: 'incremental_sync',
+        items: [],
+        projectKey: source.defaultProjectKey,
+      })
+      .subscribe({
+        next: (result) => {
+          this.syncing = false;
+          this.notifySyncResult('Source sync', result);
+          this.refresh();
+        },
+        error: (error) => {
+          this.syncing = false;
+          this.notification.error('Source sync failed', error?.error?.error || 'The connector could not retrieve records.');
+        },
+      });
+  }
+
   syncFolder(): void {
     if (this.folderForm.invalid) {
       return;

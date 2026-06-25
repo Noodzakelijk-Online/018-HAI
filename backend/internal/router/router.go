@@ -8,6 +8,9 @@ import (
 func Initialize() error {
 	// initialize Router
 	router := gin.Default()
+	if err := router.SetTrustedProxies(nil); err != nil {
+		return err
+	}
 	router.Use(localCaptureCORSMiddleware())
 
 	// initialize routes

@@ -319,6 +319,28 @@ The canonical Go/Angular application now includes a private AI-conversation memo
 
 The private Chrome/Edge extension lives in `browser-extension/`. Load it as an unpacked extension, keep the default local endpoint `http://127.0.0.1:17070/api/v1/memory-engine/import`, enter `BACKEND_API_SHARED_KEY`, open one of Robert's own AI conversation pages, and click **Capture current conversation**. The extension reads only the currently open thread after that explicit click. It does not read cookies, passwords, local storage, hidden account data, or unrelated pages, and it sends requests with `credentials: omit`.
 
+### Normalized JSON source feeds
+
+The operational `json-feed` connector is the bridge between HAI and account-specific adapters. A local service can use the official Gmail, Calendar, GitHub, Trello, Drive, or other permitted API, retain its own credentials, and expose normalized read-only records to HAI:
+
+```json
+{
+  "nextCursor": "provider-cursor-2",
+  "items": [
+    {
+      "externalId": "stable-provider-item-id",
+      "title": "Item title",
+      "content": "Extractable source text",
+      "sourceUri": "provider://account/item-id",
+      "itemType": "email",
+      "projectKey": "018-HAI"
+    }
+  ]
+}
+```
+
+HAI sends the previous cursor as the `cursor` query parameter, persists the returned `nextCursor`, deduplicates records, extracts tasks and decisions, creates workflow candidates, updates useful memory, and records sync/audit history. The endpoint must use HTTP(S), its hostname must be explicitly listed in `CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS`, redirects are rejected, and response size and timeout are bounded. Keep provider credentials in the bridge or provider secret store, never in `syncTarget`.
+
 Browser DOM selectors can change when providers redesign their chat pages. A failed capture is reported rather than silently treated as complete. Account-wide historical backfill should use official exports where available; automatic sidebar traversal is intentionally not enabled because it is brittle and can trigger platform limits.
 
 The workflow layer now stores operational history in separate tables:
@@ -468,6 +490,10 @@ Local folder sync is bounded by:
 - `CONNECTED_SOURCE_LOCAL_ROOT`, default `/root/connected-sources`.
 - `CONNECTED_SOURCE_FILE_LIMIT`, default `100`, hard-capped at `500`.
 - `CONNECTED_SOURCE_MAX_BYTES`, default `1048576`, hard-capped at `10485760`.
+- `CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS`, exact hostname allowlist for normalized JSON feeds.
+- `CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL`, default `false`; keep disabled unless a reviewed local adapter specifically needs link-local access.
+- `CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS`, default `20`, bounded to `1-120`.
+- `CONNECTED_SOURCE_HTTP_MAX_BYTES`, default `2097152`, bounded to `1 KiB-20 MiB`.
 - `SOURCE_SCHEDULER_ENABLED`, default `true`.
 - `SOURCE_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
 - Incremental sync based on `LastSyncedAt`, unless mode is `historical_backfill`.

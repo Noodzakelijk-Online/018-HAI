@@ -4,14 +4,20 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/workflow"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"math"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -139,6 +145,7 @@ var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var ErrSyncInProgress = errors.New("source sync is already in progress")
 
 const maxSyncErrorDetails = 20
+const defaultHTTPFeedAllowedHosts = "localhost,127.0.0.1,::1,host.docker.internal"
 
 func NewService(repo Repository, memoryService memory.Service) Service {
 	return &service{repo: repo, memoryService: memoryService, activeSyncs: map[uuid.UUID]bool{}}
@@ -267,7 +274,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
 	}
-	if source.ConnectorKey != "local-folder" && len(request.Items) == 0 {
+	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" && len(request.Items) == 0 {
 		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
 	}
 	if source.ConnectorKey == "local-folder" {
@@ -301,8 +308,21 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	items := request.Items
+	adapterCursor := ""
 	if len(items) == 0 && source.ConnectorKey == "local-folder" {
 		items, err = s.localFolderItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == "json-feed" {
+		items, adapterCursor, err = fetchJSONFeed(source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -352,7 +372,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	job.CursorAfter = source.Cursor
 	if failed == 0 {
 		source.LastSyncedAt = &now
-		source.Cursor = fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(items))
+		source.Cursor = firstNonEmpty(adapterCursor, fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(items)))
 		job.Status = "completed"
 		job.CursorAfter = source.Cursor
 		job.Message = "sync completed with cached extraction and provenance links"
@@ -904,6 +924,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "project-board", Name: "Trello and project boards", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
 		{ConnectorKey: "github", Name: "GitHub repositories and issues", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "manual and scheduled local-folder ingestion are implemented"},
+		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "scheduled and incremental normalized JSON ingestion are implemented with host allowlisting and bounded responses"},
 	}
 }
 
@@ -966,7 +987,7 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 }
 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
-	if source.ConnectorKey != "local-folder" {
+	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
 	}
 	interval, ok := parseSyncFrequency(source.SyncFrequency)
@@ -980,6 +1001,142 @@ func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, str
 		return true, ""
 	}
 	return false, "not due yet"
+}
+
+type jsonFeedEnvelope struct {
+	Items      []ImportItem `json:"items"`
+	NextCursor string       `json:"nextCursor,omitempty"`
+}
+
+func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error) {
+	if source == nil {
+		return nil, "", fmt.Errorf("source is required")
+	}
+	target, err := url.Parse(strings.TrimSpace(source.SyncTarget))
+	if err != nil || target.Scheme == "" || target.Hostname() == "" {
+		return nil, "", fmt.Errorf("json-feed sync target must be an absolute HTTP(S) URL")
+	}
+	if target.Scheme != "http" && target.Scheme != "https" {
+		return nil, "", fmt.Errorf("json-feed sync target must use HTTP or HTTPS")
+	}
+	if target.User != nil {
+		return nil, "", fmt.Errorf("json-feed credentials must not be embedded in syncTarget")
+	}
+	if !sourceHTTPHostAllowed(target.Hostname()) {
+		return nil, "", fmt.Errorf("json-feed host %s is not allowlisted; set CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS deliberately", target.Hostname())
+	}
+	if sourceHTTPAddressBlocked(target.Hostname()) {
+		return nil, "", fmt.Errorf("json-feed target uses link-local, metadata, or unspecified address space")
+	}
+	if source.Cursor != "" {
+		query := target.Query()
+		query.Set("cursor", source.Cursor)
+		target.RawQuery = query.Encode()
+	}
+	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create json-feed request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	client := &http.Client{
+		Timeout: sourceHTTPTimeout(),
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", fmt.Errorf("fetch json-feed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, "", fmt.Errorf("json-feed returned HTTP %d", response.StatusCode)
+	}
+	maxBytes := sourceHTTPMaxBytes()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read json-feed: %w", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, "", fmt.Errorf("json-feed response exceeds %d bytes", maxBytes)
+	}
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return []ImportItem{}, source.Cursor, nil
+	}
+	if body[0] == '[' {
+		var items []ImportItem
+		if err := json.Unmarshal(body, &items); err != nil {
+			return nil, "", fmt.Errorf("decode json-feed items: %w", err)
+		}
+		return normalizeFeedItems(items, source), source.Cursor, nil
+	}
+	var envelope jsonFeedEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, "", fmt.Errorf("decode json-feed envelope: %w", err)
+	}
+	return normalizeFeedItems(envelope.Items, source), firstNonEmpty(strings.TrimSpace(envelope.NextCursor), source.Cursor), nil
+}
+
+func normalizeFeedItems(items []ImportItem, source *models.ConnectedSource) []ImportItem {
+	result := make([]ImportItem, 0, len(items))
+	for _, item := range items {
+		item.ExternalID = strings.TrimSpace(item.ExternalID)
+		item.Title = strings.TrimSpace(item.Title)
+		item.Content = strings.TrimSpace(item.Content)
+		item.ProjectKey = firstNonEmpty(strings.TrimSpace(item.ProjectKey), source.DefaultProjectKey)
+		if item.ExternalID == "" || item.Content == "" {
+			continue
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func sourceHTTPHostAllowed(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, allowed := range strings.Split(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS"), defaultHTTPFeedAllowedHosts), ",") {
+		if host == strings.ToLower(strings.TrimSpace(allowed)) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceHTTPAddressBlocked(host string) bool {
+	if envBool("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL") {
+		return false
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	return ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.String() == "169.254.169.254"
+}
+
+func sourceHTTPTimeout() time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS")))
+	if err != nil || seconds < 1 || seconds > 120 {
+		seconds = 20
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func sourceHTTPMaxBytes() int64 {
+	value, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_MAX_BYTES")), 10, 64)
+	if err != nil || value < 1024 || value > 20*1024*1024 {
+		return 2 * 1024 * 1024
+	}
+	return value
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseSyncFrequency(value string) (time.Duration, bool) {

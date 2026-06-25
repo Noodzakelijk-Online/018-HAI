@@ -6,6 +6,8 @@ import (
 	"automation-hub-backend/internal/workflow"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -227,13 +229,14 @@ func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	}
 }
 
-func TestConnectorsMarkOnlyLocalFolderOperational(t *testing.T) {
+func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	connectors, err := service.Connectors()
 	if err != nil {
 		t.Fatalf("Connectors: %v", err)
 	}
 	foundLocal := false
+	foundJSONFeed := false
 	foundEmail := false
 	for _, connector := range connectors {
 		switch connector.ConnectorKey {
@@ -242,6 +245,11 @@ func TestConnectorsMarkOnlyLocalFolderOperational(t *testing.T) {
 			if !connector.Enabled || connector.AdapterStatus != "operational" {
 				t.Fatalf("local-folder connector = %#v, want operational enabled", connector)
 			}
+		case "json-feed":
+			foundJSONFeed = true
+			if !connector.Enabled || connector.AdapterStatus != "operational" {
+				t.Fatalf("json-feed connector = %#v, want operational enabled", connector)
+			}
 		case "email":
 			foundEmail = true
 			if connector.Enabled || connector.AdapterStatus != "not_implemented" {
@@ -249,8 +257,8 @@ func TestConnectorsMarkOnlyLocalFolderOperational(t *testing.T) {
 			}
 		}
 	}
-	if !foundLocal || !foundEmail {
-		t.Fatalf("expected local and email connectors, got %#v", connectors)
+	if !foundLocal || !foundJSONFeed || !foundEmail {
+		t.Fatalf("expected local, json-feed, and email connectors, got %#v", connectors)
 	}
 }
 
@@ -286,6 +294,82 @@ func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
 	}
 	if source.ConnectorKey != "local-folder" || !source.Enabled {
 		t.Fatalf("source = %#v, want enabled local-folder", source)
+	}
+}
+
+func TestSyncJSONFeedImportsItemsAndAdvancesCursor(t *testing.T) {
+	var receivedCursor string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedCursor = r.URL.Query().Get("cursor")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"nextCursor":"cursor-2",
+			"items":[{
+				"externalId":"message-2",
+				"title":"Follow-up request",
+				"content":"Follow up: prepare the evidence checklist by Friday.",
+				"sourceUri":"local-bridge://email/message-2",
+				"itemType":"email"
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      "json-feed",
+		Name:              "Local account bridge",
+		Category:          "generic_feed",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		SyncFrequency:     "1m",
+		SyncTarget:        server.URL,
+		DefaultProjectKey: "018-HAI",
+		Cursor:            "cursor-1",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	result, err := service.Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if receivedCursor != "cursor-1" {
+		t.Fatalf("received cursor = %q, want cursor-1", receivedCursor)
+	}
+	if result.Job.ItemsSeen != 1 || len(result.Extractions) != 1 {
+		t.Fatalf("result = %#v, want one imported extraction", result)
+	}
+	if result.Extractions[0].ProjectKey != "018-HAI" {
+		t.Fatalf("project key = %q, want default project", result.Extractions[0].ProjectKey)
+	}
+	updated, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if updated.Cursor != "cursor-2" {
+		t.Fatalf("cursor = %q, want cursor-2", updated.Cursor)
+	}
+}
+
+func TestSyncJSONFeedRejectsUnallowlistedHost(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "json-feed",
+		Name:         "Blocked external feed",
+		Category:     "generic_feed",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+		SyncTarget:   "https://example.com/feed",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	_, err := service.Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err == nil || !strings.Contains(err.Error(), "not allowlisted") {
+		t.Fatalf("error = %v, want allowlist rejection", err)
 	}
 }
 

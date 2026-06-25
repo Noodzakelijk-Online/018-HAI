@@ -50,6 +50,7 @@ func DefaultRepository() Repository {
 
 func (r *GormRepository) SaveConnector(connector *models.SourceConnector) (*models.SourceConnector, error) {
 	var existing models.SourceConnector
+	create := false
 	if connector.ID == uuid.Nil {
 		err := r.DB.Where("connector_key = ?", connector.ConnectorKey).First(&existing).Error
 		if err == nil {
@@ -61,13 +62,22 @@ func (r *GormRepository) SaveConnector(connector *models.SourceConnector) (*mode
 			return nil, err
 		} else {
 			connector.ID = uuid.New()
+			create = true
 		}
 	} else if connector.CreatedAt.IsZero() {
 		if err := r.DB.First(&existing, "id = ?", connector.ID).Error; err == nil {
 			connector.CreatedAt = existing.CreatedAt
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			create = true
+		} else {
 			return nil, err
 		}
+	}
+	if create {
+		if err := r.DB.Create(connector).Error; err != nil {
+			return nil, err
+		}
+		return connector, nil
 	}
 	if err := r.DB.Select("*").Save(connector).Error; err != nil {
 		return nil, err
