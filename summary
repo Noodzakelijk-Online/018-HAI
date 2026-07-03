@@ -1,0 +1,26 @@
+HAI local browser QA artifact summary
+====================================
+
+Date captured: 2026-06-28
+Tooling: local Playwright CLI evidence capture
+Target: http://localhost login/control-center flow
+
+What this artifact records
+--------------------------
+
+- Console captures showed expected unauthenticated 401 responses for
+  `/api/v1/auth/is-user-authenticated` while the browser was on the login page.
+- The browser also reported a form quality warning for the password input:
+  missing browser autocomplete metadata for the current password field.
+- One non-empty page snapshot captured the redesigned HAI navigation shell with
+  grouped sections for Work, Intelligence, and System.
+- Two snapshot attempts produced empty files. They are retained with explicit
+  notes so the failed capture attempts are visible rather than silent.
+
+Interpretation
+--------------
+
+These files are local QA evidence, not production code. They document the
+state seen while debugging login, dashboard loading, and navigation layout.
+The auth 401 entries are normal before login. The password autocomplete warning
+is a small UX/accessibility follow-up, not a runtime blocker.

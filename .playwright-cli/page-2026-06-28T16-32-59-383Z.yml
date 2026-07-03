@@ -1,0 +1,5 @@
+capture:
+  status: failed-empty
+  captured_at: "2026-06-28T16:32:59.383Z"
+  target: "http://localhost/login"
+  note: "The Playwright page snapshot command produced no DOM output for this attempt. Retained to document the failed capture rather than leaving a silent zero-byte artifact."

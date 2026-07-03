@@ -1,0 +1,153 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e59]:
+    - complementary [ref=e60]:
+      - button "HAI HAI Automation Hub Personal operations" [ref=e61] [cursor=pointer]:
+        - generic [ref=e62]: HAI
+        - generic [ref=e63]:
+          - strong [ref=e64]: HAI Automation Hub
+          - generic [ref=e65]: Personal operations
+      - navigation "Main navigation" [ref=e66]:
+        - generic [ref=e67]:
+          - generic [ref=e68]: Work
+          - button "Command Center" [ref=e69] [cursor=pointer]:
+            - img [ref=e71]
+            - generic [ref=e73]: Command Center
+          - button "Approvals" [ref=e74] [cursor=pointer]:
+            - img [ref=e76]
+            - generic [ref=e79]: Approvals
+          - button "Workflows" [ref=e80] [cursor=pointer]:
+            - img [ref=e82]
+            - generic [ref=e84]: Workflows
+          - button "Automations" [ref=e85] [cursor=pointer]:
+            - img [ref=e87]
+            - generic [ref=e89]: Automations
+        - generic [ref=e90]:
+          - generic [ref=e91]: Intelligence
+          - button "Priorities" [ref=e92] [cursor=pointer]:
+            - img [ref=e94]
+            - generic [ref=e96]: Priorities
+          - button "Sources" [ref=e97] [cursor=pointer]:
+            - img [ref=e99]
+            - generic [ref=e101]: Sources
+          - button "Memory" [ref=e102] [cursor=pointer]:
+            - img [ref=e104]
+            - generic [ref=e106]: Memory
+          - button "Task Planning" [ref=e107] [cursor=pointer]:
+            - img [ref=e109]
+            - generic [ref=e111]: Task Planning
+          - button "Verified Answers" [ref=e112] [cursor=pointer]:
+            - img [ref=e114]
+            - generic [ref=e116]: Verified Answers
+          - button "Activity" [ref=e117] [cursor=pointer]:
+            - img [ref=e119]
+            - generic [ref=e121]: Activity
+        - generic [ref=e122]:
+          - generic [ref=e123]: System
+          - button "Brain Settings" [ref=e124] [cursor=pointer]:
+            - img [ref=e126]
+            - generic [ref=e128]: Brain Settings
+          - button "Models" [ref=e129] [cursor=pointer]:
+            - img [ref=e131]
+            - generic [ref=e133]: Models
+      - button "Developer / Diagnostics" [ref=e134] [cursor=pointer]:
+        - img [ref=e136]
+        - generic [ref=e138]: Developer / Diagnostics
+        - img [ref=e140]
+    - main [ref=e142]:
+      - generic [ref=e143]:
+        - generic [ref=e144]:
+          - button "Safe mode active High-risk actions require approval" [ref=e145] [cursor=pointer]:
+            - generic [ref=e147]:
+              - strong [ref=e148]: Safe mode active
+              - generic [ref=e149]: High-risk actions require approval
+          - button "0 need attention 0 completed workflows" [ref=e150] [cursor=pointer]:
+            - img [ref=e152]
+            - generic [ref=e155]:
+              - strong [ref=e156]: 0 need attention
+              - generic [ref=e157]: 0 completed workflows
+        - generic [ref=e158]:
+          - generic [ref=e159]:
+            - generic [ref=e160]: Action mode
+            - button "Safe mode" [ref=e161] [cursor=pointer]:
+              - img [ref=e163]
+              - text: Safe mode
+              - img [ref=e166]
+          - button "Light mode" [ref=e168] [cursor=pointer]:
+            - img [ref=e170]
+            - text: Light mode
+          - button "Review approvals" [ref=e172] [cursor=pointer]:
+            - generic [ref=e173]: Review approvals
+          - button "Run scan now" [ref=e174] [cursor=pointer]:
+            - img [ref=e176]
+            - generic [ref=e178]: Run scan now
+      - generic [ref=e179]:
+        - generic [ref=e180]:
+          - button "Command Center Choose the next action. Metrics stay close, but out of the way." [ref=e181] [cursor=pointer]:
+            - heading "Command Center" [level=1] [ref=e182]
+            - paragraph [ref=e183]: Choose the next action. Metrics stay close, but out of the way.
+          - button "Refresh" [ref=e184]:
+            - img [ref=e186]
+            - generic [ref=e188]: Refresh
+        - region "Primary actions"
+        - generic [ref=e189]:
+          - article [ref=e190]:
+            - generic [ref=e191]:
+              - generic [ref=e192]:
+                - heading "Attention Required" [level=2] [ref=e193]
+                - paragraph [ref=e194]: Decisions only you can make.
+              - button "View all" [ref=e195] [cursor=pointer]:
+                - generic [ref=e196]: View all
+          - article [ref=e197]:
+            - generic [ref=e198]:
+              - generic [ref=e199]:
+                - heading "Currently Handled by AI" [level=2] [ref=e200]
+                - paragraph [ref=e201]: Safe work already moving forward.
+              - button "View all" [ref=e202] [cursor=pointer]:
+                - generic [ref=e203]: View all
+        - group [ref=e204]:
+          - generic "Operational Controls Blockers, priorities, and open loops" [ref=e205] [cursor=pointer]:
+            - generic [ref=e206]: Operational Controls
+            - generic [ref=e207]: Blockers, priorities, and open loops
+          - generic [ref=e208]:
+            - article [ref=e209]:
+              - generic [ref=e210]:
+                - generic [ref=e211]:
+                  - heading "Blocked / Waiting" [level=2] [ref=e212]
+                  - paragraph [ref=e213]: Open loops that need an answer, document, or follow-up.
+                - button "Resolve blockers" [ref=e214] [cursor=pointer]:
+                  - generic [ref=e215]: Resolve blockers
+              - generic [ref=e216]:
+                - img [ref=e218]
+                - generic [ref=e221]:
+                  - strong [ref=e222]: Nothing is blocked
+                  - generic [ref=e223]: HAI can continue all currently approved work.
+            - article [ref=e224]:
+              - generic [ref=e225]:
+                - generic [ref=e226]:
+                  - heading "Life Priorities Overview" [level=2] [ref=e227]
+                  - paragraph [ref=e228]: Your priorities, not a diagnosis.
+                - button "Open priorities" [ref=e229] [cursor=pointer]:
+                  - generic [ref=e230]: Open priorities
+              - generic [ref=e231]:
+                - img [ref=e233]
+                - generic [ref=e235]:
+                  - strong [ref=e236]: No priorities configured
+                  - generic [ref=e237]: Set the areas where HAI should focus its attention first.
+        - group [ref=e239]:
+          - generic "Context & Audit Recent decisions, memory updates, and traceability" [ref=e240] [cursor=pointer]:
+            - generic [ref=e241]: Context & Audit
+            - generic [ref=e242]: Recent decisions, memory updates, and traceability
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - button "Close":
+                      - generic:
+                        - img
+                    - generic:
+                      - generic: Action inspector
