@@ -40,8 +40,8 @@ func TestWorkflowSchedulerLimitDefaultsAndCaps(t *testing.T) {
 		t.Fatalf("capped limit = %d, want 50", got)
 	}
 	t.Setenv("WORKFLOW_SCHEDULER_RUN_LIMIT", "bad")
-	if got := schedulerLimit(); got != 5 {
-		t.Fatalf("fallback limit = %d, want 5", got)
+	if got := schedulerLimit(); got != 2 {
+		t.Fatalf("fallback limit = %d, want 2", got)
 	}
 }
 

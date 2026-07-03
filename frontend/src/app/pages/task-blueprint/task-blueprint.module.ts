@@ -11,6 +11,7 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzTableModule } from 'ng-zorro-antd/table';
+import { NzTagModule } from 'ng-zorro-antd/tag';
 import { TaskBlueprintComponent } from './task-blueprint.component';
 import { TASK_PLAN_SERVICE_TOKEN } from '../../services/task-plan/task-plan.service.token';
 import { TaskPlanService } from '../../services/task-plan/task-plan.service';
@@ -32,6 +33,7 @@ const routes: Routes = [{ path: '', component: TaskBlueprintComponent }];
     NzLayoutModule,
     NzNotificationModule,
     NzTableModule,
+    NzTagModule,
   ],
   providers: [{ provide: TASK_PLAN_SERVICE_TOKEN, useClass: TaskPlanService }],
 })

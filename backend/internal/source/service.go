@@ -3,6 +3,7 @@ package source
 import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
 	"bytes"
@@ -18,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -140,8 +142,14 @@ type service struct {
 	repo            Repository
 	memoryService   memory.Service
 	workflowService workflow.Service
+	pursuitLinker   pursuitAutoLinker
 	syncMu          sync.Mutex
 	activeSyncs     map[uuid.UUID]bool
+}
+
+type pursuitAutoLinker interface {
+	AutoLinkWorkflow(request pursuit.AutoLinkWorkflowRequest) (*pursuit.AutoLinkResult, error)
+	AutoLinkMemory(request pursuit.AutoLinkMemoryRequest) (*pursuit.AutoLinkResult, error)
 }
 
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
@@ -149,13 +157,20 @@ var ErrSyncInProgress = errors.New("source sync is already in progress")
 
 const maxSyncErrorDetails = 20
 const defaultHTTPFeedAllowedHosts = "localhost,127.0.0.1,::1,host.docker.internal"
+const defaultWhatsAppChunkMessages = 40
+
+var whatsAppMessageLine = regexp.MustCompile(`^\[?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[APap]\.?[Mm]\.?)?)\]?\s*[-\x{2013}]\s*([^:]{1,120}):\s*(.*)$`)
 
 func NewService(repo Repository, memoryService memory.Service) Service {
 	return &service{repo: repo, memoryService: memoryService, activeSyncs: map[uuid.UUID]bool{}}
 }
 
 func NewServiceWithWorkflow(repo Repository, memoryService memory.Service, workflowService workflow.Service) Service {
-	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService, activeSyncs: map[uuid.UUID]bool{}}
+	return NewServiceWithWorkflowAndPursuitLinker(repo, memoryService, workflowService, nil)
+}
+
+func NewServiceWithWorkflowAndPursuitLinker(repo Repository, memoryService memory.Service, workflowService workflow.Service, pursuitLinker pursuitAutoLinker) Service {
+	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService, pursuitLinker: pursuitLinker, activeSyncs: map[uuid.UUID]bool{}}
 }
 
 func DefaultService() Service {
@@ -281,7 +296,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
 	}
-	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" && len(request.Items) == 0 {
+	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" && source.ConnectorKey != "whatsapp-export" && source.ConnectorKey != "odoo-herp" && len(request.Items) == 0 {
 		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
 	}
 	if source.ConnectorKey == "local-folder" {
@@ -339,6 +354,22 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			s.audit(sourceID, "source.sync_failed", err.Error())
 			return nil, err
 		}
+	}
+	if source.ConnectorKey == "whatsapp-export" {
+		items, err = s.whatsAppExportItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == "odoo-herp" {
+		items = odooHERPItems(source, request)
+		s.audit(sourceID, "source.odoo_herp_modeled", fmt.Sprintf("modeled %d Odoo/HERP app domain(s) into governed source records", len(items)))
 	}
 	for index, item := range items {
 		if shouldExclude(source.ExcludePatterns, item.Title+" "+item.SourceURI) {
@@ -460,7 +491,7 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 	if s.workflowService == nil {
 		return
 	}
-	_, err := s.workflowService.Intake(workflow.IntakeRequest{
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
 		Input: strings.Join([]string{
 			"Connected source sync failed for " + source.Name + ".",
 			"Connector: " + source.ConnectorKey + ".",
@@ -481,6 +512,9 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 	if err != nil {
 		s.audit(source.ID, "source.failure_workflow_failed", compact(err.Error(), 260))
 		return
+	}
+	if record != nil {
+		s.autoLinkPursuitWorkflow(&source, nil, record, "Connected source sync failed for "+source.Name+". "+reason)
 	}
 	s.audit(source.ID, "source.failure_workflow_created", "scheduled sync failure routed to workflow review")
 }
@@ -594,6 +628,7 @@ func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction
 	if err != nil {
 		return nil, err
 	}
+	before := *extraction
 	if request.Text != "" {
 		extraction.Text = request.Text
 	}
@@ -624,6 +659,7 @@ func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction
 		if errWorkflow := s.reconcileWorkflowFromExtraction(updated); errWorkflow != nil {
 			return updated, fmt.Errorf("extraction corrected but workflow reconciliation failed: %w", errWorkflow)
 		}
+		s.rememberExtractionCorrection(&before, updated)
 	}
 	return updated, err
 }
@@ -732,6 +768,212 @@ func (s *service) localFolderItems(source *models.ConnectedSource, request Impor
 	return items, nil
 }
 
+func (s *service) whatsAppExportItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	projectKey := firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
+	if len(request.Items) > 0 {
+		return expandWhatsAppImportItems(request.Items, projectKey, source.Name, firstPositiveInt(request.Limit, envInt("WHATSAPP_EXPORT_CHUNK_MESSAGES", defaultWhatsAppChunkMessages))), nil
+	}
+
+	root := firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources")
+	folder, err := resolveAllowedFolder(root, firstNonEmpty(request.FolderPath, source.SyncTarget, "."))
+	if err != nil {
+		return nil, err
+	}
+	limit := firstPositiveInt(request.Limit, envInt("CONNECTED_SOURCE_FILE_LIMIT", 100))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	maxBytes := firstPositiveInt64(request.MaxBytes, envInt64("CONNECTED_SOURCE_MAX_BYTES", 2*1024*1024))
+	if maxBytes <= 0 || maxBytes > 10*1024*1024 {
+		maxBytes = 2 * 1024 * 1024
+	}
+
+	baseItems := []ImportItem{}
+	err = filepath.WalkDir(folder, func(path string, entry os.DirEntry, errWalk error) error {
+		if errWalk != nil {
+			return nil
+		}
+		if len(baseItems) >= limit {
+			return errLocalFolderLimitReached
+		}
+		name := entry.Name()
+		if entry.Type()&os.ModeSymlink != 0 {
+			s.audit(source.ID, "source.whatsapp_symlink_skipped", fmt.Sprintf("skipped symlink %s", path))
+			return nil
+		}
+		if entry.IsDir() {
+			if path != folder && shouldExclude(source.ExcludePatterns, name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if shouldExclude(source.ExcludePatterns, path) || strings.ToLower(filepath.Ext(path)) != ".txt" {
+			return nil
+		}
+		info, errInfo := entry.Info()
+		if errInfo != nil {
+			return nil
+		}
+		if request.Mode != ModeHistoricalBackfill && source.LastSyncedAt != nil && !info.ModTime().After(*source.LastSyncedAt) {
+			return nil
+		}
+		content, errRead := readLocalTextFile(path, maxBytes)
+		if errRead != nil || strings.TrimSpace(content) == "" {
+			return nil
+		}
+		rel, _ := filepath.Rel(folder, path)
+		baseItems = append(baseItems, ImportItem{
+			ExternalID: "whatsapp-file:" + filepath.ToSlash(rel),
+			Title:      strings.TrimSuffix(filepath.ToSlash(rel), filepath.Ext(rel)),
+			Content:    content,
+			SourceURI:  "file://" + filepath.ToSlash(path),
+			ItemType:   "whatsapp_export",
+			ProjectKey: projectKey,
+			Metadata:   fmt.Sprintf("source=whatsapp-export;size=%d;modified=%s", info.Size(), info.ModTime().UTC().Format(time.RFC3339)),
+		})
+		return nil
+	})
+	if err != nil && err != errLocalFolderLimitReached {
+		return nil, err
+	}
+	items := expandWhatsAppImportItems(baseItems, projectKey, source.Name, envInt("WHATSAPP_EXPORT_CHUNK_MESSAGES", defaultWhatsAppChunkMessages))
+	s.audit(source.ID, "source.whatsapp_export_scanned", fmt.Sprintf("parsed %d source file(s) into %d bounded WhatsApp conversation windows", len(baseItems), len(items)))
+	return items, nil
+}
+
+type odooHERPApp struct {
+	Name      string
+	Domain    string
+	Role      string
+	Signals   []string
+	Workflows []string
+	Risk      string
+	Autonomy  string
+}
+
+func odooHERPItems(source *models.ConnectedSource, request ImportRequest) []ImportItem {
+	projectKey := firstNonEmpty(request.ProjectKey, source.DefaultProjectKey, "Robert-life-os")
+	apps := selectedOdooHERPApps(firstNonEmpty(request.FolderPath, source.SyncTarget))
+	items := make([]ImportItem, 0, len(apps))
+	for _, app := range apps {
+		slug := slugText(app.Name)
+		items = append(items, ImportItem{
+			ExternalID: "odoo-herp-app:" + slug,
+			Title:      "Odoo " + app.Name + " app",
+			Content:    renderOdooHERPApp(app),
+			SourceURI:  sourceURIForOdooApp(source.SyncTarget, slug),
+			ItemType:   "odoo_herp_app",
+			ProjectKey: projectKey,
+			Metadata: fmt.Sprintf(
+				"source=odoo-herp;domain=%s;risk=%s;autonomy=%s;read_only_default=true",
+				app.Domain,
+				app.Risk,
+				app.Autonomy,
+			),
+		})
+	}
+	return items
+}
+
+func selectedOdooHERPApps(selector string) []odooHERPApp {
+	apps := defaultOdooHERPApps()
+	raw := strings.TrimSpace(selector)
+	if raw == "" {
+		return apps
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed.RawQuery != "" {
+		raw = firstNonEmpty(parsed.Query().Get("apps"), parsed.Query().Get("modules"), parsed.Query().Get("domains"))
+	}
+	if raw == "" || strings.Contains(strings.ToLower(raw), "odoo.com/odoo") {
+		return apps
+	}
+	requested := map[string]bool{}
+	for _, value := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '|'
+	}) {
+		key := slugText(value)
+		if key != "" {
+			requested[key] = true
+		}
+	}
+	if len(requested) == 0 {
+		return apps
+	}
+	selected := []odooHERPApp{}
+	for _, app := range apps {
+		if odooAppRequested(app, requested) {
+			selected = append(selected, app)
+		}
+	}
+	if len(selected) == 0 {
+		return apps
+	}
+	return selected
+}
+
+func odooAppRequested(app odooHERPApp, requested map[string]bool) bool {
+	appKey := slugText(app.Name)
+	domainKey := slugText(app.Domain)
+	for key := range requested {
+		if key == appKey || key == domainKey || strings.Contains(appKey, key) || (len(key) >= 6 && strings.Contains(domainKey, key)) {
+			return true
+		}
+	}
+	return false
+}
+
+func renderOdooHERPApp(app odooHERPApp) string {
+	return strings.Join([]string{
+		"Odoo app: " + app.Name,
+		"HERP domain: " + app.Domain,
+		"HAI role: " + app.Role,
+		"Source signals: " + strings.Join(app.Signals, "; "),
+		"Workflow candidates: " + strings.Join(app.Workflows, "; "),
+		"Task: map " + app.Name + " records into source-linked HAI workflows, next-best actions, and review queues.",
+		"Follow up: review fresh " + app.Domain + " records during Odoo sync and create follow-up tasks when an owner, deadline, quote, invoice, stock movement, customer reply, or blocked item appears.",
+		"Decision: keep Odoo write-back read-only by default; quotes, invoices, payments, public messages, inventory changes, account changes, and external sends require Robert approval.",
+		"Risk: " + app.Risk,
+		"Autonomy: " + app.Autonomy,
+	}, "\n")
+}
+
+func sourceURIForOdooApp(syncTarget, slug string) string {
+	target := strings.TrimSpace(syncTarget)
+	if target == "" || strings.ContainsAny(target, ",;|") {
+		return "odoo://app/" + slug
+	}
+	if strings.Contains(target, "#") {
+		return target + "&app=" + slug
+	}
+	return strings.TrimRight(target, "/") + "#app=" + slug
+}
+
+func defaultOdooHERPApps() []odooHERPApp {
+	return []odooHERPApp{
+		{Name: "CRM", Domain: "relationships", Role: "turn leads, opportunities, promises, and stalled conversations into next actions.", Signals: []string{"lead stage", "expected revenue", "next activity", "lost reason"}, Workflows: []string{"follow up stale opportunities", "draft client replies", "surface high-value leads"}, Risk: "medium", Autonomy: "draft and schedule low-risk reminders"},
+		{Name: "Sales", Domain: "commercial operations", Role: "track quotes, orders, customer commitments, and deal blockers.", Signals: []string{"quotation status", "expiration date", "customer acceptance", "delivery promise"}, Workflows: []string{"draft quotation follow-ups", "flag expiring offers", "prepare handoff checklists"}, Risk: "medium", Autonomy: "draft only for commercial commitments"},
+		{Name: "Invoicing and Accounting", Domain: "finance", Role: "connect invoices, bills, overdue amounts, payments, and financial obligations to safe review queues.", Signals: []string{"invoice due date", "payment status", "amount", "vendor or customer"}, Workflows: []string{"detect overdue invoices", "prepare payment review", "summarize cash obligations"}, Risk: "high", Autonomy: "approval required for financial action"},
+		{Name: "Website and eCommerce", Domain: "public presence", Role: "track orders, forms, public pages, and publishable content without making unsupported public changes.", Signals: []string{"order status", "form submission", "page change", "abandoned cart"}, Workflows: []string{"triage customer submissions", "draft content updates", "flag public publishing approvals"}, Risk: "high", Autonomy: "draft only for public publishing"},
+		{Name: "Inventory", Domain: "stock and assets", Role: "monitor stock levels, reservations, receiving, delivery readiness, and missing materials.", Signals: []string{"on-hand quantity", "reserved quantity", "reorder rule", "picking status"}, Workflows: []string{"detect low stock", "prepare procurement tasks", "flag delivery blockers"}, Risk: "medium", Autonomy: "suggest and checklist, approval for stock moves"},
+		{Name: "Purchase", Domain: "procurement", Role: "track supplier requests, purchase orders, approvals, expected receipts, and price changes.", Signals: []string{"RFQ status", "vendor", "expected arrival", "purchase amount"}, Workflows: []string{"chase supplier replies", "flag late receipts", "prepare approval packages"}, Risk: "high", Autonomy: "approval required for spend"},
+		{Name: "Manufacturing", Domain: "production", Role: "map bills of materials, work orders, shortages, and completion blockers into operational steps.", Signals: []string{"work order status", "component shortage", "planned date", "quality check"}, Workflows: []string{"detect blocked production", "prepare material checklist", "flag overdue work orders"}, Risk: "medium", Autonomy: "execute only low-risk status checklists"},
+		{Name: "Project", Domain: "project delivery", Role: "turn project tasks, blockers, assignees, milestones, and due dates into HAI work queues.", Signals: []string{"task stage", "assignee", "deadline", "blocked reason"}, Workflows: []string{"clear blockers", "generate next actions", "summarize project health"}, Risk: "medium", Autonomy: "safe admin updates only"},
+		{Name: "Timesheets", Domain: "capacity and billing", Role: "connect time entries, missing logs, billability, and workload imbalance to review.", Signals: []string{"timesheet entry", "billable flag", "employee", "project"}, Workflows: []string{"detect missing time", "prepare billing summary", "flag overloaded weeks"}, Risk: "medium", Autonomy: "suggest corrections, approval for billed changes"},
+		{Name: "Helpdesk", Domain: "support", Role: "route tickets, customer pain, SLA risk, and repeated issues into workflows and knowledge.", Signals: []string{"ticket priority", "SLA deadline", "customer", "status"}, Workflows: []string{"prioritize urgent tickets", "draft customer updates", "detect repeat incidents"}, Risk: "medium", Autonomy: "draft customer replies, send only with approval when sensitive"},
+		{Name: "Field Service", Domain: "field operations", Role: "coordinate appointments, locations, materials, travel dependencies, and completion evidence.", Signals: []string{"appointment time", "address", "task status", "materials needed"}, Workflows: []string{"prepare visit checklist", "detect impossible schedules", "draft after-job summary"}, Risk: "medium", Autonomy: "admin reminders and checklists"},
+		{Name: "Planning", Domain: "resource planning", Role: "monitor shifts, workload, availability, and conflicts before they become missed commitments.", Signals: []string{"resource allocation", "shift", "conflict", "capacity"}, Workflows: []string{"flag schedule conflicts", "suggest workload moves", "prepare staffing reminders"}, Risk: "medium", Autonomy: "suggest only for people assignments"},
+		{Name: "Employees and HR", Domain: "people operations", Role: "surface HR tasks, documents, onboarding, absence, and sensitive people records with strict privacy.", Signals: []string{"employee record", "contract date", "leave request", "document"}, Workflows: []string{"prepare onboarding checklist", "flag expiring documents", "route HR approvals"}, Risk: "high", Autonomy: "review-gated only"},
+		{Name: "Expenses", Domain: "finance", Role: "track receipts, reimbursements, policy gaps, and missing evidence.", Signals: []string{"receipt", "amount", "approval status", "employee"}, Workflows: []string{"collect missing receipts", "prepare reimbursement review", "flag policy exceptions"}, Risk: "high", Autonomy: "approval required for financial action"},
+		{Name: "Documents and Sign", Domain: "documents", Role: "connect contracts, signed files, evidence, folders, and document requests to provenance-backed workflows.", Signals: []string{"document owner", "signature status", "folder", "version"}, Workflows: []string{"detect unsigned documents", "prepare evidence bundles", "link source files to cases"}, Risk: "high", Autonomy: "never delete or sign automatically"},
+		{Name: "Calendar and Appointments", Domain: "time", Role: "turn appointments, meetings, deadlines, and scheduling conflicts into preparation and follow-up work.", Signals: []string{"event date", "attendee", "location", "booking status"}, Workflows: []string{"create preparation tasks", "flag conflicts", "draft reschedule options"}, Risk: "medium", Autonomy: "low-risk reminders only"},
+		{Name: "Discuss and Contacts", Domain: "communication", Role: "link people, threads, commitments, and unanswered messages to projects and follow-ups.", Signals: []string{"message thread", "contact role", "company", "last reply"}, Workflows: []string{"detect unanswered threads", "summarize commitments", "draft next reply"}, Risk: "high", Autonomy: "draft only for external communication"},
+		{Name: "Marketing and Social", Domain: "public communication", Role: "plan campaigns, audience messages, and publishing work with source-grounded approval controls.", Signals: []string{"campaign status", "mailing result", "social post", "audience segment"}, Workflows: []string{"draft campaign updates", "flag public posting approvals", "review unsupported claims"}, Risk: "high", Autonomy: "draft only for public content"},
+		{Name: "Knowledge", Domain: "organizational memory", Role: "turn internal notes, procedures, and repeated answers into verified HAI memory and source-grounded responses.", Signals: []string{"article update", "procedure", "owner", "tag"}, Workflows: []string{"refresh procedural memory", "detect stale guidance", "propose knowledge updates"}, Risk: "medium", Autonomy: "propose memory updates with source links"},
+		{Name: "Point of Sale", Domain: "front-office sales", Role: "connect POS orders, sessions, cash movements, returns, and stock effects to reviewable operations.", Signals: []string{"session status", "order", "refund", "cash difference"}, Workflows: []string{"flag cash differences", "summarize daily sales", "detect refund review needs"}, Risk: "high", Autonomy: "approval required for cash or refund action"},
+		{Name: "Subscriptions", Domain: "recurring revenue", Role: "track renewal dates, failed payments, churn risk, and customer commitments.", Signals: []string{"renewal date", "subscription status", "MRR", "payment failure"}, Workflows: []string{"draft renewal follow-ups", "flag failed payments", "surface churn risk"}, Risk: "medium", Autonomy: "draft only for customer commitments"},
+	}
+}
+
 func (s *service) ensureConnectors() error {
 	for _, connector := range defaultConnectors() {
 		c := connector
@@ -803,17 +1045,20 @@ func (s *service) extractAndStore(source *models.ConnectedSource, raw *models.So
 	existing.SourceURI = raw.SourceURI
 	existing.SourceLabel = raw.Title
 	existing.ContentHash = raw.ContentHash
-	existing.Sensitive = containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical")
+	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
 	existing.Uncertain = len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
 	existing.LastIndexedAt = &now
 	return s.repo.SaveExtraction(existing)
 }
 
 func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *models.SourceExtraction) {
+	if s.memoryService == nil || source == nil || extraction == nil {
+		return
+	}
 	if extraction.Sensitive || extraction.Uncertain || extraction.Summary == "" {
 		return
 	}
-	_, _ = s.memoryService.Create(memory.CreateRequest{
+	created, err := s.memoryService.Create(memory.CreateRequest{
 		ProjectKey:  extraction.ProjectKey,
 		Kind:        "source",
 		Content:     extraction.Summary,
@@ -823,6 +1068,150 @@ func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *
 		SourceURI:   extraction.SourceURI,
 		SourceLabel: extraction.SourceLabel,
 	})
+	if err != nil {
+		s.audit(source.ID, "memory.source_create_failed", compact(safety.RedactSecrets(err.Error()), 240))
+		return
+	}
+	if created != nil {
+		s.autoLinkPursuitMemory(source, extraction, created)
+	}
+}
+
+func (s *service) rememberExtractionCorrection(before, after *models.SourceExtraction) {
+	if s.memoryService == nil || before == nil || after == nil || !extractionCorrectionUseful(before, after) {
+		return
+	}
+	source, _ := s.repo.FindSource(after.SourceID)
+	request := extractionCorrectionMemoryRequest(source, before, after)
+	created, err := s.memoryService.Create(request)
+	if err != nil {
+		s.audit(after.SourceID, "extraction.correction_memory_failed", compact(safety.RedactSecrets(err.Error()), 240))
+		return
+	}
+	if created != nil {
+		s.autoLinkPursuitMemory(source, after, created)
+	}
+	s.audit(after.SourceID, "extraction.correction_memory_created", "stored reviewable source correction lesson")
+}
+
+func extractionCorrectionUseful(before, after *models.SourceExtraction) bool {
+	if before.ID == uuid.Nil || after.ID == uuid.Nil || before.ID != after.ID {
+		return false
+	}
+	fields := []struct {
+		left  string
+		right string
+	}{
+		{before.ProjectKey, after.ProjectKey},
+		{before.Summary, after.Summary},
+		{before.Entities, after.Entities},
+		{before.Dates, after.Dates},
+		{before.Tasks, after.Tasks},
+		{before.Decisions, after.Decisions},
+		{before.FollowUps, after.FollowUps},
+	}
+	for _, field := range fields {
+		if normalizeSpaces(field.left) != normalizeSpaces(field.right) {
+			return true
+		}
+	}
+	return before.Sensitive != after.Sensitive || before.Uncertain != after.Uncertain
+}
+
+func extractionCorrectionMemoryRequest(source *models.ConnectedSource, before, after *models.SourceExtraction) memory.CreateRequest {
+	sourceLabel := firstNonEmpty(after.SourceLabel, "Corrected connected-source extraction")
+	sourceURI := firstNonEmpty(after.SourceURI, "source-extraction://"+after.ID.String())
+	tags := []string{"connected-source", "source-correction", "correction"}
+	if source != nil {
+		tags = append(tags, source.Category, source.ConnectorKey)
+	}
+	tags = append(tags, after.ContentType, after.ProjectKey)
+
+	if after.Sensitive {
+		content := strings.Join([]string{
+			"Robert corrected a sensitive connected-source extraction.",
+			"Future behavior: keep similar records review-gated, avoid storing raw sensitive content as memory, and ask for confirmation before workflow, task, or memory use.",
+		}, " ")
+		return memory.CreateRequest{
+			ProjectKey:  after.ProjectKey,
+			Kind:        "lesson",
+			Content:     content,
+			Summary:     "Sensitive source correction requires review before future use.",
+			Tags:        append(tags, "sensitive", "review-required"),
+			Confidence:  0.62,
+			SourceURI:   "source-extraction://" + after.ID.String(),
+			SourceLabel: "Sensitive connected-source correction",
+		}
+	}
+
+	changedFields := extractionCorrectionChangedFields(before, after)
+	content := strings.Join([]string{
+		"Robert corrected connected-source extraction behavior.",
+		"Changed fields: " + strings.Join(changedFields, ", ") + ".",
+		extractionCorrectionValue("Previous summary", before.Summary),
+		extractionCorrectionValue("Revised summary", after.Summary),
+		extractionCorrectionValue("Previous tasks", before.Tasks),
+		extractionCorrectionValue("Revised tasks", after.Tasks),
+		extractionCorrectionValue("Previous follow-ups", before.FollowUps),
+		extractionCorrectionValue("Revised follow-ups", after.FollowUps),
+		"Future behavior: prefer Robert-corrected project matching, task extraction, follow-up detection, and review gating for similar connected-source records; if source evidence conflicts, mark needs_review.",
+	}, " ")
+
+	confidence := 0.78
+	if after.Uncertain {
+		confidence = 0.66
+		tags = append(tags, "uncertain", "review-required")
+	}
+	return memory.CreateRequest{
+		ProjectKey:  after.ProjectKey,
+		Kind:        "lesson",
+		Content:     compact(content, 1300),
+		Summary:     compact("Learn from source correction for "+sourceLabel+": "+strings.Join(changedFields, ", "), 240),
+		Tags:        tags,
+		Confidence:  confidence,
+		SourceURI:   safety.RedactURL(sourceURI),
+		SourceLabel: sourceLabel,
+	}
+}
+
+func extractionCorrectionChangedFields(before, after *models.SourceExtraction) []string {
+	fields := []struct {
+		name  string
+		left  string
+		right string
+	}{
+		{"project", before.ProjectKey, after.ProjectKey},
+		{"summary", before.Summary, after.Summary},
+		{"entities", before.Entities, after.Entities},
+		{"dates", before.Dates, after.Dates},
+		{"tasks", before.Tasks, after.Tasks},
+		{"decisions", before.Decisions, after.Decisions},
+		{"follow-ups", before.FollowUps, after.FollowUps},
+	}
+	changed := []string{}
+	for _, field := range fields {
+		if normalizeSpaces(field.left) != normalizeSpaces(field.right) {
+			changed = append(changed, field.name)
+		}
+	}
+	if before.Sensitive != after.Sensitive {
+		changed = append(changed, "sensitivity")
+	}
+	if before.Uncertain != after.Uncertain {
+		changed = append(changed, "uncertainty")
+	}
+	if len(changed) == 0 {
+		return []string{"operator correction"}
+	}
+	return changed
+}
+
+func extractionCorrectionValue(label, value string) string {
+	value = strings.TrimSpace(safety.RedactSecrets(value))
+	if value == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s.", label, compact(value, 260))
 }
 
 func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) error {
@@ -839,7 +1228,7 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		"Follow-ups: " + extraction.FollowUps,
 		"Dates: " + extraction.Dates,
 	}, "\n")
-	_, err := s.workflowService.Intake(workflow.IntakeRequest{
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
 		Input:          input,
 		ProjectKey:     extraction.ProjectKey,
 		SourceType:     source.Category,
@@ -855,8 +1244,78 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		s.audit(source.ID, "workflow.intake_failed", err.Error())
 		return err
 	}
+	if record != nil {
+		s.autoLinkPursuitWorkflow(source, extraction, record, input)
+	}
 	s.audit(source.ID, "workflow.intake_created", "actionable extraction sent to workflow engine")
 	return nil
+}
+
+func (s *service) autoLinkPursuitWorkflow(source *models.ConnectedSource, extraction *models.SourceExtraction, record *workflow.WorkflowRecord, input string) {
+	if s.pursuitLinker == nil || source == nil || record == nil || record.Item.ID == uuid.Nil {
+		return
+	}
+	request := pursuit.AutoLinkWorkflowRequest{
+		WorkflowID:           record.Item.ID,
+		Input:                input,
+		ProjectKey:           source.DefaultProjectKey,
+		SourceType:           source.Category,
+		SourceID:             source.ID.String(),
+		SourceURI:            safety.RedactURL(source.SyncTarget),
+		SourceLabel:          source.Name,
+		Actor:                "source-worker",
+		AllowCreateCandidate: true,
+	}
+	if extraction != nil {
+		request.ProjectKey = firstNonEmpty(extraction.ProjectKey, source.DefaultProjectKey)
+		request.SourceType = source.Category
+		request.SourceID = extraction.ID.String()
+		request.SourceURI = firstNonEmpty(extraction.SourceURI, "source-extraction://"+extraction.ID.String())
+		request.SourceLabel = firstNonEmpty(extraction.SourceLabel, source.Name)
+		request.ExtractionID = extraction.ID.String()
+		if extraction.RawItemID != uuid.Nil {
+			request.RawItemID = extraction.RawItemID.String()
+		}
+	}
+	result, err := s.pursuitLinker.AutoLinkWorkflow(request)
+	if err != nil {
+		s.audit(source.ID, "pursuit.auto_link_failed", compact(err.Error(), 260))
+		return
+	}
+	if result != nil && result.Linked {
+		s.audit(source.ID, "pursuit.auto_linked", fmt.Sprintf("workflow %s linked to pursuit %s with %.2f confidence", record.Item.ID, result.PursuitID, result.Score))
+		return
+	}
+	if result != nil && result.Message != "" {
+		s.audit(source.ID, "pursuit.auto_link_skipped", result.Message)
+	}
+}
+
+func (s *service) autoLinkPursuitMemory(source *models.ConnectedSource, extraction *models.SourceExtraction, memoryRecord *models.ContextMemory) {
+	if s.pursuitLinker == nil || source == nil || extraction == nil || memoryRecord == nil || memoryRecord.ID == uuid.Nil {
+		return
+	}
+	request := pursuit.AutoLinkMemoryRequest{
+		MemoryID:             memoryRecord.ID,
+		Input:                firstNonEmpty(extraction.Summary, memoryRecord.Summary, memoryRecord.Content),
+		ProjectKey:           firstNonEmpty(extraction.ProjectKey, source.DefaultProjectKey, memoryRecord.ProjectKey),
+		SourceURI:            firstNonEmpty(memoryRecord.SourceURI, extraction.SourceURI, "source-extraction://"+extraction.ID.String()),
+		SourceLabel:          firstNonEmpty(memoryRecord.SourceLabel, extraction.SourceLabel, source.Name),
+		Actor:                "source-worker",
+		AllowCreateCandidate: false,
+	}
+	result, err := s.pursuitLinker.AutoLinkMemory(request)
+	if err != nil {
+		s.audit(source.ID, "pursuit.memory_auto_link_failed", compact(err.Error(), 260))
+		return
+	}
+	if result != nil && result.Linked {
+		s.audit(source.ID, "pursuit.memory_auto_linked", fmt.Sprintf("memory %s linked to pursuit %s with %.2f confidence", memoryRecord.ID, result.PursuitID, result.Score))
+		return
+	}
+	if result != nil && result.Message != "" {
+		s.audit(source.ID, "pursuit.memory_auto_link_skipped", result.Message)
+	}
 }
 
 func extractionReviewReason(extraction *models.SourceExtraction) string {
@@ -963,6 +1422,8 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "github", Name: "GitHub repositories and issues", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "manual and scheduled local-folder ingestion are implemented"},
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "scheduled and incremental normalized JSON ingestion are implemented with host allowlisting and bounded responses"},
+		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "local WhatsApp .txt exports are parsed into bounded, sensitive, review-gated source records"},
+		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "Odoo app-domain modeling and manual/API-snapshot imports are implemented; write-back remains approval-gated and disabled by default"},
 	}
 }
 
@@ -986,7 +1447,7 @@ func minimalPermissions(category string, requested []string) []string {
 	if len(requested) == 0 {
 		return []string{"metadata:read", category + ":read"}
 	}
-	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true}
+	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "herp:read": true, "odoo:read": true}
 	result := []string{}
 	for _, value := range requested {
 		value = strings.TrimSpace(value)
@@ -1025,7 +1486,7 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 }
 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
-	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" {
+	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" && source.ConnectorKey != "whatsapp-export" && source.ConnectorKey != "odoo-herp" {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
 	}
 	interval, ok := parseSyncFrequency(source.SyncFrequency)
@@ -1223,6 +1684,97 @@ func parseSyncFrequency(value string) (time.Duration, bool) {
 	return duration, true
 }
 
+type whatsAppMessage struct {
+	DateTime string
+	Sender   string
+	Body     string
+}
+
+func expandWhatsAppImportItems(items []ImportItem, projectKey, sourceName string, chunkMessages int) []ImportItem {
+	if chunkMessages <= 0 || chunkMessages > 200 {
+		chunkMessages = defaultWhatsAppChunkMessages
+	}
+	result := []ImportItem{}
+	for _, item := range items {
+		messages := parseWhatsAppMessages(item.Content)
+		if len(messages) == 0 {
+			normalized := item
+			normalized.ItemType = firstNonEmpty(normalized.ItemType, "whatsapp_export")
+			normalized.ProjectKey = firstNonEmpty(normalized.ProjectKey, projectKey)
+			normalized.Metadata = firstNonEmpty(normalized.Metadata, "source=whatsapp-export;format=unparsed")
+			result = append(result, normalized)
+			continue
+		}
+		for start := 0; start < len(messages); start += chunkMessages {
+			end := start + chunkMessages
+			if end > len(messages) {
+				end = len(messages)
+			}
+			window := messages[start:end]
+			title := whatsAppWindowTitle(item, sourceName, window, start, end)
+			result = append(result, ImportItem{
+				ExternalID: firstNonEmpty(item.ExternalID, hashText(item.Title+item.SourceURI)) + fmt.Sprintf(":messages:%d-%d", start+1, end),
+				Title:      title,
+				Content:    renderWhatsAppWindow(window),
+				SourceURI:  firstNonEmpty(item.SourceURI, "whatsapp-export://"+hashText(item.Title)),
+				ItemType:   "whatsapp_chat_window",
+				ProjectKey: firstNonEmpty(item.ProjectKey, projectKey),
+				Metadata: fmt.Sprintf(
+					"source=whatsapp-export;messages=%d;window_start=%d;window_end=%d;chat=%s",
+					len(window),
+					start+1,
+					end,
+					firstNonEmpty(item.Title, sourceName, "WhatsApp export"),
+				),
+			})
+		}
+	}
+	return result
+}
+
+func parseWhatsAppMessages(content string) []whatsAppMessage {
+	messages := []whatsAppMessage{}
+	for _, rawLine := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		line := strings.TrimRight(rawLine, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		matches := whatsAppMessageLine.FindStringSubmatch(line)
+		if len(matches) == 5 {
+			messages = append(messages, whatsAppMessage{
+				DateTime: strings.TrimSpace(matches[1] + " " + matches[2]),
+				Sender:   strings.TrimSpace(matches[3]),
+				Body:     strings.TrimSpace(matches[4]),
+			})
+			continue
+		}
+		if len(messages) > 0 {
+			last := &messages[len(messages)-1]
+			last.Body = strings.TrimSpace(last.Body + "\n" + strings.TrimSpace(line))
+		}
+	}
+	return messages
+}
+
+func renderWhatsAppWindow(messages []whatsAppMessage) string {
+	lines := []string{
+		"WhatsApp conversation export window.",
+		"Treat this as private connected-source evidence. Do not send, publish, or store as stable memory without Robert's approval.",
+	}
+	for _, message := range messages {
+		lines = append(lines, fmt.Sprintf("%s | %s: %s", message.DateTime, message.Sender, message.Body))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func whatsAppWindowTitle(item ImportItem, sourceName string, messages []whatsAppMessage, start, end int) string {
+	chat := firstNonEmpty(item.Title, sourceName, "WhatsApp export")
+	if len(messages) == 0 {
+		return chat
+	}
+	return fmt.Sprintf("%s messages %d-%d (%s to %s)", chat, start+1, end, messages[0].DateTime, messages[len(messages)-1].DateTime)
+}
+
 func extractEntities(text string) []string {
 	result := []string{}
 	for _, word := range strings.Fields(text) {
@@ -1238,7 +1790,8 @@ func extractDates(text string) []string {
 	result := []string{}
 	for _, word := range strings.Fields(text) {
 		clean := strings.Trim(word, ".,;:()[]")
-		if strings.Contains(clean, "202") || strings.Contains(clean, "deadline") || strings.Contains(clean, "tomorrow") || strings.Contains(clean, "today") {
+		lower := strings.ToLower(clean)
+		if strings.Contains(clean, "202") || strings.Contains(lower, "deadline") || strings.Contains(lower, "tomorrow") || strings.Contains(lower, "today") || strings.Contains(lower, "morgen") || strings.Contains(lower, "vandaag") || strings.Contains(lower, "maandag") || strings.Contains(lower, "dinsdag") || strings.Contains(lower, "woensdag") || strings.Contains(lower, "donderdag") || strings.Contains(lower, "vrijdag") {
 			result = append(result, clean)
 		}
 	}
@@ -1246,15 +1799,15 @@ func extractDates(text string) []string {
 }
 
 func extractTasks(text string) []string {
-	return extractSentences(text, "todo", "must", "should", "need to", "action", "task")
+	return extractSentences(text, "todo", "must", "should", "need to", "action", "task", "moet", "moeten", "nodig", "actie", "taak", "regelen", "uitzoeken", "oppakken")
 }
 
 func extractDecisions(text string) []string {
-	return extractSentences(text, "decided", "decision", "approved", "rejected", "agreed")
+	return extractSentences(text, "decided", "decision", "approved", "rejected", "agreed", "besloten", "beslissing", "goedgekeurd", "afgewezen", "akkoord", "afgesproken")
 }
 
 func extractFollowUps(text string) []string {
-	return extractSentences(text, "follow up", "waiting", "open loop", "remind", "next")
+	return extractSentences(text, "follow up", "waiting", "open loop", "remind", "next", "opvolgen", "wachten", "wacht op", "herinner", "reminder", "reageer", "antwoord", "volgende")
 }
 
 func extractSentences(text string, needles ...string) []string {
@@ -1283,6 +1836,28 @@ func hashText(value string) string {
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(strings.ToLower(normalizeSpaces(value))))
 	return fmt.Sprintf("%x", hash.Sum64())
+}
+
+func slugText(value string) string {
+	clean := strings.ToLower(strings.TrimSpace(value))
+	builder := strings.Builder{}
+	lastDash := false
+	for _, r := range clean {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash && builder.Len() > 0 {
+				builder.WriteRune('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }
 
 func normalizeSpaces(value string) string {

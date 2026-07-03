@@ -4,6 +4,7 @@ import {HomeComponent} from './home.component';
 import { RouterModule, Routes } from '@angular/router';
 import {NzLayoutModule} from "ng-zorro-antd/layout";
 import {NzDropDownModule} from "ng-zorro-antd/dropdown";
+import { NzDrawerModule } from 'ng-zorro-antd/drawer';
 import {NzIconModule} from "ng-zorro-antd/icon";
 import {NzCardModule} from "ng-zorro-antd/card";
 import {DragDropModule} from "@angular/cdk/drag-drop";
@@ -20,6 +21,7 @@ import { AutomationsFormComponent } from './modals/automations-form/automations-
 import {USER_SERVICE_TOKEN} from "../../services/user/user.service.token";
 import {UserService} from "../../services/user/user.service";
 import {NzSelectModule} from "ng-zorro-antd/select";
+import {NzNotificationModule} from "ng-zorro-antd/notification";
 
 const routes: Routes = [
   { path: '', component: HomeComponent },
@@ -31,6 +33,7 @@ const routes: Routes = [
         RouterModule.forChild(routes),
         NzLayoutModule,
         NzDropDownModule,
+        NzDrawerModule,
         NzIconModule,
         NzCardModule,
         DragDropModule,
@@ -43,6 +46,7 @@ const routes: Routes = [
         NzButtonModule,
         NzUploadModule,
         NzSelectModule,
+        NzNotificationModule,
     ],
   exports: [HomeComponent],
   providers: [

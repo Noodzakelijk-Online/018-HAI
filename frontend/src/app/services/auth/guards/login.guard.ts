@@ -10,12 +10,9 @@ export const RedirectIfLoggedGuard: CanActivateFn = (route, state) => {
     return authService.loggedIn().pipe(
         map(authenticated => {
             if (authenticated) {
-                router.navigate(['/home']).then(() => {
-                });
-                return false;
-            } else {
-                return true;
+                return router.createUrlTree(['/control-center']);
             }
+            return true;
         })
     );
 };

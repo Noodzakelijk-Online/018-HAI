@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   IAIConversationArchive,
+  IAIConversationImportResult,
   ICommandDashboard,
   IMemoryEngineSearchResult,
 } from '../../models/memory-engine.model.interface';
@@ -22,6 +23,10 @@ export class MemoryEngineService implements IMemoryEngineService {
     return this.http.get<IAIConversationArchive[]>(`${this.apiUrl}/conversations`, {
       params: { limit },
     });
+  }
+
+  importConversation(request: Record<string, unknown>): Observable<IAIConversationImportResult> {
+    return this.http.post<IAIConversationImportResult>(`${this.apiUrl}/import`, request);
   }
 
   search(query: string, projectKey = '', limit = 12): Observable<IMemoryEngineSearchResult> {

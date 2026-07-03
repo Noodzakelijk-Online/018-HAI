@@ -18,19 +18,23 @@ import (
 )
 
 const (
+	TierLocal      = "local"
 	TierFree       = "free"
 	TierCheap      = "cheap"
 	TierAcceptable = "acceptable"
 	TierHigh       = "high"
+	TierPremium    = "premium"
 	TierExpensive  = "expensive"
 )
 
 var tierRank = map[string]int{
-	TierFree:       0,
-	TierCheap:      1,
-	TierAcceptable: 2,
-	TierHigh:       3,
-	TierExpensive:  4,
+	TierLocal:      0,
+	TierFree:       1,
+	TierCheap:      2,
+	TierAcceptable: 3,
+	TierHigh:       4,
+	TierPremium:    5,
+	TierExpensive:  6,
 }
 
 var reasoningRank = map[string]int{
@@ -51,6 +55,9 @@ type Policy struct {
 	RouteComplexTasksToBestFreeModel bool                    `json:"routeComplexTasksToBestAvailableFreeModel"`
 	RequireApprovalBeforePaidUsage   bool                    `json:"requireApprovalBeforePaidUsage"`
 	TierOrder                        []string                `json:"tierOrder"`
+	DailyBudgetUsedEUR               float64                 `json:"dailyBudgetUsedEur"`
+	InputTokensUsed                  int                     `json:"inputTokensUsed"`
+	OutputTokensUsed                 int                     `json:"outputTokensUsed"`
 	Providers                        []Provider              `json:"providers"`
 	InferenceInfrastructure          InferenceInfrastructure `json:"inferenceInfrastructure"`
 }
@@ -63,31 +70,41 @@ type InferenceInfrastructure struct {
 }
 
 type Provider struct {
-	ID              string  `json:"id"`
-	Name            string  `json:"name"`
-	Enabled         bool    `json:"enabled"`
-	Local           bool    `json:"local"`
-	Paid            bool    `json:"paid"`
-	EndpointURL     string  `json:"endpointUrl,omitempty"`
-	APIKeyEnv       string  `json:"apiKeyEnv,omitempty"`
-	Configured      bool    `json:"configured"`
-	ReadinessStatus string  `json:"readinessStatus,omitempty"`
-	ReadinessReason string  `json:"readinessReason,omitempty"`
-	QuotaRemaining  int     `json:"quotaRemaining"`
-	DailyBudgetEUR  float64 `json:"dailyBudgetEur"`
-	Models          []Model `json:"models"`
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	Enabled          bool    `json:"enabled"`
+	Local            bool    `json:"local"`
+	Paid             bool    `json:"paid"`
+	EndpointURL      string  `json:"endpointUrl,omitempty"`
+	APIKeyEnv        string  `json:"apiKeyEnv,omitempty"`
+	Configured       bool    `json:"configured"`
+	ReadinessStatus  string  `json:"readinessStatus,omitempty"`
+	ReadinessReason  string  `json:"readinessReason,omitempty"`
+	QuotaRemaining   int     `json:"quotaRemaining"`
+	DailyBudgetEUR   float64 `json:"dailyBudgetEur"`
+	BudgetUsedEUR    float64 `json:"budgetUsedEur"`
+	InputTokensUsed  int     `json:"inputTokensUsed"`
+	OutputTokensUsed int     `json:"outputTokensUsed"`
+	Models           []Model `json:"models"`
 }
 
 type Model struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Tier             string   `json:"tier"`
-	Capabilities     []string `json:"capabilities"`
-	MaxDifficulty    int      `json:"maxDifficulty"`
-	MaxReasoning     string   `json:"maxReasoning"`
-	EstimatedCostEUR float64  `json:"estimatedCostEur"`
-	RequiresApproval bool     `json:"requiresApproval"`
-	Enabled          bool     `json:"enabled"`
+	ID                            string   `json:"id"`
+	Name                          string   `json:"name"`
+	Tier                          string   `json:"tier"`
+	Capabilities                  []string `json:"capabilities"`
+	MaxDifficulty                 int      `json:"maxDifficulty"`
+	MaxReasoning                  string   `json:"maxReasoning"`
+	EstimatedCostEUR              float64  `json:"estimatedCostEur"`
+	InputCostPerMillionTokensEUR  float64  `json:"inputCostPerMillionTokensEur"`
+	OutputCostPerMillionTokensEUR float64  `json:"outputCostPerMillionTokensEur"`
+	PricingUnit                   string   `json:"pricingUnit,omitempty"`
+	PricingSource                 string   `json:"pricingSource,omitempty"`
+	RequiresApproval              bool     `json:"requiresApproval"`
+	Enabled                       bool     `json:"enabled"`
+	BudgetUsedEUR                 float64  `json:"budgetUsedEur"`
+	InputTokensUsed               int      `json:"inputTokensUsed"`
+	OutputTokensUsed              int      `json:"outputTokensUsed"`
 }
 
 type RouteRequest struct {
@@ -108,17 +125,20 @@ type TaskClassification struct {
 }
 
 type RouteDecision struct {
-	SelectedProviderID string             `json:"selectedProviderId"`
-	SelectedModelID    string             `json:"selectedModelId"`
-	SelectedModelName  string             `json:"selectedModelName"`
-	Tier               string             `json:"tier"`
-	Reason             string             `json:"reason"`
-	EstimatedCostEUR   float64            `json:"estimatedCostEur"`
-	RequiresApproval   bool               `json:"requiresApproval"`
-	Classification     TaskClassification `json:"classification"`
-	FallbackPath       []FallbackOption   `json:"fallbackPath"`
-	Skipped            []SkippedModel     `json:"skipped"`
-	LoggedAt           time.Time          `json:"loggedAt"`
+	SelectedProviderID    string             `json:"selectedProviderId"`
+	SelectedModelID       string             `json:"selectedModelId"`
+	SelectedModelName     string             `json:"selectedModelName"`
+	Tier                  string             `json:"tier"`
+	Reason                string             `json:"reason"`
+	EstimatedCostEUR      float64            `json:"estimatedCostEur"`
+	EstimatedInputTokens  int                `json:"estimatedInputTokens"`
+	EstimatedOutputTokens int                `json:"estimatedOutputTokens"`
+	PricingSource         string             `json:"pricingSource,omitempty"`
+	RequiresApproval      bool               `json:"requiresApproval"`
+	Classification        TaskClassification `json:"classification"`
+	FallbackPath          []FallbackOption   `json:"fallbackPath"`
+	Skipped               []SkippedModel     `json:"skipped"`
+	LoggedAt              time.Time          `json:"loggedAt"`
 }
 
 type GenerateRequest struct {
@@ -161,12 +181,14 @@ type ProviderProbeResult struct {
 }
 
 type FallbackOption struct {
-	ProviderID       string  `json:"providerId"`
-	ModelID          string  `json:"modelId"`
-	ModelName        string  `json:"modelName"`
-	Tier             string  `json:"tier"`
-	EstimatedCostEUR float64 `json:"estimatedCostEur"`
-	RequiresApproval bool    `json:"requiresApproval"`
+	ProviderID            string  `json:"providerId"`
+	ModelID               string  `json:"modelId"`
+	ModelName             string  `json:"modelName"`
+	Tier                  string  `json:"tier"`
+	EstimatedCostEUR      float64 `json:"estimatedCostEur"`
+	EstimatedInputTokens  int     `json:"estimatedInputTokens"`
+	EstimatedOutputTokens int     `json:"estimatedOutputTokens"`
+	RequiresApproval      bool    `json:"requiresApproval"`
 }
 
 type SkippedModel struct {
@@ -179,6 +201,13 @@ type Service struct {
 	policy Policy
 	mu     sync.Mutex
 	logs   []RouteDecision
+	usage  map[string]UsageCounter
+}
+
+type UsageCounter struct {
+	BudgetUsedEUR    float64
+	InputTokensUsed  int
+	OutputTokensUsed int
 }
 
 func NewServiceFromEnv() (*Service, error) {
@@ -198,11 +227,11 @@ func NewServiceFromEnv() (*Service, error) {
 	}
 
 	policy = annotateInfrastructure(annotatePolicyReadiness(policy))
-	return &Service{policy: policy, logs: []RouteDecision{}}, nil
+	return &Service{policy: policy, logs: []RouteDecision{}, usage: map[string]UsageCounter{}}, nil
 }
 
 func (s *Service) Policy() Policy {
-	return annotateInfrastructure(annotatePolicyReadiness(s.policy))
+	return s.annotateUsage(annotateInfrastructure(annotatePolicyReadiness(s.policy)))
 }
 
 func annotateInfrastructure(policy Policy) Policy {
@@ -255,30 +284,38 @@ func (s *Service) ProbeProviders() []ProviderProbeResult {
 func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 	classification := classifyTask(request)
 	candidates, skipped := s.candidates(classification, request)
+	estimatedInputTokens := estimateTokens(request.Task)
+	estimatedOutputTokens := estimateRouteOutputTokens(classification)
 	if len(candidates) == 0 {
 		decision := RouteDecision{
-			Reason:         "No enabled model satisfies the task, budget, quota, and approval policy.",
-			Classification: classification,
-			Skipped:        skipped,
-			LoggedAt:       time.Now().UTC(),
+			Reason:                "No enabled model satisfies the task, budget, quota, and approval policy.",
+			EstimatedInputTokens:  estimatedInputTokens,
+			EstimatedOutputTokens: estimatedOutputTokens,
+			Classification:        classification,
+			Skipped:               skipped,
+			LoggedAt:              time.Now().UTC(),
 		}
 		s.addLog(decision)
 		return decision, nil
 	}
 
 	selected := candidates[0]
+	estimatedCostEUR := estimateRouteCostEUR(selected.model, estimatedInputTokens, estimatedOutputTokens)
 	decision := RouteDecision{
-		SelectedProviderID: selected.provider.ID,
-		SelectedModelID:    selected.model.ID,
-		SelectedModelName:  selected.model.Name,
-		Tier:               selected.model.Tier,
-		Reason:             selectionReason(selected, classification),
-		EstimatedCostEUR:   selected.model.EstimatedCostEUR,
-		RequiresApproval:   selected.model.RequiresApproval || selected.provider.Paid,
-		Classification:     classification,
-		FallbackPath:       fallbackPath(candidates[1:]),
-		Skipped:            skipped,
-		LoggedAt:           time.Now().UTC(),
+		SelectedProviderID:    selected.provider.ID,
+		SelectedModelID:       selected.model.ID,
+		SelectedModelName:     selected.model.Name,
+		Tier:                  selected.model.Tier,
+		Reason:                selectionReason(selected, classification, estimatedInputTokens, estimatedOutputTokens, estimatedCostEUR),
+		EstimatedCostEUR:      estimatedCostEUR,
+		EstimatedInputTokens:  estimatedInputTokens,
+		EstimatedOutputTokens: estimatedOutputTokens,
+		PricingSource:         selected.model.PricingSource,
+		RequiresApproval:      selected.model.RequiresApproval || selected.provider.Paid,
+		Classification:        classification,
+		FallbackPath:          fallbackPath(candidates[1:], estimatedInputTokens, estimatedOutputTokens),
+		Skipped:               skipped,
+		LoggedAt:              time.Now().UTC(),
 	}
 
 	s.addLog(decision)
@@ -382,6 +419,13 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			LoggedAt:         time.Now().UTC(),
 		}, nil
 	}
+	inputTokens := estimateTokens(buildPrompt(request))
+	outputTokens := estimateTokens(output)
+	actualCostEUR := estimateModelUsageCostEUR(model, inputTokens, outputTokens)
+	if actualCostEUR == 0 {
+		actualCostEUR = model.EstimatedCostEUR
+	}
+	s.addUsage(provider.ID, model.ID, actualCostEUR, inputTokens, outputTokens)
 	return &GenerationResult{
 		ProviderID:       provider.ID,
 		ModelID:          model.ID,
@@ -390,7 +434,7 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 		Output:           safety.RedactSecrets(strings.TrimSpace(output)),
 		Status:           "completed",
 		Reason:           "model endpoint returned a draft; verification must still ground important claims",
-		EstimatedCostEUR: model.EstimatedCostEUR,
+		EstimatedCostEUR: actualCostEUR,
 		DurationMs:       time.Since(started).Milliseconds(),
 		FallbackPath:     fallbackLabels(decision.FallbackPath),
 		LoggedAt:         time.Now().UTC(),
@@ -682,6 +726,106 @@ func (s *Service) addLog(decision RouteDecision) {
 	}
 }
 
+func (s *Service) addUsage(providerID, modelID string, budgetEUR float64, inputTokens, outputTokens int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.usage == nil {
+		s.usage = map[string]UsageCounter{}
+	}
+	current := s.usage[providerID]
+	current.BudgetUsedEUR += budgetEUR
+	current.InputTokensUsed += inputTokens
+	current.OutputTokensUsed += outputTokens
+	s.usage[providerID] = current
+	if strings.TrimSpace(modelID) != "" {
+		modelUsage := s.usage[usageKey(providerID, modelID)]
+		modelUsage.BudgetUsedEUR += budgetEUR
+		modelUsage.InputTokensUsed += inputTokens
+		modelUsage.OutputTokensUsed += outputTokens
+		s.usage[usageKey(providerID, modelID)] = modelUsage
+	}
+}
+
+func (s *Service) annotateUsage(policy Policy) Policy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range policy.Providers {
+		usage := s.usage[policy.Providers[index].ID]
+		policy.Providers[index].BudgetUsedEUR = usage.BudgetUsedEUR
+		policy.Providers[index].InputTokensUsed = usage.InputTokensUsed
+		policy.Providers[index].OutputTokensUsed = usage.OutputTokensUsed
+		policy.DailyBudgetUsedEUR += usage.BudgetUsedEUR
+		policy.InputTokensUsed += usage.InputTokensUsed
+		policy.OutputTokensUsed += usage.OutputTokensUsed
+		for modelIndex := range policy.Providers[index].Models {
+			model := &policy.Providers[index].Models[modelIndex]
+			modelUsage := s.usage[usageKey(policy.Providers[index].ID, model.ID)]
+			model.BudgetUsedEUR = modelUsage.BudgetUsedEUR
+			model.InputTokensUsed = modelUsage.InputTokensUsed
+			model.OutputTokensUsed = modelUsage.OutputTokensUsed
+		}
+	}
+	return policy
+}
+
+func usageKey(providerID, modelID string) string {
+	return providerID + "\x00" + modelID
+}
+
+func estimateModelUsageCostEUR(model Model, inputTokens, outputTokens int) float64 {
+	return costFromMillionTokenPrice(model.InputCostPerMillionTokensEUR, inputTokens) +
+		costFromMillionTokenPrice(model.OutputCostPerMillionTokensEUR, outputTokens)
+}
+
+func estimateRouteCostEUR(model Model, inputTokens, outputTokens int) float64 {
+	cost := estimateModelUsageCostEUR(model, inputTokens, outputTokens)
+	if cost > 0 {
+		return cost
+	}
+	return model.EstimatedCostEUR
+}
+
+func estimateRouteOutputTokens(classification TaskClassification) int {
+	reasoningMultiplier := map[string]int{
+		"low":       1,
+		"medium":    2,
+		"high":      3,
+		"very_high": 4,
+	}
+	multiplier := reasoningMultiplier[classification.RequiredReasoning]
+	if multiplier == 0 {
+		multiplier = 2
+	}
+	estimate := 180 + (classification.Difficulty * 120 * multiplier)
+	if hasCapability(classification.RequiredCapabilities, "coding") {
+		estimate += 500
+	}
+	if hasCapability(classification.RequiredCapabilities, "verification") {
+		estimate += 350
+	}
+	if estimate > 4000 {
+		return 4000
+	}
+	return estimate
+}
+
+func costFromMillionTokenPrice(priceEUR float64, tokens int) float64 {
+	if priceEUR <= 0 || tokens <= 0 {
+		return 0
+	}
+	return priceEUR * float64(tokens) / 1_000_000
+}
+
+func estimateTokens(value string) int {
+	words := len(strings.Fields(value))
+	chars := len([]rune(value))
+	byChars := chars / 4
+	if chars%4 != 0 {
+		byChars++
+	}
+	return maxInt(words, byChars)
+}
+
 type candidate struct {
 	provider Provider
 	model    Model
@@ -844,27 +988,32 @@ func classifyTask(request RouteRequest) TaskClassification {
 	}
 }
 
-func selectionReason(selected candidate, classification TaskClassification) string {
+func selectionReason(selected candidate, classification TaskClassification, inputTokens, outputTokens int, estimatedCostEUR float64) string {
 	return fmt.Sprintf(
-		"Selected the cheapest suitable %s-tier model after classifying the task as %s difficulty %d with %s reasoning. The model satisfies required capabilities: %s.",
+		"Selected the cheapest suitable %s-tier model after classifying the task as %s difficulty %d with %s reasoning. The model satisfies required capabilities: %s. Estimated route size: %d input / %d output tokens, EUR %.6f.",
 		selected.model.Tier,
 		classification.TaskType,
 		classification.Difficulty,
 		classification.RequiredReasoning,
 		strings.Join(classification.RequiredCapabilities, ", "),
+		inputTokens,
+		outputTokens,
+		estimatedCostEUR,
 	)
 }
 
-func fallbackPath(candidates []candidate) []FallbackOption {
+func fallbackPath(candidates []candidate, inputTokens, outputTokens int) []FallbackOption {
 	path := []FallbackOption{}
 	for _, candidate := range candidates {
 		path = append(path, FallbackOption{
-			ProviderID:       candidate.provider.ID,
-			ModelID:          candidate.model.ID,
-			ModelName:        candidate.model.Name,
-			Tier:             candidate.model.Tier,
-			EstimatedCostEUR: candidate.model.EstimatedCostEUR,
-			RequiresApproval: candidate.provider.Paid || candidate.model.RequiresApproval,
+			ProviderID:            candidate.provider.ID,
+			ModelID:               candidate.model.ID,
+			ModelName:             candidate.model.Name,
+			Tier:                  candidate.model.Tier,
+			EstimatedCostEUR:      estimateRouteCostEUR(candidate.model, inputTokens, outputTokens),
+			EstimatedInputTokens:  inputTokens,
+			EstimatedOutputTokens: outputTokens,
+			RequiresApproval:      candidate.provider.Paid || candidate.model.RequiresApproval,
 		})
 	}
 	return path
@@ -989,6 +1138,21 @@ func defaultPolicy() Policy {
 		odysseusAPIKeyEnv = "ODYSSEUS_API_TOKEN"
 	}
 	freeCloudEndpoint := strings.TrimSpace(os.Getenv("FREE_CLOUD_OPENAI_BASE_URL"))
+	nousEndpoint := strings.TrimSpace(os.Getenv("NOUS_PORTAL_BASE_URL"))
+	nousAPIKeyEnv := ""
+	if strings.TrimSpace(os.Getenv("NOUS_PORTAL_API_KEY")) != "" {
+		nousAPIKeyEnv = "NOUS_PORTAL_API_KEY"
+	}
+	mixtureEndpoint := strings.TrimSpace(os.Getenv("MIXTURE_OF_AGENTS_BASE_URL"))
+	mixtureAPIKeyEnv := ""
+	if strings.TrimSpace(os.Getenv("MIXTURE_OF_AGENTS_API_KEY")) != "" {
+		mixtureAPIKeyEnv = "MIXTURE_OF_AGENTS_API_KEY"
+	}
+	openAICodexEndpoint := strings.TrimSpace(os.Getenv("OPENAI_CODEX_BASE_URL"))
+	openAICodexAPIKeyEnv := ""
+	if strings.TrimSpace(os.Getenv("OPENAI_CODEX_API_KEY")) != "" {
+		openAICodexAPIKeyEnv = "OPENAI_CODEX_API_KEY"
+	}
 	return Policy{
 		DailyPaidBudgetEUR:               0,
 		PaidCallsAllowed:                 false,
@@ -999,7 +1163,7 @@ func defaultPolicy() Policy {
 		RouteSimpleTasksToSmallModels:    true,
 		RouteComplexTasksToBestFreeModel: true,
 		RequireApprovalBeforePaidUsage:   true,
-		TierOrder:                        []string{TierFree, TierCheap, TierAcceptable, TierHigh, TierExpensive},
+		TierOrder:                        []string{TierLocal, TierFree, TierCheap, TierAcceptable, TierHigh, TierPremium, TierExpensive},
 		Providers: []Provider{
 			{
 				ID:             "ollama",
@@ -1010,10 +1174,19 @@ func defaultPolicy() Policy {
 				EndpointURL:    ollamaEndpoint,
 				QuotaRemaining: -1,
 				Models: []Model{
-					{ID: "phi3:mini", Name: "Phi small local", Tier: TierFree, Capabilities: []string{"general", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
-					{ID: "qwen2.5-coder:7b", Name: "Qwen coder local", Tier: TierFree, Capabilities: []string{"general", "coding", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "deepseek-coder:6.7b", Name: "DeepSeek coder local", Tier: TierFree, Capabilities: []string{"general", "coding", "planning"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "llama3.1:8b", Name: "Llama local", Tier: TierFree, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "phi3:mini", Name: "Phi small local", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
+					{ID: "phi4:latest", Name: "Phi general local", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 3, MaxReasoning: "medium", Enabled: true},
+					{ID: "gemma3:4b", Name: "Gemma compact local", Tier: TierLocal, Capabilities: []string{"general", "classification", "summarization"}, MaxDifficulty: 3, MaxReasoning: "medium", Enabled: true},
+					{ID: "gemma3:12b", Name: "Gemma capable local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "mistral:7b", Name: "Mistral local", Tier: TierLocal, Capabilities: []string{"general", "planning", "summarization"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "mixtral:8x7b", Name: "Mixtral local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+					{ID: "llama3.1:8b", Name: "Llama local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "llama3.1:70b", Name: "Llama large local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+					{ID: "qwen2.5:7b", Name: "Qwen general local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "qwen2.5-coder:7b", Name: "Qwen coder local", Tier: TierLocal, Capabilities: []string{"general", "coding", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "qwen2.5-coder:32b", Name: "Qwen coder large local", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+					{ID: "deepseek-coder:6.7b", Name: "DeepSeek coder local", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "deepseek-r1:8b", Name: "DeepSeek reasoning local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
 				},
 			},
 			{
@@ -1025,7 +1198,9 @@ func defaultPolicy() Policy {
 				EndpointURL:    lmStudioEndpoint,
 				QuotaRemaining: -1,
 				Models: []Model{
-					{ID: "openai-compatible-local", Name: "OpenAI-compatible local endpoint", Tier: TierFree, Capabilities: []string{"general", "coding", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "openai-compatible-local", Name: "OpenAI-compatible local endpoint", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+					{ID: "local-small", Name: "Configured small local model", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
+					{ID: "local-best", Name: "Configured best local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
 				},
 			},
 			{
@@ -1038,7 +1213,7 @@ func defaultPolicy() Policy {
 				APIKeyEnv:      odysseusAPIKeyEnv,
 				QuotaRemaining: -1,
 				Models: []Model{
-					{ID: "odysseus-workspace-agent", Name: "Odysseus workspace agent", Tier: TierFree, Capabilities: []string{"general", "planning", "verification", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", RequiresApproval: true, Enabled: true},
+					{ID: "odysseus-workspace-agent", Name: "Odysseus workspace agent", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", RequiresApproval: true, Enabled: true},
 				},
 			},
 			{
@@ -1052,6 +1227,101 @@ func defaultPolicy() Policy {
 				QuotaRemaining: 0,
 				Models: []Model{
 					{ID: "free-best-available", Name: "Best configured free model", Tier: TierFree, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+					{ID: "free-fast-classifier", Name: "Free fast classifier", Tier: TierFree, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
+					{ID: "free-coder", Name: "Free coder quota model", Tier: TierFree, Capabilities: []string{"general", "coding", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
+				},
+			},
+			{
+				ID:             "nous-portal",
+				Name:           "Nous Portal",
+				Enabled:        true,
+				Local:          false,
+				Paid:           true,
+				EndpointURL:    nousEndpoint,
+				APIKeyEnv:      nousAPIKeyEnv,
+				QuotaRemaining: 0,
+				DailyBudgetEUR: 0,
+				Models:         nousPortalModels(),
+			},
+			{
+				ID:             "mixture-of-agents",
+				Name:           "Mixture of Agents",
+				Enabled:        true,
+				Local:          false,
+				Paid:           true,
+				EndpointURL:    mixtureEndpoint,
+				APIKeyEnv:      mixtureAPIKeyEnv,
+				QuotaRemaining: 0,
+				DailyBudgetEUR: 0,
+				Models: []Model{
+					catalogModel("moa-default", "Default", TierPremium, []string{"general", "coding", "planning", "verification", "extraction"}, 5, "very_high", 2, 8, true, "default estimate for multi-agent orchestration; verify with provider invoice or override through LLM_PROVIDERS_JSON"),
+				},
+			},
+			{
+				ID:             "openai-codex",
+				Name:           "OpenAI Codex",
+				Enabled:        true,
+				Local:          false,
+				Paid:           true,
+				EndpointURL:    openAICodexEndpoint,
+				APIKeyEnv:      openAICodexAPIKeyEnv,
+				QuotaRemaining: 0,
+				DailyBudgetEUR: 0,
+				Models: []Model{
+					catalogModel("gpt-5.5", "GPT-5.5", TierPremium, []string{"general", "coding", "planning", "verification", "extraction"}, 5, "very_high", 5, 15, true, "default estimate; verify with OpenAI/Codex invoice or override through LLM_PROVIDERS_JSON"),
+					catalogModel("gpt-5.4", "GPT-5.4", TierHigh, []string{"general", "coding", "planning", "verification", "extraction"}, 5, "very_high", 3, 10, true, "default estimate; verify with OpenAI/Codex invoice or override through LLM_PROVIDERS_JSON"),
+					catalogModel("gpt-5.4-mini", "GPT-5.4-mini", TierCheap, []string{"general", "coding", "planning", "extraction"}, 4, "high", 0.25, 1, true, "default estimate; verify with OpenAI/Codex invoice or override through LLM_PROVIDERS_JSON"),
+					catalogModel("gpt-5.3-codex-spark", "GPT-5.3-codex-spark", TierCheap, []string{"general", "coding", "extraction"}, 4, "high", 0.15, 0.6, true, "default estimate; verify with OpenAI/Codex invoice or override through LLM_PROVIDERS_JSON"),
+				},
+			},
+			{
+				ID:             "cheap-provider",
+				Name:           "Cheap API provider",
+				Enabled:        false,
+				Local:          false,
+				Paid:           true,
+				QuotaRemaining: 0,
+				DailyBudgetEUR: 0,
+				Models: []Model{
+					{ID: "cheap-small", Name: "Cheap small model", Tier: TierCheap, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 3, MaxReasoning: "medium", EstimatedCostEUR: 0.001, RequiresApproval: true, Enabled: true},
+					{ID: "cheap-coder", Name: "Cheap coder model", Tier: TierCheap, Capabilities: []string{"general", "coding", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", EstimatedCostEUR: 0.003, RequiresApproval: true, Enabled: true},
+				},
+			},
+			{
+				ID:             "acceptable-provider",
+				Name:           "Acceptable API provider",
+				Enabled:        false,
+				Local:          false,
+				Paid:           true,
+				QuotaRemaining: 0,
+				DailyBudgetEUR: 0,
+				Models: []Model{
+					{ID: "acceptable-general", Name: "Acceptable general model", Tier: TierAcceptable, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", EstimatedCostEUR: 0.01, RequiresApproval: true, Enabled: true},
+					{ID: "acceptable-coder", Name: "Acceptable coder model", Tier: TierAcceptable, Capabilities: []string{"general", "coding", "planning"}, MaxDifficulty: 4, MaxReasoning: "high", EstimatedCostEUR: 0.015, RequiresApproval: true, Enabled: true},
+				},
+			},
+			{
+				ID:             "high-provider",
+				Name:           "High capability API provider",
+				Enabled:        false,
+				Local:          false,
+				Paid:           true,
+				QuotaRemaining: 0,
+				DailyBudgetEUR: 0,
+				Models: []Model{
+					{ID: "high-reasoning", Name: "High reasoning model", Tier: TierHigh, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.03, RequiresApproval: true, Enabled: true},
+				},
+			},
+			{
+				ID:             "premium-provider",
+				Name:           "Premium API provider",
+				Enabled:        false,
+				Local:          false,
+				Paid:           true,
+				QuotaRemaining: 0,
+				DailyBudgetEUR: 0,
+				Models: []Model{
+					{ID: "premium-best", Name: "Premium best-available model", Tier: TierPremium, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.04, RequiresApproval: true, Enabled: true},
 				},
 			},
 			{
@@ -1064,10 +1334,71 @@ func defaultPolicy() Policy {
 				DailyBudgetEUR: 0,
 				Models: []Model{
 					{ID: "paid-high-capability", Name: "Paid high capability model", Tier: TierExpensive, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.05, RequiresApproval: true, Enabled: true},
+					{ID: "expensive-frontier", Name: "Expensive frontier model", Tier: TierExpensive, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.08, RequiresApproval: true, Enabled: true},
 				},
 			},
 		},
 	}
+}
+
+func nousPortalModels() []Model {
+	frontier := []string{"general", "coding", "planning", "verification", "extraction"}
+	reasoning := []string{"general", "planning", "verification", "extraction"}
+	coding := []string{"general", "coding", "planning", "extraction"}
+	fast := []string{"general", "classification", "extraction", "summarization"}
+
+	return []Model{
+		nousModel("opus-4.8", "Opus 4.8", TierExpensive, frontier, 5, "very_high", 15, 75),
+		nousModel("sonnet-4.6", "Sonnet 4.6", TierHigh, frontier, 5, "very_high", 3, 15),
+		nousModel("haiku-4.5", "Haiku 4.5", TierAcceptable, fast, 3, "medium", 0.8, 4),
+		nousModel("gpt-5.5", "GPT-5.5", TierPremium, frontier, 5, "very_high", 5, 15),
+		nousModel("gpt-5.5-pro", "GPT-5.5-pro", TierExpensive, frontier, 5, "very_high", 15, 60),
+		nousModel("gpt-5.4-mini", "GPT-5.4-mini", TierCheap, coding, 3, "medium", 0.25, 1),
+		nousModel("gemini-3-pro-preview", "Gemini 3 pro Preview", TierPremium, reasoning, 5, "very_high", 2.5, 15),
+		nousModel("gemini-3.1-pro-preview", "Gemini 3.1 pro Preview", TierHigh, reasoning, 5, "very_high", 1.25, 10),
+		nousModel("gemini-3.5-flash", "Gemini 3.5 flash", TierCheap, fast, 3, "medium", 0.3, 2.5),
+		nousModel("grok-4.3", "Grok 4.3", TierHigh, frontier, 5, "very_high", 3, 15),
+		nousModel("deepseek-v4-pro", "Deepseek V4 Pro", TierHigh, frontier, 5, "very_high", 0.55, 2.2),
+		nousModel("deepseek-v4-flash", "Deepseek V4 Flash", TierCheap, coding, 4, "high", 0.14, 0.28),
+		nousModel("qwen3.7-max", "Qwen3.7 Max", TierPremium, frontier, 5, "very_high", 1.6, 6.4),
+		nousModel("qwen3.7-plus", "Qwen3.7 Plus", TierAcceptable, coding, 4, "high", 0.4, 1.2),
+		nousModel("qwen3.6-35b-a3b", "Qwen3.6 35b A3b", TierCheap, coding, 4, "high", 0.2, 0.8),
+		nousModel("kimi-k2.7-code", "Kimi K2.7 Code", TierHigh, coding, 5, "very_high", 0.6, 2.4),
+		nousModel("minimax-m3", "Minimax M3", TierHigh, frontier, 5, "very_high", 0.5, 2),
+		nousModel("glm-5.2", "Glm 5.2", TierHigh, reasoning, 5, "very_high", 0.5, 2),
+		nousModel("glm-5.1", "Glm 5.1", TierAcceptable, reasoning, 4, "high", 0.25, 1),
+		nousModel("mimo-v2.5-pro", "Mimo V2.5 Pro", TierHigh, frontier, 5, "very_high", 0.8, 3.2),
+		nousModel("hy3-preview", "Hy3 Preview", TierPremium, reasoning, 5, "very_high", 1, 4),
+		nousModel("step-3.7-flash", "Step 3.7 Flash", TierCheap, fast, 3, "medium", 0.2, 0.8),
+		nousModel("nemotron-3-super-120b-a12b", "Nemotron 3 Super 120b A12b", TierPremium, frontier, 5, "very_high", 0.8, 3.2),
+		catalogModel("step-3.7-flash-free", "Step 3.7 Flash:Free", TierFree, fast, 3, "medium", 0, 0, true, "free quota estimate; verify availability and quota with Nous Portal or override through LLM_PROVIDERS_JSON"),
+	}
+}
+
+func nousModel(id, name, tier string, capabilities []string, maxDifficulty int, maxReasoning string, inputCostPerMillion, outputCostPerMillion float64) Model {
+	return catalogModel(id, name, tier, capabilities, maxDifficulty, maxReasoning, inputCostPerMillion, outputCostPerMillion, true, "default estimate; verify with provider invoice or override through LLM_PROVIDERS_JSON")
+}
+
+func catalogModel(id, name, tier string, capabilities []string, maxDifficulty int, maxReasoning string, inputCostPerMillion, outputCostPerMillion float64, requiresApproval bool, pricingSource string) Model {
+	return Model{
+		ID:                            id,
+		Name:                          name,
+		Tier:                          tier,
+		Capabilities:                  capabilities,
+		MaxDifficulty:                 maxDifficulty,
+		MaxReasoning:                  maxReasoning,
+		EstimatedCostEUR:              estimateDefaultRouteCostEUR(inputCostPerMillion, outputCostPerMillion),
+		InputCostPerMillionTokensEUR:  inputCostPerMillion,
+		OutputCostPerMillionTokensEUR: outputCostPerMillion,
+		PricingUnit:                   "EUR per 1M tokens",
+		PricingSource:                 pricingSource,
+		RequiresApproval:              requiresApproval,
+		Enabled:                       true,
+	}
+}
+
+func estimateDefaultRouteCostEUR(inputCostPerMillion, outputCostPerMillion float64) float64 {
+	return costFromMillionTokenPrice(inputCostPerMillion, 1000) + costFromMillionTokenPrice(outputCostPerMillion, 1000)
 }
 
 func odysseusExecutionBlockedReason() string {

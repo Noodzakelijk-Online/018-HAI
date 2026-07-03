@@ -53,18 +53,21 @@ type HealthSummary struct {
 }
 
 type LaunchResult struct {
-	AutomationID     uuid.UUID `json:"automationId"`
-	RuntimeType      string    `json:"runtimeType,omitempty"`
-	LaunchType       string    `json:"launchType"`
-	Target           string    `json:"target"`
-	Status           string    `json:"status"`
-	Message          string    `json:"message,omitempty"`
-	Output           string    `json:"output,omitempty"`
-	ExitCode         int       `json:"exitCode"`
-	DurationMs       int64     `json:"durationMs"`
-	RequiresApproval bool      `json:"requiresApproval"`
-	AuditEvents      []string  `json:"auditEvents"`
-	LaunchedAt       time.Time `json:"launchedAt"`
+	AutomationID      uuid.UUID                           `json:"automationId"`
+	LaunchEventID     uuid.UUID                           `json:"launchEventId,omitempty"`
+	RuntimeTaskID     string                              `json:"runtimeTaskId,omitempty"`
+	RuntimeType       string                              `json:"runtimeType,omitempty"`
+	LaunchType        string                              `json:"launchType"`
+	Target            string                              `json:"target"`
+	Status            string                              `json:"status"`
+	Message           string                              `json:"message,omitempty"`
+	Output            string                              `json:"output,omitempty"`
+	RuntimeRouteTrace *models.AutomationRuntimeRouteTrace `json:"runtimeRouteTrace,omitempty"`
+	ExitCode          int                                 `json:"exitCode"`
+	DurationMs        int64                               `json:"durationMs"`
+	RequiresApproval  bool                                `json:"requiresApproval"`
+	AuditEvents       []string                            `json:"auditEvents"`
+	LaunchedAt        time.Time                           `json:"launchedAt"`
 }
 
 type DiagnosticResult struct {
@@ -86,13 +89,15 @@ type DiagnosticResult struct {
 }
 
 type launchExecution struct {
-	Status           string
-	Message          string
-	Output           string
-	ExitCode         int
-	DurationMs       int64
-	RequiresApproval bool
-	AuditEvents      []string
+	Status            string
+	Message           string
+	Output            string
+	RuntimeRouteTrace *models.AutomationRuntimeRouteTrace
+	ExitCode          int
+	DurationMs        int64
+	RequiresApproval  bool
+	RuntimeTaskID     string
+	AuditEvents       []string
 }
 
 type TaskLaunchRequest struct {
@@ -112,6 +117,7 @@ type Service interface {
 	HealthSummary() (*HealthSummary, error)
 	Launch(id uuid.UUID) (*LaunchResult, error)
 	LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error)
+	StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error)
 	Diagnostics(id uuid.UUID) (*DiagnosticResult, error)
 }
 
@@ -465,6 +471,80 @@ func (s *service) LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchRe
 	return s.launch(id, request)
 }
 
+func (s *service) StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error) {
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	s.applyAutomationDefaults(automation)
+	started := time.Now().UTC()
+	runtimeID := strings.ToLower(strings.TrimSpace(automation.RuntimeType))
+	taskID := automation.ID.String()
+	if automation.LaunchType != "agent_runtime" || (runtimeID != "hermes" && runtimeID != "odysseus" && runtimeID != "openclaw") {
+		result := &agentruntime.StopResult{
+			RuntimeID: runtimeID,
+			TaskID:    taskID,
+			Status:    "blocked",
+			Message:   "automation is not configured as a controlled agent runtime",
+			AuditEvents: []string{
+				"automation runtime stop rejected",
+				"launch type is not agent_runtime or runtime type is unsupported",
+			},
+		}
+		s.persistRuntimeStopEvent(automation, result, started)
+		return result, nil
+	}
+	if s.runtimeRegistry == nil {
+		result := &agentruntime.StopResult{
+			RuntimeID:   runtimeID,
+			TaskID:      taskID,
+			Status:      "blocked",
+			Message:     "agent runtime registry is not configured",
+			AuditEvents: []string{"agent runtime registry unavailable"},
+		}
+		s.persistRuntimeStopEvent(automation, result, started)
+		return result, nil
+	}
+	result := s.runtimeRegistry.StopTask(context.Background(), runtimeID, taskID)
+	s.persistRuntimeStopEvent(automation, &result, started)
+	return &result, nil
+}
+
+func (s *service) persistRuntimeStopEvent(automation *models.Automation, result *agentruntime.StopResult, started time.Time) {
+	if automation == nil || result == nil {
+		return
+	}
+	audit := append([]string{"runtime stop requested"}, result.AuditEvents...)
+	exitCode := 0
+	if result.Status == "blocked" || result.Status == "failed" {
+		exitCode = -1
+		automation.LastFailureReason = safety.RedactSecrets(result.Message)
+		if _, errUpdate := s.repo.Update(automation); errUpdate != nil {
+			log.Printf("Failed to update automation %s after runtime stop: %v", automation.ID, errUpdate)
+		}
+	}
+	event := &models.AutomationLaunchEvent{
+		ID:            uuid.New(),
+		AutomationID:  automation.ID,
+		RuntimeType:   automation.RuntimeType,
+		LaunchType:    "agent_runtime_stop",
+		RuntimeTaskID: result.TaskID,
+		Target:        redactLaunchTarget(automation.LaunchTarget),
+		Status:        result.Status,
+		Message:       safety.RedactSecrets(result.Message),
+		AuditEvents:   redactAuditEvents(audit),
+		ExitCode:      exitCode,
+		DurationMs:    time.Since(started).Milliseconds(),
+		StartedAt:     started,
+		CompletedAt:   time.Now().UTC(),
+	}
+	if errEvent := s.repo.SaveLaunchEvent(event); errEvent != nil {
+		log.Printf("Failed to persist runtime stop event for automation %s: %v", automation.ID, errEvent)
+		return
+	}
+	result.EvidenceURI = "automation-launch://" + event.ID.String()
+}
+
 func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error) {
 	automation, err := s.repo.FindByID(id)
 	if err != nil {
@@ -481,34 +561,46 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 		return nil, errUpdate
 	}
 	event := &models.AutomationLaunchEvent{
-		AutomationID: automation.ID,
-		RuntimeType:  automation.RuntimeType,
-		LaunchType:   automation.LaunchType,
-		Target:       redactLaunchTarget(automation.LaunchTarget),
-		Status:       execution.Status,
-		Message:      safety.RedactSecrets(execution.Message),
-		Output:       safety.RedactSecrets(execution.Output),
-		ExitCode:     execution.ExitCode,
-		DurationMs:   execution.DurationMs,
-		StartedAt:    launchedAt,
-		CompletedAt:  time.Now().UTC(),
+		ID:            uuid.New(),
+		AutomationID:  automation.ID,
+		RuntimeType:   automation.RuntimeType,
+		LaunchType:    automation.LaunchType,
+		RuntimeTaskID: execution.RuntimeTaskID,
+		Target:        redactLaunchTarget(automation.LaunchTarget),
+		Status:        execution.Status,
+		Message:       safety.RedactSecrets(execution.Message),
+		Output:        safety.RedactSecrets(execution.Output),
+		AuditEvents:   redactAuditEvents(execution.AuditEvents),
+		RuntimeRouteTrace: redactRuntimeRouteTrace(
+			execution.RuntimeRouteTrace,
+		),
+		ExitCode:    execution.ExitCode,
+		DurationMs:  execution.DurationMs,
+		StartedAt:   launchedAt,
+		CompletedAt: time.Now().UTC(),
 	}
+	launchEventID := uuid.Nil
 	if errEvent := s.repo.SaveLaunchEvent(event); errEvent != nil {
 		log.Printf("Failed to persist launch event for automation %s: %v", automation.ID, errEvent)
+	} else {
+		launchEventID = event.ID
 	}
 	return &LaunchResult{
-		AutomationID:     automation.ID,
-		RuntimeType:      automation.RuntimeType,
-		LaunchType:       automation.LaunchType,
-		Target:           redactLaunchTarget(automation.LaunchTarget),
-		Status:           execution.Status,
-		Message:          safety.RedactSecrets(execution.Message),
-		Output:           safety.RedactSecrets(execution.Output),
-		ExitCode:         execution.ExitCode,
-		DurationMs:       execution.DurationMs,
-		RequiresApproval: execution.RequiresApproval,
-		AuditEvents:      execution.AuditEvents,
-		LaunchedAt:       launchedAt,
+		AutomationID:      automation.ID,
+		LaunchEventID:     launchEventID,
+		RuntimeTaskID:     execution.RuntimeTaskID,
+		RuntimeType:       automation.RuntimeType,
+		LaunchType:        automation.LaunchType,
+		Target:            redactLaunchTarget(automation.LaunchTarget),
+		Status:            execution.Status,
+		Message:           safety.RedactSecrets(execution.Message),
+		Output:            safety.RedactSecrets(execution.Output),
+		RuntimeRouteTrace: redactRuntimeRouteTrace(execution.RuntimeRouteTrace),
+		ExitCode:          execution.ExitCode,
+		DurationMs:        execution.DurationMs,
+		RequiresApproval:  execution.RequiresApproval,
+		AuditEvents:       execution.AuditEvents,
+		LaunchedAt:        launchedAt,
 	}, nil
 }
 
@@ -556,6 +648,72 @@ func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
 	}, nil
 }
 
+func redactAuditEvents(events []string) []string {
+	if len(events) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(events))
+	for _, event := range events {
+		event = strings.TrimSpace(safety.RedactSecrets(event))
+		if event != "" {
+			result = append(result, event)
+		}
+	}
+	return result
+}
+
+func automationRuntimeRouteTrace(trace *agentruntime.RouteTrace) *models.AutomationRuntimeRouteTrace {
+	if trace == nil {
+		return nil
+	}
+	return redactRuntimeRouteTrace(&models.AutomationRuntimeRouteTrace{
+		RuntimeID:           trace.RuntimeID,
+		Intent:              trace.Intent,
+		ExecutionMode:       trace.ExecutionMode,
+		RiskLevel:           trace.RiskLevel,
+		RecommendedSkills:   append([]string{}, trace.RecommendedSkills...),
+		VisibleProviders:    append([]string{}, trace.VisibleProviders...),
+		VisibleTools:        append([]string{}, trace.VisibleTools...),
+		RelevantMaps:        append([]string{}, trace.RelevantMaps...),
+		BlockedSurfaces:     append([]string{}, trace.BlockedSurfaces...),
+		RequiredControls:    append([]string{}, trace.RequiredControls...),
+		ValidationChecklist: append([]string{}, trace.ValidationChecklist...),
+	})
+}
+
+func redactRuntimeRouteTrace(trace *models.AutomationRuntimeRouteTrace) *models.AutomationRuntimeRouteTrace {
+	if trace == nil {
+		return nil
+	}
+	return &models.AutomationRuntimeRouteTrace{
+		RuntimeID:           safety.RedactSecrets(trace.RuntimeID),
+		Intent:              safety.RedactSecrets(trace.Intent),
+		ExecutionMode:       safety.RedactSecrets(trace.ExecutionMode),
+		RiskLevel:           safety.RedactSecrets(trace.RiskLevel),
+		RecommendedSkills:   redactStringSlice(trace.RecommendedSkills),
+		VisibleProviders:    redactStringSlice(trace.VisibleProviders),
+		VisibleTools:        redactStringSlice(trace.VisibleTools),
+		RelevantMaps:        redactStringSlice(trace.RelevantMaps),
+		BlockedSurfaces:     redactStringSlice(trace.BlockedSurfaces),
+		RequiredControls:    redactStringSlice(trace.RequiredControls),
+		ValidationChecklist: redactStringSlice(trace.ValidationChecklist),
+	}
+}
+
+func redactStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(safety.RedactSecrets(value))
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 func (s *service) executeLaunch(automation *models.Automation, request TaskLaunchRequest, started time.Time) launchExecution {
 	launchType := strings.ToLower(strings.TrimSpace(automation.LaunchType))
 	if launchType == "" {
@@ -599,26 +757,29 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 
 func (s *service) executeAgentRuntime(automation *models.Automation, request TaskLaunchRequest, started time.Time, audit []string) launchExecution {
 	runtimeID := strings.ToLower(strings.TrimSpace(automation.RuntimeType))
-	if runtimeID != "hermes" && runtimeID != "odysseus" {
-		return blockedLaunch("agent_runtime launch type requires runtimeType hermes or odysseus", started, append(audit, "agent runtime type rejected"))
+	if runtimeID != "hermes" && runtimeID != "odysseus" && runtimeID != "openclaw" {
+		return blockedLaunch("agent_runtime launch type requires runtimeType hermes, odysseus, or openclaw", started, append(audit, "agent runtime type rejected"))
 	}
 	if s.runtimeRegistry == nil {
 		return blockedLaunch("agent runtime registry is not configured", started, append(audit, "agent runtime registry unavailable"))
 	}
+	runtimeTaskID := automation.ID.String()
 	result := s.runtimeRegistry.Execute(context.Background(), runtimeID, agentruntime.Task{
-		ID:            automation.ID.String(),
+		ID:            runtimeTaskID,
 		Prompt:        request.Task,
 		ProjectKey:    request.ProjectKey,
 		HumanApproved: request.HumanApproved,
 	})
 	return launchExecution{
-		Status:           result.Status,
-		Message:          result.Message,
-		Output:           result.Output,
-		ExitCode:         result.ExitCode,
-		DurationMs:       result.DurationMs,
-		RequiresApproval: result.Status == "blocked",
-		AuditEvents:      append(audit, result.AuditEvents...),
+		Status:            result.Status,
+		Message:           result.Message,
+		Output:            result.Output,
+		RuntimeRouteTrace: automationRuntimeRouteTrace(result.RouteTrace),
+		ExitCode:          result.ExitCode,
+		DurationMs:        result.DurationMs,
+		RequiresApproval:  result.Status == "blocked",
+		RuntimeTaskID:     runtimeTaskID,
+		AuditEvents:       append(audit, result.AuditEvents...),
 	}
 }
 

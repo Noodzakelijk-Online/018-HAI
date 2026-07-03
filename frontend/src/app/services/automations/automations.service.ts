@@ -7,6 +7,7 @@ import {
   IAutomationLaunchResult,
   IAutomationModel,
 } from "../../models/automation.model.interface";
+import { IAgentRuntimeStopResult } from "../../models/agent-runtime.model.interface";
 import {Observable} from "rxjs";
 import {HttpClient} from "@angular/common/http";
 
@@ -78,6 +79,10 @@ export class AutomationsService implements IAutomationsService {
 
   launchAutomation(id: string): Observable<IAutomationLaunchResult> {
     return this.http.post<IAutomationLaunchResult>(`${this.apiUrl}/${id}/launch`, {});
+  }
+
+  stopRuntimeTask(id: string): Observable<IAgentRuntimeStopResult> {
+    return this.http.post<IAgentRuntimeStopResult>(`${this.apiUrl}/${id}/stop-runtime`, {});
   }
 
   runHealthCheck(id: string): Observable<IAutomationHealthResult> {

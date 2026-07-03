@@ -2,6 +2,7 @@ import { ILLMGenerationResult, ILLMRouteDecision } from './llm-policy.model.inte
 import { IRankedMemory } from './context-memory.model.interface';
 import { IRankedExtraction, IScheduledSyncRun } from './connected-source.model.interface';
 import { IVerificationClaim } from './verification.model.interface';
+import { IAutomationRuntimeRouteTrace } from './automation.model.interface';
 
 export interface ITaskPlanRequest {
   request: string;
@@ -96,12 +97,14 @@ export interface IExecutionResult {
 
 export interface IToolExecutionResult {
   automationId: string;
+  launchEventId?: string;
   runtimeType?: string;
   launchType: string;
   target?: string;
   status: string;
   message?: string;
   output?: string;
+  runtimeRouteTrace?: IAutomationRuntimeRouteTrace;
   exitCode: number;
   durationMs: number;
   requiresApproval: boolean;

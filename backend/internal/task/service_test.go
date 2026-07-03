@@ -1,6 +1,7 @@
 package task
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -274,6 +275,45 @@ func TestRunToolTaskExecutesConfiguredAutomation(t *testing.T) {
 	}
 }
 
+func TestRunToolTaskUsesLaunchEventURIAsRuntimeEvidence(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	verifier := &sequencedVerificationService{}
+	service := NewServiceWithEngines(mem, llmService, nil, verifier, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests and verify exact runtime evidence",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "validated" {
+		t.Fatalf("status = %q, want validated", plan.CompletionStatus)
+	}
+	if len(verifier.requests) == 0 {
+		t.Fatalf("verification service was not called")
+	}
+	foundRuntimeEvidence := false
+	for _, evidence := range verifier.requests[len(verifier.requests)-1].ExternalEvidence {
+		if evidence.SourceType == "controlled_runtime" {
+			foundRuntimeEvidence = true
+			if evidence.SourceID != executor.result.LaunchEventID || evidence.SourceURI != "automation-launch://"+executor.result.LaunchEventID {
+				t.Fatalf("runtime evidence did not use launch event id: %#v", evidence)
+			}
+			if !strings.Contains(evidence.Snippet, "runtime=openclaw") || !strings.Contains(evidence.Snippet, "skills=autoreview, gitcrawl") {
+				t.Fatalf("runtime route trace missing from evidence snippet: %#v", evidence)
+			}
+		}
+	}
+	if !foundRuntimeEvidence {
+		t.Fatalf("controlled runtime evidence missing: %#v", verifier.requests[len(verifier.requests)-1].ExternalEvidence)
+	}
+}
+
 func TestRunToolTaskBlocksNilRuntimeResult(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)
@@ -390,27 +430,39 @@ func (f *fakeToolExecutor) Execute(request ToolExecutionRequest) (*ToolExecution
 }
 
 func completedToolResult() *ToolExecutionResult {
+	launchEventID := uuid.NewString()
 	return &ToolExecutionResult{
-		AutomationID: uuid.NewString(),
-		RuntimeType:  "script",
-		LaunchType:   "script",
-		Target:       "verify-project.sh",
-		Status:       "completed",
-		Message:      "script completed",
-		Output:       "build and tests passed",
-		ExitCode:     0,
-		DurationMs:   25,
-		AuditEvents:  []string{"script executed without shell"},
-		ExecutedAt:   time.Now().UTC(),
+		AutomationID:  uuid.NewString(),
+		LaunchEventID: launchEventID,
+		RuntimeType:   "script",
+		LaunchType:    "script",
+		Target:        "verify-project.sh",
+		Status:        "completed",
+		Message:       "script completed",
+		Output:        "build and tests passed",
+		RuntimeRouteTrace: &models.AutomationRuntimeRouteTrace{
+			RuntimeID:         "openclaw",
+			Intent:            "code_review",
+			ExecutionMode:     "read_only",
+			RiskLevel:         "medium",
+			RecommendedSkills: []string{"autoreview", "gitcrawl"},
+			BlockedSurfaces:   []string{"external_message_sending"},
+		},
+		ExitCode:    0,
+		DurationMs:  25,
+		AuditEvents: []string{"script executed without shell"},
+		ExecutedAt:  time.Now().UTC(),
 	}
 }
 
 type sequencedVerificationService struct {
 	statuses []string
 	calls    int
+	requests []verification.AnswerRequest
 }
 
 func (s *sequencedVerificationService) Answer(request verification.AnswerRequest) (*verification.VerificationResult, error) {
+	s.requests = append(s.requests, request)
 	status := verification.StatusSourceSupported
 	if s.calls < len(s.statuses) {
 		status = s.statuses[s.calls]

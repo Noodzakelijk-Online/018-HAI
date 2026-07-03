@@ -1,4 +1,4 @@
-<section>
+<section class="home-page">
   <nz-layout>
     <nz-header class="header-container">
       <div class="header-content">
@@ -6,142 +6,82 @@
         <button
           type="button"
           class="header-content__menu"
-          aria-label="Open main menu"
-          title="Open main menu"
+          aria-label="Open navigation"
+          title="Open navigation"
           nz-button
           nzType="text"
-          nz-dropdown
-          [nzDropdownMenu]="mainMenu"
-          [nzTrigger]="'click'"
-          nzPlacement="bottomRight"
+          (click)="openNavigation()"
         >
           <i nz-icon nzType="menu" nzTheme="outline"></i>
         </button>
-        <nz-dropdown-menu #mainMenu="nzDropdownMenu">
-          <ul nz-menu>
-            <li nz-menu-item (click)="showProfileModal()">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="user"
-                nzTheme="outline"
-              ></i>
-              Profile
-            </li>
-            <li nz-menu-item (click)="openAutomationModal()">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="plus"
-                nzTheme="outline"
-              ></i>
-              Add Automation
-            </li>
-            <li nz-menu-item routerLink="/hai-os">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="control"
-                nzTheme="outline"
-              ></i>
-              HAI OS
-            </li>
-            <li nz-menu-item routerLink="/command-dashboard">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="radar-chart"
-                nzTheme="outline"
-              ></i>
-              Command Dashboard
-            </li>
-            <li nz-menu-item routerLink="/ambient-brain">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="radar-chart"
-                nzTheme="outline"
-              ></i>
-              Proactive Brain
-            </li>
-            <li nz-menu-item routerLink="/control-center">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="dashboard"
-                nzTheme="outline"
-              ></i>
-              Control Center
-            </li>
-            <li nz-menu-item routerLink="/llm-policy">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="deployment-unit"
-                nzTheme="outline"
-              ></i>
-              LLM Routing
-            </li>
-            <li nz-menu-item routerLink="/memory">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="database"
-                nzTheme="outline"
-              ></i>
-              Memory
-            </li>
-            <li nz-menu-item routerLink="/task-blueprint">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="partition"
-                nzTheme="outline"
-              ></i>
-              Task Blueprint
-            </li>
-            <li nz-menu-item routerLink="/connected-sources">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="cluster"
-                nzTheme="outline"
-              ></i>
-              Connected Sources
-            </li>
-            <li nz-menu-item routerLink="/grounded-answers">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="safety-certificate"
-                nzTheme="outline"
-              ></i>
-              Grounded Answers
-            </li>
-            <li nz-menu-item routerLink="/workflow-engine">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="branches"
-                nzTheme="outline"
-              ></i>
-              Workflow Engine
-            </li>
-            <li nz-menu-item (click)="logout()">
-              <i
-                class="menu-item__icon"
-                nz-icon
-                nzType="logout"
-                nzTheme="outline"
-              ></i>
-              Logout
-            </li>
-          </ul>
-        </nz-dropdown-menu>
       </div>
     </nz-header>
+    <nz-drawer
+      [nzVisible]="isNavigationVisible"
+      nzPlacement="right"
+      [nzWidth]="420"
+      [nzClosable]="false"
+      [nzBodyStyle]="{ padding: '0' }"
+      (nzOnClose)="closeNavigation()"
+    >
+      <ng-container *nzDrawerContent>
+        <nav class="navigation-drawer" aria-label="Main navigation">
+          <header class="navigation-drawer__header">
+            <div>
+              <strong>HAI Navigation</strong>
+              <span>Choose the command surface you need.</span>
+            </div>
+            <button
+              type="button"
+              class="navigation-drawer__close"
+              aria-label="Close navigation"
+              (click)="closeNavigation()"
+            >
+              <i nz-icon nzType="close" nzTheme="outline"></i>
+            </button>
+          </header>
+
+          <section class="navigation-drawer__account">
+            <button type="button" (click)="showProfileFromMenu()">
+              <i nz-icon nzType="user" nzTheme="outline"></i>
+              <span>
+                <strong>Profile</strong>
+                <small>Account and password</small>
+              </span>
+            </button>
+            <button type="button" (click)="logout()">
+              <i nz-icon nzType="logout" nzTheme="outline"></i>
+              <span>
+                <strong>Logout</strong>
+                <small>End this local session</small>
+              </span>
+            </button>
+          </section>
+
+          <section class="navigation-group" *ngFor="let group of navigationGroups">
+            <span class="navigation-group__label">{{ group.label }}</span>
+            <button
+              type="button"
+              class="navigation-link"
+              *ngFor="let item of group.items"
+              (click)="activateNavigationItem(item)"
+            >
+              <span class="navigation-link__icon">
+                <i nz-icon [nzType]="item.icon" nzTheme="outline"></i>
+              </span>
+              <span class="navigation-link__copy">
+                <strong>{{ item.label }}</strong>
+                <small>{{ item.detail }}</small>
+              </span>
+              <i nz-icon nzType="right" nzTheme="outline"></i>
+            </button>
+          </section>
+        </nav>
+      </ng-container>
+    </nz-drawer>
     <nz-content class="content-container">
       <div
+        *ngIf="automations.length; else emptyAutomationState"
         cdkDropList
         cdkDropListOrientation="horizontal"
         class="card-container"
@@ -214,6 +154,47 @@
           </ng-template>
         </nz-card>
       </div>
+
+      <ng-template #emptyAutomationState>
+        <section class="automation-empty">
+          <span class="automation-empty__eyebrow">Automation registry</span>
+          <h2>No automations registered yet</h2>
+          <p>
+            Add a local app, script, service, or dashboard entry here. Operational workflow controls
+            remain available from the command center and workflow engine.
+          </p>
+          <div class="automation-empty__actions">
+            <button
+              type="button"
+              nz-button
+              nzType="primary"
+              data-testid="automation-empty-add"
+              (click)="openAutomationModal()"
+            >
+              <i nz-icon nzType="plus" nzTheme="outline"></i>
+              Add automation
+            </button>
+            <button
+              type="button"
+              nz-button
+              nzType="default"
+              data-testid="automation-empty-command-center"
+              (click)="navigateFromMenu('/control-center')"
+            >
+              Command Center
+            </button>
+            <button
+              type="button"
+              nz-button
+              nzType="default"
+              data-testid="automation-empty-workflow-engine"
+              (click)="navigateFromMenu('/workflow-engine')"
+            >
+              Workflow Engine
+            </button>
+          </div>
+        </section>
+      </ng-template>
     </nz-content>
 
     <app-automations-form-modal
@@ -310,12 +291,14 @@
         </form>
       </ng-container>
       <ng-container *nzModalFooter>
-        <button nz-button nzType="default" (click)="handleProfileCancel()">
+        <button type="button" nz-button nzType="default" data-testid="profile-cancel" (click)="handleProfileCancel()">
           Cancel
         </button>
         <button
+          type="button"
           nz-button
           nzType="primary"
+          data-testid="profile-save"
           [disabled]="profileForm.invalid"
           (click)="onProfileSubmit()"
           class="save-button"

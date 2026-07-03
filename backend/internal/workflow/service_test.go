@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 
 	"github.com/google/uuid"
@@ -69,6 +70,54 @@ func TestIntakeCreatesApprovalGatedLegalWorkflow(t *testing.T) {
 	}
 	if len(record.Transitions) != 1 {
 		t.Fatalf("transitions = %d, want intake transition", len(record.Transitions))
+	}
+}
+
+func TestGetIncludesLinkedPursuitContext(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Collect ASR insurance claim documents and prepare evidence bundle.",
+		ProjectKey: "ASR claim",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	pursuitID := uuid.New()
+	linkID := uuid.New()
+	repo.pursuits[record.Item.ID] = []WorkflowPursuitContext{
+		{
+			ID:                    pursuitID,
+			Title:                 "Finish ASR insurance claim",
+			Status:                "active",
+			RiskLevel:             "medium",
+			PriorityScore:         83,
+			AutonomyLevel:         "approve_before_execute",
+			DesiredOutcome:        "Complete the claim with source-linked evidence.",
+			CurrentStateSummary:   "Evidence collection is in progress.",
+			NextRecommendedAction: "Ask Robert to approve the missing-document request.",
+			CompletionState:       "open",
+			LinkID:                linkID,
+			Relationship:          "operational_work",
+			SourceURI:             "pursuit://asr-claim",
+			SourceLabel:           "ASR claim pursuit",
+			LinkConfidence:        0.9,
+		},
+	}
+
+	detail, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(detail.Pursuits) != 1 {
+		t.Fatalf("pursuits = %d, want 1", len(detail.Pursuits))
+	}
+	got := detail.Pursuits[0]
+	if got.ID != pursuitID || got.LinkID != linkID || got.Title != "Finish ASR insurance claim" {
+		t.Fatalf("unexpected pursuit context: %#v", got)
+	}
+	if got.NextRecommendedAction == "" || got.Relationship != "operational_work" {
+		t.Fatalf("pursuit context lost next action/relationship: %#v", got)
 	}
 }
 
@@ -258,6 +307,267 @@ func TestResolveProposalDefaultsToChangesRequested(t *testing.T) {
 	}
 	if updated.Item.CurrentState != StateWaitingInput {
 		t.Fatalf("state = %q, want waiting_external_input", updated.Item.CurrentState)
+	}
+}
+
+func TestResolveProposalChangesRequestedStoresFeedbackLesson(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	mem := &fakeWorkflowMemoryService{}
+	service := NewServiceWithMemory(repo, mem)
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Create Trello checklist for client quote workflow",
+		ProjectKey: "garden-ops",
+		SourceType: "trello",
+		SourceURI:  "trello://card/quote",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	_, err = service.ResolveProposal(record.Item.ID, record.Proposals[0].ID, ProposalResolutionRequest{
+		Note:  "Make future checklists include customer address, parking, access, before photos, and after photos.",
+		Actor: "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveProposal: %v", err)
+	}
+
+	if len(mem.created) != 1 {
+		t.Fatalf("created memories = %d, want 1", len(mem.created))
+	}
+	created := mem.created[0]
+	if created.Kind != "lesson" || created.ProjectKey != "garden-ops" {
+		t.Fatalf("memory = %#v, want lesson for project", created)
+	}
+	if !strings.Contains(created.Content, "customer address") || !strings.Contains(created.Content, "Future behavior") {
+		t.Fatalf("memory content does not preserve correction and future behavior: %q", created.Content)
+	}
+	if !strings.Contains(strings.Join(created.Tags, ","), "workflow-feedback") {
+		t.Fatalf("tags = %#v, want workflow-feedback", created.Tags)
+	}
+}
+
+func TestResolveApprovalGenericRejectionDoesNotStoreNoise(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	mem := &fakeWorkflowMemoryService{}
+	service := NewServiceWithMemory(repo, mem)
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Email from lawyer about Vivare legal hearing tomorrow. Draft formal reply.",
+		ProjectKey: "Vivare dispute",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	if _, err := service.ResolveApproval(record.Item.ID, ApprovalResolutionRequest{Approved: false, Note: "rejected", Actor: "Robert"}); err != nil {
+		t.Fatalf("ResolveApproval: %v", err)
+	}
+	if len(mem.created) != 0 {
+		t.Fatalf("created memories = %d, want 0 for generic rejection", len(mem.created))
+	}
+}
+
+func TestResolveApprovalApprovedNoteStoresSpecificLearning(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	mem := &fakeWorkflowMemoryService{}
+	service := NewServiceWithMemory(repo, mem)
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Email from lawyer about Vivare legal hearing tomorrow. Draft formal reply.",
+		ProjectKey: "Vivare dispute",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	_, err = service.ResolveApproval(record.Item.ID, ApprovalResolutionRequest{
+		Approved: true,
+		Note:     "For future lawyer emails, keep replies formal Dutch, evidence-linked, and never send automatically.",
+		Actor:    "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveApproval: %v", err)
+	}
+
+	if len(mem.created) != 1 {
+		t.Fatalf("created memories = %d, want 1", len(mem.created))
+	}
+	created := mem.created[0]
+	if created.Kind != "lesson" || created.ProjectKey != "Vivare dispute" {
+		t.Fatalf("memory = %#v, want project lesson", created)
+	}
+	if !strings.Contains(created.Content, "formal Dutch") || !strings.Contains(created.Content, "approval_approved") {
+		t.Fatalf("memory content did not preserve approval feedback: %q", created.Content)
+	}
+	if !strings.Contains(strings.Join(created.Tags, ","), "approval_approved") {
+		t.Fatalf("tags = %#v, want approval_approved", created.Tags)
+	}
+}
+
+func TestResolveInterruptedExecutionStoresReviewLesson(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	mem := &fakeWorkflowMemoryService{}
+	service := NewServiceWithMemory(repo, mem)
+	record := recoverInterruptedWorkflow(t, repo, service, "Create Trello checklist for low risk admin work")
+
+	_, err := service.ResolveInterruptedExecution(record.Item.ID, InterruptedExecutionResolutionRequest{
+		Decision: "retry",
+		Note:     "Before retrying script-based tasks, check target logs and confirm no duplicate Trello card was created.",
+		Actor:    "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveInterruptedExecution: %v", err)
+	}
+
+	if len(mem.created) != 1 {
+		t.Fatalf("created memories = %d, want 1", len(mem.created))
+	}
+	created := mem.created[0]
+	if !strings.Contains(created.Content, "duplicate Trello card") || !strings.Contains(created.Content, "interruption_retry") {
+		t.Fatalf("memory content did not capture interrupted execution review: %q", created.Content)
+	}
+	if !strings.Contains(strings.Join(created.Tags, ","), "interruption_retry") {
+		t.Fatalf("tags = %#v, want interruption_retry", created.Tags)
+	}
+}
+
+func TestChecklistBlockedStoresFeedbackLesson(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	mem := &fakeWorkflowMemoryService{}
+	service := NewServiceWithMemory(repo, mem)
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Create Trello checklist for client quote workflow",
+		ProjectKey: "garden-ops",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	_, err = service.UpdateChecklistItem(record.Item.ID, record.Checklist[0].ID, ChecklistUpdateRequest{
+		Status: "blocked",
+		Note:   "This step is blocked until the supplier access code is available; ask Robert first next time.",
+		Actor:  "Robert",
+	})
+	if err != nil {
+		t.Fatalf("UpdateChecklistItem: %v", err)
+	}
+
+	if len(mem.created) != 1 {
+		t.Fatalf("created memories = %d, want 1", len(mem.created))
+	}
+	created := mem.created[0]
+	if !strings.Contains(created.Content, "supplier access code") || !strings.Contains(created.Content, "checklist_blocked") {
+		t.Fatalf("memory content did not capture checklist correction: %q", created.Content)
+	}
+	if !strings.Contains(strings.Join(created.Tags, ","), "checklist_blocked") {
+		t.Fatalf("tags = %#v, want checklist_blocked", created.Tags)
+	}
+}
+
+func TestIntakeAppliesRelevantFeedbackMemoryToFutureWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	lessonID := uuid.New()
+	mem := &fakeWorkflowMemoryService{
+		retrieveResult: &memory.RetrieveResult{
+			Explanation: "Retrieved relevant correction lesson only.",
+			UsedContext: []memory.RankedMemory{
+				{
+					Memory: models.ContextMemory{
+						ID:          lessonID,
+						ProjectKey:  "garden-ops",
+						Kind:        "lesson",
+						Content:     "Robert corrected HAI workflow behavior. Correction: include customer address, parking, access, before photos, and after photos.",
+						Summary:     "Include customer address, parking, access, before photos, and after photos in similar client quote checklists.",
+						Tags:        "workflow-feedback,correction,proposal_changes_requested",
+						Confidence:  0.86,
+						SourceURI:   "workflow://previous-feedback",
+						SourceLabel: "Prior Robert correction",
+					},
+					Score:       0.92,
+					Explanation: "same project, checklist terms matched",
+				},
+			},
+		},
+	}
+	service := NewServiceWithMemory(repo, mem)
+
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Create a Trello checklist for a client quote workflow with site visit planning.",
+		ProjectKey: "garden-ops",
+		SourceType: "trello",
+		SourceURI:  "trello://card/new-quote",
+		Trigger:    "trello.sync",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	if len(mem.retrieveRequests) != 1 {
+		t.Fatalf("retrieve requests = %d, want 1", len(mem.retrieveRequests))
+	}
+	request := mem.retrieveRequests[0]
+	if request.ProjectKey != "garden-ops" || request.Limit != 3 {
+		t.Fatalf("retrieve request = %#v, want scoped project and limit 3", request)
+	}
+	if !strings.Contains(request.Query, "client quote") {
+		t.Fatalf("retrieve query = %q, want workflow input", request.Query)
+	}
+	if !hasChecklistContaining(record.Checklist, "Apply learned context", "customer address") {
+		t.Fatalf("checklist %#v does not include learned customer-address correction", record.Checklist)
+	}
+	if !hasDecision(record.Decisions, "memory_context", "applied") {
+		t.Fatalf("decisions %#v missing memory_context applied decision", record.Decisions)
+	}
+	if !hasSourceRelationship(record.SourceLinks, "planning_context") {
+		t.Fatalf("source links %#v missing memory planning context", record.SourceLinks)
+	}
+	if !hasEventType(record.Events, "workflow.memory_context") {
+		t.Fatalf("events %#v missing memory context audit", record.Events)
+	}
+}
+
+func TestIntakeSkipsNonActionableRetrievedMemory(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	mem := &fakeWorkflowMemoryService{
+		retrieveResult: &memory.RetrieveResult{
+			Explanation: "Retrieved low-value context.",
+			UsedContext: []memory.RankedMemory{
+				{
+					Memory: models.ContextMemory{
+						ID:         uuid.New(),
+						ProjectKey: "garden-ops",
+						Kind:       "project",
+						Content:    "General project description that should not become a learned checklist step.",
+						Confidence: 0.9,
+					},
+					Score: 0.8,
+				},
+				{
+					Memory: models.ContextMemory{
+						ID:         uuid.New(),
+						ProjectKey: "garden-ops",
+						Kind:       "lesson",
+						Content:    "Low confidence correction.",
+						Confidence: 0.2,
+					},
+					Score: 0.7,
+				},
+			},
+		},
+	}
+	service := NewServiceWithMemory(repo, mem)
+
+	record, err := service.Intake(IntakeRequest{
+		Input:      "Create a Trello checklist for a client quote workflow.",
+		ProjectKey: "garden-ops",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if hasChecklistContaining(record.Checklist, "Apply learned context", "General project description") {
+		t.Fatalf("non-actionable project memory was applied to checklist: %#v", record.Checklist)
+	}
+	if hasDecision(record.Decisions, "memory_context", "applied") {
+		t.Fatalf("memory_context decision should not be created for skipped memories: %#v", record.Decisions)
 	}
 }
 
@@ -512,11 +822,21 @@ func TestChecklistUpdateAuditsProgress(t *testing.T) {
 func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	runner := &fakeTaskRunner{result: &TaskRunResult{
-		PlanID:             "plan-1",
-		CompletionStatus:   "validated",
-		VerificationStatus: "verified",
-		Output:             "completed",
-		Passed:             true,
+		PlanID:               "plan-1",
+		CompletionStatus:     "validated",
+		VerificationStatus:   "verified",
+		Output:               "completed",
+		RuntimeEvidenceURI:   "automation-launch://11111111-1111-1111-1111-111111111111",
+		RuntimeEvidenceLabel: "script runtime",
+		RuntimeRouteTrace: &models.AutomationRuntimeRouteTrace{
+			RuntimeID:         "openclaw",
+			Intent:            "code_review",
+			ExecutionMode:     "read_only",
+			RiskLevel:         "medium",
+			RecommendedSkills: []string{"autoreview", "gitcrawl"},
+			BlockedSurfaces:   []string{"external_message_sending"},
+		},
+		Passed: true,
 	}}
 	service := NewServiceWithTaskRunner(repo, runner)
 	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
@@ -548,6 +868,18 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 	if !hasGateStatus(updated.QualityGates, "verification before completion", "passed") {
 		t.Fatalf("expected verification quality gate to pass")
+	}
+	foundRuntimeEvidence := false
+	for _, claim := range updated.Evidence {
+		if claim.SourceURI == "automation-launch://11111111-1111-1111-1111-111111111111" && claim.Reliability == "controlled_runtime" {
+			foundRuntimeEvidence = true
+			if claim.Status != "verified" || !strings.Contains(claim.ClaimText, "script runtime") || !strings.Contains(claim.ClaimText, "runtime=openclaw") {
+				t.Fatalf("runtime evidence claim = %#v", claim)
+			}
+		}
+	}
+	if !foundRuntimeEvidence {
+		t.Fatalf("runtime evidence claim missing from workflow detail: %#v", updated.Evidence)
 	}
 }
 
@@ -1046,11 +1378,11 @@ func TestRunDueBlocksTechnicalWorkflowWhenQualityEvidenceMissing(t *testing.T) {
 func TestRunDueDoesNotRepeatCompletedExternalActionAfterQualityGateFailure(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	runner := &fakeTaskRunner{result: &TaskRunResult{
-		PlanID:                "plan-runtime-quality-review",
-		CompletionStatus:      "validated",
-		VerificationStatus:    "verified",
-		Output:                "runtime completed",
-		Passed:                true,
+		PlanID:                 "plan-runtime-quality-review",
+		CompletionStatus:       "validated",
+		VerificationStatus:     "verified",
+		Output:                 "runtime completed",
+		Passed:                 true,
 		ExternalActionExecuted: true,
 	}}
 	service := NewServiceWithTaskRunner(repo, runner)
@@ -1477,6 +1809,23 @@ func hasApprovalChecklist(items []models.WorkflowChecklistItem) bool {
 	return false
 }
 
+func hasChecklistContaining(items []models.WorkflowChecklistItem, parts ...string) bool {
+	for _, item := range items {
+		label := strings.ToLower(item.Label)
+		matches := true
+		for _, part := range parts {
+			if !strings.Contains(label, strings.ToLower(part)) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
 func hasGateStatus(gates []models.WorkflowQualityGate, gateName, status string) bool {
 	for _, gate := range gates {
 		if gate.Gate == gateName && gate.Status == status {
@@ -1498,6 +1847,15 @@ func hasDecision(decisions []models.WorkflowDecision, decisionType, decision str
 func hasSourceRelationship(links []models.WorkflowSourceLink, relationship string) bool {
 	for _, link := range links {
 		if link.Relationship == relationship {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEventType(events []models.WorkflowEvent, eventType string) bool {
+	for _, event := range events {
+		if event.EventType == eventType {
 			return true
 		}
 	}
@@ -1565,6 +1923,7 @@ type fakeWorkflowRepo struct {
 	checklist            map[uuid.UUID][]models.WorkflowChecklistItem
 	intake               map[uuid.UUID][]models.WorkflowIntakeRecord
 	matches              map[uuid.UUID][]models.WorkflowProjectMatch
+	pursuits             map[uuid.UUID][]WorkflowPursuitContext
 	evidence             map[uuid.UUID][]models.WorkflowEvidenceClaim
 	openLoops            map[uuid.UUID][]models.WorkflowOpenLoop
 	proposals            map[uuid.UUID][]models.WorkflowProposal
@@ -1584,6 +1943,7 @@ func newFakeWorkflowRepo() *fakeWorkflowRepo {
 		checklist:   map[uuid.UUID][]models.WorkflowChecklistItem{},
 		intake:      map[uuid.UUID][]models.WorkflowIntakeRecord{},
 		matches:     map[uuid.UUID][]models.WorkflowProjectMatch{},
+		pursuits:    map[uuid.UUID][]WorkflowPursuitContext{},
 		evidence:    map[uuid.UUID][]models.WorkflowEvidenceClaim{},
 		openLoops:   map[uuid.UUID][]models.WorkflowOpenLoop{},
 		proposals:   map[uuid.UUID][]models.WorkflowProposal{},
@@ -1827,6 +2187,10 @@ func (r *fakeWorkflowRepo) CreateProjectMatch(match *models.WorkflowProjectMatch
 
 func (r *fakeWorkflowRepo) FindProjectMatches(workflowID uuid.UUID) ([]models.WorkflowProjectMatch, error) {
 	return append([]models.WorkflowProjectMatch{}, r.matches[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPursuitContext, error) {
+	return append([]WorkflowPursuitContext{}, r.pursuits[workflowID]...), nil
 }
 
 func (r *fakeWorkflowRepo) CreateEvidenceClaim(claim *models.WorkflowEvidenceClaim) (*models.WorkflowEvidenceClaim, error) {
@@ -2132,6 +2496,65 @@ func (r *fakeWorkflowRepo) CreateEvent(event *models.WorkflowEvent) (*models.Wor
 
 func (r *fakeWorkflowRepo) FindEvents(workflowID uuid.UUID) ([]models.WorkflowEvent, error) {
 	return append([]models.WorkflowEvent{}, r.events[workflowID]...), nil
+}
+
+type fakeWorkflowMemoryService struct {
+	created          []memory.CreateRequest
+	retrieveRequests []memory.RetrieveRequest
+	retrieveResult   *memory.RetrieveResult
+	retrieveErr      error
+}
+
+func (s *fakeWorkflowMemoryService) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
+	s.created = append(s.created, request)
+	return &models.ContextMemory{
+		ID:          uuid.New(),
+		ProjectKey:  request.ProjectKey,
+		Kind:        request.Kind,
+		Content:     request.Content,
+		Summary:     request.Summary,
+		SourceURI:   request.SourceURI,
+		SourceLabel: request.SourceLabel,
+		Confidence:  request.Confidence,
+	}, nil
+}
+
+func (s *fakeWorkflowMemoryService) Update(id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return &models.ContextMemory{ID: id, Content: request.Content, Kind: request.Kind}, nil
+}
+
+func (s *fakeWorkflowMemoryService) FindAll(projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *fakeWorkflowMemoryService) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
+	return &models.ContextMemory{ID: id}, nil
+}
+
+func (s *fakeWorkflowMemoryService) Archive(id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return &models.ContextMemory{ID: id, Archived: archived}, nil
+}
+
+func (s *fakeWorkflowMemoryService) Delete(id uuid.UUID) error {
+	return nil
+}
+
+func (s *fakeWorkflowMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	s.retrieveRequests = append(s.retrieveRequests, request)
+	if s.retrieveErr != nil {
+		return nil, s.retrieveErr
+	}
+	if s.retrieveResult != nil {
+		result := *s.retrieveResult
+		if result.Query == "" {
+			result.Query = request.Query
+		}
+		if result.ProjectKey == "" {
+			result.ProjectKey = request.ProjectKey
+		}
+		return &result, nil
+	}
+	return &memory.RetrieveResult{Query: request.Query, ProjectKey: request.ProjectKey}, nil
 }
 
 type fakeTaskRunner struct {

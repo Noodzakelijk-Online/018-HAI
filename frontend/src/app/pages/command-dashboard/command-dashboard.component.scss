@@ -45,7 +45,7 @@
   background: #17202a;
   color: #fff;
   display: grid;
-  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 }
 
 .metric {
@@ -82,9 +82,373 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.assistant-actions {
+  background: #fff;
+  border: 1px solid #d0d5dd;
+}
+
+.action-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 14px 16px 16px;
+}
+
+.action-tile {
+  align-items: flex-start;
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  color: #17202a;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-height: 132px;
+  padding: 14px;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.action-tile:hover,
+.action-tile:focus-visible {
+  border-color: #1677ff;
+  box-shadow: 0 10px 28px rgba(16, 24, 40, 0.08);
+  outline: 0;
+  transform: translateY(-1px);
+}
+
+.action-tile--loading {
+  border-color: #1677ff;
+  opacity: 0.76;
+  pointer-events: none;
+}
+
+.action-icon {
+  align-items: center;
+  background: #eaf3ff;
+  border-radius: 8px;
+  color: #1677ff;
+  display: inline-flex;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
+.action-copy {
+  min-width: 0;
+}
+
+.action-copy strong,
+.action-copy small,
+.action-metric {
+  display: block;
+}
+
+.action-copy strong {
+  font-size: 15px;
+}
+
+.action-copy small {
+  color: #667085;
+  line-height: 1.45;
+  margin-top: 5px;
+}
+
+.action-metric {
+  align-self: end;
+  background: #ecfdf3;
+  border-radius: 6px;
+  color: #067647;
+  font-size: 12px;
+  font-weight: 700;
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 4px 8px;
+}
+
+.assistant-result {
+  align-items: flex-start;
+  border-top: 1px solid #e4e7ec;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(260px, 1.2fr) minmax(420px, 2fr);
+  padding: 14px 16px;
+}
+
+.assistant-result > div strong,
+.assistant-result > div span,
+.assistant-result > small {
+  display: block;
+}
+
+.assistant-result > div span,
+.assistant-result > small {
+  color: #667085;
+  margin-top: 4px;
+}
+
+.assistant-result dl {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.assistant-result dl > div {
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.assistant-result dt {
+  color: #667085;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.assistant-result dd {
+  font-weight: 700;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.assistant-result > small {
+  grid-column: 1 / -1;
+}
+
 .runtime-band {
   border: 1px solid #d0d5dd;
   background: #fff;
+}
+
+.pursuit-band {
+  background: #fff;
+  border: 1px solid #d0d5dd;
+}
+
+.pursuit-summary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pursuit-brief {
+  background: var(--hai-surface-muted, #f8fbff);
+  border: 1px solid var(--hai-border, #dfe7f1);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+}
+
+.pursuit-brief__summary {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.pursuit-brief__summary span,
+.brief-card em {
+  color: var(--hai-muted, #708096);
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pursuit-brief__summary strong,
+.pursuit-brief__summary small {
+  display: block;
+}
+
+.pursuit-brief__summary strong {
+  color: var(--hai-text, #142033);
+  font-size: 17px;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+
+.pursuit-brief__summary small {
+  color: var(--hai-muted, #708096);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
+.pursuit-brief__metrics,
+.pursuit-brief__cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pursuit-brief__metrics span {
+  background: var(--hai-surface, #fff);
+  border: 1px solid var(--hai-border, #dfe7f1);
+  border-radius: 999px;
+  color: var(--hai-muted, #708096);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+}
+
+.brief-card {
+  background: var(--hai-surface, #fff);
+  border: 1px solid var(--hai-border, #dfe7f1);
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 1 1 230px;
+  min-width: 220px;
+  padding: 11px;
+  text-align: left;
+}
+
+.brief-card:hover,
+.brief-card:focus-visible {
+  border-color: var(--hai-blue, #1769e0);
+  box-shadow: 0 10px 24px rgba(23, 105, 224, 0.12);
+}
+
+.brief-card--alert {
+  border-color: rgba(225, 104, 64, 0.4);
+}
+
+.brief-card strong,
+.brief-card span,
+.brief-card small {
+  display: block;
+}
+
+.brief-card strong {
+  color: var(--hai-text, #142033);
+  font-size: 14px;
+  line-height: 1.3;
+  margin-top: 4px;
+}
+
+.brief-card span,
+.brief-card small {
+  color: var(--hai-muted, #708096);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+
+.pursuit-lanes {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 16px;
+}
+
+.pursuit-lane {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.pursuit-lane--alert {
+  border-color: #fed7aa;
+}
+
+.pursuit-lane--warning {
+  border-color: #fde68a;
+}
+
+.pursuit-lane header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.pursuit-lane header span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.pursuit-lane header strong {
+  font-size: 22px;
+}
+
+.pursuit-item {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  cursor: pointer;
+  display: block;
+  padding: 11px;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  width: 100%;
+}
+
+.pursuit-item--decision {
+  cursor: default;
+  display: grid;
+  gap: 10px;
+}
+
+.pursuit-item__main {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.pursuit-item__main:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: 3px;
+}
+
+.pursuit-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pursuit-item:hover,
+.pursuit-item:focus-visible {
+  border-color: #1677ff;
+  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.08);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.pursuit-item strong,
+.pursuit-item span,
+.pursuit-item em,
+.pursuit-item small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.pursuit-item span,
+.pursuit-item em,
+.pursuit-item small {
+  color: #667085;
+  margin-top: 4px;
+}
+
+.pursuit-item em {
+  border-left: 3px solid #d0d5dd;
+  font-style: normal;
+  padding-left: 8px;
 }
 
 .section-heading {
@@ -110,8 +474,133 @@
   overflow-x: auto;
 }
 
+.openclaw-cockpit {
+  background: #fbfcfe;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  margin: 14px 16px 16px;
+  padding: 14px;
+}
+
+.openclaw-cockpit__header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.openclaw-cockpit__header span,
+.openclaw-cockpit__header small,
+.openclaw-group small,
+.openclaw-surface small,
+.openclaw-metric span {
+  color: #667085;
+}
+
+.openclaw-cockpit__header strong {
+  color: #101828;
+  display: block;
+  font-size: 15px;
+  margin-top: 2px;
+}
+
+.openclaw-cockpit__actions,
+.openclaw-cockpit__metrics,
+.openclaw-surface-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.openclaw-cockpit__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.openclaw-metric {
+  background: #ffffff;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  cursor: help;
+  min-width: 0;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.openclaw-metric strong {
+  color: #101828;
+  display: block;
+  font-size: 18px;
+  line-height: 1.2;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.openclaw-metric--risk strong {
+  color: #b42318;
+}
+
+.openclaw-groups {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.openclaw-group {
+  background: #ffffff;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.openclaw-group header {
+  margin-bottom: 10px;
+}
+
+.openclaw-group header strong,
+.openclaw-group header small {
+  display: block;
+}
+
+.openclaw-surface {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  color: #344054;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: min(100%, 220px);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.openclaw-surface span {
+  min-width: 0;
+}
+
+.openclaw-surface strong,
+.openclaw-surface small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.openclaw-surface:hover,
+.openclaw-surface:focus-visible,
+.openclaw-metric:hover,
+.openclaw-metric:focus-visible {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+  outline: none;
+}
+
 .runtime-row {
-  align-items: start;
+  align-items: flex-start;
   border-bottom: 1px solid #f0f2f5;
   display: grid;
   gap: 14px;
@@ -135,6 +624,133 @@
 .runtime-row strong,
 .capability-copy {
   overflow-wrap: anywhere;
+}
+
+.ecosystem-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.runtime-skill-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.runtime-skill-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.runtime-skill-chips small {
+  align-self: center;
+}
+
+.ecosystem-chip {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  color: #344054;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.openclaw-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.openclaw-upload {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.openclaw-upload input[type='file'] {
+  display: none;
+}
+
+.openclaw-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ecosystem-path {
+  color: #0c4a6e;
+  display: inline-block;
+  font-weight: 600;
+  margin-left: 4px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.ecosystem-chip:hover,
+.ecosystem-chip:focus-visible {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+  outline: none;
+}
+
+.ecosystem-chip strong,
+.ecosystem-chip span,
+.ecosystem-chip em {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.ecosystem-chip strong {
+  color: #101828;
+}
+
+.ecosystem-chip span {
+  background: #eaf2ff;
+  border-radius: 999px;
+  color: #175cd3;
+  font-weight: 700;
+  padding: 1px 6px;
+}
+
+.ecosystem-chip em {
+  color: #667085;
+  font-style: normal;
+}
+
+.runtime-surface-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.runtime-surface-summary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.runtime-surface-summary span,
+.runtime-surface-detail p,
+.runtime-surface-detail small,
+.runtime-surface-item {
+  overflow-wrap: anywhere;
+}
+
+.runtime-surface-detail p,
+.runtime-surface-detail small {
+  color: #667085;
 }
 
 .command-grid > nz-card,
@@ -213,6 +829,23 @@ td small {
     grid-template-columns: 1fr;
   }
 
+  .pursuit-lanes {
+    grid-template-columns: 1fr;
+  }
+
+  .openclaw-cockpit__metrics,
+  .openclaw-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .assistant-result {
+    grid-template-columns: 1fr;
+  }
+
   .section-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -235,8 +868,18 @@ td small {
     width: 100%;
   }
 
+  .openclaw-cockpit__header {
+    flex-direction: column;
+  }
+
+  .openclaw-cockpit__actions {
+    width: 100%;
+  }
+
   .status-strip,
-  .search-bar {
+  .search-bar,
+  .action-grid,
+  .assistant-result dl {
     grid-template-columns: 1fr;
   }
 

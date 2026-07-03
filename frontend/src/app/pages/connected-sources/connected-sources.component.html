@@ -1,28 +1,146 @@
-<section>
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
-        <h1 class="header-content__title">Connected Sources</h1>
-        <div class="header-content__actions">
-          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
-            <i nz-icon nzType="reload" nzTheme="outline"></i>
-            Refresh
-          </button>
-          <button nz-button nzType="default" (click)="goHome()">
-            <i nz-icon nzType="appstore" nzTheme="outline"></i>
-            Automations
-          </button>
-        </div>
-      </div>
-    </nz-header>
+<section class="sources-shell" [class.sources-shell--dark]="themeMode === 'dark'">
+  <header class="sources-header">
+    <div>
+      <p class="eyebrow">Knowledge intake</p>
+      <h1>Connected Sources</h1>
+      <span>Connect accounts, files, exports, and project records as source-linked context.</span>
+    </div>
+    <div class="header-actions">
+      <button type="button" nz-button nzType="default" (click)="toggleTheme()" [title]="themeLabel()">
+        <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
+        {{ themeLabel() }}
+      </button>
+      <button type="button" nz-button nzType="default" (click)="refresh()" [nzLoading]="loading" title="Reload connectors, sources, jobs, extractions, and audit logs">
+        <i nz-icon nzType="reload" nzTheme="outline"></i>
+        Refresh
+      </button>
+      <button type="button" nz-button nzType="primary" (click)="runDueScheduledSyncs()" [nzLoading]="syncing" title="Run all due scheduled source sync jobs">
+        <i nz-icon nzType="sync" nzTheme="outline"></i>
+        Sync due
+      </button>
+      <button type="button" nz-button nzType="default" (click)="goHome()" title="Open the automation registry">
+        <i nz-icon nzType="appstore" nzTheme="outline"></i>
+        Automations
+      </button>
+    </div>
+  </header>
 
-    <nz-content class="content-container">
-      <div class="source-grid">
-        <nz-card nzSize="small" nzTitle="Connect Source">
-          <form nz-form [formGroup]="sourceForm">
-            <nz-form-item>
-              <nz-form-label>Connector</nz-form-label>
-              <nz-form-control>
+  <main class="sources-content">
+    <section class="status-strip" aria-label="Source status">
+      <button type="button" title="Enabled sources that can currently be used by HAI">
+        <strong>{{ enabledSources().length }}</strong>
+        <span>active sources</span>
+      </button>
+      <button type="button" title="Connector adapters exposed by the backend and currently operational">
+        <strong>{{ operationalConnectorCount() }}/{{ connectors.length }}</strong>
+        <span>connectors operational</span>
+      </button>
+      <button type="button" title="Extracted records available for source-grounded memory and task context">
+        <strong>{{ extractions.length }}</strong>
+        <span>extracted records</span>
+      </button>
+      <button type="button" title="Records that must stay review-gated or sensitive">
+        <strong>{{ sensitiveExtractionCount() }}</strong>
+        <span>sensitive records</span>
+      </button>
+      <button type="button" [class.attention]="failedJobCount() > 0" title="Sync jobs that failed and need attention">
+        <strong>{{ failedJobCount() }}</strong>
+        <span>failed jobs</span>
+      </button>
+    </section>
+
+    <section class="action-rail" aria-label="Source actions">
+      <button
+        type="button"
+        *ngFor="let action of sourceActions"
+        class="action-tile"
+        [class.action-tile--active]="selectedAction === action.id"
+        [attr.data-tone]="action.tone"
+        (click)="setAction(action.id)"
+        [title]="action.title + ': ' + action.detail"
+      >
+        <i nz-icon [nzType]="action.icon" nzTheme="outline"></i>
+        <span>
+          <strong>{{ action.title }}</strong>
+          <small>{{ action.detail }}</small>
+        </span>
+        <em>{{ action.metric }}</em>
+      </button>
+    </section>
+
+    <section class="workspace-grid">
+      <aside class="panel source-registry">
+        <div class="panel-heading">
+          <div>
+            <h2>Source registry</h2>
+            <p>Each source keeps permissions, sync state, provenance, and review controls together.</p>
+          </div>
+          <label nz-checkbox [(ngModel)]="includeDisabled" (ngModelChange)="refresh()" title="Show paused or disabled records as well as active sources">Show disabled</label>
+        </div>
+
+        <nz-empty *ngIf="!sources.length && !loading" nzNotFoundContent="No connected sources yet."></nz-empty>
+
+        <div class="source-list">
+          <article
+            *ngFor="let source of sources"
+            class="source-row"
+            [class.source-row--selected]="selectedSource()?.id === source.id"
+            (click)="selectSource(source)"
+            [title]="source.name + ': open details and controls'"
+          >
+            <div class="source-row__icon" [attr.data-status]="statusTone(source.status)">
+              <i nz-icon nzType="cluster" nzTheme="outline"></i>
+            </div>
+            <div class="source-row__main">
+              <div>
+                <strong>{{ source.name }}</strong>
+                <span>{{ source.connectorKey }} · {{ source.category || 'source' }}</span>
+              </div>
+              <small>
+                {{ source.lastSyncedAt ? ('Last sync ' + (source.lastSyncedAt | date: 'short')) : 'Not synced yet' }}
+              </small>
+            </div>
+            <div class="source-row__badges">
+              <span class="status-pill" [attr.data-status]="statusTone(source.status)">{{ statusText(source.status) }}</span>
+              <span *ngIf="source.localOnly" class="status-pill local">local</span>
+              <span class="status-pill">{{ sourceExtractionCount(source) }} records</span>
+            </div>
+            <div class="source-row__actions">
+              <button
+                type="button"
+                *ngIf="syncButtonVisible(source)"
+                class="icon-button"
+                (click)="$event.stopPropagation(); syncSource(source)"
+                [disabled]="syncing"
+                title="Run an incremental sync for this source"
+              >
+                <i nz-icon nzType="sync" nzTheme="outline"></i>
+              </button>
+              <button
+                type="button"
+                class="icon-button"
+                (click)="$event.stopPropagation(); reindex(source)"
+                title="Re-index extracted context for this source"
+              >
+                <i nz-icon nzType="database" nzTheme="outline"></i>
+              </button>
+            </div>
+          </article>
+        </div>
+      </aside>
+
+      <section class="panel action-panel">
+        <ng-container [ngSwitch]="selectedAction">
+          <div *ngSwitchCase="'connect'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Connect source</h2>
+                <p>Register only the connector, permissions, target, and project scope HAI needs.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="sourceForm" class="operation-form">
+              <label>
+                <span>Connector</span>
                 <nz-select formControlName="connectorKey" (ngModelChange)="connectorChanged($event)">
                   <nz-option
                     *ngFor="let connector of connectors"
@@ -31,258 +149,397 @@
                     [nzDisabled]="!connector.enabled"
                   ></nz-option>
                 </nz-select>
-              </nz-form-control>
-            </nz-form-item>
-            <p *ngIf="connectors.length" class="muted">
-              Operational connectors include selected folders and allowlisted JSON feeds. Account-specific OAuth/API adapters remain disabled until a real provider integration is configured.
-            </p>
-            <nz-form-item>
-              <nz-form-label>Name</nz-form-label>
-              <nz-form-control>
+              </label>
+              <label>
+                <span>Name</span>
                 <input nz-input formControlName="name" />
-              </nz-form-control>
-            </nz-form-item>
-            <div class="form-row">
-              <nz-form-item>
-                <nz-form-label>Sync</nz-form-label>
-                <nz-form-control>
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Sync frequency</span>
                   <input nz-input formControlName="syncFrequency" />
-                </nz-form-control>
-              </nz-form-item>
-              <label nz-checkbox formControlName="localOnly">Local only</label>
-            </div>
-            <div class="form-row">
-              <input nz-input formControlName="syncTarget" [placeholder]="syncTargetPlaceholder()" />
-              <input nz-input formControlName="defaultProjectKey" placeholder="Project key" />
-            </div>
-            <nz-form-item>
-              <nz-form-label>Exclude</nz-form-label>
-              <nz-form-control>
+                </label>
+                <label>
+                  <span>Project key</span>
+                  <input nz-input formControlName="defaultProjectKey" />
+                </label>
+              </div>
+              <label>
+                <span>Sync target</span>
+                <input nz-input formControlName="syncTarget" [placeholder]="syncTargetPlaceholder()" />
+              </label>
+              <label>
+                <span>Exclude patterns</span>
                 <input nz-input formControlName="excludePatterns" />
-              </nz-form-control>
-            </nz-form-item>
-            <button nz-button nzType="primary" (click)="connectSource()">Connect</button>
-          </form>
-        </nz-card>
-
-        <nz-card nzSize="small" nzTitle="Manual Import">
-          <form nz-form [formGroup]="importForm">
-            <nz-form-item>
-              <nz-form-label>Source</nz-form-label>
-              <nz-form-control>
-                <nz-select formControlName="sourceId">
-                  <nz-option
-                    *ngFor="let source of sources"
-                    [nzValue]="source.id"
-                    [nzLabel]="source.name"
-                  ></nz-option>
-                </nz-select>
-              </nz-form-control>
-            </nz-form-item>
-            <div class="form-row">
-              <input nz-input formControlName="mode" />
-              <input nz-input formControlName="projectKey" />
-            </div>
-            <input nz-input formControlName="externalId" />
-            <input nz-input formControlName="title" />
-            <input nz-input formControlName="sourceUri" />
-            <textarea nz-input rows="5" formControlName="content"></textarea>
-            <button nz-button nzType="primary" (click)="sync()" [nzLoading]="syncing">
-              Sync and Extract
-            </button>
-          </form>
-        </nz-card>
-
-        <nz-card nzSize="small" nzTitle="Local Folder Sync">
-          <form nz-form [formGroup]="folderForm">
-            <nz-form-item>
-              <nz-form-label>Source</nz-form-label>
-              <nz-form-control>
-                <nz-select formControlName="sourceId">
-                  <nz-option
-                    *ngFor="let source of sources"
-                    [nzValue]="source.id"
-                    [nzLabel]="source.name"
-                  ></nz-option>
-                </nz-select>
-              </nz-form-control>
-            </nz-form-item>
-            <div class="form-row">
-              <input nz-input formControlName="mode" />
-              <input nz-input formControlName="projectKey" />
-            </div>
-            <nz-form-item>
-              <nz-form-label>Folder</nz-form-label>
-              <nz-form-control>
-                <input nz-input formControlName="folderPath" placeholder="Relative to allowlisted connected-source root" />
-              </nz-form-control>
-            </nz-form-item>
-            <div class="form-row">
-              <input nz-input type="number" formControlName="limit" />
-              <input nz-input type="number" formControlName="maxBytes" />
-            </div>
-            <button nz-button nzType="primary" (click)="syncFolder()" [nzLoading]="syncing">
-              Scan Folder
-            </button>
-            <button nz-button nzType="default" (click)="runDueScheduledSyncs()" [nzLoading]="syncing">
-              Run Due Scheduled Syncs
-            </button>
-          </form>
-        </nz-card>
-      </div>
-
-      <nz-card nzTitle="Connected Sources" class="section-card">
-        <label nz-checkbox [(ngModel)]="includeDisabled" (ngModelChange)="refresh()">Show disabled</label>
-        <nz-table [nzData]="sources" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Status</th>
-              <th>Local</th>
-              <th>Target</th>
-              <th>Last sync</th>
-              <th nzWidth="300px">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let source of sources">
-              <td>{{ source.name }}</td>
-              <td>{{ source.category }}</td>
-              <td>{{ source.status }}</td>
-              <td>{{ source.localOnly ? 'yes' : 'no' }}</td>
-              <td>{{ source.syncTarget || '-' }}</td>
-              <td>{{ source.lastSyncedAt ? (source.lastSyncedAt | date: 'short') : '-' }}</td>
-              <td>
-                <button *ngIf="source.enabled" nz-button nzSize="small" nzType="default" (click)="pause(source)">Pause</button>
-                <button *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzSize="small" nzType="default" (click)="resume(source)">Resume</button>
-                <button
-                  *ngIf="source.enabled && source.connectorKey === 'json-feed'"
-                  nz-button
-                  nzSize="small"
-                  nzType="primary"
-                  (click)="syncSource(source)"
-                  [nzLoading]="syncing"
-                >
-                  Sync
-                </button>
-                <button nz-button nzSize="small" nzType="default" (click)="reindex(source)">Re-index</button>
-                <button nz-button nzSize="small" nzType="link" nzDanger (click)="revoke(source)">Revoke</button>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Sync Job History" class="section-card">
-        <nz-table [nzData]="syncJobs" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Started</th>
-              <th>Mode</th>
-              <th>Status</th>
-              <th>Seen</th>
-              <th>Added</th>
-              <th>Updated</th>
-              <th>Failed</th>
-              <th>Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let job of syncJobs">
-              <td>{{ job.startedAt | date: 'short' }}</td>
-              <td>{{ job.mode }}</td>
-              <td>{{ job.status }}</td>
-              <td>{{ job.itemsSeen }}</td>
-              <td>{{ job.itemsAdded }}</td>
-              <td>{{ job.itemsUpdated }}</td>
-              <td>{{ job.itemsFailed }}</td>
-              <td>{{ job.message || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Search Extracted Context" class="section-card">
-        <form nz-form [formGroup]="searchForm" class="search-form">
-          <textarea nz-input rows="3" formControlName="query"></textarea>
-          <div class="form-row">
-            <input nz-input formControlName="projectKey" />
-            <input nz-input type="number" formControlName="limit" />
-            <label nz-checkbox formControlName="includeSensitive">Include sensitive</label>
+              </label>
+              <div class="form-footer">
+                <label nz-checkbox formControlName="localOnly">Local only</label>
+                <button type="button" nz-button nzType="primary" (click)="connectSource()">Connect source</button>
+              </div>
+            </form>
           </div>
-          <button nz-button nzType="primary" (click)="search()">Search</button>
-        </form>
-        <p *ngIf="searchResult">{{ searchResult.explanation }}</p>
-        <nz-empty *ngIf="searchResult && !searchResult.usedContext.length" nzNotFoundContent="No relevant extracted context."></nz-empty>
-        <nz-table *ngIf="searchResult?.usedContext?.length" [nzData]="searchResult!.usedContext" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Score</th>
-              <th>Summary</th>
-              <th>Why</th>
-              <th>Source</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of searchResult!.usedContext">
-              <td>{{ item.score }}</td>
-              <td>{{ item.extraction.summary || item.extraction.text }}</td>
-              <td>{{ item.explanation }}</td>
-              <td>{{ item.extraction.sourceLabel || item.extraction.sourceUri || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
 
-      <nz-card nzTitle="Extracted Records" class="section-card">
-        <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()">Show archived</label>
-        <nz-table [nzData]="extractions" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Summary</th>
-              <th>Tasks</th>
-              <th>Flags</th>
-              <th>Source</th>
-              <th nzWidth="230px">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let extraction of extractions">
-              <td>{{ extraction.contentType }}</td>
-              <td>{{ extraction.summary || extraction.text }}</td>
-              <td>{{ extraction.tasks || extraction.followUps || '-' }}</td>
-              <td>{{ extraction.sensitive ? 'sensitive ' : '' }}{{ extraction.uncertain ? 'uncertain' : '' }}</td>
-              <td>{{ extraction.sourceLabel || extraction.sourceUri || '-' }}</td>
-              <td>
-                <button nz-button nzSize="small" nzType="default" (click)="markCorrected(extraction)">Correct</button>
-                <button nz-button nzSize="small" nzType="default" (click)="archive(extraction)">Archive</button>
-                <button nz-button nzSize="small" nzType="link" nzDanger (click)="delete(extraction)">Delete</button>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+          <div *ngSwitchCase="'folder'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Scan local folder</h2>
+                <p>Use allowlisted folder paths and incremental scanning instead of rereading everything.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="folderForm" class="operation-form">
+              <label>
+                <span>Source</span>
+                <nz-select formControlName="sourceId">
+                  <nz-option *ngFor="let source of sources" [nzValue]="source.id" [nzLabel]="source.name"></nz-option>
+                </nz-select>
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Mode</span>
+                  <input nz-input formControlName="mode" />
+                </label>
+                <label>
+                  <span>Project</span>
+                  <input nz-input formControlName="projectKey" />
+                </label>
+              </div>
+              <label>
+                <span>Folder path</span>
+                <input nz-input formControlName="folderPath" placeholder="Relative to allowlisted connected-source root" />
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Limit</span>
+                  <input nz-input type="number" formControlName="limit" />
+                </label>
+                <label>
+                  <span>Max bytes</span>
+                  <input nz-input type="number" formControlName="maxBytes" />
+                </label>
+              </div>
+              <div class="form-footer">
+                <span>Local files stay source-linked and reviewable.</span>
+                <button type="button" nz-button nzType="primary" (click)="syncFolder()" [nzLoading]="syncing">Scan folder</button>
+              </div>
+            </form>
+          </div>
 
-      <nz-card nzTitle="Sync and Extraction Audit" class="section-card">
-        <nz-table [nzData]="auditLogs" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Action</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let log of auditLogs">
-              <td>{{ log.createdAt | date: 'short' }}</td>
-              <td>{{ log.action }}</td>
-              <td>{{ log.message }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-    </nz-content>
-  </nz-layout>
+          <div *ngSwitchCase="'whatsapp'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>WhatsApp export intake</h2>
+                <p>Use selected chat exports. This is local, explicit, and review-gated.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="whatsappForm" class="operation-form">
+              <div class="field-grid">
+                <label>
+                  <span>WhatsApp source</span>
+                  <nz-select formControlName="sourceId" nzPlaceHolder="WhatsApp source">
+                    <nz-option *ngFor="let source of whatsappSources()" [nzValue]="source.id" [nzLabel]="source.name"></nz-option>
+                  </nz-select>
+                </label>
+                <label>
+                  <span>Project</span>
+                  <input nz-input formControlName="projectKey" />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label>
+                  <span>Source name</span>
+                  <input nz-input formControlName="name" />
+                </label>
+                <label>
+                  <span>Export folder</span>
+                  <input nz-input formControlName="folderPath" />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label>
+                  <span>Chat label</span>
+                  <input nz-input formControlName="chatTitle" />
+                </label>
+                <label>
+                  <span>Messages per chunk</span>
+                  <input nz-input type="number" formControlName="chunkMessages" />
+                </label>
+              </div>
+              <label>
+                <span>Pasted exported chat</span>
+                <textarea nz-input rows="8" formControlName="pastedExport"></textarea>
+              </label>
+              <div class="form-footer">
+                <button type="button" nz-button nzType="default" (click)="connectWhatsAppSource()">Connect source</button>
+                <button type="button" nz-button nzType="default" (click)="syncWhatsAppFolder()" [nzLoading]="syncing">Scan folder</button>
+                <button type="button" nz-button nzType="primary" (click)="importWhatsAppPaste()" [nzLoading]="syncing">Import paste</button>
+              </div>
+            </form>
+          </div>
+
+          <div *ngSwitchCase="'odoo'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Odoo / HERP intake</h2>
+                <p>Model Odoo apps as governed operational domains before any write-back exists.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="odooForm" class="operation-form">
+              <div class="field-grid">
+                <label>
+                  <span>Odoo source</span>
+                  <nz-select formControlName="sourceId" nzPlaceHolder="Odoo / HERP source">
+                    <nz-option *ngFor="let source of odooSources()" [nzValue]="source.id" [nzLabel]="source.name"></nz-option>
+                  </nz-select>
+                </label>
+                <label>
+                  <span>Project</span>
+                  <input nz-input formControlName="projectKey" />
+                </label>
+              </div>
+              <label>
+                <span>Source name</span>
+                <input nz-input formControlName="name" />
+              </label>
+              <label>
+                <span>Odoo base URL</span>
+                <input nz-input formControlName="baseUrl" placeholder="https://your-company.odoo.com/odoo" />
+              </label>
+              <label>
+                <span>Apps or domains to model</span>
+                <textarea nz-input rows="4" formControlName="apps" placeholder="CRM, Sales, Accounting, Project, Helpdesk"></textarea>
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Sync frequency</span>
+                  <input nz-input formControlName="syncFrequency" />
+                </label>
+                <label class="checkbox-field">
+                  <span>Safety</span>
+                  <label nz-checkbox formControlName="localOnly">Local-first source records</label>
+                </label>
+              </div>
+              <div class="form-footer">
+                <span>Write-back stays disabled; risky Odoo actions are approval-gated.</span>
+                <button type="button" nz-button nzType="default" (click)="connectOdooSource()">Connect source</button>
+                <button type="button" nz-button nzType="primary" (click)="syncOdooApps()" [nzLoading]="syncing">Model apps</button>
+              </div>
+            </form>
+          </div>
+
+          <div *ngSwitchCase="'import'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Manual import</h2>
+                <p>Add one source-backed item and immediately run extraction.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="importForm" class="operation-form">
+              <label>
+                <span>Source</span>
+                <nz-select formControlName="sourceId">
+                  <nz-option *ngFor="let source of sources" [nzValue]="source.id" [nzLabel]="source.name"></nz-option>
+                </nz-select>
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Mode</span>
+                  <input nz-input formControlName="mode" />
+                </label>
+                <label>
+                  <span>Project</span>
+                  <input nz-input formControlName="projectKey" />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label>
+                  <span>External ID</span>
+                  <input nz-input formControlName="externalId" />
+                </label>
+                <label>
+                  <span>Title</span>
+                  <input nz-input formControlName="title" />
+                </label>
+              </div>
+              <label>
+                <span>Source URI</span>
+                <input nz-input formControlName="sourceUri" />
+              </label>
+              <label>
+                <span>Content</span>
+                <textarea nz-input rows="7" formControlName="content"></textarea>
+              </label>
+              <div class="form-footer">
+                <span>Manual imports are logged with provenance.</span>
+                <button type="button" nz-button nzType="primary" (click)="sync()" [nzLoading]="syncing">Sync and extract</button>
+              </div>
+            </form>
+          </div>
+
+          <div *ngSwitchCase="'search'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Search extracted context</h2>
+                <p>Retrieve only relevant source-linked facts before planning or answering.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="searchForm" class="operation-form">
+              <label>
+                <span>Query</span>
+                <textarea nz-input rows="4" formControlName="query"></textarea>
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Project</span>
+                  <input nz-input formControlName="projectKey" />
+                </label>
+                <label>
+                  <span>Limit</span>
+                  <input nz-input type="number" formControlName="limit" />
+                </label>
+              </div>
+              <div class="form-footer">
+                <label nz-checkbox formControlName="includeSensitive">Include sensitive</label>
+                <button type="button" nz-button nzType="primary" (click)="search()">Search context</button>
+              </div>
+            </form>
+            <div *ngIf="searchResult" class="search-results">
+              <p>{{ searchResult.explanation }}</p>
+              <article *ngFor="let item of searchResult.usedContext" title="Click the source record in HAI for full provenance">
+                <strong>{{ item.extraction.summary || item.extraction.text }}</strong>
+                <span>{{ item.explanation }} · score {{ item.score }}</span>
+                <small>{{ item.extraction.sourceLabel || item.extraction.sourceUri || 'source linked' }}</small>
+              </article>
+              <nz-empty *ngIf="!searchResult.usedContext.length" nzNotFoundContent="No relevant extracted context."></nz-empty>
+            </div>
+          </div>
+        </ng-container>
+      </section>
+
+      <aside class="panel inspector">
+        <div class="panel-heading compact">
+          <div>
+            <h2>Selected source</h2>
+            <p>Granular controls stay here instead of cluttering the main workflow.</p>
+          </div>
+        </div>
+        <ng-container *ngIf="selectedSource() as source; else noSource">
+          <div class="source-detail">
+            <div class="source-detail__hero">
+              <div class="source-row__icon" [attr.data-status]="statusTone(source.status)">
+                <i nz-icon nzType="cluster" nzTheme="outline"></i>
+              </div>
+              <div>
+                <strong>{{ source.name }}</strong>
+                <span>{{ connectorFor(source)?.name || source.connectorKey }}</span>
+              </div>
+            </div>
+            <dl>
+              <div>
+                <dt>Status</dt>
+                <dd>{{ statusText(source.status) }} · {{ source.enabled ? 'enabled' : 'paused' }}</dd>
+              </div>
+              <div>
+                <dt>Sync</dt>
+                <dd>{{ source.syncFrequency || 'manual' }} · {{ source.syncTarget || 'no target configured' }}</dd>
+              </div>
+              <div>
+                <dt>Project</dt>
+                <dd>{{ source.defaultProjectKey || 'not scoped' }}</dd>
+              </div>
+              <div>
+                <dt>Latest job</dt>
+                <dd>{{ latestJobFor(source)?.status || 'no job yet' }}</dd>
+              </div>
+            </dl>
+            <div class="inspector-actions">
+              <button type="button" nz-button nzType="default" (click)="syncSource(source)" [disabled]="!syncButtonVisible(source)" [nzLoading]="syncing">Sync</button>
+              <button type="button" nz-button nzType="default" (click)="reindex(source)">Re-index</button>
+              <button type="button" *ngIf="source.enabled" nz-button nzType="default" (click)="pause(source)">Pause</button>
+              <button type="button" *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzType="default" (click)="resume(source)">Resume</button>
+            </div>
+            <details>
+              <summary>Permissions and filters</summary>
+              <p><strong>Permissions:</strong> {{ sourcePermissions(source).join(', ') || 'not specified' }}</p>
+              <p><strong>Excluded:</strong> {{ sourceExcludePatterns(source).join(', ') || 'none' }}</p>
+            </details>
+            <details class="danger-zone">
+              <summary>Danger zone</summary>
+              <p>Revoking stops future sync and keeps the action in the audit log.</p>
+              <button type="button" nz-button nzDanger nzType="default" (click)="revoke(source)">Revoke source</button>
+            </details>
+          </div>
+        </ng-container>
+        <ng-template #noSource>
+          <nz-empty nzNotFoundContent="Select or connect a source."></nz-empty>
+        </ng-template>
+      </aside>
+    </section>
+
+    <section class="lower-grid">
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Extracted context</h2>
+            <p>Facts, tasks, dates, and follow-ups stay editable and source-linked.</p>
+          </div>
+          <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()" title="Include archived extraction records">Show archived</label>
+        </div>
+        <div class="record-list">
+          <article *ngFor="let extraction of recentExtractions()">
+            <div>
+              <strong>{{ extraction.summary || extraction.text }}</strong>
+              <span>{{ extraction.contentType }} · {{ extraction.sourceLabel || extraction.sourceUri || 'source linked' }}</span>
+              <small>
+                {{ extraction.tasks || extraction.followUps || extraction.decisions || 'No task extracted' }}
+              </small>
+            </div>
+            <div class="record-flags">
+              <span *ngIf="extraction.sensitive" class="status-pill local">sensitive</span>
+              <span *ngIf="extraction.uncertain" class="status-pill" data-status="watch">uncertain</span>
+            </div>
+            <div class="record-actions">
+              <button type="button" class="icon-button" (click)="markCorrected(extraction)" title="Mark corrected">
+                <i nz-icon nzType="check" nzTheme="outline"></i>
+              </button>
+              <button type="button" class="icon-button" (click)="archive(extraction)" title="Archive">
+                <i nz-icon nzType="inbox" nzTheme="outline"></i>
+              </button>
+              <button type="button" class="icon-button icon-button--danger" (click)="delete(extraction)" title="Delete">
+                <i nz-icon nzType="delete" nzTheme="outline"></i>
+              </button>
+            </div>
+          </article>
+          <nz-empty *ngIf="!recentExtractions().length" nzNotFoundContent="No extracted records yet."></nz-empty>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Sync jobs and audit</h2>
+            <p>Every source action is traceable.</p>
+          </div>
+        </div>
+        <div class="timeline">
+          <article *ngFor="let job of recentSyncJobs()" [attr.data-status]="statusTone(job.status)">
+            <i nz-icon nzType="sync" nzTheme="outline"></i>
+            <div>
+              <strong>{{ statusText(job.status) }} · {{ job.mode }}</strong>
+              <span>{{ job.itemsSeen }} seen, {{ job.itemsAdded }} added, {{ job.itemsFailed }} failed</span>
+              <small>{{ job.startedAt | date: 'short' }} · {{ job.message || 'no message' }}</small>
+            </div>
+          </article>
+          <article *ngFor="let log of recentAuditLogs()" data-status="neutral">
+            <i nz-icon nzType="history" nzTheme="outline"></i>
+            <div>
+              <strong>{{ log.action }}</strong>
+              <span>{{ log.message }}</span>
+              <small>{{ log.createdAt | date: 'short' }}</small>
+            </div>
+          </article>
+          <nz-empty *ngIf="!recentSyncJobs().length && !recentAuditLogs().length" nzNotFoundContent="No source activity yet."></nz-empty>
+        </div>
+      </section>
+    </section>
+  </main>
 </section>

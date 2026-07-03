@@ -25,10 +25,10 @@ type Scheduler struct {
 
 func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limit int) *Scheduler {
 	if interval < 15*time.Second {
-		interval = time.Minute
+		interval = 10 * time.Minute
 	}
 	if limit <= 0 {
-		limit = 5
+		limit = 2
 	}
 	return &Scheduler{service: service, interval: interval, limit: limit}
 }
@@ -42,7 +42,9 @@ func StartScheduler(ctx context.Context, service ScheduledWorkflowService) {
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
-	s.runOnce()
+	if schedulerRunOnStartup() {
+		s.runOnce()
+	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -98,11 +100,11 @@ func schedulerEnabled(name string, defaultEnabled bool) bool {
 func schedulerInterval(name string) time.Duration {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return time.Minute
+		return 10 * time.Minute
 	}
 	var seconds int64
 	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 15 {
-		return time.Minute
+		return 10 * time.Minute
 	}
 	return time.Duration(seconds) * time.Second
 }
@@ -110,16 +112,21 @@ func schedulerInterval(name string) time.Duration {
 func schedulerLimit() int {
 	value := strings.TrimSpace(os.Getenv("WORKFLOW_SCHEDULER_RUN_LIMIT"))
 	if value == "" {
-		return 5
+		return 2
 	}
 	var parsed int
 	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil || parsed <= 0 {
-		return 5
+		return 2
 	}
 	if parsed > 50 {
 		return 50
 	}
 	return parsed
+}
+
+func schedulerRunOnStartup() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("WORKFLOW_SCHEDULER_RUN_ON_STARTUP")))
+	return value == "true" || value == "1" || value == "yes"
 }
 
 func claimLeaseDuration() time.Duration {

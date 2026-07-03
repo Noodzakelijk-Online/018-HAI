@@ -1,8 +1,6 @@
 import {NgModule} from '@angular/core';
 import {CommonModule} from '@angular/common';
 import {LoginComponent} from './login.component';
-import {AUTH_SERVICE_TOKEN} from "../../services/auth/auth.service.token";
-import {AuthService} from "../../services/auth/auth.service";
 import {FormsModule, ReactiveFormsModule} from "@angular/forms";
 import { RouterModule, Routes } from '@angular/router';
 import {NzFormModule} from "ng-zorro-antd/form";
@@ -34,10 +32,7 @@ const routes: Routes = [
     NzLayoutModule,
     RouterModule.forChild(routes)
   ],
-  exports: [LoginComponent],
-  providers: [
-    {provide: AUTH_SERVICE_TOKEN, useClass: AuthService}
-  ]
+  exports: [LoginComponent]
 })
 export class LoginModule {
 }

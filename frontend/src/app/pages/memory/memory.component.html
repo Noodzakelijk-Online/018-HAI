@@ -1,181 +1,446 @@
-<section>
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
-        <h1 class="header-content__title">Context Memory</h1>
-        <div class="header-content__actions">
-          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
-            <i nz-icon nzType="reload" nzTheme="outline"></i>
-            Refresh
-          </button>
-          <button nz-button nzType="default" (click)="exportMemories()">
-            <i nz-icon nzType="download" nzTheme="outline"></i>
-            Export
-          </button>
-          <button nz-button nzType="default" (click)="goHome()">
-            <i nz-icon nzType="appstore" nzTheme="outline"></i>
-            Automations
-          </button>
-        </div>
-      </div>
-    </nz-header>
+<section class="memory-shell" [class.memory-shell--dark]="themeMode === 'dark'">
+  <header class="memory-header">
+    <div>
+      <p class="eyebrow">Context intelligence</p>
+      <h1>Context Memory</h1>
+      <span>Store useful context, retrieve only what matters, and keep learned facts reviewable.</span>
+    </div>
+    <div class="header-actions">
+      <button type="button" nz-button nzType="default" (click)="toggleTheme()" [title]="themeLabel()">
+        <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
+        {{ themeLabel() }}
+      </button>
+      <button type="button" nz-button nzType="default" (click)="refresh()" [nzLoading]="loading" title="Reload memory records">
+        <i nz-icon nzType="reload" nzTheme="outline"></i>
+        Refresh
+      </button>
+      <button type="button" nz-button nzType="default" (click)="exportMemories()" title="Download memories for the selected project as JSON">
+        <i nz-icon nzType="download" nzTheme="outline"></i>
+        Export
+      </button>
+      <button type="button" nz-button nzType="default" (click)="goHome()" title="Open automation registry">
+        <i nz-icon nzType="appstore" nzTheme="outline"></i>
+        Automations
+      </button>
+    </div>
+  </header>
 
-    <nz-content class="content-container">
-      <div class="memory-grid">
-        <nz-card nzSize="small" [nzTitle]="editingId ? 'Correct Memory' : 'Store Memory'">
-          <form nz-form [formGroup]="memoryForm">
-            <div class="form-row">
-              <nz-form-item>
-                <nz-form-label>Project</nz-form-label>
-                <nz-form-control>
+  <main class="memory-content">
+    <section class="status-strip" aria-label="Memory status">
+      <button type="button" title="Active memory records available for retrieval">
+        <strong>{{ activeMemories().length }}</strong>
+        <span>active memories</span>
+      </button>
+      <button type="button" title="Memory records archived and excluded from normal context">
+        <strong>{{ archivedCount() }}</strong>
+        <span>archived</span>
+      </button>
+      <button type="button" title="Memory records with explicit source URI or source label">
+        <strong>{{ sourceLinkedCount() }}</strong>
+        <span>source-linked</span>
+      </button>
+      <button type="button" [class.attention]="sourceCorrectionCount() > 0" title="Robert-corrected connected-source lessons available for review">
+        <strong>{{ sourceCorrectionCount() }}</strong>
+        <span>learned corrections</span>
+      </button>
+      <button type="button" [class.attention]="importPursuitLinkCount() > 0" title="Pursuits linked by the most recent AI-thread import">
+        <strong>{{ importPursuitLinkCount() }}</strong>
+        <span>import pursuit links</span>
+      </button>
+      <button type="button" title="Average confidence across the currently loaded memory set">
+        <strong>{{ averageConfidence() }}</strong>
+        <span>avg confidence</span>
+      </button>
+      <button type="button" [class.attention]="lowConfidenceCount() > 0" title="Records that may need review or correction">
+        <strong>{{ lowConfidenceCount() }}</strong>
+        <span>needs review</span>
+      </button>
+    </section>
+
+    <section class="action-rail" aria-label="Memory actions">
+      <button
+        type="button"
+        *ngFor="let action of memoryActions"
+        class="action-tile"
+        [class.action-tile--active]="selectedAction === action.id"
+        [attr.data-tone]="action.tone"
+        (click)="setAction(action.id)"
+        [title]="action.title + ': ' + action.detail"
+      >
+        <i nz-icon [nzType]="action.icon" nzTheme="outline"></i>
+        <span>
+          <strong>{{ action.title }}</strong>
+          <small>{{ action.detail }}</small>
+        </span>
+        <em>{{ action.metric }}</em>
+      </button>
+    </section>
+
+    <section class="workspace-grid">
+      <aside class="panel memory-library">
+        <div class="panel-heading">
+          <div>
+            <h2>Memory library</h2>
+            <p>Useful lessons only. Irrelevant context stays unloaded.</p>
+          </div>
+          <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()" title="Include archived records in the library">Archived</label>
+        </div>
+
+        <div class="memory-list">
+          <article
+            *ngFor="let memory of recentMemories()"
+            class="memory-row"
+            [class.memory-row--selected]="selectedMemory()?.id === memory.id"
+            (click)="selectMemory(memory)"
+            [title]="memoryTitle(memory)"
+          >
+            <div class="memory-row__icon" [attr.data-tone]="kindTone(memory.kind)">
+              <i nz-icon nzType="database" nzTheme="outline"></i>
+            </div>
+            <div class="memory-row__main">
+              <strong>{{ memoryTitle(memory) }}</strong>
+              <span>{{ memory.projectKey || 'global' }} / {{ memory.kind }}</span>
+              <small>{{ memory.sourceLabel || memory.sourceUri || 'manual memory' }}</small>
+            </div>
+            <div class="memory-row__meta">
+              <span *ngIf="isSourceCorrection(memory)" class="status-pill" data-status="good">correction</span>
+              <span class="status-pill" [attr.data-status]="confidenceTone(memory)">{{ memory.confidence }}</span>
+              <span *ngIf="memory.archived" class="status-pill muted">archived</span>
+            </div>
+          </article>
+          <nz-empty *ngIf="!memories.length && !loading" nzNotFoundContent="No memory records yet."></nz-empty>
+        </div>
+      </aside>
+
+      <section class="panel action-panel">
+        <ng-container [ngSwitch]="selectedAction">
+          <div *ngSwitchCase="'store'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>{{ editingId ? 'Correct memory' : 'Store memory' }}</h2>
+                <p>Save compact, source-aware facts. Do not store everything blindly.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="memoryForm" class="operation-form">
+              <div class="field-grid">
+                <label>
+                  <span>Project</span>
                   <input nz-input formControlName="projectKey" />
-                </nz-form-control>
-              </nz-form-item>
-              <nz-form-item>
-                <nz-form-label>Kind</nz-form-label>
-                <nz-form-control>
+                </label>
+                <label>
+                  <span>Kind</span>
                   <nz-select formControlName="kind">
                     <nz-option nzValue="preference" nzLabel="Preference"></nz-option>
                     <nz-option nzValue="project" nzLabel="Project context"></nz-option>
                     <nz-option nzValue="decision" nzLabel="Decision"></nz-option>
                     <nz-option nzValue="source" nzLabel="Source note"></nz-option>
+                    <nz-option nzValue="lesson" nzLabel="Lesson"></nz-option>
+                    <nz-option nzValue="procedural" nzLabel="Procedure"></nz-option>
                   </nz-select>
-                </nz-form-control>
-              </nz-form-item>
-            </div>
-            <nz-form-item>
-              <nz-form-label>Content</nz-form-label>
-              <nz-form-control nzErrorTip="Memory content is required.">
-                <textarea nz-input rows="5" formControlName="content"></textarea>
-              </nz-form-control>
-            </nz-form-item>
-            <nz-form-item>
-              <nz-form-label>Summary</nz-form-label>
-              <nz-form-control>
+                </label>
+              </div>
+              <label>
+                <span>Content</span>
+                <textarea nz-input rows="6" formControlName="content"></textarea>
+              </label>
+              <label>
+                <span>Compact summary</span>
                 <input nz-input formControlName="summary" placeholder="Optional compact summary" />
-              </nz-form-control>
-            </nz-form-item>
-            <div class="form-row">
-              <nz-form-item>
-                <nz-form-label>Tags</nz-form-label>
-                <nz-form-control>
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Tags</span>
                   <input nz-input formControlName="tags" placeholder="comma, separated" />
-                </nz-form-control>
-              </nz-form-item>
-              <nz-form-item>
-                <nz-form-label>Confidence</nz-form-label>
-                <nz-form-control>
+                </label>
+                <label>
+                  <span>Confidence</span>
                   <input nz-input type="number" min="0.1" max="1" step="0.1" formControlName="confidence" />
-                </nz-form-control>
-              </nz-form-item>
-            </div>
-            <div class="form-row">
-              <nz-form-item>
-                <nz-form-label>Source URI</nz-form-label>
-                <nz-form-control>
+                </label>
+              </div>
+              <div class="field-grid">
+                <label>
+                  <span>Source URI</span>
                   <input nz-input formControlName="sourceUri" />
-                </nz-form-control>
-              </nz-form-item>
-              <nz-form-item>
-                <nz-form-label>Source label</nz-form-label>
-                <nz-form-control>
+                </label>
+                <label>
+                  <span>Source label</span>
                   <input nz-input formControlName="sourceLabel" />
-                </nz-form-control>
-              </nz-form-item>
-            </div>
-            <div class="button-row">
-              <button nz-button nzType="primary" (click)="save()" [nzLoading]="saving">
-                Save
-              </button>
-              <button nz-button nzType="default" (click)="clearForm()">Clear</button>
-            </div>
-          </form>
-        </nz-card>
+                </label>
+              </div>
+              <div class="form-footer">
+                <span>{{ editingId ? 'This will update an existing memory.' : 'Only useful context should be saved.' }}</span>
+                <button type="button" nz-button nzType="default" (click)="clearForm()">Clear</button>
+                <button type="button" nz-button nzType="primary" (click)="save()" [nzLoading]="saving">Save memory</button>
+              </div>
+            </form>
+          </div>
 
-        <nz-card nzSize="small" nzTitle="Retrieve Relevant Context">
-          <form nz-form [formGroup]="retrieveForm">
-            <nz-form-item>
-              <nz-form-label>Task or query</nz-form-label>
-              <nz-form-control>
+          <div *ngSwitchCase="'retrieve'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Retrieve relevant context</h2>
+                <p>Rank by project match, relevance, recency, confidence, and source support.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="retrieveForm" class="operation-form">
+              <label>
+                <span>Task or query</span>
                 <textarea nz-input rows="5" formControlName="query"></textarea>
-              </nz-form-control>
-            </nz-form-item>
-            <div class="form-row">
-              <nz-form-item>
-                <nz-form-label>Project</nz-form-label>
-                <nz-form-control>
+              </label>
+              <div class="field-grid">
+                <label>
+                  <span>Project</span>
                   <input nz-input formControlName="projectKey" />
-                </nz-form-control>
-              </nz-form-item>
-              <nz-form-item>
-                <nz-form-label>Limit</nz-form-label>
-                <nz-form-control>
+                </label>
+                <label>
+                  <span>Limit</span>
                   <input nz-input type="number" formControlName="limit" />
-                </nz-form-control>
-              </nz-form-item>
+                </label>
+              </div>
+              <div class="form-footer">
+                <span>Retrieval should explain which memories were used and why.</span>
+                <button type="button" nz-button nzType="primary" (click)="retrieve()" [nzLoading]="retrieving">Retrieve context</button>
+              </div>
+            </form>
+            <div *ngIf="retrieveResult" class="retrieve-results">
+              <p>{{ retrieveResult.explanation }}</p>
+              <article *ngFor="let item of retrieveResult.usedContext" (click)="selectMemory(item.memory)" title="Select this memory">
+                <strong>{{ item.memory.summary || item.memory.content }}</strong>
+                <span>{{ item.explanation }}</span>
+                <small>score {{ item.score }} / {{ item.memory.sourceLabel || item.memory.sourceUri || 'manual memory' }}</small>
+              </article>
+              <nz-empty *ngIf="!retrieveResult.usedContext.length" nzNotFoundContent="No relevant context matched this task."></nz-empty>
             </div>
-            <button nz-button nzType="primary" (click)="retrieve()" [nzLoading]="retrieving">
-              Retrieve Context
-            </button>
-          </form>
-        </nz-card>
-      </div>
+          </div>
 
-      <nz-card nzTitle="Context Used" *ngIf="retrieveResult" class="section-card">
-        <p>{{ retrieveResult.explanation }}</p>
-        <nz-empty *ngIf="!retrieveResult.usedContext.length" nzNotFoundContent="No relevant context matched this task."></nz-empty>
-        <nz-table *ngIf="retrieveResult.usedContext.length" [nzData]="retrieveResult.usedContext" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Score</th>
-              <th>Summary</th>
-              <th>Why used</th>
-              <th>Source</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of retrieveResult.usedContext">
-              <td>{{ item.score }}</td>
-              <td>{{ item.memory.summary || item.memory.content }}</td>
-              <td>{{ item.explanation }}</td>
-              <td>{{ item.memory.sourceLabel || item.memory.sourceUri || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+          <div *ngSwitchCase="'import'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Import AI conversation</h2>
+                <p>Raw chat history is encrypted, compact insights are extracted, and actions are routed into workflows and pursuits.</p>
+              </div>
+            </div>
+            <form nz-form [formGroup]="importForm" class="operation-form">
+              <div class="field-grid">
+                <label>
+                  <span>Platform</span>
+                  <nz-select formControlName="platform">
+                    <nz-option nzValue="chatgpt" nzLabel="ChatGPT"></nz-option>
+                    <nz-option nzValue="gemini" nzLabel="Gemini"></nz-option>
+                    <nz-option nzValue="copilot" nzLabel="Copilot"></nz-option>
+                    <nz-option nzValue="deepseek" nzLabel="DeepSeek"></nz-option>
+                  </nz-select>
+                </label>
+                <label>
+                  <span>Project</span>
+                  <input nz-input formControlName="projectKey" />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label>
+                  <span>Title</span>
+                  <input nz-input formControlName="title" />
+                </label>
+                <label>
+                  <span>External ID</span>
+                  <input nz-input formControlName="externalId" placeholder="thread id, optional" />
+                </label>
+              </div>
+              <label>
+                <span>Source URI</span>
+                <input nz-input formControlName="sourceUri" />
+              </label>
+              <label>
+                <span>Messages</span>
+                <textarea
+                  nz-input
+                  rows="8"
+                  formControlName="messagesText"
+                  placeholder="user: ...&#10;assistant: Decision: ...&#10;assistant: Action: ..."
+                ></textarea>
+              </label>
+              <div class="form-footer">
+                <span>High-risk actions become review-gated workflows. Stable facts become compact memory.</span>
+                <button type="button" nz-button nzType="primary" (click)="importConversation()" [nzLoading]="importing">Import and route</button>
+              </div>
+            </form>
 
-      <nz-card nzTitle="Stored Memories" class="section-card">
-        <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()">Show archived</label>
-        <nz-table [nzData]="memories" [nzLoading]="loading" nzSize="small" [nzPageSize]="10">
-          <thead>
-            <tr>
-              <th>Kind</th>
-              <th>Summary</th>
-              <th>Tags</th>
-              <th>Confidence</th>
-              <th>Last used</th>
-              <th nzWidth="260px">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let memory of memories">
-              <td>
-                <nz-tag [nzColor]="memory.archived ? 'default' : 'blue'">{{ memory.kind }}</nz-tag>
-              </td>
-              <td>{{ memory.summary || memory.content }}</td>
-              <td>{{ memory.tags || '-' }}</td>
-              <td>{{ memory.confidence }}</td>
-              <td>{{ memory.lastUsedAt ? (memory.lastUsedAt | date: 'short') : '-' }}</td>
-              <td>
-                <button nz-button nzSize="small" nzType="default" (click)="edit(memory)">Edit</button>
-                <button *ngIf="!memory.archived" nz-button nzSize="small" nzType="default" (click)="archive(memory)">Archive</button>
-                <button *ngIf="memory.archived" nz-button nzSize="small" nzType="default" (click)="restore(memory)">Restore</button>
-                <button nz-button nzSize="small" nzType="link" nzDanger (click)="delete(memory)">Delete</button>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-    </nz-content>
-  </nz-layout>
+            <div *ngIf="importResult" class="retrieve-results">
+              <p>
+                Imported {{ importResult.conversation.messageCount }} encrypted message(s),
+                extracted {{ importResult.insights.length }} insight(s),
+                created {{ importWorkflowCount() }} workflow(s),
+                linked {{ importPursuitLinkCount() }} pursuit(s).
+              </p>
+              <article *ngFor="let link of importResult.pursuitLinks" [title]="link.message || 'Open linked pursuit'">
+                <strong>{{ link.message || (link.created ? 'Created pursuit candidate' : 'Linked existing pursuit') }}</strong>
+                <span>score {{ link.score }} / {{ link.created ? 'candidate created' : 'matched existing pursuit' }}</span>
+                <small>{{ link.reasons?.join(', ') || 'No matching rationale recorded' }}</small>
+                <button type="button" nz-button nzType="link" *ngIf="link.pursuitId" (click)="openPursuit(link.pursuitId)">
+                  Open pursuit
+                </button>
+              </article>
+              <article *ngIf="importWarningCount()" title="Warnings from import, workflow intake, memory, or pursuit linking">
+                <strong>Warnings</strong>
+                <span>{{ importResult.warnings?.join(' / ') }}</span>
+              </article>
+              <nz-empty *ngIf="!importPursuitLinkCount() && !importWarningCount()" nzNotFoundContent="No pursuit links or warnings returned from this import."></nz-empty>
+            </div>
+          </div>
+
+          <div *ngSwitchCase="'corrections'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Learned source corrections</h2>
+                <p>Corrections from connected sources become reviewable lessons before they shape future automation.</p>
+              </div>
+            </div>
+            <div class="correction-list">
+              <article *ngFor="let memory of sourceCorrectionMemories()" class="correction-card" [title]="memoryTitle(memory)">
+                <button type="button" class="review-main" (click)="selectMemory(memory)">
+                  <strong>{{ memoryTitle(memory) }}</strong>
+                  <span>{{ memory.projectKey || 'global' }} / {{ memory.sourceLabel || memory.sourceUri || 'source correction' }}</span>
+                </button>
+                <div class="correction-card__meta">
+                  <span class="status-pill" [attr.data-status]="confidenceTone(memory)">{{ memory.confidence }}</span>
+                  <button type="button" class="icon-button" (click)="edit(memory)" title="Correct this learned lesson">
+                    <i nz-icon nzType="edit" nzTheme="outline"></i>
+                  </button>
+                  <button type="button" *ngIf="!memory.archived" class="icon-button" (click)="archive(memory)" title="Archive this learned correction">
+                    <i nz-icon nzType="inbox" nzTheme="outline"></i>
+                  </button>
+                  <button type="button" *ngIf="memory.archived" class="icon-button" (click)="restore(memory)" title="Restore this learned correction">
+                    <i nz-icon nzType="undo" nzTheme="outline"></i>
+                  </button>
+                </div>
+              </article>
+              <nz-empty *ngIf="!sourceCorrectionMemories().length" nzNotFoundContent="No source corrections have been learned yet."></nz-empty>
+            </div>
+          </div>
+
+          <div *ngSwitchCase="'review'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Review memories</h2>
+                <p>Correct weak records, archive stale context, and keep memory compact.</p>
+              </div>
+            </div>
+            <div class="review-list">
+              <article *ngFor="let memory of recentMemories()">
+                <button type="button" class="review-main" (click)="selectMemory(memory)">
+                  <strong>{{ memoryTitle(memory) }}</strong>
+                  <span>{{ memory.kind }} / {{ memory.projectKey || 'global' }}</span>
+                </button>
+                <span class="status-pill" [attr.data-status]="confidenceTone(memory)">{{ memory.confidence }}</span>
+                <button type="button" class="icon-button" (click)="edit(memory)" title="Edit memory">
+                  <i nz-icon nzType="edit" nzTheme="outline"></i>
+                </button>
+                <button type="button" *ngIf="!memory.archived" class="icon-button" (click)="archive(memory)" title="Archive memory">
+                  <i nz-icon nzType="inbox" nzTheme="outline"></i>
+                </button>
+                <button type="button" *ngIf="memory.archived" class="icon-button" (click)="restore(memory)" title="Restore memory">
+                  <i nz-icon nzType="undo" nzTheme="outline"></i>
+                </button>
+              </article>
+            </div>
+          </div>
+
+          <div *ngSwitchCase="'cleanup'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Cleanup queue</h2>
+                <p>Use this when memory gets stale, duplicated, low-confidence, or no longer useful.</p>
+              </div>
+            </div>
+            <div class="cleanup-panel">
+              <button type="button" nz-button nzType="default" (click)="includeArchived = !includeArchived; refresh()">
+                {{ includeArchived ? 'Hide archived' : 'Show archived' }}
+              </button>
+              <button type="button" nz-button nzType="default" (click)="setAction('review')">Review records</button>
+              <button type="button" nz-button nzType="primary" (click)="exportMemories()">Export before cleanup</button>
+              <p>Deletion remains manual and confirmed per record. Archive first unless the data is clearly wrong or unwanted.</p>
+            </div>
+          </div>
+
+          <div *ngSwitchCase="'export'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Export memory</h2>
+                <p>Download the selected project memory as JSON for backup, audit, or migration.</p>
+              </div>
+            </div>
+            <div class="cleanup-panel">
+              <button type="button" nz-button nzType="primary" (click)="exportMemories()">Export now</button>
+              <button type="button" nz-button nzType="default" (click)="setAction('retrieve')">Back to retrieval</button>
+              <p>The export uses the project key currently set in the store-memory form.</p>
+            </div>
+          </div>
+        </ng-container>
+      </section>
+
+      <aside class="panel inspector">
+        <div class="panel-heading compact">
+          <div>
+            <h2>Selected memory</h2>
+            <p>Provenance and granular controls stay here.</p>
+          </div>
+        </div>
+
+        <ng-container *ngIf="selectedMemory() as memory; else noMemory">
+          <div class="memory-detail">
+            <div class="memory-detail__hero">
+              <div class="memory-row__icon" [attr.data-tone]="kindTone(memory.kind)">
+                <i nz-icon nzType="database" nzTheme="outline"></i>
+              </div>
+              <div>
+                <strong>{{ memoryTitle(memory) }}</strong>
+                <span>{{ memory.kind }} / {{ memory.projectKey || 'global' }}</span>
+              </div>
+            </div>
+            <dl>
+              <div>
+                <dt>Confidence</dt>
+                <dd>{{ memory.confidence }} / {{ confidenceTone(memory) }}</dd>
+              </div>
+              <div>
+                <dt>Source</dt>
+                <dd>{{ memory.sourceLabel || memory.sourceUri || 'manual / unlinked' }}</dd>
+              </div>
+              <div>
+                <dt>Last used</dt>
+                <dd>{{ memory.lastUsedAt ? (memory.lastUsedAt | date: 'short') : 'not used yet' }}</dd>
+              </div>
+              <div>
+                <dt>Updated</dt>
+                <dd>{{ memory.updatedAt || memory.createdAt ? (updatedLabel(memory) | date: 'short') : 'not dated' }}</dd>
+              </div>
+            </dl>
+            <div class="tag-list">
+              <span *ngIf="isSourceCorrection(memory)" class="status-pill" data-status="good">learned correction</span>
+              <span *ngFor="let tag of memoryTags(memory)" class="status-pill">{{ tag }}</span>
+              <span *ngIf="!memoryTags(memory).length" class="status-pill muted">no tags</span>
+              <span *ngIf="memory.archived" class="status-pill muted">archived</span>
+            </div>
+            <div class="inspector-actions">
+              <button type="button" nz-button nzType="default" (click)="edit(memory)">Edit</button>
+              <button type="button" *ngIf="!memory.archived" nz-button nzType="default" (click)="archive(memory)">Archive</button>
+              <button type="button" *ngIf="memory.archived" nz-button nzType="default" (click)="restore(memory)">Restore</button>
+            </div>
+            <details>
+              <summary>Full content</summary>
+              <p>{{ memory.content }}</p>
+            </details>
+            <details class="danger-zone">
+              <summary>Danger zone</summary>
+              <p>Delete only when the record is wrong, private data should be removed, or it must never be used again.</p>
+              <button type="button" nz-button nzDanger nzType="default" (click)="delete(memory)">Delete permanently</button>
+            </details>
+          </div>
+        </ng-container>
+        <ng-template #noMemory>
+          <nz-empty nzNotFoundContent="Select or store a memory."></nz-empty>
+        </ng-template>
+      </aside>
+    </section>
+  </main>
 </section>

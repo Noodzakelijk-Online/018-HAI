@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"automation-hub-backend/docs"
+	"automation-hub-backend/internal/agentcycle"
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
+	"automation-hub-backend/internal/assistant"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
 	"automation-hub-backend/internal/config"
@@ -17,6 +19,7 @@ import (
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
+	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
@@ -55,9 +58,10 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeLLMRoutes(v1, llmHandler)
 		memoryService := memory.DefaultService()
 		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
-		sourceService := source.NewServiceWithWorkflow(source.DefaultRepository(), memoryService, workflow.DefaultService())
-		source.StartScheduler(context.Background(), sourceService)
-		initializeSourceRoutes(v1, source.NewHandler(sourceService))
+		workflowRunner := workflowtask.NewDeferredRunner()
+		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner, memoryService)
+		pursuitService := pursuit.NewService(pursuit.DefaultRepository(), workflowService)
+		sourceService := source.NewServiceWithWorkflowAndPursuitLinker(source.DefaultRepository(), memoryService, workflowService, pursuitService)
 		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService)
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
 		taskService := task.NewServiceWithEngines(
@@ -67,26 +71,32 @@ func initializeRoutes(router *gin.Engine) error {
 			verificationService,
 			task.NewAutomationToolExecutor(automationService),
 		)
-		workflowRunner := workflowtask.NewRunner(taskService)
-		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner)
+		workflowRunner.Set(workflowtask.NewRunner(taskService))
+		source.StartScheduler(context.Background(), sourceService)
 		workflow.StartScheduler(context.Background(), workflowService)
+		initializeSourceRoutes(v1, source.NewHandler(sourceService))
 		initializeWorkflowRoutes(v1, workflow.NewHandler(workflowService))
+		initializePursuitRoutes(v1, pursuit.NewHandler(pursuitService))
 		memoryEngineSecret := config.AppConfig.MemoryEngineKey
 		if strings.TrimSpace(memoryEngineSecret) == "" {
 			memoryEngineSecret = config.AppConfig.BackendAPIKey
 		}
-		memoryEngineService := memoryengine.NewService(
+		memoryEngineService := memoryengine.NewServiceWithPursuitLinker(
 			memoryengine.DefaultRepository(),
 			memoryService,
 			workflowService,
 			memoryEngineSecret,
+			pursuitService,
 		)
 		initializeMemoryEngineRoutes(v1, memoryengine.NewHandler(memoryEngineService))
-		ambientService := ambient.NewService(ambient.DefaultRepository(), workflowService, memoryEngineService)
+		ambientService := ambient.NewServiceWithPursuits(ambient.DefaultRepository(), workflowService, memoryEngineService, pursuitService, memoryService)
 		ambient.StartScheduler(context.Background(), ambientService)
 		initializeAmbientRoutes(v1, ambient.NewHandler(ambientService))
+		agentCycleService := agentcycle.NewServiceWithPursuits(sourceService, workflowService, ambientService, pursuitService, memoryService)
+		initializeAgentCycleRoutes(v1, agentcycle.NewHandler(agentCycleService))
+		initializeAssistantRoutes(v1, assistant.NewHandler(assistant.NewService(taskService, agentCycleService)))
 		initializeAutonomyRoutes(v1, autonomy.NewHandler(autonomy.DefaultService()))
-		osHandler, err := haios.DefaultHandler()
+		osHandler, err := haios.DefaultHandlerWithPursuits(pursuitService)
 		if err != nil {
 			return err
 		}
@@ -95,6 +105,21 @@ func initializeRoutes(router *gin.Engine) error {
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+func initializeAssistantRoutes(apiVersion *gin.RouterGroup, handler *assistant.Handler) {
+	routes := apiVersion.Group("/assistant")
+	{
+		routes.POST("/command", handler.Command)
+		routes.GET("/logs", handler.Logs)
+	}
+}
+
+func initializeAgentCycleRoutes(apiVersion *gin.RouterGroup, handler *agentcycle.Handler) {
+	routes := apiVersion.Group("/agent-cycle")
+	{
+		routes.POST("/run", handler.Run)
+	}
 }
 
 func initializeAutonomyRoutes(apiVersion *gin.RouterGroup, handler *autonomy.Handler) {
@@ -121,6 +146,12 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 	{
 		routes.GET("/", handler.Registry)
 		routes.GET("/health", handler.Health)
+		routes.GET("/:id/skills", handler.Skills)
+		routes.POST("/:id/tasks/:taskId/stop", handler.StopTask)
+		routes.GET("/openclaw/ecosystem", handler.OpenClawEcosystem)
+		routes.PATCH("/openclaw/ecosystem", handler.SetOpenClawEcosystem)
+		routes.POST("/openclaw/ecosystem/refresh", handler.RefreshOpenClawEcosystem)
+		routes.POST("/openclaw/ecosystem/upload", handler.UploadOpenClawEcosystem)
 	}
 }
 
@@ -181,6 +212,7 @@ func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *autom
 		automations.GET("/images/:imageName", autoHandler.ImageHandler)
 		automations.GET("/:id", autoHandler.GetByID)
 		automations.POST("/:id/launch", autoHandler.Launch)
+		automations.POST("/:id/stop-runtime", autoHandler.StopRuntimeTask)
 		automations.POST("/:id/health-check", autoHandler.RunHealthCheck)
 		automations.GET("/:id/diagnostics", autoHandler.Diagnostics)
 		automations.POST("/", autoHandler.Create)
@@ -298,5 +330,33 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.POST("/:id/interruption/resolve", workflowHandler.ResolveInterruptedExecution)
 		workflowRoutes.POST("/:id/proposals/:proposalId/resolve", workflowHandler.ResolveProposal)
 		workflowRoutes.PATCH("/:id/checklist/:itemId", workflowHandler.UpdateChecklistItem)
+	}
+}
+
+func initializePursuitRoutes(apiVersion *gin.RouterGroup, pursuitHandler *pursuit.Handler) {
+	pursuitRoutes := apiVersion.Group("/pursuits")
+	{
+		pursuitRoutes.GET("/", pursuitHandler.List)
+		pursuitRoutes.POST("/", pursuitHandler.Create)
+		pursuitRoutes.GET("/dashboard", pursuitHandler.Dashboard)
+		pursuitRoutes.GET("/brief", pursuitHandler.Brief)
+		pursuitRoutes.GET("/decisions", pursuitHandler.Decisions)
+		pursuitRoutes.POST("/match", pursuitHandler.Match)
+		pursuitRoutes.POST("/intake", pursuitHandler.RouteIntake)
+		pursuitRoutes.GET("/:id/evidence", pursuitHandler.ResolveEvidence)
+		pursuitRoutes.GET("/:id", pursuitHandler.Get)
+		pursuitRoutes.PATCH("/:id", pursuitHandler.Update)
+		pursuitRoutes.POST("/:id/archive", pursuitHandler.Archive)
+		pursuitRoutes.POST("/:id/summary", pursuitHandler.RefreshSummary)
+		pursuitRoutes.POST("/:id/review", pursuitHandler.Review)
+		pursuitRoutes.POST("/:id/decisions/resolve", pursuitHandler.ResolveDecision)
+		pursuitRoutes.GET("/:id/activity", pursuitHandler.Activity)
+		pursuitRoutes.GET("/:id/next-actions", pursuitHandler.NextActions)
+		pursuitRoutes.GET("/:id/blockers", pursuitHandler.Blockers)
+		pursuitRoutes.GET("/:id/approvals", pursuitHandler.Approvals)
+		pursuitRoutes.POST("/:id/intake", pursuitHandler.Intake)
+		pursuitRoutes.POST("/:id/plan", pursuitHandler.Plan)
+		pursuitRoutes.POST("/:id/links", pursuitHandler.Link)
+		pursuitRoutes.DELETE("/:id/links/:linkId", pursuitHandler.DeleteLink)
 	}
 }

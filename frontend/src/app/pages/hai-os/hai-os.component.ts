@@ -42,6 +42,12 @@ export class HAIOSComponent implements OnInit {
     this.router.navigate([link]);
   }
 
+  openPursuits(selected?: string): void {
+    this.router.navigate(['/pursuits'], {
+      queryParams: selected ? { selected } : undefined,
+    });
+  }
+
   goHome(): void {
     this.router.navigate(['/home']);
   }

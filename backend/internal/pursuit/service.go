@@ -1,0 +1,4173 @@
+package pursuit
+
+import (
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/workflow"
+	"fmt"
+	"math"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+const (
+	StatusActive    = "active"
+	StatusWaiting   = "waiting"
+	StatusBlocked   = "blocked"
+	StatusCompleted = "completed"
+	StatusArchived  = "archived"
+
+	CompletionOpen      = "open"
+	CompletionCandidate = "candidate"
+	CompletionVerified  = "verified"
+
+	LinkWorkflow           = "workflow"
+	LinkMemory             = "memory"
+	LinkSourceExtraction   = "source_extraction"
+	LinkSourceItem         = "source_item"
+	LinkVerification       = "verification"
+	LinkAutomation         = "automation"
+	LinkAgentRuntime       = "agent_runtime"
+	LinkAmbientOpportunity = "ambient_opportunity"
+	LinkPursuit            = "pursuit"
+)
+
+const defaultAutoLinkMinimumScore = 0.45
+
+type CreateRequest struct {
+	OwnerIdentity         string  `json:"ownerIdentity,omitempty"`
+	Title                 string  `json:"title"`
+	Description           string  `json:"description,omitempty"`
+	ProjectKey            string  `json:"projectKey,omitempty"`
+	Domain                string  `json:"domain,omitempty"`
+	DesiredOutcome        string  `json:"desiredOutcome,omitempty"`
+	CurrentStateSummary   string  `json:"currentStateSummary,omitempty"`
+	Status                string  `json:"status,omitempty"`
+	PriorityScore         int     `json:"priorityScore,omitempty"`
+	RiskLevel             string  `json:"riskLevel,omitempty"`
+	Confidence            float64 `json:"confidence,omitempty"`
+	AutonomyLevel         string  `json:"autonomyLevel,omitempty"`
+	NeedCategory          string  `json:"needCategory,omitempty"`
+	SourceOfCreation      string  `json:"sourceOfCreation,omitempty"`
+	NextRecommendedAction string  `json:"nextRecommendedAction,omitempty"`
+	CompletionDefinition  string  `json:"completionDefinition,omitempty"`
+	NextReviewAt          string  `json:"nextReviewAt,omitempty"`
+}
+
+type UpdateRequest struct {
+	Title                 string   `json:"title,omitempty"`
+	Description           *string  `json:"description,omitempty"`
+	ProjectKey            *string  `json:"projectKey,omitempty"`
+	Domain                *string  `json:"domain,omitempty"`
+	DesiredOutcome        *string  `json:"desiredOutcome,omitempty"`
+	CurrentStateSummary   *string  `json:"currentStateSummary,omitempty"`
+	Status                string   `json:"status,omitempty"`
+	PriorityScore         *int     `json:"priorityScore,omitempty"`
+	RiskLevel             string   `json:"riskLevel,omitempty"`
+	Confidence            *float64 `json:"confidence,omitempty"`
+	AutonomyLevel         string   `json:"autonomyLevel,omitempty"`
+	NeedCategory          *string  `json:"needCategory,omitempty"`
+	NextRecommendedAction *string  `json:"nextRecommendedAction,omitempty"`
+	CompletionDefinition  *string  `json:"completionDefinition,omitempty"`
+	CompletionState       string   `json:"completionState,omitempty"`
+	NextReviewAt          *string  `json:"nextReviewAt,omitempty"`
+	Archived              *bool    `json:"archived,omitempty"`
+	Actor                 string   `json:"actor,omitempty"`
+}
+
+type ReviewRequest struct {
+	Action       string `json:"action,omitempty"`
+	Actor        string `json:"actor,omitempty"`
+	Note         string `json:"note,omitempty"`
+	NextReviewAt string `json:"nextReviewAt,omitempty"`
+	SnoozeDays   int    `json:"snoozeDays,omitempty"`
+}
+
+type PlanRequest struct {
+	Input          string `json:"input,omitempty"`
+	Actor          string `json:"actor,omitempty"`
+	RequiresReview bool   `json:"requiresReview,omitempty"`
+	ReviewReason   string `json:"reviewReason,omitempty"`
+}
+
+type DecisionResolutionRequest struct {
+	DecisionID    string `json:"decisionId"`
+	DecisionType  string `json:"decisionType,omitempty"`
+	Approved      bool   `json:"approved"`
+	Reason        string `json:"reason,omitempty"`
+	Note          string `json:"note,omitempty"`
+	EvidenceURI   string `json:"evidenceUri,omitempty"`
+	EvidenceLabel string `json:"evidenceLabel,omitempty"`
+	Actor         string `json:"actor,omitempty"`
+}
+
+type LinkRequest struct {
+	LinkType     string  `json:"linkType"`
+	LinkID       string  `json:"linkId"`
+	Relationship string  `json:"relationship,omitempty"`
+	SourceURI    string  `json:"sourceUri,omitempty"`
+	SourceLabel  string  `json:"sourceLabel,omitempty"`
+	Confidence   float64 `json:"confidence,omitempty"`
+	Actor        string  `json:"actor,omitempty"`
+}
+
+type MatchRequest struct {
+	Input      string `json:"input,omitempty"`
+	ProjectKey string `json:"projectKey,omitempty"`
+	SourceType string `json:"sourceType,omitempty"`
+	SourceID   string `json:"sourceId,omitempty"`
+	SourceURI  string `json:"sourceUri,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+}
+
+type MatchCandidate struct {
+	Pursuit    models.Pursuit `json:"pursuit"`
+	Score      float64        `json:"score"`
+	Reasons    []string       `json:"reasons"`
+	Confidence string         `json:"confidence"`
+}
+
+type AutoLinkWorkflowRequest struct {
+	WorkflowID           uuid.UUID `json:"workflowId"`
+	Input                string    `json:"input,omitempty"`
+	ProjectKey           string    `json:"projectKey,omitempty"`
+	SourceType           string    `json:"sourceType,omitempty"`
+	SourceID             string    `json:"sourceId,omitempty"`
+	SourceURI            string    `json:"sourceUri,omitempty"`
+	SourceLabel          string    `json:"sourceLabel,omitempty"`
+	ExtractionID         string    `json:"extractionId,omitempty"`
+	RawItemID            string    `json:"rawItemId,omitempty"`
+	Actor                string    `json:"actor,omitempty"`
+	MinimumScore         float64   `json:"minimumScore,omitempty"`
+	AllowCreateCandidate bool      `json:"allowCreateCandidate,omitempty"`
+}
+
+type AutoLinkMemoryRequest struct {
+	MemoryID             uuid.UUID `json:"memoryId"`
+	Input                string    `json:"input,omitempty"`
+	ProjectKey           string    `json:"projectKey,omitempty"`
+	SourceURI            string    `json:"sourceUri,omitempty"`
+	SourceLabel          string    `json:"sourceLabel,omitempty"`
+	Actor                string    `json:"actor,omitempty"`
+	MinimumScore         float64   `json:"minimumScore,omitempty"`
+	AllowCreateCandidate bool      `json:"allowCreateCandidate,omitempty"`
+}
+
+type AutoLinkResult struct {
+	Linked    bool                 `json:"linked"`
+	Created   bool                 `json:"created,omitempty"`
+	PursuitID uuid.UUID            `json:"pursuitId,omitempty"`
+	Score     float64              `json:"score"`
+	Reasons   []string             `json:"reasons,omitempty"`
+	Message   string               `json:"message,omitempty"`
+	Links     []models.PursuitLink `json:"links,omitempty"`
+}
+
+type IntakeRequest struct {
+	Input          string `json:"input"`
+	ProjectKey     string `json:"projectKey,omitempty"`
+	AutomationID   string `json:"automationId,omitempty"`
+	SourceType     string `json:"sourceType,omitempty"`
+	SourceID       string `json:"sourceId,omitempty"`
+	SourceURI      string `json:"sourceUri,omitempty"`
+	SourceLabel    string `json:"sourceLabel,omitempty"`
+	ContentType    string `json:"contentType,omitempty"`
+	Sender         string `json:"sender,omitempty"`
+	ReceivedAt     string `json:"receivedAt,omitempty"`
+	Trigger        string `json:"trigger,omitempty"`
+	Actor          string `json:"actor,omitempty"`
+	RequiresReview bool   `json:"requiresReview,omitempty"`
+	ReviewReason   string `json:"reviewReason,omitempty"`
+}
+
+type RoutedIntakeResult struct {
+	Mode             string           `json:"mode"`
+	Matched          bool             `json:"matched"`
+	CreatedCandidate bool             `json:"createdCandidate"`
+	PursuitID        uuid.UUID        `json:"pursuitId,omitempty"`
+	Score            float64          `json:"score,omitempty"`
+	Reasons          []string         `json:"reasons,omitempty"`
+	Message          string           `json:"message,omitempty"`
+	Matches          []MatchCandidate `json:"matches,omitempty"`
+	Detail           *PursuitDetail   `json:"detail,omitempty"`
+	AutoLink         *AutoLinkResult  `json:"autoLink,omitempty"`
+}
+
+type Dashboard struct {
+	Counts               map[string]int64           `json:"counts"`
+	DecisionQueue        []PursuitDashboardDecision `json:"decisionQueue"`
+	NeedsRobert          []PursuitListItem          `json:"needsRobert"`
+	VAReady              []PursuitListItem          `json:"vaReady"`
+	SystemReady          []PursuitListItem          `json:"systemReady"`
+	Blocked              []PursuitListItem          `json:"blocked"`
+	Stale                []PursuitListItem          `json:"stale"`
+	ReviewDue            []PursuitListItem          `json:"reviewDue"`
+	PlanningNeeded       []PursuitListItem          `json:"planningNeeded"`
+	RecentlyChanged      []PursuitListItem          `json:"recentlyChanged"`
+	HighRisk             []PursuitListItem          `json:"highRisk"`
+	CompletionCandidates []PursuitListItem          `json:"completionCandidates"`
+}
+
+type Brief struct {
+	GeneratedAt          time.Time   `json:"generatedAt"`
+	OperatingMode        string      `json:"operatingMode"`
+	Summary              string      `json:"summary"`
+	PrimaryAction        string      `json:"primaryAction"`
+	NeedsRobert          int         `json:"needsRobert"`
+	ReadyToMove          int         `json:"readyToMove"`
+	Stuck                int         `json:"stuck"`
+	ReviewDue            int         `json:"reviewDue"`
+	PlanningNeeded       int         `json:"planningNeeded"`
+	CompletionCandidates int         `json:"completionCandidates"`
+	RecentlyChanged      int         `json:"recentlyChanged"`
+	Cards                []BriefCard `json:"cards"`
+}
+
+type BriefCard struct {
+	Queue        string `json:"queue"`
+	PursuitID    string `json:"pursuitId"`
+	Title        string `json:"title"`
+	Action       string `json:"action"`
+	Context      string `json:"context"`
+	RiskLevel    string `json:"riskLevel"`
+	EvidenceLine string `json:"evidenceLine"`
+	NeedsRobert  bool   `json:"needsRobert"`
+}
+
+type PursuitListItem struct {
+	Pursuit             models.Pursuit `json:"pursuit"`
+	NeedsRobert         int            `json:"needsRobert"`
+	Blocked             int            `json:"blocked"`
+	OpenLoops           int            `json:"openLoops"`
+	DecisionCards       int            `json:"decisionCards"`
+	LinkedEvidence      int            `json:"linkedEvidence"`
+	TimelineItems       int            `json:"timelineItems"`
+	CompletionCandidate bool           `json:"completionCandidate"`
+	CurrentState        string         `json:"currentState,omitempty"`
+	WhatChanged         string         `json:"whatChanged,omitempty"`
+	NextAction          string         `json:"nextAction,omitempty"`
+	Stale               bool           `json:"stale"`
+	ReviewDue           bool           `json:"reviewDue"`
+	PlanningNeeded      bool           `json:"planningNeeded"`
+}
+
+type PursuitDashboardDecision struct {
+	Pursuit      models.Pursuit  `json:"pursuit"`
+	Decision     PursuitDecision `json:"decision"`
+	CurrentState string          `json:"currentState,omitempty"`
+	NextAction   string          `json:"nextAction,omitempty"`
+	Blocked      int             `json:"blocked"`
+	EvidenceLine string          `json:"evidenceLine,omitempty"`
+}
+
+type PursuitDetail struct {
+	Pursuit              models.Pursuit                 `json:"pursuit"`
+	Links                []models.PursuitLink           `json:"links"`
+	Activity             []models.PursuitActivity       `json:"activity"`
+	Workflows            []models.WorkflowItem          `json:"workflows"`
+	OpenLoops            []models.WorkflowOpenLoop      `json:"openLoops"`
+	Proposals            []models.WorkflowProposal      `json:"proposals"`
+	Decisions            []models.WorkflowDecision      `json:"decisions"`
+	DecisionQueue        []PursuitDecision              `json:"decisionQueue"`
+	Transitions          []models.WorkflowTransition    `json:"transitions"`
+	SourceLinks          []models.WorkflowSourceLink    `json:"sourceLinks"`
+	Events               []models.WorkflowEvent         `json:"events"`
+	Timeline             []PursuitTimelineItem          `json:"timeline"`
+	Evidence             []models.WorkflowEvidenceClaim `json:"evidence"`
+	Memories             []models.ContextMemory         `json:"memories"`
+	TaskRuns             []PursuitTaskRun               `json:"taskRuns"`
+	VerificationRuns     []models.VerificationRun       `json:"verificationRuns"`
+	VerificationClaims   []models.VerificationClaim     `json:"verificationClaims"`
+	VerificationEvidence []models.VerificationEvidence  `json:"verificationEvidence"`
+	Automations          []PursuitAutomation            `json:"automations"`
+	RuntimeAttempts      []models.AutomationLaunchEvent `json:"runtimeAttempts"`
+	SourceItems          []PursuitSourceItem            `json:"sourceItems"`
+	SourceExtractions    []models.SourceExtraction      `json:"sourceExtractions"`
+	NextActions          []PursuitAction                `json:"nextActions"`
+	ActionQueues         PursuitActionQueues            `json:"actionQueues"`
+	Blockers             []PursuitBlocker               `json:"blockers"`
+	ApprovalItems        []models.WorkflowItem          `json:"approvalItems"`
+	Summary              PursuitSummary                 `json:"summary"`
+	OperationalDigest    PursuitOperationalDigest       `json:"operationalDigest"`
+}
+
+type PursuitEvidenceResolution struct {
+	URI                  string                        `json:"uri"`
+	Kind                 string                        `json:"kind"`
+	Title                string                        `json:"title"`
+	Summary              string                        `json:"summary,omitempty"`
+	Status               string                        `json:"status,omitempty"`
+	SourceType           string                        `json:"sourceType,omitempty"`
+	SourceID             string                        `json:"sourceId,omitempty"`
+	SourceLabel          string                        `json:"sourceLabel,omitempty"`
+	WorkflowID           string                        `json:"workflowId,omitempty"`
+	NeedsReview          bool                          `json:"needsReview"`
+	RuntimeAttempt       *models.AutomationLaunchEvent `json:"runtimeAttempt,omitempty"`
+	PursuitLink          *models.PursuitLink           `json:"pursuitLink,omitempty"`
+	TimelineItem         *PursuitTimelineItem          `json:"timelineItem,omitempty"`
+	WorkflowEvidence     *models.WorkflowEvidenceClaim `json:"workflowEvidence,omitempty"`
+	Memory               *models.ContextMemory         `json:"memory,omitempty"`
+	SourceItem           *PursuitSourceItem            `json:"sourceItem,omitempty"`
+	SourceExtraction     *models.SourceExtraction      `json:"sourceExtraction,omitempty"`
+	VerificationEvidence *models.VerificationEvidence  `json:"verificationEvidence,omitempty"`
+	Activity             *models.PursuitActivity       `json:"activity,omitempty"`
+}
+
+type PursuitApprovalOverview struct {
+	Pursuit       models.Pursuit        `json:"pursuit"`
+	DecisionQueue []PursuitDecision     `json:"decisionQueue"`
+	ApprovalItems []models.WorkflowItem `json:"approvalItems"`
+	Actions       []PursuitAction       `json:"actions"`
+	Blockers      []PursuitBlocker      `json:"blockers"`
+	Summary       PursuitSummary        `json:"summary"`
+	Counts        map[string]int        `json:"counts"`
+}
+
+type PursuitSourceItem struct {
+	ID         uuid.UUID `json:"id"`
+	SourceID   uuid.UUID `json:"sourceId"`
+	ExternalID string    `json:"externalId"`
+	ProjectKey string    `json:"projectKey,omitempty"`
+	ItemType   string    `json:"itemType,omitempty"`
+	Title      string    `json:"title,omitempty"`
+	SourceURI  string    `json:"sourceUri,omitempty"`
+	Metadata   string    `json:"metadata,omitempty"`
+	FetchedAt  time.Time `json:"fetchedAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+type PursuitAutomation struct {
+	ID                uuid.UUID  `json:"id"`
+	Name              string     `json:"name"`
+	RuntimeType       string     `json:"runtimeType,omitempty"`
+	LaunchType        string     `json:"launchType,omitempty"`
+	Status            string     `json:"status,omitempty"`
+	LastLaunchAt      *time.Time `json:"lastLaunchAt,omitempty"`
+	LastFailureReason string     `json:"lastFailureReason,omitempty"`
+}
+
+type PursuitTaskRun struct {
+	WorkflowID         uuid.UUID  `json:"workflowId"`
+	WorkflowTitle      string     `json:"workflowTitle"`
+	TaskPlanID         string     `json:"taskPlanId,omitempty"`
+	Status             string     `json:"status"`
+	VerificationStatus string     `json:"verificationStatus,omitempty"`
+	RetryCount         int        `json:"retryCount"`
+	MaxRetries         int        `json:"maxRetries"`
+	LastRunAt          *time.Time `json:"lastRunAt,omitempty"`
+	NextRunAt          *time.Time `json:"nextRunAt,omitempty"`
+	LastWorkerError    string     `json:"lastWorkerError,omitempty"`
+	AutomationID       string     `json:"automationId,omitempty"`
+	NeedsReview        bool       `json:"needsReview"`
+}
+
+type PursuitDecision struct {
+	ID               string `json:"id"`
+	WorkflowID       string `json:"workflowId,omitempty"`
+	WorkflowTitle    string `json:"workflowTitle,omitempty"`
+	DecisionType     string `json:"decisionType"`
+	Status           string `json:"status"`
+	Recommended      string `json:"recommended"`
+	Reason           string `json:"reason"`
+	RiskLevel        string `json:"riskLevel"`
+	EvidenceURI      string `json:"evidenceUri,omitempty"`
+	EvidenceLabel    string `json:"evidenceLabel,omitempty"`
+	YesLabel         string `json:"yesLabel"`
+	NoLabel          string `json:"noLabel"`
+	YesConsequence   string `json:"yesConsequence"`
+	NoConsequence    string `json:"noConsequence"`
+	RequiresApproval bool   `json:"requiresApproval"`
+	Approved         bool   `json:"approved"`
+	Actor            string `json:"actor,omitempty"`
+	CreatedAt        string `json:"createdAt,omitempty"`
+}
+
+type PursuitTimelineItem struct {
+	ID            string    `json:"id"`
+	Kind          string    `json:"kind"`
+	Title         string    `json:"title"`
+	Message       string    `json:"message,omitempty"`
+	WorkflowID    string    `json:"workflowId,omitempty"`
+	WorkflowTitle string    `json:"workflowTitle,omitempty"`
+	Actor         string    `json:"actor,omitempty"`
+	Status        string    `json:"status,omitempty"`
+	RiskLevel     string    `json:"riskLevel,omitempty"`
+	SourceURI     string    `json:"sourceUri,omitempty"`
+	SourceLabel   string    `json:"sourceLabel,omitempty"`
+	NeedsReview   bool      `json:"needsReview"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+type PursuitAction struct {
+	Label            string `json:"label"`
+	Owner            string `json:"owner"`
+	RiskLevel        string `json:"riskLevel"`
+	RequiresApproval bool   `json:"requiresApproval"`
+	Reason           string `json:"reason"`
+	WorkflowID       string `json:"workflowId,omitempty"`
+	YesLabel         string `json:"yesLabel,omitempty"`
+	NoLabel          string `json:"noLabel,omitempty"`
+}
+
+type PursuitBlocker struct {
+	Label      string     `json:"label"`
+	Reason     string     `json:"reason"`
+	Owner      string     `json:"owner"`
+	WorkflowID string     `json:"workflowId,omitempty"`
+	FollowUpAt *time.Time `json:"followUpAt,omitempty"`
+}
+
+type PursuitActionQueues struct {
+	NeedsRobert []PursuitAction `json:"needsRobert"`
+	VAReady     []PursuitAction `json:"vaReady"`
+	SystemReady []PursuitAction `json:"systemReady"`
+	Waiting     []PursuitAction `json:"waiting"`
+}
+
+type PursuitSummary struct {
+	CurrentState        string  `json:"currentState"`
+	WhatChanged         string  `json:"whatChanged"`
+	NeedsRobert         int     `json:"needsRobert"`
+	Blocked             int     `json:"blocked"`
+	OpenLoops           int     `json:"openLoops"`
+	RobertActions       int     `json:"robertActions"`
+	VAReadyActions      int     `json:"vaReadyActions"`
+	SystemReadyActions  int     `json:"systemReadyActions"`
+	WaitingActions      int     `json:"waitingActions"`
+	ReviewDue           bool    `json:"reviewDue"`
+	DecisionCards       int     `json:"decisionCards"`
+	TimelineItems       int     `json:"timelineItems"`
+	TaskRuns            int     `json:"taskRuns"`
+	LinkedEvidence      int     `json:"linkedEvidence"`
+	VerificationRuns    int     `json:"verificationRuns"`
+	RuntimeAttempts     int     `json:"runtimeAttempts"`
+	Confidence          float64 `json:"confidence"`
+	PlanningNeeded      bool    `json:"planningNeeded"`
+	CompletionCandidate bool    `json:"completionCandidate"`
+}
+
+type PursuitOperationalDigest struct {
+	PrimaryLane       string `json:"primaryLane"`
+	Headline          string `json:"headline"`
+	RecommendedAction string `json:"recommendedAction"`
+	RobertLine        string `json:"robertLine"`
+	DelegationLine    string `json:"delegationLine"`
+	SystemLine        string `json:"systemLine"`
+	WaitingLine       string `json:"waitingLine"`
+	BlockerLine       string `json:"blockerLine"`
+	EvidenceLine      string `json:"evidenceLine"`
+	RuntimeLine       string `json:"runtimeLine"`
+	SourceLine        string `json:"sourceLine"`
+	VerificationLine  string `json:"verificationLine"`
+	RiskLine          string `json:"riskLine"`
+	NeedsRobert       int    `json:"needsRobert"`
+	VAReady           int    `json:"vaReady"`
+	SystemReady       int    `json:"systemReady"`
+	Waiting           int    `json:"waiting"`
+	Blocked           int    `json:"blocked"`
+	Evidence          int    `json:"evidence"`
+	RuntimeAttempts   int    `json:"runtimeAttempts"`
+	VerificationRuns  int    `json:"verificationRuns"`
+	OpenLoops         int    `json:"openLoops"`
+}
+
+type Service interface {
+	Create(request CreateRequest) (*models.Pursuit, error)
+	Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, error)
+	Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error)
+	List(includeArchived bool) ([]models.Pursuit, error)
+	Dashboard() (*Dashboard, error)
+	Decisions() ([]PursuitDashboardDecision, error)
+	Brief() (*Brief, error)
+	Detail(id uuid.UUID) (*PursuitDetail, error)
+	ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
+	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
+	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
+	DeleteLink(id uuid.UUID, linkID uuid.UUID) error
+	Match(request MatchRequest) ([]MatchCandidate, error)
+	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
+	AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult, error)
+	RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error)
+	Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
+	Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
+	ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
+	RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error)
+	Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
+	Activity(id uuid.UUID) ([]models.PursuitActivity, error)
+}
+
+type workflowIntakeService interface {
+	Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
+}
+
+type service struct {
+	repo            Repository
+	workflowService workflowIntakeService
+}
+
+func NewService(repo Repository, workflowService workflowIntakeService) Service {
+	return &service{repo: repo, workflowService: workflowService}
+}
+
+func DefaultService() Service {
+	return NewService(DefaultRepository(), workflow.DefaultService())
+}
+
+func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
+	title := strings.TrimSpace(request.Title)
+	if title == "" {
+		return nil, fmt.Errorf("title is required")
+	}
+	now := time.Now().UTC()
+	nextReviewAt := parseOptionalTime(request.NextReviewAt)
+	pursuit := &models.Pursuit{
+		OwnerIdentity:         strings.TrimSpace(request.OwnerIdentity),
+		Title:                 title,
+		Description:           strings.TrimSpace(request.Description),
+		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		Domain:                firstNonEmpty(request.Domain, classifyDomain(title+" "+request.Description)),
+		DesiredOutcome:        strings.TrimSpace(request.DesiredOutcome),
+		CurrentStateSummary:   strings.TrimSpace(request.CurrentStateSummary),
+		Status:                firstNonEmpty(request.Status, StatusActive),
+		PriorityScore:         clampInt(request.PriorityScore, 0, 100, 50),
+		RiskLevel:             firstNonEmpty(request.RiskLevel, classifyRisk(title+" "+request.Description+" "+request.DesiredOutcome)),
+		Confidence:            normalizeConfidence(request.Confidence, 0.7),
+		AutonomyLevel:         firstNonEmpty(request.AutonomyLevel, defaultAutonomy(classifyRisk(title+" "+request.Description+" "+request.DesiredOutcome))),
+		NeedCategory:          firstNonEmpty(request.NeedCategory, classifyNeed(title+" "+request.Description+" "+request.DesiredOutcome)),
+		SourceOfCreation:      firstNonEmpty(request.SourceOfCreation, "manual"),
+		NextRecommendedAction: strings.TrimSpace(request.NextRecommendedAction),
+		CompletionDefinition:  strings.TrimSpace(request.CompletionDefinition),
+		CompletionState:       CompletionOpen,
+		LastActivityAt:        &now,
+		NextReviewAt:          nextReviewAt,
+	}
+	if pursuit.CurrentStateSummary == "" {
+		pursuit.CurrentStateSummary = "New pursuit created. HAI should gather context, link operational work, and propose the next concrete action."
+	}
+	if pursuit.NextRecommendedAction == "" {
+		pursuit.NextRecommendedAction = "Define the first workflow item and evidence needed for this pursuit."
+	}
+	created, err := s.repo.Create(pursuit)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, "operator", "", "", "")
+	return created, nil
+}
+
+func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if requestsVerifiedCompletion(*pursuit, request) {
+		if reason, err := s.completionActiveBlockerReason(id); err != nil {
+			return nil, err
+		} else if reason != "" {
+			return nil, fmt.Errorf("pursuit completion is blocked by unresolved operational work: %s", reason)
+		}
+		allowed, reason, err := s.completionEvidenceAvailable(id)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, fmt.Errorf("pursuit completion requires verified evidence, linked verification, or a verified completed workflow before it can be marked complete: %s", reason)
+		}
+	}
+	if strings.TrimSpace(request.Title) != "" {
+		pursuit.Title = strings.TrimSpace(request.Title)
+	}
+	assignString(request.Description, &pursuit.Description)
+	assignString(request.ProjectKey, &pursuit.ProjectKey)
+	assignString(request.Domain, &pursuit.Domain)
+	assignString(request.DesiredOutcome, &pursuit.DesiredOutcome)
+	assignString(request.CurrentStateSummary, &pursuit.CurrentStateSummary)
+	assignString(request.NeedCategory, &pursuit.NeedCategory)
+	assignString(request.NextRecommendedAction, &pursuit.NextRecommendedAction)
+	assignString(request.CompletionDefinition, &pursuit.CompletionDefinition)
+	if request.Status != "" {
+		pursuit.Status = strings.TrimSpace(request.Status)
+	}
+	if request.RiskLevel != "" {
+		pursuit.RiskLevel = strings.TrimSpace(request.RiskLevel)
+	}
+	if request.AutonomyLevel != "" {
+		pursuit.AutonomyLevel = strings.TrimSpace(request.AutonomyLevel)
+	}
+	if request.CompletionState != "" {
+		pursuit.CompletionState = strings.TrimSpace(request.CompletionState)
+	}
+	if strings.EqualFold(strings.TrimSpace(request.Status), StatusCompleted) && strings.TrimSpace(request.CompletionState) == "" {
+		pursuit.CompletionState = CompletionVerified
+	}
+	if request.PriorityScore != nil {
+		pursuit.PriorityScore = clampInt(*request.PriorityScore, 0, 100, pursuit.PriorityScore)
+	}
+	if request.Confidence != nil {
+		pursuit.Confidence = normalizeConfidence(*request.Confidence, pursuit.Confidence)
+	}
+	if request.NextReviewAt != nil {
+		pursuit.NextReviewAt = parseOptionalTime(*request.NextReviewAt)
+	}
+	if request.Archived != nil {
+		pursuit.Archived = *request.Archived
+		if *request.Archived {
+			pursuit.Status = StatusArchived
+		} else if pursuit.Status == StatusArchived {
+			pursuit.Status = StatusActive
+		}
+	}
+	now := time.Now().UTC()
+	pursuit.LastActivityAt = &now
+	updated, err := s.repo.Update(pursuit)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(id, "pursuit.updated", "Pursuit details updated", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	return updated, nil
+}
+
+func (s *service) Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error) {
+	return s.Update(id, UpdateRequest{Archived: &archived, Actor: actor})
+}
+
+func (s *service) List(includeArchived bool) ([]models.Pursuit, error) {
+	return s.repo.FindAll(includeArchived)
+}
+
+func (s *service) Dashboard() (*Dashboard, error) {
+	pursuits, err := s.repo.FindAll(false)
+	if err != nil {
+		return nil, err
+	}
+	dashboard := &Dashboard{
+		Counts: map[string]int64{
+			"active": 0, "waiting": 0, "blocked": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,
+		},
+	}
+	for _, pursuit := range pursuits {
+		item, detail, _ := s.listItemWithDetail(pursuit)
+		switch dashboardStatusBucket(pursuit, item) {
+		case StatusWaiting:
+			dashboard.Counts["waiting"]++
+		case StatusBlocked:
+			dashboard.Counts["blocked"]++
+		default:
+			dashboard.Counts["active"]++
+		}
+		if item.NeedsRobert > 0 {
+			dashboard.NeedsRobert = append(dashboard.NeedsRobert, item)
+			dashboard.Counts["needsRobert"]++
+		}
+		if detail != nil {
+			dashboard.DecisionQueue = append(dashboard.DecisionQueue, dashboardDecisionCards(item, detail)...)
+		}
+		if item.Blocked > 0 || pursuit.Status == StatusBlocked {
+			dashboard.Blocked = append(dashboard.Blocked, item)
+		}
+		if item.Stale {
+			dashboard.Stale = append(dashboard.Stale, item)
+			dashboard.Counts["stale"]++
+		}
+		if item.ReviewDue {
+			dashboard.ReviewDue = append(dashboard.ReviewDue, item)
+			dashboard.Counts["reviewDue"]++
+		}
+		if item.PlanningNeeded {
+			dashboard.PlanningNeeded = append(dashboard.PlanningNeeded, item)
+			dashboard.Counts["planningNeeded"]++
+		}
+		if strings.EqualFold(pursuit.RiskLevel, "high") {
+			dashboard.HighRisk = append(dashboard.HighRisk, item)
+			dashboard.Counts["highRisk"]++
+		}
+		if item.CompletionCandidate {
+			dashboard.CompletionCandidates = append(dashboard.CompletionCandidates, item)
+			dashboard.Counts["completionCandidates"]++
+		}
+		if isVAReady(item) {
+			dashboard.VAReady = append(dashboard.VAReady, item)
+		}
+		if isSystemReady(item) {
+			dashboard.SystemReady = append(dashboard.SystemReady, item)
+		}
+		dashboard.RecentlyChanged = append(dashboard.RecentlyChanged, item)
+	}
+	sortDashboardDecisions(dashboard.DecisionQueue)
+	dashboard.Counts["decisionQueue"] = int64(len(dashboard.DecisionQueue))
+	limitDashboardDecisions(&dashboard.DecisionQueue, 12)
+	limitListItems(&dashboard.NeedsRobert, 8)
+	limitListItems(&dashboard.VAReady, 8)
+	limitListItems(&dashboard.SystemReady, 8)
+	limitListItems(&dashboard.Blocked, 8)
+	limitListItems(&dashboard.Stale, 8)
+	limitListItems(&dashboard.ReviewDue, 8)
+	limitListItems(&dashboard.PlanningNeeded, 8)
+	limitListItems(&dashboard.HighRisk, 8)
+	limitListItems(&dashboard.CompletionCandidates, 8)
+	limitListItems(&dashboard.RecentlyChanged, 12)
+	return dashboard, nil
+}
+
+func (s *service) Decisions() ([]PursuitDashboardDecision, error) {
+	dashboard, err := s.Dashboard()
+	if err != nil {
+		return nil, err
+	}
+	decisions := make([]PursuitDashboardDecision, len(dashboard.DecisionQueue))
+	copy(decisions, dashboard.DecisionQueue)
+	return decisions, nil
+}
+
+func dashboardStatusBucket(pursuit models.Pursuit, item PursuitListItem) string {
+	if item.Blocked > 0 || pursuit.Status == StatusBlocked {
+		return StatusBlocked
+	}
+	if pursuit.Status == StatusWaiting {
+		return StatusWaiting
+	}
+	return StatusActive
+}
+
+func (s *service) Brief() (*Brief, error) {
+	dashboard, err := s.Dashboard()
+	if err != nil {
+		return nil, err
+	}
+	brief := &Brief{
+		GeneratedAt:          time.Now().UTC(),
+		NeedsRobert:          len(dashboard.NeedsRobert),
+		ReadyToMove:          len(dashboard.VAReady) + len(dashboard.SystemReady),
+		Stuck:                len(dashboard.Blocked) + len(dashboard.Stale),
+		ReviewDue:            len(dashboard.ReviewDue),
+		PlanningNeeded:       len(dashboard.PlanningNeeded),
+		CompletionCandidates: len(dashboard.CompletionCandidates),
+		RecentlyChanged:      len(dashboard.RecentlyChanged),
+	}
+	brief.OperatingMode = briefOperatingMode(*brief)
+	brief.Summary = briefSummary(*brief, dashboard)
+	brief.PrimaryAction = briefPrimaryAction(*brief)
+	brief.Cards = briefCards(dashboard, 6)
+	return brief, nil
+}
+
+func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	links, err := s.repo.FindLinks(id)
+	if err != nil {
+		return nil, err
+	}
+	activity, _ := s.repo.FindActivities(id, 50)
+	workflowIDs := linkUUIDs(links, LinkWorkflow)
+	memoryIDs := linkUUIDs(links, LinkMemory)
+	sourceItemIDs := linkUUIDs(links, LinkSourceItem)
+	extractionIDs := linkUUIDs(links, LinkSourceExtraction)
+	verificationIDs := linkUUIDs(links, LinkVerification)
+	linkedAutomationIDs := linkUUIDs(links, LinkAutomation)
+	linkedRuntimeAttemptIDs := linkUUIDs(links, LinkAgentRuntime)
+	workflows, _ := s.repo.FindLinkedWorkflows(workflowIDs)
+	automationIDs := uniqueUUIDs(append(linkedAutomationIDs, workflowAutomationIDs(workflows)...))
+	openLoops, _ := s.repo.FindLinkedOpenLoops(workflowIDs)
+	proposals, _ := s.repo.FindLinkedProposals(workflowIDs)
+	decisions, _ := s.repo.FindLinkedDecisions(workflowIDs)
+	transitions, _ := s.repo.FindLinkedTransitions(workflowIDs)
+	sourceLinks, _ := s.repo.FindLinkedSourceLinks(workflowIDs)
+	events, _ := s.repo.FindLinkedEvents(workflowIDs)
+	evidence, _ := s.repo.FindLinkedEvidence(workflowIDs)
+	memories, _ := s.repo.FindLinkedMemories(memoryIDs)
+	sourceItems, _ := s.repo.FindLinkedSourceItems(sourceItemIDs)
+	extractions, _ := s.repo.FindLinkedExtractions(extractionIDs)
+	verificationRuns, _ := s.repo.FindLinkedVerificationRuns(verificationIDs)
+	runIDs := verificationRunIDs(verificationRuns)
+	verificationClaims, _ := s.repo.FindLinkedVerificationClaims(runIDs)
+	verificationEvidence, _ := s.repo.FindLinkedVerificationEvidence(runIDs)
+	automations, _ := s.repo.FindLinkedAutomations(automationIDs)
+	runtimeAttempts, _ := s.repo.FindLinkedAutomationLaunches(automationIDs, linkedRuntimeAttemptIDs, 20)
+	if runtimeAttempts == nil {
+		runtimeAttempts = []models.AutomationLaunchEvent{}
+	}
+	resolvedDecisions := resolvedPursuitDecisions(activity)
+	sourceBlockers := sourceRetractionBlockers(links, extractions)
+
+	detail := &PursuitDetail{
+		Pursuit:              *pursuit,
+		Links:                links,
+		Activity:             activity,
+		Workflows:            workflows,
+		OpenLoops:            openLoops,
+		Proposals:            proposals,
+		Decisions:            decisions,
+		Transitions:          transitions,
+		SourceLinks:          sourceLinks,
+		Events:               events,
+		Evidence:             evidence,
+		Memories:             memories,
+		TaskRuns:             taskRunsFromWorkflows(workflows),
+		VerificationRuns:     verificationRuns,
+		VerificationClaims:   verificationClaims,
+		VerificationEvidence: verificationEvidence,
+		Automations:          compactAutomations(automations),
+		RuntimeAttempts:      runtimeAttempts,
+		SourceItems:          compactSourceItems(sourceItems),
+		SourceExtractions:    extractions,
+	}
+	detail.ApprovalItems = approvalWorkflows(workflows)
+	detail.DecisionQueue = decisionQueue(*pursuit, workflows, proposals, decisions, runtimeAttempts, resolvedDecisions)
+	detail.Timeline = pursuitTimeline(*pursuit, activity, workflows, transitions, sourceLinks, decisions, events, detail.TaskRuns, verificationRuns, runtimeAttempts)
+	detail.Blockers = append(blockers(workflows, openLoops), runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedDecisions)...)
+	detail.Blockers = append(detail.Blockers, sourceBlockers...)
+	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions)
+	detail.ActionQueues = actionQueues(*pursuit, detail.NextActions, detail.Blockers)
+	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, verificationRuns, runtimeAttempts, activity, sourceBlockers)
+	if len(detail.Timeline) > 0 {
+		detail.Summary.WhatChanged = timelineChangeSummary(detail.Timeline[0])
+	}
+	if pending := pendingDecisionCards(detail.DecisionQueue); pending > detail.Summary.NeedsRobert {
+		detail.Summary.NeedsRobert = pending
+	}
+	if queueNeedsRobert := len(detail.ActionQueues.NeedsRobert); queueNeedsRobert > detail.Summary.NeedsRobert {
+		detail.Summary.NeedsRobert = queueNeedsRobert
+	}
+	if pursuitNeedsRobert(*pursuit, detail.NextActions) && detail.Summary.NeedsRobert == 0 {
+		detail.Summary.NeedsRobert = 1
+	}
+	detail.Summary.DecisionCards = len(detail.DecisionQueue)
+	detail.Summary.TimelineItems = len(detail.Timeline)
+	detail.Summary.RobertActions = len(detail.ActionQueues.NeedsRobert)
+	detail.Summary.VAReadyActions = len(detail.ActionQueues.VAReady)
+	detail.Summary.SystemReadyActions = len(detail.ActionQueues.SystemReady)
+	detail.Summary.WaitingActions = len(detail.ActionQueues.Waiting)
+	detail.OperationalDigest = operationalDigest(*pursuit, *detail)
+	return detail, nil
+}
+
+func (s *service) ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error) {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return nil, fmt.Errorf("evidence uri is required")
+	}
+	detail, err := s.Detail(id)
+	if err != nil {
+		return nil, err
+	}
+	for _, attempt := range detail.RuntimeAttempts {
+		evidenceURI := "automation-launch://" + attempt.ID.String()
+		if !strings.EqualFold(uri, evidenceURI) {
+			continue
+		}
+		copy := attempt
+		return &PursuitEvidenceResolution{
+			URI:            evidenceURI,
+			Kind:           "runtime_attempt",
+			Title:          runtimeTimelineTitle(attempt, runtimeAttemptLabel(attempt)),
+			Summary:        firstNonEmpty(attempt.Message, attempt.Target, attempt.Output, "runtime attempt evidence"),
+			Status:         attempt.Status,
+			SourceType:     "automation_launch",
+			SourceID:       attempt.ID.String(),
+			SourceLabel:    runtimeAttemptLabel(attempt),
+			NeedsReview:    runtimeAttemptNeedsReview(attempt),
+			RuntimeAttempt: &copy,
+		}, nil
+	}
+	for _, link := range detail.Links {
+		if !strings.EqualFold(strings.TrimSpace(link.SourceURI), uri) {
+			continue
+		}
+		copy := link
+		return &PursuitEvidenceResolution{
+			URI:         uri,
+			Kind:        "pursuit_link",
+			Title:       firstNonEmpty(link.SourceLabel, link.Relationship, link.LinkType),
+			Summary:     fmt.Sprintf("Linked %s %s as %s.", link.LinkType, link.LinkID, link.Relationship),
+			SourceType:  link.LinkType,
+			SourceID:    link.LinkID,
+			SourceLabel: link.SourceLabel,
+			PursuitLink: &copy,
+		}, nil
+	}
+	for _, item := range detail.Timeline {
+		if !strings.EqualFold(strings.TrimSpace(item.SourceURI), uri) {
+			continue
+		}
+		copy := item
+		return &PursuitEvidenceResolution{
+			URI:          uri,
+			Kind:         "timeline_item",
+			Title:        item.Title,
+			Summary:      firstNonEmpty(item.Message, item.WorkflowTitle, item.Kind),
+			Status:       item.Status,
+			SourceType:   item.Kind,
+			SourceID:     item.ID,
+			SourceLabel:  item.SourceLabel,
+			WorkflowID:   item.WorkflowID,
+			NeedsReview:  item.NeedsReview,
+			TimelineItem: &copy,
+		}, nil
+	}
+	for _, claim := range detail.Evidence {
+		if !strings.EqualFold(strings.TrimSpace(claim.SourceURI), uri) {
+			continue
+		}
+		copy := claim
+		return &PursuitEvidenceResolution{
+			URI:              uri,
+			Kind:             "workflow_evidence",
+			Title:            claim.ClaimText,
+			Summary:          firstNonEmpty(claim.SourceLabel, claim.Reliability, "workflow evidence claim"),
+			Status:           claim.Status,
+			SourceType:       "workflow_evidence",
+			SourceID:         claim.ID.String(),
+			SourceLabel:      claim.SourceLabel,
+			WorkflowID:       claim.WorkflowID.String(),
+			NeedsReview:      !acceptedCompletionStatus(claim.Status),
+			WorkflowEvidence: &copy,
+		}, nil
+	}
+	for _, memory := range detail.Memories {
+		if !strings.EqualFold(strings.TrimSpace(memory.SourceURI), uri) {
+			continue
+		}
+		copy := memory
+		return &PursuitEvidenceResolution{
+			URI:         uri,
+			Kind:        "memory",
+			Title:       firstNonEmpty(memory.Summary, memory.Kind, "memory"),
+			Summary:     firstNonEmpty(memory.Summary, memory.Content),
+			SourceType:  "memory",
+			SourceID:    memory.ID.String(),
+			SourceLabel: firstNonEmpty(memory.SourceLabel, memory.ProjectKey),
+			Memory:      &copy,
+		}, nil
+	}
+	for _, item := range detail.SourceItems {
+		if !strings.EqualFold(strings.TrimSpace(item.SourceURI), uri) {
+			continue
+		}
+		copy := item
+		return &PursuitEvidenceResolution{
+			URI:         uri,
+			Kind:        "source_item",
+			Title:       firstNonEmpty(item.Title, item.ExternalID, "source item"),
+			Summary:     item.Metadata,
+			SourceType:  item.ItemType,
+			SourceID:    item.ID.String(),
+			SourceLabel: item.Title,
+			SourceItem:  &copy,
+		}, nil
+	}
+	for _, extraction := range detail.SourceExtractions {
+		if !strings.EqualFold(strings.TrimSpace(extraction.SourceURI), uri) {
+			continue
+		}
+		copy := extraction
+		return &PursuitEvidenceResolution{
+			URI:              uri,
+			Kind:             "source_extraction",
+			Title:            firstNonEmpty(extraction.SourceLabel, extraction.Summary, "source extraction"),
+			Summary:          firstNonEmpty(extraction.Summary, extraction.Text),
+			Status:           sourceExtractionStatus(extraction),
+			SourceType:       extraction.ContentType,
+			SourceID:         extraction.ID.String(),
+			SourceLabel:      extraction.SourceLabel,
+			NeedsReview:      extraction.Archived,
+			SourceExtraction: &copy,
+		}, nil
+	}
+	for _, evidence := range detail.VerificationEvidence {
+		if !strings.EqualFold(strings.TrimSpace(evidence.SourceURI), uri) {
+			continue
+		}
+		copy := evidence
+		return &PursuitEvidenceResolution{
+			URI:                  uri,
+			Kind:                 "verification_evidence",
+			Title:                firstNonEmpty(evidence.SourceLabel, evidence.SourceID, "verification evidence"),
+			Summary:              evidence.Snippet,
+			SourceType:           evidence.SourceType,
+			SourceID:             evidence.ID.String(),
+			SourceLabel:          evidence.SourceLabel,
+			VerificationEvidence: &copy,
+		}, nil
+	}
+	for _, activity := range detail.Activity {
+		if !strings.EqualFold(strings.TrimSpace(activity.SourceURI), uri) {
+			continue
+		}
+		copy := activity
+		return &PursuitEvidenceResolution{
+			URI:         uri,
+			Kind:        "activity",
+			Title:       activity.EventType,
+			Summary:     activity.Message,
+			SourceType:  activity.SourceType,
+			SourceID:    activity.SourceID,
+			SourceLabel: activity.Actor,
+			Activity:    &copy,
+		}, nil
+	}
+	return nil, fmt.Errorf("evidence uri is not linked to this pursuit")
+}
+
+func (s *service) Approvals(id uuid.UUID) (*PursuitApprovalOverview, error) {
+	detail, err := s.Detail(id)
+	if err != nil {
+		return nil, err
+	}
+	actions := approvalActions(detail.NextActions)
+	overview := &PursuitApprovalOverview{
+		Pursuit:       detail.Pursuit,
+		DecisionQueue: detail.DecisionQueue,
+		ApprovalItems: detail.ApprovalItems,
+		Actions:       actions,
+		Blockers:      detail.Blockers,
+		Summary:       detail.Summary,
+		Counts: map[string]int{
+			"decisionQueue":    len(detail.DecisionQueue),
+			"pendingDecisions": pendingDecisionCards(detail.DecisionQueue),
+			"approvalItems":    len(detail.ApprovalItems),
+			"actions":          len(actions),
+			"blockers":         len(detail.Blockers),
+			"needsRobert":      detail.Summary.NeedsRobert,
+		},
+	}
+	return overview, nil
+}
+
+func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error) {
+	if _, err := s.repo.FindByID(id); err != nil {
+		return nil, err
+	}
+	linkType := strings.TrimSpace(request.LinkType)
+	linkID := strings.TrimSpace(request.LinkID)
+	if linkType == "" || linkID == "" {
+		return nil, fmt.Errorf("linkType and linkId are required")
+	}
+	link := &models.PursuitLink{
+		PursuitID:    id,
+		LinkType:     linkType,
+		LinkID:       linkID,
+		Relationship: firstNonEmpty(request.Relationship, "related"),
+		SourceURI:    strings.TrimSpace(request.SourceURI),
+		SourceLabel:  strings.TrimSpace(request.SourceLabel),
+		Confidence:   normalizeConfidence(request.Confidence, 0.7),
+	}
+	created, err := s.repo.CreateLink(link)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(id, "pursuit.linked", fmt.Sprintf("Linked %s %s", linkType, linkID), firstNonEmpty(request.Actor, "system"), linkType, linkID, request.SourceURI)
+	return created, nil
+}
+
+func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID) error {
+	if _, err := s.repo.FindByID(id); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteLink(id, linkID); err != nil {
+		return err
+	}
+	_, _ = s.recordActivity(id, "pursuit.link_removed", "Removed pursuit link", "operator", "", linkID.String(), "")
+	return nil
+}
+
+func (s *service) Match(request MatchRequest) ([]MatchCandidate, error) {
+	pursuits, err := s.repo.FindAll(false)
+	if err != nil {
+		return nil, err
+	}
+	if request.SourceType != "" && request.SourceID != "" {
+		if link, err := s.repo.FindLink(request.SourceType, request.SourceID); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil {
+				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.98, Reasons: []string{"source is already linked to this pursuit"}, Confidence: "high"}}, nil
+			}
+		}
+	}
+	query := normalizeWords(request.Input + " " + request.ProjectKey + " " + request.SourceURI)
+	result := []MatchCandidate{}
+	for _, pursuit := range pursuits {
+		score := 0.0
+		reasons := []string{}
+		if request.ProjectKey != "" && strings.EqualFold(request.ProjectKey, pursuit.ProjectKey) {
+			score += 0.45
+			reasons = append(reasons, "project key matches")
+		}
+		words := normalizeWords(pursuit.Title + " " + pursuit.Description + " " + pursuit.DesiredOutcome + " " + pursuit.ProjectKey)
+		overlap := wordOverlap(query, words)
+		if overlap > 0 {
+			score += math.Min(0.45, overlap)
+			reasons = append(reasons, "title/context overlap")
+		}
+		if score >= 0.18 {
+			result = append(result, MatchCandidate{Pursuit: pursuit, Score: round(score), Reasons: reasons, Confidence: confidenceLabel(score)})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Score > result[j].Score })
+	limit := request.Limit
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error) {
+	if request.WorkflowID == uuid.Nil {
+		return nil, fmt.Errorf("workflowId is required")
+	}
+	minimumScore := autoLinkMinimum(request.MinimumScore)
+	matchSourceType := strings.TrimSpace(request.SourceType)
+	matchSourceID := strings.TrimSpace(request.SourceID)
+	if extractionID := strings.TrimSpace(request.ExtractionID); extractionID != "" {
+		matchSourceType = LinkSourceExtraction
+		matchSourceID = extractionID
+	}
+	matches, err := s.Match(MatchRequest{
+		Input:      request.Input,
+		ProjectKey: request.ProjectKey,
+		SourceType: matchSourceType,
+		SourceID:   matchSourceID,
+		SourceURI:  request.SourceURI,
+		Limit:      1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		if request.AllowCreateCandidate && workflowCandidateAllowed(request) {
+			return s.createWorkflowCandidate(request)
+		}
+		return &AutoLinkResult{Message: "no pursuit candidates matched"}, nil
+	}
+	match := matches[0]
+	result := &AutoLinkResult{
+		PursuitID: match.Pursuit.ID,
+		Score:     match.Score,
+		Reasons:   match.Reasons,
+	}
+	if match.Score < minimumScore {
+		result.Message = fmt.Sprintf("best pursuit match %.2f is below auto-link threshold %.2f", match.Score, minimumScore)
+		return result, nil
+	}
+
+	actor := firstNonEmpty(request.Actor, "system")
+	links := []models.PursuitLink{}
+	workflowLink, err := s.Link(match.Pursuit.ID, LinkRequest{
+		LinkType:     LinkWorkflow,
+		LinkID:       request.WorkflowID.String(),
+		Relationship: "operational_work",
+		SourceURI:    request.SourceURI,
+		SourceLabel:  request.SourceLabel,
+		Confidence:   match.Score,
+		Actor:        actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	links = append(links, *workflowLink)
+	if sourceItemLink, linked, err := s.linkOptionalUUID(match.Pursuit.ID, LinkSourceItem, request.RawItemID, "source_record", request, match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceItemLink)
+	}
+	if extractionLink, linked, err := s.linkOptionalUUID(match.Pursuit.ID, LinkSourceExtraction, request.ExtractionID, "source_extraction", request, match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *extractionLink)
+	}
+	_, _ = s.recordActivity(match.Pursuit.ID, "pursuit.auto_linked", fmt.Sprintf("Source-derived workflow auto-linked to pursuit with %.2f confidence", match.Score), actor, LinkWorkflow, request.WorkflowID.String(), request.SourceURI)
+	result.Linked = true
+	result.Links = links
+	result.Message = "source-derived workflow linked to pursuit"
+	if _, err := s.RefreshSummary(match.Pursuit.ID, actor); err != nil {
+		result.Message = "source-derived workflow linked to pursuit; summary refresh failed: " + err.Error()
+	}
+	return result, nil
+}
+
+func (s *service) AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult, error) {
+	if request.MemoryID == uuid.Nil {
+		return nil, fmt.Errorf("memoryId is required")
+	}
+	minimumScore := autoLinkMinimum(request.MinimumScore)
+	matches, err := s.Match(MatchRequest{
+		Input:      request.Input,
+		ProjectKey: request.ProjectKey,
+		SourceURI:  request.SourceURI,
+		Limit:      1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		if request.AllowCreateCandidate && memoryCandidateAllowed(request) {
+			return s.createMemoryCandidate(request)
+		}
+		return &AutoLinkResult{Message: "no pursuit candidates matched"}, nil
+	}
+	match := matches[0]
+	result := &AutoLinkResult{
+		PursuitID: match.Pursuit.ID,
+		Score:     match.Score,
+		Reasons:   match.Reasons,
+	}
+	if match.Score < minimumScore {
+		result.Message = fmt.Sprintf("best pursuit match %.2f is below auto-link threshold %.2f", match.Score, minimumScore)
+		return result, nil
+	}
+	actor := firstNonEmpty(request.Actor, "system")
+	link, err := s.Link(match.Pursuit.ID, LinkRequest{
+		LinkType:     LinkMemory,
+		LinkID:       request.MemoryID.String(),
+		Relationship: "context_memory",
+		SourceURI:    request.SourceURI,
+		SourceLabel:  request.SourceLabel,
+		Confidence:   match.Score,
+		Actor:        actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(match.Pursuit.ID, "pursuit.memory_auto_linked", fmt.Sprintf("Context memory auto-linked to pursuit with %.2f confidence", match.Score), actor, LinkMemory, request.MemoryID.String(), request.SourceURI)
+	result.Linked = true
+	result.Links = []models.PursuitLink{*link}
+	result.Message = "context memory linked to pursuit"
+	if _, err := s.RefreshSummary(match.Pursuit.ID, actor); err != nil {
+		result.Message = "context memory linked to pursuit; summary refresh failed: " + err.Error()
+	}
+	return result, nil
+}
+
+func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error) {
+	request.Input = strings.TrimSpace(request.Input)
+	if request.Input == "" {
+		return nil, fmt.Errorf("input is required")
+	}
+	if s.workflowService == nil {
+		return nil, fmt.Errorf("workflow service is not configured")
+	}
+	actor := firstNonEmpty(request.Actor, "operator")
+	matches, err := s.Match(MatchRequest{
+		Input:      request.Input,
+		ProjectKey: request.ProjectKey,
+		SourceType: request.SourceType,
+		SourceID:   request.SourceID,
+		SourceURI:  request.SourceURI,
+		Limit:      3,
+	})
+	if err != nil {
+		return nil, err
+	}
+	minimumScore := defaultAutoLinkMinimumScore
+	if len(matches) > 0 && matches[0].Score >= minimumScore {
+		detail, err := s.Intake(matches[0].Pursuit.ID, request)
+		if err != nil {
+			return nil, err
+		}
+		_, _ = s.recordActivity(matches[0].Pursuit.ID, "pursuit.routed_intake", fmt.Sprintf("Global intake routed into existing pursuit with %.2f confidence.", matches[0].Score), actor, firstNonEmpty(request.SourceType, "intake"), request.SourceID, request.SourceURI)
+		return &RoutedIntakeResult{
+			Mode:      "matched_existing",
+			Matched:   true,
+			PursuitID: matches[0].Pursuit.ID,
+			Score:     matches[0].Score,
+			Reasons:   matches[0].Reasons,
+			Message:   "intake matched and created governed workflow under existing pursuit",
+			Matches:   matches,
+			Detail:    detail,
+		}, nil
+	}
+
+	reviewRequired := request.RequiresReview || strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high")
+	reviewReason := firstNonEmpty(request.ReviewReason, routedIntakeReviewReason(reviewRequired, request))
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		Input:          request.Input,
+		ProjectKey:     request.ProjectKey,
+		AutomationID:   request.AutomationID,
+		SourceType:     request.SourceType,
+		SourceID:       request.SourceID,
+		SourceURI:      request.SourceURI,
+		SourceLabel:    request.SourceLabel,
+		ContentType:    request.ContentType,
+		Sender:         request.Sender,
+		ReceivedAt:     request.ReceivedAt,
+		Trigger:        firstNonEmpty(request.Trigger, "pursuit_global_intake"),
+		Actor:          actor,
+		RequiresReview: reviewRequired,
+		ReviewReason:   reviewReason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if record == nil || record.Item.ID == uuid.Nil {
+		return &RoutedIntakeResult{
+			Mode:    "workflow_missing",
+			Message: "workflow intake did not return a workflow record; no pursuit candidate was created",
+			Matches: matches,
+		}, nil
+	}
+
+	autoLinkRequest := AutoLinkWorkflowRequest{
+		WorkflowID:           record.Item.ID,
+		Input:                request.Input,
+		ProjectKey:           request.ProjectKey,
+		SourceType:           request.SourceType,
+		SourceID:             request.SourceID,
+		SourceURI:            request.SourceURI,
+		SourceLabel:          request.SourceLabel,
+		Actor:                actor,
+		AllowCreateCandidate: true,
+	}
+	autoLink, err := s.AutoLinkWorkflow(autoLinkRequest)
+	if err != nil {
+		return nil, err
+	}
+	if (autoLink == nil || !autoLink.Linked) && workflowCandidateAllowed(autoLinkRequest) {
+		autoLink, err = s.createWorkflowCandidate(autoLinkRequest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result := &RoutedIntakeResult{
+		Mode:     "candidate_created",
+		Matches:  matches,
+		AutoLink: autoLink,
+		Message:  firstNonEmpty(autoLinkMessage(autoLink), "intake converted into governed workflow; no pursuit candidate was created"),
+	}
+	if autoLink != nil {
+		result.Matched = autoLink.Linked && !autoLink.Created
+		result.CreatedCandidate = autoLink.Created
+		result.PursuitID = autoLink.PursuitID
+		result.Score = autoLink.Score
+		result.Reasons = autoLink.Reasons
+		if autoLink.PursuitID != uuid.Nil {
+			detail, err := s.Detail(autoLink.PursuitID)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = detail
+		}
+		if autoLink.Created {
+			result.Mode = "candidate_created"
+		} else if autoLink.Linked {
+			result.Mode = "matched_after_workflow"
+		}
+	}
+	return result, nil
+}
+
+func routedIntakeReviewReason(reviewRequired bool, request IntakeRequest) string {
+	if !reviewRequired {
+		return ""
+	}
+	risk := classifyRisk(request.Input + " " + request.SourceLabel + " " + request.SourceType)
+	if strings.EqualFold(risk, "high") {
+		return "global pursuit intake classified this as high-risk; Robert approval is required before consequential execution"
+	}
+	return "global pursuit intake requires review before consequential execution"
+}
+
+func autoLinkMessage(result *AutoLinkResult) string {
+	if result == nil {
+		return ""
+	}
+	return result.Message
+}
+
+func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*AutoLinkResult, error) {
+	actor := firstNonEmpty(request.Actor, "system")
+	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, request.SourceType, "source-derived work")
+	created, err := s.Create(CreateRequest{
+		Title:                 candidateTitle(sourceLabel, request.Input),
+		Description:           candidateDescription("workflow", request.Input, request.SourceURI, sourceLabel),
+		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		DesiredOutcome:        "Turn this source-derived work into a verified, governed outcome.",
+		CurrentStateSummary:   "Created as a reviewable pursuit candidate after no existing pursuit matched the source-derived workflow.",
+		Status:                StatusWaiting,
+		RiskLevel:             classifyRisk(request.Input + " " + sourceLabel),
+		AutonomyLevel:         "suggest",
+		SourceOfCreation:      firstNonEmpty(request.SourceType, "source") + "_pursuit_candidate",
+		NextRecommendedAction: "Review this pursuit candidate, confirm it belongs in HAI, and decide the next concrete workflow step.",
+		CompletionDefinition:  "Candidate is accepted, linked to the correct work, and closed only after verified completion or Robert archives it.",
+	})
+	if err != nil {
+		return nil, err
+	}
+	links := []models.PursuitLink{}
+	workflowLink, err := s.Link(created.ID, LinkRequest{
+		LinkType:     LinkWorkflow,
+		LinkID:       request.WorkflowID.String(),
+		Relationship: "candidate_operational_work",
+		SourceURI:    request.SourceURI,
+		SourceLabel:  request.SourceLabel,
+		Confidence:   1,
+		Actor:        actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	links = append(links, *workflowLink)
+	if sourceItemLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceItem, request.RawItemID, "candidate_source_record", request, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceItemLink)
+	}
+	if extractionLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceExtraction, request.ExtractionID, "candidate_source_extraction", request, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *extractionLink)
+	}
+	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from source-derived workflow because no existing pursuit matched.", actor, LinkWorkflow, request.WorkflowID.String(), request.SourceURI)
+	if _, err := s.RefreshSummary(created.ID, actor); err != nil {
+		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from source-derived workflow"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: links}, nil
+	}
+	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from source-derived workflow"}, Message: "pursuit candidate created from source-derived workflow", Links: links}, nil
+}
+
+func (s *service) createMemoryCandidate(request AutoLinkMemoryRequest) (*AutoLinkResult, error) {
+	actor := firstNonEmpty(request.Actor, "system")
+	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, "memory insight")
+	created, err := s.Create(CreateRequest{
+		Title:                 candidateTitle(sourceLabel, request.Input),
+		Description:           candidateDescription("memory", request.Input, request.SourceURI, sourceLabel),
+		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		DesiredOutcome:        "Turn this memory-derived objective into a verified, governed outcome.",
+		CurrentStateSummary:   "Created as a reviewable pursuit candidate after no existing pursuit matched the memory insight.",
+		Status:                StatusWaiting,
+		RiskLevel:             classifyRisk(request.Input + " " + sourceLabel),
+		AutonomyLevel:         "suggest",
+		SourceOfCreation:      "memory_pursuit_candidate",
+		NextRecommendedAction: "Review this memory-derived pursuit candidate before turning it into active work.",
+		CompletionDefinition:  "Candidate is accepted, linked to the correct work, and closed only after verified completion or Robert archives it.",
+	})
+	if err != nil {
+		return nil, err
+	}
+	link, err := s.Link(created.ID, LinkRequest{
+		LinkType:     LinkMemory,
+		LinkID:       request.MemoryID.String(),
+		Relationship: "candidate_context_memory",
+		SourceURI:    request.SourceURI,
+		SourceLabel:  request.SourceLabel,
+		Confidence:   1,
+		Actor:        actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from memory insight because no existing pursuit matched.", actor, LinkMemory, request.MemoryID.String(), request.SourceURI)
+	if _, err := s.RefreshSummary(created.ID, actor); err != nil {
+		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: []models.PursuitLink{*link}}, nil
+	}
+	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created from memory insight", Links: []models.PursuitLink{*link}}, nil
+}
+
+func workflowCandidateAllowed(request AutoLinkWorkflowRequest) bool {
+	if request.WorkflowID == uuid.Nil {
+		return false
+	}
+	return candidateHasEnoughSignal(request.Input, request.ProjectKey, request.SourceLabel, request.SourceURI)
+}
+
+func memoryCandidateAllowed(request AutoLinkMemoryRequest) bool {
+	if request.MemoryID == uuid.Nil {
+		return false
+	}
+	return candidateHasEnoughSignal(request.Input, request.ProjectKey, request.SourceLabel, request.SourceURI)
+}
+
+func candidateHasEnoughSignal(values ...string) bool {
+	words := normalizeWords(strings.Join(values, " "))
+	return len(words) >= 4
+}
+
+func candidateTitle(sourceLabel, input string) string {
+	title := firstNonEmpty(sourceLabel, firstNonEmptyLine(input), "Review new pursuit candidate")
+	return compactCandidateText(title, 90)
+}
+
+func candidateDescription(kind, input, sourceURI, sourceLabel string) string {
+	parts := []string{"Candidate source: " + kind}
+	if strings.TrimSpace(sourceLabel) != "" {
+		parts = append(parts, "Source label: "+compactCandidateText(sourceLabel, 180))
+	}
+	if strings.TrimSpace(sourceURI) != "" {
+		parts = append(parts, "Source URI: "+compactCandidateText(sourceURI, 260))
+	}
+	if strings.TrimSpace(input) != "" {
+		parts = append(parts, "Extracted signal: "+compactCandidateText(input, 1000))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func firstNonEmptyLine(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		if strings.TrimSpace(line) != "" {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
+func compactCandidateText(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return strings.TrimSpace(value[:limit-3]) + "..."
+}
+
+func runtimeLaunchIDFromEvidenceURI(value string) (uuid.UUID, bool) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return uuid.Nil, false
+	}
+	if !strings.HasPrefix(raw, "automation-launch://") {
+		return uuid.Nil, false
+	}
+	raw = strings.TrimPrefix(raw, "automation-launch://")
+	raw = strings.Trim(raw, "/")
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (s *service) linkOptionalUUID(pursuitID uuid.UUID, linkType, rawID, relationship string, request AutoLinkWorkflowRequest, confidence float64, actor string) (*models.PursuitLink, bool, error) {
+	id := strings.TrimSpace(rawID)
+	if id == "" {
+		return nil, false, nil
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, false, nil
+	}
+	link, err := s.Link(pursuitID, LinkRequest{
+		LinkType:     linkType,
+		LinkID:       id,
+		Relationship: relationship,
+		SourceURI:    request.SourceURI,
+		SourceLabel:  request.SourceLabel,
+		Confidence:   confidence,
+		Actor:        actor,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return link, true, nil
+}
+
+func autoLinkMinimum(value float64) float64 {
+	if value <= 0 || value > 1 {
+		return defaultAutoLinkMinimumScore
+	}
+	return value
+}
+
+func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(request.Input) == "" {
+		return nil, fmt.Errorf("input is required")
+	}
+	if s.workflowService == nil {
+		return nil, fmt.Errorf("workflow service is not configured")
+	}
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		Input:          request.Input,
+		ProjectKey:     firstNonEmpty(request.ProjectKey, pursuit.ProjectKey),
+		AutomationID:   request.AutomationID,
+		SourceType:     request.SourceType,
+		SourceID:       request.SourceID,
+		SourceURI:      request.SourceURI,
+		SourceLabel:    request.SourceLabel,
+		ContentType:    request.ContentType,
+		Sender:         request.Sender,
+		ReceivedAt:     request.ReceivedAt,
+		Trigger:        firstNonEmpty(request.Trigger, "pursuit_intake"),
+		Actor:          firstNonEmpty(request.Actor, "operator"),
+		RequiresReview: request.RequiresReview,
+		ReviewReason:   request.ReviewReason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if record != nil {
+		_, err = s.Link(id, LinkRequest{
+			LinkType:     LinkWorkflow,
+			LinkID:       record.Item.ID.String(),
+			Relationship: "operational_work",
+			SourceURI:    request.SourceURI,
+			SourceLabel:  request.SourceLabel,
+			Confidence:   0.9,
+			Actor:        "system",
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := s.linkIntakeSourceReference(id, request); err != nil {
+		return nil, err
+	}
+	if launchID, ok := runtimeLaunchIDFromEvidenceURI(request.SourceURI); ok {
+		if _, err := s.Link(id, LinkRequest{
+			LinkType:     LinkAgentRuntime,
+			LinkID:       launchID.String(),
+			Relationship: "execution_attempt",
+			SourceURI:    request.SourceURI,
+			SourceLabel:  firstNonEmpty(request.SourceLabel, "Runtime launch evidence"),
+			Confidence:   0.95,
+			Actor:        "system",
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if strings.EqualFold(request.SourceType, "pursuit_decision") && strings.TrimSpace(request.SourceID) != "" {
+		_, _ = s.recordDecisionResolution(id, DecisionResolutionRequest{
+			DecisionID:    request.SourceID,
+			DecisionType:  request.ContentType,
+			Approved:      true,
+			Reason:        request.ReviewReason,
+			Note:          "Decision approved and converted into governed workflow intake.",
+			EvidenceURI:   request.SourceURI,
+			EvidenceLabel: request.SourceLabel,
+			Actor:         firstNonEmpty(request.Actor, "Robert"),
+		})
+	}
+	return s.RefreshSummary(id, "system")
+}
+
+func (s *service) linkIntakeSourceReference(id uuid.UUID, request IntakeRequest) error {
+	sourceID := strings.TrimSpace(request.SourceID)
+	if sourceID == "" {
+		return nil
+	}
+	linkType := ""
+	relationship := ""
+	switch strings.TrimSpace(request.SourceType) {
+	case LinkSourceItem:
+		linkType = LinkSourceItem
+		relationship = "source_record"
+	case LinkSourceExtraction:
+		linkType = LinkSourceExtraction
+		relationship = "source_extraction"
+	default:
+		return nil
+	}
+	if _, err := uuid.Parse(sourceID); err != nil {
+		return nil
+	}
+	_, err := s.Link(id, LinkRequest{
+		LinkType:     linkType,
+		LinkID:       sourceID,
+		Relationship: relationship,
+		SourceURI:    request.SourceURI,
+		SourceLabel:  request.SourceLabel,
+		Confidence:   0.9,
+		Actor:        "system",
+	})
+	return err
+}
+
+func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.Detail(id)
+	if err != nil {
+		return nil, err
+	}
+	if !pursuitNeedsPlanning(*pursuit, len(existing.Workflows)) {
+		if isPursuitCandidate(*pursuit) {
+			if err := s.markPursuitCandidateAccepted(pursuit, firstNonEmpty(request.Actor, "Robert")); err != nil {
+				return nil, err
+			}
+			return s.RefreshSummary(id, firstNonEmpty(request.Actor, "pursuit-engine"))
+		}
+		return existing, nil
+	}
+	if s.workflowService == nil {
+		return nil, fmt.Errorf("workflow service is not configured")
+	}
+	requiresReview := request.RequiresReview || strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")
+	reviewReason := firstNonEmpty(request.ReviewReason, "first pursuit workflow plan should be reviewed before execution")
+	if requiresReview && strings.EqualFold(pursuit.RiskLevel, "high") {
+		reviewReason = firstNonEmpty(request.ReviewReason, "high-risk pursuit planning requires Robert approval before execution")
+	}
+	input := firstNonEmpty(request.Input, pursuitPlanInput(*pursuit))
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		Input:          input,
+		ProjectKey:     pursuit.ProjectKey,
+		SourceType:     LinkPursuit,
+		SourceID:       pursuit.ID.String(),
+		SourceURI:      "pursuit://" + pursuit.ID.String(),
+		SourceLabel:    pursuit.Title,
+		ContentType:    "pursuit_plan",
+		Trigger:        "pursuit_planning",
+		Actor:          firstNonEmpty(request.Actor, "pursuit-engine"),
+		RequiresReview: requiresReview,
+		ReviewReason:   reviewReason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if record != nil {
+		if _, err := s.Link(id, LinkRequest{
+			LinkType:     LinkWorkflow,
+			LinkID:       record.Item.ID.String(),
+			Relationship: "first_workflow_plan",
+			SourceURI:    "pursuit://" + pursuit.ID.String(),
+			SourceLabel:  pursuit.Title,
+			Confidence:   0.95,
+			Actor:        firstNonEmpty(request.Actor, "pursuit-engine"),
+		}); err != nil {
+			return nil, err
+		}
+		_, _ = s.recordActivity(id, "pursuit.planned", "Created first linked workflow plan: "+record.Item.Title, firstNonEmpty(request.Actor, "pursuit-engine"), LinkWorkflow, record.Item.ID.String(), "pursuit://"+pursuit.ID.String())
+	}
+	if isPursuitCandidate(*pursuit) {
+		if err := s.markPursuitCandidateAccepted(pursuit, firstNonEmpty(request.Actor, "Robert")); err != nil {
+			return nil, err
+		}
+	}
+	return s.RefreshSummary(id, firstNonEmpty(request.Actor, "pursuit-engine"))
+}
+
+func (s *service) ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error) {
+	if _, err := s.repo.FindByID(id); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(request.DecisionID) == "" {
+		return nil, fmt.Errorf("decisionId is required")
+	}
+	if request.Approved && strings.EqualFold(strings.TrimSpace(request.DecisionType), "pursuit_completion_review") {
+		if err := s.completePursuitFromDecision(id, request); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.recordDecisionResolution(id, request); err != nil {
+		return nil, err
+	}
+	if err := s.createApprovedDecisionWorkflow(id, request); err != nil {
+		return nil, err
+	}
+	return s.RefreshSummary(id, firstNonEmpty(request.Actor, "Robert"))
+}
+
+func (s *service) completePursuitFromDecision(id uuid.UUID, request DecisionResolutionRequest) error {
+	expectedID := completionReviewDecisionID(id)
+	if !strings.EqualFold(strings.TrimSpace(request.DecisionID), expectedID) {
+		return fmt.Errorf("completion review decision does not belong to this pursuit")
+	}
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	if pursuitClosed(*pursuit) {
+		return nil
+	}
+	if reason, err := s.completionActiveBlockerReason(id); err != nil {
+		return err
+	} else if reason != "" {
+		return fmt.Errorf("pursuit completion is blocked by unresolved operational work: %s", reason)
+	}
+	allowed, reason, err := s.completionEvidenceAvailable(id)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("pursuit completion requires verified evidence, linked verification, or a verified completed workflow before it can be marked complete: %s", reason)
+	}
+	now := time.Now().UTC()
+	pursuit.Status = StatusCompleted
+	pursuit.CompletionState = CompletionVerified
+	pursuit.LastActivityAt = &now
+	pursuit.CurrentStateSummary = firstNonEmpty(request.Note, "Marked complete after Robert approved the verified completion review.")
+	pursuit.NextRecommendedAction = "No active next action; keep evidence available for audit or future review."
+	if _, err := s.repo.Update(pursuit); err != nil {
+		return err
+	}
+	_, _ = s.recordActivity(
+		id,
+		"pursuit.completed",
+		completionDecisionMessage(request.Note),
+		firstNonEmpty(request.Actor, "Robert"),
+		"pursuit_decision:pursuit_completion_review:approved",
+		strings.TrimSpace(request.DecisionID),
+		request.EvidenceURI,
+	)
+	return nil
+}
+
+func completionDecisionMessage(note string) string {
+	message := "Pursuit marked completed after verified evidence review."
+	if strings.TrimSpace(note) != "" {
+		message += " Note: " + strings.TrimSpace(note)
+	}
+	return message
+}
+
+func (s *service) createApprovedDecisionWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
+	if !request.Approved {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(request.DecisionType)) {
+	case "runtime_attempt_review":
+		return s.createRuntimeRecoveryWorkflow(id, request)
+	default:
+		return nil
+	}
+}
+
+func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
+	if s.workflowService == nil {
+		return fmt.Errorf("workflow service is not configured")
+	}
+	detail, err := s.Detail(id)
+	if err != nil {
+		return err
+	}
+	attempt, ok := runtimeAttemptForDecision(detail.RuntimeAttempts, request)
+	if !ok {
+		return fmt.Errorf("runtime attempt evidence is required before creating a recovery workflow")
+	}
+	sourceURI := "automation-launch://" + attempt.ID.String()
+	if runtimeAttemptHasRecoveryWorkflow(attempt, detail.Workflows) {
+		return nil
+	}
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		Input:          runtimeRecoveryWorkflowInput(detail.Pursuit, attempt, request),
+		ProjectKey:     detail.Pursuit.ProjectKey,
+		SourceType:     "pursuit_decision",
+		SourceID:       strings.TrimSpace(request.DecisionID),
+		SourceURI:      sourceURI,
+		SourceLabel:    firstNonEmpty(request.EvidenceLabel, runtimeAttemptLabel(attempt)),
+		ContentType:    "runtime_attempt_review",
+		Trigger:        "pursuit_decision_approved",
+		Actor:          firstNonEmpty(request.Actor, "Robert"),
+		RequiresReview: true,
+		ReviewReason:   firstNonEmpty(request.Reason, runtimeAttemptReason(attempt), "runtime attempt needs governed recovery before retry"),
+	})
+	if err != nil {
+		return err
+	}
+	if record != nil {
+		if _, err := s.Link(id, LinkRequest{
+			LinkType:     LinkWorkflow,
+			LinkID:       record.Item.ID.String(),
+			Relationship: "runtime_recovery_workflow",
+			SourceURI:    sourceURI,
+			SourceLabel:  firstNonEmpty(request.EvidenceLabel, runtimeAttemptLabel(attempt)),
+			Confidence:   0.95,
+			Actor:        firstNonEmpty(request.Actor, "pursuit-engine"),
+		}); err != nil {
+			return err
+		}
+		_, _ = s.recordActivity(
+			id,
+			"pursuit.runtime_recovery_workflow_created",
+			"Created governed recovery workflow for runtime attempt: "+runtimeAttemptLabel(attempt),
+			firstNonEmpty(request.Actor, "pursuit-engine"),
+			LinkWorkflow,
+			record.Item.ID.String(),
+			sourceURI,
+		)
+	}
+	return nil
+}
+
+func (s *service) RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error) {
+	detail, err := s.Detail(id)
+	if err != nil {
+		return nil, err
+	}
+	pursuit := detail.Pursuit
+	pursuit.CurrentStateSummary = detail.Summary.CurrentState
+	if len(detail.NextActions) > 0 {
+		pursuit.NextRecommendedAction = detail.NextActions[0].Label
+	}
+	if detail.Summary.Blocked > 0 {
+		pursuit.Status = StatusBlocked
+	} else if detail.Summary.CompletionCandidate {
+		pursuit.CompletionState = CompletionCandidate
+	} else if len(detail.OpenLoops) > 0 {
+		pursuit.Status = StatusWaiting
+	} else if pursuit.Status == StatusBlocked || pursuit.Status == StatusWaiting {
+		pursuit.Status = StatusActive
+	}
+	now := time.Now().UTC()
+	pursuit.LastActivityAt = &now
+	updated, err := s.repo.Update(&pursuit)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(id, "pursuit.summary_refreshed", "Pursuit summary refreshed from linked operational records", firstNonEmpty(actor, "system"), "", "", "")
+	detail.Pursuit = *updated
+	return s.Detail(id)
+}
+
+func (s *service) Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	action := strings.ToLower(strings.TrimSpace(firstNonEmpty(request.Action, "complete")))
+	actor := firstNonEmpty(request.Actor, "robert")
+	note := strings.TrimSpace(request.Note)
+	nextReviewAt := parseOptionalTime(request.NextReviewAt)
+
+	switch action {
+	case "complete", "reviewed", "done":
+		if nextReviewAt == nil {
+			next := now.Add(7 * 24 * time.Hour)
+			nextReviewAt = &next
+		}
+		pursuit.NextReviewAt = nextReviewAt
+		pursuit.LastActivityAt = &now
+		pursuit.CurrentStateSummary = firstNonEmpty(note, fmt.Sprintf("Review completed; next review scheduled for %s.", pursuit.NextReviewAt.Format("2006-01-02")), pursuit.CurrentStateSummary)
+		updated, err := s.repo.Update(pursuit)
+		if err != nil {
+			return nil, err
+		}
+		_, _ = s.recordActivity(id, "pursuit.reviewed", firstNonEmpty(note, fmt.Sprintf("Review completed; next review scheduled for %s", updated.NextReviewAt.Format("2006-01-02"))), actor, "", "", "")
+	case "snooze", "postpone":
+		if nextReviewAt == nil {
+			days := clampInt(request.SnoozeDays, 1, 90, 3)
+			next := now.Add(time.Duration(days) * 24 * time.Hour)
+			nextReviewAt = &next
+		}
+		pursuit.NextReviewAt = nextReviewAt
+		pursuit.LastActivityAt = &now
+		pursuit.CurrentStateSummary = firstNonEmpty(note, fmt.Sprintf("Review snoozed until %s.", pursuit.NextReviewAt.Format("2006-01-02")), pursuit.CurrentStateSummary)
+		updated, err := s.repo.Update(pursuit)
+		if err != nil {
+			return nil, err
+		}
+		_, _ = s.recordActivity(id, "pursuit.review_snoozed", firstNonEmpty(note, fmt.Sprintf("Review snoozed until %s", updated.NextReviewAt.Format("2006-01-02"))), actor, "", "", "")
+	default:
+		return nil, fmt.Errorf("unsupported pursuit review action %q", request.Action)
+	}
+
+	return s.Detail(id)
+}
+
+func (s *service) Activity(id uuid.UUID) ([]models.PursuitActivity, error) {
+	if _, err := s.repo.FindByID(id); err != nil {
+		return nil, err
+	}
+	return s.repo.FindActivities(id, 100)
+}
+
+func (s *service) listItem(pursuit models.Pursuit) (PursuitListItem, error) {
+	item, _, err := s.listItemWithDetail(pursuit)
+	return item, err
+}
+
+func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *PursuitDetail, error) {
+	detail, err := s.Detail(pursuit.ID)
+	if err != nil {
+		return PursuitListItem{Pursuit: pursuit, NextAction: pursuit.NextRecommendedAction, Stale: isStale(pursuit), ReviewDue: isReviewDue(pursuit), PlanningNeeded: pursuitNeedsPlanning(pursuit, 0)}, nil, err
+	}
+	needsRobert := len(detail.ApprovalItems)
+	if pursuitNeedsRobert(pursuit, detail.NextActions) {
+		needsRobert++
+	}
+	if detail.Summary.NeedsRobert > needsRobert {
+		needsRobert = detail.Summary.NeedsRobert
+	}
+	return PursuitListItem{
+		Pursuit:             pursuit,
+		NeedsRobert:         needsRobert,
+		Blocked:             len(detail.Blockers),
+		OpenLoops:           len(detail.OpenLoops),
+		DecisionCards:       detail.Summary.DecisionCards,
+		LinkedEvidence:      detail.Summary.LinkedEvidence,
+		TimelineItems:       detail.Summary.TimelineItems,
+		CompletionCandidate: detail.Summary.CompletionCandidate,
+		CurrentState:        detail.Summary.CurrentState,
+		WhatChanged:         detail.Summary.WhatChanged,
+		NextAction:          firstNonEmpty(pursuit.NextRecommendedAction, firstActionLabel(detail.NextActions)),
+		Stale:               isStale(pursuit),
+		ReviewDue:           isReviewDue(pursuit),
+		PlanningNeeded:      detail.Summary.PlanningNeeded,
+	}, detail, nil
+}
+
+func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, sourceType, sourceID, sourceURI string) (*models.PursuitActivity, error) {
+	return s.repo.CreateActivity(&models.PursuitActivity{
+		PursuitID:  id,
+		EventType:  eventType,
+		Message:    strings.TrimSpace(message),
+		Actor:      strings.TrimSpace(actor),
+		SourceType: strings.TrimSpace(sourceType),
+		SourceID:   strings.TrimSpace(sourceID),
+		SourceURI:  strings.TrimSpace(sourceURI),
+	})
+}
+
+func (s *service) recordDecisionResolution(id uuid.UUID, request DecisionResolutionRequest) (*models.PursuitActivity, error) {
+	decisionID := strings.TrimSpace(request.DecisionID)
+	if decisionID == "" {
+		return nil, fmt.Errorf("decisionId is required")
+	}
+	outcome := "rejected"
+	if request.Approved {
+		outcome = "approved"
+	}
+	message := firstNonEmpty(request.Note, fmt.Sprintf("Robert %s pursuit decision %s.", outcome, decisionID))
+	if strings.TrimSpace(request.Reason) != "" {
+		message = message + " Reason: " + strings.TrimSpace(request.Reason)
+	}
+	if strings.TrimSpace(request.EvidenceLabel) != "" {
+		message = message + " Evidence: " + strings.TrimSpace(request.EvidenceLabel)
+	}
+	return s.recordActivity(
+		id,
+		"pursuit.decision_resolved",
+		message,
+		firstNonEmpty(request.Actor, "Robert"),
+		"pursuit_decision:"+strings.TrimSpace(request.DecisionType)+":"+outcome,
+		decisionID,
+		request.EvidenceURI,
+	)
+}
+
+func approvalWorkflows(workflows []models.WorkflowItem) []models.WorkflowItem {
+	result := []models.WorkflowItem{}
+	for _, item := range workflows {
+		if item.RequiresApproval && (item.ApprovalStatus == "" || item.ApprovalStatus == "pending") {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func openWorkflowProposals(proposals []models.WorkflowProposal) []models.WorkflowProposal {
+	result := []models.WorkflowProposal{}
+	for _, proposal := range proposals {
+		if proposal.Status == "open" || proposal.Status == "pending" || proposal.Status == "" {
+			result = append(result, proposal)
+		}
+	}
+	return result
+}
+
+func unresolvedWorkflowDecisions(decisions []models.WorkflowDecision) []models.WorkflowDecision {
+	result := []models.WorkflowDecision{}
+	for _, decision := range decisions {
+		status := decisionStatus(decision)
+		if status == "needs_review" || status == "rejected" {
+			result = append(result, decision)
+		}
+	}
+	return result
+}
+
+func blockers(workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop) []PursuitBlocker {
+	result := []PursuitBlocker{}
+	for _, item := range workflows {
+		if item.CurrentState == workflow.StateBlocked || strings.TrimSpace(item.BlockedReason) != "" {
+			result = append(result, PursuitBlocker{
+				Label:      item.Title,
+				Reason:     firstNonEmpty(item.BlockedReason, "workflow is blocked"),
+				Owner:      "Robert or external party",
+				WorkflowID: item.ID.String(),
+			})
+		}
+	}
+	now := time.Now().UTC()
+	for _, loop := range loops {
+		if loop.Status == "open" || loop.Status == "follow_up_due" || loop.FollowUpAt != nil && loop.FollowUpAt.Before(now) {
+			result = append(result, PursuitBlocker{
+				Label:      loop.WaitingFor,
+				Reason:     loop.NextAction,
+				Owner:      firstNonEmpty(loop.ResponsibleParty, "external"),
+				WorkflowID: loop.WorkflowID.String(),
+				FollowUpAt: loop.FollowUpAt,
+			})
+		}
+	}
+	return result
+}
+
+func sourceRetractionBlockers(links []models.PursuitLink, extractions []models.SourceExtraction) []PursuitBlocker {
+	expected := map[uuid.UUID]models.PursuitLink{}
+	for _, link := range links {
+		if link.LinkType != LinkSourceExtraction {
+			continue
+		}
+		if !sourceExtractionLinkRequiresEvidenceReview(link.Relationship) {
+			continue
+		}
+		id, err := uuid.Parse(strings.TrimSpace(link.LinkID))
+		if err != nil {
+			continue
+		}
+		expected[id] = link
+	}
+	if len(expected) == 0 {
+		return nil
+	}
+	found := map[uuid.UUID]models.SourceExtraction{}
+	for _, extraction := range extractions {
+		found[extraction.ID] = extraction
+	}
+	result := []PursuitBlocker{}
+	for id, link := range expected {
+		extraction, ok := found[id]
+		if !ok {
+			result = append(result, PursuitBlocker{
+				Label:  firstNonEmpty(link.SourceLabel, "Missing source extraction"),
+				Reason: "linked source extraction is missing; verify or remove the stale evidence link before relying on this pursuit",
+				Owner:  "Robert or source owner",
+			})
+			continue
+		}
+		if extraction.Archived {
+			result = append(result, PursuitBlocker{
+				Label:  firstNonEmpty(extraction.SourceLabel, link.SourceLabel, extraction.Summary, "Archived source extraction"),
+				Reason: "linked source extraction was archived and must be reviewed before relying on it as evidence",
+				Owner:  "Robert or source owner",
+			})
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Label < result[j].Label
+	})
+	return result
+}
+
+func sourceExtractionStatus(extraction models.SourceExtraction) string {
+	if extraction.Archived {
+		return "archived"
+	}
+	if extraction.Uncertain {
+		return "uncertain"
+	}
+	return "active"
+}
+
+func sourceExtractionLinkRequiresEvidenceReview(relationship string) bool {
+	relationship = strings.ToLower(strings.TrimSpace(relationship))
+	if relationship == "" {
+		return true
+	}
+	if strings.Contains(relationship, "candidate") {
+		return false
+	}
+	return strings.Contains(relationship, "evidence") ||
+		strings.Contains(relationship, "source") ||
+		strings.Contains(relationship, "provenance")
+}
+
+func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, proposals []models.WorkflowProposal, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool) []PursuitAction {
+	actions := []PursuitAction{}
+	if pursuitClosed(pursuit) {
+		return actions
+	}
+	if isPursuitCandidate(pursuit) {
+		actions = append(actions, PursuitAction{
+			Label:            firstNonEmpty(pursuit.NextRecommendedAction, "Review this auto-created pursuit candidate and decide whether HAI should plan it."),
+			Owner:            "Robert",
+			RiskLevel:        firstNonEmpty(pursuit.RiskLevel, "low"),
+			RequiresApproval: true,
+			Reason:           "auto-created pursuit candidates must be accepted before HAI treats them as planned work",
+			YesLabel:         "Accept and plan",
+			NoLabel:          "Archive candidate",
+		})
+	}
+	if isReviewDue(pursuit) {
+		requiresApproval := strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")
+		actions = append(actions, PursuitAction{
+			Label:            firstNonEmpty(pursuit.NextRecommendedAction, "Review this pursuit and choose the next concrete action"),
+			Owner:            reviewOwner(pursuit),
+			RiskLevel:        pursuit.RiskLevel,
+			RequiresApproval: requiresApproval,
+			Reason:           "scheduled pursuit review is due",
+			YesLabel:         "Review now",
+			NoLabel:          "Snooze",
+		})
+	}
+	for _, item := range workflows {
+		if item.RequiresApproval && (item.ApprovalStatus == "" || item.ApprovalStatus == "pending") {
+			actions = append(actions, PursuitAction{
+				Label:            firstNonEmpty(item.NextAction, item.ApprovalReason, "Review and approve workflow: "+item.Title),
+				Owner:            "Robert",
+				RiskLevel:        firstNonEmpty(item.RiskLevel, pursuit.RiskLevel),
+				RequiresApproval: true,
+				Reason:           firstNonEmpty(item.ApprovalReason, "workflow policy requires human approval"),
+				WorkflowID:       item.ID.String(),
+				YesLabel:         "Approve",
+				NoLabel:          "Reject",
+			})
+		}
+	}
+	for _, proposal := range openWorkflowProposals(proposals) {
+		actions = append(actions, PursuitAction{
+			Label:            proposal.RecommendedAction,
+			Owner:            "Robert",
+			RiskLevel:        pursuit.RiskLevel,
+			RequiresApproval: true,
+			Reason:           "open proposal needs a decision",
+			WorkflowID:       proposal.WorkflowID.String(),
+			YesLabel:         "Accept",
+			NoLabel:          "Decline",
+		})
+	}
+	now := time.Now().UTC()
+	for _, loop := range loops {
+		if loop.Status == "open" || loop.Status == "follow_up_due" || loop.FollowUpAt != nil && loop.FollowUpAt.Before(now) {
+			actions = append(actions, PursuitAction{
+				Label:            firstNonEmpty(loop.NextAction, "Follow up on waiting state"),
+				Owner:            "System or VA",
+				RiskLevel:        pursuit.RiskLevel,
+				RequiresApproval: strings.EqualFold(pursuit.RiskLevel, "high"),
+				Reason:           "open loop is due or still waiting",
+				WorkflowID:       loop.WorkflowID.String(),
+				YesLabel:         "Prepare",
+				NoLabel:          "Ignore for now",
+			})
+		}
+	}
+	for _, attempt := range runtimeAttempts {
+		if runtimeAttemptRecoveredByWorkflow(attempt, workflows) {
+			continue
+		}
+		if !runtimeAttemptNeedsReview(attempt) || resolvedDecisions[runtimeAttemptDecisionID(attempt)] {
+			continue
+		}
+		actions = append(actions, PursuitAction{
+			Label:            "Review failed runtime attempt before retrying",
+			Owner:            "Robert",
+			RiskLevel:        firstNonEmpty(pursuit.RiskLevel, "medium"),
+			RequiresApproval: true,
+			Reason:           runtimeAttemptReason(attempt),
+			YesLabel:         "Create recovery workflow",
+			NoLabel:          "Keep blocked",
+		})
+		break
+	}
+	if len(workflows) == 0 {
+		actions = append(actions, PursuitAction{
+			Label:            "Create the first workflow item for this pursuit",
+			Owner:            "System",
+			RiskLevel:        "low",
+			RequiresApproval: false,
+			Reason:           "pursuit has no linked operational work yet",
+			YesLabel:         "Create workflow",
+			NoLabel:          "Not now",
+		})
+	}
+	if len(actions) == 0 && workflowsReadyForCompletion(workflows) {
+		actions = append(actions, PursuitAction{
+			Label:            "Review verified evidence and mark pursuit complete",
+			Owner:            "Robert",
+			RiskLevel:        firstNonEmpty(pursuit.RiskLevel, "medium"),
+			RequiresApproval: true,
+			Reason:           "all linked workflows are complete and accepted verification evidence is available",
+			YesLabel:         "Mark complete",
+			NoLabel:          "Keep active",
+		})
+	}
+	if len(actions) == 0 {
+		if resolvedDecisions["pursuit:"+pursuit.ID.String()+":next-action"] {
+			return actions
+		}
+		actions = append(actions, PursuitAction{
+			Label:            firstNonEmpty(pursuit.NextRecommendedAction, "Review this pursuit and confirm the next concrete action"),
+			Owner:            "Robert",
+			RiskLevel:        pursuit.RiskLevel,
+			RequiresApproval: strings.EqualFold(pursuit.RiskLevel, "high"),
+			Reason:           "no active blocker or approval was found",
+			YesLabel:         "Confirm",
+			NoLabel:          "Revise",
+		})
+	}
+	return actions
+}
+
+func actionQueues(pursuit models.Pursuit, actions []PursuitAction, blockers []PursuitBlocker) PursuitActionQueues {
+	queues := PursuitActionQueues{}
+	seen := map[string]bool{}
+	actionWorkflowIDs := map[string]bool{}
+	add := func(action PursuitAction, lane string) {
+		key := lane + "|" + action.Label + "|" + action.WorkflowID + "|" + action.Owner
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		switch lane {
+		case "robert":
+			queues.NeedsRobert = append(queues.NeedsRobert, action)
+		case "va":
+			queues.VAReady = append(queues.VAReady, action)
+		case "system":
+			queues.SystemReady = append(queues.SystemReady, action)
+		default:
+			queues.Waiting = append(queues.Waiting, action)
+		}
+	}
+	for _, action := range actions {
+		if strings.TrimSpace(action.WorkflowID) != "" {
+			actionWorkflowIDs[action.WorkflowID] = true
+		}
+		switch {
+		case actionNeedsRobert(action):
+			add(action, "robert")
+		case actionIsSystemReady(action):
+			add(action, "system")
+		case actionIsVAReady(action):
+			add(action, "va")
+		default:
+			add(action, "waiting")
+		}
+	}
+	for _, blocker := range blockers {
+		if strings.TrimSpace(blocker.WorkflowID) != "" && actionWorkflowIDs[blocker.WorkflowID] {
+			continue
+		}
+		action := PursuitAction{
+			Label:            firstNonEmpty(blocker.Reason, "Clear blocker: "+blocker.Label),
+			Owner:            firstNonEmpty(blocker.Owner, "external"),
+			RiskLevel:        pursuit.RiskLevel,
+			RequiresApproval: strings.EqualFold(pursuit.RiskLevel, "high"),
+			Reason:           "Blocked or waiting: " + firstNonEmpty(blocker.Label, blocker.Reason, "pursuit blocker"),
+			WorkflowID:       blocker.WorkflowID,
+			YesLabel:         "Prepare follow-up",
+			NoLabel:          "Keep waiting",
+		}
+		if actionNeedsRobert(action) || strings.Contains(strings.ToLower(action.Owner), "robert") {
+			add(action, "robert")
+			continue
+		}
+		add(action, "waiting")
+	}
+	return queues
+}
+
+func approvalActions(actions []PursuitAction) []PursuitAction {
+	result := []PursuitAction{}
+	seen := map[string]bool{}
+	for _, action := range actions {
+		if !actionNeedsRobert(action) {
+			continue
+		}
+		key := action.Label + "|" + action.WorkflowID + "|" + action.Owner
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, action)
+	}
+	return result
+}
+
+func actionNeedsRobert(action PursuitAction) bool {
+	owner := strings.ToLower(strings.TrimSpace(action.Owner))
+	return action.RequiresApproval || owner == "robert" || strings.Contains(owner, "robert")
+}
+
+func actionIsVAReady(action PursuitAction) bool {
+	owner := strings.ToLower(strings.TrimSpace(action.Owner))
+	risk := strings.ToLower(strings.TrimSpace(action.RiskLevel))
+	return !action.RequiresApproval &&
+		(risk == "" || risk == "low" || risk == "medium") &&
+		(strings.Contains(owner, "va") || strings.Contains(owner, "assistant"))
+}
+
+func actionIsSystemReady(action PursuitAction) bool {
+	owner := strings.ToLower(strings.TrimSpace(action.Owner))
+	risk := strings.ToLower(strings.TrimSpace(action.RiskLevel))
+	return !action.RequiresApproval &&
+		(risk == "" || risk == "low") &&
+		(strings.Contains(owner, "system") || strings.Contains(owner, "hai"))
+}
+
+func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, proposals []models.WorkflowProposal, decisions []models.WorkflowDecision, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool) []PursuitDecision {
+	result := []PursuitDecision{}
+	workflowsByID := map[uuid.UUID]models.WorkflowItem{}
+	if pursuitClosed(pursuit) {
+		return result
+	}
+	if isPursuitCandidate(pursuit) {
+		result = append(result, PursuitDecision{
+			ID:               "pursuit:" + pursuit.ID.String() + ":candidate-review",
+			DecisionType:     "pursuit_candidate_review",
+			Status:           "pending",
+			Recommended:      firstNonEmpty(pursuit.NextRecommendedAction, "Accept this pursuit candidate and create the first governed workflow plan."),
+			Reason:           "HAI created this candidate automatically because no existing pursuit matched the source or memory signal.",
+			RiskLevel:        firstNonEmpty(pursuit.RiskLevel, "low"),
+			EvidenceLabel:    firstNonEmpty(pursuit.SourceOfCreation, "auto-created pursuit candidate"),
+			YesLabel:         "Accept and plan",
+			NoLabel:          "Archive",
+			YesConsequence:   "HAI converts the candidate into governed pursuit work and keeps approval gates for any risky action.",
+			NoConsequence:    "The candidate is archived so it no longer clutters active Robert queues.",
+			RequiresApproval: true,
+			CreatedAt:        optionalRFC3339(pursuit.CreatedAt),
+		})
+	}
+	for _, attempt := range runtimeAttempts {
+		decisionID := runtimeAttemptDecisionID(attempt)
+		if runtimeAttemptRecoveredByWorkflow(attempt, workflows) {
+			continue
+		}
+		if !runtimeAttemptNeedsReview(attempt) || resolvedDecisions[decisionID] {
+			continue
+		}
+		result = append(result, PursuitDecision{
+			ID:               decisionID,
+			DecisionType:     "runtime_attempt_review",
+			Status:           "pending",
+			Recommended:      "Create a governed recovery workflow before retrying this runtime attempt.",
+			Reason:           runtimeAttemptReason(attempt),
+			RiskLevel:        firstNonEmpty(runtimeAttemptRouteRisk(attempt), pursuit.RiskLevel, "medium"),
+			EvidenceURI:      "automation-launch://" + attempt.ID.String(),
+			EvidenceLabel:    runtimeAttemptLabel(attempt),
+			YesLabel:         "Create recovery workflow",
+			NoLabel:          "Keep blocked",
+			YesConsequence:   "HAI creates a tracked recovery workflow; it does not retry uncontrolled runtime execution.",
+			NoConsequence:    "The pursuit remains blocked until the runtime configuration or safety issue is reviewed.",
+			RequiresApproval: true,
+			CreatedAt:        optionalRFC3339(firstTime(attempt.CompletedAt, attempt.StartedAt)),
+		})
+		if len(result) >= 5 {
+			break
+		}
+	}
+	for _, item := range workflows {
+		workflowsByID[item.ID] = item
+		if item.RequiresApproval && (item.ApprovalStatus == "" || item.ApprovalStatus == "pending") {
+			result = append(result, PursuitDecision{
+				ID:               "workflow:" + item.ID.String() + ":approval",
+				WorkflowID:       item.ID.String(),
+				WorkflowTitle:    item.Title,
+				DecisionType:     "approval",
+				Status:           "pending",
+				Recommended:      firstNonEmpty(item.NextAction, item.ApprovalReason, "Approve or reject workflow: "+item.Title),
+				Reason:           firstNonEmpty(item.ApprovalReason, "workflow policy requires human approval"),
+				RiskLevel:        firstNonEmpty(item.RiskLevel, pursuit.RiskLevel),
+				EvidenceURI:      item.SourceURI,
+				EvidenceLabel:    item.SourceLabel,
+				YesLabel:         "Approve",
+				NoLabel:          "Reject",
+				YesConsequence:   "The workflow may move forward through the governed worker or automation path.",
+				NoConsequence:    "The workflow remains blocked for revision or cancellation.",
+				RequiresApproval: true,
+			})
+		}
+	}
+	for _, proposal := range openWorkflowProposals(proposals) {
+		workflowTitle := ""
+		if item, ok := workflowsByID[proposal.WorkflowID]; ok {
+			workflowTitle = item.Title
+		}
+		result = append(result, PursuitDecision{
+			ID:               "proposal:" + proposal.ID.String(),
+			WorkflowID:       proposal.WorkflowID.String(),
+			WorkflowTitle:    workflowTitle,
+			DecisionType:     "proposal",
+			Status:           "pending",
+			Recommended:      proposal.RecommendedAction,
+			Reason:           firstNonEmpty(proposal.Options, "open proposal needs a decision"),
+			RiskLevel:        pursuit.RiskLevel,
+			YesLabel:         "Accept",
+			NoLabel:          "Decline",
+			YesConsequence:   "HAI records the selected proposal and can advance the linked workflow.",
+			NoConsequence:    "The proposal stays unresolved or returns for revision.",
+			RequiresApproval: true,
+			CreatedAt:        optionalRFC3339(proposal.CreatedAt),
+		})
+	}
+	for _, decision := range decisions {
+		workflowTitle := ""
+		sourceURI := ""
+		sourceLabel := ""
+		riskLevel := pursuit.RiskLevel
+		if item, ok := workflowsByID[decision.WorkflowID]; ok {
+			workflowTitle = item.Title
+			sourceURI = item.SourceURI
+			sourceLabel = item.SourceLabel
+			riskLevel = firstNonEmpty(item.RiskLevel, pursuit.RiskLevel)
+		}
+		result = append(result, PursuitDecision{
+			ID:               decision.ID.String(),
+			WorkflowID:       decision.WorkflowID.String(),
+			WorkflowTitle:    workflowTitle,
+			DecisionType:     decision.DecisionType,
+			Status:           decisionStatus(decision),
+			Recommended:      decisionRecommendation(decision),
+			Reason:           firstNonEmpty(decision.Reason, decision.RuleApplied, "decision recorded in linked workflow"),
+			RiskLevel:        riskLevel,
+			EvidenceURI:      sourceURI,
+			EvidenceLabel:    sourceLabel,
+			YesLabel:         "Accept record",
+			NoLabel:          "Review",
+			YesConsequence:   "The audit record remains part of the pursuit history.",
+			NoConsequence:    "Robert should inspect the linked workflow before relying on this decision.",
+			RequiresApproval: false,
+			Approved:         decision.Approved,
+			Actor:            decision.Actor,
+			CreatedAt:        optionalRFC3339(decision.CreatedAt),
+		})
+		if len(result) >= 24 {
+			break
+		}
+	}
+	if len(result) == 0 && workflowsReadyForCompletion(workflows) {
+		decisionID := completionReviewDecisionID(pursuit.ID)
+		if resolvedDecisions[decisionID] {
+			return result
+		}
+		result = append(result, PursuitDecision{
+			ID:               decisionID,
+			DecisionType:     "pursuit_completion_review",
+			Status:           "pending",
+			Recommended:      "Review verified evidence and mark this pursuit complete.",
+			Reason:           "all linked workflows are complete and accepted verification evidence is available",
+			RiskLevel:        firstNonEmpty(pursuit.RiskLevel, "medium"),
+			YesLabel:         "Mark complete",
+			NoLabel:          "Keep active",
+			YesConsequence:   "HAI marks the pursuit completed and verified through the existing completion evidence guard.",
+			NoConsequence:    "The pursuit stays active for more evidence, follow-up, or a better completion note.",
+			RequiresApproval: true,
+			CreatedAt:        optionalRFC3339(pursuit.UpdatedAt),
+		})
+	}
+	if len(result) == 0 && (strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")) {
+		decisionID := "pursuit:" + pursuit.ID.String() + ":next-action"
+		if resolvedDecisions[decisionID] {
+			return result
+		}
+		result = append(result, PursuitDecision{
+			ID:               decisionID,
+			DecisionType:     "pursuit_next_action",
+			Status:           "pending",
+			Recommended:      firstNonEmpty(pursuit.NextRecommendedAction, "Define the first safe workflow item for this pursuit."),
+			Reason:           "high-risk pursuit needs Robert approval before HAI can execute or delegate consequential work",
+			RiskLevel:        firstNonEmpty(pursuit.RiskLevel, "high"),
+			YesLabel:         "Create workflow",
+			NoLabel:          "Revise goal",
+			YesConsequence:   "HAI can create or prepare the first governed workflow with approval gates preserved.",
+			NoConsequence:    "The pursuit remains active but waits for a safer objective or more context.",
+			RequiresApproval: true,
+			CreatedAt:        optionalRFC3339(pursuit.UpdatedAt),
+		})
+	}
+	return result
+}
+
+func completionReviewDecisionID(id uuid.UUID) string {
+	return "pursuit:" + id.String() + ":completion-review"
+}
+
+func pendingDecisionCards(cards []PursuitDecision) int {
+	count := 0
+	for _, card := range cards {
+		if strings.EqualFold(card.Status, "pending") || card.RequiresApproval {
+			count++
+		}
+	}
+	return count
+}
+
+func decisionStatus(decision models.WorkflowDecision) string {
+	if strings.EqualFold(decision.DecisionType, "approval") {
+		if decision.Approved || strings.EqualFold(decision.Decision, "approved") {
+			return "approved"
+		}
+		if strings.EqualFold(decision.Decision, "rejected") {
+			return "rejected"
+		}
+	}
+	if strings.EqualFold(decision.Decision, "needs_review") || strings.EqualFold(decision.Decision, "blocked") {
+		return "needs_review"
+	}
+	return "recorded"
+}
+
+func decisionRecommendation(decision models.WorkflowDecision) string {
+	switch strings.ToLower(strings.TrimSpace(decision.DecisionType)) {
+	case "approval_gate":
+		if strings.EqualFold(decision.Decision, "required") {
+			return "Approval gate was required before execution."
+		}
+		return "Approval gate allowed low-risk workflow progression."
+	case "approval":
+		return "Human approval decision recorded: " + decision.Decision + "."
+	case "proposal":
+		return "Proposal decision recorded: " + decision.Decision + "."
+	case "worker_execution", "interrupted_execution":
+		return "Worker execution decision recorded: " + decision.Decision + "."
+	case "verification_completion":
+		return "Verification/completion decision recorded: " + decision.Decision + "."
+	default:
+		return firstNonEmpty(decision.Reason, decision.DecisionType+": "+decision.Decision)
+	}
+}
+
+func optionalRFC3339(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func pursuitTimeline(
+	pursuit models.Pursuit,
+	activity []models.PursuitActivity,
+	workflows []models.WorkflowItem,
+	transitions []models.WorkflowTransition,
+	sourceLinks []models.WorkflowSourceLink,
+	decisions []models.WorkflowDecision,
+	events []models.WorkflowEvent,
+	taskRuns []PursuitTaskRun,
+	verificationRuns []models.VerificationRun,
+	runtimeAttempts []models.AutomationLaunchEvent,
+) []PursuitTimelineItem {
+	items := []PursuitTimelineItem{}
+	workflowTitles := map[uuid.UUID]string{}
+	workflowRisks := map[uuid.UUID]string{}
+	for _, item := range workflows {
+		workflowTitles[item.ID] = item.Title
+		workflowRisks[item.ID] = firstNonEmpty(item.RiskLevel, pursuit.RiskLevel)
+	}
+	for _, item := range activity {
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:          item.ID.String(),
+			Kind:        "pursuit_activity",
+			Title:       item.EventType,
+			Message:     item.Message,
+			Actor:       item.Actor,
+			SourceURI:   item.SourceURI,
+			SourceLabel: item.SourceType,
+			Status:      "recorded",
+			RiskLevel:   pursuit.RiskLevel,
+			CreatedAt:   item.CreatedAt,
+		})
+	}
+	for _, event := range events {
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:            event.ID.String(),
+			Kind:          "workflow_event",
+			Title:         firstNonEmpty(event.EventType, "workflow event"),
+			Message:       firstNonEmpty(event.Message, event.RuleApplied),
+			WorkflowID:    event.WorkflowID.String(),
+			WorkflowTitle: workflowTitles[event.WorkflowID],
+			Actor:         event.Actor,
+			Status:        firstNonEmpty(event.ToState, event.EventType),
+			RiskLevel:     workflowRisks[event.WorkflowID],
+			SourceURI:     event.SourceURI,
+			CreatedAt:     event.CreatedAt,
+		})
+	}
+	for _, transition := range transitions {
+		title := "State changed to " + transition.ToState
+		if strings.TrimSpace(transition.FromState) != "" {
+			title = "State changed: " + transition.FromState + " -> " + transition.ToState
+		}
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:            transition.ID.String(),
+			Kind:          "workflow_transition",
+			Title:         title,
+			Message:       firstNonEmpty(transition.Reason, transition.Trigger),
+			WorkflowID:    transition.WorkflowID.String(),
+			WorkflowTitle: workflowTitles[transition.WorkflowID],
+			Actor:         transition.Actor,
+			Status:        transition.ToState,
+			RiskLevel:     workflowRisks[transition.WorkflowID],
+			NeedsReview:   !transition.Approved && containsAny(strings.ToLower(transition.ToState), "approval", "blocked", "review"),
+			CreatedAt:     transition.CreatedAt,
+		})
+	}
+	for _, link := range sourceLinks {
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:            link.ID.String(),
+			Kind:          "source_link",
+			Title:         "Source linked: " + firstNonEmpty(link.Relationship, link.SourceType, "related"),
+			Message:       firstNonEmpty(link.SourceLabel, link.SourceURI, link.SourceID),
+			WorkflowID:    link.WorkflowID.String(),
+			WorkflowTitle: workflowTitles[link.WorkflowID],
+			Status:        link.Relationship,
+			RiskLevel:     workflowRisks[link.WorkflowID],
+			SourceURI:     link.SourceURI,
+			SourceLabel:   link.SourceLabel,
+			CreatedAt:     link.CreatedAt,
+		})
+	}
+	for _, decision := range decisions {
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:            decision.ID.String(),
+			Kind:          "workflow_decision",
+			Title:         "Decision: " + firstNonEmpty(decision.DecisionType, "workflow") + " / " + decision.Decision,
+			Message:       firstNonEmpty(decision.Reason, decision.RuleApplied),
+			WorkflowID:    decision.WorkflowID.String(),
+			WorkflowTitle: workflowTitles[decision.WorkflowID],
+			Actor:         decision.Actor,
+			Status:        decisionStatus(decision),
+			RiskLevel:     workflowRisks[decision.WorkflowID],
+			NeedsReview:   decisionStatus(decision) == "needs_review",
+			CreatedAt:     decision.CreatedAt,
+		})
+	}
+	for _, run := range taskRuns {
+		when := timeFromPointer(run.LastRunAt)
+		if when.IsZero() {
+			continue
+		}
+		workflowID, _ := uuid.Parse(run.WorkflowID.String())
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:            "task-run:" + run.WorkflowID.String() + ":" + run.TaskPlanID,
+			Kind:          "task_run",
+			Title:         "Task run: " + run.Status,
+			Message:       firstNonEmpty(run.LastWorkerError, run.VerificationStatus, "task engine attempted the workflow"),
+			WorkflowID:    run.WorkflowID.String(),
+			WorkflowTitle: firstNonEmpty(run.WorkflowTitle, workflowTitles[workflowID]),
+			Status:        run.Status,
+			RiskLevel:     workflowRisks[workflowID],
+			NeedsReview:   run.NeedsReview,
+			CreatedAt:     when,
+		})
+	}
+	for _, run := range verificationRuns {
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:          run.ID.String(),
+			Kind:        "verification",
+			Title:       "Verification: " + firstNonEmpty(run.Mode, "run"),
+			Message:     firstNonEmpty(run.Question, run.Answer),
+			Status:      run.Status,
+			RiskLevel:   pursuit.RiskLevel,
+			NeedsReview: !acceptedCompletionStatus(run.Status),
+			CreatedAt:   run.CreatedAt,
+		})
+	}
+	for _, attempt := range runtimeAttempts {
+		when := firstTime(attempt.CompletedAt, attempt.StartedAt)
+		label := firstNonEmpty(attempt.RuntimeType, attempt.LaunchType, "automation")
+		sourceURI := "automation-launch://" + attempt.ID.String()
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:          attempt.ID.String(),
+			Kind:        "runtime_attempt",
+			Title:       runtimeTimelineTitle(attempt, label),
+			Message:     firstNonEmpty(attempt.Message, attempt.Target, attempt.Output),
+			Status:      attempt.Status,
+			RiskLevel:   pursuit.RiskLevel,
+			SourceURI:   sourceURI,
+			SourceLabel: runtimeAttemptLabel(attempt),
+			NeedsReview: runtimeAttemptNeedsReview(attempt),
+			CreatedAt:   when,
+		})
+		for index, auditEvent := range boundedRuntimeAuditEvents(attempt.AuditEvents) {
+			items = appendTimeline(items, PursuitTimelineItem{
+				ID:          fmt.Sprintf("%s:audit:%d", attempt.ID.String(), index),
+				Kind:        "runtime_audit",
+				Title:       "Runtime audit: " + label,
+				Message:     auditEvent,
+				Status:      attempt.Status,
+				RiskLevel:   pursuit.RiskLevel,
+				SourceURI:   sourceURI,
+				SourceLabel: runtimeAttemptLabel(attempt),
+				NeedsReview: runtimeAttemptNeedsReview(attempt),
+				CreatedAt:   when,
+			})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	if len(items) > 50 {
+		return items[:50]
+	}
+	return items
+}
+
+func appendTimeline(items []PursuitTimelineItem, item PursuitTimelineItem) []PursuitTimelineItem {
+	if item.CreatedAt.IsZero() {
+		return items
+	}
+	if strings.TrimSpace(item.Title) == "" {
+		item.Title = item.Kind
+	}
+	item.CreatedAt = item.CreatedAt.UTC()
+	return append(items, item)
+}
+
+func boundedRuntimeAuditEvents(events []string) []string {
+	const limit = 5
+	capacity := len(events)
+	if capacity > limit {
+		capacity = limit
+	}
+	result := make([]string, 0, capacity)
+	for _, event := range events {
+		event = strings.TrimSpace(event)
+		if event == "" {
+			continue
+		}
+		result = append(result, event)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
+}
+
+func runtimeTimelineTitle(attempt models.AutomationLaunchEvent, label string) string {
+	if strings.EqualFold(strings.TrimSpace(attempt.LaunchType), "agent_runtime_stop") {
+		return "Runtime stop: " + label
+	}
+	return "Runtime attempt: " + label
+}
+
+func timelineChangeSummary(item PursuitTimelineItem) string {
+	if strings.TrimSpace(item.Message) == "" {
+		return item.Title
+	}
+	return item.Title + ": " + item.Message
+}
+
+func timeFromPointer(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
+}
+
+func firstTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
+}
+
+func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker) PursuitSummary {
+	approvals := len(approvalWorkflows(workflows))
+	needsRobert := approvals
+	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers)
+	linkedEvidence := len(evidence) + len(memories) + len(sourceItems) + activeSourceExtractions(extractions) + acceptedVerificationRuns(verificationRuns) + completedRuntimeAttempts(runtimeAttempts) + acceptedWorkflowCompletionEvidence(workflows) + acceptedAmbientOpportunityLinks(links)
+	completed := 0
+	for _, item := range workflows {
+		if item.CurrentState == workflow.StateCompleted {
+			completed++
+		}
+	}
+	state := fmt.Sprintf("%s has %d linked workflows, %d needing Robert, %d blockers, and %d open loops.", pursuit.Title, len(workflows), approvals, blocked, len(loops))
+	if isPursuitCandidate(pursuit) {
+		needsRobert++
+		state = state + " This is an auto-created pursuit candidate and needs Robert acceptance before HAI treats it as planned work."
+	}
+	if !pursuitClosed(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0 {
+		state = "All linked workflows appear complete; pursuit completion needs evidence review or Robert confirmation."
+		if isPursuitCandidate(pursuit) {
+			state = state + " It is still a candidate until Robert accepts or archives it."
+		}
+	}
+	planningNeeded := pursuitNeedsPlanning(pursuit, len(workflows))
+	if planningNeeded {
+		state = state + " No linked workflow exists yet; planning is needed before HAI can move it forward."
+	}
+	if len(sourceBlockers) > 0 {
+		state = state + " Some linked source evidence was archived or is missing; review provenance before using it."
+	}
+	reviewDue := isReviewDue(pursuit)
+	if reviewDue {
+		state = state + " Scheduled pursuit review is due."
+	}
+	changed := "No recent activity recorded."
+	if len(activity) > 0 {
+		changed = activity[0].Message
+	}
+	return PursuitSummary{
+		CurrentState:        state,
+		WhatChanged:         changed,
+		NeedsRobert:         needsRobert,
+		Blocked:             blocked,
+		OpenLoops:           len(loops),
+		TaskRuns:            len(taskRuns),
+		LinkedEvidence:      linkedEvidence,
+		VerificationRuns:    len(verificationRuns),
+		RuntimeAttempts:     len(runtimeAttempts),
+		Confidence:          pursuit.Confidence,
+		PlanningNeeded:      planningNeeded,
+		ReviewDue:           reviewDue,
+		CompletionCandidate: !pursuitClosed(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0,
+	}
+}
+
+func operationalDigest(pursuit models.Pursuit, detail PursuitDetail) PursuitOperationalDigest {
+	summary := detail.Summary
+	digest := PursuitOperationalDigest{
+		NeedsRobert:      summary.NeedsRobert,
+		VAReady:          len(detail.ActionQueues.VAReady),
+		SystemReady:      len(detail.ActionQueues.SystemReady),
+		Waiting:          len(detail.ActionQueues.Waiting),
+		Blocked:          len(detail.Blockers),
+		Evidence:         summary.LinkedEvidence,
+		RuntimeAttempts:  len(detail.RuntimeAttempts),
+		VerificationRuns: len(detail.VerificationRuns),
+		OpenLoops:        len(detail.OpenLoops),
+	}
+	digest.PrimaryLane = primaryOperationalLane(pursuit, summary, detail.ActionQueues, detail.Blockers)
+	digest.Headline = operationalHeadline(pursuit, digest.PrimaryLane, summary)
+	digest.RecommendedAction = firstNonEmpty(primaryActionLabel(detail.ActionQueues.NeedsRobert), primaryActionLabel(detail.ActionQueues.SystemReady), primaryActionLabel(detail.ActionQueues.VAReady), primaryActionLabel(detail.ActionQueues.Waiting), pursuit.NextRecommendedAction, "Review pursuit context and define the next concrete action.")
+	digest.RobertLine = fmt.Sprintf("%d Robert decision%s pending.", digest.NeedsRobert, pluralSuffix(digest.NeedsRobert))
+	if action := primaryActionLabel(detail.ActionQueues.NeedsRobert); action != "" {
+		digest.RobertLine = digest.RobertLine + " Next: " + action
+	}
+	digest.DelegationLine = fmt.Sprintf("%d VA-ready action%s.", digest.VAReady, pluralSuffix(digest.VAReady))
+	if action := primaryActionLabel(detail.ActionQueues.VAReady); action != "" {
+		digest.DelegationLine = digest.DelegationLine + " First: " + action
+	}
+	digest.SystemLine = fmt.Sprintf("%d system-ready action%s.", digest.SystemReady, pluralSuffix(digest.SystemReady))
+	if action := primaryActionLabel(detail.ActionQueues.SystemReady); action != "" {
+		digest.SystemLine = digest.SystemLine + " First: " + action
+	}
+	digest.WaitingLine = fmt.Sprintf("%d waiting action%s and %d open loop%s.", digest.Waiting, pluralSuffix(digest.Waiting), digest.OpenLoops, pluralSuffix(digest.OpenLoops))
+	digest.BlockerLine = operationalBlockerLine(detail.Blockers)
+	digest.EvidenceLine = operationalEvidenceLine(summary, detail)
+	digest.RuntimeLine = operationalRuntimeLine(detail.RuntimeAttempts)
+	digest.SourceLine = operationalSourceLine(detail)
+	digest.VerificationLine = operationalVerificationLine(detail)
+	digest.RiskLine = fmt.Sprintf("%s risk with %.0f%% confidence and %s autonomy.", firstNonEmpty(pursuit.RiskLevel, "unknown"), pursuit.Confidence*100, firstNonEmpty(pursuit.AutonomyLevel, "manual"))
+	return digest
+}
+
+func primaryOperationalLane(pursuit models.Pursuit, summary PursuitSummary, queues PursuitActionQueues, blockers []PursuitBlocker) string {
+	switch {
+	case pursuitClosed(pursuit):
+		return "completed"
+	case len(queues.NeedsRobert) > 0 || summary.NeedsRobert > 0:
+		return "needs_robert"
+	case len(blockers) > 0 || summary.Blocked > 0:
+		return "blocked"
+	case summary.PlanningNeeded:
+		return "planning_needed"
+	case len(queues.SystemReady) > 0:
+		return "system_ready"
+	case len(queues.VAReady) > 0:
+		return "va_ready"
+	case len(queues.Waiting) > 0:
+		return "waiting"
+	default:
+		return "monitor"
+	}
+}
+
+func operationalHeadline(pursuit models.Pursuit, lane string, summary PursuitSummary) string {
+	switch lane {
+	case "completed":
+		return "Pursuit is closed; keep evidence and audit history available."
+	case "needs_robert":
+		return "Robert has a concrete decision or approval to resolve before this can move safely."
+	case "blocked":
+		return "The pursuit is blocked or waiting; unblock before spending more execution effort."
+	case "planning_needed":
+		return "No linked workflow exists yet; create the first governed workflow plan."
+	case "system_ready":
+		return "HAI can prepare low-risk system work through the guarded task path."
+	case "va_ready":
+		return "This has delegation-ready work that can be packaged for a VA or assistant."
+	case "waiting":
+		return "The pursuit is waiting; monitor follow-up timing and source changes."
+	default:
+		return firstNonEmpty(summary.CurrentState, pursuit.CurrentStateSummary, "Pursuit is being monitored.")
+	}
+}
+
+func primaryActionLabel(actions []PursuitAction) string {
+	for _, action := range actions {
+		if value := strings.TrimSpace(action.Label); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func operationalBlockerLine(blockers []PursuitBlocker) string {
+	if len(blockers) == 0 {
+		return "No active blocker detected from linked workflows, open loops, sources, or runtime attempts."
+	}
+	first := blockers[0]
+	line := fmt.Sprintf("%d blocker%s. First: %s", len(blockers), pluralSuffix(len(blockers)), firstNonEmpty(first.Label, first.Reason, "unresolved blocker"))
+	if reason := strings.TrimSpace(first.Reason); reason != "" {
+		line = line + " - " + reason
+	}
+	if owner := strings.TrimSpace(first.Owner); owner != "" {
+		line = line + " (owner: " + owner + ")"
+	}
+	return line
+}
+
+func operationalEvidenceLine(summary PursuitSummary, detail PursuitDetail) string {
+	parts := []string{
+		fmt.Sprintf("%d evidence item%s", summary.LinkedEvidence, pluralSuffix(summary.LinkedEvidence)),
+		fmt.Sprintf("%d timeline item%s", summary.TimelineItems, pluralSuffix(summary.TimelineItems)),
+	}
+	if len(detail.Evidence) > 0 {
+		parts = append(parts, "workflow evidence present")
+	}
+	if len(detail.Memories) > 0 {
+		parts = append(parts, "memory context linked")
+	}
+	if len(detail.SourceItems) > 0 || activeSourceExtractions(detail.SourceExtractions) > 0 {
+		parts = append(parts, "source provenance linked")
+	}
+	return strings.Join(parts, " / ")
+}
+
+func operationalRuntimeLine(attempts []models.AutomationLaunchEvent) string {
+	if len(attempts) == 0 {
+		return "No agent runtime attempts are linked to this pursuit."
+	}
+	latest := attempts[0]
+	for _, attempt := range attempts[1:] {
+		if firstTime(attempt.CompletedAt, attempt.StartedAt).After(firstTime(latest.CompletedAt, latest.StartedAt)) {
+			latest = attempt
+		}
+	}
+	line := fmt.Sprintf("%d runtime attempt%s. Latest: %s %s", len(attempts), pluralSuffix(len(attempts)), runtimeAttemptLabel(latest), firstNonEmpty(latest.Status, "unknown"))
+	if route := runtimeAttemptRouteSummary(latest); route != "" {
+		line = line + " / " + route
+	}
+	return line
+}
+
+func operationalSourceLine(detail PursuitDetail) string {
+	sourceCount := len(detail.SourceLinks) + len(detail.SourceItems) + activeSourceExtractions(detail.SourceExtractions)
+	if sourceCount == 0 {
+		return "No connected-source provenance is linked yet."
+	}
+	return fmt.Sprintf("%d connected-source/provenance record%s linked.", sourceCount, pluralSuffix(sourceCount))
+}
+
+func operationalVerificationLine(detail PursuitDetail) string {
+	accepted := acceptedVerificationRuns(detail.VerificationRuns)
+	if len(detail.VerificationRuns) == 0 && len(detail.VerificationClaims) == 0 && len(detail.VerificationEvidence) == 0 {
+		return "No verification run is linked yet; do not treat completion as proven."
+	}
+	return fmt.Sprintf("%d verification run%s, %d accepted, %d claim%s, %d evidence record%s.", len(detail.VerificationRuns), pluralSuffix(len(detail.VerificationRuns)), accepted, len(detail.VerificationClaims), pluralSuffix(len(detail.VerificationClaims)), len(detail.VerificationEvidence), pluralSuffix(len(detail.VerificationEvidence)))
+}
+
+func activeSourceExtractions(extractions []models.SourceExtraction) int {
+	count := 0
+	for _, extraction := range extractions {
+		if !extraction.Archived {
+			count++
+		}
+	}
+	return count
+}
+
+func requestsVerifiedCompletion(pursuit models.Pursuit, request UpdateRequest) bool {
+	status := strings.TrimSpace(request.Status)
+	completionState := strings.TrimSpace(request.CompletionState)
+	return (strings.EqualFold(status, StatusCompleted) && !strings.EqualFold(pursuit.Status, StatusCompleted)) ||
+		(strings.EqualFold(completionState, CompletionVerified) && !strings.EqualFold(pursuit.CompletionState, CompletionVerified))
+}
+
+func (s *service) completionActiveBlockerReason(id uuid.UUID) (string, error) {
+	links, err := s.repo.FindLinks(id)
+	if err != nil {
+		return "", err
+	}
+	workflowIDs := linkUUIDs(links, LinkWorkflow)
+	workflows, err := s.repo.FindLinkedWorkflows(workflowIDs)
+	if err != nil {
+		return "", err
+	}
+	if approvals := approvalWorkflows(workflows); len(approvals) > 0 {
+		return fmt.Sprintf("%d workflow approval%s still pending", len(approvals), pluralSuffix(len(approvals))), nil
+	}
+	openLoops, err := s.repo.FindLinkedOpenLoops(workflowIDs)
+	if err != nil {
+		return "", err
+	}
+	if active := blockers(workflows, openLoops); len(active) > 0 {
+		return firstNonEmpty(active[0].Reason, active[0].Label, "linked workflow or open loop is still blocked"), nil
+	}
+	proposals, err := s.repo.FindLinkedProposals(workflowIDs)
+	if err != nil {
+		return "", err
+	}
+	if open := openWorkflowProposals(proposals); len(open) > 0 {
+		return firstNonEmpty(open[0].RecommendedAction, open[0].Options, "open workflow proposal needs a decision"), nil
+	}
+	decisions, err := s.repo.FindLinkedDecisions(workflowIDs)
+	if err != nil {
+		return "", err
+	}
+	if unresolved := unresolvedWorkflowDecisions(decisions); len(unresolved) > 0 {
+		return firstNonEmpty(unresolved[0].Reason, unresolved[0].RuleApplied, "linked workflow decision still needs review"), nil
+	}
+	extractions, err := s.repo.FindLinkedExtractions(linkUUIDs(links, LinkSourceExtraction))
+	if err != nil {
+		return "", err
+	}
+	if staleSources := sourceRetractionBlockers(links, extractions); len(staleSources) > 0 {
+		return firstNonEmpty(staleSources[0].Reason, staleSources[0].Label, "linked source evidence needs review"), nil
+	}
+	runtimeAttemptIDs := linkUUIDs(links, LinkAgentRuntime)
+	if len(runtimeAttemptIDs) > 0 {
+		attempts, err := s.repo.FindLinkedAutomationLaunches(nil, runtimeAttemptIDs, len(runtimeAttemptIDs))
+		if err != nil {
+			return "", err
+		}
+		if runtimeBlockers := runtimeAttemptBlockers(attempts, workflows, map[string]bool{}); len(runtimeBlockers) > 0 {
+			return firstNonEmpty(runtimeBlockers[0].Reason, runtimeBlockers[0].Label, "linked runtime attempt still needs review"), nil
+		}
+	}
+	return "", nil
+}
+
+func (s *service) completionEvidenceAvailable(id uuid.UUID) (bool, string, error) {
+	links, err := s.repo.FindLinks(id)
+	if err != nil {
+		return false, "", err
+	}
+	for _, link := range links {
+		if link.LinkType == LinkVerification && strings.TrimSpace(link.LinkID) != "" {
+			id, err := uuid.Parse(strings.TrimSpace(link.LinkID))
+			if err != nil {
+				if strings.TrimSpace(link.SourceURI) != "" && strings.EqualFold(strings.TrimSpace(link.Relationship), "completion_evidence") {
+					return true, "external completion verification record has provenance", nil
+				}
+				continue
+			}
+			runs, err := s.repo.FindLinkedVerificationRuns([]uuid.UUID{id})
+			if err != nil {
+				return false, "", err
+			}
+			for _, run := range runs {
+				if acceptedCompletionStatus(run.Status) {
+					return true, "linked verification run has accepted status", nil
+				}
+			}
+			if strings.TrimSpace(link.SourceURI) != "" && strings.EqualFold(strings.TrimSpace(link.Relationship), "completion_evidence") {
+				return true, "external completion verification record has provenance", nil
+			}
+		}
+	}
+	runtimeEvidenceIDs := completionEvidenceRuntimeIDs(links)
+	if len(runtimeEvidenceIDs) > 0 {
+		attempts, err := s.repo.FindLinkedAutomationLaunches(nil, runtimeEvidenceIDs, len(runtimeEvidenceIDs))
+		if err != nil {
+			return false, "", err
+		}
+		for _, attempt := range attempts {
+			if runtimeAttemptCompleted(attempt.Status) {
+				return true, "linked agent-runtime attempt completed under HAI controls", nil
+			}
+		}
+	}
+	workflowIDs := linkUUIDs(links, LinkWorkflow)
+	if len(workflowIDs) == 0 {
+		return false, "no linked workflows or verification records", nil
+	}
+	evidence, err := s.repo.FindLinkedEvidence(workflowIDs)
+	if err != nil {
+		return false, "", err
+	}
+	for _, claim := range evidence {
+		if acceptedCompletionStatus(claim.Status) && strings.TrimSpace(claim.SourceURI) != "" {
+			return true, "linked workflow evidence is verified", nil
+		}
+	}
+	workflows, err := s.repo.FindLinkedWorkflows(workflowIDs)
+	if err != nil {
+		return false, "", err
+	}
+	for _, item := range workflows {
+		if item.CurrentState == workflow.StateCompleted && acceptedCompletionStatus(item.VerificationStatus) {
+			return true, "linked workflow completed with accepted verification", nil
+		}
+	}
+	return false, "linked workflows do not have accepted verification evidence", nil
+}
+
+func completionEvidenceRuntimeIDs(links []models.PursuitLink) []uuid.UUID {
+	ids := []uuid.UUID{}
+	for _, link := range links {
+		if link.LinkType != LinkAgentRuntime {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(link.Relationship), "completion_evidence") {
+			continue
+		}
+		id, err := uuid.Parse(strings.TrimSpace(link.LinkID))
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return uniqueUUIDs(ids)
+}
+
+func acceptedCompletionStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "verified", "source_supported", "test_passed", "human_approved":
+		return true
+	default:
+		return false
+	}
+}
+
+func compactSourceItems(items []models.SourceRawItem) []PursuitSourceItem {
+	result := make([]PursuitSourceItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, PursuitSourceItem{
+			ID:         item.ID,
+			SourceID:   item.SourceID,
+			ExternalID: item.ExternalID,
+			ProjectKey: item.ProjectKey,
+			ItemType:   item.ItemType,
+			Title:      item.Title,
+			SourceURI:  item.SourceURI,
+			Metadata:   item.Metadata,
+			FetchedAt:  item.FetchedAt,
+			CreatedAt:  item.CreatedAt,
+			UpdatedAt:  item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func compactAutomations(items []models.Automation) []PursuitAutomation {
+	result := make([]PursuitAutomation, 0, len(items))
+	for _, item := range items {
+		result = append(result, PursuitAutomation{
+			ID:                item.ID,
+			Name:              item.Name,
+			RuntimeType:       item.RuntimeType,
+			LaunchType:        item.LaunchType,
+			Status:            item.Status,
+			LastLaunchAt:      item.LastLaunchAt,
+			LastFailureReason: item.LastFailureReason,
+		})
+	}
+	return result
+}
+
+func taskRunsFromWorkflows(workflows []models.WorkflowItem) []PursuitTaskRun {
+	result := []PursuitTaskRun{}
+	for _, item := range workflows {
+		if !workflowHasTaskRunEvidence(item) {
+			continue
+		}
+		result = append(result, PursuitTaskRun{
+			WorkflowID:         item.ID,
+			WorkflowTitle:      item.Title,
+			TaskPlanID:         item.LastTaskPlanID,
+			Status:             taskRunStatus(item),
+			VerificationStatus: item.VerificationStatus,
+			RetryCount:         item.RetryCount,
+			MaxRetries:         item.MaxRetries,
+			LastRunAt:          item.LastRunAt,
+			NextRunAt:          item.NextRunAt,
+			LastWorkerError:    item.LastWorkerError,
+			AutomationID:       item.AutomationID,
+			NeedsReview:        taskRunNeedsReview(item),
+		})
+	}
+	return result
+}
+
+func workflowHasTaskRunEvidence(item models.WorkflowItem) bool {
+	return strings.TrimSpace(item.LastTaskPlanID) != "" ||
+		item.LastRunAt != nil ||
+		item.RetryCount > 0 ||
+		strings.TrimSpace(item.VerificationStatus) != "" ||
+		strings.TrimSpace(item.LastWorkerError) != ""
+}
+
+func taskRunStatus(item models.WorkflowItem) string {
+	if strings.TrimSpace(item.LastWorkerError) != "" {
+		return "blocked"
+	}
+	if item.CurrentState == workflow.StateCompleted {
+		return "completed"
+	}
+	if item.NextRunAt != nil {
+		return "retry_scheduled"
+	}
+	if strings.TrimSpace(item.LastTaskPlanID) != "" || item.LastRunAt != nil {
+		return "ran"
+	}
+	return "not_started"
+}
+
+func taskRunNeedsReview(item models.WorkflowItem) bool {
+	status := strings.ToLower(strings.TrimSpace(item.VerificationStatus))
+	return strings.TrimSpace(item.LastWorkerError) != "" ||
+		status == "needs_review" ||
+		status == "unsupported" ||
+		strings.Contains(status, "fail")
+}
+
+func verificationRunIDs(runs []models.VerificationRun) []uuid.UUID {
+	result := make([]uuid.UUID, 0, len(runs))
+	for _, run := range runs {
+		result = append(result, run.ID)
+	}
+	return uniqueUUIDs(result)
+}
+
+func acceptedVerificationRuns(runs []models.VerificationRun) int {
+	count := 0
+	for _, run := range runs {
+		if acceptedCompletionStatus(run.Status) {
+			count++
+		}
+	}
+	return count
+}
+
+func acceptedWorkflowCompletionEvidence(workflows []models.WorkflowItem) int {
+	count := 0
+	for _, item := range workflows {
+		if item.CurrentState == workflow.StateCompleted && acceptedCompletionStatus(item.VerificationStatus) {
+			count++
+		}
+	}
+	return count
+}
+
+func acceptedAmbientOpportunityLinks(links []models.PursuitLink) int {
+	count := 0
+	for _, link := range links {
+		if link.LinkType != LinkAmbientOpportunity {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(link.Relationship), "ambient_proposal_accepted") {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func workflowsReadyForCompletion(workflows []models.WorkflowItem) bool {
+	if len(workflows) == 0 {
+		return false
+	}
+	for _, item := range workflows {
+		if item.CurrentState != workflow.StateCompleted || !acceptedCompletionStatus(item.VerificationStatus) {
+			return false
+		}
+	}
+	return true
+}
+
+func pursuitNeedsRobert(pursuit models.Pursuit, actions []PursuitAction) bool {
+	if pursuitClosed(pursuit) {
+		return false
+	}
+	if isPursuitCandidate(pursuit) {
+		return true
+	}
+	if strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute") {
+		return true
+	}
+	for _, action := range actions {
+		if action.RequiresApproval || strings.EqualFold(action.Owner, "Robert") {
+			return true
+		}
+	}
+	return false
+}
+
+func pursuitClosed(pursuit models.Pursuit) bool {
+	return pursuit.Archived ||
+		strings.EqualFold(pursuit.Status, StatusCompleted) ||
+		strings.EqualFold(pursuit.CompletionState, CompletionVerified)
+}
+
+func isPursuitCandidate(pursuit models.Pursuit) bool {
+	source := strings.ToLower(strings.TrimSpace(pursuit.SourceOfCreation))
+	return source == "pursuit_candidate" || strings.Contains(source, "_pursuit_candidate")
+}
+
+func (s *service) markPursuitCandidateAccepted(pursuit *models.Pursuit, actor string) error {
+	if pursuit == nil || !isPursuitCandidate(*pursuit) {
+		return nil
+	}
+	now := time.Now().UTC()
+	pursuit.SourceOfCreation = acceptedCandidateSource(pursuit.SourceOfCreation)
+	pursuit.Status = StatusActive
+	pursuit.LastActivityAt = &now
+	pursuit.CurrentStateSummary = firstNonEmpty(pursuit.CurrentStateSummary, "Pursuit candidate accepted by Robert and ready for governed planning.")
+	if _, err := s.repo.Update(pursuit); err != nil {
+		return err
+	}
+	_, _ = s.recordActivity(pursuit.ID, "pursuit.candidate_accepted", "Robert accepted the auto-created pursuit candidate for governed HAI handling.", firstNonEmpty(actor, "Robert"), "", "", "")
+	return nil
+}
+
+func acceptedCandidateSource(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "pursuit_intake"
+	}
+	lower := strings.ToLower(source)
+	needle := "_pursuit_candidate"
+	if idx := strings.Index(lower, needle); idx >= 0 {
+		return source[:idx] + "_pursuit_intake" + source[idx+len(needle):]
+	}
+	if strings.EqualFold(source, "pursuit_candidate") {
+		return "pursuit_intake"
+	}
+	return source + "_accepted"
+}
+
+func isVAReady(item PursuitListItem) bool {
+	if item.NeedsRobert > 0 || item.Blocked > 0 || strings.EqualFold(item.Pursuit.RiskLevel, "high") {
+		return false
+	}
+	return strings.Contains(strings.ToLower(item.Pursuit.AutonomyLevel), "suggest")
+}
+
+func isSystemReady(item PursuitListItem) bool {
+	if item.NeedsRobert > 0 || item.Blocked > 0 || !strings.EqualFold(item.Pursuit.RiskLevel, "low") {
+		return false
+	}
+	autonomy := strings.ToLower(item.Pursuit.AutonomyLevel)
+	return strings.Contains(autonomy, "autonomous_safe") || strings.Contains(autonomy, "autonomous_full_local_only")
+}
+
+func briefOperatingMode(brief Brief) string {
+	switch {
+	case brief.NeedsRobert > 0:
+		return "needs_robert"
+	case brief.PlanningNeeded > 0:
+		return "planning_needed"
+	case brief.ReviewDue > 0:
+		return "review_due"
+	case brief.Stuck > 0:
+		return "stuck"
+	case brief.ReadyToMove > 0:
+		return "ready_to_move"
+	default:
+		return "calm"
+	}
+}
+
+func briefSummary(brief Brief, dashboard *Dashboard) string {
+	active := int64(0)
+	if dashboard != nil && dashboard.Counts != nil {
+		active = dashboard.Counts["active"] + dashboard.Counts["waiting"] + dashboard.Counts["blocked"]
+	}
+	if active == 0 {
+		return "No active pursuits are registered. HAI is ready to create pursuits from source intake, memory imports, or manual goals."
+	}
+	parts := []string{fmt.Sprintf("%d active pursuits", active)}
+	if brief.NeedsRobert > 0 {
+		parts = append(parts, fmt.Sprintf("%d need Robert", brief.NeedsRobert))
+	}
+	if brief.PlanningNeeded > 0 {
+		parts = append(parts, fmt.Sprintf("%d need a first plan", brief.PlanningNeeded))
+	}
+	if brief.ReviewDue > 0 {
+		parts = append(parts, fmt.Sprintf("%d have review due", brief.ReviewDue))
+	}
+	if brief.ReadyToMove > 0 {
+		parts = append(parts, fmt.Sprintf("%d can move without vague re-explaining", brief.ReadyToMove))
+	}
+	if brief.Stuck > 0 {
+		parts = append(parts, fmt.Sprintf("%d are blocked or stale", brief.Stuck))
+	}
+	return strings.Join(parts, ", ") + "."
+}
+
+func briefPrimaryAction(brief Brief) string {
+	switch brief.OperatingMode {
+	case "needs_robert":
+		return "Handle the Robert-only decisions first; approve, reject, or correct the proposed next action."
+	case "planning_needed":
+		return "Create first workflow plans for pursuits that have goals but no operational path."
+	case "review_due":
+		return "Review due pursuits and either mark them reviewed, snooze them, or convert them into next actions."
+	case "stuck":
+		return "Unblock stale or blocked pursuits by assigning the next follow-up, missing-input request, or review step."
+	case "ready_to_move":
+		return "Move VA-ready and system-ready work through the governed workflow layer."
+	default:
+		return "Keep scanning sources and memory for new pursuit candidates and unfinished work."
+	}
+}
+
+func briefCards(dashboard *Dashboard, limit int) []BriefCard {
+	if dashboard == nil || limit <= 0 {
+		return []BriefCard{}
+	}
+	result := []BriefCard{}
+	seen := map[uuid.UUID]bool{}
+	add := func(queue string, items []PursuitListItem) {
+		for _, item := range items {
+			if len(result) >= limit {
+				return
+			}
+			id := item.Pursuit.ID
+			if id == uuid.Nil || seen[id] {
+				continue
+			}
+			seen[id] = true
+			result = append(result, briefCard(queue, item))
+		}
+	}
+	add("Robert", dashboard.NeedsRobert)
+	add("Plan", dashboard.PlanningNeeded)
+	add("Review", dashboard.ReviewDue)
+	add("Blocked", dashboard.Blocked)
+	add("Stale", dashboard.Stale)
+	add("VA-ready", dashboard.VAReady)
+	add("System-ready", dashboard.SystemReady)
+	add("Verify", dashboard.CompletionCandidates)
+	add("Changed", dashboard.RecentlyChanged)
+	return result
+}
+
+func briefCard(queue string, item PursuitListItem) BriefCard {
+	return BriefCard{
+		Queue:        queue,
+		PursuitID:    item.Pursuit.ID.String(),
+		Title:        item.Pursuit.Title,
+		Action:       briefCardAction(queue, item),
+		Context:      firstNonEmpty(item.WhatChanged, item.CurrentState, item.Pursuit.CurrentStateSummary, item.Pursuit.DesiredOutcome, "No operational movement recorded yet."),
+		RiskLevel:    firstNonEmpty(item.Pursuit.RiskLevel, "medium"),
+		EvidenceLine: briefEvidenceLine(item),
+		NeedsRobert:  item.NeedsRobert > 0 || queue == "Robert",
+	}
+}
+
+func briefCardAction(queue string, item PursuitListItem) string {
+	if strings.TrimSpace(item.NextAction) != "" {
+		return item.NextAction
+	}
+	if strings.TrimSpace(item.Pursuit.NextRecommendedAction) != "" {
+		return item.Pursuit.NextRecommendedAction
+	}
+	switch queue {
+	case "Plan":
+		return "Create the first governed workflow plan."
+	case "Review":
+		return "Review the pursuit and choose whether to snooze, continue, or change direction."
+	case "Blocked":
+		return "Resolve the blocker or create a missing-information request."
+	case "Stale":
+		return "Create a follow-up so the pursuit starts moving again."
+	case "Verify":
+		return "Check evidence before marking the pursuit complete."
+	default:
+		return "Review the pursuit and choose the next concrete action."
+	}
+}
+
+func briefEvidenceLine(item PursuitListItem) string {
+	parts := []string{
+		fmt.Sprintf("%d decision%s", item.DecisionCards, pluralSuffix(item.DecisionCards)),
+		fmt.Sprintf("%d evidence", item.LinkedEvidence),
+		fmt.Sprintf("%d timeline", item.TimelineItems),
+	}
+	if item.OpenLoops > 0 {
+		parts = append(parts, fmt.Sprintf("%d open loop%s", item.OpenLoops, pluralSuffix(item.OpenLoops)))
+	}
+	return strings.Join(parts, " / ")
+}
+
+func dashboardDecisionCards(item PursuitListItem, detail *PursuitDetail) []PursuitDashboardDecision {
+	if detail == nil {
+		return nil
+	}
+	result := []PursuitDashboardDecision{}
+	for _, decision := range detail.DecisionQueue {
+		if !decisionNeedsRobert(decision) {
+			continue
+		}
+		result = append(result, PursuitDashboardDecision{
+			Pursuit:      detail.Pursuit,
+			Decision:     decision,
+			CurrentState: firstNonEmpty(item.CurrentState, detail.Summary.CurrentState, detail.Pursuit.CurrentStateSummary),
+			NextAction:   firstNonEmpty(item.NextAction, detail.Pursuit.NextRecommendedAction, decision.Recommended),
+			Blocked:      item.Blocked,
+			EvidenceLine: briefEvidenceLine(item),
+		})
+	}
+	return result
+}
+
+func decisionNeedsRobert(decision PursuitDecision) bool {
+	return strings.EqualFold(decision.Status, "pending") || decision.RequiresApproval
+}
+
+func sortDashboardDecisions(items []PursuitDashboardDecision) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		if left.Decision.RequiresApproval != right.Decision.RequiresApproval {
+			return left.Decision.RequiresApproval
+		}
+		if decisionRiskRank(left.Decision.RiskLevel, left.Pursuit.RiskLevel) != decisionRiskRank(right.Decision.RiskLevel, right.Pursuit.RiskLevel) {
+			return decisionRiskRank(left.Decision.RiskLevel, left.Pursuit.RiskLevel) > decisionRiskRank(right.Decision.RiskLevel, right.Pursuit.RiskLevel)
+		}
+		if left.Blocked != right.Blocked {
+			return left.Blocked > right.Blocked
+		}
+		return parseDecisionCardTime(left.Decision.CreatedAt).After(parseDecisionCardTime(right.Decision.CreatedAt))
+	})
+}
+
+func decisionRiskRank(values ...string) int {
+	risk := strings.ToLower(strings.TrimSpace(firstNonEmpty(values...)))
+	switch risk {
+	case "critical", "highest":
+		return 5
+	case "high":
+		return 4
+	case "medium":
+		return 3
+	case "low":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func parseDecisionCardTime(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+func limitDashboardDecisions(items *[]PursuitDashboardDecision, limit int) {
+	if len(*items) > limit {
+		*items = (*items)[:limit]
+	}
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func linkUUIDs(links []models.PursuitLink, linkType string) []uuid.UUID {
+	result := []uuid.UUID{}
+	seen := map[uuid.UUID]bool{}
+	for _, link := range links {
+		if link.LinkType != linkType {
+			continue
+		}
+		id, err := uuid.Parse(link.LinkID)
+		if err != nil || seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	return result
+}
+
+func workflowAutomationIDs(workflows []models.WorkflowItem) []uuid.UUID {
+	result := []uuid.UUID{}
+	for _, item := range workflows {
+		id, err := uuid.Parse(strings.TrimSpace(item.AutomationID))
+		if err != nil {
+			continue
+		}
+		result = append(result, id)
+	}
+	return uniqueUUIDs(result)
+}
+
+func uniqueUUIDs(ids []uuid.UUID) []uuid.UUID {
+	result := []uuid.UUID{}
+	seen := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		if id == uuid.Nil || seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	return result
+}
+
+func completedRuntimeAttempts(attempts []models.AutomationLaunchEvent) int {
+	count := 0
+	for _, attempt := range attempts {
+		if runtimeAttemptCompleted(attempt.Status) {
+			count++
+		}
+	}
+	return count
+}
+
+func runtimeAttemptCompleted(status string) bool {
+	return strings.EqualFold(strings.TrimSpace(status), "completed")
+}
+
+func resolvedPursuitDecisions(activity []models.PursuitActivity) map[string]bool {
+	result := map[string]bool{}
+	for _, item := range activity {
+		if !strings.EqualFold(item.EventType, "pursuit.decision_resolved") {
+			continue
+		}
+		decisionID := strings.TrimSpace(item.SourceID)
+		if decisionID == "" {
+			continue
+		}
+		result[decisionID] = true
+	}
+	return result
+}
+
+func runtimeAttemptNeedsReview(attempt models.AutomationLaunchEvent) bool {
+	status := strings.ToLower(strings.TrimSpace(attempt.Status))
+	switch status {
+	case "failed", "blocked", "error", "timeout", "timed_out", "cancelled", "canceled", "needs_review", "unsupported":
+		return true
+	case "completed", "ready":
+		return false
+	default:
+		return attempt.ExitCode != 0
+	}
+}
+
+func runtimeAttemptDecisionID(attempt models.AutomationLaunchEvent) string {
+	return "runtime:" + attempt.ID.String() + ":review"
+}
+
+func runtimeAttemptForDecision(attempts []models.AutomationLaunchEvent, request DecisionResolutionRequest) (models.AutomationLaunchEvent, bool) {
+	candidates := []uuid.UUID{}
+	if id, ok := runtimeLaunchIDFromEvidenceURI(request.EvidenceURI); ok {
+		candidates = append(candidates, id)
+	}
+	if id, ok := runtimeLaunchIDFromDecisionID(request.DecisionID); ok {
+		candidates = append(candidates, id)
+	}
+	for _, attempt := range attempts {
+		for _, candidate := range candidates {
+			if attempt.ID == candidate {
+				return attempt, true
+			}
+		}
+	}
+	if len(attempts) == 1 {
+		return attempts[0], true
+	}
+	return models.AutomationLaunchEvent{}, false
+}
+
+func runtimeLaunchIDFromDecisionID(value string) (uuid.UUID, bool) {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) != 3 || !strings.EqualFold(parts[0], "runtime") || !strings.EqualFold(parts[2], "review") {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(parts[1])
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func runtimeAttemptHasRecoveryWorkflow(attempt models.AutomationLaunchEvent, workflows []models.WorkflowItem) bool {
+	sourceURI := "automation-launch://" + attempt.ID.String()
+	for _, item := range workflows {
+		if strings.EqualFold(strings.TrimSpace(item.SourceURI), sourceURI) {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeRecoveryWorkflowInput(pursuit models.Pursuit, attempt models.AutomationLaunchEvent, request DecisionResolutionRequest) string {
+	parts := []string{
+		"Create a governed recovery workflow for a blocked agent runtime attempt.",
+		"Pursuit: " + pursuit.Title,
+		"Desired outcome: " + firstNonEmpty(pursuit.DesiredOutcome, "restore safe controlled runtime progress without bypassing HAI policy"),
+		"Runtime evidence: automation-launch://" + attempt.ID.String(),
+		"Runtime: " + runtimeAttemptLabel(attempt),
+		"Status: " + firstNonEmpty(attempt.Status, "unknown"),
+		"Failure/review reason: " + firstNonEmpty(request.Reason, runtimeAttemptReason(attempt)),
+	}
+	if route := runtimeAttemptRouteSummary(attempt); route != "" {
+		parts = append(parts, "Route trace: "+route)
+	}
+	if attempt.RuntimeRouteTrace != nil {
+		if controls := compactRuntimeTraceList(attempt.RuntimeRouteTrace.RequiredControls, 6); controls != "" {
+			parts = append(parts, "Required controls: "+controls)
+		}
+		if checks := compactRuntimeTraceList(attempt.RuntimeRouteTrace.ValidationChecklist, 6); checks != "" {
+			parts = append(parts, "Validation checklist: "+checks)
+		}
+	}
+	parts = append(parts,
+		"Recovery rules:",
+		"- Do not retry the runtime directly from this decision.",
+		"- Keep external messages, public posting, account changes, destructive file changes, and broad host/browser control approval-gated.",
+		"- Diagnose missing configuration, allowlist, workspace, token, safety, or adapter issues first.",
+		"- Produce a concrete checklist with evidence requirements and a safe retry condition.",
+		"- Verify the recovery result before treating the pursuit as unblocked.",
+	)
+	if strings.TrimSpace(request.Note) != "" {
+		parts = append(parts, "Robert note: "+strings.TrimSpace(request.Note))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func runtimeAttemptBlockers(attempts []models.AutomationLaunchEvent, workflows []models.WorkflowItem, resolvedDecisions map[string]bool) []PursuitBlocker {
+	result := []PursuitBlocker{}
+	for _, attempt := range attempts {
+		if !runtimeAttemptNeedsReview(attempt) {
+			continue
+		}
+		if runtimeAttemptRecoveredByWorkflow(attempt, workflows) {
+			continue
+		}
+		owner := "Robert"
+		if resolvedDecisions[runtimeAttemptDecisionID(attempt)] {
+			owner = "System"
+		}
+		result = append(result, PursuitBlocker{
+			Label:  "Runtime attempt needs review: " + runtimeAttemptLabel(attempt),
+			Reason: runtimeAttemptReason(attempt),
+			Owner:  owner,
+		})
+		if len(result) >= 5 {
+			break
+		}
+	}
+	return result
+}
+
+func runtimeAttemptRecoveredByWorkflow(attempt models.AutomationLaunchEvent, workflows []models.WorkflowItem) bool {
+	sourceURI := "automation-launch://" + attempt.ID.String()
+	for _, item := range workflows {
+		if !strings.EqualFold(strings.TrimSpace(item.SourceURI), sourceURI) {
+			continue
+		}
+		if item.CurrentState != workflow.StateCompleted {
+			continue
+		}
+		if acceptedCompletionStatus(item.VerificationStatus) {
+			return true
+		}
+		if item.RecoveryStatus == workflow.RecoveryCompletedAfterRetry || item.RecoveryStatus == workflow.RecoveryCompletionConfirmed {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeAttemptLabel(attempt models.AutomationLaunchEvent) string {
+	return firstNonEmpty(attempt.RuntimeType, attempt.LaunchType, attempt.AutomationID.String(), "agent runtime")
+}
+
+func runtimeAttemptReason(attempt models.AutomationLaunchEvent) string {
+	reason := firstNonEmpty(attempt.Message, attempt.Output, attempt.Target, "runtime attempt did not complete successfully")
+	if route := runtimeAttemptRouteSummary(attempt); route != "" {
+		reason = reason + " | " + route
+	}
+	if strings.TrimSpace(attempt.Status) != "" {
+		return fmt.Sprintf("%s: %s", attempt.Status, reason)
+	}
+	return reason
+}
+
+func runtimeAttemptRouteRisk(attempt models.AutomationLaunchEvent) string {
+	if attempt.RuntimeRouteTrace == nil {
+		return ""
+	}
+	return strings.TrimSpace(attempt.RuntimeRouteTrace.RiskLevel)
+}
+
+func runtimeAttemptRouteSummary(attempt models.AutomationLaunchEvent) string {
+	trace := attempt.RuntimeRouteTrace
+	if trace == nil {
+		return ""
+	}
+	parts := []string{}
+	if value := strings.TrimSpace(trace.Intent); value != "" {
+		parts = append(parts, "intent="+compactCandidateText(value, 90))
+	}
+	if value := strings.TrimSpace(trace.ExecutionMode); value != "" {
+		parts = append(parts, "mode="+compactCandidateText(value, 90))
+	}
+	if value := compactRuntimeTraceList(trace.RecommendedSkills, 4); value != "" {
+		parts = append(parts, "skills="+value)
+	}
+	if value := compactRuntimeTraceList(trace.VisibleTools, 4); value != "" {
+		parts = append(parts, "tools="+value)
+	}
+	if value := compactRuntimeTraceList(trace.BlockedSurfaces, 4); value != "" {
+		parts = append(parts, "blocked="+value)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "runtime route: " + strings.Join(parts, "; ")
+}
+
+func compactRuntimeTraceList(values []string, limit int) string {
+	cleaned := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		cleaned = append(cleaned, compactCandidateText(value, 60))
+	}
+	if len(cleaned) == 0 {
+		return ""
+	}
+	if limit > 0 && len(cleaned) > limit {
+		return strings.Join(cleaned[:limit], ", ") + fmt.Sprintf(" +%d more", len(cleaned)-limit)
+	}
+	return strings.Join(cleaned, ", ")
+}
+
+func limitListItems(items *[]PursuitListItem, limit int) {
+	if len(*items) > limit {
+		*items = (*items)[:limit]
+	}
+}
+
+func isStale(pursuit models.Pursuit) bool {
+	if pursuit.LastActivityAt == nil {
+		return time.Since(pursuit.UpdatedAt) > 14*24*time.Hour
+	}
+	return time.Since(*pursuit.LastActivityAt) > 14*24*time.Hour
+}
+
+func isReviewDue(pursuit models.Pursuit) bool {
+	return pursuit.NextReviewAt != nil && !pursuit.NextReviewAt.After(time.Now().UTC())
+}
+
+func pursuitNeedsPlanning(pursuit models.Pursuit, workflowCount int) bool {
+	if pursuit.Archived || strings.EqualFold(pursuit.Status, StatusCompleted) || strings.EqualFold(pursuit.CompletionState, CompletionVerified) {
+		return false
+	}
+	return workflowCount == 0
+}
+
+func pursuitPlanInput(pursuit models.Pursuit) string {
+	parts := []string{
+		"Create the first operational workflow for this pursuit.",
+		"Goal: " + pursuit.Title,
+	}
+	if strings.TrimSpace(pursuit.DesiredOutcome) != "" {
+		parts = append(parts, "Desired outcome: "+strings.TrimSpace(pursuit.DesiredOutcome))
+	}
+	if strings.TrimSpace(pursuit.Description) != "" {
+		parts = append(parts, "Context: "+strings.TrimSpace(pursuit.Description))
+	}
+	if strings.TrimSpace(pursuit.CurrentStateSummary) != "" {
+		parts = append(parts, "Current state: "+strings.TrimSpace(pursuit.CurrentStateSummary))
+	}
+	if strings.TrimSpace(pursuit.NextRecommendedAction) != "" {
+		parts = append(parts, "Recommended next action: "+strings.TrimSpace(pursuit.NextRecommendedAction))
+	}
+	if strings.TrimSpace(pursuit.CompletionDefinition) != "" {
+		parts = append(parts, "Completion definition: "+strings.TrimSpace(pursuit.CompletionDefinition))
+	}
+	if strings.TrimSpace(pursuit.RiskLevel) != "" {
+		parts = append(parts, "Risk level: "+strings.TrimSpace(pursuit.RiskLevel))
+	}
+	if strings.TrimSpace(pursuit.AutonomyLevel) != "" {
+		parts = append(parts, "Autonomy level: "+strings.TrimSpace(pursuit.AutonomyLevel))
+	}
+	parts = append(parts, "Output needed: concrete workflow checklist, evidence requirements, approval boundaries, and first safe next action.")
+	return strings.Join(parts, "\n")
+}
+
+func reviewOwner(pursuit models.Pursuit) string {
+	if strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute") {
+		return "Robert"
+	}
+	return "System or VA"
+}
+
+func firstActionLabel(actions []PursuitAction) string {
+	if len(actions) == 0 {
+		return ""
+	}
+	return actions[0].Label
+}
+
+func classifyDomain(text string) string {
+	lower := strings.ToLower(text)
+	switch {
+	case containsAny(lower, "legal", "lawyer", "government", "municipality", "insurance", "claim", "dispute"):
+		return "stability"
+	case containsAny(lower, "automation", "github", "developer", "software", "code", "hai"):
+		return "work"
+	case containsAny(lower, "health", "doctor", "medical"):
+		return "health"
+	case containsAny(lower, "client", "invoice", "quote", "job"):
+		return "business"
+	default:
+		return "operations"
+	}
+}
+
+func classifyRisk(text string) string {
+	lower := strings.ToLower(text)
+	switch {
+	case containsAny(lower, "legal", "lawyer", "government", "municipality", "insurance", "financial", "money", "publish", "public", "delete", "account"):
+		return "high"
+	case containsAny(lower, "client", "deadline", "contract", "message", "email"):
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func classifyNeed(text string) string {
+	lower := strings.ToLower(text)
+	switch {
+	case containsAny(lower, "housing", "legal", "government", "insurance", "money", "safety", "stability"):
+		return "safety_and_stability"
+	case containsAny(lower, "client", "work", "business", "automation", "developer"):
+		return "work_and_capability"
+	case containsAny(lower, "health", "doctor", "capacity"):
+		return "health_and_capacity"
+	default:
+		return "operations"
+	}
+}
+
+func defaultAutonomy(risk string) string {
+	if risk == "high" {
+		return "approve_before_execute"
+	}
+	if risk == "medium" {
+		return "suggest"
+	}
+	return "autonomous_safe"
+}
+
+func normalizeWords(text string) map[string]bool {
+	result := map[string]bool{}
+	for _, token := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(token) < 3 {
+			continue
+		}
+		result[token] = true
+	}
+	return result
+}
+
+func wordOverlap(left, right map[string]bool) float64 {
+	if len(left) == 0 || len(right) == 0 {
+		return 0
+	}
+	overlap := 0
+	for word := range left {
+		if right[word] {
+			overlap++
+		}
+	}
+	return float64(overlap) / math.Sqrt(float64(len(left)*len(right)))
+}
+
+func confidenceLabel(score float64) string {
+	switch {
+	case score >= 0.7:
+		return "high"
+	case score >= 0.35:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func round(value float64) float64 {
+	return math.Round(value*100) / 100
+}
+
+func containsAny(text string, values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(text, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func assignString(value *string, target *string) {
+	if value != nil {
+		*target = strings.TrimSpace(*value)
+	}
+}
+
+func clampInt(value, minimum, maximum, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	if value < minimum {
+		return minimum
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
+
+func normalizeConfidence(value, fallback float64) float64 {
+	if value <= 0 {
+		return fallback
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
+func parseOptionalTime(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		utc := parsed.UTC()
+		return &utc
+	}
+	if parsed, err := time.Parse("2006-01-02", value); err == nil {
+		utc := parsed.UTC()
+		return &utc
+	}
+	return nil
+}

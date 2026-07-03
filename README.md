@@ -2,7 +2,7 @@
 
 018-HAI is a local-first automation hub and Personal AI Operating System in progress. It combines an Angular dashboard, Go backend APIs, an IDP service, nginx gateway routing, Postgres, Redis, and Kafka into one Docker Compose based workspace.
 
-The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, workflow state handling, source-grounded verification, and an HAI OS overview dashboard. It is not yet a fully autonomous Claw/OpenClaw-style runtime. The current engine can plan, route, gather context, import local files, identify actionable source extractions, create workflow items, generate checklists, gate approvals, verify grounded output, run controlled automation launches, and block unsafe or unsupported results; richer browser/MCP/agent runtime adapters still need to be implemented.
+The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, workflow state handling, source-grounded verification, and an HAI OS overview dashboard. The current engine can plan, route, gather context, import local files, identify actionable source extractions, create workflow items, generate checklists, gate approvals, verify grounded output, run controlled automation launches, and block unsafe or unsupported results. It also exposes controlled Hermes, Odysseus, and OpenClaw-compatible runtime adapters, but it is still not an unrestricted autonomous desktop agent.
 
 ## Canonical Stack Decision
 
@@ -19,7 +19,7 @@ Implemented:
 - Local Docker Compose setup for Windows 11 and general Docker Desktop use.
 - Local-first LLM routing policy with configurable providers, local/free priority, paid usage disabled by default, provider readiness checks, selected-model explanation, and routing logs.
 - Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints. Unconfigured providers are skipped, unsafe link-local endpoints are blocked by default, and paid execution is blocked unless explicitly approved by policy.
-- Guarded Hermes and Odysseus agent runtime adapters. HAI can probe both runtimes, show configuration/readiness in the Command Dashboard, and execute approved tasks through the existing task/workflow engine. Runtime execution is disabled by default and remains subject to approval, emergency stop, allowlists, bounded output, timeouts, audit logs, and downstream verification.
+- Guarded Hermes, Odysseus, and OpenClaw agent runtime adapters. HAI can probe those runtimes, show configuration/readiness in the Command Dashboard, and execute approved tasks through the existing task/workflow engine. Runtime execution is disabled by default and remains subject to approval, emergency stop, allowlists, bounded output, timeouts, audit logs, and downstream verification.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
 - Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
@@ -34,7 +34,7 @@ Implemented:
 
 Not implemented yet:
 
-- Additional Claw-compatible task execution adapters for OpenClaw, QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, generic MCP tools, browser automation, and richer API/tool workflows. Hermes and Odysseus now have controlled first-party adapters, but must still be installed/configured separately.
+- Additional Claw-compatible task execution adapters for QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, generic MCP tools, browser automation, and richer API/tool workflows. Hermes, Odysseus, and OpenClaw now have controlled first-party adapters, but must still be installed/configured separately.
 - Full autonomous device control. Automation `launch` now has guarded adapters for host-allowlisted API calls, explicitly enabled allowlisted container-local scripts, and optionally Docker API container start requests for allowlisted containers, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
 - Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, scheduled due-sync for enabled local-folder sources, and workflow intake from extracted action items. Email, calendar, cloud/document, project-board, and GitHub connectors are registered as disabled `not_implemented` adapter contracts until real adapters are added.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
@@ -126,7 +126,7 @@ Local folder ingestion:
 
 The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. Supported file types are `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`.
 
-For recurring local-folder ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`. Only the local-folder adapter is scheduled today; other connector categories stay registered until real adapters are implemented.
+For recurring local-folder ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. Only the local-folder adapter is scheduled today; other connector categories stay registered until real adapters are implemented.
 
 ## Developer Checks
 
@@ -418,14 +418,22 @@ Task execution can use a configured model endpoint to produce a draft, but the d
 
 Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls and provider probes do not follow redirects. `GET /api/v1/llm/probes` performs a live, bounded readiness check against configured local/free providers (`/api/tags` for Ollama, `/v1/models` for OpenAI-compatible endpoints, and health/UI paths for Odysseus) so configuration can be separated from real endpoint availability. Client requests to `/llm/generate` cannot approve paid or approval-required model use by setting request JSON; paid approval must be implemented as a server-side approval workflow before paid generation is allowed. The dashboard shows configured, disabled, blocked, missing-key, auth-required, and live-probe states so placeholder providers are not mistaken for live integrations. The HAI OS readiness gate counts only configured providers with at least one enabled no-approval executable model that is allowed by local/free quota policy; Odysseus and other approval-gated/runtime-only connectors are reported separately.
 
-Odysseus upstream reference: [pewdiepie-archdaemon/odysseus](https://github.com/pewdiepie-archdaemon/odysseus). The upstream project describes a self-hosted AI workspace with local models, agents, MCP, local tools, browser use, files, memory, email, and calendar features. HAI invokes its `/api/chat_stream` agent mode only through an approved automation with `allow_bash=false`, web search disabled, a preselected session, a host allowlist, and a bounded timeout/output capture.
+Odysseus upstream reference: [pewdiepie-archdaemon/odysseus](https://github.com/pewdiepie-archdaemon/odysseus). The supplied Odysseus package exposes a self-hosted AI workspace with a scoped Codex integration API, local model workspace, agent loop, prompt/tool security layers, memory, todos/reminders, email, calendar, contacts, documents, research/search, MCP, Cookbook model serving, companion/webhook surfaces, and Codex/Claude bridge assets. HAI integrates it as a controlled runtime architecture, not as an unrestricted local-admin bridge. Runtime execution still goes through HAI approval, audit, verification, host allowlisting, token scoping, bounded timeouts, and secret-redacted output capture.
 
-Hermes upstream reference: [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent). HAI uses Hermes' documented noninteractive `hermes chat -q ... -Q` path. The adapter never adds `--yolo`, enables filesystem checkpoints, passes arguments without shell interpolation, runs in a dedicated configured workspace, inherits only allowlisted environment variables, and stops the process when the configured timeout expires.
+Hermes upstream reference: [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent). HAI treats Hermes as an optional agentic substrate, not as uncontrolled core logic. The runtime registry exposes Hermes' broader ecosystem as controlled capabilities: model/provider routing, skills and skill learning, memory and session search, MCP servers, gateway channels, cron jobs, subagent delegation, mixture-of-agents orchestration, terminal backends, context compression, OpenClaw migration, and ACP integration. Actual execution still uses Hermes' documented noninteractive `hermes chat -q ... -Q` path.
 
-### Controlled Hermes and Odysseus runtimes
+The Hermes adapter never adds `--yolo`, enables filesystem checkpoints, passes arguments without shell interpolation, runs in a dedicated configured workspace, inherits only allowlisted environment variables plus explicit HAI task metadata, and stops the process when the configured timeout expires. HAI remains the policy, approval, audit, and verification control plane.
 
-1. Install and configure Hermes or Odysseus separately. HAI does not download or auto-update third-party agent software.
-2. Create an HAI automation with `launchType=agent_runtime` and `runtimeType=hermes` or `runtimeType=odysseus`.
+OpenClaw upstream package reference: local `openclaw-main.zip` / OpenClaw distribution. HAI treats OpenClaw as a local-first Gateway and agent runtime ecosystem, not as a bundled dependency. When `OPENCLAW_ECOSYSTEM_PATH` points at the supplied zip or an extracted OpenClaw package, the runtime registry inventories the actual skills, skill scripts, root scripts, extensions, provider paths, channel adapters, companion apps, core packages, source modules, documentation corpus, QA assets, test suites, config profiles, security assets, deployment descriptors, Codex prompt maps, GitHub workflows, reusable GitHub Actions, issue templates, security/CodeQL maps, repository instructions, repository docs/config, and control UI/controller surfaces for dashboard visibility and future planning. Actual execution through HAI uses only the documented noninteractive `openclaw agent --message ... --thinking ...` CLI path.
+
+Before execution, HAI wraps the approved user task in an OpenClaw task envelope. That envelope maps the task to relevant indexed OpenClaw skills, lists visible provider/tool surfaces, carries relevant security/CI/issue/instruction maps, carries the original request, and repeats the blocked surfaces and validation checklist. The selected route trace is persisted into automation launch history, task evidence, workflow evidence, and dashboard summaries. The OpenClaw adapter does not call `openclaw message send`, approve pairings, invoke nodes, control browsers, create cron jobs, execute public posting, or bypass OpenClaw's Gateway auth/scopes/sandboxing. Those surfaces are visible as configured capabilities only. HAI remains the approval, audit, workspace, timeout, secret-redaction, and verification control plane.
+
+OpenClaw task profiling now also routes HAI-native personal operating work: pursuits, open loops, deadlines, source-grounded evidence, memory/context, Odoo/HERP operations, and local-model/provider setup are mapped to indexed OpenClaw skills and reference maps while outbound communication, public posting, destructive file changes, and legal/financial/government commitments stay blocked until separate HAI approval and verification exist.
+
+### Controlled Hermes, Odysseus, and OpenClaw runtimes
+
+1. Install and configure Hermes, Odysseus, or OpenClaw separately. HAI does not download or auto-update third-party agent software.
+2. Create an HAI automation with `launchType=agent_runtime` and `runtimeType=hermes`, `runtimeType=odysseus`, or `runtimeType=openclaw`.
 3. Supply that automation ID to a task/workflow request. Direct automation launch calls cannot forge approval and therefore cannot execute agent tasks.
 4. Approve the resulting review item. The server then replays the stored task with a server-side approval record.
 5. HAI captures the runtime output as evidence and still requires verification before the task can be marked complete.
@@ -434,9 +442,19 @@ Hermes configuration:
 
 - `HERMES_AGENT_ENABLED=true`
 - `HERMES_EXECUTABLE=hermes` or an explicit installed executable path
+- optional `HERMES_HOME` and `HERMES_PROFILE` to isolate Hermes state/profile for HAI
+- optional `HERMES_IGNORE_USER_CONFIG=true` for tighter noninteractive isolation
 - `AGENT_RUNTIME_WORKSPACE_ROOT=<parent folder dedicated to agent workspaces>`
 - `HERMES_WORKSPACE=<dedicated allowlisted workspace>`
-- optional `HERMES_TOOLSETS`, `HERMES_ENV_ALLOWLIST`, `HERMES_MAX_TURNS`, and `HERMES_TIMEOUT_SECONDS`
+- optional `HERMES_TOOLSETS`, `HERMES_SKILLS`, `HERMES_ENV_ALLOWLIST`, `HERMES_MAX_TURNS`, and `HERMES_TIMEOUT_SECONDS`
+- optional ecosystem visibility flags: `HERMES_GATEWAY_ENABLED`, `HERMES_CRON_ENABLED`, `HERMES_MCP_ENABLED`, `HERMES_MOA_ENABLED`, `HERMES_SUBAGENTS_ENABLED`, `HERMES_MEMORY_SYNC_ENABLED`, `HERMES_ACP_ENABLED`, and `HERMES_TERMINAL_BACKENDS`
+
+Recommended first Hermes posture for HAI is restrictive:
+
+- use a dedicated `HERMES_HOME` and `HERMES_WORKSPACE`
+- start with `HERMES_TOOLSETS=safe,skills,todo` or another reviewed small set
+- preload only reviewed skills through `HERMES_SKILLS`
+- enable gateway, cron, MCP, MoA, subagents, and ACP one surface at a time after HAI approval/audit flows are verified
 
 Odysseus configuration:
 
@@ -445,8 +463,44 @@ Odysseus configuration:
 - `ODYSSEUS_API_TOKEN=<scoped token>`
 - `ODYSSEUS_AGENT_SESSION_ID=<existing configured session>`
 - optional `ODYSSEUS_AGENT_WORKSPACE` and `ODYSSEUS_AGENT_TIMEOUT_SECONDS`
+- optional ecosystem visibility flags: `ODYSSEUS_TODOS_ENABLED`, `ODYSSEUS_NOTES_ENABLED`, `ODYSSEUS_TASKS_ENABLED`, `ODYSSEUS_EMAIL_ENABLED`, `ODYSSEUS_CALENDAR_ENABLED`, `ODYSSEUS_CONTACTS_ENABLED`, `ODYSSEUS_DOCUMENTS_ENABLED`, `ODYSSEUS_MEMORY_SYNC_ENABLED`, `ODYSSEUS_RESEARCH_ENABLED`, `ODYSSEUS_SEARCH_ENABLED`, `ODYSSEUS_MCP_ENABLED`, `ODYSSEUS_COOKBOOK_ENABLED`, `ODYSSEUS_LOCAL_MODEL_DISCOVERY_ENABLED`, `ODYSSEUS_BROWSER_ENABLED`, `ODYSSEUS_VAULT_ENABLED`, `ODYSSEUS_GALLERY_ENABLED`, `ODYSSEUS_TTS_ENABLED`, `ODYSSEUS_STT_ENABLED`, `ODYSSEUS_COMPANION_ENABLED`, `ODYSSEUS_WEBHOOKS_ENABLED`, `ODYSSEUS_CODEX_BRIDGE_ENABLED`, `ODYSSEUS_CLAUDE_BRIDGE_ENABLED`, `ODYSSEUS_AGENT_MIGRATION_ENABLED`, and `ODYSSEUS_CONTEXT_BUDGET_ENABLED`
+- high-risk runtime toggles: `ODYSSEUS_SHELL_ENABLED`, `ODYSSEUS_AGENT_ALLOW_BASH`, `ODYSSEUS_AGENT_ALLOW_WEB_SEARCH`, and `ODYSSEUS_AGENT_ALLOW_RESEARCH`
 
-Use a narrowly scoped Odysseus token. Read-only scopes are the correct default. Email sending, calendar writes, document deletion, host control, public posting, and other consequential operations must remain unavailable unless the matching HAI workflow was explicitly approved.
+Use a narrowly scoped Odysseus token created for the Codex Agent integration surface. HAI checks `/api/codex/capabilities` and treats `403` as an intentional restriction, not as something to work around. The adapter does not SSH into the Odysseus host, query its database, import Python internals, use Docker directly, or bypass `/api/codex/*` and `/api/chat_stream`.
+
+Recommended first Odysseus posture for HAI is restrictive:
+
+- use read-only token scopes first
+- keep `ODYSSEUS_SHELL_ENABLED=false`, `ODYSSEUS_AGENT_ALLOW_BASH=false`, `ODYSSEUS_AGENT_ALLOW_WEB_SEARCH=false`, and `ODYSSEUS_AGENT_ALLOW_RESEARCH=false`
+- enable todos/memory/documents before email/calendar/cookbook/host-control surfaces
+- only enable email send, calendar writes, document deletion, Cookbook serve/stop, browser control, shell, or public posting after the matching HAI approval workflow has been tested end to end
+- keep the Odysseus instance on localhost, `host.docker.internal`, or another host explicitly listed in `AGENT_RUNTIME_ALLOWED_HOSTS`
+
+OpenClaw configuration:
+
+- `OPENCLAW_AGENT_ENABLED=true`
+- `OPENCLAW_EXECUTABLE=openclaw` or an explicit installed executable path
+- optional `OPENCLAW_GATEWAY_URL=ws://host.docker.internal:18789` for a Windows-host Gateway
+- `OPENCLAW_GATEWAY_TOKEN=<gateway token>` when `OPENCLAW_GATEWAY_ENABLED=true`
+- optional `OPENCLAW_STATE_DIR` and `OPENCLAW_CONFIG_PATH` to isolate OpenClaw state/config for HAI
+- optional `OPENCLAW_ECOSYSTEM_PATH=<extracted OpenClaw repo/package or openclaw-main.zip>` for read-only ecosystem inventory. HAI scans names and metadata paths for skills, skill scripts, root scripts, extensions, providers, channels, apps, packages, source modules, docs, QA/test assets, config profiles, security assets, deployment descriptors, Codex prompt maps, GitHub workflows, reusable GitHub Actions, issue templates, security/CodeQL maps, repository instructions, repository docs/config, and control UI/controller modules; it does not execute scripts, import OpenClaw code, or dispatch upstream automations from this path.
+- OpenClaw ecosystem uploads use the command dashboard upload route `/api/v1/agent-runtimes/openclaw/ecosystem/upload`. The local nginx gateway gives only that route a bounded `800m` body limit and disables request buffering so `openclaw-main.zip` style archives can reach the backend. The backend still validates `.zip`, rejects unsafe archive paths, and caps accepted archives at 750 MB.
+- `AGENT_RUNTIME_WORKSPACE_ROOT=<parent folder dedicated to agent workspaces>`
+- `OPENCLAW_WORKSPACE=<dedicated allowlisted workspace>`
+- optional `OPENCLAW_THINKING`, `OPENCLAW_TIMEOUT_SECONDS`, and `OPENCLAW_ENV_ALLOWLIST`
+- optional ecosystem visibility flags: `OPENCLAW_GATEWAY_ENABLED`, `OPENCLAW_MESSAGES_ENABLED`, `OPENCLAW_SKILLS_ENABLED`, `OPENCLAW_PLUGINS_ENABLED`, `OPENCLAW_MCP_ENABLED`, `OPENCLAW_MEMORY_ENABLED`, `OPENCLAW_CRON_ENABLED`, `OPENCLAW_BROWSER_ENABLED`, `OPENCLAW_CANVAS_ENABLED`, `OPENCLAW_NODES_ENABLED`, `OPENCLAW_VOICE_ENABLED`, `OPENCLAW_TALK_ENABLED`, `OPENCLAW_WEBCHAT_ENABLED`, `OPENCLAW_PAIRING_ENABLED`, `OPENCLAW_MULTI_AGENT_ENABLED`, `OPENCLAW_APP_SDK_ENABLED`, `OPENCLAW_PLUGIN_SDK_ENABLED`, `OPENCLAW_LOCAL_MODELS_ENABLED`, `OPENCLAW_CHANNELS_ENABLED`, `OPENCLAW_PROVIDERS_ENABLED`, and `OPENCLAW_COMPANION_APPS`
+- high-risk runtime toggles: `OPENCLAW_EXEC_APPROVALS_ENABLED`, `OPENCLAW_HOST_TOOLS_ENABLED`, `OPENCLAW_PUBLIC_POSTING_ENABLED`, `OPENCLAW_WEB_SEARCH_ENABLED`, `OPENCLAW_SANDBOX_REQUIRED`, `OPENCLAW_SANDBOX_MODE`, `OPENCLAW_SANDBOX_DOCKER_ENABLED`, `OPENCLAW_SANDBOX_SSH_ENABLED`, and `OPENCLAW_SANDBOX_OPENSHELL_ENABLED`
+- `OPENCLAW_ALLOW_HIGH_RISK_EXECUTION=false` by default. If any high-risk OpenClaw surfaces are enabled, HAI blocks generic OpenClaw runtime execution until those surfaces are disabled again or this flag is deliberately set to `true`; per-task HAI approval and OpenClaw's own downstream policies still apply.
+
+Recommended first OpenClaw posture for HAI is restrictive:
+
+- use a dedicated OpenClaw state/config and a dedicated `OPENCLAW_WORKSPACE`
+- keep `OPENCLAW_AGENT_CLI_ENABLED=true` and all outbound/device/control surfaces disabled
+- keep `OPENCLAW_ALLOW_HIGH_RISK_EXECUTION=false` unless a reviewed high-risk runtime policy exists
+- keep `OPENCLAW_SANDBOX_REQUIRED=true` with `OPENCLAW_SANDBOX_MODE=all`
+- enable skills, memory, local models, and Gateway readiness before messaging, browser, cron, nodes, host tools, or public posting
+- only enable channel sends, pairing approval, browser control, node commands, cron writes, host tools, public posting, or web search after the matching HAI approval and audit workflow is tested end to end
+- keep the Gateway on localhost, `host.docker.internal`, or another host explicitly listed in `AGENT_RUNTIME_ALLOWED_HOSTS`
 
 Controlled runtime outputs and LLM provider error bodies are redacted for common secrets before they are stored or returned in operational logs. Script execution still remains disabled by default and runs with a minimal environment when enabled.
 
@@ -497,7 +551,8 @@ Local folder sync is bounded by:
 - `CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS`, default `20`, bounded to `1-120`.
 - `CONNECTED_SOURCE_HTTP_MAX_BYTES`, default `2097152`, bounded to `1 KiB-20 MiB`.
 - `SOURCE_SCHEDULER_ENABLED`, default `true`.
-- `SOURCE_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
+- `SOURCE_SCHEDULER_INTERVAL_SECONDS`, default `600`, minimum `15`.
+- `SOURCE_SCHEDULER_RUN_ON_STARTUP`, default `false`; set to `true` only when startup should immediately scan due sources.
 - Incremental sync based on `LastSyncedAt`, unless mode is `historical_backfill`.
 
 Supported categories are represented for email, calendars, contacts/cloud documents, project boards, GitHub, local folders, and future connectors. Only `local-folder` is currently operational. Real account adapters must be added behind the existing service/repository interfaces before those connectors can be enabled or scheduled.
@@ -545,8 +600,9 @@ Workflow autonomy:
 
 - `WORKFLOW_SCHEDULER_ENABLED`, default `true`, runs the workflow scheduler in the backend.
 - `WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED`, default `true`, lets the scheduler trigger due follow-up proposals before running ready workflow items.
-- `WORKFLOW_SCHEDULER_INTERVAL_SECONDS`, default `60`, minimum `15`.
-- `WORKFLOW_SCHEDULER_RUN_LIMIT`, default `5`, capped at `50`.
+- `WORKFLOW_SCHEDULER_INTERVAL_SECONDS`, default `600`, minimum `15`.
+- `WORKFLOW_SCHEDULER_RUN_LIMIT`, default `2`, capped at `50`.
+- `WORKFLOW_SCHEDULER_RUN_ON_STARTUP`, default `false`; set to `true` only when backend startup should immediately process due work.
 - `WORKFLOW_CLAIM_LEASE_SECONDS`, default `900`, minimum `60`, capped at `86400`. Active task workers renew the lease every third of this duration.
 - The scheduler uses the same workflow, task, verification, and controlled automation services as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, owned leases prevent duplicate concurrent execution and stale result writes, task-runner panics enter normal retry handling, review-required runtime outcomes do not auto-retry, and completion requires runtime plus verification success.
 
@@ -557,7 +613,8 @@ Ambient proactive planning:
 - The five default need dimensions are health/capacity, safety/stability, relationships/belonging, reputation/capability, and growth/self-direction. These are user-controlled planning preferences, not diagnoses or judgments about a person's worth or status.
 - `AMBIENT_SCHEDULER_ENABLED=true` enables periodic scans.
 - `AMBIENT_EXECUTION_ENABLED=false` keeps the default suggestion-only. Enabling it only permits bounded calls into the existing workflow and open-loop workers; it cannot bypass approvals, verification, emergency stop, leases, or audit controls.
-- `AMBIENT_SCAN_INTERVAL_SECONDS`, `AMBIENT_MINIMUM_SCORE`, `AMBIENT_MINIMUM_CONFIDENCE`, `AMBIENT_OPPORTUNITY_LIMIT`, `AMBIENT_EXECUTION_LIMIT`, `AMBIENT_DISMISS_COOLDOWN_HOURS`, and `AMBIENT_SCAN_RETENTION` bound background activity and storage growth.
+- `AMBIENT_RUN_ON_STARTUP=false` prevents startup scans from competing with local boot and Docker initialization.
+- `AMBIENT_SCAN_INTERVAL_SECONDS`, default `3600`, plus `AMBIENT_MINIMUM_SCORE`, `AMBIENT_MINIMUM_CONFIDENCE`, `AMBIENT_OPPORTUNITY_LIMIT`, `AMBIENT_EXECUTION_LIMIT`, `AMBIENT_DISMISS_COOLDOWN_HOURS`, and `AMBIENT_SCAN_RETENTION`, default `100`, bound background activity and storage growth.
 - `AUTONOMY_WORLD_STATE_TTL_SECONDS` defines when an execution observation becomes stale and must be refreshed. `AUTONOMY_TELEMETRY_LIMIT` bounds recent action/state records returned to the dashboard.
 
 The Proactive Brain also records execution-based autonomy telemetry for workflow worker attempts: compact world-state snapshots, typed action traces, verification status, latency, retries, human intervention, recovery, raw completion, and completion under policy. Its deterministic stress suite checks approval, stale-state, action-interface, and prompt-injection guards. These checks validate HAI's local policy boundaries; they do not substitute for provider-specific or real-world benchmark evidence.
@@ -586,7 +643,7 @@ DualPath KV-cache boundary:
 
 The nginx config-manager no longer receives `/var/run/docker.sock` in `docker-compose.local.yml` by default. It can write generated route config files, but nginx reload via Docker API is skipped unless `NGINX_RELOAD_ENABLED=true` and the operator deliberately restores a reviewed Docker socket mount.
 
-Current limitation: OpenClaw, QwenPaw, generic MCP, browser, and desktop-agent execution still need dedicated adapters. Hermes and Odysseus are implemented, but a live end-to-end run still requires the operator to install/configure those upstream runtimes, create scoped credentials/session state, and enable the matching HAI environment flags. They are not bundled into the HAI backend image.
+Current limitation: QwenPaw, generic MCP, browser, and desktop-agent execution still need dedicated adapters. Hermes, Odysseus, and OpenClaw are implemented as controlled runtime adapters, but a live end-to-end run still requires the operator to install/configure those upstream runtimes, create scoped credentials/session state where needed, and enable the matching HAI environment flags. They are not bundled into the HAI backend image.
 
 ## Safety Rules for Developers
 
@@ -612,7 +669,7 @@ This project is intended to gain local execution power, so safety should be desi
 - IDP and nginx-config-manager are separate Go services.
 - Database schema changes currently rely on Gorm `AutoMigrate` plus `init.sql`; a production migration system is still needed.
 - Docker Compose local mode uses PostgreSQL 17 with Docker-managed named volumes, one Kafka broker, and Zookeeper. PostgreSQL data directories must never be committed or copied as ordinary Git files because required empty runtime directories are not preserved. Export and restore with `pg_dump`/`pg_restore` when migrating existing data or changing major versions.
-- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed only under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/memory-engine`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, `/api/v1/workflow`, `/api/v1/agent-runtimes`, and `/api/v1/ambient`.
+- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed only under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/memory-engine`, `/api/v1/pursuits`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, `/api/v1/workflow`, `/api/v1/agent-runtimes`, and `/api/v1/ambient`.
 - Do not rely on committed `.env` files for new work. Use `.env.example` -> `.env.local`.
 - Do not commit generated database directories, uploaded images, frontend `dist`, `node_modules`, local caches, or Docker state.
 - Keep UI changes consistent with the existing Angular/ng-zorro dashboard style.

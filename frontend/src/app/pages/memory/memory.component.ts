@@ -2,12 +2,28 @@ import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { timeout } from 'rxjs/operators';
 import {
   IContextMemory,
   IMemoryRetrieveResult,
 } from '../../models/context-memory.model.interface';
+import { IAIConversationImportResult } from '../../models/memory-engine.model.interface';
 import { CONTEXT_MEMORY_SERVICE_TOKEN } from '../../services/context-memory/context-memory.service.token';
 import { IContextMemoryService } from '../../services/context-memory.service.interface';
+import { MEMORY_ENGINE_SERVICE_TOKEN } from '../../services/memory-engine/memory-engine.service.token';
+import { IMemoryEngineService } from '../../services/memory-engine.service.interface';
+import { ThemeMode, ThemeService } from '../../services/theme.service';
+
+type MemoryAction = 'store' | 'retrieve' | 'import' | 'corrections' | 'review' | 'export' | 'cleanup';
+
+interface MemoryActionCard {
+  id: MemoryAction;
+  title: string;
+  detail: string;
+  icon: string;
+  metric: string;
+  tone: 'blue' | 'green' | 'gold' | 'red';
+}
 
 @Component({
   selector: 'app-memory',
@@ -20,8 +36,16 @@ export class MemoryComponent implements OnInit {
   loading = false;
   saving = false;
   retrieving = false;
+  importing = false;
   includeArchived = false;
   editingId?: string;
+  selectedAction: MemoryAction = 'retrieve';
+  memoryActions: MemoryActionCard[] = [];
+  importResult?: IAIConversationImportResult;
+  selectedMemoryId?: string;
+  themeMode: ThemeMode = 'light';
+  private readonly loadTimeoutMs = 6000;
+  private readonly operationTimeoutMs = 15000;
 
   memoryForm: FormGroup = this.fb.group({
     projectKey: ['018-HAI'],
@@ -40,15 +64,29 @@ export class MemoryComponent implements OnInit {
     limit: [8, [Validators.min(1), Validators.max(20)]],
   });
 
+  importForm: FormGroup = this.fb.group({
+    platform: ['chatgpt', [Validators.required]],
+    externalId: [''],
+    title: ['Imported AI thread', [Validators.required]],
+    sourceUri: ['https://chatgpt.com/c/example', [Validators.required]],
+    projectKey: ['018-HAI'],
+    messagesText: ['user: What should HAI do next?\nassistant: Action: create a governed workflow and link it to the correct pursuit.', [Validators.required]],
+  });
+
   constructor(
     private fb: FormBuilder,
     @Inject(CONTEXT_MEMORY_SERVICE_TOKEN)
     private memoryService: IContextMemoryService,
+    @Inject(MEMORY_ENGINE_SERVICE_TOKEN)
+    private memoryEngine: IMemoryEngineService,
     private notification: NzNotificationService,
-    private router: Router
+    private router: Router,
+    private themeService: ThemeService
   ) {}
 
   ngOnInit(): void {
+    this.themeMode = this.themeService.mode();
+    this.updateMemoryActions();
     this.refresh();
   }
 
@@ -56,13 +94,19 @@ export class MemoryComponent implements OnInit {
     this.loading = true;
     this.memoryService
       .list(this.memoryForm.value.projectKey, this.includeArchived)
+      .pipe(timeout(this.loadTimeoutMs))
       .subscribe({
         next: (memories) => {
           this.memories = memories;
+          if (!this.selectedMemoryId && memories.length) {
+            this.selectedMemoryId = memories[0].id;
+          }
+          this.updateMemoryActions();
           this.loading = false;
         },
         error: () => {
           this.loading = false;
+          this.updateMemoryActions();
           this.notification.error('Error', 'Failed to load memories.');
         },
       });
@@ -83,7 +127,7 @@ export class MemoryComponent implements OnInit {
       ? this.memoryService.update(this.editingId, request)
       : this.memoryService.create(request);
 
-    save$.subscribe({
+    save$.pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: () => {
         this.saving = false;
         this.clearForm();
@@ -99,6 +143,8 @@ export class MemoryComponent implements OnInit {
 
   edit(memory: IContextMemory): void {
     this.editingId = memory.id;
+    this.selectedMemoryId = memory.id;
+    this.selectedAction = 'store';
     this.memoryForm.patchValue({
       projectKey: memory.projectKey || '',
       kind: memory.kind,
@@ -109,6 +155,7 @@ export class MemoryComponent implements OnInit {
       sourceUri: memory.sourceUri || '',
       sourceLabel: memory.sourceLabel || '',
     });
+    this.updateMemoryActions();
   }
 
   clearForm(): void {
@@ -123,6 +170,7 @@ export class MemoryComponent implements OnInit {
       sourceUri: '',
       sourceLabel: '',
     });
+    this.updateMemoryActions();
   }
 
   retrieve(): void {
@@ -130,9 +178,13 @@ export class MemoryComponent implements OnInit {
       return;
     }
     this.retrieving = true;
-    this.memoryService.retrieve(this.retrieveForm.value).subscribe({
+    this.memoryService.retrieve(this.retrieveForm.value).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
         this.retrieveResult = result;
+        if (result.usedContext.length) {
+          this.selectedMemoryId = result.usedContext[0].memory.id;
+        }
+        this.updateMemoryActions();
         this.retrieving = false;
         this.refresh();
       },
@@ -143,29 +195,78 @@ export class MemoryComponent implements OnInit {
     });
   }
 
+  importConversation(): void {
+    if (this.importForm.invalid) {
+      this.importForm.markAllAsTouched();
+      return;
+    }
+    const messages = this.parseMessages(String(this.importForm.value.messagesText || ''));
+    if (!messages.length) {
+      this.notification.warning('Import needs messages', 'Paste at least one user, assistant, or system message.');
+      return;
+    }
+    this.importing = true;
+    this.memoryEngine.importConversation({
+      platform: this.importForm.value.platform,
+      externalId: this.importForm.value.externalId,
+      title: this.importForm.value.title,
+      sourceUri: this.importForm.value.sourceUri,
+      projectKey: this.importForm.value.projectKey,
+      messages,
+    }).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: (result) => {
+        this.importResult = result;
+        this.importing = false;
+        this.updateMemoryActions();
+        this.refresh();
+        const pursuitCount = result.pursuitLinks?.length || 0;
+        this.notification.success(
+          'AI thread imported',
+          `${result.insights.length} insight(s), ${result.workflowIds.length} workflow(s), ${pursuitCount} pursuit link(s).`
+        );
+      },
+      error: (error) => {
+        this.importing = false;
+        this.notification.error(
+          'Import blocked',
+          error?.error?.error || 'HAI could not import this AI thread. Check encryption key and source URL.'
+        );
+      },
+    });
+  }
+
   archive(memory: IContextMemory): void {
     if (!memory.id) {
       return;
     }
-    this.memoryService.archive(memory.id).subscribe(() => this.refresh());
+    this.memoryService.archive(memory.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.refresh(),
+      error: () => this.notification.error('Archive failed', 'The memory could not be archived.'),
+    });
   }
 
   restore(memory: IContextMemory): void {
     if (!memory.id) {
       return;
     }
-    this.memoryService.restore(memory.id).subscribe(() => this.refresh());
+    this.memoryService.restore(memory.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.refresh(),
+      error: () => this.notification.error('Restore failed', 'The memory could not be restored.'),
+    });
   }
 
   delete(memory: IContextMemory): void {
     if (!memory.id || !window.confirm('Delete this memory permanently?')) {
       return;
     }
-    this.memoryService.delete(memory.id).subscribe(() => this.refresh());
+    this.memoryService.delete(memory.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.refresh(),
+      error: () => this.notification.error('Delete failed', 'The memory could not be deleted.'),
+    });
   }
 
   exportMemories(): void {
-    this.memoryService.exportMemories(this.memoryForm.value.projectKey).subscribe({
+    this.memoryService.exportMemories(this.memoryForm.value.projectKey).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (data) => {
         const blob = new Blob([JSON.stringify(data, null, 2)], {
           type: 'application/json',
@@ -181,8 +282,220 @@ export class MemoryComponent implements OnInit {
     });
   }
 
+  setAction(action: MemoryAction): void {
+    this.selectedAction = action;
+  }
+
+  private updateMemoryActions(): void {
+    this.memoryActions = [
+      {
+        id: 'store',
+        title: this.editingId ? 'Correct memory' : 'Store memory',
+        detail: 'Add verified context with source notes.',
+        icon: 'plus-circle',
+        metric: this.editingId ? 'editing' : `${this.memories.length} stored`,
+        tone: 'blue',
+      },
+      {
+        id: 'retrieve',
+        title: 'Retrieve context',
+        detail: 'Find only relevant memories.',
+        icon: 'search',
+        metric: this.retrieveResult ? `${this.retrieveResult.usedContext.length} hits` : 'ready',
+        tone: 'green',
+      },
+      {
+        id: 'import',
+        title: 'Import AI thread',
+        detail: 'Extract actions and link pursuits.',
+        icon: 'import',
+        metric: this.importResult ? `${this.importResult.pursuitLinks?.length || 0} pursuit links` : 'encrypted',
+        tone: 'gold',
+      },
+      {
+        id: 'review',
+        title: 'Review memories',
+        detail: 'Browse, correct, archive, delete.',
+        icon: 'unordered-list',
+        metric: `${this.lowConfidenceCount()} low confidence`,
+        tone: this.lowConfidenceCount() ? 'gold' : 'blue',
+      },
+      {
+        id: 'corrections',
+        title: 'Learned corrections',
+        detail: 'Review what HAI learned from source fixes.',
+        icon: 'safety-certificate',
+        metric: `${this.sourceCorrectionCount()} learned`,
+        tone: this.sourceCorrectionCount() ? 'green' : 'blue',
+      },
+      {
+        id: 'cleanup',
+        title: 'Cleanup',
+        detail: 'Show archived and stale records.',
+        icon: 'clear',
+        metric: `${this.archivedCount()} archived`,
+        tone: this.archivedCount() ? 'gold' : 'blue',
+      },
+      {
+        id: 'export',
+        title: 'Export',
+        detail: 'Download project memory JSON.',
+        icon: 'download',
+        metric: 'JSON',
+        tone: 'blue',
+      },
+    ];
+  }
+
+  selectedMemory(): IContextMemory | undefined {
+    return (
+      this.memories.find((memory) => memory.id === this.selectedMemoryId) ||
+      this.memories[0]
+    );
+  }
+
+  selectMemory(memory: IContextMemory): void {
+    this.selectedMemoryId = memory.id;
+  }
+
+  activeMemories(): IContextMemory[] {
+    return this.memories.filter((memory) => !memory.archived);
+  }
+
+  archivedCount(): number {
+    return this.memories.filter((memory) => memory.archived).length;
+  }
+
+  lowConfidenceCount(): number {
+    return this.memories.filter((memory) => Number(memory.confidence || 0) < 0.65).length;
+  }
+
+  sourceLinkedCount(): number {
+    return this.memories.filter((memory) => memory.sourceUri || memory.sourceLabel).length;
+  }
+
+  sourceCorrectionCount(): number {
+    return this.sourceCorrectionMemories().length;
+  }
+
+  importPursuitLinkCount(): number {
+    return this.importResult?.pursuitLinks?.length || 0;
+  }
+
+  importWorkflowCount(): number {
+    return this.importResult?.workflowIds?.length || 0;
+  }
+
+  importWarningCount(): number {
+    return this.importResult?.warnings?.length || 0;
+  }
+
+  averageConfidence(): string {
+    if (!this.memories.length) {
+      return '0.00';
+    }
+    const total = this.memories.reduce((sum, memory) => sum + Number(memory.confidence || 0), 0);
+    return (total / this.memories.length).toFixed(2);
+  }
+
+  recentMemories(): IContextMemory[] {
+    return this.memories.slice(0, 12);
+  }
+
+  sourceCorrectionMemories(): IContextMemory[] {
+    return this.memories
+      .filter((memory) => this.memoryTags(memory).includes('source-correction'))
+      .slice(0, 12);
+  }
+
+  memoryTags(memory?: IContextMemory): string[] {
+    if (!memory?.tags) {
+      return [];
+    }
+    return String(memory.tags)
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  }
+
+  memoryTitle(memory: IContextMemory): string {
+    return memory.summary || memory.content;
+  }
+
+  confidenceTone(memory?: IContextMemory): string {
+    const confidence = Number(memory?.confidence || 0);
+    if (confidence >= 0.8) {
+      return 'good';
+    }
+    if (confidence >= 0.65) {
+      return 'watch';
+    }
+    return 'bad';
+  }
+
+  kindTone(kind?: string): string {
+    switch ((kind || '').toLowerCase()) {
+      case 'preference':
+        return 'green';
+      case 'decision':
+        return 'gold';
+      case 'source':
+        return 'blue';
+      case 'lesson':
+      case 'procedural':
+        return 'green';
+      default:
+        return 'neutral';
+    }
+  }
+
+  isSourceCorrection(memory?: IContextMemory): boolean {
+    return this.memoryTags(memory).includes('source-correction');
+  }
+
+  updatedLabel(memory?: IContextMemory): string {
+    if (!memory?.updatedAt && !memory?.createdAt) {
+      return 'not dated';
+    }
+    return memory.updatedAt || memory.createdAt || '';
+  }
+
+  toggleTheme(): void {
+    this.themeMode = this.themeService.toggle();
+  }
+
+  themeLabel(): string {
+    return this.themeService.label();
+  }
+
+  themeIcon(): string {
+    return this.themeService.icon();
+  }
+
   goHome(): void {
     this.router.navigate(['/home']);
+  }
+
+  openPursuit(id?: string): void {
+    if (!id) {
+      return;
+    }
+    this.router.navigate(['/pursuits'], { queryParams: { selected: id } });
+  }
+
+  private parseMessages(text: string): Array<{ role: string; content: string }> {
+    return text
+      .split(/\r?\n(?=(user|assistant|system)\s*:)/i)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const match = part.match(/^(user|assistant|system)\s*:\s*([\s\S]*)$/i);
+        if (!match) {
+          return { role: 'user', content: part };
+        }
+        return { role: match[1].toLowerCase(), content: match[2].trim() };
+      })
+      .filter((message) => message.content);
   }
 
   private formRequest() {

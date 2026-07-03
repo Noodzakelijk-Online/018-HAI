@@ -18,7 +18,7 @@ type Scheduler struct {
 
 func NewScheduler(service Service, interval time.Duration) *Scheduler {
 	if interval < 15*time.Second {
-		interval = time.Minute
+		interval = 10 * time.Minute
 	}
 	return &Scheduler{service: service, interval: interval}
 }
@@ -32,7 +32,9 @@ func StartScheduler(ctx context.Context, service Service) {
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
-	s.runOnce()
+	if schedulerRunOnStartup() {
+		s.runOnce()
+	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -68,11 +70,16 @@ func schedulerEnabled() bool {
 func schedulerInterval() time.Duration {
 	value := strings.TrimSpace(os.Getenv("SOURCE_SCHEDULER_INTERVAL_SECONDS"))
 	if value == "" {
-		return time.Minute
+		return 10 * time.Minute
 	}
 	var seconds int64
 	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 15 {
-		return time.Minute
+		return 10 * time.Minute
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func schedulerRunOnStartup() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("SOURCE_SCHEDULER_RUN_ON_STARTUP")))
+	return value == "true" || value == "1" || value == "yes"
 }

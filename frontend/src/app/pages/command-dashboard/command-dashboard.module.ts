@@ -4,10 +4,12 @@ import { ReactiveFormsModule } from '@angular/forms';
 import { RouterModule, Routes } from '@angular/router';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzCardModule } from 'ng-zorro-antd/card';
+import { NzEmptyModule } from 'ng-zorro-antd/empty';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzListModule } from 'ng-zorro-antd/list';
+import { NzModalModule } from 'ng-zorro-antd/modal';
 import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzTableModule } from 'ng-zorro-antd/table';
 import { NzTagModule } from 'ng-zorro-antd/tag';
@@ -25,10 +27,12 @@ const routes: Routes = [{ path: '', component: CommandDashboardComponent }];
     RouterModule.forChild(routes),
     NzButtonModule,
     NzCardModule,
+    NzEmptyModule,
     NzIconModule,
     NzInputModule,
     NzLayoutModule,
     NzListModule,
+    NzModalModule,
     NzNotificationModule,
     NzTableModule,
     NzTagModule,

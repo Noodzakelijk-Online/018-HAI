@@ -1,8 +1,10 @@
 package ambient
 
 import (
+	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
 	"automation-hub-backend/internal/models"
+	pursuitpkg "automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
 	"crypto/sha256"
@@ -75,6 +77,11 @@ type WorkflowService interface {
 	RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error)
 }
 
+type PursuitService interface {
+	Dashboard() (*pursuitpkg.Dashboard, error)
+	Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error)
+}
+
 type Service interface {
 	Overview() (*Overview, error)
 	Scan(trigger string) (*models.AmbientScan, error)
@@ -87,11 +94,17 @@ type service struct {
 	repo         Repository
 	workflows    WorkflowService
 	memoryEngine memoryengine.Service
+	memory       memory.Service
+	pursuits     PursuitService
 	scanning     atomic.Bool
 }
 
-func NewService(repo Repository, workflows WorkflowService, memoryEngine memoryengine.Service) Service {
-	return &service{repo: repo, workflows: workflows, memoryEngine: memoryEngine}
+func NewService(repo Repository, workflows WorkflowService, memoryEngine memoryengine.Service, memoryServices ...memory.Service) Service {
+	return NewServiceWithPursuits(repo, workflows, memoryEngine, nil, memoryServices...)
+}
+
+func NewServiceWithPursuits(repo Repository, workflows WorkflowService, memoryEngine memoryengine.Service, pursuits PursuitService, memoryServices ...memory.Service) Service {
+	return &service{repo: repo, workflows: workflows, memoryEngine: memoryEngine, pursuits: pursuits, memory: firstMemoryService(memoryServices...)}
 }
 
 func (s *service) Overview() (*Overview, error) {
@@ -179,9 +192,16 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 	if err != nil {
 		return fail(err)
 	}
+	var pursuitDashboard *pursuitpkg.Dashboard
+	if s.pursuits != nil {
+		pursuitDashboard, err = s.pursuits.Dashboard()
+		if err != nil {
+			return fail(err)
+		}
+	}
 
-	candidates := buildCandidates(dashboard, items, memoryDashboard, needMap)
-	scan.ItemsExamined = len(items) + len(memoryDashboard.DelegateToVA) + len(memoryDashboard.Contradictions) + len(dashboard.DueOpenLoops)
+	candidates := buildCandidates(dashboard, items, memoryDashboard, pursuitDashboard, needMap)
+	scan.ItemsExamined = len(items) + len(memoryDashboard.DelegateToVA) + len(memoryDashboard.Contradictions) + len(dashboard.DueOpenLoops) + pursuitSignalCount(pursuitDashboard)
 	scan.OpportunitiesFound = len(candidates)
 	policy := policyFromEnv()
 	now := time.Now().UTC()
@@ -320,6 +340,9 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 		return nil, fmt.Errorf("opportunity in %s state cannot be accepted", item.Status)
 	}
 	if item.WorkflowID == nil {
+		if s.workflows == nil {
+			return nil, fmt.Errorf("workflow service is not configured")
+		}
 		record, intakeErr := s.workflows.Intake(workflow.IntakeRequest{
 			Input:          item.NextAction,
 			SourceType:     "ambient_opportunity",
@@ -335,11 +358,58 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 		if intakeErr != nil {
 			return nil, intakeErr
 		}
+		if record == nil || record.Item.ID == uuid.Nil {
+			return nil, fmt.Errorf("workflow intake did not return a workflow record")
+		}
 		item.WorkflowID = &record.Item.ID
+		if err := s.linkAcceptedPursuitOpportunity(item, record); err != nil {
+			return nil, err
+		}
 	}
 	item.Status = StatusAccepted
 	item.ResolutionNote = appendNote(item.ResolutionNote, request.Note)
-	return s.repo.SaveOpportunity(item)
+	saved, err := s.repo.SaveOpportunity(item)
+	if err != nil {
+		return nil, err
+	}
+	s.rememberOpportunityFeedback(saved, "ambient_opportunity_accepted", request.Note)
+	return saved, nil
+}
+
+func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity, record *workflow.WorkflowRecord) error {
+	if s.pursuits == nil || item == nil || record == nil || record.Item.ID == uuid.Nil || !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
+		return nil
+	}
+	pursuitID, err := uuid.Parse(strings.TrimSpace(item.SourceID))
+	if err != nil {
+		return nil
+	}
+	_, err = s.pursuits.Link(pursuitID, pursuitpkg.LinkRequest{
+		LinkType:     pursuitpkg.LinkWorkflow,
+		LinkID:       record.Item.ID.String(),
+		Relationship: "ambient_follow_up",
+		SourceURI:    item.SourceURI,
+		SourceLabel:  item.Title,
+		Confidence:   float64(clamp(item.Confidence, 0, 100)) / 100,
+		Actor:        "ambient",
+	})
+	if err != nil {
+		return fmt.Errorf("link accepted ambient workflow to pursuit: %w", err)
+	}
+	sourceURI := firstNonEmpty(item.SourceURI, "ambient://opportunities/"+item.ID.String())
+	_, err = s.pursuits.Link(pursuitID, pursuitpkg.LinkRequest{
+		LinkType:     pursuitpkg.LinkAmbientOpportunity,
+		LinkID:       item.ID.String(),
+		Relationship: "ambient_proposal_accepted",
+		SourceURI:    sourceURI,
+		SourceLabel:  item.Title,
+		Confidence:   float64(clamp(item.Confidence, 0, 100)) / 100,
+		Actor:        "ambient",
+	})
+	if err != nil {
+		return fmt.Errorf("link accepted ambient proposal to pursuit: %w", err)
+	}
+	return nil
 }
 
 func (s *service) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error) {
@@ -357,7 +427,28 @@ func (s *service) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.Ambi
 	item.ResolutionNote = appendNote(item.ResolutionNote, request.Note)
 	cooldown := time.Now().UTC().Add(time.Duration(policyFromEnv().CooldownHours) * time.Hour)
 	item.CooldownUntil = &cooldown
-	return s.repo.SaveOpportunity(item)
+	saved, err := s.repo.SaveOpportunity(item)
+	if err != nil {
+		return nil, err
+	}
+	s.rememberOpportunityFeedback(saved, "ambient_opportunity_dismissed", request.Note)
+	return saved, nil
+}
+
+func (s *service) rememberOpportunityFeedback(item *models.AmbientOpportunity, signal, note string) {
+	if s.memory == nil || item == nil || !ambientFeedbackUseful(signal, note, *item) {
+		return
+	}
+	sourceURI := firstNonEmpty(item.SourceURI, "ambient://opportunities/"+item.ID.String())
+	_, _ = s.memory.Create(memory.CreateRequest{
+		Kind:        "lesson",
+		Content:     ambientFeedbackContent(*item, signal, note),
+		Summary:     ambientFeedbackSummary(*item, signal, note),
+		Tags:        ambientFeedbackTags(*item, signal),
+		Confidence:  ambientFeedbackConfidence(signal, note),
+		SourceURI:   sourceURI,
+		SourceLabel: ambientFeedbackSourceLabel(*item),
+	})
 }
 
 func (s *service) ensureNeeds() error {
@@ -378,6 +469,7 @@ func buildCandidates(
 	dashboard *workflow.WorkflowDashboard,
 	items []models.WorkflowItem,
 	memoryDashboard *memoryengine.CommandDashboard,
+	pursuitDashboard *pursuitpkg.Dashboard,
 	needs map[string]models.AmbientNeed,
 ) []models.AmbientOpportunity {
 	candidates := []models.AmbientOpportunity{}
@@ -505,6 +597,7 @@ func buildCandidates(
 			RequiresApproval: insight.NeedsReview || insight.RobertNeeded,
 		})
 	}
+	addPursuitCandidates(pursuitDashboard, add)
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].PriorityScore > candidates[j].PriorityScore
 	})
@@ -513,6 +606,86 @@ func buildCandidates(
 		return candidates[:policy.OpportunityLimit]
 	}
 	return candidates
+}
+
+func addPursuitCandidates(dashboard *pursuitpkg.Dashboard, add func(models.AmbientOpportunity)) {
+	if dashboard == nil {
+		return
+	}
+	for _, item := range dashboard.NeedsRobert {
+		add(pursuitOpportunity(item, "pursuit_decision", "Robert decision needed: "+compact(item.Pursuit.Title, 180), "A pursuit has pending approvals, high-risk next actions, or Robert-only decisions. HAI should present a clear Yes/No or small-option decision instead of asking Robert to re-plan.", firstNonEmpty(item.NextAction, item.Pursuit.NextRecommendedAction, "review the recommended pursuit action and approve, reject, or request revision"), 88, 78, 20, true))
+	}
+	for _, item := range dashboard.ReviewDue {
+		add(pursuitOpportunity(item, "pursuit_review_due", "Review pursuit: "+compact(item.Pursuit.Title, 180), "A pursuit has reached its scheduled review time. HAI should resurface the current state, verify whether the next action still makes sense, and either record the review or propose a safe follow-up.", firstNonEmpty(item.NextAction, item.Pursuit.NextRecommendedAction, "review the pursuit and either record completion of the review or snooze it"), 74, 70, 22, riskScore(item.Pursuit.RiskLevel) >= 60))
+	}
+	for _, item := range dashboard.PlanningNeeded {
+		add(pursuitOpportunity(item, "pursuit_planning_needed", "Plan pursuit: "+compact(item.Pursuit.Title, 180), "A pursuit has no linked workflow yet. HAI should convert the goal into the first concrete workflow, checklist, evidence requirement, and approval boundary instead of leaving Robert to manually re-plan.", firstNonEmpty(item.NextAction, item.Pursuit.NextRecommendedAction, "create the first concrete workflow plan for this pursuit"), 66, 72, 26, riskScore(item.Pursuit.RiskLevel) >= 60))
+	}
+	for _, item := range dashboard.Blocked {
+		add(pursuitOpportunity(item, "pursuit_blocker", "Unblock pursuit: "+compact(item.Pursuit.Title, 180), "A pursuit is blocked or waiting on missing information. The ambient brain should surface the blocker and prepare the next safe follow-up.", firstNonEmpty(item.NextAction, item.Pursuit.NextRecommendedAction, "identify the blocker owner and prepare the next follow-up"), 78, 72, 35, riskScore(item.Pursuit.RiskLevel) >= 60))
+	}
+	for _, item := range dashboard.Stale {
+		add(pursuitOpportunity(item, "pursuit_stale", "Restart stale pursuit: "+compact(item.Pursuit.Title, 180), "A pursuit has not moved recently. HAI should propose the smallest concrete action that restarts momentum without requiring Robert to reconstruct context.", firstNonEmpty(item.NextAction, item.Pursuit.NextRecommendedAction, "review stale pursuit context and choose the next concrete action"), 62, 64, 28, riskScore(item.Pursuit.RiskLevel) >= 60))
+	}
+	for _, item := range dashboard.VAReady {
+		add(pursuitOpportunity(item, "pursuit_va_ready", "Delegate pursuit work: "+compact(item.Pursuit.Title, 180), "A pursuit appears suitable for VA-ready work. HAI should prepare a bounded delegation package with source links and authority limits.", firstNonEmpty(item.NextAction, "prepare a scoped VA delegation package with context, source links, checklist, and escalation rules"), 54, 66, 30, false))
+	}
+	for _, item := range dashboard.SystemReady {
+		add(pursuitOpportunity(item, "pursuit_system_ready", "Run safe pursuit work: "+compact(item.Pursuit.Title, 180), "A low-risk pursuit has work that HAI can move through existing workflow and approval-safe execution paths.", firstNonEmpty(item.NextAction, item.Pursuit.NextRecommendedAction, "queue the next low-risk workflow step"), 58, 68, 25, false))
+	}
+	for _, item := range dashboard.CompletionCandidates {
+		add(pursuitOpportunity(item, "pursuit_completion_candidate", "Verify completion: "+compact(item.Pursuit.Title, 180), "A pursuit may be complete, but completion must be verified against evidence before it is accepted as done.", firstNonEmpty(item.NextAction, "review linked evidence and confirm whether the pursuit meets its completion definition"), 72, 74, 32, true))
+	}
+	for _, item := range dashboard.HighRisk {
+		if highRiskPursuitAlreadyCovered(item) {
+			continue
+		}
+		add(pursuitOpportunity(item, "pursuit_high_risk", "Review high-risk pursuit: "+compact(item.Pursuit.Title, 180), "A high-risk pursuit is active without another immediate ambient queue marker. HAI should proactively verify that approval boundaries, source evidence, and the next action are still explicit before work advances.", firstNonEmpty(item.NextAction, item.Pursuit.NextRecommendedAction, "review approval boundaries, evidence, and next action for this high-risk pursuit"), 70, 76, 28, true))
+	}
+}
+
+func highRiskPursuitAlreadyCovered(item pursuitpkg.PursuitListItem) bool {
+	return item.NeedsRobert > 0 ||
+		item.Blocked > 0 ||
+		item.ReviewDue ||
+		item.PlanningNeeded ||
+		item.Stale ||
+		item.CompletionCandidate
+}
+
+func pursuitOpportunity(item pursuitpkg.PursuitListItem, sourceType, title, rationale, nextAction string, urgency, impact, effort int, requiresApproval bool) models.AmbientOpportunity {
+	pursuit := item.Pursuit
+	sourceID := pursuit.ID.String()
+	sourceURI := "pursuit://" + sourceID
+	risk := riskScore(pursuit.RiskLevel)
+	confidence := clamp(int(math.Round(pursuit.Confidence*100)), 35, 100)
+	if pursuit.Confidence <= 0 {
+		confidence = 60
+	}
+	impact = max(impact, clamp(pursuit.PriorityScore, 0, 100))
+	return models.AmbientOpportunity{
+		NeedKey:          needForPursuit(pursuit),
+		Title:            title,
+		Rationale:        rationale + " " + scoreExplanation(urgency, impact, risk, confidence),
+		NextAction:       nextAction,
+		SourceType:       sourceType,
+		SourceID:         sourceID,
+		SourceURI:        sourceURI,
+		EvidenceManifest: evidenceManifest(sourceType, sourceID, sourceURI, pursuit.UpdatedAt),
+		Urgency:          urgency,
+		Impact:           impact,
+		Effort:           effort,
+		Confidence:       confidence,
+		Risk:             risk,
+		RequiresApproval: requiresApproval || risk >= 80,
+	}
+}
+
+func pursuitSignalCount(dashboard *pursuitpkg.Dashboard) int {
+	if dashboard == nil {
+		return 0
+	}
+	return len(dashboard.NeedsRobert) + len(dashboard.ReviewDue) + len(dashboard.PlanningNeeded) + len(dashboard.Blocked) + len(dashboard.Stale) + len(dashboard.VAReady) + len(dashboard.SystemReady) + len(dashboard.CompletionCandidates) + len(dashboard.HighRisk)
 }
 
 func opportunityScore(item models.AmbientOpportunity, need models.AmbientNeed) int {
@@ -547,8 +720,8 @@ func policyFromEnv() Policy {
 		OpportunityLimit:       envInt("AMBIENT_OPPORTUNITY_LIMIT", 50, 1, 200),
 		ExecutionLimit:         envInt("AMBIENT_EXECUTION_LIMIT", 3, 1, 20),
 		CooldownHours:          envInt("AMBIENT_DISMISS_COOLDOWN_HOURS", 168, 1, 8760),
-		ScanIntervalSeconds:    envInt("AMBIENT_SCAN_INTERVAL_SECONDS", 300, 30, 86400),
-		ScanRetention:          envInt("AMBIENT_SCAN_RETENTION", 500, 10, 10000),
+		ScanIntervalSeconds:    envInt("AMBIENT_SCAN_INTERVAL_SECONDS", 3600, 30, 86400),
+		ScanRetention:          envInt("AMBIENT_SCAN_RETENTION", 100, 10, 10000),
 		DualPathKVCacheMode:    dualMode,
 		DualPathInfrastructure: envBool("LLM_DUALPATH_INFRASTRUCTURE_VERIFIED", false),
 	}
@@ -565,6 +738,35 @@ func needForWorkflow(item models.WorkflowItem) string {
 		return "physiological"
 	case strings.Contains(text, "publish") || strings.Contains(text, "career") || strings.Contains(text, "reputation") || strings.Contains(text, "delegate"):
 		return "esteem"
+	default:
+		return "growth"
+	}
+}
+
+func needForPursuit(pursuit models.Pursuit) string {
+	category := strings.ToLower(strings.TrimSpace(pursuit.NeedCategory))
+	switch {
+	case strings.Contains(category, "safety") || strings.Contains(category, "stability"):
+		return "safety"
+	case strings.Contains(category, "belong"):
+		return "belonging"
+	case strings.Contains(category, "esteem") || strings.Contains(category, "reputation") || strings.Contains(category, "capability"):
+		return "esteem"
+	case strings.Contains(category, "physiological") || strings.Contains(category, "health") || strings.Contains(category, "housing"):
+		return "physiological"
+	case strings.Contains(category, "growth"):
+		return "growth"
+	}
+	text := strings.ToLower(pursuit.Domain + " " + pursuit.Title + " " + pursuit.Description + " " + pursuit.DesiredOutcome)
+	switch {
+	case strings.EqualFold(pursuit.RiskLevel, "high") || strings.Contains(text, "legal") || strings.Contains(text, "government") || strings.Contains(text, "insurance") || strings.Contains(text, "financial") || strings.Contains(text, "security"):
+		return "safety"
+	case strings.Contains(text, "client") || strings.Contains(text, "reply") || strings.Contains(text, "relationship") || strings.Contains(text, "household"):
+		return "belonging"
+	case strings.Contains(text, "reputation") || strings.Contains(text, "career") || strings.Contains(text, "developer") || strings.Contains(text, "delegate"):
+		return "esteem"
+	case strings.Contains(text, "health") || strings.Contains(text, "housing") || strings.Contains(text, "home"):
+		return "physiological"
 	default:
 		return "growth"
 	}
@@ -600,6 +802,101 @@ func riskScore(level string) int {
 
 func scoreExplanation(urgency, impact, risk, confidence int) string {
 	return fmt.Sprintf("Ranking inputs: urgency %d, impact %d, risk %d, confidence %d.", urgency, impact, risk, confidence)
+}
+
+func firstMemoryService(services ...memory.Service) memory.Service {
+	for _, service := range services {
+		if service != nil {
+			return service
+		}
+	}
+	return nil
+}
+
+func ambientFeedbackUseful(signal, note string, item models.AmbientOpportunity) bool {
+	switch strings.TrimSpace(signal) {
+	case "ambient_opportunity_accepted":
+		return strings.TrimSpace(item.NextAction) != "" || strings.TrimSpace(note) != ""
+	case "ambient_opportunity_dismissed":
+		return len([]rune(strings.TrimSpace(note))) >= 12
+	default:
+		return false
+	}
+}
+
+func ambientFeedbackContent(item models.AmbientOpportunity, signal, note string) string {
+	parts := []string{
+		"Robert gave feedback on HAI ambient proactive suggestions.",
+		"Signal: " + strings.ReplaceAll(strings.TrimSpace(signal), "_", " ") + ".",
+	}
+	if item.NeedKey != "" {
+		parts = append(parts, "Need area: "+item.NeedKey+".")
+	}
+	if item.Title != "" {
+		parts = append(parts, "Suggestion: "+item.Title+".")
+	}
+	if item.NextAction != "" {
+		parts = append(parts, "Proposed action: "+compact(item.NextAction, 420)+".")
+	}
+	if item.Rationale != "" {
+		parts = append(parts, "Original rationale: "+compact(item.Rationale, 420)+".")
+	}
+	if strings.TrimSpace(note) != "" {
+		parts = append(parts, "Robert note: "+strings.TrimSpace(note)+".")
+	}
+	switch strings.TrimSpace(signal) {
+	case "ambient_opportunity_dismissed":
+		parts = append(parts, "Future behavior: avoid similar proactive suggestions unless stronger source evidence, urgency, or explicit user intent is present.")
+	default:
+		parts = append(parts, "Future behavior: similar proactive suggestions may be useful when source evidence and approval gates are preserved.")
+	}
+	return strings.Join(parts, " ")
+}
+
+func ambientFeedbackSummary(item models.AmbientOpportunity, signal, note string) string {
+	status := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(signal), "_", " "), "ambient opportunity ")
+	base := "Ambient " + firstNonEmpty(status, "feedback")
+	if item.Title != "" {
+		base += ": " + item.Title
+	}
+	if strings.TrimSpace(note) != "" {
+		base += " - " + strings.TrimSpace(note)
+	}
+	return compact(base, 240)
+}
+
+func ambientFeedbackTags(item models.AmbientOpportunity, signal string) []string {
+	tags := []string{"ambient-feedback", strings.TrimSpace(signal)}
+	for _, value := range []string{item.NeedKey, item.SourceType, item.Status} {
+		if value = strings.TrimSpace(value); value != "" {
+			tags = append(tags, value)
+		}
+	}
+	return tags
+}
+
+func ambientFeedbackConfidence(signal, note string) float64 {
+	switch strings.TrimSpace(signal) {
+	case "ambient_opportunity_dismissed":
+		if strings.TrimSpace(note) != "" {
+			return 0.8
+		}
+		return 0.62
+	case "ambient_opportunity_accepted":
+		if strings.TrimSpace(note) != "" {
+			return 0.72
+		}
+		return 0.6
+	default:
+		return 0.55
+	}
+}
+
+func ambientFeedbackSourceLabel(item models.AmbientOpportunity) string {
+	if title := strings.TrimSpace(item.Title); title != "" {
+		return "Ambient feedback: " + title
+	}
+	return "Ambient opportunity feedback"
 }
 
 func appendNote(base, note string) string {

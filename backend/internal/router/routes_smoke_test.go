@@ -33,6 +33,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	a.GET("/images/:imageName", mark("image"))
 	a.GET("/:id", mark("getByID"))
 	a.POST("/:id/launch", mark("launch"))
+	a.POST("/:id/stop-runtime", mark("stopRuntime"))
 	a.POST("/:id/health-check", mark("healthCheck"))
 	a.GET("/:id/diagnostics", mark("diagnostics"))
 	a.POST("/", mark("create"))
@@ -42,6 +43,19 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	agentRuntimes := r.Group("/api/v1").Group("/agent-runtimes")
 	agentRuntimes.GET("/", mark("agentRuntimeRegistry"))
 	agentRuntimes.GET("/health", mark("agentRuntimeHealth"))
+	agentRuntimes.GET("/:id/skills", mark("agentRuntimeSkills"))
+	agentRuntimes.POST("/:id/tasks/:taskId/stop", mark("agentRuntimeStopTask"))
+	agentRuntimes.GET("/openclaw/ecosystem", mark("openclawEcosystem"))
+	agentRuntimes.PATCH("/openclaw/ecosystem", mark("openclawEcosystemSet"))
+	agentRuntimes.POST("/openclaw/ecosystem/refresh", mark("openclawEcosystemRefresh"))
+	agentRuntimes.POST("/openclaw/ecosystem/upload", mark("openclawEcosystemUpload"))
+
+	agentCycle := r.Group("/api/v1").Group("/agent-cycle")
+	agentCycle.POST("/run", mark("agentCycleRun"))
+
+	assistantRoutes := r.Group("/api/v1").Group("/assistant")
+	assistantRoutes.POST("/command", mark("assistantCommand"))
+	assistantRoutes.GET("/logs", mark("assistantLogs"))
 
 	m := r.Group("/api/v1").Group("/memory")
 	m.GET("/", mark("memoryList"))
@@ -116,12 +130,37 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	workflowRoutes.POST("/:id/proposals/:proposalId/resolve", mark("workflowProposalResolve"))
 	workflowRoutes.PATCH("/:id/checklist/:itemId", mark("workflowChecklist"))
 
+	pursuits := r.Group("/api/v1").Group("/pursuits")
+	pursuits.GET("/", mark("pursuitList"))
+	pursuits.POST("/", mark("pursuitCreate"))
+	pursuits.GET("/dashboard", mark("pursuitDashboard"))
+	pursuits.GET("/brief", mark("pursuitBrief"))
+	pursuits.GET("/decisions", mark("pursuitDecisions"))
+	pursuits.POST("/match", mark("pursuitMatch"))
+	pursuits.POST("/intake", mark("pursuitRouteIntake"))
+	pursuits.GET("/:id/evidence", mark("pursuitEvidence"))
+	pursuits.GET("/:id", mark("pursuitGet"))
+	pursuits.PATCH("/:id", mark("pursuitUpdate"))
+	pursuits.POST("/:id/archive", mark("pursuitArchive"))
+	pursuits.POST("/:id/summary", mark("pursuitSummary"))
+	pursuits.POST("/:id/review", mark("pursuitReview"))
+	pursuits.POST("/:id/decisions/resolve", mark("pursuitDecisionResolve"))
+	pursuits.GET("/:id/activity", mark("pursuitActivity"))
+	pursuits.GET("/:id/next-actions", mark("pursuitNextActions"))
+	pursuits.GET("/:id/blockers", mark("pursuitBlockers"))
+	pursuits.GET("/:id/approvals", mark("pursuitApprovals"))
+	pursuits.POST("/:id/intake", mark("pursuitIntake"))
+	pursuits.POST("/:id/plan", mark("pursuitPlan"))
+	pursuits.POST("/:id/links", mark("pursuitLink"))
+	pursuits.DELETE("/:id/links/:linkId", mark("pursuitDeleteLink"))
+
 	cases := []struct {
 		method, path, want string
 	}{
 		{"GET", "/api/v1/automation/health/summary", "summary"},
 		{"GET", "/api/v1/automation/health-summary", "summary"},
 		{"POST", "/api/v1/automation/abc/launch", "launch"},
+		{"POST", "/api/v1/automation/abc/stop-runtime", "stopRuntime"},
 		{"POST", "/api/v1/automation/abc/health-check", "healthCheck"},
 		{"GET", "/api/v1/automation/abc/diagnostics", "diagnostics"},
 		{"GET", "/api/v1/automation/abc", "getByID"},
@@ -129,6 +168,16 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/automation/swap/1/2", "swap"},
 		{"GET", "/api/v1/agent-runtimes/", "agentRuntimeRegistry"},
 		{"GET", "/api/v1/agent-runtimes/health", "agentRuntimeHealth"},
+		{"GET", "/api/v1/agent-runtimes/openclaw/skills", "agentRuntimeSkills"},
+		{"POST", "/api/v1/agent-runtimes/openclaw/tasks/task-1/stop", "agentRuntimeStopTask"},
+		{"GET", "/api/v1/agent-runtimes/openclaw/ecosystem", "openclawEcosystem"},
+		{"PATCH", "/api/v1/agent-runtimes/openclaw/ecosystem", "openclawEcosystemSet"},
+		{"POST", "/api/v1/agent-runtimes/openclaw/ecosystem/refresh", "openclawEcosystemRefresh"},
+		{"POST", "/api/v1/agent-runtimes/openclaw/ecosystem/upload", "openclawEcosystemUpload"},
+		{"GET", "/api/v1/pursuits/decisions", "pursuitDecisions"},
+		{"POST", "/api/v1/agent-cycle/run", "agentCycleRun"},
+		{"POST", "/api/v1/assistant/command", "assistantCommand"},
+		{"GET", "/api/v1/assistant/logs", "assistantLogs"},
 		{"POST", "/api/v1/memory/retrieve", "memoryRetrieve"},
 		{"GET", "/api/v1/memory/export", "memoryExport"},
 		{"GET", "/api/v1/memory/abc", "memoryGet"},
@@ -184,6 +233,27 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/workflow/abc/interruption/resolve", "workflowInterruptionResolve"},
 		{"POST", "/api/v1/workflow/abc/proposals/def/resolve", "workflowProposalResolve"},
 		{"PATCH", "/api/v1/workflow/abc/checklist/def", "workflowChecklist"},
+		{"GET", "/api/v1/pursuits/", "pursuitList"},
+		{"POST", "/api/v1/pursuits/", "pursuitCreate"},
+		{"GET", "/api/v1/pursuits/dashboard", "pursuitDashboard"},
+		{"GET", "/api/v1/pursuits/brief", "pursuitBrief"},
+		{"POST", "/api/v1/pursuits/match", "pursuitMatch"},
+		{"POST", "/api/v1/pursuits/intake", "pursuitRouteIntake"},
+		{"GET", "/api/v1/pursuits/abc/evidence?uri=automation-launch://example", "pursuitEvidence"},
+		{"GET", "/api/v1/pursuits/abc", "pursuitGet"},
+		{"PATCH", "/api/v1/pursuits/abc", "pursuitUpdate"},
+		{"POST", "/api/v1/pursuits/abc/archive", "pursuitArchive"},
+		{"POST", "/api/v1/pursuits/abc/summary", "pursuitSummary"},
+		{"POST", "/api/v1/pursuits/abc/review", "pursuitReview"},
+		{"POST", "/api/v1/pursuits/abc/decisions/resolve", "pursuitDecisionResolve"},
+		{"GET", "/api/v1/pursuits/abc/activity", "pursuitActivity"},
+		{"GET", "/api/v1/pursuits/abc/next-actions", "pursuitNextActions"},
+		{"GET", "/api/v1/pursuits/abc/blockers", "pursuitBlockers"},
+		{"GET", "/api/v1/pursuits/abc/approvals", "pursuitApprovals"},
+		{"POST", "/api/v1/pursuits/abc/intake", "pursuitIntake"},
+		{"POST", "/api/v1/pursuits/abc/plan", "pursuitPlan"},
+		{"POST", "/api/v1/pursuits/abc/links", "pursuitLink"},
+		{"DELETE", "/api/v1/pursuits/abc/links/def", "pursuitDeleteLink"},
 	}
 	for _, tc := range cases {
 		hit = ""

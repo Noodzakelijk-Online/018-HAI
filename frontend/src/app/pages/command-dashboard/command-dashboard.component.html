@@ -19,6 +19,10 @@
             <i nz-icon nzType="radar-chart" nzTheme="outline"></i>
             Proactive brain
           </button>
+          <button nz-button nzType="default" (click)="openPursuits()">
+            <i nz-icon nzType="flag" nzTheme="outline"></i>
+            Pursuits
+          </button>
           <button nz-button nzType="default" (click)="goHome()">
             <i nz-icon nzType="appstore" nzTheme="outline"></i>
             Automations
@@ -49,16 +53,334 @@
           <span>Contradictions</span>
           <strong>{{ view.contradictions.length }}</strong>
         </div>
+        <div class="metric">
+          <span>Learned corrections</span>
+          <strong>{{ view.sourceCorrections?.length || 0 }}</strong>
+        </div>
+        <div class="metric alert">
+          <span>Pursuit decisions</span>
+          <strong>{{ pursuitDecisionCount() }}</strong>
+        </div>
+        <div class="metric">
+          <span>Ready pursuit work</span>
+          <strong>{{ pursuitReadyCount() }}</strong>
+        </div>
       </div>
 
-      <section class="runtime-band">
+      <section class="assistant-actions">
+            <div class="section-heading">
+          <div>
+            <h2>Assistant Actions</h2>
+            <span>Primary controls run through the same task, memory, source, workflow, and agent-cycle bridge.</span>
+          </div>
+          <nz-tag [nzColor]="commandStatusColor(lastCommand)">
+            {{ lastCommand ? (lastCommand.reviewRequired ? 'review needed' : 'ready') : 'no command yet' }}
+          </nz-tag>
+        </div>
+
+        <div class="action-grid">
+          <button
+            type="button"
+            class="action-tile"
+            *ngFor="let action of actions"
+            [attr.title]="action.description + ' Click for full orchestration through the assistant command bridge.'"
+            [class.action-tile--loading]="commandLoading === action.key"
+            (click)="runDashboardAction(action)"
+          >
+            <span class="action-icon">
+              <i nz-icon [nzType]="action.icon" nzTheme="outline"></i>
+            </span>
+            <span class="action-copy">
+              <strong>{{ action.title }}</strong>
+              <small>{{ action.description }}</small>
+            </span>
+            <span class="action-metric">{{ actionMetric(action) }}</span>
+          </button>
+        </div>
+
+        <div class="assistant-result" *ngIf="lastCommand as command">
+          <div>
+            <strong>{{ command.summary }}</strong>
+            <span>{{ command.nextAction }}</span>
+          </div>
+          <dl>
+            <div>
+              <dt>Intent</dt>
+              <dd>{{ command.intent }}</dd>
+            </div>
+            <div>
+              <dt>Engines</dt>
+              <dd>{{ command.actions.length }}</dd>
+            </div>
+            <div>
+              <dt>Cycle</dt>
+              <dd>{{ command.agentCycle?.status || '-' }}</dd>
+            </div>
+            <div>
+              <dt>Review</dt>
+              <dd>{{ command.reviewRequired ? 'required' : 'not required' }}</dd>
+            </div>
+          </dl>
+          <small>{{ commandEngineSummary(command) }}</small>
+        </div>
+      </section>
+
+      <section class="pursuit-band" *ngIf="pursuitDashboard as pursuits">
         <div class="section-heading">
           <div>
-            <h2>Controlled Agent Runtimes</h2>
-            <span>Hermes and Odysseus execute only through approved task workflows.</span>
+            <h2>Pursuit Operations</h2>
+            <span>Top-level goals tied to workflows, evidence, memory, approvals, and source context.</span>
           </div>
-          <strong>{{ runtimes.length }} registered</strong>
+          <div class="pursuit-summary">
+            <button nz-button nzSize="small" nzType="default" title="Reload pursuit dashboard state." (click)="refreshPursuits()" [nzLoading]="pursuitsLoading">
+              <i nz-icon nzType="reload" nzTheme="outline"></i>
+            </button>
+            <button nz-button nzSize="small" nzType="default" title="Open granular pursuit controls." (click)="openPursuits()">
+              <i nz-icon nzType="flag" nzTheme="outline"></i>
+              {{ activePursuitCount() }} active
+            </button>
+            <nz-tag [nzColor]="pursuitAttentionCount() ? 'gold' : 'green'">
+              {{ pursuitAttentionCount() }} need attention
+            </nz-tag>
+          </div>
         </div>
+
+        <div class="pursuit-brief" *ngIf="pursuitBrief as brief">
+          <button
+            type="button"
+            class="pursuit-brief__summary"
+            title="Open pursuits for the full operating view."
+            (click)="openPursuits()"
+          >
+            <span>{{ brief.operatingMode }}</span>
+            <strong>{{ brief.summary }}</strong>
+            <small>{{ brief.primaryAction }}</small>
+          </button>
+          <div class="pursuit-brief__metrics">
+            <span title="Decisions or approvals that require Robert.">{{ brief.needsRobert }} Robert</span>
+            <span title="Pursuits with no first workflow plan yet.">{{ brief.planningNeeded }} need plan</span>
+            <span title="Scheduled pursuit reviews due now.">{{ brief.reviewDue }} review due</span>
+            <span title="VA-ready plus system-ready pursuit work.">{{ brief.readyToMove }} ready</span>
+            <span title="Blocked plus stale pursuits.">{{ brief.stuck }} stuck</span>
+          </div>
+          <div class="pursuit-brief__cards" *ngIf="brief.cards.length">
+            <button
+              type="button"
+              class="brief-card"
+              *ngFor="let card of brief.cards"
+              [class.brief-card--alert]="card.needsRobert"
+              [attr.title]="card.context + ' / ' + card.evidenceLine"
+              (click)="openPursuitCard(card)"
+            >
+              <em>{{ card.queue }}</em>
+              <strong>{{ card.title }}</strong>
+              <span>{{ card.action }}</span>
+              <small>{{ card.riskLevel }} risk / {{ card.evidenceLine }}</small>
+            </button>
+          </div>
+        </div>
+
+        <div class="pursuit-lanes">
+          <article class="pursuit-lane pursuit-lane--alert">
+            <header title="Pursuits where Robert must approve, decide, verify, or unblock something.">
+              <span>Robert queue</span>
+              <strong>{{ robertDecisionQueue().length || reviewQueue().length }}</strong>
+            </header>
+            <article
+              class="pursuit-item pursuit-item--decision"
+              *ngFor="let card of robertDecisionQueue()"
+              [attr.title]="card.decision.reason + ' / ' + (card.decision.evidenceLabel || card.decision.evidenceUri || card.evidenceLine || 'no evidence label')"
+            >
+              <button type="button" class="pursuit-item__main" (click)="openPursuitDecision(card)">
+                <strong>{{ card.pursuit.title }}</strong>
+                <span>{{ card.decision.recommended }}</span>
+                <em>{{ card.currentState || card.decision.reason }}</em>
+                <small>{{ card.decision.riskLevel }} risk / {{ card.decision.evidenceLabel || card.decision.evidenceUri || card.evidenceLine || 'evidence in detail' }}</small>
+              </button>
+              <div class="pursuit-item__actions" *ngIf="canResolveDashboardDecision(card)">
+                <button
+                  type="button"
+                  nz-button
+                  nzSize="small"
+                  nzType="primary"
+                  [nzLoading]="resolvingDashboardDecisionId === card.decision.id"
+                  (click)="resolveDashboardDecision(card, true, $event)"
+                  [title]="dashboardDecisionTitle(card, true)"
+                >
+                  {{ card.decision.yesLabel || 'Yes' }}
+                </button>
+                <button
+                  type="button"
+                  nz-button
+                  nzSize="small"
+                  [disabled]="resolvingDashboardDecisionId === card.decision.id"
+                  (click)="resolveDashboardDecision(card, false, $event)"
+                  [title]="dashboardDecisionTitle(card, false)"
+                >
+                  {{ card.decision.noLabel || 'No' }}
+                </button>
+              </div>
+            </article>
+            <button
+              type="button"
+              class="pursuit-item"
+              *ngFor="let item of robertDecisionQueue().length ? [] : reviewQueue()"
+              [attr.title]="pursuitSubtitle(item)"
+              (click)="openPursuit(item)"
+            >
+              <strong>{{ item.pursuit.title }}</strong>
+              <span>{{ pursuitSubtitle(item) }}</span>
+              <em>{{ pursuitContext(item) }}</em>
+              <small>{{ item.pursuit.riskLevel }} risk / {{ pursuitEvidenceLine(item) }}</small>
+            </button>
+            <nz-empty *ngIf="!robertDecisionQueue().length && !reviewQueue().length" nzNotFoundContent="No Robert-only pursuit decisions right now."></nz-empty>
+          </article>
+
+          <article class="pursuit-lane">
+            <header title="Pursuits where HAI or a VA can prepare bounded low-risk work.">
+              <span>Ready to move</span>
+              <strong>{{ readyQueue().length }}</strong>
+            </header>
+            <button
+              type="button"
+              class="pursuit-item"
+              *ngFor="let item of readyQueue()"
+              [attr.title]="pursuitSubtitle(item)"
+              (click)="openPursuit(item)"
+            >
+              <strong>{{ item.pursuit.title }}</strong>
+              <span>{{ pursuitSubtitle(item) }}</span>
+              <em>{{ pursuitContext(item) }}</em>
+              <small>{{ item.pursuit.autonomyLevel }} / priority {{ item.pursuit.priorityScore }} / {{ pursuitEvidenceLine(item) }}</small>
+            </button>
+            <nz-empty *ngIf="!readyQueue().length" nzNotFoundContent="No VA-ready or system-ready pursuit work."></nz-empty>
+          </article>
+
+          <article class="pursuit-lane pursuit-lane--warning">
+            <header title="Pursuits that are blocked, stale, waiting, or missing fresh movement.">
+              <span>Stuck or stale</span>
+              <strong>{{ stuckQueue().length }}</strong>
+            </header>
+            <button
+              type="button"
+              class="pursuit-item"
+              *ngFor="let item of stuckQueue()"
+              [attr.title]="pursuitSubtitle(item)"
+              (click)="openPursuit(item)"
+            >
+              <strong>{{ item.pursuit.title }}</strong>
+              <span>{{ pursuitSubtitle(item) }}</span>
+              <em>{{ pursuitContext(item) }}</em>
+              <small>{{ item.blocked }} blocker{{ item.blocked === 1 ? '' : 's' }} / {{ pursuitEvidenceLine(item) }}</small>
+            </button>
+            <nz-empty *ngIf="!stuckQueue().length" nzNotFoundContent="No stuck pursuit work in the current queue."></nz-empty>
+          </article>
+        </div>
+      </section>
+
+      <section class="runtime-band">
+          <div class="section-heading">
+            <div>
+              <h2>Controlled Agent Runtimes</h2>
+            <span>Hermes, Odysseus, and OpenClaw execute only through approved task workflows.</span>
+            </div>
+            <strong>{{ runtimes.length }} registered</strong>
+          </div>
+
+        <article class="openclaw-cockpit" *ngIf="openClawRuntime() as openClaw">
+          <header class="openclaw-cockpit__header">
+            <div>
+              <span>OpenClaw ecosystem</span>
+              <strong>{{ openClawPosture(openClaw) }}</strong>
+              <small *ngIf="openClaw.ecosystemPath">
+                Source:
+                <span class="ecosystem-path" [title]="openClaw.ecosystemPath">{{ openClaw.ecosystemPath }}</span>
+              </small>
+            </div>
+            <div class="openclaw-cockpit__actions">
+              <button
+                nz-button
+                nzType="default"
+                nzSize="small"
+                (click)="loadRuntimeSkills(openClaw)"
+                [nzLoading]="runtimeSkillsLoading[openClaw.id]"
+                title="Load OpenClaw skills exposed through the controlled runtime adapter."
+              >
+                Load skills
+              </button>
+              <button
+                nz-button
+                nzType="default"
+                nzSize="small"
+                (click)="refreshOpenClawEcosystem(openClaw)"
+                [nzLoading]="openClawRefreshLoading"
+                title="Re-scan the configured OpenClaw package path or uploaded zip."
+              >
+                Refresh ecosystem
+              </button>
+            </div>
+          </header>
+
+          <div class="openclaw-cockpit__metrics">
+            <button
+              type="button"
+              class="openclaw-metric"
+              title="Total indexed OpenClaw items visible to HAI planning and operator review."
+            >
+              <span>Indexed surfaces</span>
+              <strong>{{ openClawSurfaceCount(openClaw) }}</strong>
+            </button>
+            <button
+              type="button"
+              class="openclaw-metric"
+              title="Surface categories that require HAI approval before execution or downstream use."
+            >
+              <span>Approval-gated</span>
+              <strong>{{ openClawApprovalSurfaceCount(openClaw) }}</strong>
+            </button>
+            <button
+              type="button"
+              class="openclaw-metric openclaw-metric--risk"
+              title="High-risk categories such as messaging channels, host tools, shell, browser, cron, and public posting."
+            >
+              <span>High-risk groups</span>
+              <strong>{{ openClawHighRiskSurfaceCount(openClaw) }}</strong>
+            </button>
+            <button
+              type="button"
+              class="openclaw-metric"
+              title="Runtime health from the HAI runtime registry."
+            >
+              <span>Health</span>
+              <strong>{{ runtimeStatus(openClaw) }}</strong>
+            </button>
+          </div>
+
+          <div class="openclaw-groups">
+            <section class="openclaw-group" *ngFor="let group of openClawSurfaceGroups(openClaw)">
+              <header>
+                <strong>{{ group.title }}</strong>
+                <small>{{ group.description }}</small>
+              </header>
+              <div class="openclaw-surface-list">
+                <button
+                  type="button"
+                  class="openclaw-surface"
+                  *ngFor="let surface of group.surfaces"
+                  [title]="ecosystemTitle(surface)"
+                  (click)="inspectRuntimeSurface(surface)"
+                >
+                  <span>
+                    <strong>{{ surface.category }}</strong>
+                    <small>{{ surface.status }}</small>
+                  </span>
+                  <nz-tag [nzColor]="runtimeSurfaceColor(surface)">{{ surface.count }}</nz-tag>
+                </button>
+              </div>
+            </section>
+          </div>
+        </article>
+
         <div class="runtime-table">
           <div class="runtime-row runtime-header">
             <span>Runtime</span>
@@ -88,7 +410,104 @@
               <strong>{{ runtime.requiresApproval ? 'Approval required' : 'Policy controlled' }}</strong>
               <small>{{ runtime.readOnlyDefault ? 'Read-only default' : 'Configured capability policy' }}</small>
             </div>
-            <span class="capability-copy">{{ runtime.capabilities.join(' · ') }}</span>
+            <span class="capability-copy">
+              {{ runtime.capabilities.join(' · ') }}
+              <div class="runtime-skill-controls">
+                <button
+                  nz-button
+                  nzType="default"
+                  nzSize="small"
+                  (click)="loadRuntimeSkills(runtime)"
+                  [nzLoading]="runtimeSkillsLoading[runtime.id]"
+                  [title]="'Load approval-gated skills and executable surfaces for ' + runtime.name"
+                >
+                  {{ runtimeSkillsFor(runtime).length ? 'Refresh skills' : 'Load skills' }}
+                </button>
+                <small *ngIf="runtimeSkillsFor(runtime).length">
+                  {{ runtimeSkillsFor(runtime).length }} surfaced capabilities
+                </small>
+              </div>
+              <span class="runtime-skill-chips" *ngIf="runtimeSkillsFor(runtime).length">
+                <nz-tag
+                  *ngFor="let skill of runtimeSkillsFor(runtime) | slice:0:12"
+                  [nzColor]="runtimeSkillColor(skill)"
+                  [title]="runtimeSkillTitle(skill)"
+                >
+                  {{ skill.category }} / {{ skill.name }}
+                </nz-tag>
+                <small *ngIf="runtimeSkillsFor(runtime).length > 12">
+                  +{{ runtimeSkillsFor(runtime).length - 12 }} more
+                </small>
+              </span>
+              <small *ngIf="runtime.id === 'openclaw' && runtime.ecosystemPath">
+                OpenClaw ecosystem path:
+                <span class="ecosystem-path" [title]="runtime.ecosystemPath">{{ runtime.ecosystemPath }}</span>
+              </small>
+              <div class="openclaw-controls" *ngIf="runtime.id === 'openclaw'">
+                <div class="openclaw-upload">
+                  <input
+                    #openClawUploadInput
+                    type="file"
+                    accept=".zip"
+                    (change)="onOpenClawEcosystemUpload($event)"
+                    [disabled]="openClawUploadLoading"
+                    aria-label="Upload OpenClaw ecosystem zip"
+                  />
+                  <button
+                    nz-button
+                    nzType="default"
+                    nzSize="small"
+                    (click)="openClawUploadInput.click()"
+                    [nzLoading]="openClawUploadLoading"
+                  >
+                    {{ openClawUploadFileName ? 'Uploading ' + openClawUploadFileName : 'Upload openclaw-main.zip' }}
+                  </button>
+                </div>
+                <input
+                  nz-input
+                  nzSize="small"
+                  [value]="openClawEcosystemPath"
+                  (input)="openClawEcosystemPath = $any($event.target).value"
+                  (keydown.enter)="setOpenClawEcosystemPath(runtime)"
+                  placeholder="openclaw-main.zip or OpenClaw directory path"
+                />
+                <div class="openclaw-control-actions">
+                  <button
+                    nz-button
+                    nzType="default"
+                    nzSize="small"
+                    (click)="setOpenClawEcosystemPath(runtime)"
+                    [nzLoading]="openClawConfigLoading"
+                  >
+                    Save ecosystem path
+                  </button>
+                  <button
+                    nz-button
+                    nzType="default"
+                    nzSize="small"
+                    (click)="refreshOpenClawEcosystem(runtime)"
+                    [nzLoading]="openClawRefreshLoading"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              <span class="ecosystem-chips" *ngIf="runtime.ecosystem?.length">
+                <button
+                  type="button"
+                  class="ecosystem-chip"
+                  *ngFor="let surface of runtime.ecosystem"
+                  [title]="ecosystemTitle(surface)"
+                  (click)="inspectRuntimeSurface(surface)"
+                >
+                  <strong>{{ surface.category }}</strong>
+                  <span>{{ surface.count }}</span>
+                  <em>{{ surface.status }}</em>
+                </button>
+              </span>
+              <small *ngIf="runtime.architecture?.length">Architecture: {{ runtime.architecture?.join(' -> ') }}</small>
+              <small *ngIf="runtime.controls?.length">Controls: {{ runtime.controls?.join(' · ') }}</small>
+            </span>
           </div>
         </div>
       </section>
@@ -141,6 +560,21 @@
               </div>
             </nz-list-item>
           </nz-list>
+        </nz-card>
+
+        <nz-card nzTitle="Learned Corrections">
+          <nz-list nzSize="small">
+            <nz-list-item *ngFor="let memory of view.sourceCorrections || []">
+              <div class="list-copy">
+                <strong>{{ memory.summary || memory.content }}</strong>
+                <span>{{ memory.projectKey || 'Global' }} / {{ memory.sourceLabel || memory.sourceUri || 'source correction' }}</span>
+              </div>
+              <button nz-button nzType="text" (click)="openSource(memory.sourceUri)">
+                <i nz-icon nzType="database" nzTheme="outline"></i>
+              </button>
+            </nz-list-item>
+          </nz-list>
+          <nz-empty *ngIf="!view.sourceCorrections?.length" nzNotFoundContent="No learned source corrections yet."></nz-empty>
         </nz-card>
       </div>
 
@@ -207,6 +641,7 @@
                 <th>Open</th>
                 <th>Decisions</th>
                 <th>Risks</th>
+                <th>Corrections</th>
               </tr>
             </thead>
             <tbody>
@@ -215,6 +650,7 @@
                 <td>{{ project.open }}</td>
                 <td>{{ project.decisions }}</td>
                 <td>{{ project.risks }}</td>
+                <td>{{ project.corrections || 0 }}</td>
               </tr>
             </tbody>
           </nz-table>
@@ -260,6 +696,64 @@
         <strong>Capture controls</strong>
         <span *ngFor="let warning of view.warnings">{{ warning }}</span>
       </div>
+
+      <nz-card nzTitle="Assistant Command History" class="full-band">
+        <nz-table [nzData]="commandLogs" nzSize="small" [nzPageSize]="8">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Intent</th>
+              <th>Summary</th>
+              <th>Next Action</th>
+              <th>Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let command of commandLogs">
+              <td>{{ command.createdAt | date: 'short' }}</td>
+              <td>{{ command.intent }}</td>
+              <td>{{ command.summary }}</td>
+              <td>{{ command.nextAction }}</td>
+              <td>
+                <nz-tag [nzColor]="commandStatusColor(command)">
+                  {{ command.reviewRequired ? 'review' : 'clear' }}
+                </nz-tag>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+        <nz-empty *ngIf="!commandLogs.length" nzNotFoundContent="No assistant commands yet."></nz-empty>
+      </nz-card>
     </nz-content>
   </nz-layout>
 </section>
+
+<nz-modal
+  [nzVisible]="!!selectedRuntimeSurface"
+  [nzTitle]="selectedRuntimeSurface?.category || 'Runtime surface'"
+  [nzFooter]="null"
+  (nzOnCancel)="closeRuntimeSurface()"
+  nzWidth="720px"
+>
+  <ng-container *nzModalContent>
+    <section class="runtime-surface-detail" *ngIf="selectedRuntimeSurface as surface">
+      <div class="runtime-surface-summary">
+        <nz-tag [nzColor]="surface.approvalRequired ? 'gold' : 'green'">
+          {{ surface.approvalRequired ? 'approval-gated' : 'read-only' }}
+        </nz-tag>
+        <nz-tag [nzColor]="surface.riskLevel === 'high' ? 'red' : surface.riskLevel === 'medium' ? 'gold' : 'blue'">
+          {{ surface.riskLevel || 'unknown' }} risk
+        </nz-tag>
+        <span>{{ surface.status }} / {{ surface.count }} items</span>
+      </div>
+      <p *ngIf="surface.control">{{ surface.control }}</p>
+      <nz-list *ngIf="runtimeSurfaceItems(surface).length" nzSize="small" [nzDataSource]="runtimeSurfaceItems(surface)">
+        <nz-list-item *ngFor="let item of runtimeSurfaceItems(surface)">
+          <span class="runtime-surface-item">{{ item }}</span>
+        </nz-list-item>
+      </nz-list>
+      <nz-empty *ngIf="!runtimeSurfaceItems(surface).length" nzNotFoundContent="No indexed items for this surface."></nz-empty>
+      <small *ngIf="surface.more">+{{ surface.more }} more hidden in the compact dashboard payload.</small>
+    </section>
+  </ng-container>
+</nz-modal>

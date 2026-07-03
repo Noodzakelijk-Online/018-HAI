@@ -75,27 +75,8 @@ func (h *Handler) Login(c *gin.Context) {
 	atExpiresTime := time.Unix(tokenDetails.AtExpires, 0)
 	rtExpiresTime := time.Unix(tokenDetails.RtExpires, 0)
 
-	// Set the access token as a cookie
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "access_token",
-		Value:    tokenDetails.AccessToken,
-		Expires:  atExpiresTime,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/",
-	})
-
-	// Set the refresh token as a cookie
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    tokenDetails.RefreshToken,
-		Expires:  rtExpiresTime,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/",
-	})
+	setAccessTokenCookie(c.Writer, tokenDetails.AccessToken, atExpiresTime)
+	setRefreshTokenCookie(c.Writer, tokenDetails.RefreshToken, rtExpiresTime)
 
 	c.Status(http.StatusOK)
 }
@@ -156,16 +137,7 @@ func (h *Handler) IsUserAuthenticated(c *gin.Context) {
 
 		atExpiresTime := time.Unix(newAccessToken.AtExpires, 0)
 
-		// Set the new access token as a cookie
-		http.SetCookie(c.Writer, &http.Cookie{
-			Name:     "access_token",
-			Value:    newAccessToken.AccessToken,
-			Expires:  atExpiresTime,
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteStrictMode,
-			Path:     "/",
-		})
+		setAccessTokenCookie(c.Writer, newAccessToken.AccessToken, atExpiresTime)
 
 		c.Status(http.StatusOK)
 		return

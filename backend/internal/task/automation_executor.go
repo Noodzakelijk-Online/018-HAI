@@ -42,17 +42,26 @@ func (e *AutomationToolExecutor) Execute(request ToolExecutionRequest) (*ToolExe
 		return nil, fmt.Errorf("automation runtime returned no launch result")
 	}
 	return &ToolExecutionResult{
-		AutomationID:     result.AutomationID.String(),
-		RuntimeType:      result.RuntimeType,
-		LaunchType:       result.LaunchType,
-		Target:           result.Target,
-		Status:           result.Status,
-		Message:          result.Message,
-		Output:           result.Output,
-		ExitCode:         result.ExitCode,
-		DurationMs:       result.DurationMs,
-		RequiresApproval: result.RequiresApproval,
-		AuditEvents:      append([]string{}, result.AuditEvents...),
-		ExecutedAt:       result.LaunchedAt,
+		AutomationID:      result.AutomationID.String(),
+		LaunchEventID:     uuidStringOrEmpty(result.LaunchEventID),
+		RuntimeType:       result.RuntimeType,
+		LaunchType:        result.LaunchType,
+		Target:            result.Target,
+		Status:            result.Status,
+		Message:           result.Message,
+		Output:            result.Output,
+		RuntimeRouteTrace: copyAutomationRuntimeRouteTrace(result.RuntimeRouteTrace),
+		ExitCode:          result.ExitCode,
+		DurationMs:        result.DurationMs,
+		RequiresApproval:  result.RequiresApproval,
+		AuditEvents:       append([]string{}, result.AuditEvents...),
+		ExecutedAt:        result.LaunchedAt,
 	}, nil
+}
+
+func uuidStringOrEmpty(id uuid.UUID) string {
+	if id == uuid.Nil {
+		return ""
+	}
+	return id.String()
 }

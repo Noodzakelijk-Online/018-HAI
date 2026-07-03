@@ -3,6 +3,7 @@ package memoryengine
 import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	pursuitpkg "automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
 	"crypto/aes"
@@ -46,6 +47,7 @@ type ImportResult struct {
 	Conversation models.AIConversationArchive `json:"conversation"`
 	Insights     []models.AIMemoryInsight     `json:"insights"`
 	WorkflowIDs  []uuid.UUID                  `json:"workflowIds"`
+	PursuitLinks []pursuitpkg.AutoLinkResult  `json:"pursuitLinks,omitempty"`
 	Deduplicated bool                         `json:"deduplicated"`
 	Warnings     []string                     `json:"warnings,omitempty"`
 }
@@ -64,17 +66,19 @@ type CommandDashboard struct {
 	OpenLoops         []models.WorkflowOpenLoop      `json:"openLoops"`
 	Contradictions    []models.AIMemoryInsight       `json:"contradictions"`
 	RecentDecisions   []models.AIMemoryInsight       `json:"recentDecisions"`
+	SourceCorrections []models.ContextMemory         `json:"sourceCorrections"`
 	Projects          []ProjectSummary               `json:"projects"`
 	RecentArchives    []models.AIConversationArchive `json:"recentArchives"`
 	Warnings          []string                       `json:"warnings"`
 }
 
 type ProjectSummary struct {
-	ProjectKey string `json:"projectKey"`
-	Actions    int    `json:"actions"`
-	Decisions  int    `json:"decisions"`
-	Risks      int    `json:"risks"`
-	Open       int    `json:"open"`
+	ProjectKey  string `json:"projectKey"`
+	Actions     int    `json:"actions"`
+	Decisions   int    `json:"decisions"`
+	Risks       int    `json:"risks"`
+	Corrections int    `json:"corrections"`
+	Open        int    `json:"open"`
 }
 
 type SearchResult struct {
@@ -96,10 +100,20 @@ type service struct {
 	repo            Repository
 	memoryService   memory.Service
 	workflowService workflow.Service
+	pursuitLinker   pursuitAutoLinker
 	encryptionKey   []byte
 }
 
+type pursuitAutoLinker interface {
+	AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error)
+	AutoLinkMemory(request pursuitpkg.AutoLinkMemoryRequest) (*pursuitpkg.AutoLinkResult, error)
+}
+
 func NewService(repo Repository, memoryService memory.Service, workflowService workflow.Service, encryptionSecret string) Service {
+	return NewServiceWithPursuitLinker(repo, memoryService, workflowService, encryptionSecret, nil)
+}
+
+func NewServiceWithPursuitLinker(repo Repository, memoryService memory.Service, workflowService workflow.Service, encryptionSecret string, pursuitLinker pursuitAutoLinker) Service {
 	var key []byte
 	if secret := strings.TrimSpace(encryptionSecret); secret != "" {
 		sum := sha256.Sum256([]byte(secret))
@@ -109,6 +123,7 @@ func NewService(repo Repository, memoryService memory.Service, workflowService w
 		repo:            repo,
 		memoryService:   memoryService,
 		workflowService: workflowService,
+		pursuitLinker:   pursuitLinker,
 		encryptionKey:   key,
 	}
 }
@@ -139,10 +154,10 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 			return nil, errInsights
 		}
 		for _, insight := range filterConversationInsights(oldInsights, existing.ID, existing.Revision) {
-			if insight.Kind == "action" && s.workflowService != nil {
+			if workflowEligibleInsight(insight) && s.workflowService != nil {
 				sourceID := existing.ID.String() + ":" + insight.ID.String()
 				if errRetract := s.workflowService.RetractSource("ai_chat", sourceID, "AI conversation revision was superseded"); errRetract != nil {
-					return nil, fmt.Errorf("retract superseded action workflow: %w", errRetract)
+					return nil, fmt.Errorf("retract superseded AI insight workflow: %w", errRetract)
 				}
 			}
 		}
@@ -188,6 +203,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 
 	insights := extractInsights(*saved, normalized)
 	workflowIDs := []uuid.UUID{}
+	pursuitLinks := []pursuitpkg.AutoLinkResult{}
 	warnings := []string{}
 	for index := range insights {
 		insights[index].ConversationID = saved.ID
@@ -199,7 +215,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		}
 		insights[index] = *stored
 		if s.memoryService != nil && memoryEligible(*stored) {
-			_, errMemory := s.memoryService.Create(memory.CreateRequest{
+			memoryRecord, errMemory := s.memoryService.Create(memory.CreateRequest{
 				ProjectKey:  stored.ProjectKey,
 				Kind:        stored.Kind,
 				Content:     stored.Text,
@@ -211,9 +227,13 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 			})
 			if errMemory != nil {
 				warnings = append(warnings, "failed to update searchable memory for "+stored.Kind)
+			} else if linkResult, errLink := s.autoLinkPursuitMemory(*saved, *stored, memoryRecord); errLink != nil {
+				warnings = append(warnings, "failed to link "+stored.Kind+" memory to pursuit")
+			} else if linkResult != nil {
+				pursuitLinks = append(pursuitLinks, *linkResult)
 			}
 		}
-		if s.workflowService != nil && stored.Kind == "action" {
+		if s.workflowService != nil && workflowEligibleInsight(*stored) {
 			record, errWorkflow := s.workflowService.Intake(workflow.IntakeRequest{
 				Input:          stored.Text,
 				ProjectKey:     stored.ProjectKey,
@@ -221,16 +241,23 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 				SourceID:       saved.ID.String() + ":" + stored.ID.String(),
 				SourceURI:      stored.SourceURI,
 				SourceLabel:    stored.SourceLabel,
-				ContentType:    "ai_chat_action",
+				ContentType:    "ai_chat_" + stored.Kind,
 				Trigger:        "memory_engine.import",
 				Actor:          "memory-engine",
-				RequiresReview: stored.NeedsReview || stored.RobertNeeded,
+				RequiresReview: workflowInsightRequiresReview(*stored),
 				ReviewReason:   reviewReason(*stored),
 			})
 			if errWorkflow != nil {
-				warnings = append(warnings, "failed to create workflow for action insight")
+				warnings = append(warnings, "failed to create workflow for "+stored.Kind+" insight")
+			} else if record == nil || record.Item.ID == uuid.Nil {
+				warnings = append(warnings, "workflow intake for "+stored.Kind+" insight did not return a workflow record")
 			} else {
 				workflowIDs = append(workflowIDs, record.Item.ID)
+				if linkResult, errLink := s.autoLinkPursuitWorkflow(*saved, *stored, record); errLink != nil {
+					warnings = append(warnings, "failed to link "+stored.Kind+" insight workflow to pursuit")
+				} else if linkResult != nil {
+					pursuitLinks = append(pursuitLinks, *linkResult)
+				}
 			}
 		}
 	}
@@ -238,8 +265,60 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		Conversation: *saved,
 		Insights:     insights,
 		WorkflowIDs:  workflowIDs,
+		PursuitLinks: pursuitLinks,
 		Warnings:     uniqueStrings(warnings),
 	}, nil
+}
+
+func (s *service) autoLinkPursuitWorkflow(conversation models.AIConversationArchive, insight models.AIMemoryInsight, record *workflow.WorkflowRecord) (*pursuitpkg.AutoLinkResult, error) {
+	if s.pursuitLinker == nil || record == nil || record.Item.ID == uuid.Nil {
+		return nil, nil
+	}
+	result, err := s.pursuitLinker.AutoLinkWorkflow(pursuitpkg.AutoLinkWorkflowRequest{
+		WorkflowID:           record.Item.ID,
+		Input:                strings.Join([]string{conversation.Title, insight.Text}, "\n"),
+		ProjectKey:           insight.ProjectKey,
+		SourceType:           "ai_chat",
+		SourceID:             conversation.ID.String() + ":" + insight.ID.String(),
+		SourceURI:            insight.SourceURI,
+		SourceLabel:          insight.SourceLabel,
+		Actor:                "memory-engine",
+		AllowCreateCandidate: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *service) autoLinkPursuitMemory(conversation models.AIConversationArchive, insight models.AIMemoryInsight, memoryRecord *models.ContextMemory) (*pursuitpkg.AutoLinkResult, error) {
+	if s.pursuitLinker == nil || memoryRecord == nil || memoryRecord.ID == uuid.Nil {
+		return nil, nil
+	}
+	projectKey := insight.ProjectKey
+	if strings.TrimSpace(projectKey) == "" {
+		projectKey = memoryRecord.ProjectKey
+	}
+	sourceURI := insight.SourceURI
+	if strings.TrimSpace(sourceURI) == "" {
+		sourceURI = memoryRecord.SourceURI
+	}
+	sourceLabel := insight.SourceLabel
+	if strings.TrimSpace(sourceLabel) == "" {
+		sourceLabel = memoryRecord.SourceLabel
+	}
+	result, err := s.pursuitLinker.AutoLinkMemory(pursuitpkg.AutoLinkMemoryRequest{
+		MemoryID:    memoryRecord.ID,
+		Input:       strings.Join([]string{conversation.Title, insight.Text, memoryRecord.Summary}, "\n"),
+		ProjectKey:  projectKey,
+		SourceURI:   sourceURI,
+		SourceLabel: sourceLabel,
+		Actor:       "memory-engine",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *service) Conversations(limit int) ([]models.AIConversationArchive, error) {
@@ -275,7 +354,7 @@ func (s *service) DeleteConversation(id uuid.UUID) error {
 		return err
 	}
 	for _, insight := range insights {
-		if insight.ConversationID != id || insight.Kind != "action" || s.workflowService == nil {
+		if insight.ConversationID != id || !workflowEligibleInsight(insight) || s.workflowService == nil {
 			continue
 		}
 		sourceID := id.String() + ":" + insight.ID.String()
@@ -318,6 +397,7 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 		OpenLoops:         append([]models.WorkflowOpenLoop{}, workflowDashboard.DueOpenLoops...),
 		Contradictions:    []models.AIMemoryInsight{},
 		RecentDecisions:   []models.AIMemoryInsight{},
+		SourceCorrections: []models.ContextMemory{},
 		Projects:          []ProjectSummary{},
 		RecentArchives:    append([]models.AIConversationArchive{}, conversations...),
 		Warnings: []string{
@@ -325,6 +405,14 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 			"Passwords, tokens, and authorization values are redacted from indexed memory.",
 			"AI-extracted actions and uncertain facts remain approval-gated.",
 		},
+	}
+	if s.memoryService != nil {
+		memories, errMemory := s.memoryService.FindAll("", false)
+		if errMemory != nil {
+			result.Warnings = append(result.Warnings, "Correction memory review is unavailable: "+errMemory.Error())
+		} else {
+			result.SourceCorrections = sourceCorrectionMemories(memories)
+		}
 	}
 	projects := map[string]*ProjectSummary{}
 	for _, insight := range insights {
@@ -356,6 +444,17 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 				project.Risks++
 			}
 		}
+	}
+	for _, correction := range result.SourceCorrections {
+		if correction.ProjectKey == "" {
+			continue
+		}
+		project := projects[correction.ProjectKey]
+		if project == nil {
+			project = &ProjectSummary{ProjectKey: correction.ProjectKey}
+			projects[correction.ProjectKey] = project
+		}
+		project.Corrections++
 	}
 	for _, project := range projects {
 		result.Projects = append(result.Projects, *project)
@@ -409,6 +508,41 @@ func (s *service) Search(query, projectKey string, limit int) (*SearchResult, er
 		}
 	}
 	return &SearchResult{Memory: retrieved, Facts: facts}, nil
+}
+
+func sourceCorrectionMemories(memories []models.ContextMemory) []models.ContextMemory {
+	result := []models.ContextMemory{}
+	for _, item := range memories {
+		if item.Archived || !contextMemoryHasTag(item, "source-correction") {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(item.Kind)) {
+		case "lesson", "preference", "procedural":
+			result = append(result, item)
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		left := result[i]
+		right := result[j]
+		if !left.UpdatedAt.Equal(right.UpdatedAt) {
+			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+		return left.Confidence > right.Confidence
+	})
+	if len(result) > 20 {
+		return result[:20]
+	}
+	return result
+}
+
+func contextMemoryHasTag(item models.ContextMemory, tag string) bool {
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	for _, value := range strings.Split(item.Tags, ",") {
+		if strings.ToLower(strings.TrimSpace(value)) == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeImport(request ImportRequest) (ImportRequest, []byte, string, error) {
@@ -497,10 +631,10 @@ func classifySentence(sentence string) string {
 		return "contradiction"
 	case containsAny(lower, "decided", "decision:", "approved", "rejected", "agreed", "we will"):
 		return "decision"
-	case containsAny(lower, "todo", "to do", "action:", "must ", "need to", "should ", "follow up", "next step", "build ", "create ", "implement "):
-		return "action"
 	case containsAny(lower, "risk:", "warning:", "danger", "may break", "could fail", "blocked"):
 		return "risk"
+	case containsAny(lower, "todo", "to do", "action:", "must ", "need to", "should ", "follow up", "next step", "build ", "create ", "implement "):
+		return "action"
 	case containsAny(lower, "preference:", "always ", "never ", "rule:", "non-negotiable"):
 		return "rule"
 	default:
@@ -535,6 +669,12 @@ func insightOwner(value string) string {
 
 func reviewReason(insight models.AIMemoryInsight) string {
 	reasons := []string{}
+	switch insight.Kind {
+	case "contradiction":
+		reasons = append(reasons, "AI conversation contains conflicting or unsupported information that needs source review")
+	case "risk":
+		reasons = append(reasons, "AI conversation surfaced a risk that must be assessed before action")
+	}
 	if insight.RobertNeeded {
 		reasons = append(reasons, "extracted action requires Robert")
 	}
@@ -542,6 +682,24 @@ func reviewReason(insight models.AIMemoryInsight) string {
 		reasons = append(reasons, "extraction confidence or risk requires review")
 	}
 	return strings.Join(reasons, "; ")
+}
+
+func workflowEligibleInsight(insight models.AIMemoryInsight) bool {
+	switch strings.ToLower(strings.TrimSpace(insight.Kind)) {
+	case "action", "contradiction":
+		return true
+	case "risk":
+		return strings.EqualFold(insight.RiskLevel, "high") || insight.NeedsReview || insight.RobertNeeded
+	default:
+		return false
+	}
+}
+
+func workflowInsightRequiresReview(insight models.AIMemoryInsight) bool {
+	return insight.NeedsReview ||
+		insight.RobertNeeded ||
+		strings.EqualFold(insight.Kind, "contradiction") ||
+		strings.EqualFold(insight.RiskLevel, "high")
 }
 
 func memoryEligible(insight models.AIMemoryInsight) bool {

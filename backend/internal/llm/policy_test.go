@@ -19,11 +19,69 @@ func TestRouteSkipsWeakFreeModelForCodingTask(t *testing.T) {
 	if decision.SelectedModelID == "phi3:mini" {
 		t.Fatalf("selected weak model %q for coding task", decision.SelectedModelID)
 	}
-	if decision.Tier != TierFree {
-		t.Fatalf("selected tier %q, want %q", decision.Tier, TierFree)
+	if decision.Tier != TierLocal {
+		t.Fatalf("selected tier %q, want %q", decision.Tier, TierLocal)
 	}
 	if decision.Classification.TaskType != "coding" {
 		t.Fatalf("classified task as %q, want coding", decision.Classification.TaskType)
+	}
+}
+
+func TestRouteIncludesTaskSpecificTokenAndCostEstimate(t *testing.T) {
+	policy := Policy{
+		DailyPaidBudgetEUR:             5,
+		PaidCallsAllowed:               true,
+		LocalModelsAllowed:             true,
+		FreeCloudQuotaAllowed:          true,
+		LocalFirst:                     true,
+		RequireApprovalBeforePaidUsage: false,
+		TierOrder:                      []string{TierLocal, TierFree, TierCheap, TierAcceptable, TierHigh, TierPremium, TierExpensive},
+		Providers: []Provider{
+			{
+				ID:             "priced-test",
+				Name:           "Priced test provider",
+				Enabled:        true,
+				Paid:           true,
+				EndpointURL:    "http://localhost:9999",
+				DailyBudgetEUR: 5,
+				Models: []Model{
+					{
+						ID:                            "priced-coder",
+						Name:                          "Priced coder",
+						Tier:                          TierCheap,
+						Capabilities:                  []string{"general", "coding"},
+						MaxDifficulty:                 5,
+						MaxReasoning:                  "high",
+						InputCostPerMillionTokensEUR:  2,
+						OutputCostPerMillionTokensEUR: 6,
+						PricingSource:                 "test price sheet",
+						Enabled:                       true,
+					},
+				},
+			},
+		},
+	}
+	service := &Service{policy: policy}
+
+	decision, err := service.Route(RouteRequest{Task: "Fix a Go API bug and explain the compile failure"})
+	if err != nil {
+		t.Fatalf("Route returned error: %v", err)
+	}
+
+	if decision.SelectedModelID != "priced-coder" {
+		t.Fatalf("selected model = %q, want priced-coder", decision.SelectedModelID)
+	}
+	if decision.EstimatedInputTokens == 0 || decision.EstimatedOutputTokens == 0 {
+		t.Fatalf("missing token estimates: %#v", decision)
+	}
+	if decision.EstimatedCostEUR <= 0 {
+		t.Fatalf("estimated cost = %f, want > 0", decision.EstimatedCostEUR)
+	}
+	if decision.PricingSource != "test price sheet" {
+		t.Fatalf("pricing source = %q, want test price sheet", decision.PricingSource)
+	}
+	if !strings.Contains(decision.Reason, "input") || !strings.Contains(decision.Reason, "output") {
+		t.Fatalf("reason should include token estimate, got %q", decision.Reason)
 	}
 }
 
@@ -529,4 +587,170 @@ func TestPolicyRejectsUnknownKVCacheStrategy(t *testing.T) {
 	if got := service.Policy().InferenceInfrastructure.KVCacheLoadStrategy; got != "disabled" {
 		t.Fatalf("strategy = %q, want disabled", got)
 	}
+}
+
+func TestDefaultPolicyIncludesNousPortalCatalog(t *testing.T) {
+	t.Setenv("NOUS_PORTAL_BASE_URL", "https://portal.example.test/v1")
+	t.Setenv("NOUS_PORTAL_API_KEY", "test-token")
+
+	policy := defaultPolicy()
+	nousIndex := providerIndex(t, policy, "nous-portal")
+	provider := policy.Providers[nousIndex]
+
+	if provider.EndpointURL != "https://portal.example.test/v1" {
+		t.Fatalf("endpoint = %q, want configured Nous Portal URL", provider.EndpointURL)
+	}
+	if provider.APIKeyEnv != "NOUS_PORTAL_API_KEY" {
+		t.Fatalf("apiKeyEnv = %q, want NOUS_PORTAL_API_KEY", provider.APIKeyEnv)
+	}
+	if !provider.Paid {
+		t.Fatalf("Nous Portal should be marked paid/approval-gated")
+	}
+	if len(provider.Models) != 24 {
+		t.Fatalf("models = %d, want 24: %#v", len(provider.Models), provider.Models)
+	}
+
+	wantTiers := map[string]string{
+		"opus-4.8":                   TierExpensive,
+		"gpt-5.5-pro":                TierExpensive,
+		"gpt-5.5":                    TierPremium,
+		"qwen3.7-max":                TierPremium,
+		"gemini-3-pro-preview":       TierPremium,
+		"hy3-preview":                TierPremium,
+		"nemotron-3-super-120b-a12b": TierPremium,
+		"sonnet-4.6":                 TierHigh,
+		"deepseek-v4-pro":            TierHigh,
+		"gemini-3.1-pro-preview":     TierHigh,
+		"grok-4.3":                   TierHigh,
+		"kimi-k2.7-code":             TierHigh,
+		"minimax-m3":                 TierHigh,
+		"glm-5.2":                    TierHigh,
+		"mimo-v2.5-pro":              TierHigh,
+		"haiku-4.5":                  TierAcceptable,
+		"qwen3.7-plus":               TierAcceptable,
+		"glm-5.1":                    TierAcceptable,
+		"gpt-5.4-mini":               TierCheap,
+		"gemini-3.5-flash":           TierCheap,
+		"deepseek-v4-flash":          TierCheap,
+		"qwen3.6-35b-a3b":            TierCheap,
+		"step-3.7-flash":             TierCheap,
+		"step-3.7-flash-free":        TierFree,
+	}
+	for modelID, tier := range wantTiers {
+		model, ok := findModel(provider.Models, modelID)
+		if !ok {
+			t.Fatalf("model %q not found", modelID)
+		}
+		if model.Tier != tier {
+			t.Fatalf("model %s tier = %q, want %q", modelID, model.Tier, tier)
+		}
+		if !model.RequiresApproval {
+			t.Fatalf("model %s should require approval", modelID)
+		}
+		if modelID == "step-3.7-flash-free" {
+			if model.InputCostPerMillionTokensEUR != 0 || model.OutputCostPerMillionTokensEUR != 0 {
+				t.Fatalf("free model %s should have zero token pricing: %#v", modelID, model)
+			}
+			continue
+		}
+		if model.InputCostPerMillionTokensEUR <= 0 || model.OutputCostPerMillionTokensEUR <= 0 {
+			t.Fatalf("model %s missing token pricing: %#v", modelID, model)
+		}
+		if !strings.Contains(model.PricingSource, "default estimate") {
+			t.Fatalf("model %s pricing source = %q, want default estimate warning", modelID, model.PricingSource)
+		}
+	}
+}
+
+func TestDefaultPolicyIncludesMixtureAndOpenAICodexCatalogs(t *testing.T) {
+	t.Setenv("MIXTURE_OF_AGENTS_BASE_URL", "https://moa.example.test/v1")
+	t.Setenv("MIXTURE_OF_AGENTS_API_KEY", "test-token")
+	t.Setenv("OPENAI_CODEX_BASE_URL", "https://codex.example.test/v1")
+	t.Setenv("OPENAI_CODEX_API_KEY", "test-token")
+
+	policy := defaultPolicy()
+	mixture := policy.Providers[providerIndex(t, policy, "mixture-of-agents")]
+	codex := policy.Providers[providerIndex(t, policy, "openai-codex")]
+
+	if mixture.EndpointURL != "https://moa.example.test/v1" || mixture.APIKeyEnv != "MIXTURE_OF_AGENTS_API_KEY" {
+		t.Fatalf("mixture provider env mapping is wrong: %#v", mixture)
+	}
+	if len(mixture.Models) != 1 || mixture.Models[0].ID != "moa-default" || mixture.Models[0].Tier != TierPremium {
+		t.Fatalf("unexpected mixture catalog: %#v", mixture.Models)
+	}
+	if codex.EndpointURL != "https://codex.example.test/v1" || codex.APIKeyEnv != "OPENAI_CODEX_API_KEY" {
+		t.Fatalf("codex provider env mapping is wrong: %#v", codex)
+	}
+	wantTiers := map[string]string{
+		"gpt-5.5":             TierPremium,
+		"gpt-5.4":             TierHigh,
+		"gpt-5.4-mini":        TierCheap,
+		"gpt-5.3-codex-spark": TierCheap,
+	}
+	for modelID, tier := range wantTiers {
+		model, ok := findModel(codex.Models, modelID)
+		if !ok {
+			t.Fatalf("codex model %q not found", modelID)
+		}
+		if model.Tier != tier {
+			t.Fatalf("codex model %s tier = %q, want %q", modelID, model.Tier, tier)
+		}
+		if !model.RequiresApproval {
+			t.Fatalf("codex model %s should require approval", modelID)
+		}
+	}
+}
+
+func TestGenerateTracksModelLevelUsageAndTokenPrice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{"message": map[string]string{"content": "priced draft response"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[1].EndpointURL = server.URL
+	policy.Providers[1].Models[0].InputCostPerMillionTokensEUR = 10
+	policy.Providers[1].Models[0].OutputCostPerMillionTokensEUR = 20
+	service := &Service{policy: policy}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Plan this work item",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "lm-studio",
+			SelectedModelID:    "openai-compatible-local",
+			SelectedModelName:  "OpenAI-compatible local endpoint",
+			Tier:               TierLocal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status = %q, want completed", result.Status)
+	}
+	policyWithUsage := service.Policy()
+	provider := policyWithUsage.Providers[1]
+	model := provider.Models[0]
+	if provider.InputTokensUsed == 0 || provider.OutputTokensUsed == 0 {
+		t.Fatalf("provider usage not tracked: %#v", provider)
+	}
+	if model.InputTokensUsed != provider.InputTokensUsed || model.OutputTokensUsed != provider.OutputTokensUsed {
+		t.Fatalf("model usage %#v did not match provider usage %#v", model, provider)
+	}
+	if model.BudgetUsedEUR <= 0 || provider.BudgetUsedEUR <= 0 || policyWithUsage.DailyBudgetUsedEUR <= 0 {
+		t.Fatalf("priced usage not accumulated: provider=%#v model=%#v policy=%#v", provider, model, policyWithUsage)
+	}
+}
+
+func findModel(models []Model, id string) (Model, bool) {
+	for _, model := range models {
+		if model.ID == id {
+			return model, true
+		}
+	}
+	return Model{}, false
 }

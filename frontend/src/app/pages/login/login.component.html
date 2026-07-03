@@ -1,12 +1,26 @@
-<section>
+<section class="login-page">
+  <div class="login-copy">
+    <span class="login-mark">HAI</span>
+    <h1>HAI Automation Hub</h1>
+    <p>Sign in to your local-first personal operations command center.</p>
+    <div class="login-signal">
+      <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+      <span>
+        <strong>Safe mode by default</strong>
+        <small>High-risk actions remain approval-gated.</small>
+      </span>
+    </div>
+  </div>
+
   <form
     nz-form
     [formGroup]="validateForm"
     (ngSubmit)="submitForm()"
     class="login-box"
   >
-    <div class="user-icon">
-      <i class="user-icon__icon" nz-icon nzType="user" nzTheme="outline"></i>
+    <div class="login-box__header">
+      <h2>Log in</h2>
+      <span>Use the local admin account from your environment file.</span>
     </div>
 
     <nz-form-item>
@@ -53,12 +67,26 @@
     </nz-form-item>
 
     <nz-form-control>
-      <label nz-checkbox formControlName="remember" style="float: left">
+      <div class="login-options">
+      <label nz-checkbox formControlName="remember">
         <span>Remember me</span>
       </label>
-      <a class="login-form-forgot" style="float: right">Forgot password?</a>
-      <br />
-      <button nz-button class="login-form-button" [nzType]="'primary'">
+      <button
+        type="button"
+        class="login-form-forgot"
+        data-testid="login-password-help"
+        (click)="showPasswordHelp()"
+      >
+        Forgot password?
+      </button>
+      </div>
+      <button
+        type="submit"
+        nz-button
+        class="login-form-button"
+        [nzType]="'primary'"
+        data-testid="login-submit"
+      >
         Log in
       </button>
     </nz-form-control>

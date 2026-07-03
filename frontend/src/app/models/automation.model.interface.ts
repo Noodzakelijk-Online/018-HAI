@@ -52,12 +52,15 @@ export interface IAutomationHealthResult {
 
 export interface IAutomationLaunchResult {
   automationId: string;
+  launchEventId?: string;
+  runtimeTaskId?: string;
   runtimeType?: string;
   launchType: string;
   target: string;
   status: string;
   message?: string;
   output?: string;
+  runtimeRouteTrace?: IAutomationRuntimeRouteTrace;
   exitCode: number;
   durationMs: number;
   requiresApproval: boolean;
@@ -70,14 +73,31 @@ export interface IAutomationLaunchEvent {
   automationId: string;
   runtimeType?: string;
   launchType: string;
+  runtimeTaskId?: string;
   target?: string;
   status: string;
   message?: string;
   output?: string;
+  runtimeRouteTrace?: IAutomationRuntimeRouteTrace;
+  auditEvents?: string[];
   exitCode: number;
   durationMs: number;
   startedAt: string;
   completedAt: string;
+}
+
+export interface IAutomationRuntimeRouteTrace {
+  runtimeId: string;
+  intent?: string;
+  executionMode?: string;
+  riskLevel?: string;
+  recommendedSkills?: string[];
+  visibleProviders?: string[];
+  visibleTools?: string[];
+  relevantMaps?: string[];
+  blockedSurfaces?: string[];
+  requiredControls?: string[];
+  validationChecklist?: string[];
 }
 
 export interface IAutomationHealthEvent {

@@ -1,8 +1,10 @@
 package ambient
 
 import (
+	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -72,6 +74,86 @@ func TestAcceptProposedOpportunityStoresResolutionNote(t *testing.T) {
 	}
 }
 
+func TestAcceptOpportunityStoresAmbientLearningMemory(t *testing.T) {
+	workflowID := uuid.New()
+	item := &models.AmbientOpportunity{
+		ID:         uuid.New(),
+		WorkflowID: &workflowID,
+		Status:     StatusProposed,
+		NeedKey:    "safety",
+		Title:      "Prepare lawyer follow-up",
+		Rationale:  "A legal workflow is waiting for a reply.",
+		NextAction: "Draft a formal lawyer follow-up with evidence links.",
+		SourceType: "workflow",
+		SourceURI:  "workflow://legal-follow-up",
+	}
+	memorySpy := &ambientMemorySpy{}
+	engine := NewService(&ambientRepositoryStub{opportunity: item}, nil, nil, memorySpy)
+
+	if _, err := engine.Accept(item.ID, ResolutionRequest{}); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if len(memorySpy.created) != 1 {
+		t.Fatalf("stored %d memories, want 1", len(memorySpy.created))
+	}
+	created := memorySpy.created[0]
+	if created.Kind != "lesson" || !strings.Contains(created.Content, "similar proactive suggestions may be useful") {
+		t.Fatalf("memory content did not capture accepted ambient lesson: %#v", created)
+	}
+	if !strings.Contains(strings.Join(created.Tags, ","), "ambient_opportunity_accepted") {
+		t.Fatalf("memory tags = %#v, want accepted ambient signal", created.Tags)
+	}
+}
+
+func TestDismissOpportunityStoresCorrectionMemoryWhenNoteIsUseful(t *testing.T) {
+	item := &models.AmbientOpportunity{
+		ID:         uuid.New(),
+		Status:     StatusProposed,
+		NeedKey:    "belonging",
+		Title:      "Follow up with client",
+		Rationale:  "A message appears unanswered.",
+		NextAction: "Send a client follow-up draft.",
+		SourceType: "workflow_open_loop",
+		SourceURI:  "workflow://client-loop",
+	}
+	memorySpy := &ambientMemorySpy{}
+	engine := NewService(&ambientRepositoryStub{opportunity: item}, nil, nil, memorySpy)
+
+	_, err := engine.Dismiss(item.ID, ResolutionRequest{Note: "Do not suggest client follow-ups until the quote status has been checked."})
+	if err != nil {
+		t.Fatalf("Dismiss: %v", err)
+	}
+	if len(memorySpy.created) != 1 {
+		t.Fatalf("stored %d memories, want 1", len(memorySpy.created))
+	}
+	created := memorySpy.created[0]
+	if created.Confidence < 0.79 {
+		t.Fatalf("confidence = %.2f, want strong correction signal", created.Confidence)
+	}
+	if !strings.Contains(created.Content, "avoid similar proactive suggestions") {
+		t.Fatalf("memory content did not capture dismissal correction: %s", created.Content)
+	}
+}
+
+func TestDismissOpportunityWithoutUsefulNoteDoesNotStoreMemory(t *testing.T) {
+	item := &models.AmbientOpportunity{
+		ID:         uuid.New(),
+		Status:     StatusProposed,
+		NeedKey:    "growth",
+		Title:      "Review open idea",
+		NextAction: "Review open idea.",
+	}
+	memorySpy := &ambientMemorySpy{}
+	engine := NewService(&ambientRepositoryStub{opportunity: item}, nil, nil, memorySpy)
+
+	if _, err := engine.Dismiss(item.ID, ResolutionRequest{Note: "no"}); err != nil {
+		t.Fatalf("Dismiss: %v", err)
+	}
+	if len(memorySpy.created) != 0 {
+		t.Fatalf("stored %d memories, want no low-signal dismissal memory", len(memorySpy.created))
+	}
+}
+
 type ambientRepositoryStub struct {
 	opportunity *models.AmbientOpportunity
 }
@@ -124,4 +206,37 @@ func (r *ambientRepositoryStub) Scans(int) ([]models.AmbientScan, error) {
 
 func (r *ambientRepositoryStub) PruneScans(int) error {
 	return nil
+}
+
+type ambientMemorySpy struct {
+	created []memory.CreateRequest
+}
+
+func (s *ambientMemorySpy) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
+	s.created = append(s.created, request)
+	return &models.ContextMemory{ID: uuid.New(), Kind: request.Kind, Content: request.Content, Summary: request.Summary, Confidence: request.Confidence}, nil
+}
+
+func (s *ambientMemorySpy) Update(uuid.UUID, memory.UpdateRequest) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *ambientMemorySpy) FindAll(string, bool) ([]models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *ambientMemorySpy) FindByID(uuid.UUID) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *ambientMemorySpy) Archive(uuid.UUID, bool) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *ambientMemorySpy) Delete(uuid.UUID) error {
+	return nil
+}
+
+func (s *ambientMemorySpy) Retrieve(memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	return &memory.RetrieveResult{}, nil
 }

@@ -1,7 +1,9 @@
 package models
 
 import (
+	"encoding/json"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"time"
 )
 
@@ -18,18 +20,80 @@ type AutomationHealthEvent struct {
 }
 
 type AutomationLaunchEvent struct {
-	ID           uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
-	AutomationID uuid.UUID `gorm:"type:uuid;index" json:"automationId"`
-	RuntimeType  string    `gorm:"type:varchar(50);index" json:"runtimeType,omitempty"`
-	LaunchType   string    `gorm:"type:varchar(50);index" json:"launchType"`
-	Target       string    `gorm:"type:varchar(1024)" json:"target,omitempty"`
-	Status       string    `gorm:"type:varchar(30);index" json:"status"`
-	Message      string    `gorm:"type:text" json:"message,omitempty"`
-	Output       string    `gorm:"type:text" json:"output,omitempty"`
-	ExitCode     int       `gorm:"default:0" json:"exitCode"`
-	DurationMs   int64     `gorm:"default:0" json:"durationMs"`
-	StartedAt    time.Time `gorm:"index" json:"startedAt"`
-	CompletedAt  time.Time `gorm:"index" json:"completedAt"`
+	ID                   uuid.UUID                    `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	AutomationID         uuid.UUID                    `gorm:"type:uuid;index" json:"automationId"`
+	RuntimeType          string                       `gorm:"type:varchar(50);index" json:"runtimeType,omitempty"`
+	LaunchType           string                       `gorm:"type:varchar(50);index" json:"launchType"`
+	RuntimeTaskID        string                       `gorm:"type:varchar(120);index" json:"runtimeTaskId,omitempty"`
+	Target               string                       `gorm:"type:varchar(1024)" json:"target,omitempty"`
+	Status               string                       `gorm:"type:varchar(30);index" json:"status"`
+	Message              string                       `gorm:"type:text" json:"message,omitempty"`
+	Output               string                       `gorm:"type:text" json:"output,omitempty"`
+	AuditLog             string                       `gorm:"column:audit_events;type:text" json:"-"`
+	AuditEvents          []string                     `gorm:"-" json:"auditEvents,omitempty"`
+	RuntimeRouteTraceLog string                       `gorm:"column:runtime_route_trace;type:text" json:"-"`
+	RuntimeRouteTrace    *AutomationRuntimeRouteTrace `gorm:"-" json:"runtimeRouteTrace,omitempty"`
+	ExitCode             int                          `gorm:"default:0" json:"exitCode"`
+	DurationMs           int64                        `gorm:"default:0" json:"durationMs"`
+	StartedAt            time.Time                    `gorm:"index" json:"startedAt"`
+	CompletedAt          time.Time                    `gorm:"index" json:"completedAt"`
+}
+
+type AutomationRuntimeRouteTrace struct {
+	RuntimeID           string   `json:"runtimeId"`
+	Intent              string   `json:"intent,omitempty"`
+	ExecutionMode       string   `json:"executionMode,omitempty"`
+	RiskLevel           string   `json:"riskLevel,omitempty"`
+	RecommendedSkills   []string `json:"recommendedSkills,omitempty"`
+	VisibleProviders    []string `json:"visibleProviders,omitempty"`
+	VisibleTools        []string `json:"visibleTools,omitempty"`
+	RelevantMaps        []string `json:"relevantMaps,omitempty"`
+	BlockedSurfaces     []string `json:"blockedSurfaces,omitempty"`
+	RequiredControls    []string `json:"requiredControls,omitempty"`
+	ValidationChecklist []string `json:"validationChecklist,omitempty"`
+}
+
+func (e *AutomationLaunchEvent) BeforeSave(_ *gorm.DB) error {
+	if e == nil {
+		return nil
+	}
+	if len(e.AuditEvents) == 0 {
+		e.AuditLog = ""
+	} else {
+		payload, err := json.Marshal(e.AuditEvents)
+		if err != nil {
+			return err
+		}
+		e.AuditLog = string(payload)
+	}
+
+	if e.RuntimeRouteTrace == nil {
+		e.RuntimeRouteTraceLog = ""
+		return nil
+	}
+	payload, err := json.Marshal(e.RuntimeRouteTrace)
+	if err != nil {
+		return err
+	}
+	e.RuntimeRouteTraceLog = string(payload)
+	return nil
+}
+
+func (e *AutomationLaunchEvent) AfterFind(_ *gorm.DB) error {
+	if e == nil || e.AuditLog == "" {
+	} else {
+		var events []string
+		if err := json.Unmarshal([]byte(e.AuditLog), &events); err == nil {
+			e.AuditEvents = events
+		}
+	}
+	if e.RuntimeRouteTraceLog != "" {
+		var trace AutomationRuntimeRouteTrace
+		if err := json.Unmarshal([]byte(e.RuntimeRouteTraceLog), &trace); err == nil {
+			e.RuntimeRouteTrace = &trace
+		}
+	}
+	return nil
 }
 
 type AutomationDependency struct {

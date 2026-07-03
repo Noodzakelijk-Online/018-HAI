@@ -1,287 +1,337 @@
 <section class="ambient-page">
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
+  <header class="brain-header">
+    <div>
+      <h1>Proactive Brain</h1>
+      <p>Actions first. Context appears on hover or in focused detail views.</p>
+    </div>
+    <div class="header-actions">
+      <button nz-button nzType="primary" (click)="runScan()" [nzLoading]="scanning">
+        <i nz-icon nzType="radar-chart" nzTheme="outline"></i>
+        Scan now
+      </button>
+      <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+        <i nz-icon nzType="reload" nzTheme="outline"></i>
+        Refresh
+      </button>
+      <button nz-button nzType="default" (click)="goHome()">
+        <i nz-icon nzType="appstore" nzTheme="outline"></i>
+      </button>
+    </div>
+  </header>
+
+  <main class="brain-content" *ngIf="overview as view">
+    <section class="action-strip" aria-label="Primary proactive brain actions">
+      <button
+        type="button"
+        class="action-tile action-tile--primary"
+        title="Search connected signals for open loops, deduplicate repeated information, and propose next actions."
+        (click)="runScan()"
+      >
+        <span class="action-tile__help">?</span>
+        <span><i nz-icon nzType="radar-chart" nzTheme="outline"></i></span>
+        <strong>Scan for open loops</strong>
+        <small>{{ view.scans[0] ? ('Last scan ' + (view.scans[0].startedAt | date: 'short')) : 'No scan yet' }}</small>
+        <em>{{ view.scans[0] ? view.scans[0].itemsExamined : 0 }} reviewed</em>
+        <span class="action-tile__hover">
+          <strong>{{ view.scans[0] ? view.scans[0].itemsExamined : 0 }} reviewed</strong>
+          <small>{{ view.scans[0] ? view.scans[0].opportunitiesFound + ' opportunities found' : 'Ready for first scan' }}</small>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        class="action-tile"
+        title="Review the highest ranked opportunity and decide whether it should become a controlled workflow."
+        [disabled]="!topOpportunity()"
+        (click)="openTopOpportunity()"
+      >
+        <span class="action-tile__help">?</span>
+        <span><i nz-icon nzType="rise" nzTheme="outline"></i></span>
+        <strong>Review next opportunity</strong>
+        <small>{{ topOpportunity()?.title || 'No proposed opportunity' }}</small>
+        <em>{{ proposedCount() }} proposed</em>
+        <span class="action-tile__hover">
+          <strong>{{ proposedCount() }} proposed</strong>
+          <small>{{ acceptedCount() }} already accepted</small>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        class="action-tile"
+        title="Tune the priority targets HAI uses when ranking possible next actions."
+        (click)="visibleNeeds()[0] && openNeed(visibleNeeds()[0])"
+      >
+        <span class="action-tile__help">?</span>
+        <span><i nz-icon nzType="heart" nzTheme="outline"></i></span>
+        <strong>Tune priorities</strong>
+        <small>{{ visibleNeeds().length }} enabled, {{ disabledNeedCount() }} disabled</small>
+        <em>Targets controlled by you</em>
+        <span class="action-tile__hover">
+          <strong>{{ visibleNeeds().length }} enabled</strong>
+          <small>{{ disabledNeedCount() }} disabled ranking targets</small>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        class="action-tile"
+        title="Run deterministic safety checks. These validate policy guards, not the truth of external provider answers."
+        (click)="runStressSuite()"
+      >
+        <span class="action-tile__help">?</span>
+        <span><i nz-icon nzType="safety-certificate" nzTheme="outline"></i></span>
+        <strong>Test guards</strong>
+        <small *ngIf="autonomyOverview?.recentStressRuns?.[0] as stress">
+          {{ stress.passed }} passed / {{ stress.failed }} failed
+        </small>
+        <small *ngIf="!autonomyOverview?.recentStressRuns?.length">No recent guard run</small>
+        <em>Policy only</em>
+        <span class="action-tile__hover">
+          <strong *ngIf="autonomyOverview?.recentStressRuns?.[0] as stress">{{ stress.passed }} passed</strong>
+          <strong *ngIf="!autonomyOverview?.recentStressRuns?.length">No run yet</strong>
+          <small>Deterministic guard coverage, not provider truth</small>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        class="action-tile"
+        title="Open execution telemetry, completion rates, and YAGNI policy details."
+        (click)="openDetails('autonomy')"
+      >
+        <span class="action-tile__help">?</span>
+        <span><i nz-icon nzType="dashboard" nzTheme="outline"></i></span>
+        <strong>Open metrics</strong>
+        <small>{{ autonomyOverview ? percent(autonomyOverview.metrics.policyCompletionRate) + ' policy completion' : 'Telemetry unavailable' }}</small>
+        <em>Details on demand</em>
+        <span class="action-tile__hover">
+          <strong>{{ autonomyOverview ? percent(autonomyOverview.metrics.policyCompletionRate) : 'No telemetry' }}</strong>
+          <small>{{ autonomyOverview ? percent(autonomyOverview.metrics.interventionRate) + ' intervention' : 'Open after telemetry loads' }}</small>
+        </span>
+      </button>
+    </section>
+
+    <section class="opportunity-panel">
+      <div class="section-heading">
         <div>
-          <h1>Proactive Brain</h1>
-          <span>Find open work, rank it against your priorities, and route it through controlled workflows.</span>
+          <h2>Next Best Actions</h2>
+          <p>Ranked for verified progress. Accepting creates or advances controlled workflow work.</p>
         </div>
-        <div class="header-actions">
-          <button nz-button nzType="primary" (click)="runScan()" [nzLoading]="scanning">
-            <i nz-icon nzType="radar-chart" nzTheme="outline"></i>
-            Scan now
-          </button>
-          <button nz-button nzType="default" (click)="runStressSuite()" [nzLoading]="stressTesting">
-            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
-            Test guards
-          </button>
-          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
-            <i nz-icon nzType="reload" nzTheme="outline"></i>
-          </button>
-          <button nz-button nzType="default" (click)="goHome()">
-            <i nz-icon nzType="appstore" nzTheme="outline"></i>
-          </button>
-        </div>
+        <nz-radio-group [(ngModel)]="statusFilter" nzButtonStyle="solid">
+          <label nz-radio-button nzValue="proposed">Proposed</label>
+          <label nz-radio-button nzValue="accepted">Accepted</label>
+          <label nz-radio-button nzValue="completed">Completed</label>
+          <label nz-radio-button nzValue="dismissed">Dismissed</label>
+          <label nz-radio-button nzValue="all">All</label>
+        </nz-radio-group>
       </div>
-    </nz-header>
 
-    <nz-content class="content-container" *ngIf="overview as view">
-      <div class="policy-strip">
-        <div>
-          <span>Ambient scheduler</span>
-          <strong>{{ view.policy.schedulerEnabled ? 'Active' : 'Disabled' }}</strong>
-        </div>
-        <div>
-          <span>Ambient action mode</span>
-          <strong>{{ view.policy.suggestionOnly ? 'Proposals only' : 'Accelerate ready work' }}</strong>
-        </div>
-        <div>
-          <span>Minimum score</span>
-          <strong>{{ view.policy.minimumScore }}</strong>
-        </div>
-        <div>
-          <span>Scan interval</span>
-          <strong>{{ view.policy.scanIntervalSeconds / 60 | number: '1.0-1' }} min</strong>
-        </div>
-        <div>
-          <span>KV-cache strategy</span>
-          <strong>{{ view.policy.dualPathKvCacheMode }}</strong>
-        </div>
-      </div>
-
-      <section class="scan-band" *ngIf="autonomyOverview as autonomy">
-        <div class="section-heading">
-          <div>
-            <h2>Deployable Autonomy</h2>
-            <span>Execution-based outcomes are measured separately from policy-compliant completion.</span>
-          </div>
-          <nz-tag *ngIf="autonomy.recentStressRuns[0] as stress">
-            Last guard suite: {{ stress.passed }} passed / {{ stress.failed }} failed
-            · {{ stress.createdAt | date: 'short' }}
-          </nz-tag>
-        </div>
-        <div class="policy-strip">
-          <div>
-            <span>Attempts</span>
-            <strong>{{ autonomy.metrics.attempts }}</strong>
-          </div>
-          <div>
-            <span>Raw completion</span>
-            <strong>{{ percent(autonomy.metrics.rawCompletionRate) }}</strong>
-          </div>
-          <div>
-            <span>Completion under policy</span>
-            <strong>{{ percent(autonomy.metrics.policyCompletionRate) }}</strong>
-          </div>
-          <div>
-            <span>Human intervention</span>
-            <strong>{{ percent(autonomy.metrics.interventionRate) }}</strong>
-          </div>
-          <div>
-            <span>Recovery rate</span>
-            <strong>{{ percent(autonomy.metrics.recoveryRate) }}</strong>
-          </div>
-          <div>
-            <span>Average latency</span>
-            <strong>{{ autonomy.metrics.averageLatencyMillis | number: '1.0-0' }} ms</strong>
-          </div>
-        </div>
-        <nz-table [nzData]="autonomy.recentActions" nzSize="small" [nzPageSize]="6">
-          <thead>
-            <tr>
-              <th>Started</th>
-              <th>Interface</th>
-              <th>Action</th>
-              <th>Policy</th>
-              <th>Verified</th>
-              <th>Latency</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let action of autonomy.recentActions">
-              <td>{{ action.startedAt | date: 'short' }}</td>
-              <td>{{ action.interfaceType }}</td>
-              <td>{{ action.actionType }}</td>
-              <td><nz-tag>{{ action.policyDecision }}</nz-tag></td>
-              <td>{{ action.executionVerified ? 'yes' : 'no' }}</td>
-              <td>{{ action.latencyMilliseconds | number }} ms</td>
-              <td><nz-tag>{{ action.status }}</nz-tag></td>
-            </tr>
-          </tbody>
-        </nz-table>
-        <div class="warning-band">
-          <strong>{{ autonomy.decisionDiscipline.name }}</strong>
-          <span>{{ autonomy.decisionDiscipline.order.join(' → ') }}</span>
-          <span>New dependencies: {{ autonomy.decisionDiscipline.newDependenciesDefault }}</span>
-          <span>Published savings claims: {{ autonomy.decisionDiscipline.benchmarkClaims }}</span>
-        </div>
-        <div class="autonomy-warning" *ngFor="let warning of autonomy.warnings">
-          {{ warning }}
-        </div>
-      </section>
-
-      <section class="needs-band">
-        <div class="section-heading">
-          <div>
-            <h2>Need Priorities</h2>
-            <span>You control the targets. HAI uses the gap as one ranking input, never as a diagnosis.</span>
-          </div>
-        </div>
-        <div class="needs-grid">
-          <article class="need-row" *ngFor="let need of view.needs">
-            <div class="need-title">
-              <label nz-checkbox [(ngModel)]="need.enabled">{{ need.name }}</label>
-              <span>{{ need.description }}</span>
+      <div class="opportunity-list">
+        <article class="opportunity-row" *ngFor="let item of filteredOpportunities()">
+          <button type="button" class="score-cell" (click)="openOpportunityDetails(item)" [attr.title]="item.rationale">
+            <strong>{{ item.priorityScore }}</strong>
+            <span>priority</span>
+          </button>
+          <div class="opportunity-copy">
+            <div class="tag-line">
+              <nz-tag nzColor="blue">{{ needName(item.needKey) }}</nz-tag>
+              <nz-tag [nzColor]="riskColor(item.risk)">risk {{ item.risk }}</nz-tag>
+              <nz-tag *ngIf="item.requiresApproval" nzColor="gold">approval</nz-tag>
+              <nz-tag>{{ item.status }}</nz-tag>
             </div>
-            <label>
-              Current
-              <nz-input-number [(ngModel)]="need.currentLevel" [nzMin]="0" [nzMax]="100"></nz-input-number>
-            </label>
-            <label>
-              Target
-              <nz-input-number [(ngModel)]="need.targetLevel" [nzMin]="0" [nzMax]="100"></nz-input-number>
-            </label>
-            <label>
-              Priority
-              <nz-input-number [(ngModel)]="need.priorityWeight" [nzMin]="0" [nzMax]="100"></nz-input-number>
-            </label>
-            <label class="need-notes">
-              Notes
-              <input
-                nz-input
-                [(ngModel)]="need.notes"
-                placeholder="Constraints, preferences, or what progress means"
-              />
-            </label>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.nextAction }}</p>
+          </div>
+          <div class="opportunity-actions">
+            <button
+              nz-button
+              nzType="primary"
+              *ngIf="item.status === 'proposed'"
+              (click)="accept(item)"
+              [nzLoading]="resolving === item.id"
+            >
+              Accept
+            </button>
             <button
               nz-button
               nzType="default"
-              (click)="saveNeed(need)"
-              [nzLoading]="savingNeed === need.key"
-              aria-label="Save need profile"
+              *ngIf="item.status === 'proposed'"
+              (click)="dismiss(item)"
+              [disabled]="resolving === item.id"
             >
-              <i nz-icon nzType="save" nzTheme="outline"></i>
+              Dismiss
             </button>
-          </article>
-        </div>
-      </section>
-
-      <section class="opportunity-band">
-        <div class="section-heading">
-          <div>
-            <h2>Next Best Opportunities</h2>
-            <span>Ranked for verified progress, with risk and approval gates visible.</span>
+            <button nz-button nzType="default" (click)="openOpportunityDetails(item)">Details</button>
+            <button nz-button nzType="text" *ngIf="item.workflowId" (click)="openWorkflow(item.workflowId)">
+              <i nz-icon nzType="branches" nzTheme="outline"></i>
+            </button>
+            <button
+              nz-button
+              nzType="text"
+              *ngIf="canOpenSource(item.sourceUri)"
+              (click)="openSource(item.sourceUri)"
+              aria-label="Open source"
+            >
+              <i nz-icon nzType="link" nzTheme="outline"></i>
+            </button>
           </div>
-          <nz-radio-group [(ngModel)]="statusFilter" nzButtonStyle="solid">
-            <label nz-radio-button nzValue="proposed">Proposed</label>
-            <label nz-radio-button nzValue="accepted">Accepted</label>
-            <label nz-radio-button nzValue="completed">Completed</label>
-            <label nz-radio-button nzValue="dismissed">Dismissed</label>
-            <label nz-radio-button nzValue="all">All</label>
-          </nz-radio-group>
-        </div>
-
-        <div class="opportunity-list">
-          <article class="opportunity-row" *ngFor="let item of filteredOpportunities()">
-            <div class="score-cell">
-              <strong>{{ item.priorityScore }}</strong>
-              <span>priority</span>
-            </div>
-            <div class="opportunity-copy">
-              <div class="tag-line">
-                <nz-tag nzColor="blue">{{ needName(item.needKey) }}</nz-tag>
-                <nz-tag [nzColor]="riskColor(item.risk)">risk {{ item.risk }}</nz-tag>
-                <nz-tag *ngIf="item.requiresApproval" nzColor="gold">approval required</nz-tag>
-                <nz-tag>{{ item.status }}</nz-tag>
-              </div>
-              <h3>{{ item.title }}</h3>
-              <p>{{ item.rationale }}</p>
-              <strong>Next: {{ item.nextAction }}</strong>
-              <small>Source: {{ item.sourceType || 'internal' }} / {{ item.sourceId || 'derived' }}</small>
-              <small>
-                urgency {{ item.urgency }} | impact {{ item.impact }} | confidence {{ item.confidence }} | effort {{ item.effort }}
-              </small>
-              <small *ngIf="item.resolutionNote">Resolution: {{ item.resolutionNote }}</small>
-            </div>
-            <div class="opportunity-actions">
-              <button
-                nz-button
-                nzType="primary"
-                *ngIf="item.status === 'proposed'"
-                (click)="accept(item)"
-                [nzLoading]="resolving === item.id"
-              >
-                Accept
-              </button>
-              <button
-                nz-button
-                nzType="default"
-                *ngIf="item.status === 'proposed'"
-                (click)="dismiss(item)"
-                [disabled]="resolving === item.id"
-              >
-                Dismiss
-              </button>
-              <button nz-button nzType="text" *ngIf="item.workflowId" (click)="openWorkflow(item.workflowId)">
-                <i nz-icon nzType="branches" nzTheme="outline"></i>
-              </button>
-              <button
-                nz-button
-                nzType="text"
-                *ngIf="canOpenSource(item.sourceUri)"
-                (click)="openSource(item.sourceUri)"
-                aria-label="Open source"
-              >
-                <i nz-icon nzType="link" nzTheme="outline"></i>
-              </button>
-            </div>
-          </article>
-          <nz-empty *ngIf="filteredOpportunities().length === 0"></nz-empty>
-        </div>
-      </section>
-
-      <section class="scan-band">
-        <div class="section-heading">
-          <div>
-            <h2>Incremental Scan History</h2>
-            <span>Compact manifests are stored instead of copying raw source content into every scan.</span>
-          </div>
-        </div>
-        <nz-table [nzData]="view.scans" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Started</th>
-              <th>Trigger</th>
-              <th>Examined</th>
-              <th>Created</th>
-              <th>Reused</th>
-              <th>Advanced</th>
-              <th>Filtered</th>
-              <th>Deduplicated bytes</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let scan of view.scans">
-              <td>{{ scan.startedAt | date: 'short' }}</td>
-              <td>{{ scan.trigger }}</td>
-              <td>{{ scan.itemsExamined }}</td>
-              <td>{{ scan.created }}</td>
-              <td>{{ scan.deduplicated }}</td>
-              <td>{{ scan.advanced }}</td>
-              <td>{{ scan.filtered }}</td>
-              <td>{{ scan.deduplicatedBytes | number }}</td>
-              <td><nz-tag>{{ scan.status }}</nz-tag></td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </section>
-
-      <div class="warning-band">
-        <strong>Governance</strong>
-        <span *ngFor="let warning of view.warnings">{{ warning }}</span>
+        </article>
+        <nz-empty *ngIf="filteredOpportunities().length === 0"></nz-empty>
       </div>
-    </nz-content>
-  </nz-layout>
+    </section>
+
+    <section class="needs-panel">
+      <div class="section-heading">
+        <div>
+          <h2>Need Priorities</h2>
+          <p>Visible as action targets, not a form table. Click a target to tune it.</p>
+        </div>
+        <button nz-button nzType="default" (click)="openDetails('policy')">
+          <i nz-icon nzType="question-circle" nzTheme="outline"></i>
+          Policy
+        </button>
+      </div>
+
+      <div class="need-grid">
+        <button
+          type="button"
+          class="need-card"
+          *ngFor="let need of view.needs"
+          [class.need-card--disabled]="!need.enabled"
+          [attr.data-tone]="needTone(need)"
+          [attr.title]="need.description"
+          (click)="openNeed(need)"
+        >
+          <span class="need-card__top">
+            <strong>{{ need.name }}</strong>
+            <em>{{ need.enabled ? 'enabled' : 'off' }}</em>
+          </span>
+          <span class="need-card__score">
+            <b>{{ need.currentLevel }}</b>
+            <small>target {{ need.targetLevel }} / gap {{ needGap(need) }}</small>
+          </span>
+          <span class="need-card__track">
+            <i [style.width.%]="need.currentLevel"></i>
+            <b [style.left.%]="need.targetLevel"></b>
+          </span>
+          <span class="need-card__note">{{ need.notes || need.description }}</span>
+        </button>
+      </div>
+    </section>
+  </main>
 </section>
+
+<nz-modal
+  [nzVisible]="!!selectedNeed"
+  [nzTitle]="selectedNeed?.name || 'Priority'"
+  [nzFooter]="needFooter"
+  (nzOnCancel)="closeNeed()"
+  nzWidth="640px"
+>
+  <ng-container *nzModalContent>
+    <div class="need-editor" *ngIf="selectedNeed as need">
+      <label nz-checkbox [(ngModel)]="need.enabled">Enabled for ranking</label>
+      <div class="need-editor__grid">
+        <label>
+          Current
+          <nz-input-number [(ngModel)]="need.currentLevel" [nzMin]="0" [nzMax]="100"></nz-input-number>
+        </label>
+        <label>
+          Target
+          <nz-input-number [(ngModel)]="need.targetLevel" [nzMin]="0" [nzMax]="100"></nz-input-number>
+        </label>
+        <label>
+          Priority
+          <nz-input-number [(ngModel)]="need.priorityWeight" [nzMin]="0" [nzMax]="100"></nz-input-number>
+        </label>
+      </div>
+      <label>
+        Notes
+        <input nz-input [(ngModel)]="need.notes" placeholder="Constraints, preferences, or what progress means" />
+      </label>
+      <p>{{ need.description }}</p>
+    </div>
+  </ng-container>
+  <ng-template #needFooter>
+    <button nz-button nzType="default" (click)="closeNeed()">Cancel</button>
+    <button
+      nz-button
+      nzType="primary"
+      *ngIf="selectedNeed as need"
+      (click)="saveNeed(need); closeNeed()"
+      [nzLoading]="savingNeed === need.key"
+    >
+      Save
+    </button>
+  </ng-template>
+</nz-modal>
+
+<nz-modal
+  [nzVisible]="!!selectedOpportunity"
+  [nzTitle]="selectedOpportunity?.title || 'Opportunity'"
+  [nzFooter]="opportunityFooter"
+  (nzOnCancel)="closeOpportunityDetails()"
+  nzWidth="720px"
+>
+  <ng-container *nzModalContent>
+    <div class="opportunity-detail" *ngIf="selectedOpportunity as item">
+      <div class="detail-metrics">
+        <span><strong>{{ item.priorityScore }}</strong> priority</span>
+        <span><strong>{{ item.urgency }}</strong> urgency</span>
+        <span><strong>{{ item.impact }}</strong> impact</span>
+        <span><strong>{{ item.confidence }}</strong> confidence</span>
+        <span><strong>{{ item.effort }}</strong> effort</span>
+      </div>
+      <p>{{ item.rationale }}</p>
+      <dl>
+        <div><dt>Next action</dt><dd>{{ item.nextAction }}</dd></div>
+        <div><dt>Need</dt><dd>{{ needName(item.needKey) }}</dd></div>
+        <div><dt>Source</dt><dd>{{ item.sourceType || 'internal' }} / {{ item.sourceId || 'derived' }}</dd></div>
+        <div><dt>Status</dt><dd>{{ item.status }}</dd></div>
+      </dl>
+      <p *ngIf="item.resolutionNote">{{ item.resolutionNote }}</p>
+    </div>
+  </ng-container>
+  <ng-template #opportunityFooter>
+    <button nz-button nzType="default" (click)="closeOpportunityDetails()">Close</button>
+    <button
+      nz-button
+      nzType="primary"
+      *ngIf="selectedOpportunity?.status === 'proposed'"
+      (click)="acceptSelectedOpportunity()"
+    >
+      Accept
+    </button>
+  </ng-template>
+</nz-modal>
+
+<nz-modal
+  [nzVisible]="detailsMode !== 'none'"
+  [nzTitle]="detailsMode === 'policy' ? 'Policy Notes' : 'Autonomy Metrics'"
+  [nzFooter]="null"
+  (nzOnCancel)="closeDetails()"
+  nzWidth="780px"
+>
+  <ng-container *nzModalContent>
+    <div class="detail-panel" *ngIf="detailsMode === 'policy'">
+      <strong>YAGNI gatekeeper</strong>
+      <span>necessity -> standard_library -> platform_native -> existing_dependency -> small_patch -> minimal_custom</span>
+      <span>New dependencies: blocked by default</span>
+      <span>Completion requires verified execution and any mandatory approval.</span>
+      <span>Stress-suite results validate deterministic guards, not external-provider correctness.</span>
+    </div>
+    <div class="detail-panel" *ngIf="detailsMode === 'autonomy' && autonomyOverview as autonomy">
+      <div class="detail-metrics">
+        <span><strong>{{ autonomy.metrics.attempts }}</strong> attempts</span>
+        <span><strong>{{ percent(autonomy.metrics.rawCompletionRate) }}</strong> raw completion</span>
+        <span><strong>{{ percent(autonomy.metrics.policyCompletionRate) }}</strong> under policy</span>
+        <span><strong>{{ percent(autonomy.metrics.interventionRate) }}</strong> intervention</span>
+        <span><strong>{{ percent(autonomy.metrics.recoveryRate) }}</strong> recovery</span>
+      </div>
+      <div class="detail-panel__warnings">
+        <span *ngFor="let warning of autonomy.warnings">{{ warning }}</span>
+      </div>
+    </div>
+  </ng-container>
+</nz-modal>

@@ -3,6 +3,8 @@ package ambient
 import (
 	"context"
 	"log"
+	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -25,7 +27,9 @@ func (s *Scheduler) Start(ctx context.Context, interval time.Duration) {
 	if interval < 30*time.Second {
 		interval = 5 * time.Minute
 	}
-	s.runOnce()
+	if runOnStartup() {
+		s.runOnce()
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -36,6 +40,11 @@ func (s *Scheduler) Start(ctx context.Context, interval time.Duration) {
 			s.runOnce()
 		}
 	}
+}
+
+func runOnStartup() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("AMBIENT_RUN_ON_STARTUP")))
+	return value == "true" || value == "1" || value == "yes"
 }
 
 func (s *Scheduler) runOnce() {

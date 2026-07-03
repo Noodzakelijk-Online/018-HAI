@@ -3,16 +3,13 @@ import { CommonModule } from '@angular/common'
 import { RouterModule, Routes } from '@angular/router'
 import { FormsModule } from '@angular/forms'
 import { NzLayoutModule } from 'ng-zorro-antd/layout'
-import { NzTableModule } from 'ng-zorro-antd/table'
 import { NzTagModule } from 'ng-zorro-antd/tag'
 import { NzButtonModule } from 'ng-zorro-antd/button'
 import { NzIconModule } from 'ng-zorro-antd/icon'
-import { NzCardModule } from 'ng-zorro-antd/card'
 import { NzModalModule } from 'ng-zorro-antd/modal'
-import { NzGridModule } from 'ng-zorro-antd/grid'
-import { NzToolTipModule } from 'ng-zorro-antd/tooltip'
+import { NzDrawerModule } from 'ng-zorro-antd/drawer'
 import { NzSpinModule } from 'ng-zorro-antd/spin'
-import { NzDividerModule } from 'ng-zorro-antd/divider'
+import { NzNotificationModule } from 'ng-zorro-antd/notification'
 import { ControlCenterComponent } from './control-center.component'
 import { AUTOMATIONS_SERVICE_TOKEN } from '../../services/automations/automations.service.token'
 import { AutomationsService } from '../../services/automations/automations.service'
@@ -26,16 +23,13 @@ const routes: Routes = [{ path: '', component: ControlCenterComponent }]
     RouterModule.forChild(routes),
     FormsModule,
     NzLayoutModule,
-    NzTableModule,
     NzTagModule,
     NzButtonModule,
     NzIconModule,
-    NzCardModule,
     NzModalModule,
-    NzGridModule,
-    NzToolTipModule,
+    NzDrawerModule,
     NzSpinModule,
-    NzDividerModule,
+    NzNotificationModule,
   ],
   providers: [
     { provide: AUTOMATIONS_SERVICE_TOKEN, useClass: AutomationsService },

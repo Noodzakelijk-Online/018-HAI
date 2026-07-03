@@ -1,145 +1,785 @@
-<section>
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
-        <h1 class="header-content__title">Control Center</h1>
-        <div class="header-content__actions">
-          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
-            <i nz-icon nzType="reload" nzTheme="outline"></i>
-            Refresh
-          </button>
-          <button nz-button nzType="default" (click)="goHome()">
-            <i nz-icon nzType="appstore" nzTheme="outline"></i>
-            Automations
-          </button>
-        </div>
+<section class="operations-shell" [class.operations-shell--dark]="themeMode === 'dark'">
+  <aside class="side-nav" [class.side-nav--open]="mobileNavigationOpen">
+    <button
+      type="button"
+      class="brand"
+      title="Command Center: return to the main action dashboard"
+      data-testid="brand-command-center"
+      (click)="navigateToSection('overview')"
+    >
+      <span class="brand__mark">HAI</span>
+      <div>
+        <strong>HAI Automation Hub</strong>
+        <span>Personal operations</span>
       </div>
-    </nz-header>
+    </button>
 
-    <nz-content class="content-container">
-      <div nz-row [nzGutter]="16" class="summary-bar" *ngIf="summary as s">
-        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
-          <nz-card nzSize="small" class="summary-card">
-            <div class="summary-card__value">{{ s.total }}</div>
-            <div class="summary-card__label">Total</div>
-          </nz-card>
-        </div>
-        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
-          <nz-card nzSize="small" class="summary-card summary-card--healthy">
-            <div class="summary-card__value">{{ s.healthy }}</div>
-            <div class="summary-card__label">Healthy</div>
-          </nz-card>
-        </div>
-        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
-          <nz-card nzSize="small" class="summary-card summary-card--warning">
-            <div class="summary-card__value">{{ s.warning }}</div>
-            <div class="summary-card__label">Warning</div>
-          </nz-card>
-        </div>
-        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
-          <nz-card nzSize="small" class="summary-card summary-card--degraded">
-            <div class="summary-card__value">{{ s.degraded }}</div>
-            <div class="summary-card__label">Degraded</div>
-          </nz-card>
-        </div>
-        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
-          <nz-card nzSize="small" class="summary-card summary-card--broken">
-            <div class="summary-card__value">{{ s.broken }}</div>
-            <div class="summary-card__label">Broken</div>
-          </nz-card>
-        </div>
-        <div nz-col [nzXs]="12" [nzSm]="8" [nzMd]="4">
-          <nz-card nzSize="small" class="summary-card summary-card--unknown">
-            <div class="summary-card__value">{{ s.unknown }}</div>
-            <div class="summary-card__label">Unknown</div>
-          </nz-card>
-        </div>
-      </div>
+    <nav aria-label="Main navigation">
+      <section class="nav-group" *ngFor="let group of navigationGroups">
+        <span class="nav-group__label">{{ group.label }}</span>
+        <button
+          type="button"
+          class="nav-item"
+          *ngFor="let item of group.items"
+          [class.nav-item--active]="isNavigationItemActive(item)"
+          [attr.aria-current]="isNavigationItemActive(item) ? 'page' : null"
+          [attr.title]="controlTitle(item.label, item.route ? 'Open the ' + item.label + ' module' : 'Jump to the ' + item.label + ' section')"
+          [attr.data-testid]="'nav-' + menuKey(item.label)"
+          (click)="activateNavigationItem(item)"
+        >
+          <i nz-icon [nzType]="item.icon" nzTheme="outline"></i>
+          <span>{{ item.label }}</span>
+          <strong *ngIf="navigationBadge(item) as badge">
+            {{ badge }}
+          </strong>
+        </button>
+      </section>
+    </nav>
 
-      <nz-table
-        #table
-        [nzData]="automations"
-        [nzLoading]="loading"
-        [nzPageSize]="20"
-        nzSize="middle"
-        class="automation-table"
+    <button
+      type="button"
+      class="diagnostics-link"
+      data-testid="nav-developer-diagnostics"
+      title="Developer / Diagnostics: inspect automation runtime health and execution controls"
+      [class.diagnostics-link--active]="activeSection === 'diagnostics'"
+      [attr.aria-expanded]="diagnosticsExpanded"
+      (click)="navigateToSection('diagnostics')"
+    >
+      <i nz-icon nzType="code" nzTheme="outline"></i>
+      <span>Developer / Diagnostics</span>
+      <i
+        nz-icon
+        [nzType]="diagnosticsExpanded ? 'up' : 'right'"
+        nzTheme="outline"
+      ></i>
+    </button>
+  </aside>
+
+  <main class="workspace">
+    <header class="top-bar">
+      <button
+        type="button"
+        class="mobile-menu"
+        aria-label="Toggle navigation"
+        data-testid="top-mobile-menu"
+        nz-button
+        nzType="text"
+        (click)="mobileNavigationOpen = !mobileNavigationOpen"
       >
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Last checked</th>
-            <th>Last launch</th>
-            <th>Last success</th>
-            <th>Latency</th>
-            <th>Last failure</th>
-            <th>Failure reason</th>
-            <th nzWidth="340px">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let automation of table.data">
-            <td>{{ automation.name }}</td>
-            <td>
+        <i nz-icon nzType="menu" nzTheme="outline"></i>
+      </button>
+
+      <div class="system-summary">
+        <button
+          type="button"
+          class="summary-item"
+          title="Safe mode: high-risk work is blocked until approved. Open brain settings."
+          data-testid="summary-safe-mode"
+          (click)="navigate('/ambient-brain')"
+        >
+          <span class="status-dot status-dot--safe"></span>
+          <div>
+            <strong>Safe mode active</strong>
+            <span>High-risk actions require approval</span>
+          </div>
+        </button>
+        <button
+          type="button"
+          class="summary-item"
+          title="Items reviewed: open recent AI activity and scan history."
+          data-testid="summary-items-reviewed"
+          (click)="navigateToSection('activity')"
+        >
+          <i nz-icon nzType="cluster" nzTheme="outline"></i>
+          <div>
+            <strong>{{ reviewedItemCount() }} items reviewed</strong>
+            <span>{{ lastScanAt() ? ('Last scan ' + (lastScanAt() | date: 'shortTime')) : 'Ready to scan' }}</span>
+          </div>
+        </button>
+        <button
+          type="button"
+          class="summary-item"
+          title="Needs attention: jump to approval decisions and blocked work."
+          data-testid="summary-attention"
+          (click)="navigateToSection('attention')"
+        >
+          <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
+          <div>
+            <strong>{{ attentionItems().length }} need attention</strong>
+            <span>{{ completedCount() }} completed workflows</span>
+          </div>
+        </button>
+      </div>
+
+      <div class="top-actions">
+        <div class="mode-control">
+          <span>Action mode</span>
+          <button
+            type="button"
+            data-testid="top-action-mode"
+            title="Open autonomy and ambient brain settings"
+            (click)="navigate('/ambient-brain')"
+          >
+            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+            {{ autonomyMode() }}
+            <i nz-icon nzType="right" nzTheme="outline"></i>
+          </button>
+        </div>
+        <button
+          type="button"
+          class="theme-toggle"
+          data-testid="theme-toggle"
+          [attr.title]="themeLabel() + ': switch between light and dark dashboard themes'"
+          (click)="toggleTheme()"
+        >
+          <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
+          {{ themeLabel() }}
+        </button>
+        <button
+          type="button"
+          nz-button
+          nzType="primary"
+          data-testid="top-review-approvals"
+          title="Review approvals: open human decision queue"
+          (click)="navigateToSection('attention')"
+        >
+          Review approvals
+          <strong *ngIf="attentionItems().length">{{ attentionItems().length }}</strong>
+        </button>
+        <button
+          type="button"
+          nz-button
+          nzType="default"
+          data-testid="top-run-scan"
+          title="Run scan now: search for open loops and next actions"
+          (click)="runScan()"
+          [nzLoading]="scanning"
+        >
+          <i nz-icon nzType="scan" nzTheme="outline"></i>
+          Run scan now
+        </button>
+      </div>
+    </header>
+
+    <div class="page-content" id="overview">
+      <div class="page-heading">
+        <button
+          type="button"
+          class="heading-copy"
+          title="Command Center: primary action surface for HAI"
+          (click)="navigateToSection('overview')"
+        >
+          <h1>Command Center</h1>
+          <p>Choose the next action. Metrics stay close, but out of the way.</p>
+        </button>
+        <button
+          type="button"
+          nz-button
+          nzType="default"
+          data-testid="page-refresh"
+          title="Refresh dashboard data from workflow and ambient engines"
+          (click)="refresh()"
+          [nzLoading]="loading"
+        >
+          <i nz-icon nzType="reload" nzTheme="outline"></i>
+          Refresh
+        </button>
+      </div>
+
+      <section class="command-board" aria-label="Primary actions">
+        <button
+          type="button"
+          class="command-card"
+          *ngFor="let action of commandActions()"
+          [attr.data-tone]="action.tone"
+          [attr.data-testid]="'action-' + action.id"
+          [attr.title]="controlTitle(action.title, action.context)"
+          (click)="openAction(action)"
+        >
+          <span class="command-card__help" [attr.title]="action.context">?</span>
+          <span class="command-card__icon">
+            <i nz-icon [nzType]="action.icon" nzTheme="outline"></i>
+          </span>
+          <span class="command-card__copy">
+            <strong>{{ action.title }}</strong>
+            <small>{{ action.detail }}</small>
+          </span>
+          <span class="command-card__metric">{{ action.primaryMetric }}</span>
+          <span class="command-card__hover">
+            <strong>{{ action.primaryMetric }}</strong>
+            <small>{{ action.secondaryMetric }}</small>
+            <em>Open inspector</em>
+          </span>
+        </button>
+      </section>
+
+      <section class="primary-grid">
+        <article class="panel attention-panel" id="attention">
+          <div class="panel-heading">
+            <div>
+              <h2>Attention Required</h2>
+              <p>Decisions only you can make.</p>
+            </div>
+            <button
+              type="button"
+              nz-button
+              nzType="link"
+              data-testid="panel-attention-view-all"
+              title="Open the full workflow engine approval queue"
+              (click)="openWorkflow()"
+            >
+              View all
+            </button>
+          </div>
+
+          <div class="empty-state" *ngIf="!attentionItems().length && !loading">
+            <i nz-icon nzType="check-circle" nzTheme="outline"></i>
+            <div>
+              <strong>No approvals needed right now</strong>
+              <span>HAI will continue monitoring connected sources and place decisions here.</span>
+            </div>
+          </div>
+
+          <div class="attention-list" *ngIf="attentionItems().length">
+            <article class="attention-item" *ngFor="let item of attentionItems(); trackBy: trackById">
+              <div class="item-main">
+                <div class="item-icon" [class.item-icon--urgent]="item.riskLevel === 'high'">
+                  <i nz-icon nzType="file-protect" nzTheme="outline"></i>
+                </div>
+                <div class="item-copy">
+                  <div class="item-title-line">
+                    <h3>{{ item.title }}</h3>
+                    <nz-tag [nzColor]="riskColor(item.riskLevel)">
+                      {{ item.riskLevel || 'low' }} risk
+                    </nz-tag>
+                    <span *ngIf="item.dueAt">Due {{ item.dueAt | date: 'mediumDate' }}</span>
+                  </div>
+                  <p>{{ itemReason(item) }}</p>
+                  <dl class="decision-context">
+                    <div>
+                      <dt>Source</dt>
+                      <dd>{{ item.sourceLabel || item.sourceType || 'Workflow intake' }}</dd>
+                    </div>
+                    <div>
+                      <dt>Recommended action</dt>
+                      <dd>{{ itemRecommendation(item) }}</dd>
+                    </div>
+                    <div>
+                      <dt>Expected outcome</dt>
+                      <dd>{{ expectedOutcome(item) }}</dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+              <div class="item-actions">
+                <button
+                  type="button"
+                  nz-button
+                  nzType="primary"
+                  [attr.data-testid]="'approval-approve-' + item.id"
+                  (click)="resolveApproval(item, true)"
+                  [nzLoading]="resolvingId === item.id"
+                >
+                  <i nz-icon nzType="check" nzTheme="outline"></i>
+                  Approve
+                </button>
+                <button type="button" nz-button nzDanger [attr.data-testid]="'approval-reject-' + item.id" (click)="resolveApproval(item, false)">
+                  Reject
+                </button>
+                <button type="button" nz-button nzType="default" [attr.data-testid]="'approval-edit-' + item.id" (click)="openWorkflow(item)">
+                  Edit
+                </button>
+                <button type="button" nz-button nzType="default" [attr.data-testid]="'approval-snooze-' + item.id" (click)="snooze(item)">
+                  <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
+                  Snooze
+                </button>
+                <button type="button" nz-button nzType="text" [attr.data-testid]="'approval-details-' + item.id" (click)="openWorkflow(item)">
+                  Details
+                </button>
+                <button
+                  type="button"
+                  nz-button
+                  nzType="text"
+                  *ngIf="item.sourceUri"
+                  [attr.data-testid]="'approval-source-' + item.id"
+                  (click)="openSource(item.sourceUri)"
+                >
+                  <i nz-icon nzType="link" nzTheme="outline"></i>
+                  Source
+                </button>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="panel active-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Currently Handled by AI</h2>
+              <p>Safe work already moving forward.</p>
+            </div>
+            <button
+              type="button"
+              nz-button
+              nzType="link"
+              data-testid="panel-active-view-all"
+              title="Open the full workflow engine with active work"
+              (click)="openWorkflow()"
+            >
+              View all
+            </button>
+          </div>
+
+          <div class="empty-state" *ngIf="!activeItems().length && !loading">
+            <i nz-icon nzType="radar-chart" nzTheme="outline"></i>
+            <div>
+              <strong>No active workflows</strong>
+              <span>Run a scan to find useful next actions from your connected sources.</span>
+            </div>
+          </div>
+
+          <div class="active-list">
+            <article class="active-item" *ngFor="let item of activeItems(); trackBy: trackById">
+              <div class="active-item__icon">
+                <i nz-icon nzType="sync" nzTheme="outline"></i>
+              </div>
+              <div class="active-item__copy">
+                <div>
+                  <h3>{{ item.title }}</h3>
+                  <nz-tag [nzColor]="statusColor(item.currentState)">
+                    {{ readableState(item.currentState) }}
+                  </nz-tag>
+                </div>
+                <p>{{ item.description || 'HAI is processing the next allowed workflow step.' }}</p>
+                <span><strong>Next:</strong> {{ item.nextAction || 'Verify the current result.' }}</span>
+                <small>
+                  {{ item.sourceLabel || item.sourceType || 'Internal workflow' }}
+                  <ng-container *ngIf="item.nextRunAt"> &middot; Next run {{ item.nextRunAt | date: 'short' }}</ng-container>
+                </small>
+              </div>
+              <button
+                type="button"
+                class="icon-button"
+                aria-label="Open task details"
+                [attr.data-testid]="'active-open-' + item.id"
+                (click)="openWorkflow(item)"
+              >
+                <i nz-icon nzType="right" nzTheme="outline"></i>
+              </button>
+            </article>
+          </div>
+        </article>
+      </section>
+
+      <details class="advanced-section" open>
+        <summary title="Expand or collapse blockers and priority controls">
+          <span>Operational Controls</span>
+          <small>Blockers, priorities, and open loops</small>
+        </summary>
+      <section class="secondary-grid">
+        <article class="panel blocked-panel" id="blocked">
+          <div class="panel-heading">
+            <div>
+              <h2>Blocked / Waiting</h2>
+              <p>Open loops that need an answer, document, or follow-up.</p>
+            </div>
+            <button
+              type="button"
+              nz-button
+              nzType="link"
+              data-testid="panel-blocked-resolve"
+              title="Open workflow engine filtered toward blocked work"
+              (click)="openWorkflow()"
+            >
+              Resolve blockers
+            </button>
+          </div>
+
+          <div class="empty-state compact" *ngIf="!blockedItems().length && !workflowDashboard?.dueOpenLoops?.length">
+            <i nz-icon nzType="check-circle" nzTheme="outline"></i>
+            <div>
+              <strong>Nothing is blocked</strong>
+              <span>HAI can continue all currently approved work.</span>
+            </div>
+          </div>
+
+          <div class="blocked-list">
+            <article *ngFor="let item of blockedItems(); trackBy: trackById">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.blockedReason || item.lastWorkerError || 'The workflow cannot safely continue.' }}</span>
+              </div>
+              <div>
+                <span>Needed from</span>
+                <strong>{{ item.sourceLabel || 'Robert or an external party' }}</strong>
+              </div>
+              <button type="button" nz-button nzType="default" nzSize="small" [attr.data-testid]="'blocked-resolve-' + item.id" (click)="openWorkflow(item)">
+                Resolve
+              </button>
+            </article>
+            <article *ngFor="let loop of workflowDashboard?.dueOpenLoops || []; trackBy: trackById">
+              <div>
+                <strong>{{ loop.waitingFor }}</strong>
+                <span>{{ loop.nextAction }}</span>
+              </div>
+              <div>
+                <span>Responsible</span>
+                <strong>{{ loop.responsibleParty }}</strong>
+              </div>
+              <button type="button" nz-button nzType="default" nzSize="small" [attr.data-testid]="'open-loop-review-' + loop.id" (click)="openWorkflow()">
+                Review
+              </button>
+            </article>
+          </div>
+        </article>
+
+        <article class="panel priorities-panel" id="priorities">
+          <div class="panel-heading">
+            <div>
+              <h2>Life Priorities Overview</h2>
+              <p>Your priorities, not a diagnosis.</p>
+            </div>
+            <button
+              type="button"
+              nz-button
+              nzType="link"
+              data-testid="panel-priorities-open"
+              title="Open ambient brain settings and life-priority ranking"
+              (click)="navigate('/ambient-brain')"
+            >
+              Open priorities
+            </button>
+          </div>
+
+          <div class="empty-state compact" *ngIf="!lifePriorities().length">
+            <i nz-icon nzType="heart" nzTheme="outline"></i>
+            <div>
+              <strong>No priorities configured</strong>
+              <span>Set the areas where HAI should focus its attention first.</span>
+            </div>
+          </div>
+
+          <div class="priority-grid">
+            <article
+              class="priority-card"
+              *ngFor="let need of lifePriorities(); trackBy: trackById"
+              [attr.data-tone]="priorityTone(need)"
+            >
+              <div class="priority-card__heading">
+                <i nz-icon [nzType]="needIcon(need)" nzTheme="outline"></i>
+                <strong>{{ need.name }}</strong>
+                <span>{{ priorityLabel(need) }}</span>
+              </div>
+              <div class="priority-score">
+                <strong>{{ need.currentLevel }}</strong>
+                <span>toward {{ need.targetLevel }}</span>
+              </div>
+              <div class="progress-track">
+                <span [style.width.%]="need.currentLevel"></span>
+                <i [style.left.%]="need.targetLevel"></i>
+              </div>
+              <p>{{ needAction(need) }}</p>
+              <small>{{ connectedTaskCount(need) }} connected open tasks</small>
+            </article>
+          </div>
+        </article>
+      </section>
+      </details>
+
+      <details class="advanced-section">
+        <summary title="Expand or collapse activity and memory review">
+          <span>Context & Audit</span>
+          <small>Recent decisions, memory updates, and traceability</small>
+        </summary>
+      <section class="lower-grid">
+        <article class="panel activity-panel" id="activity">
+          <div class="panel-heading">
+            <div>
+              <h2>Recent AI Activity</h2>
+              <p>What HAI observed, decided, and changed.</p>
+            </div>
+            <button
+              type="button"
+              nz-button
+              nzType="link"
+              data-testid="panel-activity-audit"
+              title="Open the complete workflow audit trail"
+              (click)="openWorkflow()"
+            >
+              Full audit trail
+            </button>
+          </div>
+
+          <div class="empty-state compact" *ngIf="!recentActivity().length">
+            <i nz-icon nzType="history" nzTheme="outline"></i>
+            <div>
+              <strong>No recent activity</strong>
+              <span>Scans and workflow changes will appear here with their source.</span>
+            </div>
+          </div>
+
+          <div class="activity-list">
+            <article *ngFor="let entry of recentActivity(); trackBy: trackByActivity">
+              <time>{{ entry.timestamp | date: 'shortTime' }}</time>
+              <span class="activity-icon" [class.activity-icon--attention]="entry.needsAction">
+                <i nz-icon [nzType]="entry.needsAction ? 'bell' : 'check-circle'" nzTheme="outline"></i>
+              </span>
+              <div>
+                <strong>{{ entry.title }}</strong>
+                <span>{{ entry.detail || 'The audit record was updated.' }}</span>
+              </div>
+              <small>{{ entry.source }}</small>
+              <nz-tag [nzColor]="statusColor(entry.status)">
+                {{ entry.needsAction ? 'Approval needed' : readableState(entry.status) }}
+              </nz-tag>
+            </article>
+          </div>
+        </article>
+
+        <article class="panel memory-panel" id="memory">
+          <div class="panel-heading">
+            <div>
+              <h2>Learning & Memory Updates</h2>
+              <p>You control what remains in persistent context.</p>
+            </div>
+            <div class="panel-actions">
+              <button
+                type="button"
+                nz-button
+                nzType="link"
+                data-testid="panel-memory-load"
+                title="Load recent memory records for review"
+                (click)="loadMemories(true)"
+                [nzLoading]="memoryLoading"
+              >
+                Load updates
+              </button>
+              <button
+                type="button"
+                nz-button
+                nzType="link"
+                data-testid="panel-memory-manage"
+                title="Open full memory management"
+                (click)="openMemory()"
+              >
+                Manage memory
+              </button>
+            </div>
+          </div>
+
+          <div class="empty-state compact" *ngIf="!memoriesLoaded && !memoryLoading">
+            <i nz-icon nzType="database" nzTheme="outline"></i>
+            <div>
+              <strong>Memory stays unloaded by default</strong>
+              <span>Load it only when you want to review recent context changes.</span>
+            </div>
+          </div>
+
+          <div class="empty-state compact" *ngIf="memoriesLoaded && !recentMemories().length">
+            <i nz-icon nzType="database" nzTheme="outline"></i>
+            <div>
+              <strong>No recent memory updates</strong>
+              <span>Only useful, source-linked lessons will appear for review.</span>
+            </div>
+          </div>
+
+          <div class="memory-list">
+            <article *ngFor="let memory of recentMemories(); trackBy: trackById">
+              <span class="memory-icon">
+                <i nz-icon nzType="bulb" nzTheme="outline"></i>
+              </span>
+              <div>
+                <strong>{{ memory.summary || memory.content }}</strong>
+                <span>
+                  {{ memory.kind }} &middot; {{ memory.projectKey || memory.sourceLabel || 'General preference' }}
+                </span>
+              </div>
+              <span class="memory-confidence">{{ memory.confidence | percent }}</span>
+              <button
+                type="button"
+                class="icon-button"
+                aria-label="Edit memory"
+                [attr.data-testid]="'memory-edit-' + memory.id"
+                (click)="openMemory()"
+              >
+                <i nz-icon nzType="edit" nzTheme="outline"></i>
+              </button>
+              <button
+                type="button"
+                class="icon-button icon-button--danger"
+                aria-label="Archive memory"
+                [attr.data-testid]="'memory-archive-' + memory.id"
+                [disabled]="archivingMemoryId === memory.id"
+                (click)="archiveMemory(memory)"
+              >
+                <i nz-icon nzType="close" nzTheme="outline"></i>
+              </button>
+            </article>
+          </div>
+        </article>
+      </section>
+      </details>
+
+      <section
+        class="panel diagnostics-panel"
+        id="diagnostics"
+        *ngIf="diagnosticsExpanded"
+      >
+        <div class="panel-heading">
+          <div>
+            <h2>Developer / Diagnostics</h2>
+            <p>Technical health and execution controls are intentionally separated from daily work.</p>
+          </div>
+          <div class="panel-actions">
+            <button
+              type="button"
+              nz-button
+              nzType="link"
+              data-testid="diagnostics-reload"
+              (click)="loadDiagnosticsData(true)"
+              [nzLoading]="diagnosticsListLoading"
+            >
+              Reload checks
+            </button>
+            <button type="button" nz-button nzType="text" data-testid="diagnostics-close" (click)="toggleDiagnostics()">
+              <i nz-icon nzType="close" nzTheme="outline"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="health-strip" *ngIf="summary as health">
+          <span><strong>{{ health.total }}</strong> registered</span>
+          <span class="healthy"><strong>{{ health.healthy }}</strong> healthy</span>
+          <span class="warning"><strong>{{ health.warning + health.degraded }}</strong> need review</span>
+          <span class="broken"><strong>{{ health.broken }}</strong> broken</span>
+          <span><strong>{{ health.unknown }}</strong> unchecked</span>
+        </div>
+
+        <div class="health-strip" *ngIf="runtimes.length">
+          <span><strong>{{ runtimes.length }}</strong> runtimes</span>
+          <span class="healthy"><strong>{{ runtimes.length - runtimeAttentionCount() }}</strong> gated</span>
+          <span class="warning"><strong>{{ runtimeAttentionCount() }}</strong> need review</span>
+          <span class="broken"><strong>{{ runtimeHighRiskSurfaceCount() }}</strong> high-risk surfaces</span>
+        </div>
+
+        <div class="empty-state compact" *ngIf="diagnosticsListLoading">
+          <i nz-icon nzType="loading" nzTheme="outline"></i>
+          <div>
+            <strong>Loading technical diagnostics</strong>
+            <span>These checks are kept out of the first dashboard paint.</span>
+          </div>
+        </div>
+
+        <div class="automation-grid" *ngIf="!diagnosticsListLoading">
+          <article *ngFor="let runtime of runtimes">
+            <div>
+              <strong>{{ runtime.name }}</strong>
+              <nz-tag [nzColor]="statusColor(runtimeStatus(runtime))">
+                {{ runtimeStatus(runtime) }}
+              </nz-tag>
+              <nz-tag [nzColor]="runtime.executionEnabled ? 'green' : 'gold'">
+                {{ runtime.executionEnabled ? 'execution gated' : 'execution blocked' }}
+              </nz-tag>
+            </div>
+            <p>{{ runtimePolicyReason(runtime) }}</p>
+            <small>
+              {{ runtime.type }} runtime
+              <ng-container *ngIf="runtime.endpoint"> &middot; {{ runtime.endpoint }}</ng-container>
+            </small>
+
+            <div *ngIf="runtimeRiskSurfaces(runtime).length">
+              <nz-tag
+                *ngFor="let surface of runtimeRiskSurfaces(runtime)"
+                [nzColor]="runtimeRiskColor(surface.riskLevel)"
+                [attr.title]="surface.control || surface.category"
+              >
+                {{ surface.category }} &middot; {{ surface.riskLevel || 'review' }} &middot; {{ surface.count }}
+              </nz-tag>
+            </div>
+
+            <div>
+              <button
+                type="button"
+                nz-button
+                nzType="default"
+                nzSize="small"
+                [attr.data-testid]="'diagnostics-runtime-' + runtime.id"
+                (click)="navigate('/home')"
+              >
+                Runtime automations
+              </button>
+              <button
+                type="button"
+                nz-button
+                nzType="text"
+                nzSize="small"
+                [attr.data-testid]="'diagnostics-runtime-models-' + runtime.id"
+                (click)="navigate('/llm-policy')"
+              >
+                Model policy
+              </button>
+            </div>
+          </article>
+
+          <article *ngFor="let automation of automations; trackBy: trackById">
+            <div>
+              <strong>{{ automation.name }}</strong>
               <nz-tag [nzColor]="statusColor(automation.status)">
                 {{ automation.status || 'unknown' }}
               </nz-tag>
-            </td>
-            <td>{{ automation.lastCheckedAt ? (automation.lastCheckedAt | date: 'short') : '-' }}</td>
-            <td>{{ automation.lastLaunchAt ? (automation.lastLaunchAt | date: 'short') : '-' }}</td>
-            <td>{{ automation.lastSuccessAt ? (automation.lastSuccessAt | date: 'short') : '-' }}</td>
-            <td>{{ automation.averageLatencyMs || 0 }} ms</td>
-            <td>{{ automation.lastFailureAt ? (automation.lastFailureAt | date: 'short') : '-' }}</td>
-            <td class="reason-cell">
-              <span nz-tooltip [nzTooltipTitle]="automation.lastFailureReason || ''">
-                {{ automation.lastFailureReason || '-' }}
-              </span>
-            </td>
-            <td>
+            </div>
+            <p>{{ automation.dependencyNotes || automation.launchTarget || 'No operational notes recorded.' }}</p>
+            <small>
+              Last checked:
+              {{ automation.lastCheckedAt ? (automation.lastCheckedAt | date: 'short') : 'not yet' }}
+            </small>
+            <div>
               <button
+                type="button"
                 nz-button
                 nzType="primary"
                 nzSize="small"
+                [attr.data-testid]="'diagnostics-launch-' + automation.id"
                 (click)="launch(automation)"
                 [nzLoading]="isLaunching(automation)"
               >
                 Launch
               </button>
               <button
+                type="button"
                 nz-button
                 nzType="default"
                 nzSize="small"
+                [attr.data-testid]="'diagnostics-health-' + automation.id"
                 (click)="runHealthCheck(automation)"
                 [nzLoading]="isChecking(automation)"
               >
-                Run Check
+                Run check
               </button>
               <button
+                type="button"
                 nz-button
-                nzType="default"
+                nzType="text"
                 nzSize="small"
+                [attr.data-testid]="'diagnostics-details-' + automation.id"
                 (click)="openDiagnostics(automation)"
               >
-                Diagnostics
+                Details
               </button>
-              <button
-                nz-button
-                nzType="link"
-                nzSize="small"
-                (click)="openTarget(automation)"
-                [disabled]="!isOpenable(automation)"
-                nz-tooltip
-                [nzTooltipTitle]="isOpenable(automation) ? targetUrl(automation) : 'No browser-openable URL'"
-              >
-                <i nz-icon nzType="link" nzTheme="outline"></i>
-                Open
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </nz-table>
-    </nz-content>
-  </nz-layout>
+            </div>
+          </article>
+        </div>
+
+        <div class="empty-state compact" *ngIf="!diagnosticsListLoading && !automations.length">
+          <i nz-icon nzType="tool" nzTheme="outline"></i>
+          <div>
+            <strong>No automations registered</strong>
+            <span>Add an automation before using runtime health controls.</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
 </section>
 
 <nz-modal
@@ -147,80 +787,143 @@
   [nzTitle]="'Diagnostics - ' + diagnosticsName"
   [nzFooter]="null"
   (nzOnCancel)="closeDiagnostics()"
-  nzWidth="640px"
+  nzWidth="720px"
 >
   <ng-container *nzModalContent>
     <nz-spin [nzSpinning]="diagnosticsLoading">
-      <div *ngIf="diagnostics as d">
-        <p><strong>Status:</strong>
-          <nz-tag [nzColor]="statusColor(d.status)">{{ d.status || 'unknown' }}</nz-tag>
+      <div class="diagnostics-detail" *ngIf="diagnostics as detail">
+        <div class="diagnostics-summary">
+          <div>
+            <span>Status</span>
+            <nz-tag [nzColor]="statusColor(detail.status)">
+              {{ detail.status || 'unknown' }}
+            </nz-tag>
+          </div>
+          <div>
+            <span>Launch target</span>
+            <strong>{{ detail.launchTarget || '-' }}</strong>
+          </div>
+          <div>
+            <span>Health target</span>
+            <strong>{{ detail.healthCheckTarget || '-' }}</strong>
+          </div>
+          <div>
+            <span>Host</span>
+            <strong>{{ detail.host || '-' }}:{{ detail.port || '-' }}</strong>
+          </div>
+        </div>
+
+        <p class="diagnostic-error" *ngIf="detail.lastFailureReason">
+          {{ detail.lastFailureReason }}
         </p>
-        <p><strong>Launch target:</strong> {{ d.launchTarget || '-' }}</p>
-        <p><strong>Health check target:</strong> {{ d.healthCheckTarget || '-' }}</p>
-        <p><strong>Route path:</strong> {{ d.routePath || '-' }}</p>
-        <p><strong>Host / Port:</strong> {{ d.host || '-' }} : {{ d.port || '-' }}</p>
-        <p *ngIf="d.lastFailureReason"><strong>Last failure reason:</strong> {{ d.lastFailureReason }}</p>
 
-        <nz-divider nzText="Recent launch events" nzOrientation="left"></nz-divider>
-        <p *ngIf="!d.recentLaunches?.length" class="muted">No launch history recorded yet.</p>
-        <table class="events-table" *ngIf="d.recentLaunches?.length">
-          <thead>
-            <tr>
-              <th>Started at</th>
-              <th>Status</th>
-              <th>Type</th>
-              <th>Duration</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let event of d.recentLaunches">
-              <td>{{ event.startedAt | date: 'short' }}</td>
-              <td>
-                <nz-tag [nzColor]="statusColor(event.status)">{{ event.status }}</nz-tag>
-              </td>
-              <td>{{ event.launchType }}</td>
-              <td>{{ event.durationMs }} ms</td>
-              <td class="reason-cell">{{ event.message || event.output || '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <nz-divider nzText="Configuration checks" nzOrientation="left"></nz-divider>
+        <h3>Configuration checks</h3>
         <div class="checks-grid">
-          <div class="checks-grid__item" *ngFor="let key of diagnosticsCheckKeys()">
-            <span class="checks-grid__key">{{ key }}</span>
-            <nz-tag [nzColor]="d.checks[key] === 'ok' ? 'green' : 'red'">
-              {{ d.checks[key] }}
+          <div *ngFor="let key of diagnosticsCheckKeys()">
+            <span>{{ key }}</span>
+            <nz-tag [nzColor]="detail.checks[key] === 'ok' ? 'green' : 'red'">
+              {{ detail.checks[key] }}
             </nz-tag>
           </div>
         </div>
 
-        <nz-divider nzText="Recent health events" nzOrientation="left"></nz-divider>
-        <p *ngIf="!d.recentEvents?.length" class="muted">No health history recorded yet.</p>
-        <table class="events-table" *ngIf="d.recentEvents?.length">
-          <thead>
-            <tr>
-              <th>Checked at</th>
-              <th>Status</th>
-              <th>Type</th>
-              <th>Latency</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let event of d.recentEvents">
-              <td>{{ event.checkedAt | date: 'short' }}</td>
-              <td>
-                <nz-tag [nzColor]="statusColor(event.status)">{{ event.status }}</nz-tag>
-              </td>
-              <td>{{ event.checkType }}</td>
-              <td>{{ event.latencyMs }} ms</td>
-              <td class="reason-cell">{{ event.failureReason || '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <h3>Recent execution</h3>
+        <div class="event-list" *ngIf="detail.recentLaunches?.length; else noLaunches">
+          <article *ngFor="let event of detail.recentLaunches">
+            <div>
+              <strong>{{ event.status }}</strong>
+              <span>{{ event.message || event.output || 'No execution summary.' }}</span>
+            </div>
+            <small>{{ event.startedAt | date: 'short' }} &middot; {{ event.durationMs }} ms</small>
+            <ul *ngIf="event.auditEvents?.length">
+              <li *ngFor="let auditEvent of event.auditEvents">{{ auditEvent }}</li>
+            </ul>
+          </article>
+        </div>
+        <ng-template #noLaunches>
+          <p class="muted">No launch history recorded yet.</p>
+        </ng-template>
       </div>
     </nz-spin>
   </ng-container>
 </nz-modal>
+
+<nz-drawer
+  [nzVisible]="!!selectedAction"
+  [nzTitle]="selectedAction?.title || 'Action inspector'"
+  nzPlacement="right"
+  nzWidth="440px"
+  [nzBodyStyle]="{ padding: '0' }"
+  (nzOnClose)="closeAction()"
+>
+  <ng-container *nzDrawerContent>
+    <aside class="action-inspector" *ngIf="selectedAction as action">
+      <header class="action-inspector__hero" [attr.data-tone]="action.tone">
+        <span class="action-inspector__icon" [attr.title]="action.title">
+          <i nz-icon [nzType]="action.icon" nzTheme="outline"></i>
+        </span>
+        <div>
+          <strong>{{ action.primaryMetric }}</strong>
+          <small>{{ action.secondaryMetric }}</small>
+        </div>
+      </header>
+
+      <div
+        class="inspector-callout"
+        tabindex="0"
+        title="Why this action exists and when HAI should use it"
+      >
+        <span>?</span>
+        <p>{{ action.context }}</p>
+      </div>
+
+      <dl class="action-detail__metrics">
+        <div title="Current visible dashboard metric">
+          <dt>Metric</dt>
+          <dd>{{ action.primaryMetric }}</dd>
+        </div>
+        <div title="Operational context behind the metric">
+          <dt>Context</dt>
+          <dd>{{ action.secondaryMetric }}</dd>
+        </div>
+      </dl>
+      <dl class="action-detail__specifics">
+        <div title="What happens when you continue">
+          <dt>Mode</dt>
+          <dd>{{ actionModeLabel(action) }}</dd>
+        </div>
+        <div title="Safety controls that govern this action">
+          <dt>Safety</dt>
+          <dd>{{ actionSafetyLabel(action) }}</dd>
+        </div>
+        <div title="When this action is most useful">
+          <dt>Useful when</dt>
+          <dd>{{ action.detail }}</dd>
+        </div>
+      </dl>
+
+      <footer class="action-inspector__footer">
+        <button
+          type="button"
+          nz-button
+          nzType="default"
+          data-testid="action-modal-close"
+          title="Close this inspector without running the action"
+          (click)="closeAction()"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          nz-button
+          nzType="primary"
+          data-testid="action-modal-continue"
+          title="Continue to the action target"
+          (click)="runSelectedAction()"
+        >
+          Continue
+        </button>
+      </footer>
+    </aside>
+  </ng-container>
+</nz-drawer>

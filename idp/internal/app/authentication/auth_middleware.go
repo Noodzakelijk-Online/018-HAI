@@ -39,16 +39,7 @@ func AuthMiddleware(h *Handler) gin.HandlerFunc {
 
 		atExpiresTime := time.Unix(newAccessToken.AtExpires, 0)
 
-		// Set the new access token as a cookie
-		http.SetCookie(c.Writer, &http.Cookie{
-			Name:     "access_token",
-			Value:    newAccessToken.AccessToken,
-			Expires:  atExpiresTime,
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteStrictMode,
-			Path:     "/",
-		})
+		setAccessTokenCookie(c.Writer, newAccessToken.AccessToken, atExpiresTime)
 
 		c.Next()
 	}

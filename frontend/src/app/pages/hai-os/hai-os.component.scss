@@ -61,3 +61,167 @@
 .section-card {
   width: 100%;
 }
+
+.pursuit-section {
+  overflow: hidden;
+}
+
+.pursuit-hero {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(260px, 0.42fr) minmax(0, 1fr);
+  margin-bottom: 14px;
+}
+
+.pursuit-primary,
+.pursuit-next {
+  min-height: 112px;
+  padding: 16px;
+  text-align: left;
+}
+
+.pursuit-primary {
+  height: auto;
+  white-space: normal;
+}
+
+.pursuit-primary__eyebrow,
+.pursuit-next span,
+.pursuit-queue small,
+.spotlight-item small {
+  color: var(--hai-muted, #708096);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pursuit-primary strong {
+  display: block;
+  color: var(--hai-text, #142033);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.pursuit-primary small {
+  display: block;
+  color: var(--hai-muted, #708096);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-top: 8px;
+}
+
+.pursuit-next {
+  background: var(--hai-surface-muted, #f8fbff);
+  border: 1px solid var(--hai-border, #dfe7f1);
+  border-radius: 8px;
+}
+
+.pursuit-next p {
+  margin: 8px 0 0;
+  color: var(--hai-text, #142033);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.pursuit-next small {
+  color: var(--hai-muted, #708096);
+  display: block;
+  margin-top: 8px;
+}
+
+.pursuit-queues {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 14px;
+}
+
+.pursuit-queue {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  min-height: 96px;
+  padding: 13px;
+  text-align: left;
+  white-space: normal;
+}
+
+.pursuit-queue strong {
+  color: var(--hai-blue, #1769e0);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.pursuit-queue span {
+  color: var(--hai-text, #142033);
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.pursuit-queue small {
+  margin-top: 4px;
+}
+
+.pursuit-spotlight {
+  display: grid;
+  gap: 8px;
+}
+
+.spotlight-item {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  height: auto;
+  min-height: 58px;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: normal;
+}
+
+.spotlight-item span,
+.spotlight-item strong,
+.spotlight-item small {
+  display: block;
+}
+
+.spotlight-item span {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.spotlight-item em {
+  background: var(--hai-blue-soft, #e8f1ff);
+  border-radius: 999px;
+  color: var(--hai-blue, #1769e0);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
+.empty-pursuit-state {
+  background: var(--hai-surface-muted, #f8fbff);
+  border: 1px dashed var(--hai-border, #dfe7f1);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.empty-pursuit-state strong,
+.empty-pursuit-state span {
+  display: block;
+}
+
+.empty-pursuit-state span {
+  color: var(--hai-muted, #708096);
+  margin-top: 4px;
+}
+
+@media (max-width: 900px) {
+  .pursuit-hero,
+  .spotlight-item {
+    grid-template-columns: 1fr;
+  }
+}

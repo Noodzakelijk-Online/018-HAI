@@ -1,450 +1,560 @@
-<section>
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
-        <h1 class="header-content__title">Task Blueprint</h1>
-        <div class="header-content__actions">
-          <button nz-button nzType="default" (click)="goHome()">
-            <i nz-icon nzType="appstore" nzTheme="outline"></i>
-            Automations
+<section class="hai-chat-shell" [class.hai-dark]="themeMode === 'dark'">
+  <header class="hai-chat-topbar">
+    <button
+      type="button"
+      class="brand-button"
+      title="Open Command Center"
+      data-testid="task-chat-command-center"
+      (click)="goControlCenter()"
+    >
+      <span class="brand-mark">HAI</span>
+      <span>
+        <strong>HAI Automation Hub</strong>
+        <small>Personal AI OS</small>
+      </span>
+    </button>
+
+    <div class="topbar-signals">
+      <button type="button" class="signal signal--safe" title="Safe mode: high-risk work requires approval">
+        <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+        <span>
+          <strong>{{ safeModeLabel() }}</strong>
+          <small>Risky actions stay gated</small>
+        </span>
+        <b>?</b>
+      </button>
+      <button type="button" class="signal signal--review" title="Review queue: decisions waiting for you">
+        <i nz-icon nzType="audit" nzTheme="outline"></i>
+        <span>
+          <strong>{{ reviewQueueOpenCount() }} approvals waiting</strong>
+          <small>{{ reviewQueue.length }} total review items</small>
+        </span>
+        <b>?</b>
+      </button>
+      <button type="button" class="signal" title="Context used by the last task">
+        <i nz-icon nzType="database" nzTheme="outline"></i>
+        <span>
+          <strong>{{ contextUsedCount() }} context items</strong>
+          <small>Loaded only when relevant</small>
+        </span>
+        <b>?</b>
+      </button>
+    </div>
+
+    <div class="topbar-actions">
+      <button
+        type="button"
+        nz-button
+        nzType="default"
+        [title]="'Switch to ' + themeLabel() + ' theme'"
+        data-testid="task-chat-theme"
+        (click)="toggleTheme()"
+      >
+        <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
+        {{ themeLabel() }}
+      </button>
+      <button
+        type="button"
+        nz-button
+        nzType="default"
+        title="Clear this chat and start a new task"
+        data-testid="task-chat-clear"
+        (click)="clearChat()"
+      >
+        <i nz-icon nzType="delete" nzTheme="outline"></i>
+        New chat
+      </button>
+      <button
+        type="button"
+        nz-button
+        nzType="default"
+        title="Open legacy automation overview"
+        data-testid="task-chat-automations"
+        (click)="goHome()"
+      >
+        <i nz-icon nzType="appstore" nzTheme="outline"></i>
+        Automations
+      </button>
+    </div>
+  </header>
+
+  <form class="hai-chat-layout" [formGroup]="planForm">
+    <aside class="context-rail" aria-label="Live context">
+      <div class="rail-section">
+        <div class="rail-heading">
+          <h2>Live Context</h2>
+          <button type="button" title="Reload recent task logs and review queue" (click)="loadLogs(); loadReviewQueue()">
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
           </button>
         </div>
-      </div>
-    </nz-header>
 
-    <nz-content class="content-container">
-      <nz-card nzSize="small" nzTitle="Completion-First Intake">
-        <form nz-form [formGroup]="planForm">
-          <nz-form-item>
-            <nz-form-label>Request</nz-form-label>
-            <nz-form-control nzErrorTip="A task request is required.">
-              <textarea nz-input rows="4" formControlName="request"></textarea>
-            </nz-form-control>
-          </nz-form-item>
-          <nz-form-item>
-            <nz-form-label>Project</nz-form-label>
-            <nz-form-control>
-              <input nz-input formControlName="projectKey" />
-            </nz-form-control>
-          </nz-form-item>
-          <nz-form-item>
-            <nz-form-label>Automation ID</nz-form-label>
-            <nz-form-control>
-              <input nz-input formControlName="automationId" placeholder="Required only for controlled runtime execution" />
-            </nz-form-control>
-          </nz-form-item>
-          <nz-form-item>
-            <nz-form-label>Success criteria</nz-form-label>
-            <nz-form-control>
-              <textarea nz-input rows="3" formControlName="successCriteria" placeholder="One criterion per line"></textarea>
-            </nz-form-control>
-          </nz-form-item>
-          <div class="button-row">
-            <button nz-button nzType="primary" (click)="createPlan()" [nzLoading]="loading">
-              Create Plan
-            </button>
-            <button nz-button nzType="default" (click)="runSuccessEngine()" [nzLoading]="running">
-              Run Success Engine
-            </button>
-          </div>
-        </form>
-      </nz-card>
+        <button type="button" class="context-card" title="Current project key used for planning" (click)="contextExpanded = !contextExpanded">
+          <i nz-icon nzType="folder" nzTheme="outline"></i>
+          <span>
+            <strong>Project</strong>
+            <small>{{ planForm.value.projectKey || 'No project set' }}</small>
+          </span>
+          <em>Active</em>
+        </button>
 
-      <div class="plan-grid" *ngIf="plan as p">
-        <nz-card nzSize="small" nzTitle="Intake">
-          <p><strong>Real goal:</strong> {{ p.realGoal }}</p>
-          <p><strong>Type:</strong> {{ p.intake.taskType }}</p>
-          <p><strong>Risk:</strong> {{ p.intake.riskLevel }}</p>
-          <p><strong>Difficulty:</strong> {{ p.intake.difficulty }}</p>
-          <p><strong>Reasoning:</strong> {{ p.intake.requiredReasoning }}</p>
-          <p><strong>Approval:</strong> {{ p.intake.needsApproval ? 'required' : 'not required' }}</p>
-          <p><strong>Reason:</strong> {{ p.intake.reason }}</p>
-        </nz-card>
+        <button type="button" class="context-card" title="Safety mode and approval policy" (click)="inspectorMode = 'overview'">
+          <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+          <span>
+            <strong>Mode</strong>
+            <small>{{ safeModeLabel() }}</small>
+          </span>
+          <em>On</em>
+        </button>
 
-        <nz-card nzSize="small" nzTitle="Model Selection">
-          <p><strong>Model:</strong> {{ p.modelDecision.selectedModelName || '-' }}</p>
-          <p><strong>Tier:</strong> {{ p.modelDecision.tier || '-' }}</p>
-          <p><strong>Cost:</strong> EUR {{ p.modelDecision.estimatedCostEur || 0 }}</p>
-          <p><strong>Reason:</strong> {{ p.modelDecision.reason }}</p>
-          <p><strong>Skipped:</strong> {{ p.modelDecision.skipped.length }}</p>
-        </nz-card>
+        <button type="button" class="context-card context-card--warning" title="Human decisions waiting for approval" (click)="inspectorMode = 'logs'">
+          <i nz-icon nzType="check-square" nzTheme="outline"></i>
+          <span>
+            <strong>Approvals</strong>
+            <small>{{ reviewQueueOpenCount() }} waiting</small>
+          </span>
+          <em>Review</em>
+        </button>
+
+        <button type="button" class="context-card" title="Relevant memory and connected-source context used by the latest run" (click)="inspectorMode = 'evidence'">
+          <i nz-icon nzType="database" nzTheme="outline"></i>
+          <span>
+            <strong>Context</strong>
+            <small>{{ contextUsedCount() }} used</small>
+          </span>
+          <em>Trace</em>
+        </button>
+
+        <button type="button" class="context-card" title="Latest model routing result" (click)="inspectorMode = 'overview'">
+          <i nz-icon nzType="branches" nzTheme="outline"></i>
+          <span>
+            <strong>AI Models</strong>
+            <small>{{ plan?.modelDecision?.selectedModelName || 'Smart routing' }}</small>
+          </span>
+          <em>{{ plan?.modelDecision?.tier || 'Auto' }}</em>
+        </button>
+
+        <button type="button" class="context-card" title="Most recent completion plan" (click)="latestLog() && copyPlanToComposer(latestLog()!)">
+          <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
+          <span>
+            <strong>Last Activity</strong>
+            <small>{{ latestLog()?.request || 'No plans yet' }}</small>
+          </span>
+          <em *ngIf="latestLog()">{{ latestLog()?.createdAt | date: 'shortTime' }}</em>
+        </button>
       </div>
 
-      <div class="plan-grid" *ngIf="plan as p">
-        <nz-card nzSize="small" nzTitle="Tool Routing">
-          <p><strong>Selected:</strong> {{ p.toolDecision.selectedTools.join(', ') || '-' }}</p>
-          <p><strong>Blocked:</strong> {{ p.toolDecision.blockedTools.join(', ') || '-' }}</p>
-          <p><strong>Skipped:</strong> {{ p.toolDecision.skippedTools.join(', ') || '-' }}</p>
-          <p><strong>Reason:</strong> {{ p.toolDecision.reason }}</p>
-        </nz-card>
-
-        <nz-card nzSize="small" nzTitle="Risk Gate">
-          <p><strong>Level:</strong> {{ p.riskAssessment.level }}</p>
-          <p><strong>Allowed now:</strong> {{ p.riskAssessment.allowedNow ? 'yes' : 'no' }}</p>
-          <p><strong>Approval:</strong> {{ p.riskAssessment.approvalRequired ? 'required' : 'not required' }}</p>
-          <p><strong>Approved:</strong> {{ p.riskAssessment.approvalGranted ? 'yes' : 'no' }}</p>
-          <ul>
-            <li *ngFor="let reason of p.riskAssessment.reasons">{{ reason }}</li>
-          </ul>
-        </nz-card>
-      </div>
-
-      <nz-card nzTitle="YAGNI Decision Gate" *ngIf="plan as p" class="section-card">
-        <div class="plan-grid">
-          <div>
-            <p><strong>Applicable:</strong> {{ p.minimalityDecision.applicable ? 'yes' : 'no' }}</p>
-            <p><strong>Necessary:</strong> {{ p.minimalityDecision.necessary ? 'yes' : 'no' }}</p>
-            <p><strong>Selected rung:</strong> {{ p.minimalityDecision.selectedLevel }}</p>
-            <p><strong>Strategy:</strong> {{ p.minimalityDecision.selectedStrategy }}</p>
-          </div>
-          <div>
-            <p><strong>New dependencies:</strong> {{ p.minimalityDecision.newDependenciesAllowed ? 'allowed' : 'blocked by default' }}</p>
-            <p><strong>Custom architecture:</strong> {{ p.minimalityDecision.customArchitectureAllowed ? 'justified by intake' : 'blocked by default' }}</p>
-            <p><strong>Repository check:</strong> {{ p.minimalityDecision.requiresRepositoryCheck ? 'required' : 'not required' }}</p>
-            <p><strong>Research status:</strong> {{ p.minimalityDecision.benchmarkClaimsStatus }}</p>
-          </div>
-        </div>
-        <p><strong>Reason:</strong> {{ p.minimalityDecision.reason }}</p>
-        <nz-table
-          *ngIf="p.minimalityDecision.ladder.length"
-          [nzData]="p.minimalityDecision.ladder"
-          nzSize="small"
-          [nzPageSize]="6"
+      <div class="rail-section quick-actions">
+        <h2>Quick Actions <span title="These load useful prompts into chat">?</span></h2>
+        <button
+          type="button"
+          *ngFor="let suggestion of suggestions"
+          [attr.title]="suggestion.prompt"
+          (click)="useSuggestion(suggestion)"
         >
-          <thead>
-            <tr>
-              <th>Decision</th>
-              <th>Status</th>
-              <th>Evidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let gate of p.minimalityDecision.ladder">
-              <td>{{ gate.label }}</td>
-              <td>{{ gate.status }}</td>
-              <td>{{ gate.evidence }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Success Criteria" *ngIf="plan as p" class="section-card">
-        <ul>
-          <li *ngFor="let criterion of p.intake.successCriteria">{{ criterion }}</li>
-        </ul>
-      </nz-card>
-
-      <nz-card nzTitle="Context Used" *ngIf="plan as p" class="section-card">
-        <p>{{ p.contextPlan.explanation }}</p>
-        <nz-empty *ngIf="!p.contextPlan.usedContext.length" nzNotFoundContent="No relevant memory was loaded."></nz-empty>
-        <nz-table *ngIf="p.contextPlan.usedContext.length" [nzData]="p.contextPlan.usedContext" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Score</th>
-              <th>Summary</th>
-              <th>Why used</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of p.contextPlan.usedContext">
-              <td>{{ item.score }}</td>
-              <td>{{ item.memory.summary || item.memory.content }}</td>
-              <td>{{ item.explanation }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Connected-Source Context" *ngIf="plan as p" class="section-card">
-        <p *ngIf="p.contextPlan.sourceRefreshExplanation">{{ p.contextPlan.sourceRefreshExplanation }}</p>
-        <div class="plan-grid" *ngIf="p.contextPlan.sourceRefresh as refresh">
-          <p><strong>Checked:</strong> {{ refresh.checked }}</p>
-          <p><strong>Due:</strong> {{ refresh.due }}</p>
-          <p><strong>Completed:</strong> {{ refresh.completed }}</p>
-          <p><strong>Failed:</strong> {{ refresh.failed }}</p>
-        </div>
-        <nz-empty *ngIf="!p.contextPlan.sourceContext.length" nzNotFoundContent="No connected-source context was loaded."></nz-empty>
-        <nz-table *ngIf="p.contextPlan.sourceContext.length" [nzData]="p.contextPlan.sourceContext" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Score</th>
-              <th>Summary</th>
-              <th>Why used</th>
-              <th>Source</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of p.contextPlan.sourceContext">
-              <td>{{ item.score }}</td>
-              <td>{{ item.extraction.summary || item.extraction.text }}</td>
-              <td>{{ item.explanation }}</td>
-              <td>{{ item.extraction.sourceLabel || item.extraction.sourceUri || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Universal Task Loop" *ngIf="plan as p" class="section-card">
-        <nz-table [nzData]="p.steps" nzSize="small" [nzPageSize]="9">
-          <thead>
-            <tr>
-              <th>Step</th>
-              <th>Purpose</th>
-              <th>Allowed</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let step of p.steps">
-              <td>{{ step.name }}</td>
-              <td>{{ step.purpose }}</td>
-              <td>{{ step.allowed ? 'yes' : 'approval needed' }}</td>
-              <td>{{ step.status }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <div class="plan-grid" *ngIf="plan as p">
-        <nz-card nzSize="small" nzTitle="Validation">
-          <ul>
-            <li *ngFor="let step of p.validationPlan.steps">{{ step }}</li>
-          </ul>
-          <p><strong>Failure policy:</strong> {{ p.validationPlan.failurePolicy }}</p>
-          <p><strong>Completion gate:</strong> {{ p.validationPlan.completionGate }}</p>
-        </nz-card>
-
-        <nz-card nzSize="small" nzTitle="Validation Result">
-          <p><strong>Status:</strong> {{ p.validationResult.status }}</p>
-          <p><strong>Passed:</strong> {{ p.validationResult.passed ? 'yes' : 'no' }}</p>
-          <p><strong>Attempt:</strong> {{ p.validationResult.attemptNumber }}</p>
-          <p><strong>Next:</strong> {{ p.validationResult.nextAction }}</p>
-          <ul>
-            <li *ngFor="let failure of p.validationResult.failures">{{ failure }}</li>
-          </ul>
-        </nz-card>
+          {{ suggestion.label }}
+        </button>
       </div>
+    </aside>
 
-      <div class="plan-grid" *ngIf="plan as p">
-        <nz-card nzSize="small" nzTitle="Execution Controls">
-          <p><strong>Mode:</strong> {{ p.executionPlan.controlledExecutionMode }}</p>
-          <p><strong>Planning separated:</strong> {{ p.executionPlan.planningSeparatedFromExecution ? 'yes' : 'no' }}</p>
-          <p><strong>Approval required for:</strong> {{ p.executionPlan.approvalRequiredFor.join(', ') || '-' }}</p>
-          <p><strong>Status:</strong> {{ p.completionStatus }}</p>
-        </nz-card>
-
-        <nz-card nzSize="small" nzTitle="Retry and Escalation">
-          <p><strong>Attempt:</strong> {{ p.retryPolicy.currentAttempt }} / {{ p.retryPolicy.maxAttempts }}</p>
-          <p><strong>Retry available:</strong> {{ p.retryPolicy.retryAvailable ? 'yes' : 'no' }}</p>
-          <p><strong>Escalation:</strong> {{ p.retryPolicy.escalationPath.join(' -> ') }}</p>
-        </nz-card>
-      </div>
-
-      <nz-card nzTitle="Execution Output" *ngIf="plan?.executionResult as result" class="section-card">
-        <div class="plan-grid">
-          <div>
-            <p><strong>Mode:</strong> {{ result.mode }}</p>
-            <p><strong>Verification:</strong> {{ result.verificationStatus }}</p>
-            <p><strong>Evidence used:</strong> {{ result.evidenceCount }}</p>
-            <p><strong>Unsupported claims:</strong> {{ result.unsupportedClaims }}</p>
-            <p *ngIf="result.blockedReason"><strong>Blocked:</strong> {{ result.blockedReason }}</p>
-            <p *ngIf="result.toolExecution"><strong>Runtime status:</strong> {{ result.toolExecution.status }}</p>
-            <p *ngIf="result.toolExecution"><strong>Automation:</strong> {{ result.toolExecution.automationId }}</p>
-          </div>
-          <div>
-            <p><strong>Started:</strong> {{ result.startedAt | date: 'short' }}</p>
-            <p><strong>Completed:</strong> {{ result.completedAt | date: 'short' }}</p>
-            <p *ngIf="result.llmGeneration"><strong>LLM:</strong> {{ result.llmGeneration.modelName || result.llmGeneration.modelId }} ({{ result.llmGeneration.status }})</p>
-            <p *ngIf="result.llmGeneration"><strong>LLM reason:</strong> {{ result.llmGeneration.reason }}</p>
-          </div>
+    <main class="chat-main" aria-label="Talk to HAI">
+      <section class="chat-header">
+        <div>
+          <h1>Talk to HAI</h1>
+          <p>Give HAI a goal. It will plan, act within safety limits, and keep you in the loop.</p>
         </div>
-        <p class="output-text">{{ result.output }}</p>
+        <button type="button" nz-button nzType="default" title="Open full command center" (click)="openFullWorkspace()">
+          Open workspace
+        </button>
+      </section>
 
-        <section class="runtime-evidence" *ngIf="result.toolExecution as tool">
-          <h3>Controlled Runtime Evidence</h3>
-          <div class="plan-grid">
+      <section class="conversation" data-testid="task-chat-conversation">
+        <article
+          class="message"
+          *ngFor="let message of chatMessages; trackBy: trackById"
+          [class.message--user]="message.role === 'user'"
+          [class.message--working]="message.status === 'working'"
+          [class.message--blocked]="message.status === 'blocked'"
+          [class.message--success]="message.status === 'success'"
+        >
+          <div class="avatar">{{ message.role === 'user' ? 'You' : 'HAI' }}</div>
+          <div class="bubble">
+            <header>
+              <strong>{{ message.title || (message.role === 'user' ? 'You' : 'HAI') }}</strong>
+              <time>{{ message.at | date: 'shortTime' }}</time>
+            </header>
+            <p>{{ message.body }}</p>
+            <ul *ngIf="message.bullets?.length">
+              <li *ngFor="let bullet of message.bullets">{{ bullet }}</li>
+            </ul>
+          </div>
+        </article>
+      </section>
+
+      <section class="composer" aria-label="HAI command composer">
+        <textarea
+          nz-input
+          rows="4"
+          formControlName="request"
+          data-testid="task-chat-input"
+          [placeholder]="composerPlaceholder()"
+          title="Tell HAI what outcome you want. It will translate this into task, context, model, tool, risk, validation, and memory steps."
+        ></textarea>
+
+        <div class="composer-controls">
+          <button type="button" class="chip-button" title="Advanced project, automation and success criteria controls" (click)="contextExpanded = !contextExpanded">
+            <i nz-icon nzType="setting" nzTheme="outline"></i>
+            Context
+          </button>
+          <button type="button" class="chip-button" title="Connected-source context is retrieved only when relevant" (click)="inspectorMode = 'evidence'">
+            <i nz-icon nzType="database" nzTheme="outline"></i>
+            Sources
+          </button>
+          <button type="button" class="chip-button" title="Controlled runtime execution uses automation ID when configured">
+            <i nz-icon nzType="deployment-unit" nzTheme="outline"></i>
+            Runtime
+          </button>
+          <span class="composer-spacer"></span>
+          <button
+            type="button"
+            nz-button
+            nzType="default"
+            data-testid="task-chat-plan"
+            title="Plan only: classify, retrieve context, choose model/tools, define success criteria and validation"
+            [nzLoading]="loading"
+            (click)="createPlan()"
+          >
+            Plan first
+          </button>
+          <button
+            type="button"
+            nz-button
+            nzType="default"
+            data-testid="task-chat-cycle"
+            title="Run the autonomous maintenance cycle: sync due sources, recover stale workflow claims, run follow-ups, run safe workflows, scan ambient opportunities, and refresh dashboard state"
+            [nzLoading]="cycling"
+            (click)="runAgentCycle()"
+          >
+            <i nz-icon nzType="deployment-unit" nzTheme="outline"></i>
+            Run cycle
+          </button>
+          <button
+            type="button"
+            nz-button
+            nzType="primary"
+            data-testid="task-chat-run"
+            title="Run success engine: execute only approved and low-risk allowed steps"
+            [nzLoading]="running"
+            (click)="runSuccessEngine()"
+          >
+            <i nz-icon nzType="rocket" nzTheme="outline"></i>
+            Run safe steps
+          </button>
+        </div>
+      </section>
+
+      <section class="advanced-context" *ngIf="contextExpanded">
+        <label>
+          <span>Project</span>
+          <input nz-input formControlName="projectKey" title="Project key used for memory, source, and workflow matching" />
+        </label>
+        <label>
+          <span>Automation ID</span>
+          <input nz-input formControlName="automationId" placeholder="Only needed for controlled runtime execution" title="Optional automation target for safe local execution" />
+        </label>
+        <label class="criteria-field">
+          <span>Success criteria</span>
+          <textarea nz-input rows="3" formControlName="successCriteria" placeholder="One criterion per line" title="HAI validates against these criteria before treating work as complete"></textarea>
+        </label>
+      </section>
+
+      <p class="safety-note">
+        HAI can make mistakes. Legal, financial, public, destructive, account, and external-message actions stay approval-gated.
+      </p>
+    </main>
+
+    <aside class="inspector" aria-label="Outcome inspector">
+      <header class="inspector-header">
+        <div>
+          <h2>Outcome Inspector</h2>
+          <p>Specifics stay here until you need them.</p>
+        </div>
+        <button type="button" title="General information: HAI converts chat into structured planning, routing, verification, and safe execution.">?</button>
+      </header>
+
+      <nav class="inspector-tabs" aria-label="Inspector sections">
+        <button type="button" [class.active]="inspectorMode === 'overview'" (click)="inspectorMode = 'overview'">Overview</button>
+        <button type="button" [class.active]="inspectorMode === 'plan'" (click)="inspectorMode = 'plan'">Plan</button>
+        <button type="button" [class.active]="inspectorMode === 'evidence'" (click)="inspectorMode = 'evidence'">Evidence</button>
+        <button type="button" [class.active]="inspectorMode === 'logs'" (click)="inspectorMode = 'logs'">Logs</button>
+      </nav>
+
+      <section class="inspector-body" *ngIf="inspectorMode === 'overview'">
+        <article class="inspector-card">
+          <h3>Plan Summary <span title="The actual goal HAI inferred">?</span></h3>
+          <p>{{ plan?.realGoal || 'No current plan. Start by asking HAI for an outcome.' }}</p>
+          <nz-tag *ngIf="plan" [nzColor]="statusTone(plan.completionStatus)">{{ plan.completionStatus }}</nz-tag>
+        </article>
+
+        <article class="inspector-card">
+          <h3>Assistant Command <span title="One chat command can route into task planning, safe execution, and the autonomous maintenance cycle">?</span></h3>
+          <dl>
             <div>
-              <p><strong>Runtime:</strong> {{ tool.runtimeType || tool.launchType }}</p>
-              <p><strong>Status:</strong> {{ tool.status }}</p>
-              <p><strong>Exit code:</strong> {{ tool.exitCode }}</p>
+              <dt>Intent</dt>
+              <dd>{{ lastCommand?.intent || 'No command yet' }}</dd>
             </div>
             <div>
-              <p><strong>Duration:</strong> {{ tool.durationMs }} ms</p>
-              <p><strong>Executed:</strong> {{ tool.executedAt | date: 'short' }}</p>
-              <p><strong>Target:</strong> {{ tool.target || '-' }}</p>
+              <dt>Review</dt>
+              <dd>{{ commandReviewLabel() }}</dd>
+            </div>
+            <div>
+              <dt>Next action</dt>
+              <dd>{{ lastCommand?.nextAction || plan?.validationResult?.nextAction || '-' }}</dd>
+            </div>
+          </dl>
+          <p>{{ lastCommand?.summary || 'The next command will be routed through the assistant bridge.' }}</p>
+          <p class="engine-summary">{{ commandActionSummary() }}</p>
+        </article>
+
+        <article class="inspector-card" *ngIf="lastCommand?.agentCycle as cycle">
+          <h3>Autonomous Cycle <span title="Server-side maintenance loop: source sync, stale claim recovery, follow-ups, safe workflow execution, ambient scan, and dashboard refresh">?</span></h3>
+          <dl>
+            <div>
+              <dt>Status</dt>
+              <dd>{{ cycle.status }}</dd>
+            </div>
+            <div>
+              <dt>Steps</dt>
+              <dd>{{ agentCycleStepCount() }}</dd>
+            </div>
+            <div>
+              <dt>Next</dt>
+              <dd>{{ cycle.nextAction }}</dd>
+            </div>
+            <div *ngIf="cycle.pursuitOperatingState as pursuitState">
+              <dt>Pursuits</dt>
+              <dd>{{ pursuitStateSummary(pursuitState) }}</dd>
+            </div>
+          </dl>
+          <ng-container *ngIf="cycle.pursuitOperatingState as pursuitState">
+            <p class="engine-summary">{{ pursuitState.primaryAction || 'Continue scheduled pursuit monitoring.' }}</p>
+            <p class="engine-summary">{{ pursuitStateMetrics(pursuitState) }}</p>
+          </ng-container>
+          <div class="step-row" *ngFor="let step of cycle.steps">
+            <span [class.done]="step.status === 'completed' || step.status === 'skipped'"></span>
+            <div>
+              <strong>{{ step.name }}</strong>
+              <small>{{ step.summary }}</small>
+            </div>
+            <em>{{ step.status }}</em>
+          </div>
+        </article>
+
+        <article class="inspector-card">
+          <h3>Risk Gate <span title="Determines whether HAI may act or must ask you first">?</span></h3>
+          <div class="risk-box" [class.risk-box--blocked]="plan?.riskAssessment?.approvalRequired">
+            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+            <div>
+              <strong>{{ plan?.riskAssessment?.level || 'Safe mode active' }}</strong>
+              <span>{{ plan?.riskAssessment?.approvalRequired ? 'Approval required before risky execution' : 'No high-risk action detected yet' }}</span>
             </div>
           </div>
-          <p>{{ tool.message || '-' }}</p>
-          <p class="output-text">{{ tool.output || '-' }}</p>
-        </section>
+        </article>
 
-        <nz-table *ngIf="result.actions.length" [nzData]="result.actions" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Action</th>
-              <th>Status</th>
-              <th>Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let action of result.actions">
-              <td>{{ action.name }}</td>
-              <td>{{ action.status }}</td>
-              <td>{{ action.output || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
+        <article class="inspector-card">
+          <h3>Model & Tool Routing <span title="Cheapest capable model, not just the cheapest model">?</span></h3>
+          <dl>
+            <div>
+              <dt>Model</dt>
+              <dd>{{ plan?.modelDecision?.selectedModelName || 'Not selected yet' }}</dd>
+            </div>
+            <div>
+              <dt>Tier</dt>
+              <dd>{{ plan?.modelDecision?.tier || '-' }}</dd>
+            </div>
+            <div>
+              <dt>Tools</dt>
+              <dd>{{ plan?.toolDecision?.selectedTools?.join(', ') || 'No tools selected yet' }}</dd>
+            </div>
+          </dl>
+        </article>
 
-        <nz-table *ngIf="result.claims.length" [nzData]="result.claims" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Claim</th>
-              <th>Status</th>
-              <th>Source</th>
-              <th>Confidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let claim of result.claims">
-              <td>{{ claim.claimText }}</td>
-              <td>{{ claim.status }}</td>
-              <td>{{ claim.sourceRefs || '-' }}</td>
-              <td>{{ claim.confidence }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+        <article class="inspector-card">
+          <h3>Success Criteria <span title="What must be true before HAI can call this complete">?</span></h3>
+          <ul class="criteria-list">
+            <li *ngFor="let criterion of plan?.intake?.successCriteria || criteria()">{{ criterion }}</li>
+            <li *ngIf="!(plan?.intake?.successCriteria?.length || criteria().length)">No explicit criteria yet.</li>
+          </ul>
+        </article>
 
-      <nz-card nzTitle="Memory Updates Proposed" *ngIf="plan as p" class="section-card">
-        <nz-empty *ngIf="!p.memoryUpdateProposals.length" nzNotFoundContent="No memory updates proposed."></nz-empty>
-        <nz-table *ngIf="p.memoryUpdateProposals.length" [nzData]="p.memoryUpdateProposals" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Kind</th>
-              <th>Content</th>
-              <th>Reason</th>
-              <th>Confidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let proposal of p.memoryUpdateProposals">
-              <td>{{ proposal.kind }}</td>
-              <td>{{ proposal.content }}</td>
-              <td>{{ proposal.reason }}</td>
-              <td>{{ proposal.confidence }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+        <article class="inspector-card">
+          <h3>Approval Queue <span title="Human decisions that block execution">?</span></h3>
+          <div class="review-row" *ngFor="let item of reviewQueue; trackBy: trackById">
+            <div>
+              <strong>{{ item.reason }}</strong>
+              <span>{{ item.priority }} · {{ item.status }}</span>
+            </div>
+            <button
+              type="button"
+              nz-button
+              nzSize="small"
+              nzType="primary"
+              [disabled]="item.status !== 'open'"
+              [nzLoading]="resolvingReviewId === item.id"
+              (click)="resolveReviewItem(item, true)"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              nz-button
+              nzSize="small"
+              [disabled]="item.status !== 'open'"
+              [nzLoading]="resolvingReviewId === item.id"
+              (click)="resolveReviewItem(item, false)"
+            >
+              Reject
+            </button>
+          </div>
+          <nz-empty *ngIf="!reviewQueue.length" nzNotFoundContent="No tasks waiting for review."></nz-empty>
+        </article>
+      </section>
 
-      <nz-card nzTitle="Lessons Learned" *ngIf="plan as p" class="section-card">
-        <nz-empty *ngIf="!p.lessonsLearned.length" nzNotFoundContent="No lessons proposed."></nz-empty>
-        <nz-table *ngIf="p.lessonsLearned.length" [nzData]="p.lessonsLearned" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Kind</th>
-              <th>Lesson</th>
-              <th>Stored</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let lesson of p.lessonsLearned">
-              <td>{{ lesson.kind }}</td>
-              <td>{{ lesson.content }}</td>
-              <td>{{ p.storedMemoryIds.length ? 'yes' : 'proposed' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+      <section class="inspector-body" *ngIf="inspectorMode === 'plan'">
+        <article class="inspector-card">
+          <h3>Universal Task Loop</h3>
+          <div class="step-row" *ngFor="let step of plan?.steps || []">
+            <span [class.done]="step.allowed"></span>
+            <div>
+              <strong>{{ step.name }}</strong>
+              <small>{{ step.purpose }}</small>
+            </div>
+            <em>{{ step.status }}</em>
+          </div>
+          <nz-empty *ngIf="!plan?.steps?.length" nzNotFoundContent="No plan steps yet."></nz-empty>
+        </article>
 
-      <nz-card nzTitle="Engine Events" *ngIf="plan as p" class="section-card">
-        <nz-empty *ngIf="!p.events.length" nzNotFoundContent="No engine events."></nz-empty>
-        <nz-table *ngIf="p.events.length" [nzData]="p.events" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Stage</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let event of p.events">
-              <td>{{ event.at | date: 'short' }}</td>
-              <td>{{ event.stage }}</td>
-              <td>{{ event.message }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+        <article class="inspector-card">
+          <h3>Validation</h3>
+          <ul>
+            <li *ngFor="let step of plan?.validationPlan?.steps || []">{{ step }}</li>
+          </ul>
+          <p *ngIf="plan"><strong>Completion gate:</strong> {{ plan.validationPlan.completionGate }}</p>
+          <p *ngIf="plan"><strong>Result:</strong> {{ plan.validationResult.status }} · {{ plan.validationResult.nextAction }}</p>
+        </article>
 
-      <nz-card nzTitle="Review Queue" class="section-card">
-        <nz-empty *ngIf="!reviewQueue.length" nzNotFoundContent="No tasks waiting for review."></nz-empty>
-        <nz-table *ngIf="reviewQueue.length" [nzData]="reviewQueue" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Created</th>
-              <th>Priority</th>
-              <th>Reason</th>
-              <th>Status</th>
-              <th>Task</th>
-              <th nzWidth="190px">Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of reviewQueue">
-              <td>{{ item.createdAt | date: 'short' }}</td>
-              <td>{{ item.priority }}</td>
-              <td>{{ item.reason }}</td>
-              <td>{{ item.status }}</td>
-              <td>{{ item.request.request }}</td>
-              <td>
-                <button
-                  nz-button
-                  nzSize="small"
-                  nzType="primary"
-                  (click)="resolveReviewItem(item, true)"
-                  [disabled]="item.status !== 'open'"
-                  [nzLoading]="resolvingReviewId === item.id"
-                >
-                  Approve
-                </button>
-                <button
-                  nz-button
-                  nzSize="small"
-                  nzType="default"
-                  (click)="resolveReviewItem(item, false)"
-                  [disabled]="item.status !== 'open'"
-                  [nzLoading]="resolvingReviewId === item.id"
-                >
-                  Reject
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+        <article class="inspector-card">
+          <h3>Minimality / YAGNI Gate</h3>
+          <p>{{ plan?.minimalityDecision?.reason || 'No minimality decision yet.' }}</p>
+          <div class="mini-table" *ngFor="let gate of plan?.minimalityDecision?.ladder || []">
+            <strong>{{ gate.label }}</strong>
+            <span>{{ gate.status }}</span>
+          </div>
+        </article>
+      </section>
 
-      <nz-card nzTitle="Recent Plans" class="section-card">
-        <nz-empty *ngIf="!logs.length" nzNotFoundContent="No task plans yet."></nz-empty>
-        <nz-table *ngIf="logs.length" [nzData]="logs" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Type</th>
-              <th>Model</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let log of logs">
-              <td>{{ log.createdAt | date: 'short' }}</td>
-              <td>{{ log.intake.taskType }}</td>
-              <td>{{ log.modelDecision.selectedModelName || '-' }}</td>
-              <td>{{ log.completionStatus }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-    </nz-content>
-  </nz-layout>
+      <section class="inspector-body" *ngIf="inspectorMode === 'evidence'">
+        <article class="inspector-card">
+          <h3>Memory Used</h3>
+          <div class="source-row" *ngFor="let item of plan?.contextPlan?.usedContext || []">
+            <strong>{{ item.memory.summary || item.memory.content }}</strong>
+            <span>{{ item.explanation }} · score {{ item.score }}</span>
+          </div>
+          <nz-empty *ngIf="!plan?.contextPlan?.usedContext?.length" nzNotFoundContent="No relevant memory loaded."></nz-empty>
+        </article>
+
+        <article class="inspector-card">
+          <h3>Connected Sources</h3>
+          <p *ngIf="plan?.contextPlan?.sourceRefreshExplanation">{{ plan?.contextPlan?.sourceRefreshExplanation }}</p>
+          <div class="source-row" *ngFor="let item of plan?.contextPlan?.sourceContext || []">
+            <strong>{{ item.extraction.summary || item.extraction.text }}</strong>
+            <span>{{ item.extraction.sourceLabel || item.extraction.sourceUri || '-' }}</span>
+          </div>
+          <nz-empty *ngIf="!plan?.contextPlan?.sourceContext?.length" nzNotFoundContent="No source context loaded."></nz-empty>
+        </article>
+
+        <article class="inspector-card" *ngIf="plan?.executionResult as result">
+          <h3>Execution Output</h3>
+          <p>{{ result.output }}</p>
+          <dl>
+            <div>
+              <dt>Verification</dt>
+              <dd>{{ result.verificationStatus }}</dd>
+            </div>
+            <div>
+              <dt>Evidence</dt>
+              <dd>{{ result.evidenceCount }}</dd>
+            </div>
+            <div>
+              <dt>Unsupported claims</dt>
+              <dd>{{ result.unsupportedClaims }}</dd>
+            </div>
+          </dl>
+          <div
+            class="runtime-evidence-card"
+            *ngIf="result.toolExecution as tool"
+            [title]="toolRuntimeEvidenceTitle(tool)"
+          >
+            <div class="runtime-evidence-row">
+              <span>
+                <strong>{{ tool.runtimeType || tool.launchType || 'controlled runtime' }}</strong>
+                <small>{{ tool.status }} · {{ tool.durationMs || 0 }} ms</small>
+              </span>
+              <code>{{ toolRuntimeEvidenceLabel(tool) }}</code>
+              <button
+                type="button"
+                nz-button
+                nzSize="small"
+                nzType="default"
+                [disabled]="!tool.launchEventId"
+                title="Copy exact runtime evidence URI"
+                (click)="copyToolRuntimeEvidence(tool)"
+              >
+                Copy
+              </button>
+            </div>
+            <small class="runtime-evidence-meta">
+              {{ tool.message || tool.target || tool.automationId }}
+            </small>
+            <div class="runtime-route-line" *ngIf="tool.runtimeRouteTrace as trace" [title]="toolRuntimeRouteSummary(tool)">
+              <span *ngIf="trace.runtimeId">{{ trace.runtimeId }}</span>
+              <span *ngIf="trace.intent">{{ trace.intent }}</span>
+              <span *ngIf="trace.executionMode">{{ trace.executionMode }}</span>
+              <span *ngIf="trace.riskLevel">{{ trace.riskLevel }}</span>
+              <span *ngIf="trace.recommendedSkills?.length">{{ compactTraceList('skills', trace.recommendedSkills, 3) }}</span>
+              <span *ngIf="trace.blockedSurfaces?.length">{{ compactTraceList('blocked', trace.blockedSurfaces, 2) }}</span>
+            </div>
+            <ol class="runtime-audit-list" *ngIf="tool.auditEvents?.length">
+              <li *ngFor="let auditEvent of tool.auditEvents">{{ auditEvent }}</li>
+            </ol>
+          </div>
+        </article>
+      </section>
+
+      <section class="inspector-body" *ngIf="inspectorMode === 'logs'">
+        <article class="inspector-card">
+          <h3>Recent Plans</h3>
+          <button
+            type="button"
+            class="log-row"
+            *ngFor="let log of logs; trackBy: trackById"
+            title="Load this plan back into the chat composer"
+            (click)="copyPlanToComposer(log)"
+          >
+            <strong>{{ log.request }}</strong>
+            <span>{{ log.intake.taskType }} · {{ log.completionStatus }} · {{ log.createdAt | date: 'short' }}</span>
+          </button>
+          <nz-empty *ngIf="!logs.length" nzNotFoundContent="No task plans yet."></nz-empty>
+        </article>
+
+        <article class="inspector-card">
+          <h3>Engine Events</h3>
+          <div class="source-row" *ngFor="let event of plan?.events || []">
+            <strong>{{ event.stage }}</strong>
+            <span>{{ event.message }} · {{ event.at | date: 'shortTime' }}</span>
+          </div>
+          <nz-empty *ngIf="!plan?.events?.length" nzNotFoundContent="No engine events for current plan."></nz-empty>
+        </article>
+      </section>
+    </aside>
+  </form>
 </section>

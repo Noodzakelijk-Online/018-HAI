@@ -1,0 +1,649 @@
+package agentcycle
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"automation-hub-backend/internal/memory"
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/workflow"
+)
+
+type SourceSyncer interface {
+	RunDueScheduledSyncs(now time.Time) (*source.ScheduledSyncRun, error)
+}
+
+type WorkflowCoordinator interface {
+	RecoverStaleClaims(request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error)
+	RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error)
+	RunDue(request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error)
+	Dashboard() (*workflow.WorkflowDashboard, error)
+}
+
+type AmbientScanner interface {
+	Scan(trigger string) (*models.AmbientScan, error)
+}
+
+type PursuitBriefProvider interface {
+	Brief() (*pursuit.Brief, error)
+}
+
+type PursuitDecisionProvider interface {
+	Decisions() ([]pursuit.PursuitDashboardDecision, error)
+}
+
+type RunRequest struct {
+	Trigger        string `json:"trigger,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
+	SkipSourceSync bool   `json:"skipSourceSync,omitempty"`
+	SkipAmbient    bool   `json:"skipAmbient,omitempty"`
+}
+
+type PhaseError struct {
+	Phase   string `json:"phase"`
+	Message string `json:"message"`
+}
+
+type WorkerStep struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Summary string `json:"summary"`
+}
+
+type RunResult struct {
+	Trigger          string                             `json:"trigger"`
+	Status           string                             `json:"status"`
+	StartedAt        time.Time                          `json:"startedAt"`
+	CompletedAt      time.Time                          `json:"completedAt"`
+	Steps            []WorkerStep                       `json:"steps"`
+	Errors           []PhaseError                       `json:"errors"`
+	AppliedContext   []memory.RankedMemory              `json:"appliedContext,omitempty"`
+	ContextNote      string                             `json:"contextNote,omitempty"`
+	SourceSync       *source.ScheduledSyncRun           `json:"sourceSync,omitempty"`
+	Recovery         *workflow.ClaimRecoverySummary     `json:"recovery,omitempty"`
+	OpenLoops        *workflow.OpenLoopRunSummary       `json:"openLoops,omitempty"`
+	Workflows        *workflow.WorkflowRunSummary       `json:"workflows,omitempty"`
+	AmbientScan      *models.AmbientScan                `json:"ambientScan,omitempty"`
+	Dashboard        *workflow.WorkflowDashboard        `json:"dashboard,omitempty"`
+	PursuitBrief     *pursuit.Brief                     `json:"pursuitBrief,omitempty"`
+	PursuitDecisions []pursuit.PursuitDashboardDecision `json:"pursuitDecisions,omitempty"`
+	PursuitState     *PursuitOperatingState             `json:"pursuitOperatingState,omitempty"`
+	NextAction       string                             `json:"nextAction"`
+	SafetySummary    string                             `json:"safetySummary"`
+	LearningIDs      []string                           `json:"learningIds,omitempty"`
+	LearningNote     string                             `json:"learningNote,omitempty"`
+}
+
+type PursuitOperatingState struct {
+	OperatingMode        string `json:"operatingMode"`
+	PrimaryLane          string `json:"primaryLane"`
+	PrimaryAction        string `json:"primaryAction"`
+	NeedsRobert          int    `json:"needsRobert"`
+	ReadyToMove          int    `json:"readyToMove"`
+	Stuck                int    `json:"stuck"`
+	ReviewDue            int    `json:"reviewDue"`
+	PlanningNeeded       int    `json:"planningNeeded"`
+	CompletionCandidates int    `json:"completionCandidates"`
+	RecentlyChanged      int    `json:"recentlyChanged"`
+	AttentionTotal       int    `json:"attentionTotal"`
+}
+
+type Service struct {
+	sources   SourceSyncer
+	workflows WorkflowCoordinator
+	ambient   AmbientScanner
+	pursuits  PursuitBriefProvider
+	memory    memory.Service
+}
+
+func NewService(sources SourceSyncer, workflows WorkflowCoordinator, ambient AmbientScanner, memoryServices ...memory.Service) *Service {
+	return NewServiceWithPursuits(sources, workflows, ambient, nil, memoryServices...)
+}
+
+func NewServiceWithPursuits(sources SourceSyncer, workflows WorkflowCoordinator, ambient AmbientScanner, pursuits PursuitBriefProvider, memoryServices ...memory.Service) *Service {
+	return &Service{
+		sources:   sources,
+		workflows: workflows,
+		ambient:   ambient,
+		pursuits:  pursuits,
+		memory:    firstMemoryService(memoryServices...),
+	}
+}
+
+func (s *Service) Run(request RunRequest) *RunResult {
+	started := time.Now().UTC()
+	result := &RunResult{
+		Trigger:       firstNonEmpty(request.Trigger, "manual"),
+		Status:        "running",
+		StartedAt:     started,
+		Steps:         []WorkerStep{},
+		Errors:        []PhaseError{},
+		SafetySummary: "Agent cycle cannot approve its own high-risk actions; approval gates, emergency stop, and workflow retry limits remain enforced inside the called engines.",
+	}
+	limit := normalizeLimit(request.Limit)
+	workflowRequest := workflow.RunDueRequest{Limit: limit}
+
+	contextResult, err := s.retrieveOperationalContext(result.Trigger)
+	if err != nil {
+		result.record("retrieve operational context", err, "context retrieval failed")
+	} else {
+		result.AppliedContext = contextResult
+		result.ContextNote = appliedContextSummary(contextResult)
+		result.record("retrieve operational context", nil, result.ContextNote)
+	}
+
+	if s.workflows == nil {
+		result.addError("workflow", fmt.Errorf("workflow coordinator is not configured"))
+	} else {
+		recovery, err := s.workflows.RecoverStaleClaims(workflowRequest)
+		result.Recovery = recovery
+		result.record("recover stale claims", err, recoverySummary(recovery))
+	}
+
+	if !request.SkipSourceSync {
+		if s.sources == nil {
+			result.addError("source_sync", fmt.Errorf("source syncer is not configured"))
+		} else {
+			sync, err := s.sources.RunDueScheduledSyncs(time.Now().UTC())
+			result.SourceSync = sync
+			result.record("sync due sources", err, sourceSummary(sync))
+		}
+	} else {
+		result.Steps = append(result.Steps, WorkerStep{Name: "sync due sources", Status: "skipped", Summary: "source sync skipped by request"})
+	}
+
+	if s.workflows != nil {
+		openLoops, err := s.workflows.RunDueOpenLoops(workflowRequest)
+		result.OpenLoops = openLoops
+		result.record("run due follow-ups", err, openLoopSummary(openLoops))
+
+		workflows, err := s.workflows.RunDue(workflowRequest)
+		result.Workflows = workflows
+		result.record("run safe workflows", err, workflowSummary(workflows))
+	}
+
+	if !request.SkipAmbient {
+		if s.ambient == nil {
+			result.addError("ambient", fmt.Errorf("ambient scanner is not configured"))
+		} else {
+			scan, err := s.ambient.Scan("agent-cycle." + result.Trigger)
+			result.AmbientScan = scan
+			result.record("scan ambient opportunities", err, ambientSummary(scan))
+		}
+	} else {
+		result.Steps = append(result.Steps, WorkerStep{Name: "scan ambient opportunities", Status: "skipped", Summary: "ambient scan skipped by request"})
+	}
+
+	if s.workflows != nil {
+		dashboard, err := s.workflows.Dashboard()
+		result.Dashboard = dashboard
+		result.record("refresh workflow dashboard", err, dashboardSummary(dashboard))
+	}
+	if s.pursuits != nil {
+		brief, err := s.pursuits.Brief()
+		result.PursuitBrief = brief
+		result.PursuitState = pursuitOperatingState(brief)
+		result.record("refresh pursuit operating brief", err, pursuitBriefSummary(brief))
+		if decisionProvider, ok := s.pursuits.(PursuitDecisionProvider); ok {
+			decisions, err := decisionProvider.Decisions()
+			result.PursuitDecisions = decisions
+			result.record("refresh Robert decision queue", err, pursuitDecisionSummary(decisions))
+		}
+	}
+
+	result.CompletedAt = time.Now().UTC()
+	result.Status = cycleStatus(result)
+	result.NextAction = nextAction(result)
+	result.LearningIDs, result.LearningNote = s.rememberOperationalLesson(result)
+	return result
+}
+
+func (s *Service) retrieveOperationalContext(trigger string) ([]memory.RankedMemory, error) {
+	if s.memory == nil {
+		return nil, nil
+	}
+	result, err := s.memory.Retrieve(memory.RetrieveRequest{
+		Query: "agent cycle operational lesson source sync workflow retry blocked follow-up ambient approval safety " + trigger,
+		Limit: 5,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || len(result.UsedContext) == 0 {
+		return nil, nil
+	}
+	context := make([]memory.RankedMemory, 0, len(result.UsedContext))
+	for _, ranked := range result.UsedContext {
+		if operationalMemoryRelevant(ranked.Memory) {
+			context = append(context, ranked)
+		}
+		if len(context) == 3 {
+			break
+		}
+	}
+	return context, nil
+}
+
+func (s *Service) rememberOperationalLesson(result *RunResult) ([]string, string) {
+	if s.memory == nil || !operationalLessonUseful(result) {
+		return nil, ""
+	}
+	content := operationalLessonContent(result)
+	created, err := s.memory.Create(memory.CreateRequest{
+		Kind:        "procedural",
+		Content:     content,
+		Summary:     compactText(operationalLessonSummary(result), 240),
+		Tags:        operationalLessonTags(result),
+		Confidence:  operationalLessonConfidence(result),
+		SourceURI:   "agent-cycle://" + result.Trigger,
+		SourceLabel: "Agent cycle operational learning",
+	})
+	if err != nil || created == nil {
+		return nil, "operational learning memory was skipped because storage failed"
+	}
+	return []string{created.ID.String()}, "stored operational lesson for future agent-cycle planning"
+}
+
+func (r *RunResult) record(name string, err error, summary string) {
+	if err != nil {
+		r.addError(name, err)
+		r.Steps = append(r.Steps, WorkerStep{Name: name, Status: "failed", Summary: err.Error()})
+		return
+	}
+	r.Steps = append(r.Steps, WorkerStep{Name: name, Status: "completed", Summary: summary})
+}
+
+func (r *RunResult) addError(phase string, err error) {
+	if err == nil {
+		return
+	}
+	r.Errors = append(r.Errors, PhaseError{Phase: phase, Message: err.Error()})
+}
+
+func cycleStatus(result *RunResult) string {
+	if len(result.Errors) == 0 {
+		return "completed"
+	}
+	for _, step := range result.Steps {
+		if step.Status == "completed" || step.Status == "skipped" {
+			return "partial_failure"
+		}
+	}
+	return "failed"
+}
+
+func nextAction(result *RunResult) string {
+	if len(result.Errors) > 0 {
+		return "review failed agent-cycle phases before trusting the cycle result"
+	}
+	if len(result.PursuitDecisions) > 0 {
+		return "review pursuit decisions"
+	}
+	if result.PursuitBrief != nil {
+		if result.PursuitBrief.NeedsRobert > 0 {
+			return "review pursuit decisions"
+		}
+		if result.PursuitBrief.PlanningNeeded > 0 {
+			return "create first workflow plans for pursuits"
+		}
+		if result.PursuitBrief.ReviewDue > 0 {
+			return "review due pursuits"
+		}
+		if result.PursuitBrief.Stuck > 0 {
+			return "clear stuck pursuits"
+		}
+	}
+	if result.Dashboard != nil {
+		if len(result.Dashboard.ApprovalItems) > 0 {
+			return "review approval queue"
+		}
+		if len(result.Dashboard.BlockedItems) > 0 {
+			return "clear blocked workflows"
+		}
+		if len(result.Dashboard.DueOpenLoops) > 0 {
+			return "review due follow-ups"
+		}
+	}
+	if result.AmbientScan != nil && result.AmbientScan.OpportunitiesFound > 0 {
+		return "review ambient opportunities"
+	}
+	return "no immediate human action; continue scheduled monitoring"
+}
+
+func pursuitDecisionSummary(decisions []pursuit.PursuitDashboardDecision) string {
+	if len(decisions) == 0 {
+		return "no Robert-only pursuit decisions waiting"
+	}
+	first := decisions[0]
+	return fmt.Sprintf("%d Robert decision(s); first: %s", len(decisions), firstNonEmpty(first.Decision.Recommended, first.NextAction, first.Pursuit.Title))
+}
+
+func normalizeLimit(limit int) int {
+	if limit <= 0 {
+		return 5
+	}
+	if limit > 50 {
+		return 50
+	}
+	return limit
+}
+
+func sourceSummary(run *source.ScheduledSyncRun) string {
+	if run == nil {
+		return "no source sync result"
+	}
+	return fmt.Sprintf("checked %d, due %d, completed %d, failed %d, skipped %d", run.Checked, run.Due, run.Completed, run.Failed, run.Skipped)
+}
+
+func recoverySummary(run *workflow.ClaimRecoverySummary) string {
+	if run == nil {
+		return "no stale claim recovery result"
+	}
+	return fmt.Sprintf("checked %d, workflows blocked %d, open loops reopened %d, skipped %d", run.Checked, run.WorkflowsBlocked, run.OpenLoopsReopened, run.Skipped)
+}
+
+func openLoopSummary(run *workflow.OpenLoopRunSummary) string {
+	if run == nil {
+		return "no open-loop run result"
+	}
+	return fmt.Sprintf("checked %d, triggered %d, resolved %d, skipped %d", run.Checked, run.Triggered, run.Resolved, run.Skipped)
+}
+
+func workflowSummary(run *workflow.WorkflowRunSummary) string {
+	if run == nil {
+		return "no workflow run result"
+	}
+	return fmt.Sprintf("checked %d, completed %d, retried %d, blocked %d, skipped %d", run.Checked, run.Completed, run.Retried, run.Blocked, run.Skipped)
+}
+
+func ambientSummary(scan *models.AmbientScan) string {
+	if scan == nil {
+		return "no ambient scan result"
+	}
+	return fmt.Sprintf("examined %d, opportunities %d, created %d, updated %d, filtered %d", scan.ItemsExamined, scan.OpportunitiesFound, scan.Created, scan.Updated, scan.Filtered)
+}
+
+func dashboardSummary(dashboard *workflow.WorkflowDashboard) string {
+	if dashboard == nil {
+		return "no dashboard result"
+	}
+	parts := []string{
+		fmt.Sprintf("approvals %d", len(dashboard.ApprovalItems)),
+		fmt.Sprintf("blocked %d", len(dashboard.BlockedItems)),
+		fmt.Sprintf("ready %d", len(dashboard.ReadyItems)),
+		fmt.Sprintf("due follow-ups %d", len(dashboard.DueOpenLoops)),
+	}
+	return strings.Join(parts, ", ")
+}
+
+func pursuitBriefSummary(brief *pursuit.Brief) string {
+	if brief == nil {
+		return "no pursuit operating brief"
+	}
+	return fmt.Sprintf("mode %s, Robert %d, planning %d, review due %d, stuck %d, ready %d", brief.OperatingMode, brief.NeedsRobert, brief.PlanningNeeded, brief.ReviewDue, brief.Stuck, brief.ReadyToMove)
+}
+
+func pursuitOperatingState(brief *pursuit.Brief) *PursuitOperatingState {
+	if brief == nil {
+		return nil
+	}
+	state := &PursuitOperatingState{
+		OperatingMode:        brief.OperatingMode,
+		PrimaryAction:        brief.PrimaryAction,
+		NeedsRobert:          brief.NeedsRobert,
+		ReadyToMove:          brief.ReadyToMove,
+		Stuck:                brief.Stuck,
+		ReviewDue:            brief.ReviewDue,
+		PlanningNeeded:       brief.PlanningNeeded,
+		CompletionCandidates: brief.CompletionCandidates,
+		RecentlyChanged:      brief.RecentlyChanged,
+	}
+	state.AttentionTotal = state.NeedsRobert + state.Stuck + state.ReviewDue + state.PlanningNeeded + state.CompletionCandidates
+	state.PrimaryLane = pursuitPrimaryLane(state)
+	if strings.TrimSpace(state.PrimaryAction) == "" {
+		state.PrimaryAction = pursuitPrimaryAction(state)
+	}
+	return state
+}
+
+func pursuitPrimaryLane(state *PursuitOperatingState) string {
+	switch {
+	case state == nil:
+		return ""
+	case state.NeedsRobert > 0:
+		return "robert"
+	case state.PlanningNeeded > 0:
+		return "planning"
+	case state.ReviewDue > 0:
+		return "review"
+	case state.Stuck > 0:
+		return "stuck"
+	case state.CompletionCandidates > 0:
+		return "completion"
+	case state.ReadyToMove > 0:
+		return "ready"
+	default:
+		return "monitor"
+	}
+}
+
+func pursuitPrimaryAction(state *PursuitOperatingState) string {
+	switch pursuitPrimaryLane(state) {
+	case "robert":
+		return "Review Robert-only pursuit decisions."
+	case "planning":
+		return "Create first workflow plans for pursuits."
+	case "review":
+		return "Review due pursuits."
+	case "stuck":
+		return "Clear stuck pursuits."
+	case "completion":
+		return "Review completion candidates."
+	case "ready":
+		return "Move VA-ready and system-ready pursuit work."
+	default:
+		return "Continue scheduled pursuit monitoring."
+	}
+}
+
+func operationalLessonUseful(result *RunResult) bool {
+	if result == nil {
+		return false
+	}
+	if len(result.Errors) > 0 {
+		return true
+	}
+	if result.SourceSync != nil && result.SourceSync.Failed > 0 {
+		return true
+	}
+	if result.Recovery != nil && (result.Recovery.WorkflowsBlocked > 0 || result.Recovery.OpenLoopsReopened > 0) {
+		return true
+	}
+	if result.Workflows != nil && (result.Workflows.Blocked > 0 || result.Workflows.Retried > 0) {
+		return true
+	}
+	if result.AmbientScan != nil && result.AmbientScan.Blocked > 0 {
+		return true
+	}
+	if result.PursuitBrief != nil && (result.PursuitBrief.NeedsRobert > 0 || result.PursuitBrief.PlanningNeeded > 0 || result.PursuitBrief.ReviewDue > 0 || result.PursuitBrief.Stuck > 0) {
+		return true
+	}
+	return false
+}
+
+func operationalMemoryRelevant(memory models.ContextMemory) bool {
+	kind := strings.ToLower(strings.TrimSpace(memory.Kind))
+	if kind == "procedural" || kind == "lesson" {
+		return true
+	}
+	tags := strings.ToLower(memory.Tags)
+	return strings.Contains(tags, "agent-cycle") ||
+		strings.Contains(tags, "workflow-retry") ||
+		strings.Contains(tags, "blocked-workflow") ||
+		strings.Contains(tags, "claim-recovery") ||
+		strings.Contains(tags, "source-sync")
+}
+
+func appliedContextSummary(context []memory.RankedMemory) string {
+	if len(context) == 0 {
+		return "no prior operational lessons matched this cycle"
+	}
+	summaries := make([]string, 0, len(context))
+	for _, item := range context {
+		summary := strings.TrimSpace(firstNonEmpty(item.Memory.Summary, item.Memory.Content))
+		if summary == "" {
+			continue
+		}
+		summaries = append(summaries, compactText(summary, 90))
+	}
+	if len(summaries) == 0 {
+		return fmt.Sprintf("loaded %d prior operational lesson(s)", len(context))
+	}
+	return fmt.Sprintf("loaded %d prior operational lesson(s): %s", len(context), strings.Join(summaries, "; "))
+}
+
+func operationalLessonContent(result *RunResult) string {
+	parts := []string{
+		"HAI agent cycle observed an operational exception that should inform future orchestration.",
+		"Trigger: " + result.Trigger + ".",
+		"Status: " + result.Status + ".",
+	}
+	if len(result.AppliedContext) > 0 {
+		parts = append(parts, "Relevant prior operational lessons were loaded before execution: "+appliedContextSummary(result.AppliedContext)+".")
+	}
+	if len(result.Errors) > 0 {
+		errorParts := make([]string, 0, len(result.Errors))
+		for _, err := range result.Errors {
+			errorParts = append(errorParts, err.Phase+": "+err.Message)
+		}
+		parts = append(parts, "Failed phases: "+compactText(strings.Join(errorParts, "; "), 600)+".")
+	}
+	if result.SourceSync != nil && result.SourceSync.Failed > 0 {
+		parts = append(parts, fmt.Sprintf("Source sync failures: %d of %d checked.", result.SourceSync.Failed, result.SourceSync.Checked))
+	}
+	if result.Recovery != nil && (result.Recovery.WorkflowsBlocked > 0 || result.Recovery.OpenLoopsReopened > 0) {
+		parts = append(parts, fmt.Sprintf("Recovered stale claims: %d workflows blocked and %d open loops reopened.", result.Recovery.WorkflowsBlocked, result.Recovery.OpenLoopsReopened))
+	}
+	if result.Workflows != nil && (result.Workflows.Blocked > 0 || result.Workflows.Retried > 0) {
+		parts = append(parts, fmt.Sprintf("Workflow worker outcomes: %d blocked and %d retry scheduled.", result.Workflows.Blocked, result.Workflows.Retried))
+	}
+	if result.AmbientScan != nil && result.AmbientScan.Blocked > 0 {
+		parts = append(parts, fmt.Sprintf("Ambient execution blocked %d opportunities.", result.AmbientScan.Blocked))
+	}
+	if result.PursuitBrief != nil {
+		parts = append(parts, "Pursuit operating brief: "+pursuitBriefSummary(result.PursuitBrief)+".")
+	}
+	if result.NextAction != "" {
+		parts = append(parts, "Next operator action: "+result.NextAction+".")
+	}
+	parts = append(parts, "Future behavior: prioritize the failing phase, preserve approval gates, and avoid treating partial cycle progress as verified completion.")
+	return strings.Join(parts, " ")
+}
+
+func operationalLessonSummary(result *RunResult) string {
+	switch {
+	case result == nil:
+		return ""
+	case len(result.Errors) > 0:
+		return "Agent cycle partial failure: " + result.Errors[0].Phase
+	case result.Workflows != nil && result.Workflows.Blocked > 0:
+		return fmt.Sprintf("Agent cycle found %d blocked workflow(s)", result.Workflows.Blocked)
+	case result.Workflows != nil && result.Workflows.Retried > 0:
+		return fmt.Sprintf("Agent cycle scheduled %d workflow retry/retries", result.Workflows.Retried)
+	case result.Recovery != nil && result.Recovery.WorkflowsBlocked > 0:
+		return fmt.Sprintf("Agent cycle recovered %d stale workflow claim(s)", result.Recovery.WorkflowsBlocked)
+	case result.SourceSync != nil && result.SourceSync.Failed > 0:
+		return fmt.Sprintf("Agent cycle saw %d source sync failure(s)", result.SourceSync.Failed)
+	case result.PursuitBrief != nil && result.PursuitBrief.NeedsRobert > 0:
+		return fmt.Sprintf("Agent cycle found %d pursuit decision(s) for Robert", result.PursuitBrief.NeedsRobert)
+	case result.PursuitBrief != nil && result.PursuitBrief.PlanningNeeded > 0:
+		return fmt.Sprintf("Agent cycle found %d pursuit(s) needing first plan", result.PursuitBrief.PlanningNeeded)
+	case result.PursuitBrief != nil && result.PursuitBrief.Stuck > 0:
+		return fmt.Sprintf("Agent cycle found %d stuck pursuit(s)", result.PursuitBrief.Stuck)
+	default:
+		return "Agent cycle operational lesson"
+	}
+}
+
+func operationalLessonTags(result *RunResult) []string {
+	tags := []string{"agent-cycle", "procedural", result.Status}
+	if len(result.Errors) > 0 {
+		tags = append(tags, "phase-failure")
+	}
+	if result.SourceSync != nil && result.SourceSync.Failed > 0 {
+		tags = append(tags, "source-sync")
+	}
+	if result.Workflows != nil && result.Workflows.Blocked > 0 {
+		tags = append(tags, "blocked-workflow")
+	}
+	if result.Workflows != nil && result.Workflows.Retried > 0 {
+		tags = append(tags, "workflow-retry")
+	}
+	if result.Recovery != nil && (result.Recovery.WorkflowsBlocked > 0 || result.Recovery.OpenLoopsReopened > 0) {
+		tags = append(tags, "claim-recovery")
+	}
+	if result.PursuitBrief != nil {
+		if result.PursuitBrief.NeedsRobert > 0 {
+			tags = append(tags, "pursuit-decision")
+		}
+		if result.PursuitBrief.PlanningNeeded > 0 {
+			tags = append(tags, "pursuit-planning")
+		}
+		if result.PursuitBrief.ReviewDue > 0 {
+			tags = append(tags, "pursuit-review")
+		}
+		if result.PursuitBrief.Stuck > 0 {
+			tags = append(tags, "stuck-pursuit")
+		}
+	}
+	return tags
+}
+
+func operationalLessonConfidence(result *RunResult) float64 {
+	if result == nil {
+		return 0.55
+	}
+	if len(result.Errors) > 0 {
+		return 0.78
+	}
+	if result.Workflows != nil && result.Workflows.Blocked > 0 {
+		return 0.74
+	}
+	if result.Recovery != nil && (result.Recovery.WorkflowsBlocked > 0 || result.Recovery.OpenLoopsReopened > 0) {
+		return 0.72
+	}
+	return 0.68
+}
+
+func compactText(value string, maxLength int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if maxLength <= 0 || len(value) <= maxLength {
+		return value
+	}
+	if maxLength <= 3 {
+		return value[:maxLength]
+	}
+	return value[:maxLength-3] + "..."
+}
+
+func firstMemoryService(services ...memory.Service) memory.Service {
+	for _, service := range services {
+		if service != nil {
+			return service
+		}
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}

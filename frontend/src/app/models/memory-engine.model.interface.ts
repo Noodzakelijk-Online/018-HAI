@@ -1,4 +1,5 @@
-import { IRankedMemory } from './context-memory.model.interface';
+import { IContextMemory, IRankedMemory } from './context-memory.model.interface';
+import { IPursuitAutoLinkResult } from './pursuit.model.interface';
 import { IWorkflowItem, IWorkflowOpenLoop } from './workflow.model.interface';
 
 export interface IAIConversationArchive {
@@ -39,6 +40,7 @@ export interface IMemoryProjectSummary {
   actions: number;
   decisions: number;
   risks: number;
+  corrections?: number;
   open: number;
 }
 
@@ -51,6 +53,7 @@ export interface ICommandDashboard {
   openLoops: IWorkflowOpenLoop[];
   contradictions: IAIMemoryInsight[];
   recentDecisions: IAIMemoryInsight[];
+  sourceCorrections?: IContextMemory[];
   projects: IMemoryProjectSummary[];
   recentArchives: IAIConversationArchive[];
   warnings: string[];
@@ -64,4 +67,13 @@ export interface IMemoryEngineSearchResult {
     explanation: string;
   };
   facts: IAIMemoryInsight[];
+}
+
+export interface IAIConversationImportResult {
+  conversation: IAIConversationArchive;
+  insights: IAIMemoryInsight[];
+  workflowIds: string[];
+  pursuitLinks?: IPursuitAutoLinkResult[];
+  deduplicated: boolean;
+  warnings?: string[];
 }

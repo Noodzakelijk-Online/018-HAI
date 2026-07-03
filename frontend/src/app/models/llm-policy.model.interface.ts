@@ -9,6 +9,9 @@ export interface ILLMPolicy {
   routeComplexTasksToBestAvailableFreeModel: boolean;
   requireApprovalBeforePaidUsage: boolean;
   tierOrder: string[];
+  dailyBudgetUsedEur: number;
+  inputTokensUsed: number;
+  outputTokensUsed: number;
   providers: ILLMProvider[];
   inferenceInfrastructure: ILLMInferenceInfrastructure;
 }
@@ -33,6 +36,9 @@ export interface ILLMProvider {
   readinessReason?: string;
   quotaRemaining: number;
   dailyBudgetEur: number;
+  budgetUsedEur: number;
+  inputTokensUsed: number;
+  outputTokensUsed: number;
   models: ILLMModel[];
 }
 
@@ -58,8 +64,15 @@ export interface ILLMModel {
   maxDifficulty: number;
   maxReasoning: string;
   estimatedCostEur: number;
+  inputCostPerMillionTokensEur: number;
+  outputCostPerMillionTokensEur: number;
+  pricingUnit?: string;
+  pricingSource?: string;
   requiresApproval: boolean;
   enabled: boolean;
+  budgetUsedEur: number;
+  inputTokensUsed: number;
+  outputTokensUsed: number;
 }
 
 export interface ILLMRouteRequest {
@@ -85,6 +98,8 @@ export interface ILLMFallbackOption {
   modelName: string;
   tier: string;
   estimatedCostEur: number;
+  estimatedInputTokens: number;
+  estimatedOutputTokens: number;
   requiresApproval: boolean;
 }
 
@@ -101,6 +116,9 @@ export interface ILLMRouteDecision {
   tier: string;
   reason: string;
   estimatedCostEur: number;
+  estimatedInputTokens: number;
+  estimatedOutputTokens: number;
+  pricingSource?: string;
   requiresApproval: boolean;
   classification: ILLMTaskClassification;
   fallbackPath: ILLMFallbackOption[];

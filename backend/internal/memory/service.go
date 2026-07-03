@@ -181,13 +181,21 @@ func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 8
 	}
-	memories, err := s.repo.FindAll(strings.TrimSpace(request.ProjectKey), false)
+	projectKey := strings.TrimSpace(request.ProjectKey)
+	memories, err := s.repo.FindAll("", false)
 	if err != nil {
 		return nil, err
 	}
-
-	ranked := make([]RankedMemory, 0, len(memories))
+	candidates := make([]models.ContextMemory, 0, len(memories))
 	for _, memory := range memories {
+		if projectKey != "" && memory.ProjectKey != "" && memory.ProjectKey != projectKey {
+			continue
+		}
+		candidates = append(candidates, memory)
+	}
+
+	ranked := make([]RankedMemory, 0, len(candidates))
+	for _, memory := range candidates {
 		score, explanation := scoreMemory(memory, request)
 		if score <= 0.12 {
 			continue
@@ -217,9 +225,9 @@ func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
 
 	return &RetrieveResult{
 		Query:       request.Query,
-		ProjectKey:  request.ProjectKey,
+		ProjectKey:  projectKey,
 		UsedContext: ranked,
-		Explanation: fmt.Sprintf("Retrieved %d relevant memories from %d stored candidates; low-scoring unrelated memories were not loaded.", len(ranked), len(memories)),
+		Explanation: fmt.Sprintf("Retrieved %d relevant memories from %d stored candidates; project-scoped retrieval also considered global memories and did not load unrelated project memories.", len(ranked), len(candidates)),
 	}, nil
 }
 

@@ -31,6 +31,7 @@ type Repository interface {
 	FindIntakeRecords(workflowID uuid.UUID) ([]models.WorkflowIntakeRecord, error)
 	CreateProjectMatch(match *models.WorkflowProjectMatch) (*models.WorkflowProjectMatch, error)
 	FindProjectMatches(workflowID uuid.UUID) ([]models.WorkflowProjectMatch, error)
+	FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPursuitContext, error)
 	CreateEvidenceClaim(claim *models.WorkflowEvidenceClaim) (*models.WorkflowEvidenceClaim, error)
 	FindEvidenceClaims(workflowID uuid.UUID) ([]models.WorkflowEvidenceClaim, error)
 	CreateOpenLoop(loop *models.WorkflowOpenLoop) (*models.WorkflowOpenLoop, error)
@@ -333,6 +334,79 @@ func (r *GormRepository) FindProjectMatches(workflowID uuid.UUID) ([]models.Work
 	var matches []models.WorkflowProjectMatch
 	err := r.DB.Where("workflow_id = ?", workflowID).Order("confidence desc, created_at desc").Find(&matches).Error
 	return matches, err
+}
+
+func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPursuitContext, error) {
+	var rows []struct {
+		ID                    uuid.UUID
+		Title                 string
+		Status                string
+		RiskLevel             string
+		PriorityScore         int
+		Confidence            float64
+		AutonomyLevel         string
+		NeedCategory          string
+		DesiredOutcome        string
+		CurrentStateSummary   string
+		NextRecommendedAction string
+		CompletionDefinition  string
+		CompletionState       string
+		LinkID                uuid.UUID
+		Relationship          string
+		SourceURI             string
+		SourceLabel           string
+		LinkConfidence        float64
+	}
+	err := r.DB.Table("pursuit_links AS links").
+		Select(`pursuits.id,
+			pursuits.title,
+			pursuits.status,
+			pursuits.risk_level,
+			pursuits.priority_score,
+			pursuits.confidence,
+			pursuits.autonomy_level,
+			pursuits.need_category,
+			pursuits.desired_outcome,
+			pursuits.current_state_summary,
+			pursuits.next_recommended_action,
+			pursuits.completion_definition,
+			pursuits.completion_state,
+			links.id AS link_id,
+			links.relationship,
+			links.source_uri,
+			links.source_label,
+			links.confidence AS link_confidence`).
+		Joins("JOIN pursuits ON pursuits.id = links.pursuit_id").
+		Where("links.link_type = ? AND links.link_id = ? AND pursuits.archived = ?", "workflow", workflowID.String(), false).
+		Order("pursuits.priority_score DESC, links.created_at DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make([]WorkflowPursuitContext, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, WorkflowPursuitContext{
+			ID:                    row.ID,
+			Title:                 row.Title,
+			Status:                row.Status,
+			RiskLevel:             row.RiskLevel,
+			PriorityScore:         row.PriorityScore,
+			Confidence:            row.Confidence,
+			AutonomyLevel:         row.AutonomyLevel,
+			NeedCategory:          row.NeedCategory,
+			DesiredOutcome:        row.DesiredOutcome,
+			CurrentStateSummary:   row.CurrentStateSummary,
+			NextRecommendedAction: row.NextRecommendedAction,
+			CompletionDefinition:  row.CompletionDefinition,
+			CompletionState:       row.CompletionState,
+			LinkID:                row.LinkID,
+			Relationship:          row.Relationship,
+			SourceURI:             row.SourceURI,
+			SourceLabel:           row.SourceLabel,
+			LinkConfidence:        row.LinkConfidence,
+		})
+	}
+	return result, nil
 }
 
 func (r *GormRepository) CreateEvidenceClaim(claim *models.WorkflowEvidenceClaim) (*models.WorkflowEvidenceClaim, error) {

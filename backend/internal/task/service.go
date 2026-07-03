@@ -154,18 +154,20 @@ type ToolExecutionRequest struct {
 }
 
 type ToolExecutionResult struct {
-	AutomationID     string    `json:"automationId"`
-	RuntimeType      string    `json:"runtimeType,omitempty"`
-	LaunchType       string    `json:"launchType"`
-	Target           string    `json:"target,omitempty"`
-	Status           string    `json:"status"`
-	Message          string    `json:"message,omitempty"`
-	Output           string    `json:"output,omitempty"`
-	ExitCode         int       `json:"exitCode"`
-	DurationMs       int64     `json:"durationMs"`
-	RequiresApproval bool      `json:"requiresApproval"`
-	AuditEvents      []string  `json:"auditEvents"`
-	ExecutedAt       time.Time `json:"executedAt"`
+	AutomationID      string                              `json:"automationId"`
+	LaunchEventID     string                              `json:"launchEventId,omitempty"`
+	RuntimeType       string                              `json:"runtimeType,omitempty"`
+	LaunchType        string                              `json:"launchType"`
+	Target            string                              `json:"target,omitempty"`
+	Status            string                              `json:"status"`
+	Message           string                              `json:"message,omitempty"`
+	Output            string                              `json:"output,omitempty"`
+	RuntimeRouteTrace *models.AutomationRuntimeRouteTrace `json:"runtimeRouteTrace,omitempty"`
+	ExitCode          int                                 `json:"exitCode"`
+	DurationMs        int64                               `json:"durationMs"`
+	RequiresApproval  bool                                `json:"requiresApproval"`
+	AuditEvents       []string                            `json:"auditEvents"`
+	ExecutedAt        time.Time                           `json:"executedAt"`
 }
 
 type ToolExecutor interface {
@@ -791,6 +793,7 @@ func completedToolExecution(previous *ExecutionResult) *ToolExecutionResult {
 	}
 	copied := *previous.ToolExecution
 	copied.AuditEvents = append([]string{}, previous.ToolExecution.AuditEvents...)
+	copied.RuntimeRouteTrace = copyAutomationRuntimeRouteTrace(previous.ToolExecution.RuntimeRouteTrace)
 	return &copied
 }
 
@@ -807,10 +810,16 @@ func blockExecution(result *ExecutionResult, reason string, plan *CompletionPlan
 }
 
 func toolExecutionEvidence(result *ToolExecutionResult) verification.EvidenceInput {
+	sourceID := result.AutomationID
+	sourceURI := "automation://" + result.AutomationID
+	if strings.TrimSpace(result.LaunchEventID) != "" {
+		sourceID = result.LaunchEventID
+		sourceURI = "automation-launch://" + result.LaunchEventID
+	}
 	return verification.EvidenceInput{
 		SourceType:  "controlled_runtime",
-		SourceID:    result.AutomationID,
-		SourceURI:   "automation://" + result.AutomationID,
+		SourceID:    sourceID,
+		SourceURI:   sourceURI,
 		SourceLabel: firstNonEmpty(result.RuntimeType, result.LaunchType, "controlled automation runtime"),
 		Snippet:     toolExecutionSnippet(result),
 		Authority:   "deterministic_runtime",
@@ -822,7 +831,88 @@ func toolExecutionSnippet(result *ToolExecutionResult) string {
 	if result == nil {
 		return ""
 	}
-	return compact(firstNonEmpty(result.Output, result.Message, "controlled runtime completed successfully"))
+	snippet := compact(firstNonEmpty(result.Output, result.Message, "controlled runtime completed successfully"))
+	if route := runtimeRouteTraceSnippet(result.RuntimeRouteTrace); route != "" {
+		return compact(snippet + " | " + route)
+	}
+	return snippet
+}
+
+func runtimeRouteTraceSnippet(trace *models.AutomationRuntimeRouteTrace) string {
+	if trace == nil {
+		return ""
+	}
+	parts := []string{}
+	if value := strings.TrimSpace(trace.RuntimeID); value != "" {
+		parts = append(parts, "runtime="+value)
+	}
+	if value := strings.TrimSpace(trace.Intent); value != "" {
+		parts = append(parts, "intent="+value)
+	}
+	if value := strings.TrimSpace(trace.ExecutionMode); value != "" {
+		parts = append(parts, "mode="+value)
+	}
+	if value := strings.TrimSpace(trace.RiskLevel); value != "" {
+		parts = append(parts, "risk="+value)
+	}
+	if value := compactRuntimeRouteTraceList("skills", trace.RecommendedSkills, 3); value != "" {
+		parts = append(parts, value)
+	}
+	if value := compactRuntimeRouteTraceList("providers", trace.VisibleProviders, 2); value != "" {
+		parts = append(parts, value)
+	}
+	if value := compactRuntimeRouteTraceList("tools", trace.VisibleTools, 2); value != "" {
+		parts = append(parts, value)
+	}
+	if value := compactRuntimeRouteTraceList("maps", trace.RelevantMaps, 2); value != "" {
+		parts = append(parts, value)
+	}
+	if value := compactRuntimeRouteTraceList("blocked", trace.BlockedSurfaces, 3); value != "" {
+		parts = append(parts, value)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "route: " + strings.Join(parts, "; ")
+}
+
+func compactRuntimeRouteTraceList(label string, values []string, limit int) string {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	if len(cleaned) == 0 {
+		return ""
+	}
+	if limit <= 0 || limit > len(cleaned) {
+		limit = len(cleaned)
+	}
+	summary := strings.Join(cleaned[:limit], ", ")
+	if len(cleaned) > limit {
+		summary += fmt.Sprintf(" +%d", len(cleaned)-limit)
+	}
+	return label + "=" + summary
+}
+
+func copyAutomationRuntimeRouteTrace(trace *models.AutomationRuntimeRouteTrace) *models.AutomationRuntimeRouteTrace {
+	if trace == nil {
+		return nil
+	}
+	return &models.AutomationRuntimeRouteTrace{
+		RuntimeID:           trace.RuntimeID,
+		Intent:              trace.Intent,
+		ExecutionMode:       trace.ExecutionMode,
+		RiskLevel:           trace.RiskLevel,
+		RecommendedSkills:   append([]string{}, trace.RecommendedSkills...),
+		VisibleProviders:    append([]string{}, trace.VisibleProviders...),
+		VisibleTools:        append([]string{}, trace.VisibleTools...),
+		RelevantMaps:        append([]string{}, trace.RelevantMaps...),
+		BlockedSurfaces:     append([]string{}, trace.BlockedSurfaces...),
+		RequiredControls:    append([]string{}, trace.RequiredControls...),
+		ValidationChecklist: append([]string{}, trace.ValidationChecklist...),
+	}
 }
 
 func executionMode(plan *CompletionPlan, request IntakeRequest) string {

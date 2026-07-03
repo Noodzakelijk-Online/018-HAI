@@ -2,6 +2,12 @@ import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { forkJoin } from 'rxjs';
+import {
+  IPursuitDetail,
+  IPursuitMatchCandidate,
+} from '../../models/pursuit.model.interface';
+import { PursuitService } from '../../services/pursuit.service';
 import {
   IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
@@ -28,9 +34,24 @@ export class WorkflowEngineComponent implements OnInit {
   runSummary?: IWorkflowRunSummary;
   openLoopRunSummary?: IWorkflowOpenLoopRunSummary;
   recoverySummary?: IWorkflowClaimRecoverySummary;
+  pursuitMatches: IPursuitMatchCandidate[] = [];
+  selectedPursuitMatch?: IPursuitMatchCandidate;
   includeArchived = false;
   loading = false;
   saving = false;
+  matchingPursuits = false;
+  runningAction?: 'refresh' | 'worker' | 'followups' | 'recovery';
+  lastOperation?: {
+    name: string;
+    status: 'completed' | 'failed';
+    summary: string;
+    details?: string;
+    at: Date;
+  };
+  workflowSearch = '';
+  stateFilter = 'all';
+  riskFilter = 'all';
+  activeQueue: 'all' | 'approval' | 'ready' | 'blocked' | 'review' = 'all';
 
   intakeForm: FormGroup = this.fb.group({
     input: [
@@ -67,6 +88,7 @@ export class WorkflowEngineComponent implements OnInit {
   constructor(
     private fb: FormBuilder,
     @Inject(WORKFLOW_SERVICE_TOKEN) private workflowService: IWorkflowService,
+    private pursuitService: PursuitService,
     private notification: NzNotificationService,
     private route: ActivatedRoute,
     private router: Router
@@ -83,30 +105,60 @@ export class WorkflowEngineComponent implements OnInit {
     }
   }
 
-  refresh(): void {
+  refresh(showNotification = false, preserveLastOperation = false): void {
+    if (this.runningAction && this.runningAction !== 'refresh') {
+      return;
+    }
+    const blockingRefresh = !preserveLastOperation;
     this.loading = true;
-    this.workflowService.overview().subscribe({
-      next: (overview) => (this.overview = overview),
-      error: () => this.notification.error('Error', 'Failed to load workflow overview.'),
-    });
-    this.workflowService.dashboard().subscribe({
-      next: (dashboard) => (this.dashboard = dashboard),
-      error: () => this.notification.error('Error', 'Failed to load workflow dashboard.'),
-    });
-    this.workflowService.items(this.includeArchived).subscribe({
-      next: (items) => {
+    if (blockingRefresh) {
+      this.runningAction = 'refresh';
+    }
+    forkJoin({
+      overview: this.workflowService.overview(),
+      dashboard: this.workflowService.dashboard(),
+      items: this.workflowService.items(this.includeArchived),
+      approvals: this.workflowService.approvals(),
+    }).subscribe({
+      next: ({ overview, dashboard, items, approvals }) => {
+        this.overview = overview;
+        this.dashboard = dashboard;
         this.items = items;
+        this.approvalItems = approvals;
         this.loading = false;
+        if (blockingRefresh) {
+          this.runningAction = undefined;
+        }
+        if (!preserveLastOperation) {
+          this.lastOperation = {
+            name: 'Refresh',
+            status: 'completed',
+            summary: `${items.length} workflows, ${approvals.length} approvals, ${dashboard.dueOpenLoops.length} due follow-ups.`,
+            at: new Date(),
+          };
+        }
+        if (showNotification) {
+          this.notification.success(
+            'Workflow data refreshed',
+            `${items.length} workflows, ${approvals.length} approvals, ${dashboard.dueOpenLoops.length} due follow-ups.`
+          );
+        }
       },
       error: () => {
-        this.items = [];
         this.loading = false;
-        this.notification.error('Error', 'Failed to load workflow inbox.');
-      },
-    });
-    this.workflowService.approvals().subscribe({
-      next: (items) => (this.approvalItems = items),
-      error: () => this.notification.error('Error', 'Failed to load approval queue.'),
+        if (blockingRefresh) {
+          this.runningAction = undefined;
+        }
+        if (!preserveLastOperation) {
+          this.lastOperation = {
+            name: 'Refresh',
+            status: 'failed',
+            summary: 'One or more workflow panels failed to load.',
+            at: new Date(),
+          };
+        }
+        this.notification.error('Error', 'Failed to load the workflow operational chain.');
+      }
     });
   }
 
@@ -115,18 +167,75 @@ export class WorkflowEngineComponent implements OnInit {
       return;
     }
     this.saving = true;
+    if (this.selectedPursuitMatch) {
+      this.pursuitService.intake(this.selectedPursuitMatch.pursuit.id, this.intakeForm.value).subscribe({
+        next: (detail) => {
+          this.saving = false;
+          this.notification.success('Workflow linked to pursuit', 'Input became operational work under the selected pursuit.');
+          this.selectNewestPursuitWorkflow(detail);
+          this.refresh(false, true);
+        },
+        error: () => {
+          this.saving = false;
+          this.notification.error('Error', 'Failed to create workflow inside the selected pursuit.');
+        },
+      });
+      return;
+    }
     this.workflowService.intake(this.intakeForm.value).subscribe({
       next: (record) => {
         this.selected = record;
         this.saving = false;
         this.notification.success('Workflow created', 'Input classified, checklist generated, and audit event recorded.');
-        this.refresh();
+        this.refresh(false, true);
       },
       error: () => {
         this.saving = false;
         this.notification.error('Error', 'Failed to intake workflow input.');
       },
     });
+  }
+
+  matchPursuits(): void {
+    const value = this.intakeForm.value;
+    if (!String(value.input || '').trim()) {
+      this.notification.error('Input required', 'Describe the signal before matching it to a pursuit.');
+      return;
+    }
+    this.matchingPursuits = true;
+    this.pursuitService.match({
+      input: value.input,
+      projectKey: value.projectKey,
+      sourceType: value.sourceType,
+      sourceId: value.sourceId,
+      sourceUri: value.sourceUri,
+      limit: 5,
+    }).subscribe({
+      next: (matches) => {
+        this.pursuitMatches = matches;
+        this.matchingPursuits = false;
+        if (!matches.length) {
+          this.selectedPursuitMatch = undefined;
+          this.notification.info('No pursuit match', 'This signal can still create a standalone workflow.');
+          return;
+        }
+        if (!this.selectedPursuitMatch && matches[0].score >= 0.7) {
+          this.selectedPursuitMatch = matches[0];
+        }
+      },
+      error: () => {
+        this.matchingPursuits = false;
+        this.notification.error('Error', 'Failed to retrieve pursuit matches.');
+      },
+    });
+  }
+
+  selectPursuitMatch(match: IPursuitMatchCandidate): void {
+    this.selectedPursuitMatch = match;
+  }
+
+  clearPursuitMatch(): void {
+    this.selectedPursuitMatch = undefined;
   }
 
   open(item: IWorkflowItem): void {
@@ -144,7 +253,7 @@ export class WorkflowEngineComponent implements OnInit {
       next: (record) => {
         this.selected = record;
         this.notification.success('State updated', 'Workflow transition was validated and audited.');
-        this.refresh();
+        this.refresh(false, true);
       },
       error: () => this.notification.error('Blocked', 'Workflow transition was not allowed.'),
     });
@@ -159,7 +268,7 @@ export class WorkflowEngineComponent implements OnInit {
       next: (record) => {
         this.selected = record;
         this.notification.success('Approval updated', approved ? 'Workflow approved for execution.' : 'Workflow rejected and blocked.');
-        this.refresh();
+        this.refresh(false, true);
       },
       error: () => this.notification.error('Error', 'Failed to update workflow approval.'),
     });
@@ -183,7 +292,7 @@ export class WorkflowEngineComponent implements OnInit {
         this.selected = record;
         this.saving = false;
         this.notification.success('Interruption resolved', `Recovery decision recorded: ${request.decision}.`);
-        this.refresh();
+        this.refresh(false, true);
       },
       error: () => {
         this.saving = false;
@@ -193,38 +302,101 @@ export class WorkflowEngineComponent implements OnInit {
   }
 
   runDue(): void {
+    if (this.runningAction) {
+      return;
+    }
+    this.runningAction = 'worker';
     this.workflowService.runDue({ limit: 10 }).subscribe({
       next: (summary) => {
         this.runSummary = summary;
+        this.runningAction = undefined;
+        this.lastOperation = {
+          name: 'Run worker',
+          status: 'completed',
+          summary: `${summary.checked} checked, ${summary.completed} completed, ${summary.retried} retried, ${summary.blocked} blocked, ${summary.skipped} skipped.`,
+          details: this.workflowRunDetails(summary),
+          at: new Date(),
+        };
         this.notification.success('Worker run complete', `${summary.completed} completed, ${summary.retried} retried, ${summary.blocked} blocked.`);
-        this.refresh();
+        this.refresh(false, true);
       },
-      error: () => this.notification.error('Error', 'Workflow worker run failed.'),
+      error: () => {
+        this.runningAction = undefined;
+        this.lastOperation = {
+          name: 'Run worker',
+          status: 'failed',
+          summary: 'Workflow worker run failed before completion.',
+          at: new Date(),
+        };
+        this.notification.error('Error', 'Workflow worker run failed.');
+      },
     });
   }
 
   recoverStaleClaims(): void {
+    if (this.runningAction) {
+      return;
+    }
+    this.runningAction = 'recovery';
     this.workflowService.recoverStaleClaims({ limit: 50 }).subscribe({
       next: (summary) => {
         this.recoverySummary = summary;
+        this.runningAction = undefined;
+        this.lastOperation = {
+          name: 'Recover stale',
+          status: 'completed',
+          summary: `${summary.checked} checked, ${summary.workflowsBlocked} workflows blocked for review, ${summary.openLoopsReopened} follow-ups reopened, ${summary.skipped} skipped.`,
+          details: this.claimRecoveryDetails(summary),
+          at: new Date(),
+        };
         this.notification.success(
           'Claim recovery complete',
           `${summary.workflowsBlocked} workflows blocked for review, ${summary.openLoopsReopened} follow-ups reopened.`
         );
-        this.refresh();
+        this.refresh(false, true);
       },
-      error: () => this.notification.error('Error', 'Stale claim recovery failed.'),
+      error: () => {
+        this.runningAction = undefined;
+        this.lastOperation = {
+          name: 'Recover stale',
+          status: 'failed',
+          summary: 'Stale claim recovery failed before completion.',
+          at: new Date(),
+        };
+        this.notification.error('Error', 'Stale claim recovery failed.');
+      },
     });
   }
 
   runDueOpenLoops(): void {
+    if (this.runningAction) {
+      return;
+    }
+    this.runningAction = 'followups';
     this.workflowService.runDueOpenLoops({ limit: 10 }).subscribe({
       next: (summary) => {
         this.openLoopRunSummary = summary;
+        this.runningAction = undefined;
+        this.lastOperation = {
+          name: 'Run follow-ups',
+          status: 'completed',
+          summary: `${summary.checked} checked, ${summary.triggered} triggered, ${summary.resolved} resolved, ${summary.skipped} skipped.`,
+          details: this.openLoopRunDetails(summary),
+          at: new Date(),
+        };
         this.notification.success('Open loops processed', `${summary.triggered} triggered, ${summary.resolved} resolved.`);
-        this.refresh();
+        this.refresh(false, true);
       },
-      error: () => this.notification.error('Error', 'Open-loop worker run failed.'),
+      error: () => {
+        this.runningAction = undefined;
+        this.lastOperation = {
+          name: 'Run follow-ups',
+          status: 'failed',
+          summary: 'Open-loop worker run failed before completion.',
+          at: new Date(),
+        };
+        this.notification.error('Error', 'Open-loop worker run failed.');
+      },
     });
   }
 
@@ -272,7 +444,147 @@ export class WorkflowEngineComponent implements OnInit {
     return (options || '').split('\n').filter((option) => !!option.trim());
   }
 
+  filteredItems(): IWorkflowItem[] {
+    const query = this.workflowSearch.trim().toLowerCase();
+    return this.items.filter((item) => {
+      const queueMatch =
+        this.activeQueue === 'all' ||
+        (this.activeQueue === 'approval' && item.requiresApproval && item.approvalStatus !== 'approved') ||
+        (this.activeQueue === 'ready' && item.currentState === 'ready') ||
+        (this.activeQueue === 'blocked' && (item.currentState === 'blocked' || !!item.blockedReason)) ||
+        (this.activeQueue === 'review' && item.recoveryStatus === 'needs_review');
+      const stateMatch = this.stateFilter === 'all' || item.currentState === this.stateFilter;
+      const riskMatch = this.riskFilter === 'all' || item.riskLevel === this.riskFilter;
+      const textMatch =
+        !query ||
+        `${item.title} ${item.description || ''} ${item.projectKey || ''} ${item.nextAction || ''}`
+          .toLowerCase()
+          .includes(query);
+      return queueMatch && stateMatch && riskMatch && textMatch;
+    });
+  }
+
+  count(key: string): number {
+    return this.dashboard?.counts?.[key] || 0;
+  }
+
+  queueCount(queue: 'all' | 'approval' | 'ready' | 'blocked' | 'review'): number {
+    if (queue === 'all') return this.items.length;
+    if (queue === 'approval') return this.approvalItems.length;
+    if (queue === 'ready') return this.dashboard?.readyItems?.length || this.count('ready');
+    if (queue === 'blocked') return this.dashboard?.blockedItems?.length || this.count('blocked');
+    return this.count('interruptedReview');
+  }
+
+  stateOptions(): string[] {
+    const states = this.overview?.states || [];
+    const itemStates = this.items.map((item) => item.currentState).filter(Boolean);
+    return Array.from(new Set([...states, ...itemStates])).sort();
+  }
+
+  riskOptions(): string[] {
+    return Array.from(new Set(this.items.map((item) => item.riskLevel).filter(Boolean))).sort();
+  }
+
+  readable(value?: string): string {
+    return (value || 'unknown').replace(/_/g, ' ');
+  }
+
+  statusClass(value?: string): string {
+    const normalized = (value || '').toLowerCase();
+    if (['implemented', 'completed', 'ready', 'approved', 'verified', 'source_supported'].includes(normalized)) {
+      return 'status--good';
+    }
+    if (['partial', 'warning', 'waiting_external_input', 'needs_approval', 'needs_review'].includes(normalized)) {
+      return 'status--watch';
+    }
+    if (['blocked', 'failed', 'rejected', 'unsupported', 'conflicting'].includes(normalized)) {
+      return 'status--risk';
+    }
+    return 'status--neutral';
+  }
+
+  statusLabel(value?: string): string {
+    const normalized = (value || '').toLowerCase();
+    if (normalized === 'partial') {
+      return 'in progress';
+    }
+    if (normalized === 'not_implemented') {
+      return 'planned';
+    }
+    return this.readable(value);
+  }
+
+  clearFilters(): void {
+    this.activeQueue = 'all';
+    this.stateFilter = 'all';
+    this.riskFilter = 'all';
+    this.workflowSearch = '';
+  }
+
+  focusIntake(): void {
+    const element = document.getElementById('workflow-intake-input');
+    if (element) {
+      element.focus();
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  priorityClass(score?: number): string {
+    if ((score || 0) >= 80) return 'priority--urgent';
+    if ((score || 0) >= 50) return 'priority--medium';
+    return 'priority--normal';
+  }
+
+  capabilityProgress(status?: string): number {
+    if (status === 'implemented') return 100;
+    if (status === 'partial') return 58;
+    return 24;
+  }
+
+  isActionRunning(action: 'refresh' | 'worker' | 'followups' | 'recovery'): boolean {
+    return this.runningAction === action;
+  }
+
+  anyActionRunning(): boolean {
+    return !!this.runningAction;
+  }
+
+  private workflowRunDetails(summary: IWorkflowRunSummary): string {
+    return summary.results
+      .slice(0, 5)
+      .map((result) => `${result.status}: ${result.message || result.workflowId}`)
+      .join(' | ');
+  }
+
+  private openLoopRunDetails(summary: IWorkflowOpenLoopRunSummary): string {
+    return summary.results
+      .slice(0, 5)
+      .map((result) => `${result.status}: ${result.message || result.openLoopId}`)
+      .join(' | ');
+  }
+
+  private claimRecoveryDetails(summary: IWorkflowClaimRecoverySummary): string {
+    return summary.results
+      .slice(0, 5)
+      .map((result) => `${result.type}/${result.status}: ${result.message}`)
+      .join(' | ');
+  }
+
   goHome(): void {
     this.router.navigate(['/home']);
+  }
+
+  openPursuit(id: string): void {
+    this.router.navigate(['/pursuits'], { queryParams: { selected: id } });
+  }
+
+  private selectNewestPursuitWorkflow(detail: IPursuitDetail): void {
+    const newest = [...(detail.workflows || [])].sort((left, right) => {
+      return new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime();
+    })[0];
+    if (newest) {
+      this.open(newest);
+    }
   }
 }

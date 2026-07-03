@@ -5,6 +5,7 @@ import {
   IAutomationLaunchResult,
   IAutomationModel,
 } from "../models/automation.model.interface";
+import { IAgentRuntimeStopResult } from "../models/agent-runtime.model.interface";
 import { Observable } from "rxjs";
 
 export interface IAutomationsService {
@@ -16,6 +17,7 @@ export interface IAutomationsService {
   swapAutomations(automation_id1: string, automation_id2: string): Observable<void>;
   getHealthSummary(): Observable<IAutomationHealthSummary>;
   launchAutomation(id: string): Observable<IAutomationLaunchResult>;
+  stopRuntimeTask(id: string): Observable<IAgentRuntimeStopResult>;
   runHealthCheck(id: string): Observable<IAutomationHealthResult>;
   getDiagnostics(id: string): Observable<IAutomationDiagnostics>;
 }

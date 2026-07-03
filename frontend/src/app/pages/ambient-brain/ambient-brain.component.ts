@@ -24,6 +24,9 @@ export class AmbientBrainComponent implements OnInit {
   savingNeed = '';
   resolving = '';
   statusFilter = 'proposed';
+  selectedNeed?: IAmbientNeed;
+  selectedOpportunity?: IAmbientOpportunity;
+  detailsMode: 'none' | 'autonomy' | 'policy' = 'none';
 
   constructor(
     private ambient: AmbientService,
@@ -74,6 +77,75 @@ export class AmbientBrainComponent implements OnInit {
 
   percent(value: number): string {
     return `${(value * 100).toFixed(1)}%`;
+  }
+
+  visibleNeeds(): IAmbientNeed[] {
+    return (this.overview?.needs || []).filter((need) => need.enabled);
+  }
+
+  disabledNeedCount(): number {
+    return (this.overview?.needs || []).filter((need) => !need.enabled).length;
+  }
+
+  proposedCount(): number {
+    return (this.overview?.opportunities || []).filter((item) => item.status === 'proposed').length;
+  }
+
+  acceptedCount(): number {
+    return (this.overview?.opportunities || []).filter((item) => item.status === 'accepted').length;
+  }
+
+  needGap(need: IAmbientNeed): number {
+    return Math.max(0, need.targetLevel - need.currentLevel);
+  }
+
+  needTone(need: IAmbientNeed): string {
+    const gap = this.needGap(need);
+    if (gap >= 30) return 'critical';
+    if (gap >= 15) return 'attention';
+    return 'stable';
+  }
+
+  topOpportunity(): IAmbientOpportunity | undefined {
+    return this.filteredOpportunities()[0];
+  }
+
+  openTopOpportunity(): void {
+    const opportunity = this.topOpportunity();
+    if (opportunity) {
+      this.openOpportunityDetails(opportunity);
+    }
+  }
+
+  openNeed(need: IAmbientNeed): void {
+    this.selectedNeed = need;
+  }
+
+  closeNeed(): void {
+    this.selectedNeed = undefined;
+  }
+
+  openOpportunityDetails(item: IAmbientOpportunity): void {
+    this.selectedOpportunity = item;
+  }
+
+  closeOpportunityDetails(): void {
+    this.selectedOpportunity = undefined;
+  }
+
+  acceptSelectedOpportunity(): void {
+    if (!this.selectedOpportunity) return;
+    const opportunity = this.selectedOpportunity;
+    this.closeOpportunityDetails();
+    this.accept(opportunity);
+  }
+
+  openDetails(mode: 'autonomy' | 'policy'): void {
+    this.detailsMode = mode;
+  }
+
+  closeDetails(): void {
+    this.detailsMode = 'none';
   }
 
   refresh(): void {

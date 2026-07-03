@@ -1,181 +1,604 @@
-<section>
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
-        <h1 class="header-content__title">LLM Routing Policy</h1>
-        <div class="header-content__actions">
-          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
-            <i nz-icon nzType="reload" nzTheme="outline"></i>
-            Refresh
+<section class="llm-policy-page" [class.llm-policy-page--dark]="themeMode === 'dark'">
+  <header class="header-container">
+    <div class="header-content">
+      <button
+        type="button"
+        class="header-title-button"
+        (click)="scrollToSection('route-task')"
+        title="Open the main model-routing action area"
+      >
+        <p class="eyebrow">Developer / model settings</p>
+        <h1>Model routing</h1>
+        <span class="header-content__subtitle">
+          Local-first selection, seven cost tiers, visible budget, and audited fallback decisions.
+        </span>
+      </button>
+
+      <div class="header-content__actions">
+        <button
+          type="button"
+          nz-button
+          nzType="default"
+          (click)="refresh()"
+          [nzLoading]="loading"
+          title="Reload policy, providers, token usage, budget, probes, and routing logs"
+        >
+          <i nz-icon nzType="reload" nzTheme="outline"></i>
+          Refresh
+        </button>
+        <button
+          type="button"
+          nz-button
+          nzType="default"
+          (click)="probeProviders()"
+          [nzLoading]="probing"
+          title="Run live checks against configured provider endpoints"
+        >
+          <i nz-icon nzType="api" nzTheme="outline"></i>
+          Probe
+        </button>
+        <button type="button" nz-button nzType="default" (click)="goHome()" title="Open the automation registry">
+          <i nz-icon nzType="appstore" nzTheme="outline"></i>
+          Automations
+        </button>
+        <button type="button" nz-button nzType="default" (click)="toggleTheme()" [title]="themeLabel()">
+          <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
+          {{ themeLabel() }}
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content-container llm-content" *ngIf="policy as p">
+    <section class="status-strip llm-status-strip" aria-label="Routing policy state">
+      <button
+        type="button"
+        class="status-tile status-tile--wide"
+        [title]="policyStateLabel(p) + ': ' + (p.requireApprovalBeforePaidUsage ? 'manual approval required before paid routes' : 'paid routing can execute under policy')"
+        (click)="scrollToSection('policy-guardrails')"
+      >
+        <nz-tag [nzColor]="policyStateColor(p)">{{ policyStateLabel(p) }}</nz-tag>
+        <strong>Paid usage {{ p.paidCallsAllowed ? 'enabled' : 'disabled' }}</strong>
+        <span>
+          {{
+            p.requireApprovalBeforePaidUsage
+              ? 'Manual approval before paid or expensive routes'
+              : 'Paid fallback may execute under policy'
+          }}
+        </span>
+      </button>
+
+      <button
+        type="button"
+        class="status-tile"
+        nz-tooltip
+        [nzTooltipTitle]="policyBudgetTooltip(p)"
+        [attr.title]="policyBudgetTooltip(p)"
+        (click)="scrollToSection('provider-inventory')"
+      >
+        <strong>{{ policyBudgetText(p) }}</strong>
+        <span>daily paid budget</span>
+        <i><b [style.width.%]="budgetUsagePercent(p)"></b></i>
+      </button>
+
+      <button
+        type="button"
+        class="status-tile"
+        nz-tooltip
+        [nzTooltipTitle]="policyBudgetTooltip(p)"
+        [attr.title]="policyBudgetTooltip(p)"
+        (click)="scrollToSection('provider-inventory')"
+      >
+        <strong>{{ tokenUsageText(p) }}</strong>
+        <span>input / output tokens</span>
+      </button>
+
+      <button type="button" class="status-tile" (click)="scrollToSection('provider-inventory')" title="Open provider readiness, quota, budget, and endpoint details">
+        <strong>{{ enabledProviderCount(p) }}/{{ p.providers.length }}</strong>
+        <span>providers enabled</span>
+      </button>
+
+      <button type="button" class="status-tile" (click)="scrollToSection('model-catalog')" title="Open all configured models grouped by the seven routing tiers">
+        <strong>{{ totalModelCount(p) }}</strong>
+        <span>{{ localModelCount(p) }} local / {{ freeModelCount(p) }} free / {{ paidModelCount(p) }} gated</span>
+      </button>
+
+      <button type="button" class="status-tile" (click)="scrollToSection('model-catalog')" title="Fallback order: local, free, cheap, acceptable, high, premium, expensive">
+        <strong>{{ tierOrder(p).length }} tiers</strong>
+        <span>{{ tierOrder(p).join(' -> ') }}</span>
+      </button>
+    </section>
+
+    <section class="policy-action-rail action-rail" aria-label="Primary routing actions">
+      <button
+        type="button"
+        *ngFor="let action of policyActions; trackBy: trackByAction"
+        class="action-tile llm-action-tile"
+        [attr.data-tone]="action.tone"
+        (click)="runAction(action.action)"
+        [title]="action.title + ': ' + action.context"
+      >
+        <span class="action-tile__help" [title]="action.context">?</span>
+        <i nz-icon [nzType]="action.icon" nzTheme="outline"></i>
+        <span>
+          <strong>{{ action.title }}</strong>
+          <small>{{ action.detail }}</small>
+        </span>
+        <em>{{ action.metric }}</em>
+        <small class="action-tile__context">{{ action.secondaryMetric }}</small>
+      </button>
+    </section>
+
+    <section class="llm-workspace" aria-label="Routing workbench">
+      <article class="surface-panel route-panel" id="route-task">
+        <div class="panel-heading">
+          <button
+            type="button"
+            class="section-title-button"
+            (click)="focusRouteInput()"
+            title="Focus the task input and run the model-selection workflow"
+          >
+            <h2>Route a task</h2>
+            <p>Classify the work, skip weak routes, choose the cheapest capable model, and log why.</p>
           </button>
-          <button nz-button nzType="default" (click)="probeProviders()" [nzLoading]="probing">
-            <i nz-icon nzType="api" nzTheme="outline"></i>
-            Probe Providers
-          </button>
-          <button nz-button nzType="default" (click)="goHome()">
-            <i nz-icon nzType="appstore" nzTheme="outline"></i>
-            Automations
-          </button>
+          <nz-tag [nzColor]="p.requireApprovalBeforePaidUsage ? 'gold' : 'red'">
+            {{ p.requireApprovalBeforePaidUsage ? 'approval required' : 'approval relaxed' }}
+          </nz-tag>
         </div>
-      </div>
-    </nz-header>
 
-    <nz-content class="content-container">
-      <nz-alert
-        *ngIf="policy"
-        nzType="info"
-        [nzMessage]="'Paid usage: ' + (policy.paidCallsAllowed ? 'enabled' : 'disabled') + ' | Daily paid budget: EUR ' + policy.dailyPaidBudgetEur"
-        nzShowIcon
-      ></nz-alert>
-
-      <div class="policy-grid" *ngIf="policy as p">
-        <nz-card nzSize="small" nzTitle="Policy">
-          <p><strong>Tier order:</strong> {{ p.tierOrder.join(' -> ') }}</p>
-          <p><strong>Local first:</strong> {{ p.localFirst ? 'yes' : 'no' }}</p>
-          <p><strong>Local models:</strong> {{ p.localModelsAllowed ? 'allowed' : 'disabled' }}</p>
-          <p><strong>Free cloud quota:</strong> {{ p.freeCloudQuotaAllowed ? 'allowed' : 'disabled' }}</p>
-          <p><strong>Paid approval:</strong> {{ p.requireApprovalBeforePaidUsage ? 'required' : 'not required' }}</p>
-          <p><strong>KV-cache path:</strong> {{ p.inferenceInfrastructure.kvCacheLoadStrategy }}</p>
-          <p><strong>DualPath ready:</strong> {{ p.inferenceInfrastructure.dualPathInfrastructureAvailable ? 'verified' : 'no' }}</p>
-          <p><small>{{ p.inferenceInfrastructure.reason }}</small></p>
-        </nz-card>
-
-        <nz-card nzSize="small" nzTitle="Route a Task">
-          <form nz-form [formGroup]="routeForm">
-            <nz-form-item>
-              <nz-form-control nzErrorTip="Enter a task to route.">
-                <textarea nz-input rows="4" formControlName="task"></textarea>
-              </nz-form-control>
-            </nz-form-item>
-            <nz-form-item>
-              <label nz-checkbox formControlName="validationPassed">Previous result passed validation</label>
-            </nz-form-item>
-            <nz-form-item>
-              <input nz-input formControlName="previousModelId" placeholder="Previous model ID, if validation failed" />
-            </nz-form-item>
-            <button nz-button nzType="primary" (click)="routeTask()" [nzLoading]="routing">
-              Route Task
+        <form nz-form [formGroup]="routeForm" class="route-form">
+          <label>
+            <span>Task to route</span>
+            <textarea
+              nz-input
+              rows="4"
+              formControlName="task"
+              id="route-task-input"
+              title="Describe the task HAI should classify and route to a capable model"
+            ></textarea>
+          </label>
+          <div class="route-controls">
+            <label
+              nz-checkbox
+              formControlName="validationPassed"
+              title="Uncheck when a previous result failed validation and should trigger a stronger fallback"
+            >
+              Previous result passed validation
+            </label>
+            <input
+              nz-input
+              formControlName="previousModelId"
+              placeholder="Previous model ID if validation failed"
+              title="Optional model ID to avoid after validation failure"
+            />
+            <button
+              type="button"
+              nz-button
+              nzType="primary"
+              (click)="routeTask()"
+              [nzLoading]="routing"
+              title="Run the routing classifier and model selector"
+            >
+              <i nz-icon nzType="branches" nzTheme="outline"></i>
+              Route task
             </button>
-          </form>
-        </nz-card>
+          </div>
+        </form>
+      </article>
+
+      <aside class="llm-side-stack" aria-label="Routing state and guardrails">
+        <article class="surface-panel policy-scorecard" id="policy-guardrails">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
+              (click)="scrollToSection('model-catalog')"
+              title="Open model tiers and policy guardrails"
+            >
+              <h2>Policy state</h2>
+              <p>Completion-first, local-first, paid usage gated.</p>
+            </button>
+          </div>
+
+          <div class="scorecard-grid">
+            <button type="button" (click)="scrollToSection('provider-inventory')" title="Enabled model providers">
+              <span>Providers</span>
+              <strong>{{ enabledProviderCount(p) }}</strong>
+              <small>{{ configuredProviderSummary(p) }} configured</small>
+            </button>
+            <button type="button" (click)="scrollToSection('model-catalog')" title="Total configured model catalog">
+              <span>Models</span>
+              <strong>{{ totalModelCount(p) }}</strong>
+              <small>{{ localModelCount(p) }} local / {{ freeModelCount(p) }} free</small>
+            </button>
+            <button
+              type="button"
+              nz-tooltip
+              [nzTooltipTitle]="policyBudgetTooltip(p)"
+              [attr.title]="policyBudgetTooltip(p)"
+              (click)="scrollToSection('provider-inventory')"
+            >
+              <span>Budget</span>
+              <strong>{{ policyBudgetText(p) }}</strong>
+              <small>{{ tokenUsageText(p) }}</small>
+            </button>
+            <button type="button" (click)="scrollToSection('model-catalog')" title="Fallback tier order">
+              <span>Tiers</span>
+              <strong>{{ tierOrder(p).length }}</strong>
+              <small>local first</small>
+            </button>
+          </div>
+        </article>
+
+        <article class="surface-panel decision-panel" id="decision-inspector">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
+              (click)="focusRouteInput()"
+              title="Route a task to populate this selection inspector"
+            >
+              <h2>Selection inspector</h2>
+              <p>Selected route, cost, approval gate, and fallback pressure.</p>
+            </button>
+          </div>
+
+          <div class="empty-state compact" *ngIf="!decision">
+            <i nz-icon nzType="branches" nzTheme="outline"></i>
+            <div>
+              <strong>No route selected</strong>
+              <span>Run a route to see the selected model, reason, skipped candidates, and fallback path.</span>
+            </div>
+          </div>
+
+          <ng-container *ngIf="decision as d">
+            <div class="decision-hero">
+              <div>
+                <span>Selected model</span>
+                <strong>{{ d.selectedModelName || 'No model selected' }}</strong>
+                <p>{{ routeDecisionSummary(d) }}</p>
+              </div>
+              <nz-tag [nzColor]="tierColor(d.tier)">{{ tierLabel(d.tier) }}</nz-tag>
+            </div>
+
+            <dl class="decision-metrics">
+              <div [title]="routeCostTooltip(d)">
+                <dt>Cost</dt>
+                <dd>EUR {{ formatMoney(d.estimatedCostEur) }}</dd>
+              </div>
+              <div [title]="routeCostTooltip(d)">
+                <dt>Tokens</dt>
+                <dd>{{ routeTokenText(d) }}</dd>
+              </div>
+              <div title="Whether this route must wait for manual approval">
+                <dt>Approval</dt>
+                <dd>{{ d.requiresApproval ? 'required' : 'not required' }}</dd>
+              </div>
+              <div title="Fallback candidates available if validation fails">
+                <dt>Fallbacks</dt>
+                <dd>{{ fallbackCount(d) }}</dd>
+              </div>
+              <div title="Models skipped because they were unsuitable or blocked">
+                <dt>Skipped</dt>
+                <dd>{{ skippedModelCount(d) }}</dd>
+              </div>
+            </dl>
+
+            <details class="detail-block" open>
+              <summary>Why this model was selected</summary>
+              <p>{{ d.reason }}</p>
+              <p>
+                {{ d.classification.taskType }} / difficulty {{ d.classification.difficulty }} /
+                {{ d.classification.requiredReasoning }}
+              </p>
+            </details>
+          </ng-container>
+        </article>
+      </aside>
+    </section>
+
+    <details class="advanced-section model-catalog-section" id="model-catalog" open>
+      <summary title="Expand or collapse the seven-tier model catalog">
+        <span>Seven-tier model catalog</span>
+        <small>{{ totalModelCount(p) }} models grouped by local, free, cheap, acceptable, high, premium, and expensive</small>
+      </summary>
+
+      <section class="tier-overview" aria-label="Model tier summary">
+        <button
+          type="button"
+          *ngFor="let tier of tierOrder(p)"
+          class="tier-card"
+          [class.tier-card--active]="isActiveTier(tier)"
+          [title]="tierDescription(tier)"
+          (click)="setActiveTier(tier)"
+        >
+          <span>{{ tierLabel(tier) }}</span>
+          <strong>{{ tierModelCount(tier) }}</strong>
+          <small>{{ tierProviderCount(tier) }} providers</small>
+        </button>
+      </section>
+
+      <section class="catalog-workbench">
+        <aside class="tier-sidebar">
+          <div class="panel-heading compact">
+            <div>
+              <h2>Fallback ladder</h2>
+              <p>HAI climbs this order only when validation or capability requires it.</p>
+            </div>
+          </div>
+          <div class="tier-selector" role="tablist" aria-label="Model routing tiers">
+            <button
+              type="button"
+              *ngFor="let tier of tierOrder(p)"
+              [class.tier-selector__item--active]="isActiveTier(tier)"
+              [attr.aria-selected]="isActiveTier(tier)"
+              [title]="tierDescription(tier)"
+              (click)="setActiveTier(tier)"
+            >
+              <span>
+                <nz-tag [nzColor]="tierColor(tier)">{{ tierLabel(tier) }}</nz-tag>
+                <small>{{ tierDescription(tier) }}</small>
+              </span>
+              <strong>{{ tierModelCount(tier) }}</strong>
+            </button>
+          </div>
+        </aside>
+
+        <article class="catalog-focus">
+          <div class="panel-heading">
+            <div>
+              <h2>{{ tierLabel(activeTier) }} models</h2>
+              <p>{{ activeTierSummary() }}. Filter by provider, model, capability, or reasoning level.</p>
+            </div>
+            <input
+              nz-input
+              type="search"
+              [value]="catalogFilter"
+              (input)="catalogFilterChanged($event)"
+              placeholder="Filter models"
+              title="Filter the active tier by provider, model, capability, or reasoning level"
+            />
+          </div>
+
+          <div class="model-table" *ngIf="activeTierEntries().length; else noActiveTierModels">
+            <article *ngFor="let entry of activeTierEntries(); trackBy: trackByCatalogEntry">
+              <button
+                type="button"
+                class="model-name-button"
+                [title]="modelCapabilityText(entry.model)"
+                (click)="catalogFilter = entry.model.name"
+              >
+                <strong>{{ entry.model.name }}</strong>
+                <span>{{ entry.providerName }}</span>
+              </button>
+              <p>{{ modelCapabilityText(entry.model) }}</p>
+              <dl>
+                <div title="Maximum task difficulty this model should handle">
+                  <dt>Difficulty</dt>
+                  <dd>{{ entry.model.maxDifficulty }}</dd>
+                </div>
+                <div title="Maximum reasoning level this model should handle">
+                  <dt>Reasoning</dt>
+                  <dd>{{ entry.model.maxReasoning }}</dd>
+                </div>
+                <div [title]="modelCostTooltip(entry.model)">
+                  <dt>Route est.</dt>
+                  <dd>{{ modelCostText(entry.model) }}</dd>
+                </div>
+                <div [title]="modelCostTooltip(entry.model)">
+                  <dt>Token price</dt>
+                  <dd>{{ modelPricingText(entry.model) }}</dd>
+                </div>
+                <div [title]="modelCostTooltip(entry.model)">
+                  <dt>Used</dt>
+                  <dd>{{ modelBudgetText(entry.model) }}</dd>
+                </div>
+                <div [title]="modelCostTooltip(entry.model)">
+                  <dt>Tokens</dt>
+                  <dd>{{ modelUsageText(entry.model) }}</dd>
+                </div>
+                <div title="Approval status for this model">
+                  <dt>Gate</dt>
+                  <dd>{{ approvalLabel(entry.model) }}</dd>
+                </div>
+              </dl>
+              <nz-tag [nzColor]="entry.model.enabled ? 'green' : 'default'">{{ modelStatusLabel(entry.model) }}</nz-tag>
+            </article>
+          </div>
+          <ng-template #noActiveTierModels>
+            <div class="empty-state compact">
+              <i nz-icon nzType="database" nzTheme="outline"></i>
+              <div>
+                <strong>No models match this view</strong>
+                <span>Change tier or clear the model filter.</span>
+              </div>
+            </div>
+          </ng-template>
+        </article>
+      </section>
+    </details>
+
+    <details class="advanced-section" id="provider-inventory">
+      <summary title="Expand or collapse provider readiness, budget, quota, and model detail">
+        <span>Provider inventory</span>
+        <small>{{ enabledProviderCount(p) }} enabled, {{ configuredProviderSummary(p) }} configured endpoints</small>
+      </summary>
+
+      <div class="provider-grid">
+        <article
+          class="provider-card"
+          *ngFor="let provider of p.providers; trackBy: trackByProvider"
+          [attr.data-status]="providerTone(provider)"
+        >
+          <header>
+            <button
+              type="button"
+              class="provider-title"
+              (click)="showProviderModels(provider)"
+              [title]="'Filter model catalog to ' + provider.name"
+            >
+              <strong>{{ provider.name }}</strong>
+              <span>{{ providerKind(provider) }}</span>
+            </button>
+            <nz-tag [nzColor]="providerColor(provider)">{{ providerStatus(provider) }}</nz-tag>
+          </header>
+
+          <div class="provider-stats">
+            <button type="button" title="Remaining quota for this provider">
+              <span>Quota</span>
+              <strong>{{ quotaText(provider) }}</strong>
+            </button>
+            <button
+              type="button"
+              nz-tooltip
+              [nzTooltipTitle]="budgetTooltip(provider)"
+              [attr.title]="budgetTooltip(provider)"
+            >
+              <span>Budget</span>
+              <strong>{{ budgetText(provider) }}</strong>
+            </button>
+            <button type="button" title="Provider input and output tokens">
+              <span>Tokens</span>
+              <strong>{{ formatNumber(totalTokens(provider)) }}</strong>
+            </button>
+            <button type="button" title="Enabled models available from this provider">
+              <span>Models</span>
+              <strong>{{ enabledModelCount(provider) }}/{{ providerModelCount(provider) }}</strong>
+            </button>
+          </div>
+
+          <div class="usage-meter" [title]="'Provider budget usage: ' + providerBudgetPercent(provider) + '%'">
+            <span [style.width.%]="providerBudgetPercent(provider)"></span>
+          </div>
+
+          <p class="provider-readiness">{{ providerReadinessText(provider) }}</p>
+
+          <div class="compact-tier-list">
+            <nz-tag
+              *ngFor="let group of modelsByTier(provider); trackBy: trackByTier"
+              [nzColor]="tierColor(group.tier)"
+              [title]="tierDescription(group.tier)"
+            >
+              {{ tierLabel(group.tier) }} / {{ group.models.length }}
+            </nz-tag>
+          </div>
+
+          <details class="provider-detail">
+            <summary>Endpoint and model detail</summary>
+            <p class="provider-endpoint">{{ provider.endpointUrl || 'Endpoint not configured' }}</p>
+            <div class="model-chip-list">
+              <button
+                type="button"
+                *ngFor="let model of providerModelPreview(provider); trackBy: trackByModel"
+                class="model-chip"
+                [attr.data-disabled]="!model.enabled"
+                [title]="modelCapabilityText(model)"
+                (click)="showModel(model)"
+              >
+                {{ model.name }}
+                <small>{{ tierLabel(model.tier) }}</small>
+              </button>
+              <span *ngIf="hiddenModelCount(provider)" class="model-chip model-chip--more">
+                +{{ hiddenModelCount(provider) }} more in catalog
+              </span>
+            </div>
+          </details>
+        </article>
       </div>
+    </details>
 
-      <nz-card nzTitle="Providers" class="section-card" *ngIf="policy as p">
-        <nz-table [nzData]="p.providers" nzSize="small" [nzPageSize]="10">
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Status</th>
-              <th>Quota</th>
-              <th>Budget</th>
-              <th>Models</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let provider of p.providers">
-              <td>{{ provider.name }}</td>
-              <td>
-                <nz-tag [nzColor]="providerColor(provider)">
-                  {{ providerStatus(provider) }}
-                </nz-tag>
-                <div *ngIf="provider.readinessReason">
-                  <small>{{ provider.readinessReason }}</small>
-                </div>
-              </td>
-              <td>{{ provider.quotaRemaining < 0 ? 'unlimited local' : provider.quotaRemaining }}</td>
-              <td>EUR {{ provider.dailyBudgetEur || 0 }}</td>
-              <td>
-                <div class="model-list">
-                  <nz-tag
-                    *ngFor="let model of provider.models"
-                    [nzColor]="model.enabled ? tierColor(model.tier) : 'default'"
-                  >
-                    {{ model.name }} / {{ model.tier }}
-                  </nz-tag>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+    <details class="advanced-section" id="routing-audit">
+      <summary title="Expand or collapse probes, routing logs, and fallback path">
+        <span>Routing audit</span>
+        <small>Provider probes, selected routes, fallback history, and rejected candidates</small>
+      </summary>
 
-      <nz-card nzTitle="Live Provider Probes" class="section-card" *ngIf="probes.length">
-        <nz-table [nzData]="probes" nzSize="small" [nzPageSize]="10">
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Status</th>
-              <th>HTTP</th>
-              <th>Models</th>
-              <th>Latency</th>
-              <th>Checked</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let probe of probes">
-              <td>{{ probe.providerName }}</td>
-              <td><nz-tag [nzColor]="probeColor(probe)">{{ probe.status }}</nz-tag></td>
-              <td>{{ probe.httpStatus || '-' }}</td>
-              <td>{{ probe.modelsSeen || 0 }}</td>
-              <td>{{ probe.durationMs }} ms</td>
-              <td>{{ probe.checkedAt | date: 'short' }}</td>
-              <td>{{ probe.reason }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+      <section class="diagnostics-grid">
+        <article class="surface-panel">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
+              (click)="probeProviders()"
+              title="Run live provider probes"
+            >
+              <h2>Live provider probes</h2>
+              <p>Runtime checks against configured model endpoints.</p>
+            </button>
+          </div>
+          <nz-empty *ngIf="!probes.length" nzNotFoundContent="No provider probes run yet."></nz-empty>
+          <div class="event-list" *ngIf="probes.length">
+            <article *ngFor="let probe of probes; trackBy: trackByProbe">
+              <i nz-icon nzType="api" nzTheme="outline"></i>
+              <div>
+                <strong>{{ probe.providerName }}</strong>
+                <span>{{ probe.status }} / {{ probe.modelsSeen || 0 }} models / {{ probe.durationMs }} ms</span>
+                <small>{{ probe.reason }}</small>
+              </div>
+              <nz-tag [nzColor]="probeColor(probe)">{{ probe.live ? 'live' : probe.status }}</nz-tag>
+            </article>
+          </div>
+        </article>
 
-      <nz-card nzTitle="Selected Model" class="section-card" *ngIf="decision">
-        <p>
-          <strong>{{ decision.selectedModelName || 'No model selected' }}</strong>
-          <nz-tag [nzColor]="tierColor(decision.tier)">{{ decision.tier || 'none' }}</nz-tag>
-        </p>
-        <p><strong>Provider:</strong> {{ decision.selectedProviderId || '-' }}</p>
-        <p><strong>Estimated cost:</strong> EUR {{ decision.estimatedCostEur || 0 }}</p>
-        <p><strong>Approval required:</strong> {{ decision.requiresApproval ? 'yes' : 'no' }}</p>
-        <p><strong>Reason:</strong> {{ decision.reason }}</p>
-        <p>
-          <strong>Classification:</strong>
-          {{ decision.classification.taskType }},
-          difficulty {{ decision.classification.difficulty }},
-          {{ decision.classification.requiredReasoning }} reasoning
-        </p>
-        <p><strong>Classifier reason:</strong> {{ decision.classification.reason }}</p>
-      </nz-card>
+        <article class="surface-panel">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
+              (click)="loadLogs()"
+              title="Reload recent model-routing decisions"
+            >
+              <h2>Routing log</h2>
+              <p>Recent decisions, selected tiers, and fallback counts.</p>
+            </button>
+          </div>
+          <nz-empty *ngIf="!logs.length" nzNotFoundContent="No routing decisions logged yet."></nz-empty>
+          <div class="event-list" *ngIf="logs.length">
+            <article *ngFor="let log of logs; trackBy: trackByLog">
+              <i nz-icon nzType="history" nzTheme="outline"></i>
+              <div>
+                <strong>{{ log.selectedModelName || 'No model selected' }}</strong>
+                <span>{{ log.loggedAt | date: 'short' }}</span>
+                <small>{{ log.reason }}</small>
+              </div>
+              <nz-tag [nzColor]="tierColor(log.tier)">{{ log.tier || '-' }}</nz-tag>
+            </article>
+          </div>
+        </article>
 
-      <nz-card nzTitle="Fallback Path" class="section-card" *ngIf="decision">
-        <nz-empty *ngIf="!decision.fallbackPath.length" nzNotFoundContent="No fallback model available under current policy."></nz-empty>
-        <nz-timeline *ngIf="decision.fallbackPath.length">
-          <nz-timeline-item *ngFor="let item of decision.fallbackPath">
-            {{ item.modelName }} / {{ item.tier }} / EUR {{ item.estimatedCostEur || 0 }}
-          </nz-timeline-item>
-        </nz-timeline>
-      </nz-card>
-
-      <nz-card nzTitle="Routing Log" class="section-card">
-        <nz-empty *ngIf="!logs.length" nzNotFoundContent="No routing decisions logged yet."></nz-empty>
-        <nz-table *ngIf="logs.length" [nzData]="logs" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Model</th>
-              <th>Tier</th>
-              <th>Reason</th>
-              <th>Fallbacks</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let log of logs">
-              <td>{{ log.loggedAt | date: 'short' }}</td>
-              <td>{{ log.selectedModelName || '-' }}</td>
-              <td><nz-tag [nzColor]="tierColor(log.tier)">{{ log.tier || '-' }}</nz-tag></td>
-              <td>{{ log.reason }}</td>
-              <td>{{ log.fallbackPath.length }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-    </nz-content>
-  </nz-layout>
+        <article class="surface-panel">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
+              (click)="focusRouteInput()"
+              title="Route a task to produce fallback candidates"
+            >
+              <h2>Fallback path</h2>
+              <p>Models available after the selected route when validation fails.</p>
+            </button>
+          </div>
+          <nz-empty
+            *ngIf="!decision || !(decision.fallbackPath || []).length"
+            nzNotFoundContent="No fallback path selected yet."
+          ></nz-empty>
+          <div class="event-list" *ngIf="decision && (decision.fallbackPath || []).length">
+            <article *ngFor="let item of decision.fallbackPath || []; trackBy: trackByFallback">
+              <i nz-icon nzType="branches" nzTheme="outline"></i>
+              <div>
+                <strong>{{ item.modelName }}</strong>
+                <span [title]="fallbackCostTooltip(item)">
+                  {{ item.providerId }} / EUR {{ formatMoney(item.estimatedCostEur) }} /
+                  {{ formatNumber(item.estimatedInputTokens || 0) }} in /
+                  {{ formatNumber(item.estimatedOutputTokens || 0) }} out
+                </span>
+                <small>{{ item.requiresApproval ? 'approval required' : 'no approval required' }}</small>
+              </div>
+              <nz-tag [nzColor]="tierColor(item.tier)">{{ item.tier }}</nz-tag>
+            </article>
+          </div>
+        </article>
+      </section>
+    </details>
+  </main>
 </section>

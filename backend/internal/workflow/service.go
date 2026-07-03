@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"automation-hub-backend/internal/autonomy"
+	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
 	"crypto/sha256"
@@ -59,6 +60,8 @@ type TransitionRequest struct {
 
 type ChecklistUpdateRequest struct {
 	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+	Actor  string `json:"actor,omitempty"`
 }
 
 type ApprovalResolutionRequest struct {
@@ -97,14 +100,17 @@ type TaskRunRequest struct {
 }
 
 type TaskRunResult struct {
-	PlanID                 string `json:"planId,omitempty"`
-	CompletionStatus       string `json:"completionStatus"`
-	VerificationStatus     string `json:"verificationStatus"`
-	Output                 string `json:"output,omitempty"`
-	FailureReason          string `json:"failureReason,omitempty"`
-	Passed                 bool   `json:"passed"`
-	ReviewRequired         bool   `json:"reviewRequired"`
-	ExternalActionExecuted bool   `json:"externalActionExecuted"`
+	PlanID                 string                              `json:"planId,omitempty"`
+	CompletionStatus       string                              `json:"completionStatus"`
+	VerificationStatus     string                              `json:"verificationStatus"`
+	Output                 string                              `json:"output,omitempty"`
+	FailureReason          string                              `json:"failureReason,omitempty"`
+	RuntimeEvidenceURI     string                              `json:"runtimeEvidenceUri,omitempty"`
+	RuntimeEvidenceLabel   string                              `json:"runtimeEvidenceLabel,omitempty"`
+	RuntimeRouteTrace      *models.AutomationRuntimeRouteTrace `json:"runtimeRouteTrace,omitempty"`
+	Passed                 bool                                `json:"passed"`
+	ReviewRequired         bool                                `json:"reviewRequired"`
+	ExternalActionExecuted bool                                `json:"externalActionExecuted"`
 }
 
 type TaskRunner interface {
@@ -167,6 +173,7 @@ type WorkflowRecord struct {
 	Checklist    []models.WorkflowChecklistItem `json:"checklist"`
 	Intake       []models.WorkflowIntakeRecord  `json:"intake"`
 	Matches      []models.WorkflowProjectMatch  `json:"matches"`
+	Pursuits     []WorkflowPursuitContext       `json:"pursuits"`
 	Evidence     []models.WorkflowEvidenceClaim `json:"evidence"`
 	OpenLoops    []models.WorkflowOpenLoop      `json:"openLoops"`
 	Proposals    []models.WorkflowProposal      `json:"proposals"`
@@ -175,6 +182,27 @@ type WorkflowRecord struct {
 	SourceLinks  []models.WorkflowSourceLink    `json:"sourceLinks"`
 	Decisions    []models.WorkflowDecision      `json:"decisions"`
 	Events       []models.WorkflowEvent         `json:"events"`
+}
+
+type WorkflowPursuitContext struct {
+	ID                    uuid.UUID `json:"id"`
+	Title                 string    `json:"title"`
+	Status                string    `json:"status"`
+	RiskLevel             string    `json:"riskLevel"`
+	PriorityScore         int       `json:"priorityScore"`
+	Confidence            float64   `json:"confidence"`
+	AutonomyLevel         string    `json:"autonomyLevel"`
+	NeedCategory          string    `json:"needCategory,omitempty"`
+	DesiredOutcome        string    `json:"desiredOutcome,omitempty"`
+	CurrentStateSummary   string    `json:"currentStateSummary,omitempty"`
+	NextRecommendedAction string    `json:"nextRecommendedAction,omitempty"`
+	CompletionDefinition  string    `json:"completionDefinition,omitempty"`
+	CompletionState       string    `json:"completionState,omitempty"`
+	LinkID                uuid.UUID `json:"linkId"`
+	Relationship          string    `json:"relationship"`
+	SourceURI             string    `json:"sourceUri,omitempty"`
+	SourceLabel           string    `json:"sourceLabel,omitempty"`
+	LinkConfidence        float64   `json:"linkConfidence"`
 }
 
 type EngineCapability struct {
@@ -222,20 +250,34 @@ type Service interface {
 }
 
 type service struct {
-	repo       Repository
-	taskRunner TaskRunner
+	repo          Repository
+	taskRunner    TaskRunner
+	memoryService memory.Service
 }
 
-func NewService(repo Repository) Service {
-	return &service{repo: repo}
+func NewService(repo Repository, memoryServices ...memory.Service) Service {
+	return &service{repo: repo, memoryService: firstMemoryService(memoryServices...)}
 }
 
-func NewServiceWithTaskRunner(repo Repository, taskRunner TaskRunner) Service {
-	return &service{repo: repo, taskRunner: taskRunner}
+func NewServiceWithTaskRunner(repo Repository, taskRunner TaskRunner, memoryServices ...memory.Service) Service {
+	return &service{repo: repo, taskRunner: taskRunner, memoryService: firstMemoryService(memoryServices...)}
+}
+
+func NewServiceWithMemory(repo Repository, memoryService memory.Service) Service {
+	return &service{repo: repo, memoryService: memoryService}
 }
 
 func DefaultService() Service {
-	return NewService(DefaultRepository())
+	return NewService(DefaultRepository(), memory.DefaultService())
+}
+
+func firstMemoryService(services ...memory.Service) memory.Service {
+	for _, service := range services {
+		if service != nil {
+			return service
+		}
+	}
+	return nil
 }
 
 func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
@@ -348,6 +390,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 			ReminderAt: reminderBefore(*analysis.dueAt),
 		})
 	}
+	s.applyMemoryContext(created.ID, input, projectKey, firstNonEmpty(request.Actor, "engine"))
 	if created.SourceURI != "" || created.SourceLabel != "" {
 		s.linkSource(created.ID, created.SourceType, request.SourceID, created.SourceURI, created.SourceLabel, "origin")
 		s.decide(created.ID, "source_link", "linked", "source provenance captured for workflow", "source link created at intake", false, firstNonEmpty(request.Actor, "engine"))
@@ -395,6 +438,73 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	}
 	s.audit(created.ID, "workflow.intake", "", created.CurrentState, "input classified and workflow state initialized", request.Trigger, analysis.ruleApplied, request.SourceURI, firstNonEmpty(request.Actor, "engine"))
 	return s.Get(created.ID)
+}
+
+func (s *service) applyMemoryContext(workflowID uuid.UUID, input, projectKey, actor string) {
+	if s.memoryService == nil {
+		return
+	}
+	result, err := s.memoryService.Retrieve(memory.RetrieveRequest{
+		Query:      input,
+		ProjectKey: projectKey,
+		Limit:      3,
+	})
+	if err != nil {
+		s.audit(workflowID, "workflow.memory_context_failed", "", "", err.Error(), "memory_retrieval", "context planning layer", "", actor)
+		return
+	}
+	applied := 0
+	summaries := []string{}
+	for _, ranked := range result.UsedContext {
+		mem := ranked.Memory
+		if !workflowMemoryUseful(mem) {
+			continue
+		}
+		lesson := workflowMemoryLessonText(mem)
+		if lesson == "" {
+			continue
+		}
+		applied++
+		_, _ = s.repo.CreateChecklistItem(&models.WorkflowChecklistItem{
+			WorkflowID: workflowID,
+			Label:      "Apply learned context: " + lesson,
+			Status:     "open",
+			Position:   800 + applied,
+		})
+		s.linkSource(
+			workflowID,
+			"memory",
+			mem.ID.String(),
+			workflowMemorySourceURI(mem),
+			firstNonEmpty(mem.SourceLabel, mem.Summary, "Context memory"),
+			"planning_context",
+		)
+		summaries = append(summaries, lesson)
+	}
+	if applied == 0 {
+		return
+	}
+	summary := compactWorkflowText(strings.Join(summaries, "; "), 420)
+	s.decide(
+		workflowID,
+		"memory_context",
+		"applied",
+		fmt.Sprintf("applied %d relevant memory record(s): %s", applied, summary),
+		firstNonEmpty(result.Explanation, "context planning layer"),
+		false,
+		actor,
+	)
+	s.audit(
+		workflowID,
+		"workflow.memory_context",
+		"",
+		"",
+		fmt.Sprintf("applied %d relevant memory record(s) to workflow planning", applied),
+		"memory_retrieval",
+		summary,
+		"",
+		actor,
+	)
 }
 
 func (s *service) supersedeSourceWorkflow(item *models.WorkflowItem, request IntakeRequest, sourceRevision string) error {
@@ -561,6 +671,10 @@ func (s *service) Get(id uuid.UUID) (*WorkflowRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	pursuits, err := s.repo.FindLinkedPursuits(id)
+	if err != nil {
+		return nil, err
+	}
 	evidence, err := s.repo.FindEvidenceClaims(id)
 	if err != nil {
 		return nil, err
@@ -593,7 +707,7 @@ func (s *service) Get(id uuid.UUID) (*WorkflowRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WorkflowRecord{Item: *item, Checklist: checklist, Intake: intake, Matches: matches, Evidence: evidence, OpenLoops: openLoops, Proposals: proposals, QualityGates: qualityGates, Transitions: transitions, SourceLinks: sourceLinks, Decisions: decisions, Events: events}, nil
+	return &WorkflowRecord{Item: *item, Checklist: checklist, Intake: intake, Matches: matches, Pursuits: pursuits, Evidence: evidence, OpenLoops: openLoops, Proposals: proposals, QualityGates: qualityGates, Transitions: transitions, SourceLinks: sourceLinks, Decisions: decisions, Events: events}, nil
 }
 
 func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*WorkflowRecord, error) {
@@ -662,12 +776,17 @@ func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionReques
 		return nil, fmt.Errorf("interrupted execution must be resolved before approval can continue")
 	}
 	if request.Approved {
-		return s.Transition(id, TransitionRequest{
+		record, err := s.Transition(id, TransitionRequest{
 			TargetState: StateReady,
 			Message:     firstNonEmpty(request.Note, "workflow approved for controlled execution"),
 			Approved:    true,
 			Actor:       firstNonEmpty(request.Actor, "operator"),
 		})
+		if err != nil {
+			return nil, err
+		}
+		s.rememberCorrection(&record.Item, "approval_approved", request.Note, firstNonEmpty(request.Actor, "operator"))
+		return record, nil
 	}
 	from := item.CurrentState
 	item.CurrentState = StateBlocked
@@ -681,6 +800,7 @@ func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionReques
 	s.recordTransition(updated.ID, from, StateBlocked, "approval_resolution", firstNonEmpty(request.Actor, "operator"), false, updated.BlockedReason)
 	s.decide(updated.ID, "approval", "rejected", updated.BlockedReason, "manual approval gate", false, firstNonEmpty(request.Actor, "operator"))
 	s.audit(updated.ID, "workflow.approval", from, StateBlocked, updated.BlockedReason, "approval_resolution", "human approval rejected", updated.SourceURI, firstNonEmpty(request.Actor, "operator"))
+	s.rememberCorrection(updated, "approval_rejected", updated.BlockedReason, firstNonEmpty(request.Actor, "operator"))
 	return s.Get(updated.ID)
 }
 
@@ -777,6 +897,7 @@ func (s *service) ResolveInterruptedExecution(id uuid.UUID, request InterruptedE
 	s.recordTransition(updated.ID, from, updated.CurrentState, "interrupted_execution_resolution", actor, approved, note)
 	s.decide(updated.ID, "interrupted_execution", decision, note, "unknown external side effects require explicit operator resolution", approved, actor)
 	s.audit(updated.ID, "workflow.interruption_resolved", from, updated.CurrentState, note, "interrupted_execution_resolution", decision, firstNonEmpty(request.EvidenceURI, updated.SourceURI), actor)
+	s.rememberCorrection(updated, "interruption_"+decision, note, actor)
 	if decision == "confirm_completed" {
 		s.markChecklistProgress(updated.ID, "Verify completion before closing")
 	}
@@ -857,6 +978,7 @@ func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request Pr
 			return nil, err
 		}
 		s.recordTransition(item.ID, from, StateWaitingInput, "proposal_resolution", firstNonEmpty(request.Actor, "operator"), false, item.NextAction)
+		s.rememberCorrection(item, "proposal_changes_requested", firstNonEmpty(request.Note, request.SelectedOption), firstNonEmpty(request.Actor, "operator"))
 	case "rejected":
 		from := item.CurrentState
 		item.CurrentState = StateBlocked
@@ -867,8 +989,34 @@ func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request Pr
 			return nil, err
 		}
 		s.recordTransition(item.ID, from, StateBlocked, "proposal_resolution", firstNonEmpty(request.Actor, "operator"), false, item.BlockedReason)
+		s.rememberCorrection(item, "proposal_rejected", item.BlockedReason, firstNonEmpty(request.Actor, "operator"))
 	}
 	return s.Get(id)
+}
+
+func (s *service) rememberCorrection(item *models.WorkflowItem, signal, note, actor string) {
+	if s.memoryService == nil || item == nil || !feedbackNoteUseful(signal, note) {
+		return
+	}
+	note = strings.TrimSpace(note)
+	sourceURI := firstNonEmpty(item.SourceURI, "workflow://"+item.ID.String())
+	sourceLabel := firstNonEmpty(item.SourceLabel, "Workflow feedback: "+item.Title)
+	content := feedbackLessonContent(*item, signal, note)
+	_, err := s.memoryService.Create(memory.CreateRequest{
+		ProjectKey:  item.ProjectKey,
+		Kind:        "lesson",
+		Content:     content,
+		Summary:     feedbackLessonSummary(*item, signal, note),
+		Tags:        feedbackLessonTags(*item, signal),
+		Confidence:  feedbackLessonConfidence(signal),
+		SourceURI:   sourceURI,
+		SourceLabel: sourceLabel,
+	})
+	if err != nil {
+		s.audit(item.ID, "workflow.feedback_memory_failed", item.CurrentState, item.CurrentState, err.Error(), signal, "learning feedback memory", sourceURI, actor)
+		return
+	}
+	s.audit(item.ID, "workflow.feedback_memory", item.CurrentState, item.CurrentState, "stored reviewable correction lesson", signal, "learning feedback memory", sourceURI, actor)
 }
 
 func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error) {
@@ -876,6 +1024,7 @@ func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request Ch
 	if err != nil {
 		return nil, err
 	}
+	actor := firstNonEmpty(request.Actor, "operator")
 	for _, item := range checklist {
 		if item.ID != itemID {
 			continue
@@ -888,7 +1037,17 @@ func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request Ch
 		if _, err := s.repo.UpdateChecklistItem(&item); err != nil {
 			return nil, err
 		}
-		s.audit(id, "workflow.checklist", "", "", "checklist item marked "+status+": "+item.Label, "checklist_update", "checklist progress tracked", "", "operator")
+		note := strings.TrimSpace(request.Note)
+		message := "checklist item marked " + status + ": " + item.Label
+		if note != "" {
+			message += " | " + note
+		}
+		s.audit(id, "workflow.checklist", "", "", message, "checklist_update", "checklist progress tracked", "", actor)
+		if note != "" || status == "blocked" {
+			if workflowItem, err := s.repo.FindItem(id); err == nil {
+				s.rememberCorrection(workflowItem, "checklist_"+status, firstNonEmpty(note, message), actor)
+			}
+		}
 		return s.Get(id)
 	}
 	return nil, fmt.Errorf("checklist item not found")
@@ -1297,6 +1456,9 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	}
 	item.LastTaskPlanID = runResult.PlanID
 	item.VerificationStatus = runResult.VerificationStatus
+	if err := s.storeTaskRuntimeEvidence(item.ID, runResult); err != nil {
+		return s.handleRunReviewRequired(&item, claimID, "runtime evidence could not be stored: "+err.Error(), "needs_review")
+	}
 	if runResult.ReviewRequired {
 		reason := firstNonEmpty(runResult.FailureReason, "task engine requires human review")
 		return s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
@@ -1332,6 +1494,91 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		return s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
 	}
 	return s.handleRunFailure(&item, claimID, reason, runResult.VerificationStatus)
+}
+
+func (s *service) storeTaskRuntimeEvidence(workflowID uuid.UUID, result *TaskRunResult) error {
+	if result == nil || strings.TrimSpace(result.RuntimeEvidenceURI) == "" {
+		return nil
+	}
+	sourceURI := strings.TrimSpace(result.RuntimeEvidenceURI)
+	existing, err := s.repo.FindEvidenceClaims(workflowID)
+	if err != nil {
+		return err
+	}
+	for _, claim := range existing {
+		if strings.EqualFold(strings.TrimSpace(claim.SourceURI), sourceURI) {
+			return nil
+		}
+	}
+	status := firstNonEmpty(result.VerificationStatus, "needs_review")
+	claimText := firstNonEmpty(result.RuntimeEvidenceLabel, "Controlled runtime execution evidence")
+	if result.Output != "" {
+		claimText = claimText + ": " + compact(result.Output, 240)
+	}
+	if routeSummary := runtimeRouteTraceEvidenceSummary(result.RuntimeRouteTrace); routeSummary != "" {
+		claimText = claimText + " | " + routeSummary
+	}
+	_, err = s.repo.CreateEvidenceClaim(&models.WorkflowEvidenceClaim{
+		WorkflowID:  workflowID,
+		ClaimText:   claimText,
+		SourceURI:   sourceURI,
+		SourceLabel: firstNonEmpty(result.RuntimeEvidenceLabel, "Controlled runtime launch"),
+		Reliability: "controlled_runtime",
+		Status:      status,
+	})
+	return err
+}
+
+func runtimeRouteTraceEvidenceSummary(trace *models.AutomationRuntimeRouteTrace) string {
+	if trace == nil {
+		return ""
+	}
+	parts := []string{}
+	if value := strings.TrimSpace(trace.RuntimeID); value != "" {
+		parts = append(parts, "runtime="+value)
+	}
+	if value := strings.TrimSpace(trace.Intent); value != "" {
+		parts = append(parts, "intent="+value)
+	}
+	if value := strings.TrimSpace(trace.ExecutionMode); value != "" {
+		parts = append(parts, "mode="+value)
+	}
+	if value := strings.TrimSpace(trace.RiskLevel); value != "" {
+		parts = append(parts, "risk="+value)
+	}
+	if value := compactTraceList("skills", trace.RecommendedSkills, 3); value != "" {
+		parts = append(parts, value)
+	}
+	if value := compactTraceList("maps", trace.RelevantMaps, 2); value != "" {
+		parts = append(parts, value)
+	}
+	if value := compactTraceList("blocked", trace.BlockedSurfaces, 3); value != "" {
+		parts = append(parts, value)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "route: " + strings.Join(parts, "; ")
+}
+
+func compactTraceList(label string, values []string, limit int) string {
+	cleaned := []string{}
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	if len(cleaned) == 0 {
+		return ""
+	}
+	if limit <= 0 || limit > len(cleaned) {
+		limit = len(cleaned)
+	}
+	summary := strings.Join(cleaned[:limit], ", ")
+	if len(cleaned) > limit {
+		summary += fmt.Sprintf(" +%d", len(cleaned)-limit)
+	}
+	return label + "=" + summary
 }
 
 func (s *service) runTaskSafely(request TaskRunRequest) (result *TaskRunResult, err error) {
@@ -2338,6 +2585,157 @@ func approvalRule(approved bool) string {
 		return "human approval recorded"
 	}
 	return "standard state transition"
+}
+
+func feedbackNoteUseful(signal, note string) bool {
+	note = strings.TrimSpace(note)
+	if len([]rune(note)) < 12 {
+		return false
+	}
+	lower := strings.ToLower(note)
+	generic := map[string]bool{
+		"approval rejected":                true,
+		"proposal rejected":                true,
+		"apply requested proposal changes": true,
+		"changes requested":                true,
+		"rejected":                         true,
+		"not approved":                     true,
+	}
+	if generic[lower] {
+		return false
+	}
+	if strings.TrimSpace(signal) == "approval_approved" && !feedbackLearningCue(lower) {
+		return false
+	}
+	return strings.TrimSpace(signal) != ""
+}
+
+func feedbackLearningCue(lowerNote string) bool {
+	for _, cue := range []string{
+		"always",
+		"avoid",
+		"exclude",
+		"future",
+		"going forward",
+		"include",
+		"keep",
+		"learn",
+		"never",
+		"next time",
+		"prefer",
+		"similar",
+		"tone",
+		"use",
+	} {
+		if strings.Contains(lowerNote, cue) {
+			return true
+		}
+	}
+	return false
+}
+
+func feedbackLessonContent(item models.WorkflowItem, signal, note string) string {
+	parts := []string{
+		"Robert gave HAI workflow feedback.",
+		"Signal: " + strings.TrimSpace(signal) + ".",
+	}
+	if item.ProjectKey != "" {
+		parts = append(parts, "Project: "+item.ProjectKey+".")
+	}
+	if item.RiskLevel != "" {
+		parts = append(parts, "Risk level: "+item.RiskLevel+".")
+	}
+	if item.TaskType != "" {
+		parts = append(parts, "Task type: "+item.TaskType+".")
+	}
+	if item.Title != "" {
+		parts = append(parts, "Workflow: "+item.Title+".")
+	}
+	parts = append(parts,
+		"Correction: "+strings.TrimSpace(note)+".",
+		"Future behavior: apply this correction to similar project, source, recipient, tone, checklist, proposal, or approval decisions. If the correction conflicts with verified source evidence or a newer Robert instruction, ask for review instead of acting from memory.",
+	)
+	return strings.Join(parts, " ")
+}
+
+func feedbackLessonSummary(item models.WorkflowItem, signal, note string) string {
+	prefix := "Learn from " + strings.ReplaceAll(strings.TrimSpace(signal), "_", " ")
+	if item.ProjectKey != "" {
+		prefix += " for " + item.ProjectKey
+	}
+	return compactWorkflowText(prefix+": "+strings.TrimSpace(note), 240)
+}
+
+func feedbackLessonTags(item models.WorkflowItem, signal string) []string {
+	tags := []string{"workflow-feedback", "correction", strings.TrimSpace(signal)}
+	for _, value := range []string{item.ProjectKey, item.RiskLevel, item.TaskType, item.AutonomyLevel, item.SourceType} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			tags = append(tags, value)
+		}
+	}
+	return tags
+}
+
+func feedbackLessonConfidence(signal string) float64 {
+	switch strings.TrimSpace(signal) {
+	case "proposal_changes_requested":
+		return 0.76
+	case "approval_rejected", "proposal_rejected":
+		return 0.82
+	case "approval_approved":
+		return 0.66
+	case "interruption_retry", "interruption_keep_blocked", "interruption_confirm_completed":
+		return 0.78
+	case "checklist_blocked":
+		return 0.74
+	default:
+		return 0.72
+	}
+}
+
+func workflowMemoryUseful(memory models.ContextMemory) bool {
+	if memory.Archived || memory.Confidence < 0.45 {
+		return false
+	}
+	if strings.TrimSpace(firstNonEmpty(memory.Summary, memory.Content)) == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(memory.Kind)) {
+	case "lesson", "preference", "procedural":
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowMemoryLessonText(memory models.ContextMemory) string {
+	text := strings.TrimSpace(firstNonEmpty(memory.Summary, memory.Content))
+	if text == "" {
+		return ""
+	}
+	return compactWorkflowText(text, 180)
+}
+
+func workflowMemorySourceURI(memory models.ContextMemory) string {
+	if uri := strings.TrimSpace(memory.SourceURI); uri != "" {
+		return uri
+	}
+	if memory.ID != uuid.Nil {
+		return "memory://" + memory.ID.String()
+	}
+	return "memory://context"
+}
+
+func compactWorkflowText(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
 }
 
 func SortItems(items []models.WorkflowItem) {

@@ -60,6 +60,9 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	if len(repo.launchEvents) != 1 {
 		t.Fatalf("expected launch event to be persisted")
 	}
+	if result.LaunchEventID == uuid.Nil || result.LaunchEventID != repo.launchEvents[0].ID {
+		t.Fatalf("launch event id was not returned with launch result: result=%s event=%s", result.LaunchEventID, repo.launchEvents[0].ID)
+	}
 }
 
 func TestResolveImagePathRejectsTraversal(t *testing.T) {
@@ -545,7 +548,7 @@ func TestLaunchBlocksWhenEmergencyStopActive(t *testing.T) {
 
 func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	id := uuid.New()
-	adapter := &fakeAgentRuntimeAdapter{}
+	adapter := &fakeAgentRuntimeAdapter{id: "hermes"}
 	registry := agentruntime.NewRegistry(adapter)
 	repo := newFakeAutomationRepo(&models.Automation{
 		ID:           id,
@@ -566,6 +569,9 @@ func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	if blocked.Status != "blocked" || adapter.called {
 		t.Fatalf("direct launch bypassed approval: %#v", blocked)
 	}
+	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "agent approval gate blocked execution") {
+		t.Fatalf("blocked runtime audit was not persisted: %#v", repo.launchEvents)
+	}
 
 	completed, err := service.LaunchTask(id, TaskLaunchRequest{
 		Task:          "Inspect the project and report verified completion.",
@@ -578,8 +584,99 @@ func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	if completed.Status != "completed" || !adapter.called {
 		t.Fatalf("approved task did not run: %#v", completed)
 	}
+	if completed.RuntimeTaskID != id.String() {
+		t.Fatalf("runtime task id = %q, want automation id %s", completed.RuntimeTaskID, id)
+	}
 	if adapter.task.Prompt != "Inspect the project and report verified completion." || adapter.task.ProjectKey != "018-hai" {
 		t.Fatalf("task context was not propagated: %#v", adapter.task)
+	}
+	if adapter.task.ID != id.String() {
+		t.Fatalf("adapter task id = %q, want %s", adapter.task.ID, id)
+	}
+	if len(repo.launchEvents) != 2 || !containsString(repo.launchEvents[1].AuditEvents, "fake runtime executed under approval") {
+		t.Fatalf("completed runtime audit was not persisted: %#v", repo.launchEvents)
+	}
+	if repo.launchEvents[1].RuntimeTaskID != id.String() {
+		t.Fatalf("launch event runtime task id = %q, want %s", repo.launchEvents[1].RuntimeTaskID, id)
+	}
+}
+
+func TestStopRuntimeTaskUsesAutomationRuntimeAndTaskID(t *testing.T) {
+	id := uuid.New()
+	adapter := &fakeAgentRuntimeAdapter{id: "openclaw"}
+	registry := agentruntime.NewRegistry(adapter)
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "OpenClaw Runtime",
+		URLPath:      "openclaw-runtime",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "agent_runtime",
+		RuntimeType:  "openclaw",
+		LaunchTarget: "runtime://openclaw",
+	})
+	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
+
+	result, err := service.StopRuntimeTask(id)
+	if err != nil {
+		t.Fatalf("StopRuntimeTask: %v", err)
+	}
+	if result.RuntimeID != "openclaw" || result.TaskID != id.String() || result.Status != "stopped" {
+		t.Fatalf("stop result = %#v", result)
+	}
+	if result.EvidenceURI == "" {
+		t.Fatalf("stop result missing evidence URI: %#v", result)
+	}
+	if len(repo.launchEvents) != 1 {
+		t.Fatalf("expected runtime stop launch event, got %#v", repo.launchEvents)
+	}
+	event := repo.launchEvents[0]
+	if event.LaunchType != "agent_runtime_stop" || event.RuntimeTaskID != id.String() || event.Status != "stopped" {
+		t.Fatalf("runtime stop event = %#v", event)
+	}
+	if result.EvidenceURI != "automation-launch://"+event.ID.String() {
+		t.Fatalf("evidence URI = %q, want event %s", result.EvidenceURI, event.ID)
+	}
+	if !containsString(event.AuditEvents, "runtime stop requested") {
+		t.Fatalf("runtime stop audit missing: %#v", event.AuditEvents)
+	}
+}
+
+func TestAgentRuntimeLaunchAllowsOpenClaw(t *testing.T) {
+	id := uuid.New()
+	adapter := &fakeAgentRuntimeAdapter{id: "openclaw"}
+	registry := agentruntime.NewRegistry(adapter)
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "OpenClaw Runtime",
+		URLPath:      "openclaw-runtime",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "agent_runtime",
+		RuntimeType:  "openclaw",
+		LaunchTarget: "runtime://openclaw",
+	})
+	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
+
+	completed, err := service.LaunchTask(id, TaskLaunchRequest{
+		Task:          "Move approved OpenClaw work forward safely.",
+		ProjectKey:    "018-hai",
+		HumanApproved: true,
+	})
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if completed.Status != "completed" || !adapter.called {
+		t.Fatalf("approved OpenClaw task did not run: %#v", completed)
+	}
+	if adapter.task.Prompt != "Move approved OpenClaw work forward safely." {
+		t.Fatalf("task context was not propagated: %#v", adapter.task)
+	}
+	if completed.RuntimeRouteTrace == nil || completed.RuntimeRouteTrace.RuntimeID != "openclaw" || !containsString(completed.RuntimeRouteTrace.RecommendedSkills, "autoreview") {
+		t.Fatalf("runtime route trace missing from launch result: %#v", completed.RuntimeRouteTrace)
+	}
+	if len(repo.launchEvents) != 1 || repo.launchEvents[0].RuntimeRouteTrace == nil || !containsString(repo.launchEvents[0].RuntimeRouteTrace.VisibleTools, "browser") {
+		t.Fatalf("runtime route trace missing from launch event: %#v", repo.launchEvents)
 	}
 }
 
@@ -697,14 +794,16 @@ type fakeAutomationRepo struct {
 }
 
 type fakeAgentRuntimeAdapter struct {
+	id     string
 	called bool
 	task   agentruntime.Task
 }
 
 func (a *fakeAgentRuntimeAdapter) Info() agentruntime.Info {
+	id := firstNonEmptyString(a.id, "hermes")
 	return agentruntime.Info{
-		ID:               "hermes",
-		Name:             "Hermes",
+		ID:               id,
+		Name:             id,
 		Enabled:          true,
 		Configured:       true,
 		ExecutionEnabled: true,
@@ -713,17 +812,63 @@ func (a *fakeAgentRuntimeAdapter) Info() agentruntime.Info {
 }
 
 func (a *fakeAgentRuntimeAdapter) HealthCheck(context.Context) agentruntime.Health {
-	return agentruntime.Health{RuntimeID: "hermes", Status: "ready"}
+	return agentruntime.Health{RuntimeID: firstNonEmptyString(a.id, "hermes"), Status: "ready"}
+}
+
+func (a *fakeAgentRuntimeAdapter) ListSkills(context.Context) []agentruntime.Skill {
+	id := firstNonEmptyString(a.id, "hermes")
+	return []agentruntime.Skill{{
+		ID:               id + ":skill:test",
+		RuntimeID:        id,
+		Name:             "test",
+		Category:         "skill",
+		RiskLevel:        "low",
+		ApprovalRequired: false,
+		ExecutionMode:    "test",
+	}}
 }
 
 func (a *fakeAgentRuntimeAdapter) ExecuteTask(_ context.Context, task agentruntime.Task) agentruntime.Result {
 	a.called = true
 	a.task = task
 	return agentruntime.Result{
-		RuntimeID: "hermes",
+		RuntimeID: firstNonEmptyString(a.id, "hermes"),
 		Status:    "completed",
 		Output:    "verified runtime output",
+		RouteTrace: &agentruntime.RouteTrace{
+			RuntimeID:         firstNonEmptyString(a.id, "hermes"),
+			Intent:            "software engineering and repository workflow",
+			ExecutionMode:     "read-only planning plus approved low-risk local actions",
+			RiskLevel:         "medium",
+			RecommendedSkills: []string{"autoreview", "gitcrawl"},
+			VisibleProviders:  []string{"ollama"},
+			VisibleTools:      []string{"browser"},
+			BlockedSurfaces:   []string{"outbound message sending"},
+		},
+		AuditEvents: []string{"fake runtime executed under approval"},
 	}
+}
+
+func (a *fakeAgentRuntimeAdapter) StopTask(_ context.Context, taskID string) agentruntime.StopResult {
+	return agentruntime.StopResult{RuntimeID: firstNonEmptyString(a.id, "hermes"), TaskID: taskID, Status: "stopped"}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func newFakeAutomationRepo(automation *models.Automation) *fakeAutomationRepo {
@@ -778,7 +923,9 @@ func (r *fakeAutomationRepo) FindHealthEvents(automationID uuid.UUID, limit int)
 }
 
 func (r *fakeAutomationRepo) SaveLaunchEvent(event *models.AutomationLaunchEvent) error {
-	event.ID = uuid.New()
+	if event.ID == uuid.Nil {
+		event.ID = uuid.New()
+	}
 	r.launchEvents = append(r.launchEvents, *event)
 	return nil
 }

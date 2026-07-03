@@ -1,0 +1,346 @@
+package pursuit
+
+import (
+	"automation-hub-backend/internal/infra"
+	"automation-hub-backend/internal/models"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+type Repository interface {
+	Create(pursuit *models.Pursuit) (*models.Pursuit, error)
+	Update(pursuit *models.Pursuit) (*models.Pursuit, error)
+	FindByID(id uuid.UUID) (*models.Pursuit, error)
+	FindAll(includeArchived bool) ([]models.Pursuit, error)
+	CreateLink(link *models.PursuitLink) (*models.PursuitLink, error)
+	DeleteLink(pursuitID uuid.UUID, id uuid.UUID) error
+	FindLinks(pursuitID uuid.UUID) ([]models.PursuitLink, error)
+	FindLink(linkType, linkID string) (*models.PursuitLink, error)
+	CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error)
+	FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error)
+	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
+	FindLinkedOpenLoops(workflowIDs []uuid.UUID) ([]models.WorkflowOpenLoop, error)
+	FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.WorkflowProposal, error)
+	FindLinkedDecisions(workflowIDs []uuid.UUID) ([]models.WorkflowDecision, error)
+	FindLinkedTransitions(workflowIDs []uuid.UUID) ([]models.WorkflowTransition, error)
+	FindLinkedSourceLinks(workflowIDs []uuid.UUID) ([]models.WorkflowSourceLink, error)
+	FindLinkedEvents(workflowIDs []uuid.UUID) ([]models.WorkflowEvent, error)
+	FindLinkedEvidence(workflowIDs []uuid.UUID) ([]models.WorkflowEvidenceClaim, error)
+	FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, error)
+	FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error)
+	FindLinkedExtractions(ids []uuid.UUID) ([]models.SourceExtraction, error)
+	FindLinkedVerificationRuns(ids []uuid.UUID) ([]models.VerificationRun, error)
+	FindLinkedVerificationClaims(runIDs []uuid.UUID) ([]models.VerificationClaim, error)
+	FindLinkedVerificationEvidence(runIDs []uuid.UUID) ([]models.VerificationEvidence, error)
+	FindLinkedAutomations(ids []uuid.UUID) ([]models.Automation, error)
+	FindLinkedAutomationLaunches(automationIDs []uuid.UUID, launchIDs []uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error)
+}
+
+type GormRepository struct {
+	DB *gorm.DB
+}
+
+func DefaultRepository() Repository {
+	db, err := infra.GetDefaultDB()
+	if err != nil {
+		panic(fmt.Sprintf("failed to initialize pursuit repository: %v", err))
+	}
+	return &GormRepository{DB: db}
+}
+
+func (r *GormRepository) Create(pursuit *models.Pursuit) (*models.Pursuit, error) {
+	if err := r.DB.Create(pursuit).Error; err != nil {
+		return nil, err
+	}
+	return pursuit, nil
+}
+
+func (r *GormRepository) Update(pursuit *models.Pursuit) (*models.Pursuit, error) {
+	if err := r.DB.Save(pursuit).Error; err != nil {
+		return nil, err
+	}
+	return pursuit, nil
+}
+
+func (r *GormRepository) FindByID(id uuid.UUID) (*models.Pursuit, error) {
+	var pursuit models.Pursuit
+	if err := r.DB.First(&pursuit, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &pursuit, nil
+}
+
+func (r *GormRepository) FindAll(includeArchived bool) ([]models.Pursuit, error) {
+	var pursuits []models.Pursuit
+	query := r.DB.Order("priority_score DESC, updated_at DESC")
+	if !includeArchived {
+		query = query.Where("archived = ?", false)
+	}
+	if err := query.Find(&pursuits).Error; err != nil {
+		return nil, err
+	}
+	return pursuits, nil
+}
+
+func (r *GormRepository) CreateLink(link *models.PursuitLink) (*models.PursuitLink, error) {
+	if link.Confidence == 0 {
+		link.Confidence = 0.7
+	}
+	var existing models.PursuitLink
+	err := r.DB.Where(
+		"pursuit_id = ? AND link_type = ? AND link_id = ? AND relationship = ?",
+		link.PursuitID,
+		link.LinkType,
+		link.LinkID,
+		link.Relationship,
+	).First(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	if err := r.DB.Create(link).Error; err != nil {
+		return nil, err
+	}
+	return link, nil
+}
+
+func (r *GormRepository) DeleteLink(pursuitID uuid.UUID, id uuid.UUID) error {
+	result := r.DB.Delete(&models.PursuitLink{}, "id = ? AND pursuit_id = ?", id, pursuitID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("pursuit link not found")
+	}
+	return nil
+}
+
+func (r *GormRepository) FindLinks(pursuitID uuid.UUID) ([]models.PursuitLink, error) {
+	var links []models.PursuitLink
+	if err := r.DB.Where("pursuit_id = ?", pursuitID).Order("created_at DESC").Find(&links).Error; err != nil {
+		return nil, err
+	}
+	return links, nil
+}
+
+func (r *GormRepository) FindLink(linkType, linkID string) (*models.PursuitLink, error) {
+	var link models.PursuitLink
+	if err := r.DB.Where("link_type = ? AND link_id = ?", linkType, linkID).Order("confidence DESC, created_at DESC").First(&link).Error; err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
+func (r *GormRepository) CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error) {
+	if activity.CreatedAt.IsZero() {
+		activity.CreatedAt = time.Now().UTC()
+	}
+	if err := r.DB.Create(activity).Error; err != nil {
+		return nil, err
+	}
+	return activity, nil
+}
+
+func (r *GormRepository) FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	var activity []models.PursuitActivity
+	if err := r.DB.Where("pursuit_id = ?", pursuitID).Order("created_at DESC").Limit(limit).Find(&activity).Error; err != nil {
+		return nil, err
+	}
+	return activity, nil
+}
+
+func (r *GormRepository) FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error) {
+	var items []models.WorkflowItem
+	if len(ids) == 0 {
+		return items, nil
+	}
+	if err := r.DB.Where("id IN ?", ids).Order("priority_score DESC, updated_at DESC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *GormRepository) FindLinkedOpenLoops(workflowIDs []uuid.UUID) ([]models.WorkflowOpenLoop, error) {
+	var loops []models.WorkflowOpenLoop
+	if len(workflowIDs) == 0 {
+		return loops, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("follow_up_at ASC NULLS LAST, updated_at DESC").Find(&loops).Error; err != nil {
+		return nil, err
+	}
+	return loops, nil
+}
+
+func (r *GormRepository) FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.WorkflowProposal, error) {
+	var proposals []models.WorkflowProposal
+	if len(workflowIDs) == 0 {
+		return proposals, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("created_at DESC").Find(&proposals).Error; err != nil {
+		return nil, err
+	}
+	return proposals, nil
+}
+
+func (r *GormRepository) FindLinkedDecisions(workflowIDs []uuid.UUID) ([]models.WorkflowDecision, error) {
+	var decisions []models.WorkflowDecision
+	if len(workflowIDs) == 0 {
+		return decisions, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("created_at DESC").Find(&decisions).Error; err != nil {
+		return nil, err
+	}
+	return decisions, nil
+}
+
+func (r *GormRepository) FindLinkedTransitions(workflowIDs []uuid.UUID) ([]models.WorkflowTransition, error) {
+	var transitions []models.WorkflowTransition
+	if len(workflowIDs) == 0 {
+		return transitions, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("created_at DESC").Find(&transitions).Error; err != nil {
+		return nil, err
+	}
+	return transitions, nil
+}
+
+func (r *GormRepository) FindLinkedSourceLinks(workflowIDs []uuid.UUID) ([]models.WorkflowSourceLink, error) {
+	var links []models.WorkflowSourceLink
+	if len(workflowIDs) == 0 {
+		return links, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("created_at DESC").Find(&links).Error; err != nil {
+		return nil, err
+	}
+	return links, nil
+}
+
+func (r *GormRepository) FindLinkedEvents(workflowIDs []uuid.UUID) ([]models.WorkflowEvent, error) {
+	var events []models.WorkflowEvent
+	if len(workflowIDs) == 0 {
+		return events, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("created_at DESC").Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func (r *GormRepository) FindLinkedEvidence(workflowIDs []uuid.UUID) ([]models.WorkflowEvidenceClaim, error) {
+	var claims []models.WorkflowEvidenceClaim
+	if len(workflowIDs) == 0 {
+		return claims, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("created_at DESC").Find(&claims).Error; err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+func (r *GormRepository) FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, error) {
+	var memories []models.ContextMemory
+	if len(ids) == 0 {
+		return memories, nil
+	}
+	if err := r.DB.Where("id IN ?", ids).Order("updated_at DESC").Find(&memories).Error; err != nil {
+		return nil, err
+	}
+	return memories, nil
+}
+
+func (r *GormRepository) FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error) {
+	var items []models.SourceRawItem
+	if len(ids) == 0 {
+		return items, nil
+	}
+	if err := r.DB.Where("id IN ?", ids).Order("updated_at DESC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *GormRepository) FindLinkedExtractions(ids []uuid.UUID) ([]models.SourceExtraction, error) {
+	var extractions []models.SourceExtraction
+	if len(ids) == 0 {
+		return extractions, nil
+	}
+	if err := r.DB.Where("id IN ?", ids).Order("updated_at DESC").Find(&extractions).Error; err != nil {
+		return nil, err
+	}
+	return extractions, nil
+}
+
+func (r *GormRepository) FindLinkedVerificationRuns(ids []uuid.UUID) ([]models.VerificationRun, error) {
+	var runs []models.VerificationRun
+	if len(ids) == 0 {
+		return runs, nil
+	}
+	if err := r.DB.Where("id IN ?", ids).Order("created_at DESC").Find(&runs).Error; err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+func (r *GormRepository) FindLinkedVerificationClaims(runIDs []uuid.UUID) ([]models.VerificationClaim, error) {
+	var claims []models.VerificationClaim
+	if len(runIDs) == 0 {
+		return claims, nil
+	}
+	if err := r.DB.Where("run_id IN ?", runIDs).Order("created_at ASC").Find(&claims).Error; err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+func (r *GormRepository) FindLinkedVerificationEvidence(runIDs []uuid.UUID) ([]models.VerificationEvidence, error) {
+	var evidence []models.VerificationEvidence
+	if len(runIDs) == 0 {
+		return evidence, nil
+	}
+	if err := r.DB.Where("run_id IN ?", runIDs).Order("quality_score DESC, created_at DESC").Find(&evidence).Error; err != nil {
+		return nil, err
+	}
+	return evidence, nil
+}
+
+func (r *GormRepository) FindLinkedAutomations(ids []uuid.UUID) ([]models.Automation, error) {
+	var automations []models.Automation
+	if len(ids) == 0 {
+		return automations, nil
+	}
+	if err := r.DB.Where("id IN ?", ids).Order("name ASC").Find(&automations).Error; err != nil {
+		return nil, err
+	}
+	return automations, nil
+}
+
+func (r *GormRepository) FindLinkedAutomationLaunches(automationIDs []uuid.UUID, launchIDs []uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error) {
+	var events []models.AutomationLaunchEvent
+	if len(automationIDs) == 0 && len(launchIDs) == 0 {
+		return events, nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	query := r.DB.Model(&models.AutomationLaunchEvent{})
+	switch {
+	case len(automationIDs) > 0 && len(launchIDs) > 0:
+		query = query.Where("automation_id IN ? OR id IN ?", automationIDs, launchIDs)
+	case len(automationIDs) > 0:
+		query = query.Where("automation_id IN ?", automationIDs)
+	default:
+		query = query.Where("id IN ?", launchIDs)
+	}
+	if err := query.Order("started_at DESC").Limit(limit).Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
+}

@@ -3,6 +3,7 @@ package source
 import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/workflow"
 	"errors"
 	"fmt"
@@ -75,6 +76,105 @@ func TestSyncLocalFolderExtractsReadableFilesWithProvenance(t *testing.T) {
 	}
 	if !repo.hasAudit("source.local_folder_scanned") || !repo.hasAudit("source.synced") {
 		t.Fatalf("expected scan and sync audit records")
+	}
+}
+
+func TestSyncWhatsAppExportParsesChatWindowsAndGatesReview(t *testing.T) {
+	root := t.TempDir()
+	export := strings.Join([]string{
+		"31/05/2026, 09:10 - Robert Velhorst: Kun jij morgen de offerte opvolgen?",
+		"31/05/2026, 09:11 - Joyce: Ja, ik moet eerst de documenten controleren.",
+		"31/05/2026, 09:12 - Robert Velhorst: Afgesproken, wacht op bevestiging en herinner mij vrijdag.",
+	}, "\n")
+	writeTestFile(t, root+"/WhatsApp Chat with Joyce.txt", export)
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      "whatsapp-export",
+		Name:              "WhatsApp Joyce export",
+		Category:          "chat",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		DefaultProjectKey: "Robert-life-os",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode:       ModeHistoricalBackfill,
+		FolderPath: ".",
+		Limit:      20,
+		MaxBytes:   4096,
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 {
+		t.Fatalf("ItemsSeen = %d, want 1 parsed chat window", result.Job.ItemsSeen)
+	}
+	if len(result.Extractions) != 1 {
+		t.Fatalf("extractions = %d, want 1", len(result.Extractions))
+	}
+	extraction := result.Extractions[0]
+	if extraction.ContentType != "whatsapp_chat_window" {
+		t.Fatalf("ContentType = %q, want whatsapp_chat_window", extraction.ContentType)
+	}
+	if !extraction.Sensitive {
+		t.Fatalf("WhatsApp extraction was not marked sensitive")
+	}
+	if !strings.Contains(extraction.Tasks, "moet") || !strings.Contains(extraction.Decisions, "Afgesproken") || !strings.Contains(extraction.FollowUps, "wacht op") {
+		t.Fatalf("extraction missed Dutch operational signals: tasks=%q decisions=%q followUps=%q", extraction.Tasks, extraction.Decisions, extraction.FollowUps)
+	}
+	if len(workflowSpy.requests) != 1 {
+		t.Fatalf("workflow requests = %d, want 1", len(workflowSpy.requests))
+	}
+	if !workflowSpy.requests[0].RequiresReview || !strings.Contains(workflowSpy.requests[0].ReviewReason, "sensitive") {
+		t.Fatalf("workflow was not review gated: %#v", workflowSpy.requests[0])
+	}
+	if !repo.hasAudit("source.whatsapp_export_scanned") || !repo.hasAudit("workflow.intake_created") {
+		t.Fatalf("expected WhatsApp scan and workflow intake audit records")
+	}
+}
+
+func TestSyncWhatsAppManualPasteCreatesBoundedWindows(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "whatsapp-export",
+		Name:         "WhatsApp manual paste",
+		Category:     "chat",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode:       ModeManualImport,
+		ProjectKey: "018-HAI",
+		Limit:      2,
+		Items: []ImportItem{{
+			ExternalID: "chat-robert-test",
+			Title:      "WhatsApp test chat",
+			SourceURI:  "whatsapp-export://manual/test",
+			Content: strings.Join([]string{
+				"01/06/2026, 10:00 - Robert: Eerste bericht.",
+				"01/06/2026, 10:01 - Contact: Tweede bericht moet worden opgevolgd.",
+				"01/06/2026, 10:02 - Robert: Derde bericht.",
+			}, "\n"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 2 {
+		t.Fatalf("ItemsSeen = %d, want 2 bounded windows", result.Job.ItemsSeen)
+	}
+	if result.Extractions[0].SourceLabel == result.Extractions[1].SourceLabel {
+		t.Fatalf("expected distinct source labels per window")
 	}
 }
 
@@ -421,6 +521,126 @@ func TestSyncCreatesWorkflowForActionableExtraction(t *testing.T) {
 	}
 	if !repo.hasAudit("workflow.intake_created") {
 		t.Fatalf("expected workflow intake audit record")
+	}
+}
+
+func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      "email",
+		Name:              "Legal mailbox",
+		Category:          "email",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		DefaultProjectKey: "Vivare dispute",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	pursuitSpy := &fakeSourcePursuitLinker{result: &pursuit.AutoLinkResult{
+		Linked:    true,
+		PursuitID: uuid.New(),
+		Score:     0.72,
+	}}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, &fakeSourceMemoryService{}, workflowSpy, pursuitSpy)
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode: ModeManualImport,
+		Items: []ImportItem{{
+			ExternalID: "email-1",
+			Title:      "Lawyer follow-up",
+			Content:    "Follow up: draft a formal reply for the legal case before tomorrow.",
+			SourceURI:  "mailto:lawyer@example.test",
+			ItemType:   "email",
+			ProjectKey: "Vivare dispute",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(result.Extractions) != 1 {
+		t.Fatalf("extractions = %d, want 1", len(result.Extractions))
+	}
+	if len(pursuitSpy.requests) != 1 {
+		t.Fatalf("pursuit auto-link requests = %d, want 1", len(pursuitSpy.requests))
+	}
+	request := pursuitSpy.requests[0]
+	if request.WorkflowID == uuid.Nil || request.ProjectKey != "Vivare dispute" {
+		t.Fatalf("auto-link request workflow/project = %s/%q", request.WorkflowID, request.ProjectKey)
+	}
+	if !request.AllowCreateCandidate {
+		t.Fatalf("source-derived workflows must be allowed to create reviewable pursuit candidates when no match exists")
+	}
+	if request.ExtractionID != result.Extractions[0].ID.String() || request.RawItemID != result.Extractions[0].RawItemID.String() {
+		t.Fatalf("auto-link source ids = %q/%q, want %s/%s", request.ExtractionID, request.RawItemID, result.Extractions[0].ID, result.Extractions[0].RawItemID)
+	}
+	if request.SourceURI != "mailto:lawyer@example.test" || request.SourceLabel != "Lawyer follow-up" {
+		t.Fatalf("auto-link source reference = %q/%q", request.SourceURI, request.SourceLabel)
+	}
+	if !repo.hasAudit("pursuit.auto_linked") {
+		t.Fatalf("expected pursuit auto-link audit record")
+	}
+}
+
+func TestSyncAutoLinksStableSourceMemoryToPursuit(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      "email",
+		Name:              "Legal mailbox",
+		Category:          "email",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		DefaultProjectKey: "Vivare dispute",
+	})
+	memorySpy := &fakeSourceMemoryService{}
+	workflowSpy := &fakeSourceWorkflowService{}
+	pursuitSpy := &fakeSourcePursuitLinker{memoryResult: &pursuit.AutoLinkResult{
+		Linked:    true,
+		PursuitID: uuid.New(),
+		Score:     0.78,
+	}}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, memorySpy, workflowSpy, pursuitSpy)
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode: ModeManualImport,
+		Items: []ImportItem{{
+			ExternalID: "email-context-1",
+			Title:      "Vivare context note",
+			Content:    "Robert prefers formal Dutch summaries for Vivare correspondence and evidence bundles attached to lawyer messages.",
+			SourceURI:  "mailto:vivare-context@example.test",
+			ItemType:   "email",
+			ProjectKey: "Vivare dispute",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(result.Extractions) != 1 {
+		t.Fatalf("extractions = %d, want 1", len(result.Extractions))
+	}
+	if len(workflowSpy.requests) != 0 {
+		t.Fatalf("workflow requests = %#v, want none for stable context memory", workflowSpy.requests)
+	}
+	if len(memorySpy.created) != 1 {
+		t.Fatalf("created memories = %d, want one stable source memory", len(memorySpy.created))
+	}
+	if len(pursuitSpy.memoryRequests) != 1 {
+		t.Fatalf("pursuit memory auto-link requests = %d, want 1", len(pursuitSpy.memoryRequests))
+	}
+	request := pursuitSpy.memoryRequests[0]
+	if request.MemoryID == uuid.Nil || request.ProjectKey != "Vivare dispute" {
+		t.Fatalf("memory auto-link request memory/project = %s/%q", request.MemoryID, request.ProjectKey)
+	}
+	if request.AllowCreateCandidate {
+		t.Fatalf("stable source memory must not create noisy pursuit candidates")
+	}
+	if request.SourceURI != "mailto:vivare-context@example.test" || request.SourceLabel != "Vivare context note" {
+		t.Fatalf("memory auto-link source reference = %q/%q", request.SourceURI, request.SourceLabel)
+	}
+	if !repo.hasAudit("pursuit.memory_auto_linked") {
+		t.Fatalf("expected pursuit memory auto-link audit record")
 	}
 }
 
@@ -835,6 +1055,153 @@ func TestCorrectingActionableExtractionReconcilesRevisedWorkflowInput(t *testing
 	}
 }
 
+func TestCorrectingExtractionStoresCorrectionLessonMemory(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	mem := &fakeSourceMemoryService{}
+	workflowSpy := &fakeSourceWorkflowService{}
+	pursuitSpy := &fakeSourcePursuitLinker{memoryResult: &pursuit.AutoLinkResult{Linked: true, PursuitID: uuid.New(), Score: 0.81}}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, mem, workflowSpy, pursuitSpy)
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-memory-correction",
+		Title:      "Correction",
+		Content:    "Short note",
+		SourceURI:  "local://memory-correction",
+		ItemType:   "email",
+		ProjectKey: "018-HAI",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(mem.created) != 0 {
+		t.Fatalf("initial uncertain extraction stored %d memories, want 0", len(mem.created))
+	}
+
+	extraction := result.Extractions[0]
+	extraction.Uncertain = false
+	extraction.Summary = "Robert corrected the source into a concrete evidence checklist request."
+	extraction.Tasks = "prepare the revised evidence checklist"
+	extraction.FollowUps = "ask Robert to review the revised checklist"
+	if _, err := service.UpdateExtraction(extraction.ID, extraction); err != nil {
+		t.Fatalf("UpdateExtraction: %v", err)
+	}
+
+	if len(mem.created) != 1 {
+		t.Fatalf("stored %d correction memories, want 1", len(mem.created))
+	}
+	if len(pursuitSpy.memoryRequests) != 1 {
+		t.Fatalf("pursuit memory link requests = %d, want correction lesson linked", len(pursuitSpy.memoryRequests))
+	}
+	linkRequest := pursuitSpy.memoryRequests[0]
+	if linkRequest.AllowCreateCandidate {
+		t.Fatalf("correction lesson memory must not create pursuit candidates")
+	}
+	if linkRequest.ProjectKey != "018-HAI" || linkRequest.SourceURI != "local://memory-correction" {
+		t.Fatalf("correction link request = %#v, want project and source provenance", linkRequest)
+	}
+	created := mem.created[0]
+	if created.Kind != "lesson" || created.ProjectKey != "018-HAI" {
+		t.Fatalf("created memory = %#v, want project-scoped lesson", created)
+	}
+	if created.Confidence < 0.75 {
+		t.Fatalf("confidence = %.2f, want strong source-correction lesson", created.Confidence)
+	}
+	if !strings.Contains(created.Content, "revised evidence checklist") || !strings.Contains(created.Content, "Future behavior") {
+		t.Fatalf("created memory did not preserve corrected behavior: %q", created.Content)
+	}
+	if !hasString(created.Tags, "source-correction") || !hasString(created.Tags, "email") {
+		t.Fatalf("tags = %#v, want source correction and connector context", created.Tags)
+	}
+	if created.SourceURI != "local://memory-correction" || created.SourceLabel != "Correction" {
+		t.Fatalf("source reference = %q/%q, want original provenance", created.SourceURI, created.SourceLabel)
+	}
+	if !repo.hasAudit("extraction.correction_memory_created") {
+		t.Fatalf("expected extraction.correction_memory_created audit log")
+	}
+	if !repo.hasAudit("pursuit.memory_auto_linked") {
+		t.Fatalf("expected correction lesson to be linked into pursuit context")
+	}
+}
+
+func TestSensitiveExtractionCorrectionStoresReviewOnlyLesson(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "whatsapp-export",
+		Name:         "WhatsApp export",
+		Category:     "chat",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	mem := &fakeSourceMemoryService{}
+	pursuitSpy := &fakeSourcePursuitLinker{memoryResult: &pursuit.AutoLinkResult{Linked: true, PursuitID: uuid.New(), Score: 0.68}}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, mem, &fakeSourceWorkflowService{}, pursuitSpy)
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-sensitive-correction",
+		Title:      "Sensitive chat",
+		Content:    "Legal matter password=supersecret Follow up: review with lawyer.",
+		SourceURI:  "file://sensitive-chat.txt",
+		ItemType:   "whatsapp_export",
+		ProjectKey: "legal-case",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(mem.created) != 0 {
+		t.Fatalf("initial sensitive extraction stored %d memories, want 0", len(mem.created))
+	}
+
+	extraction := result.Extractions[0]
+	extraction.Sensitive = true
+	extraction.Summary = "Corrected sensitive legal chat password=supersecret"
+	extraction.Tasks = "draft legal response with password=supersecret"
+	if _, err := service.UpdateExtraction(extraction.ID, extraction); err != nil {
+		t.Fatalf("UpdateExtraction: %v", err)
+	}
+
+	if len(mem.created) != 1 {
+		t.Fatalf("stored %d correction memories, want 1", len(mem.created))
+	}
+	if len(pursuitSpy.memoryRequests) != 1 {
+		t.Fatalf("pursuit memory link requests = %d, want sensitive correction lesson linked", len(pursuitSpy.memoryRequests))
+	}
+	linkRequest := pursuitSpy.memoryRequests[0]
+	if linkRequest.AllowCreateCandidate {
+		t.Fatalf("sensitive correction lesson memory must not create pursuit candidates")
+	}
+	if linkRequest.SourceURI != "source-extraction://"+extraction.ID.String() || linkRequest.SourceLabel != "Sensitive connected-source correction" {
+		t.Fatalf("sensitive correction link source = %q/%q", linkRequest.SourceURI, linkRequest.SourceLabel)
+	}
+	created := mem.created[0]
+	if created.Kind != "lesson" || created.ProjectKey != "legal-case" {
+		t.Fatalf("created memory = %#v, want project-scoped lesson", created)
+	}
+	if !strings.Contains(created.Content, "review-gated") || !strings.Contains(created.Content, "avoid storing raw sensitive content") {
+		t.Fatalf("sensitive correction lesson is not review-gated: %q", created.Content)
+	}
+	leaked := strings.ToLower(created.Content + " " + created.Summary + " " + created.SourceURI + " " + created.SourceLabel)
+	for _, forbidden := range []string{"supersecret", "password=supersecret", "sensitive-chat.txt"} {
+		if strings.Contains(leaked, forbidden) {
+			t.Fatalf("sensitive correction memory leaked %q: %#v", forbidden, created)
+		}
+	}
+	if !hasString(created.Tags, "sensitive") || !hasString(created.Tags, "review-required") {
+		t.Fatalf("tags = %#v, want sensitive review tags", created.Tags)
+	}
+	if created.SourceURI != "source-extraction://"+extraction.ID.String() || created.SourceLabel != "Sensitive connected-source correction" {
+		t.Fatalf("source reference = %q/%q, want sanitized extraction reference", created.SourceURI, created.SourceLabel)
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -1103,14 +1470,16 @@ type fakeSourceMemoryService struct {
 func (s *fakeSourceMemoryService) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
 	s.created = append(s.created, request)
 	return &models.ContextMemory{
-		ID:         uuid.New(),
-		ProjectKey: request.ProjectKey,
-		Kind:       request.Kind,
-		Content:    request.Content,
-		Summary:    request.Summary,
-		Confidence: request.Confidence,
-		CreatedAt:  time.Now().UTC(),
-		UpdatedAt:  time.Now().UTC(),
+		ID:          uuid.New(),
+		ProjectKey:  request.ProjectKey,
+		Kind:        request.Kind,
+		Content:     request.Content,
+		Summary:     request.Summary,
+		Confidence:  request.Confidence,
+		SourceURI:   request.SourceURI,
+		SourceLabel: request.SourceLabel,
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
 	}, nil
 }
 
@@ -1208,6 +1577,45 @@ func (s *fakeSourceWorkflowService) UpdateChecklistItem(id uuid.UUID, itemID uui
 func (s *fakeSourceWorkflowService) RetractSource(sourceType, sourceID, reason string) error {
 	s.retractions = append(s.retractions, sourceWorkflowRetraction{sourceType: sourceType, sourceID: sourceID, reason: reason})
 	return nil
+}
+
+type fakeSourcePursuitLinker struct {
+	requests       []pursuit.AutoLinkWorkflowRequest
+	memoryRequests []pursuit.AutoLinkMemoryRequest
+	result         *pursuit.AutoLinkResult
+	memoryResult   *pursuit.AutoLinkResult
+	err            error
+}
+
+func (f *fakeSourcePursuitLinker) AutoLinkWorkflow(request pursuit.AutoLinkWorkflowRequest) (*pursuit.AutoLinkResult, error) {
+	f.requests = append(f.requests, request)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.result != nil {
+		return f.result, nil
+	}
+	return &pursuit.AutoLinkResult{Linked: true, PursuitID: uuid.New(), Score: 0.8}, nil
+}
+
+func (f *fakeSourcePursuitLinker) AutoLinkMemory(request pursuit.AutoLinkMemoryRequest) (*pursuit.AutoLinkResult, error) {
+	f.memoryRequests = append(f.memoryRequests, request)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.memoryResult != nil {
+		return f.memoryResult, nil
+	}
+	return &pursuit.AutoLinkResult{Linked: true, PursuitID: uuid.New(), Score: 0.8}, nil
+}
+
+func hasString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *fakeSourceWorkflowService) RecoverStaleClaims(request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {

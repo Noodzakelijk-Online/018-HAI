@@ -79,6 +79,27 @@ export interface IWorkflowProjectMatch {
   createdAt: string;
 }
 
+export interface IWorkflowPursuitContext {
+  id: string;
+  title: string;
+  status: string;
+  riskLevel: string;
+  priorityScore: number;
+  confidence: number;
+  autonomyLevel: string;
+  needCategory?: string;
+  desiredOutcome?: string;
+  currentStateSummary?: string;
+  nextRecommendedAction?: string;
+  completionDefinition?: string;
+  completionState?: string;
+  linkId: string;
+  relationship: string;
+  sourceUri?: string;
+  sourceLabel?: string;
+  linkConfidence: number;
+}
+
 export interface IWorkflowEvidenceClaim {
   id: string;
   workflowId: string;
@@ -193,6 +214,7 @@ export interface IWorkflowRecord {
   checklist: IWorkflowChecklistItem[];
   intake: IWorkflowIntakeRecord[];
   matches: IWorkflowProjectMatch[];
+  pursuits: IWorkflowPursuitContext[];
   evidence: IWorkflowEvidenceClaim[];
   openLoops: IWorkflowOpenLoop[];
   proposals: IWorkflowProposal[];
@@ -228,6 +250,8 @@ export interface IWorkflowTransitionRequest {
 
 export interface IWorkflowChecklistUpdateRequest {
   status: string;
+  note?: string;
+  actor?: string;
 }
 
 export interface IWorkflowApprovalResolutionRequest {

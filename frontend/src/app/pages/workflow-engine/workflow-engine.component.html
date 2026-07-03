@@ -1,636 +1,431 @@
-<section>
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
-        <h1 class="header-content__title">Workflow Engine</h1>
-        <div class="header-content__actions">
-          <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
-            <i nz-icon nzType="reload" nzTheme="outline"></i>
-            Refresh
-          </button>
-          <button nz-button nzType="primary" (click)="runDue()">
-            <i nz-icon nzType="play-circle" nzTheme="outline"></i>
-            Run Worker
-          </button>
-          <button nz-button nzType="default" (click)="runDueOpenLoops()">
-            <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
-            Run Follow-ups
-          </button>
-          <button nz-button nzType="default" (click)="recoverStaleClaims()">
-            <i nz-icon nzType="sync" nzTheme="outline"></i>
-            Recover Stale
-          </button>
-          <button nz-button nzType="default" (click)="goHome()">
-            <i nz-icon nzType="appstore" nzTheme="outline"></i>
-            Automations
+<section class="workflow-shell">
+  <header class="workflow-header">
+    <div class="workflow-title-block">
+      <h1>Workflow Engine</h1>
+      <p>
+        Turn real-world signals into governed, traceable work.
+        <button type="button" class="help-dot" title="HAI creates workflows from signals, keeps risky actions approval-gated, and logs every step.">?</button>
+      </p>
+    </div>
+
+    <div class="header-actions">
+      <button type="button" nz-button nzType="default" data-testid="workflow-refresh" (click)="refresh(true)" [nzLoading]="isActionRunning('refresh')" [disabled]="anyActionRunning() && !isActionRunning('refresh')">
+        <i nz-icon nzType="reload" nzTheme="outline"></i>
+        Refresh
+      </button>
+      <button type="button" nz-button nzType="primary" data-testid="workflow-run-worker" (click)="runDue()" [nzLoading]="isActionRunning('worker')" [disabled]="anyActionRunning() && !isActionRunning('worker')">
+        <i nz-icon nzType="play-circle" nzTheme="outline"></i>
+        Run worker
+      </button>
+      <button type="button" nz-button nzType="default" data-testid="workflow-run-followups" (click)="runDueOpenLoops()" [nzLoading]="isActionRunning('followups')" [disabled]="anyActionRunning() && !isActionRunning('followups')">
+        <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
+        Follow-ups
+      </button>
+      <button type="button" nz-button nzType="default" data-testid="workflow-recover-stale" (click)="recoverStaleClaims()" [nzLoading]="isActionRunning('recovery')" [disabled]="anyActionRunning() && !isActionRunning('recovery')">
+        <i nz-icon nzType="sync" nzTheme="outline"></i>
+        Recover state
+      </button>
+      <button type="button" nz-button nzType="default" data-testid="workflow-open-automations" (click)="goHome()" [disabled]="anyActionRunning()">
+        <i nz-icon nzType="appstore" nzTheme="outline"></i>
+        Automations
+      </button>
+    </div>
+  </header>
+
+  <section class="action-strip" aria-label="Workflow actions">
+    <button type="button" class="action-card" (click)="activeQueue = 'approval'" title="Open work that requires a human approval before HAI may continue.">
+      <span class="action-icon action-icon--green"><i nz-icon nzType="check-square" nzTheme="outline"></i></span>
+      <span>
+        <strong>Review approvals</strong>
+        <em>{{ queueCount('approval') }} waiting</em>
+        <small>High-risk work stays blocked</small>
+      </span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="action-card" (click)="runDue()" [disabled]="anyActionRunning() && !isActionRunning('worker')" title="Run the controlled workflow worker for safe, due work.">
+      <span class="action-icon action-icon--blue"><i nz-icon nzType="safety-certificate" nzTheme="outline"></i></span>
+      <span>
+        <strong>Run safe worker</strong>
+        <em>{{ queueCount('ready') }} ready</em>
+        <small>{{ runSummary ? (runSummary.completed + ' completed last run') : 'No active run yet' }}</small>
+      </span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="action-card" (click)="runDueOpenLoops()" [disabled]="anyActionRunning() && !isActionRunning('followups')" title="Process follow-up claims and waiting states that are due.">
+      <span class="action-icon action-icon--purple"><i nz-icon nzType="message" nzTheme="outline"></i></span>
+      <span>
+        <strong>Process follow-ups</strong>
+        <em>{{ count('dueOpenLoops') }} due</em>
+        <small>{{ openLoopRunSummary ? (openLoopRunSummary.triggered + ' triggered last run') : 'Open loops stay visible' }}</small>
+      </span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="action-card" (click)="recoverStaleClaims()" [disabled]="anyActionRunning() && !isActionRunning('recovery')" title="Recover stale worker claims and move uncertain work to review.">
+      <span class="action-icon action-icon--amber"><i nz-icon nzType="sync" nzTheme="outline"></i></span>
+      <span>
+        <strong>Recover stale state</strong>
+        <em>{{ count('expiredWorkflowClaims') + count('expiredOpenLoopClaims') }} stale</em>
+        <small>{{ recoverySummary ? (recoverySummary.checked + ' checked last run') : 'System recovery path' }}</small>
+      </span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="action-card" (click)="focusIntake()" title="Create a workflow from a new real-world signal.">
+      <span class="action-icon action-icon--blue"><i nz-icon nzType="plus-square" nzTheme="outline"></i></span>
+      <span>
+        <strong>Create workflow</strong>
+        <em>{{ count('new') || 0 }} new</em>
+        <small>Paste the signal below</small>
+      </span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+  </section>
+
+  <main class="workflow-main">
+    <aside class="queue-rail" *ngIf="dashboard as monitor">
+      <section class="rail-card">
+        <div class="rail-heading">
+          <h2>Workflow queue</h2>
+          <button type="button" class="icon-button" title="Queue filters control the inbox list.">
+            <i nz-icon nzType="filter" nzTheme="outline"></i>
           </button>
         </div>
-      </div>
-    </nz-header>
 
-    <nz-content class="content-container">
-      <div class="workflow-grid">
-        <nz-card nzSize="small" nzTitle="Intake">
-          <form nz-form [formGroup]="intakeForm">
-            <nz-form-item>
-              <nz-form-label>Input</nz-form-label>
-              <nz-form-control>
-                <textarea nz-input rows="5" formControlName="input"></textarea>
-              </nz-form-control>
-            </nz-form-item>
-            <div class="form-row">
-              <input nz-input formControlName="projectKey" placeholder="Project" />
-              <input nz-input formControlName="automationId" placeholder="Controlled automation ID" />
-              <input nz-input formControlName="sourceType" placeholder="Source type" />
-            </div>
-            <div class="form-row">
-              <input nz-input formControlName="sourceId" placeholder="Source ID" />
-              <input nz-input formControlName="contentType" placeholder="Content type" />
-            </div>
-            <input nz-input formControlName="sender" placeholder="Sender or account" />
-            <input nz-input formControlName="sourceUri" placeholder="Source URI" />
-            <input nz-input formControlName="sourceLabel" placeholder="Source label" />
-            <input nz-input formControlName="trigger" placeholder="Trigger" />
-            <button nz-button nzType="primary" (click)="intake()" [nzLoading]="saving">
-              Create Workflow
-            </button>
-          </form>
-        </nz-card>
+        <button type="button" class="queue-row" [class.queue-row--active]="activeQueue === 'all'" (click)="activeQueue = 'all'">
+          <span><i nz-icon nzType="appstore" nzTheme="outline"></i> All workflows</span>
+          <strong>{{ queueCount('all') }}</strong>
+        </button>
+        <button type="button" class="queue-row" [class.queue-row--active]="activeQueue === 'approval'" (click)="activeQueue = 'approval'">
+          <span><b class="dot dot--amber"></b> Need approval</span>
+          <strong>{{ queueCount('approval') }}</strong>
+        </button>
+        <button type="button" class="queue-row" [class.queue-row--active]="activeQueue === 'ready'" (click)="activeQueue = 'ready'">
+          <span><b class="dot dot--green"></b> Ready</span>
+          <strong>{{ queueCount('ready') }}</strong>
+        </button>
+        <button type="button" class="queue-row" [class.queue-row--active]="activeQueue === 'blocked'" (click)="activeQueue = 'blocked'">
+          <span><b class="dot dot--red"></b> Blocked</span>
+          <strong>{{ queueCount('blocked') }}</strong>
+        </button>
+        <button type="button" class="queue-row" [class.queue-row--active]="activeQueue === 'review'" (click)="activeQueue = 'review'">
+          <span><b class="dot dot--purple"></b> Needs review</span>
+          <strong>{{ queueCount('review') }}</strong>
+        </button>
+      </section>
 
-        <nz-card nzSize="small" nzTitle="Operational Engine Capabilities" *ngIf="overview as data">
-          <nz-table [nzData]="data.capabilities" nzSize="small" [nzPageSize]="7">
-            <thead>
-              <tr>
-                <th>Capability</th>
-                <th>Status</th>
-                <th>Implemented</th>
-                <th>Next</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let capability of data.capabilities">
-                <td>{{ capability.name }}</td>
-                <td>{{ capability.status }}</td>
-                <td>{{ capability.implemented.join(', ') }}</td>
-                <td>{{ capability.next.join(', ') }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-      </div>
-
-      <nz-card nzTitle="Operational Monitor" class="section-card" *ngIf="dashboard as monitor">
-        <div class="workflow-grid">
-          <div>
-            <p><strong>Total:</strong> {{ monitor.counts['total'] || 0 }}</p>
-            <p><strong>Approvals:</strong> {{ monitor.counts['approvals'] || 0 }}</p>
-            <p><strong>Ready:</strong> {{ monitor.counts['ready'] || 0 }}</p>
-            <p><strong>Blocked:</strong> {{ monitor.counts['blocked'] || 0 }}</p>
-            <p><strong>High risk:</strong> {{ monitor.counts['highRisk'] || 0 }}</p>
-            <p><strong>Due open loops:</strong> {{ monitor.counts['dueOpenLoops'] || 0 }}</p>
-            <p><strong>Expired workflow claims:</strong> {{ monitor.counts['expiredWorkflowClaims'] || 0 }}</p>
-            <p><strong>Expired follow-up claims:</strong> {{ monitor.counts['expiredOpenLoopClaims'] || 0 }}</p>
-            <p><strong>Interrupted reviews:</strong> {{ monitor.counts['interruptedReview'] || 0 }}</p>
-          </div>
-          <div>
-            <nz-table [nzData]="monitor.dueOpenLoops" nzSize="small" [nzPageSize]="4">
-              <thead>
-                <tr>
-                  <th>Waiting for</th>
-                  <th>Responsible</th>
-                  <th>Follow-up</th>
-                  <th>Status</th>
-                  <th>Next action</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngFor="let loop of monitor.dueOpenLoops">
-                  <td>{{ loop.waitingFor }}</td>
-                  <td>{{ loop.responsibleParty }}</td>
-                  <td>{{ (loop.followUpAt | date: 'short') || '-' }}</td>
-                  <td>{{ loop.status }}</td>
-                  <td>{{ loop.nextAction }}</td>
-                </tr>
-              </tbody>
-            </nz-table>
-          </div>
-        </div>
-      </nz-card>
-
-      <nz-card nzTitle="Approval Queue" class="section-card">
-        <form nz-form [formGroup]="approvalForm">
-          <input nz-input formControlName="note" placeholder="Approval or rejection note" />
-        </form>
-        <nz-empty *ngIf="!approvalItems.length" nzNotFoundContent="No workflow approvals pending."></nz-empty>
-        <nz-table *ngIf="approvalItems.length" [nzData]="approvalItems" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Priority</th>
-              <th>Workflow</th>
-              <th>Reason</th>
-              <th>Source</th>
-              <th>Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of approvalItems">
-              <td>{{ item.priorityScore }}</td>
-              <td>{{ item.title }}</td>
-              <td>{{ item.approvalReason || '-' }}</td>
-              <td>{{ item.sourceLabel || item.sourceUri || '-' }}</td>
-              <td>
-                <button nz-button nzSize="small" nzType="primary" (click)="resolveApproval(item, true)">
-                  Approve
-                </button>
-                <button nz-button nzSize="small" nzType="default" (click)="resolveApproval(item, false)">
-                  Reject
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Workflow Inbox" class="section-card">
-        <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()">
+      <section class="rail-card">
+        <h2>Quick filters</h2>
+        <label>
+          <span>State</span>
+          <select [(ngModel)]="stateFilter" aria-label="State filter">
+            <option value="all">All states</option>
+            <option *ngFor="let state of stateOptions()" [value]="state">{{ readable(state) }}</option>
+          </select>
+        </label>
+        <label>
+          <span>Risk</span>
+          <select [(ngModel)]="riskFilter" aria-label="Risk filter">
+            <option value="all">All risk</option>
+            <option *ngFor="let risk of riskOptions()" [value]="risk">{{ readable(risk) }}</option>
+          </select>
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" [(ngModel)]="includeArchived" (ngModelChange)="refresh()" />
           Include archived
         </label>
-        <nz-empty *ngIf="!items.length" nzNotFoundContent="No workflow items."></nz-empty>
-        <nz-table *ngIf="items.length" [nzData]="items" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Priority</th>
-              <th>State</th>
-              <th>Title</th>
-              <th>Type</th>
-              <th>Risk</th>
-              <th>Approval</th>
-              <th>Retries</th>
-              <th>Verification</th>
-              <th>Next action</th>
-              <th>Open</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of items">
-              <td>{{ item.priorityScore }}</td>
-              <td>{{ item.currentState }}</td>
-              <td>{{ item.title }}</td>
-              <td>{{ item.taskType }}</td>
-              <td>{{ item.riskLevel }}</td>
-              <td>{{ item.approvalStatus || (item.requiresApproval ? 'pending' : 'not required') }}</td>
-              <td>{{ item.retryCount }}/{{ item.maxRetries }}</td>
-              <td>{{ item.verificationStatus || '-' }}</td>
-              <td>{{ item.nextAction || '-' }}</td>
-              <td>
-                <button nz-button nzSize="small" nzType="default" (click)="open(item)">
-                  Open
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+        <button type="button" nz-button nzBlock nzType="default" (click)="clearFilters()">Clear filters</button>
+      </section>
+    </aside>
 
-      <div class="workflow-grid" *ngIf="selected as record">
-        <nz-card nzSize="small" nzTitle="Selected Workflow">
-          <p><strong>State:</strong> {{ record.item.currentState }}</p>
-          <p><strong>Project:</strong> {{ record.item.projectKey || '-' }}</p>
-          <p><strong>Automation:</strong> {{ record.item.automationId || '-' }}</p>
-          <p><strong>Source record:</strong> {{ record.item.sourceId || '-' }}</p>
-          <p><strong>Source revision:</strong> {{ record.item.sourceRevision || '-' }}</p>
-          <p><strong>Autonomy:</strong> {{ record.item.autonomyLevel }}</p>
-          <p><strong>Approval reason:</strong> {{ record.item.approvalReason || '-' }}</p>
-          <p><strong>Approval status:</strong> {{ record.item.approvalStatus || '-' }}</p>
-          <p><strong>Blocked:</strong> {{ record.item.blockedReason || '-' }}</p>
-          <p><strong>Retry:</strong> {{ record.item.retryCount }}/{{ record.item.maxRetries }}</p>
-          <p><strong>Verification:</strong> {{ record.item.verificationStatus || '-' }}</p>
-          <p><strong>Recovery:</strong> {{ record.item.recoveryStatus || '-' }}</p>
-          <p><strong>Recovery note:</strong> {{ record.item.recoveryNote || '-' }}</p>
-          <p><strong>Next run:</strong> {{ (record.item.nextRunAt | date: 'short') || '-' }}</p>
-          <p><strong>Worker lease:</strong> {{ (record.item.workerLeaseUntil | date: 'short') || '-' }}</p>
-          <p><strong>Last task plan:</strong> {{ record.item.lastTaskPlanId || '-' }}</p>
-          <p><strong>Worker error:</strong> {{ record.item.lastWorkerError || '-' }}</p>
-          <p><strong>Source:</strong> {{ record.item.sourceLabel || record.item.sourceUri || '-' }}</p>
-        </nz-card>
+    <section class="workflow-center">
+      <article class="panel intake-panel" id="workflow-intake-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Tell HAI what happened</h2>
+            <p>Describe the signal, what should be achieved, and any important context.</p>
+          </div>
+          <button type="button" class="help-dot" title="HAI classifies the input, creates success criteria, checks risk, creates a checklist, and stores provenance.">?</button>
+        </div>
 
-        <nz-card nzSize="small" nzTitle="Transition">
-          <form nz-form [formGroup]="transitionForm">
-            <div class="form-row">
-              <nz-select formControlName="targetState">
-                <nz-option *ngFor="let state of overview?.states || []" [nzValue]="state" [nzLabel]="state"></nz-option>
-              </nz-select>
+        <form nz-form [formGroup]="intakeForm" class="intake-form">
+          <textarea
+            id="workflow-intake-input"
+            nz-input
+            rows="7"
+            formControlName="input"
+            placeholder="Example: Email from lawyer about Vivare legal hearing tomorrow. Draft formal Dutch reply and attach evidence."
+          ></textarea>
+
+          <div class="composer-tools">
+            <span title="Attachments will be linked through connected sources."><i nz-icon nzType="paper-clip" nzTheme="outline"></i></span>
+            <span title="Mention a person, source, case, project, or account."><i nz-icon nzType="at" nzTheme="outline"></i></span>
+            <span title="Use connected source records as provenance where available."><i nz-icon nzType="database" nzTheme="outline"></i></span>
+            <small>{{ intakeForm.value.input?.length || 0 }} / 4000</small>
+          </div>
+
+          <div class="pursuit-match-strip">
+            <div>
+              <strong>Attach to pursuit</strong>
+              <small *ngIf="selectedPursuitMatch; else noSelectedPursuit">
+                Selected: {{ selectedPursuitMatch.pursuit.title }} ({{ selectedPursuitMatch.confidence }} match)
+              </small>
+              <ng-template #noSelectedPursuit>
+                <small>Find whether this signal belongs under an existing life or work objective.</small>
+              </ng-template>
             </div>
-            <input nz-input formControlName="message" />
+            <div class="pursuit-match-actions">
+              <button type="button" nz-button nzType="default" data-testid="workflow-match-pursuit" (click)="matchPursuits()" [nzLoading]="matchingPursuits">
+                <i nz-icon nzType="branches" nzTheme="outline"></i>
+                Find match
+              </button>
+              <button type="button" nz-button nzType="default" *ngIf="selectedPursuitMatch" (click)="clearPursuitMatch()">
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div class="pursuit-match-list" *ngIf="pursuitMatches.length">
             <button
-              nz-button
-              nzType="primary"
-              (click)="transition()"
-              [disabled]="record.item.recoveryStatus === 'needs_review'"
+              type="button"
+              class="pursuit-match-card"
+              *ngFor="let match of pursuitMatches"
+              [class.pursuit-match-card--selected]="selectedPursuitMatch?.pursuit?.id === match.pursuit.id"
+              [title]="match.reasons.join(', ') || 'Select this pursuit'"
+              (click)="selectPursuitMatch(match)"
             >
-              Apply Transition
+              <span>
+                <strong>{{ match.pursuit.title }}</strong>
+                <small>{{ match.confidence }} match / score {{ match.score | number: '1.0-2' }}</small>
+              </span>
+              <em>{{ readable(match.pursuit.status) }}</em>
+            </button>
+          </div>
+
+          <div class="intake-options">
+            <input nz-input formControlName="projectKey" placeholder="Project or case" />
+            <input nz-input formControlName="automationId" placeholder="Automation optional" />
+            <input nz-input formControlName="sourceType" placeholder="Source type" />
+            <button type="button" nz-button nzType="primary" data-testid="workflow-create" (click)="intake()" [nzLoading]="saving">
+              <i nz-icon nzType="plus" nzTheme="outline"></i>
+              {{ selectedPursuitMatch ? 'Create in pursuit' : 'Create workflow' }}
+            </button>
+          </div>
+
+          <details class="advanced-block">
+            <summary>
+              <span>Advanced provenance</span>
+              <small>source ids, trigger, content type, sender</small>
+            </summary>
+            <div class="advanced-grid">
+              <input nz-input formControlName="sourceId" placeholder="Source record ID" />
+              <input nz-input formControlName="sourceUri" placeholder="Source URI" />
+              <input nz-input formControlName="sourceLabel" placeholder="Source label" />
+              <input nz-input formControlName="contentType" placeholder="Content type" />
+              <input nz-input formControlName="sender" placeholder="Sender or account" />
+              <input nz-input formControlName="trigger" placeholder="Trigger" />
+            </div>
+          </details>
+        </form>
+      </article>
+
+      <article class="panel inbox-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Workflow inbox</h2>
+            <p>Open a workflow to inspect next action, evidence, approvals, and timeline.</p>
+          </div>
+          <input nz-input [(ngModel)]="workflowSearch" placeholder="Search..." />
+        </div>
+
+        <div class="inbox-table" *ngIf="filteredItems().length; else noWorkflows">
+          <div class="inbox-head">
+            <span>Priority</span>
+            <span>Workflow</span>
+            <span>Status</span>
+            <span>Risk</span>
+            <span>Updated</span>
+            <span></span>
+          </div>
+          <button type="button" class="inbox-row" *ngFor="let item of filteredItems()" [class.inbox-row--selected]="selected?.item?.id === item.id" (click)="open(item)">
+            <span class="priority" [ngClass]="priorityClass(item.priorityScore)">{{ item.priorityScore || 0 }}</span>
+            <span class="workflow-title">
+              <strong>{{ item.title }}</strong>
+              <small>{{ item.projectKey || item.nextAction || item.taskType || 'Workflow' }}</small>
+            </span>
+            <span class="status-pill" [ngClass]="statusClass(item.currentState)">{{ readable(item.currentState) }}</span>
+            <span class="status-pill" [ngClass]="item.riskLevel === 'high' ? 'status--risk' : 'status--neutral'">{{ readable(item.riskLevel) }}</span>
+            <span>{{ item.updatedAt | date: 'short' }}</span>
+            <span class="row-open">Open <i nz-icon nzType="right" nzTheme="outline"></i></span>
+          </button>
+        </div>
+
+        <ng-template #noWorkflows>
+          <div class="empty-state">
+            <i nz-icon nzType="inbox" nzTheme="outline"></i>
+            <strong>No workflows yet</strong>
+            <p>Capture a signal above to create the first controlled workflow.</p>
+          </div>
+        </ng-template>
+      </article>
+    </section>
+
+    <aside class="detail-rail">
+      <section class="panel detail-card">
+        <div class="panel-heading compact">
+          <h2>Operational detail</h2>
+          <button type="button" class="help-dot" title="This panel shows the result of the last operation and the selected workflow's control surface.">?</button>
+        </div>
+
+        <article class="detail-box" *ngIf="lastOperation as operation; else noOperation" [class.detail-box--failed]="operation.status === 'failed'">
+          <div class="box-title">
+            <strong>Last operation</strong>
+            <span>{{ operation.status }}</span>
+          </div>
+          <dl>
+            <div><dt>Operation</dt><dd>{{ operation.name }}</dd></div>
+            <div><dt>Started</dt><dd>{{ operation.at | date: 'shortTime' }}</dd></div>
+            <div><dt>Result</dt><dd>{{ operation.summary }}</dd></div>
+          </dl>
+          <details *ngIf="operation.details">
+            <summary>Result details</summary>
+            <p>{{ operation.details }}</p>
+          </details>
+        </article>
+        <ng-template #noOperation>
+          <article class="detail-box muted-box">
+            <div class="box-title">
+              <strong>Last operation</strong>
+              <span>No activity yet</span>
+            </div>
+            <p>Run a worker, process follow-ups, recover state, or create a workflow to see details here.</p>
+          </article>
+        </ng-template>
+
+        <article class="detail-box" *ngIf="selected as record; else noSelection">
+          <div class="box-title">
+            <strong>Selected workflow</strong>
+            <span>{{ readable(record.item.currentState) }}</span>
+          </div>
+          <h3>{{ record.item.title }}</h3>
+          <p>{{ record.item.nextAction || record.item.description || 'No next action recorded yet.' }}</p>
+          <dl>
+            <div><dt>Project</dt><dd>{{ record.item.projectKey || '-' }}</dd></div>
+            <div><dt>Approval</dt><dd>{{ record.item.approvalStatus || (record.item.requiresApproval ? 'pending' : 'not required') }}</dd></div>
+            <div><dt>Autonomy</dt><dd>{{ readable(record.item.autonomyLevel) }}</dd></div>
+            <div><dt>Verification</dt><dd>{{ readable(record.item.verificationStatus || '-') }}</dd></div>
+          </dl>
+        </article>
+
+        <article class="detail-box pursuit-context" *ngIf="selected?.pursuits?.length">
+          <div class="box-title">
+            <strong>Linked pursuit</strong>
+            <span>{{ selected?.pursuits?.length }} active</span>
+          </div>
+          <button
+            type="button"
+            class="pursuit-link-card"
+            *ngFor="let pursuit of selected?.pursuits"
+            (click)="openPursuit(pursuit.id)"
+            [title]="pursuit.currentStateSummary || pursuit.desiredOutcome || 'Open pursuit'"
+          >
+            <span>
+              <strong>{{ pursuit.title }}</strong>
+              <small>{{ readable(pursuit.relationship) }} / {{ readable(pursuit.status) }} / {{ readable(pursuit.riskLevel) }} risk</small>
+            </span>
+            <em>{{ pursuit.priorityScore || 0 }}</em>
+            <p>{{ pursuit.nextRecommendedAction || pursuit.currentStateSummary || pursuit.desiredOutcome || 'Open pursuit detail for context.' }}</p>
+          </button>
+        </article>
+        <ng-template #noSelection>
+          <article class="detail-box muted-box">
+            <div class="box-title">
+              <strong>Selected workflow</strong>
+              <span>None selected</span>
+            </div>
+            <p>Select a workflow from the inbox to see controls, timeline, evidence, and audit trail.</p>
+          </article>
+        </ng-template>
+
+        <details class="inspector-section" *ngIf="selected as record" open>
+          <summary>Workflow controls</summary>
+          <form nz-form [formGroup]="transitionForm" class="transition-form">
+            <nz-select formControlName="targetState">
+              <nz-option *ngFor="let state of overview?.states || []" [nzValue]="state" [nzLabel]="readable(state)"></nz-option>
+            </nz-select>
+            <input nz-input formControlName="message" />
+            <button type="button" nz-button nzType="primary" data-testid="workflow-apply-transition" (click)="transition()" [disabled]="record.item.recoveryStatus === 'needs_review'">
+              Apply transition
             </button>
           </form>
-        </nz-card>
-      </div>
+        </details>
 
-      <nz-card
-        nzTitle="Interrupted Execution Review"
-        class="section-card recovery-review"
-        *ngIf="selected?.item?.recoveryStatus === 'needs_review'"
-      >
-        <form nz-form [formGroup]="interruptionForm">
-          <nz-form-item>
-            <nz-form-label>Decision</nz-form-label>
-            <nz-form-control>
-              <nz-select formControlName="decision">
-                <nz-option nzValue="retry" nzLabel="Retry after side-effect check"></nz-option>
-                <nz-option nzValue="confirm_completed" nzLabel="Confirm completed with evidence"></nz-option>
-                <nz-option nzValue="keep_blocked" nzLabel="Keep blocked"></nz-option>
-              </nz-select>
-            </nz-form-control>
-          </nz-form-item>
-          <textarea
-            nz-input
-            rows="3"
-            formControlName="note"
-            placeholder="Record what external systems were checked and what was found"
-          ></textarea>
-          <div class="form-row" *ngIf="interruptionForm.value.decision === 'confirm_completed'">
-            <input nz-input formControlName="evidenceUri" placeholder="Completion evidence URI" />
-            <input nz-input formControlName="evidenceLabel" placeholder="Evidence label" />
+        <details class="inspector-section" *ngIf="selected as record">
+          <summary>Checklist</summary>
+          <div class="checklist">
+            <article *ngFor="let item of record.checklist">
+              <div>
+                <strong>{{ item.label }}</strong>
+                <small>{{ readable(item.status) }}{{ item.requiresApproval ? ' · approval required' : '' }}</small>
+              </div>
+              <button type="button" nz-button nzSize="small" nzType="default" [attr.data-testid]="'workflow-checklist-done-' + item.id" (click)="markChecklist(item.id, 'done')">Done</button>
+              <button type="button" nz-button nzSize="small" nzType="default" [attr.data-testid]="'workflow-checklist-block-' + item.id" (click)="markChecklist(item.id, 'blocked')">Block</button>
+            </article>
           </div>
-          <button nz-button nzType="primary" (click)="resolveInterruptedExecution()" [nzLoading]="saving">
-            Record Recovery Decision
-          </button>
-        </form>
-      </nz-card>
+        </details>
 
-      <nz-card nzTitle="Checklist" class="section-card" *ngIf="selected as record">
-        <nz-table [nzData]="record.checklist" nzSize="small" [nzPageSize]="10">
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Step</th>
-              <th>Approval</th>
-              <th>Due</th>
-              <th>Reminder</th>
-              <th>Update</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let item of record.checklist">
-              <td>{{ item.status }}</td>
-              <td>{{ item.label }}</td>
-              <td>{{ item.requiresApproval ? 'required' : '-' }}</td>
-              <td>{{ (item.dueAt | date: 'short') || '-' }}</td>
-              <td>{{ (item.reminderAt | date: 'short') || '-' }}</td>
-              <td>
-                <button nz-button nzSize="small" nzType="default" (click)="markChecklist(item.id, 'done')">Done</button>
-                <button nz-button nzSize="small" nzType="default" (click)="markChecklist(item.id, 'blocked')">Blocked</button>
-              </td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
+        <details class="inspector-section" *ngIf="selected as record">
+          <summary>Evidence and proposals</summary>
+          <div class="stack-list">
+            <article *ngFor="let claim of record.evidence">
+              <strong>{{ claim.claimText }}</strong>
+              <small>{{ readable(claim.status) }} · {{ claim.sourceLabel || claim.sourceUri || claim.reliability }}</small>
+            </article>
+            <article *ngFor="let proposal of record.proposals">
+              <strong>{{ proposal.recommendedAction }}</strong>
+              <small>{{ readable(proposal.status) }}</small>
+              <div class="mini-actions">
+                <button type="button" nz-button nzSize="small" nzType="primary" [disabled]="proposal.status !== 'open'" (click)="resolveProposal(proposal.id, 'approved', optionLines(proposal.options)[0])">Approve</button>
+                <button type="button" nz-button nzSize="small" nzType="default" [disabled]="proposal.status !== 'open'" (click)="resolveProposal(proposal.id, 'changes_requested', 'Request changes')">Changes</button>
+                <button type="button" nz-button nzSize="small" nzDanger [disabled]="proposal.status !== 'open'" (click)="resolveProposal(proposal.id, 'rejected', 'Reject proposal')">Reject</button>
+              </div>
+            </article>
+          </div>
+        </details>
 
-      <div class="workflow-grid" *ngIf="selected as record">
-        <nz-card nzTitle="Intake Record" class="section-card">
-          <nz-table [nzData]="record.intake" nzSize="small" [nzPageSize]="4">
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Sender</th>
-                <th>Urgency</th>
-                <th>Summary</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let intake of record.intake">
-                <td>{{ intake.sourceLabel || intake.sourceUri || intake.sourceType || '-' }}</td>
-                <td>{{ intake.sender || '-' }}</td>
-                <td>{{ intake.urgency || '-' }}</td>
-                <td>{{ intake.normalizedSummary || '-' }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
+        <details class="inspector-section" *ngIf="selected as record">
+          <summary>Timeline and audit</summary>
+          <div class="stack-list">
+            <article *ngFor="let transition of record.transitions">
+              <strong>{{ readable(transition.fromState || '-') }} -> {{ readable(transition.toState) }}</strong>
+              <small>{{ transition.createdAt | date: 'short' }} · {{ transition.reason || '-' }}</small>
+            </article>
+            <article *ngFor="let event of record.events">
+              <strong>{{ readable(event.eventType) }}</strong>
+              <small>{{ event.createdAt | date: 'short' }} · {{ event.message || '-' }}</small>
+            </article>
+          </div>
+        </details>
 
-        <nz-card nzTitle="Project Match" class="section-card">
-          <nz-table [nzData]="record.matches" nzSize="small" [nzPageSize]="4">
-            <thead>
-              <tr>
-                <th>Project</th>
-                <th>Confidence</th>
-                <th>Matched by</th>
-                <th>Refs</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let match of record.matches">
-                <td>{{ match.projectKey }}</td>
-                <td>{{ match.confidence | number: '1.0-2' }}</td>
-                <td>{{ match.matchedBy || '-' }}</td>
-                <td>{{ match.trelloCardRef || match.driveFolderRef || '-' }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-      </div>
-
-      <div class="workflow-grid" *ngIf="selected as record">
-        <nz-card nzTitle="Evidence Claims" class="section-card">
-          <nz-table [nzData]="record.evidence" nzSize="small" [nzPageSize]="5">
-            <thead>
-              <tr>
-                <th>Claim</th>
-                <th>Status</th>
-                <th>Source</th>
-                <th>Review</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let claim of record.evidence">
-                <td>{{ claim.claimText }}</td>
-                <td>{{ claim.status }}</td>
-                <td>{{ claim.sourceLabel || claim.sourceUri || claim.reliability }}</td>
-                <td>{{ claim.needsReview ? 'needs review' : 'linked' }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-
-        <nz-card nzTitle="Open Loops" class="section-card">
-          <nz-table [nzData]="record.openLoops" nzSize="small" [nzPageSize]="5">
-            <thead>
-              <tr>
-                <th>Responsible</th>
-                <th>Waiting for</th>
-                <th>Follow-up</th>
-                <th>Status</th>
-                <th>Next action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let loop of record.openLoops">
-                <td>{{ loop.responsibleParty }}</td>
-                <td>{{ loop.waitingFor }}</td>
-                <td>{{ (loop.followUpAt | date: 'short') || '-' }}</td>
-                <td>{{ loop.status }}</td>
-                <td>{{ loop.nextAction }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-      </div>
-
-      <div class="workflow-grid" *ngIf="selected as record">
-        <nz-card nzTitle="Proposals" class="section-card">
-          <nz-table [nzData]="record.proposals" nzSize="small" [nzPageSize]="4">
-            <thead>
-              <tr>
-                <th>Recommended action</th>
-                <th>Options</th>
-                <th>Status</th>
-                <th>Decision</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let proposal of record.proposals">
-                <td>{{ proposal.recommendedAction }}</td>
-                <td>
-                  <div *ngFor="let option of optionLines(proposal.options)">{{ option }}</div>
-                  <small *ngIf="proposal.selectedOption">Selected: {{ proposal.selectedOption }}</small>
-                </td>
-                <td>{{ proposal.status }}<br /><small>{{ proposal.resolutionNote || '' }}</small></td>
-                <td>
-                  <button
-                    nz-button
-                    nzSize="small"
-                    nzType="primary"
-                    [disabled]="proposal.status !== 'open'"
-                    (click)="resolveProposal(proposal.id, 'approved', optionLines(proposal.options)[0])"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    nz-button
-                    nzSize="small"
-                    nzType="default"
-                    [disabled]="proposal.status !== 'open'"
-                    (click)="resolveProposal(proposal.id, 'changes_requested', 'Request changes')"
-                  >
-                    Changes
-                  </button>
-                  <button
-                    nz-button
-                    nzSize="small"
-                    nzDanger
-                    [disabled]="proposal.status !== 'open'"
-                    (click)="resolveProposal(proposal.id, 'rejected', 'Reject proposal')"
-                  >
-                    Reject
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-
-        <nz-card nzTitle="Quality Gates" class="section-card">
-          <nz-table [nzData]="record.qualityGates" nzSize="small" [nzPageSize]="6">
-            <thead>
-              <tr>
-                <th>Gate</th>
-                <th>Status</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let gate of record.qualityGates">
-                <td>{{ gate.gate }}</td>
-                <td>{{ gate.status }}</td>
-                <td>{{ gate.reason || '-' }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-      </div>
-
-      <div class="workflow-grid" *ngIf="selected as record">
-        <nz-card nzTitle="Decisions" class="section-card">
-          <nz-table [nzData]="record.decisions" nzSize="small" [nzPageSize]="6">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Type</th>
-                <th>Decision</th>
-                <th>Reason</th>
-                <th>Rule</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let decision of record.decisions">
-                <td>{{ decision.createdAt | date: 'short' }}</td>
-                <td>{{ decision.decisionType }}</td>
-                <td>{{ decision.decision }}</td>
-                <td>{{ decision.reason || '-' }}</td>
-                <td>{{ decision.ruleApplied || '-' }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-
-        <nz-card nzTitle="Source Links" class="section-card">
-          <nz-table [nzData]="record.sourceLinks" nzSize="small" [nzPageSize]="6">
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Type</th>
-                <th>Relationship</th>
-                <th>URI</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let link of record.sourceLinks">
-                <td>{{ link.sourceLabel || link.sourceId || '-' }}</td>
-                <td>{{ link.sourceType || '-' }}</td>
-                <td>{{ link.relationship }}</td>
-                <td>{{ link.sourceUri || '-' }}</td>
-              </tr>
-            </tbody>
-          </nz-table>
-        </nz-card>
-      </div>
-
-      <nz-card nzTitle="Transitions" class="section-card" *ngIf="selected as record">
-        <nz-table [nzData]="record.transitions" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>From</th>
-              <th>To</th>
-              <th>Trigger</th>
-              <th>Approved</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let transition of record.transitions">
-              <td>{{ transition.createdAt | date: 'short' }}</td>
-              <td>{{ transition.fromState || '-' }}</td>
-              <td>{{ transition.toState }}</td>
-              <td>{{ transition.trigger || '-' }}</td>
-              <td>{{ transition.approved ? 'yes' : 'no' }}</td>
-              <td>{{ transition.reason || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Worker Result" class="section-card" *ngIf="runSummary as summary">
-        <p>
-          Checked {{ summary.checked }},
-          completed {{ summary.completed }},
-          retried {{ summary.retried }},
-          blocked {{ summary.blocked }},
-          skipped {{ summary.skipped }}.
-        </p>
-        <nz-table [nzData]="summary.results" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>State</th>
-              <th>Attempts</th>
-              <th>Verification</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let result of summary.results">
-              <td>{{ result.status }}</td>
-              <td>{{ result.state }}</td>
-              <td>{{ result.attempts }}</td>
-              <td>{{ result.verificationStatus || '-' }}</td>
-              <td>{{ result.message || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Follow-up Result" class="section-card" *ngIf="openLoopRunSummary as summary">
-        <p>
-          Checked {{ summary.checked }},
-          triggered {{ summary.triggered }},
-          resolved {{ summary.resolved }},
-          skipped {{ summary.skipped }}.
-        </p>
-        <nz-table [nzData]="summary.results" nzSize="small" [nzPageSize]="5">
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>State</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let result of summary.results">
-              <td>{{ result.status }}</td>
-              <td>{{ result.state || '-' }}</td>
-              <td>{{ result.message || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Audit Trail" class="section-card" *ngIf="selected as record">
-        <nz-table [nzData]="record.events" nzSize="small" [nzPageSize]="8">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Event</th>
-              <th>From</th>
-              <th>To</th>
-              <th>Rule</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let event of record.events">
-              <td>{{ event.createdAt | date: 'short' }}</td>
-              <td>{{ event.eventType }}</td>
-              <td>{{ event.fromState || '-' }}</td>
-              <td>{{ event.toState || '-' }}</td>
-              <td>{{ event.ruleApplied || '-' }}</td>
-              <td>{{ event.message || '-' }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-
-      <nz-card nzTitle="Safety Rules" class="section-card" *ngIf="overview as data">
-        <ul class="safety-list">
-          <li *ngFor="let rule of data.safetyRules">{{ rule }}</li>
-        </ul>
-        <nz-table [nzData]="data.rules" nzSize="small" [nzPageSize]="6">
-          <thead>
-            <tr>
-              <th>Rule</th>
-              <th>Category</th>
-              <th>Enabled</th>
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let rule of data.rules">
-              <td>{{ rule.name }}</td>
-              <td>{{ rule.category }}</td>
-              <td>{{ rule.enabled ? 'yes' : 'no' }}</td>
-              <td>{{ rule.description }}</td>
-            </tr>
-          </tbody>
-        </nz-table>
-      </nz-card>
-    </nz-content>
-  </nz-layout>
+        <details class="inspector-section technical-section" *ngIf="overview as data">
+          <summary>
+            <span>Advanced technical status</span>
+            <em>{{ data.capabilities.length }} tracked</em>
+          </summary>
+          <div class="capability-list">
+            <article *ngFor="let capability of data.capabilities">
+              <div>
+                <strong>{{ capability.name }}</strong>
+                <span [ngClass]="statusClass(capability.status)">{{ statusLabel(capability.status) }}</span>
+              </div>
+              <p>{{ capability.implemented.join(', ') || 'Not wired yet' }}</p>
+              <small>Next: {{ capability.next.join(', ') || 'None' }}</small>
+            </article>
+          </div>
+        </details>
+      </section>
+    </aside>
+  </main>
 </section>

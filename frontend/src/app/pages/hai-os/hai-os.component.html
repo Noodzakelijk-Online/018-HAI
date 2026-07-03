@@ -1,4 +1,4 @@
-<section>
+<section class="os-page">
   <nz-layout>
     <nz-header class="header-container">
       <div class="header-content">
@@ -39,6 +39,84 @@
           <span>{{ os.emergencyStop ? 'active' : 'clear' }}</span>
         </nz-card>
       </div>
+
+      <nz-card
+        nzTitle="Pursuit Operating Layer"
+        class="section-card pursuit-section"
+        *ngIf="os.pursuitOverview as pursuit"
+      >
+        <div class="pursuit-hero">
+          <button
+            nz-button
+            nzType="default"
+            class="pursuit-primary"
+            (click)="openPursuits()"
+          >
+            <span class="pursuit-primary__eyebrow">status</span>
+            <strong>{{ pursuit.status }}</strong>
+            <small>{{ pursuit.summary }}</small>
+          </button>
+          <div class="pursuit-next">
+            <span>Next operating move</span>
+            <p>{{ pursuit.next }}</p>
+            <small>
+              {{ pursuit.evidenceStatus }} / {{ pursuit.linkedEvidence }} evidence /
+              {{ pursuit.decisionCards }} decisions / {{ pursuit.openLoops }} open loops
+            </small>
+            <small *ngIf="pursuit.ambientLine">
+              Ambient: {{ pursuit.ambientLine }}
+            </small>
+          </div>
+        </div>
+
+        <div class="pursuit-queues">
+          <button
+            nz-button
+            nzType="default"
+            class="pursuit-queue"
+            *ngFor="let queue of pursuit.queues"
+            (click)="open(queue.route)"
+            [title]="queue.description"
+          >
+            <strong>{{ queue.count }}</strong>
+            <span>{{ queue.name }}</span>
+            <small>{{ queue.status }}</small>
+          </button>
+        </div>
+
+        <div class="pursuit-spotlight" *ngIf="pursuit.spotlight.length; else noPursuitSpotlight">
+          <button
+            nz-button
+            nzType="default"
+            class="spotlight-item"
+            *ngFor="let item of pursuit.spotlight"
+            (click)="openPursuits(item.id)"
+            [title]="item.evidenceLine || item.currentState || item.nextAction || 'Open pursuit detail'"
+          >
+            <span>
+              <strong>{{ item.title }}</strong>
+              <small>{{ item.status }} / {{ item.riskLevel }} risk</small>
+              <small>{{ item.evidenceLine || item.currentState || item.nextAction }}</small>
+            </span>
+            <em *ngIf="item.needsRobert">{{ item.needsRobert }} Robert</em>
+            <em *ngIf="item.planningNeeded">plan</em>
+            <em *ngIf="item.reviewDue">review</em>
+            <em *ngIf="item.blocked">{{ item.blocked }} blocked</em>
+            <em *ngIf="item.openLoops">{{ item.openLoops }} loops</em>
+            <em *ngIf="item.linkedEvidence">{{ item.linkedEvidence }} evidence</em>
+            <em *ngIf="item.decisionCards">{{ item.decisionCards }} decisions</em>
+            <em *ngIf="item.timelineItems">{{ item.timelineItems }} timeline</em>
+            <em *ngIf="item.stale">stale</em>
+          </button>
+        </div>
+
+        <ng-template #noPursuitSpotlight>
+          <div class="empty-pursuit-state">
+            <strong>No pursuit needs attention right now</strong>
+            <span>New source intake, memory imports, and workflow events can still create or update pursuits.</span>
+          </div>
+        </ng-template>
+      </nz-card>
 
       <nz-card nzTitle="Product Stack" class="section-card">
         <p><strong>Canonical:</strong> {{ os.canonicalStack }}</p>

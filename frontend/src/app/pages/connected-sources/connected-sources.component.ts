@@ -2,6 +2,8 @@ import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { forkJoin, of } from 'rxjs';
+import { catchError, finalize, timeout } from 'rxjs/operators';
 import {
   IConnectedSource,
   ISourceAuditLog,
@@ -13,6 +15,18 @@ import {
 } from '../../models/connected-source.model.interface';
 import { CONNECTED_SOURCE_SERVICE_TOKEN } from '../../services/connected-source/connected-source.service.token';
 import { IConnectedSourceService } from '../../services/connected-source.service.interface';
+import { ThemeMode, ThemeService } from '../../services/theme.service';
+
+type SourceAction = 'connect' | 'odoo' | 'import' | 'folder' | 'whatsapp' | 'search';
+
+interface SourceActionCard {
+  id: SourceAction;
+  title: string;
+  detail: string;
+  icon: string;
+  metric: string;
+  tone: 'blue' | 'green' | 'gold';
+}
 
 @Component({
   selector: 'app-connected-sources',
@@ -30,6 +44,12 @@ export class ConnectedSourcesComponent implements OnInit {
   includeArchived = false;
   loading = false;
   syncing = false;
+  selectedAction: SourceAction = 'connect';
+  sourceActions: SourceActionCard[] = [];
+  selectedSourceId = '';
+  themeMode: ThemeMode = 'light';
+  private readonly loadTimeoutMs = 6000;
+  private readonly operationTimeoutMs = 15000;
 
   sourceForm: FormGroup = this.fb.group({
     connectorKey: ['local-folder', [Validators.required]],
@@ -60,6 +80,29 @@ export class ConnectedSourcesComponent implements OnInit {
     maxBytes: [1048576],
   });
 
+  whatsappForm: FormGroup = this.fb.group({
+    sourceId: [''],
+    name: ['WhatsApp exports for Robert'],
+    projectKey: ['Robert-life-os'],
+    folderPath: ['whatsapp'],
+    chatTitle: ['WhatsApp selected chat'],
+    pastedExport: [
+      '31/05/2026, 09:10 - Robert Velhorst: Kun jij morgen de offerte opvolgen?\n31/05/2026, 09:11 - Contact: Ja, ik moet eerst de documenten controleren.',
+    ],
+    chunkMessages: [40],
+    maxBytes: [2097152],
+  });
+
+  odooForm: FormGroup = this.fb.group({
+    sourceId: [''],
+    name: ['Odoo / HERP workspace'],
+    baseUrl: ['https://noodzakelijk-online1.odoo.com/odoo'],
+    apps: ['CRM, Sales, Invoicing and Accounting, Project, Helpdesk, Documents and Sign, Calendar and Appointments'],
+    projectKey: ['Robert-life-os'],
+    localOnly: [true],
+    syncFrequency: ['manual'],
+  });
+
   searchForm: FormGroup = this.fb.group({
     query: ['connected sources decisions follow up', [Validators.required]],
     projectKey: ['018-HAI'],
@@ -72,39 +115,56 @@ export class ConnectedSourcesComponent implements OnInit {
     @Inject(CONNECTED_SOURCE_SERVICE_TOKEN)
     private sourceService: IConnectedSourceService,
     private notification: NzNotificationService,
-    private router: Router
+    private router: Router,
+    private themeService: ThemeService
   ) {}
 
   ngOnInit(): void {
+    this.themeMode = this.themeService.mode();
+    this.updateSourceActions();
     this.refresh();
   }
 
   refresh(): void {
     this.loading = true;
-    this.sourceService.connectors().subscribe({
-      next: (connectors) => (this.connectors = connectors),
-      error: () => this.notification.error('Error', 'Failed to load connectors.'),
-    });
-    this.sourceService.sources(this.includeDisabled).subscribe({
-      next: (sources) => {
+    forkJoin({
+      connectors: this.sourceService.connectors().pipe(
+        timeout(this.loadTimeoutMs),
+        catchError(() => {
+          this.notification.error('Connectors unavailable', 'Connector status did not load in time.');
+          return of([] as ISourceConnector[]);
+        })
+      ),
+      sources: this.sourceService.sources(this.includeDisabled).pipe(
+        timeout(this.loadTimeoutMs),
+        catchError(() => {
+          this.notification.error('Sources unavailable', 'Connected sources did not load in time.');
+          return of([] as IConnectedSource[]);
+        })
+      ),
+      extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived).pipe(
+        timeout(this.loadTimeoutMs),
+        catchError(() => of([] as ISourceExtraction[]))
+      ),
+      auditLogs: this.sourceService.auditLogs().pipe(
+        timeout(this.loadTimeoutMs),
+        catchError(() => of([] as ISourceAuditLog[]))
+      ),
+      syncJobs: this.sourceService.syncJobs().pipe(
+        timeout(this.loadTimeoutMs),
+        catchError(() => of([] as ISourceSyncJob[]))
+      ),
+    })
+      .pipe(finalize(() => (this.loading = false)))
+      .subscribe(({ connectors, sources, extractions, auditLogs, syncJobs }) => {
+        this.connectors = connectors;
         this.sources = sources;
-        if (!this.importForm.value.sourceId && sources.length) {
-          this.importForm.patchValue({ sourceId: sources[0].id });
-        }
-        if (!this.folderForm.value.sourceId && sources.length) {
-          const localFolder = sources.find((source) => source.connectorKey === 'local-folder');
-          this.folderForm.patchValue({ sourceId: (localFolder || sources[0]).id });
-        }
-        this.loading = false;
-      },
-      error: () => {
-        this.loading = false;
-        this.notification.error('Error', 'Failed to load sources.');
-      },
-    });
-    this.loadExtractions();
-    this.loadAuditLogs();
-    this.loadSyncJobs();
+        this.extractions = extractions;
+        this.auditLogs = auditLogs;
+        this.syncJobs = syncJobs || [];
+        this.applySourceDefaults(sources);
+        this.updateSourceActions();
+      });
   }
 
   connectSource(): void {
@@ -129,6 +189,7 @@ export class ConnectedSourcesComponent implements OnInit {
           .map((item) => item.trim())
           .filter(Boolean),
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: () => {
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
@@ -156,6 +217,7 @@ export class ConnectedSourcesComponent implements OnInit {
           },
         ],
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: (result) => {
           this.syncing = false;
@@ -167,6 +229,186 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notification.error('Error', 'Sync failed.');
         },
       });
+  }
+
+  setAction(action: SourceAction): void {
+    this.selectedAction = action;
+  }
+
+  private updateSourceActions(): void {
+    this.sourceActions = [
+      {
+        id: 'connect',
+        title: 'Connect source',
+        detail: 'Register a governed connector.',
+        icon: 'plus',
+        metric: `${this.enabledSources().length} active`,
+        tone: 'blue',
+      },
+      {
+        id: 'folder',
+        title: 'Scan folder',
+        detail: 'Index allowlisted local files.',
+        icon: 'folder-open',
+        metric: `${this.localSourceCount()} local`,
+        tone: 'green',
+      },
+      {
+        id: 'whatsapp',
+        title: 'Import WhatsApp',
+        detail: 'Parse selected chat exports.',
+        icon: 'message',
+        metric: `${this.whatsappSources().length} sources`,
+        tone: 'green',
+      },
+      {
+        id: 'odoo',
+        title: 'Model Odoo',
+        detail: 'Wire HERP app domains.',
+        icon: 'deployment-unit',
+        metric: `${this.odooSources().length} sources`,
+        tone: 'gold',
+      },
+      {
+        id: 'import',
+        title: 'Import item',
+        detail: 'Add one source-backed record.',
+        icon: 'file-add',
+        metric: `${this.extractions.length} records`,
+        tone: 'blue',
+      },
+      {
+        id: 'search',
+        title: 'Search context',
+        detail: 'Find relevant extracted facts.',
+        icon: 'search',
+        metric: this.searchResult ? `${this.searchResult.usedContext.length} hits` : 'ready',
+        tone: 'gold',
+      },
+    ];
+  }
+
+  selectedSource(): IConnectedSource | undefined {
+    return this.sources.find((source) => source.id === this.selectedSourceId) || this.sources[0];
+  }
+
+  selectSource(source: IConnectedSource): void {
+    this.selectedSourceId = source.id;
+  }
+
+  enabledSources(): IConnectedSource[] {
+    return this.sources.filter((source) => source.enabled && source.status !== 'revoked');
+  }
+
+  localSourceCount(): number {
+    return this.sources.filter((source) => source.localOnly).length;
+  }
+
+  operationalConnectorCount(): number {
+    return this.connectors.filter((connector) => connector.enabled && connector.adapterStatus === 'operational').length;
+  }
+
+  failedJobCount(): number {
+    return this.syncJobs.filter((job) => job.status === 'failed').length;
+  }
+
+  pendingJobCount(): number {
+    return this.syncJobs.filter((job) => job.status === 'pending' || job.status === 'running').length;
+  }
+
+  uncertainExtractionCount(): number {
+    return this.extractions.filter((extraction) => extraction.uncertain).length;
+  }
+
+  sensitiveExtractionCount(): number {
+    return this.extractions.filter((extraction) => extraction.sensitive).length;
+  }
+
+  recentExtractions(): ISourceExtraction[] {
+    return this.extractions.slice(0, 8);
+  }
+
+  recentAuditLogs(): ISourceAuditLog[] {
+    return this.auditLogs.slice(0, 8);
+  }
+
+  recentSyncJobs(): ISourceSyncJob[] {
+    return this.syncJobs.slice(0, 6);
+  }
+
+  latestJobFor(source: IConnectedSource): ISourceSyncJob | undefined {
+    return this.syncJobs.find((job) => job.sourceId === source.id);
+  }
+
+  statusText(status?: string): string {
+    return (status || 'unknown').replace(/_/g, ' ');
+  }
+
+  statusTone(status?: string): string {
+    switch ((status || '').toLowerCase()) {
+      case 'active':
+      case 'completed':
+      case 'operational':
+        return 'good';
+      case 'paused':
+      case 'running':
+      case 'pending':
+      case 'not_configured':
+        return 'watch';
+      case 'failed':
+      case 'revoked':
+      case 'error':
+        return 'bad';
+      default:
+        return 'neutral';
+    }
+  }
+
+  syncButtonVisible(source: IConnectedSource): boolean {
+    return source.enabled && source.status !== 'revoked';
+  }
+
+  sourceExtractionCount(source: IConnectedSource): number {
+    return this.extractions.filter((extraction) => extraction.sourceId === source.id).length;
+  }
+
+  connectorFor(source?: IConnectedSource): ISourceConnector | undefined {
+    if (!source) {
+      return undefined;
+    }
+    return this.connectors.find((connector) => connector.connectorKey === source.connectorKey);
+  }
+
+  sourcePermissions(source?: IConnectedSource): string[] {
+    if (!source?.permissions) {
+      return [];
+    }
+    return String(source.permissions)
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  sourceExcludePatterns(source?: IConnectedSource): string[] {
+    if (!source?.excludePatterns) {
+      return [];
+    }
+    return String(source.excludePatterns)
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  toggleTheme(): void {
+    this.themeMode = this.themeService.toggle();
+  }
+
+  themeLabel(): string {
+    return this.themeService.label();
+  }
+
+  themeIcon(): string {
+    return this.themeService.icon();
   }
 
   connectorLabel(connector: ISourceConnector): string {
@@ -191,13 +433,42 @@ export class ConnectedSourcesComponent implements OnInit {
         syncTarget: '.',
         localOnly: true,
       });
+      return;
+    }
+    if (connectorKey === 'whatsapp-export') {
+      this.sourceForm.patchValue({
+        name: 'WhatsApp exported chats',
+        syncFrequency: 'manual',
+        syncTarget: 'whatsapp',
+        defaultProjectKey: 'Robert-life-os',
+        localOnly: true,
+        excludePatterns: 'media omitted,omitted,spam',
+      });
+      return;
+    }
+    if (connectorKey === 'odoo-herp') {
+      this.sourceForm.patchValue({
+        name: 'Odoo / HERP workspace',
+        syncFrequency: 'manual',
+        syncTarget: this.odooSyncTarget(),
+        defaultProjectKey: 'Robert-life-os',
+        localOnly: true,
+        excludePatterns: 'password,secret,token,private',
+      });
     }
   }
 
   syncTargetPlaceholder(): string {
-    return this.sourceForm.value.connectorKey === 'json-feed'
-      ? 'Allowlisted HTTP(S) JSON feed URL'
-      : 'Folder target, e.g. .';
+    if (this.sourceForm.value.connectorKey === 'json-feed') {
+      return 'Allowlisted HTTP(S) JSON feed URL';
+    }
+    if (this.sourceForm.value.connectorKey === 'whatsapp-export') {
+      return 'Folder under connected-source root, e.g. whatsapp';
+    }
+    if (this.sourceForm.value.connectorKey === 'odoo-herp') {
+      return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';
+    }
+    return 'Folder target, e.g. .';
   }
 
   syncSource(source: IConnectedSource): void {
@@ -208,6 +479,7 @@ export class ConnectedSourcesComponent implements OnInit {
         items: [],
         projectKey: source.defaultProjectKey,
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: (result) => {
           this.syncing = false;
@@ -235,6 +507,7 @@ export class ConnectedSourcesComponent implements OnInit {
         limit: Number(this.folderForm.value.limit || 100),
         maxBytes: Number(this.folderForm.value.maxBytes || 1048576),
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: (result) => {
           this.syncing = false;
@@ -250,7 +523,7 @@ export class ConnectedSourcesComponent implements OnInit {
 
   runDueScheduledSyncs(): void {
     this.syncing = true;
-    this.sourceService.runDueScheduledSyncs().subscribe({
+    this.sourceService.runDueScheduledSyncs().pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
         this.syncing = false;
         const summary = `${result.completed} completed, ${result.failed} failed, ${result.skipped} skipped.`;
@@ -268,6 +541,199 @@ export class ConnectedSourcesComponent implements OnInit {
     });
   }
 
+  connectWhatsAppSource(): void {
+    const connector = this.connectors.find((item) => item.connectorKey === 'whatsapp-export');
+    if (!connector?.enabled) {
+      this.notification.warning('WhatsApp connector unavailable', 'Refresh connectors and verify the backend exposes whatsapp-export as operational.');
+      return;
+    }
+    this.sourceService
+      .createSource({
+        connectorKey: 'whatsapp-export',
+        name: this.whatsappForm.value.name || 'WhatsApp exported chats',
+        category: 'chat',
+        enabled: true,
+        localOnly: true,
+        syncFrequency: 'manual',
+        syncTarget: this.whatsappForm.value.folderPath || 'whatsapp',
+        defaultProjectKey: this.whatsappForm.value.projectKey || 'Robert-life-os',
+        permissions: ['metadata:read', 'chat:read', 'selected-chat-export-read'],
+        excludePatterns: ['media omitted', 'omitted', 'spam'],
+      })
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (source) => {
+          this.whatsappForm.patchValue({ sourceId: source.id });
+          this.notification.success('WhatsApp source ready', 'Exported chats can now be parsed locally and review-gated.');
+          this.refresh();
+        },
+        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to connect WhatsApp source.'),
+      });
+  }
+
+  connectOdooSource(): void {
+    const connector = this.connectors.find((item) => item.connectorKey === 'odoo-herp');
+    if (!connector?.enabled) {
+      this.notification.warning('Odoo connector unavailable', 'Refresh connectors and verify the backend exposes odoo-herp as operational.');
+      return;
+    }
+    this.sourceService
+      .createSource({
+        connectorKey: 'odoo-herp',
+        name: this.odooForm.value.name || 'Odoo / HERP workspace',
+        category: 'herp',
+        enabled: true,
+        localOnly: Boolean(this.odooForm.value.localOnly),
+        syncFrequency: this.odooForm.value.syncFrequency || 'manual',
+        syncTarget: this.odooSyncTarget(),
+        defaultProjectKey: this.odooForm.value.projectKey || 'Robert-life-os',
+        permissions: ['metadata:read', 'herp:read', 'odoo:read'],
+        excludePatterns: ['password', 'secret', 'token', 'private'],
+      })
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (source) => {
+          this.odooForm.patchValue({ sourceId: source.id });
+          this.notification.success('Odoo / HERP source ready', 'Odoo app domains can now be modeled into governed HAI workflows.');
+          this.refresh();
+        },
+        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to connect Odoo / HERP source.'),
+      });
+  }
+
+  syncOdooApps(): void {
+    const sourceId = this.selectedOdooSourceId();
+    if (!sourceId) {
+      this.notification.warning('Odoo source missing', 'Connect or select an Odoo / HERP source first.');
+      return;
+    }
+    this.syncing = true;
+    this.sourceService
+      .sync(sourceId, {
+        mode: 'incremental_sync',
+        items: [],
+        folderPath: this.odooForm.value.apps || '',
+        projectKey: this.odooForm.value.projectKey || 'Robert-life-os',
+      })
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (result) => {
+          this.syncing = false;
+          this.notifySyncResult('Odoo / HERP modeling', result);
+          this.refresh();
+        },
+        error: (error) => {
+          this.syncing = false;
+          this.notification.error('Odoo modeling failed', error?.error?.error || 'The Odoo app domains could not be modeled.');
+        },
+      });
+  }
+
+  importWhatsAppPaste(): void {
+    const sourceId = this.selectedWhatsAppSourceId();
+    const content = String(this.whatsappForm.value.pastedExport || '').trim();
+    if (!sourceId || !content) {
+      this.notification.warning('WhatsApp import missing input', 'Connect a WhatsApp source and paste an exported chat first.');
+      return;
+    }
+    this.syncing = true;
+    this.sourceService
+      .sync(sourceId, {
+        mode: 'manual_import',
+        projectKey: this.whatsappForm.value.projectKey,
+        limit: Number(this.whatsappForm.value.chunkMessages || 40),
+        items: [
+          {
+            externalId: `whatsapp-manual-${Date.now()}`,
+            title: this.whatsappForm.value.chatTitle || 'WhatsApp selected chat',
+            content,
+            sourceUri: `whatsapp-export://manual/${Date.now()}`,
+            itemType: 'whatsapp_export',
+            projectKey: this.whatsappForm.value.projectKey,
+            metadata: 'source=whatsapp-export;import=manual-paste;privacy=local-review-gated',
+          },
+        ],
+      })
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (result) => {
+          this.syncing = false;
+          this.notifySyncResult('WhatsApp import', result);
+          this.refresh();
+        },
+        error: (error) => {
+          this.syncing = false;
+          this.notification.error('WhatsApp import failed', error?.error?.error || 'The pasted export could not be parsed.');
+        },
+      });
+  }
+
+  syncWhatsAppFolder(): void {
+    const sourceId = this.selectedWhatsAppSourceId();
+    if (!sourceId) {
+      this.notification.warning('WhatsApp source missing', 'Connect or select a WhatsApp export source first.');
+      return;
+    }
+    this.syncing = true;
+    this.sourceService
+      .sync(sourceId, {
+        mode: 'incremental_sync',
+        items: [],
+        folderPath: this.whatsappForm.value.folderPath || 'whatsapp',
+        projectKey: this.whatsappForm.value.projectKey || 'Robert-life-os',
+        limit: Number(this.whatsappForm.value.chunkMessages || 40),
+        maxBytes: Number(this.whatsappForm.value.maxBytes || 2097152),
+      })
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (result) => {
+          this.syncing = false;
+          this.notifySyncResult('WhatsApp folder scan', result);
+          this.refresh();
+        },
+        error: (error) => {
+          this.syncing = false;
+          this.notification.error('WhatsApp scan failed', error?.error?.error || 'The export folder could not be scanned.');
+        },
+      });
+  }
+
+  whatsappSources(): IConnectedSource[] {
+    return this.sources.filter((source) => source.connectorKey === 'whatsapp-export');
+  }
+
+  odooSources(): IConnectedSource[] {
+    return this.sources.filter((source) => source.connectorKey === 'odoo-herp');
+  }
+
+  private selectedWhatsAppSourceId(): string {
+    const selected = this.whatsappForm.value.sourceId;
+    if (selected) {
+      return selected;
+    }
+    return this.whatsappSources()[0]?.id || '';
+  }
+
+  private selectedOdooSourceId(): string {
+    const selected = this.odooForm.value.sourceId;
+    if (selected) {
+      return selected;
+    }
+    return this.odooSources()[0]?.id || '';
+  }
+
+  private odooSyncTarget(): string {
+    const baseUrl = String(this.odooForm.value.baseUrl || '').trim();
+    const apps = String(this.odooForm.value.apps || '').trim();
+    if (!baseUrl) {
+      return apps;
+    }
+    if (!apps) {
+      return baseUrl;
+    }
+    return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}apps=${encodeURIComponent(apps)}`;
+  }
+
   private notifySyncResult(label: string, result: ISourceSyncResult): void {
     const summary = `${result.job.itemsSeen} seen, ${result.job.itemsFailed || 0} failed. ${result.message}`;
     if (result.job.status === 'completed') {
@@ -281,40 +747,61 @@ export class ConnectedSourcesComponent implements OnInit {
     if (this.searchForm.invalid) {
       return;
     }
-    this.sourceService.search(this.searchForm.value).subscribe({
-      next: (result) => (this.searchResult = result),
+    this.sourceService.search(this.searchForm.value).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: (result) => {
+        this.searchResult = result;
+        this.updateSourceActions();
+      },
       error: () => this.notification.error('Error', 'Search failed.'),
     });
   }
 
   pause(source: IConnectedSource): void {
-    this.sourceService.pause(source.id).subscribe(() => this.refresh());
+    this.sourceService.pause(source.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.refresh(),
+      error: () => this.notification.error('Pause failed', 'The source could not be paused.'),
+    });
   }
 
   resume(source: IConnectedSource): void {
-    this.sourceService.resume(source.id).subscribe(() => this.refresh());
+    this.sourceService.resume(source.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.refresh(),
+      error: () => this.notification.error('Resume failed', 'The source could not be resumed.'),
+    });
   }
 
   reindex(source: IConnectedSource): void {
-    this.sourceService.reindex(source.id).subscribe(() => this.refresh());
+    this.sourceService.reindex(source.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.refresh(),
+      error: () => this.notification.error('Re-index failed', 'The source could not be re-indexed.'),
+    });
   }
 
   revoke(source: IConnectedSource): void {
     if (!window.confirm('Revoke this source access?')) {
       return;
     }
-    this.sourceService.revoke(source.id).subscribe(() => this.refresh());
+    this.sourceService.revoke(source.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.refresh(),
+      error: () => this.notification.error('Revoke failed', 'The source access could not be revoked.'),
+    });
   }
 
   archive(extraction: ISourceExtraction): void {
-    this.sourceService.archiveExtraction(extraction.id).subscribe(() => this.loadExtractions());
+    this.sourceService.archiveExtraction(extraction.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.loadExtractions(),
+      error: () => this.notification.error('Archive failed', 'The extracted record could not be archived.'),
+    });
   }
 
   delete(extraction: ISourceExtraction): void {
     if (!window.confirm('Delete this extracted record?')) {
       return;
     }
-    this.sourceService.deleteExtraction(extraction.id).subscribe(() => this.loadExtractions());
+    this.sourceService.deleteExtraction(extraction.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: () => this.loadExtractions(),
+      error: () => this.notification.error('Delete failed', 'The extracted record could not be deleted.'),
+    });
   }
 
   markCorrected(extraction: ISourceExtraction): void {
@@ -323,7 +810,11 @@ export class ConnectedSourcesComponent implements OnInit {
         ...extraction,
         uncertain: false,
       })
-      .subscribe(() => this.loadExtractions());
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: () => this.loadExtractions(),
+        error: () => this.notification.error('Correction failed', 'The extracted record could not be updated.'),
+      });
   }
 
   goHome(): void {
@@ -333,23 +824,60 @@ export class ConnectedSourcesComponent implements OnInit {
   private loadExtractions(): void {
     this.sourceService
       .extractions(this.searchForm.value.projectKey, this.includeArchived)
+      .pipe(timeout(this.loadTimeoutMs))
       .subscribe({
-        next: (items) => (this.extractions = items),
-        error: () => (this.extractions = []),
+        next: (items) => {
+          this.extractions = items;
+          this.updateSourceActions();
+        },
+        error: () => {
+          this.extractions = [];
+          this.updateSourceActions();
+        },
       });
   }
 
   private loadAuditLogs(): void {
-    this.sourceService.auditLogs().subscribe({
+    this.sourceService.auditLogs().pipe(timeout(this.loadTimeoutMs)).subscribe({
       next: (logs) => (this.auditLogs = logs),
       error: () => (this.auditLogs = []),
     });
   }
 
   private loadSyncJobs(): void {
-    this.sourceService.syncJobs().subscribe({
-      next: (jobs) => (this.syncJobs = jobs || []),
-      error: () => (this.syncJobs = []),
+    this.sourceService.syncJobs().pipe(timeout(this.loadTimeoutMs)).subscribe({
+      next: (jobs) => {
+        this.syncJobs = jobs || [];
+        this.updateSourceActions();
+      },
+      error: () => {
+        this.syncJobs = [];
+        this.updateSourceActions();
+      },
     });
+  }
+
+  private applySourceDefaults(sources: IConnectedSource[]): void {
+    if (!sources.length) {
+      return;
+    }
+    if (!this.selectedSourceId) {
+      this.selectedSourceId = sources[0].id;
+    }
+    if (!this.importForm.value.sourceId) {
+      this.importForm.patchValue({ sourceId: sources[0].id });
+    }
+    if (!this.folderForm.value.sourceId) {
+      const localFolder = sources.find((source) => source.connectorKey === 'local-folder');
+      this.folderForm.patchValue({ sourceId: (localFolder || sources[0]).id });
+    }
+    const whatsapp = sources.find((source) => source.connectorKey === 'whatsapp-export');
+    if (whatsapp && !this.whatsappForm.value.sourceId) {
+      this.whatsappForm.patchValue({ sourceId: whatsapp.id });
+    }
+    const odoo = sources.find((source) => source.connectorKey === 'odoo-herp');
+    if (odoo && !this.odooForm.value.sourceId) {
+      this.odooForm.patchValue({ sourceId: odoo.id });
+    }
   }
 }

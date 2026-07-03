@@ -17,8 +17,8 @@ export class LoginComponent implements OnInit {
   constructor(
     private fb: FormBuilder,
     private notification: NzNotificationService,
-    @Inject(AUTH_SERVICE_TOKEN) private authService: IAuthService,
-    private router: Router
+    private router: Router,
+    @Inject(AUTH_SERVICE_TOKEN) private authService: IAuthService
   ) {}
 
   ngOnInit(): void {
@@ -30,7 +30,6 @@ export class LoginComponent implements OnInit {
       userName: [
         "",
         {
-          updateOn: "blur",
           validators: [Validators.required, Validators.email],
         },
       ],
@@ -51,8 +50,8 @@ export class LoginComponent implements OnInit {
     this.authService
       .login(this.validateForm.value.userName, this.validateForm.value.password)
       .subscribe({
-        next: (response) => {
-          this.router.navigate(["/home"]).catch(() => {});
+        next: () => {
+          this.router.navigate(["/control-center"]);
         },
         error: (error) => {
           if (error.status === 401) {
@@ -70,5 +69,12 @@ export class LoginComponent implements OnInit {
           }
         },
       });
+  }
+
+  showPasswordHelp(): void {
+    this.notification.info(
+      "Local account recovery",
+      "Use the first-run admin credentials from .env.example or update the local IDP database/reset seed for this Windows install."
+    );
   }
 }

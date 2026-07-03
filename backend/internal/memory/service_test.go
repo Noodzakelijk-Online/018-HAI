@@ -51,6 +51,27 @@ func TestRetrieveRanksRelevantProjectMemory(t *testing.T) {
 	}
 }
 
+func TestRetrieveIncludesGlobalMemoryForProjectTask(t *testing.T) {
+	repo := newFakeRepository()
+	service := NewService(repo)
+	_, _ = service.Create(CreateRequest{Kind: "preference", Content: "For lawyer follow-ups, use formal Dutch and attach evidence links before drafting.", Confidence: 0.85})
+	_, _ = service.Create(CreateRequest{ProjectKey: "other", Kind: "project", Content: "Lawyer notes for an unrelated project should not load.", Confidence: 1})
+
+	result, err := service.Retrieve(RetrieveRequest{ProjectKey: "vivare", Query: "lawyer follow-up formal Dutch evidence", Limit: 3})
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	if len(result.UsedContext) != 1 {
+		t.Fatalf("retrieved %d memories, want only global memory", len(result.UsedContext))
+	}
+	if result.UsedContext[0].Memory.ProjectKey != "" {
+		t.Fatalf("retrieved project-scoped memory %q, want global memory", result.UsedContext[0].Memory.ProjectKey)
+	}
+	if result.UsedContext[0].Memory.LastUsedAt == nil {
+		t.Fatalf("expected global memory LastUsedAt to be updated")
+	}
+}
+
 type fakeRepository struct {
 	memories map[uuid.UUID]models.ContextMemory
 }
