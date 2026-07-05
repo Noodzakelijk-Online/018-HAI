@@ -39,6 +39,14 @@ This worklog makes the goal run auditable and resumable. Each checkpoint records
 - **Matrix:** phase 022 Missing → Implemented (backend). Roll-up: 16 Implemented / 68 Partial / 27 Missing.
 - **Remains:** frontend memory page wiring to the new endpoint; extend the same pattern to sources/workflow/pursuit listings.
 
+## Checkpoint 5 — Phase 034: CLI doctor / self-diagnostic (implementation)
+
+- **Did:** Added `internal/doctor` with a pure `Diagnose(config.Configuration) Report` (14 checks across server, database, security keys, kafka, media) plus `Render()` for human output and an `ExitCode()`. Wired a `doctor` subcommand onto the existing binary in `cmd/main.go` (server remains the default invocation).
+- **Verified:** `go build ./...` PASS; `go test ./internal/doctor/...` PASS (5 cases); **ran** `go run ./cmd doctor` → real report "11 ok, 2 warn, 0 fail / READY WITH WARNINGS" (correctly warns empty `BACKEND_API_SHARED_KEY` and `HAI_MEMORY_ENCRYPTION_KEY` under defaults). Failures (e.g. empty DB host) drive exit code 1.
+- **Why safe:** new package + additive subcommand; no existing signature changed.
+- **Matrix:** phase 034 Partial → Implemented. Roll-up: 17 Implemented / 67 Partial / 27 Missing.
+- **Remains:** optional DB-ping runtime check; surface the same readiness in the operator dashboard (feeds 035/036).
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

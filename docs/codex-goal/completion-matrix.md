@@ -61,7 +61,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 031 | Local development one-command experience | Implemented | `makefile`, `docker-compose.local.yml`, `docker-compose.dev.yml` |
 | 032 | Docker & deployment readiness | Implemented | per-service `Dockerfile`, 3 compose stacks, nginx |
 | 033 | Database migrations & rollback safety | Partial | migration files reg #91; schema drift check reg #92 |
-| 034 | CLI & doctor/self-diagnostic command | Partial | operational readiness score reg #98; dedicated doctor cmd needs verification |
+| 034 | CLI & doctor/self-diagnostic command | Implemented | `backend doctor` subcommand → pure `doctor.Diagnose(config)` over 14 readiness checks (db/security/kafka/media), human-readable report, exit 1 on any failure; run verified (`go run ./cmd doctor` → "READY WITH WARNINGS"). Tests in `internal/doctor/doctor_test.go` |
 | 035 | Observability, health & readiness endpoints | Partial | health endpoints, HAI OS overview |
 
 ## Quality & product (036–072)
@@ -154,8 +154,8 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 16 |
-| Partial | 68 |
+| Implemented | 17 |
+| Partial | 67 |
 | Missing | 27 |
 | Blocked | 0 |
 | N/A | 1 |
