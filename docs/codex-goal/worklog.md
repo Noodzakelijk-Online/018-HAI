@@ -61,6 +61,18 @@ This worklog makes the goal run auditable and resumable. Each checkpoint records
 - **Verified:** `go build ./...` PASS; `go test ./internal/router/...` PASS (readiness ready/not-ready cases).
 - **Matrix:** phase 035 Partial → Implemented. Roll-up: 20 Implemented / 64 Partial / 27 Missing.
 
+## Checkpoint 8 — Phases 072, 061, 017, 047 (batch, implementation)
+
+Four self-contained, pure, additive packages — no existing signature or test-double touched.
+
+- **072 error catalog:** `internal/apierror` — typed codes → HTTP status (fail-safe 500 default), JSON error envelope. Paired with `docs/troubleshooting.md` mapping each code to cause/action and first diagnostics (healthz/readyz/doctor).
+- **061 data invariants:** `internal/invariants.ValidateMemory` — content/kind required, confidence in [0,1] inclusive, tag length; returns typed violations for edge-validation and reconciliation.
+- **017 idempotency:** `internal/idempotency` TTL store (clock-injected) + opt-in `idempotencyMiddleware` — duplicate `Idempotency-Key` on a mutating request → 409; keyless/safe requests unaffected.
+- **047 path safety:** `internal/pathsafety.SafeJoin`/`IsSafeRelative` — rejects absolute paths and `..` escapes, with dedicated traversal tests.
+- **Verified:** `go build ./...` PASS; `go test` PASS for all four packages + `internal/router` (idempotency wired into the engine, opt-in).
+- **Matrix:** 072 Missing→Implemented; 061/017/047 Partial→Implemented. Roll-up: 24 Implemented / 61 Partial / 26 Missing.
+- **Follow-ups:** adopt `apierror` in handlers; adopt `pathsafety` in upload/ingest; extend `invariants` to more models.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/idempotency"
 	"automation-hub-backend/internal/ratelimit"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,7 @@ func Initialize() error {
 	}
 	router.Use(securityHeadersMiddleware())
 	router.Use(rateLimitMiddleware(ratelimit.New(config.AppConfig.RateLimitPerMinute, time.Minute)))
+	router.Use(idempotencyMiddleware(idempotency.New(10 * time.Minute)))
 	router.Use(localCaptureCORSMiddleware())
 
 	// initialize routes

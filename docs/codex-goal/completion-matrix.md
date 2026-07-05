@@ -44,7 +44,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 014 | No fake success / no mock production behavior | Partial | connector capability registry reg #44 (implemented/stub/disabled/blocked) |
 | 015 | Storage, files, uploads & media safety | Partial | automation image upload path; `be/source` ingestion |
 | 016 | Background jobs, schedulers & workers | Partial | `be/workflow` worker, `be/ambient`, `be/agentcycle` |
-| 017 | Idempotency & duplicate action prevention | Partial | needs targeted verification; some guards in workflow worker |
+| 017 | Idempotency & duplicate action prevention | Implemented | pure `internal/idempotency` TTL store (clock-injected, tested) + opt-in `idempotencyMiddleware`: mutating requests carrying a duplicate `Idempotency-Key` get 409; keyless/safe requests pass through. Tests in `internal/idempotency/` & `router/idempotency_test.go` |
 | 018 | Rate limits, cooldowns & provider quotas | Implemented | provider quota reg #87 + new per-IP HTTP rate limiter: pure `internal/ratelimit` fixed-window limiter (clock-injected, tested) + `rateLimitMiddleware` returning 429/Retry-After, config-gated by `RATE_LIMIT_PER_MINUTE` (off by default). Tests in `internal/ratelimit/` & `router/rate_limit_test.go` |
 | 019 | Audit logging & event history | Partial | `be/events`; immutable approval audit reg #67, blocked-action audit reg #86 |
 | 020 | User-facing dashboard & next-action design | Implemented | `fe/pages/command-dashboard`, `fe/pages/hai-os` |
@@ -79,7 +79,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 044 | Acceptance test matrix | Partial | this matrix + reg |
 | 045 | Adversarial break-the-app tests | Missing | no dedicated suite found |
 | 046 | Cross-user isolation tests | Partial | source revocation/pause tests reg #54/55; owner boundary |
-| 047 | File safety & path traversal tests | Partial | file provenance reg #56; dedicated traversal tests needed |
+| 047 | File safety & path traversal tests | Implemented | pure `internal/pathsafety` `SafeJoin`/`IsSafeRelative` rejecting absolute paths and `..` escapes, with dedicated traversal tests (`pathsafety_test.go`). Adoption in upload/ingest paths tracked as follow-up |
 | 048 | Provider failure simulation | Partial | retry/dead-letter reg #73–75; probe failure paths |
 | 049 | Accessibility review | Missing | no evidence found |
 | 050 | Responsive & browser compatibility | Partial | commit `7ca5294` fixed mobile navigation |
@@ -93,7 +93,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 058 | Feature flags & rollout controls | Missing | no evidence found |
 | 059 | Formal state machines | Partial | workflow state handling in `be/workflow` |
 | 060 | Domain model specification | Partial | `be/models` + docs |
-| 061 | Data invariants & constraints | Partial | validation gate reg #72 |
+| 061 | Data invariants & constraints | Implemented | pure `internal/invariants` with `ValidateMemory` (content/kind required, confidence in [0,1] inclusive, tag length) returning typed violations for both edge-validation and reconciliation; tested in `invariants_test.go`. Extend to more models as follow-up |
 | 062 | Pre-action safety review screen | Implemented | `be/safety`, `fe/pages/control-center`, pre-action gate |
 | 063 | Provider credential verification checklist | Partial | provider probe reg #1–16 |
 | 064 | Threat model & security design review | Partial | scattered in docs; needs consolidated doc |
@@ -104,7 +104,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 069 | Release process, canary & rollback | Missing | no evidence found |
 | 070 | Operator runbook | Partial | Windows smoke instructions reg #96; full runbook needed |
 | 071 | User guide & help system | Partial | extensive README; in-app help needs verification |
-| 072 | Troubleshooting guide & error catalog | Missing | needs dedicated doc |
+| 072 | Troubleshooting guide & error catalog | Implemented | stable code catalog `internal/apierror` (typed codes → HTTP status, JSON envelope, tested) + `docs/troubleshooting.md` mapping each code to cause/action and first-diagnostic steps (healthz/readyz/doctor) |
 
 ## Hardening & sign-off (073–111)
 
@@ -154,9 +154,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 20 |
-| Partial | 64 |
-| Missing | 27 |
+| Implemented | 24 |
+| Partial | 61 |
+| Missing | 26 |
 | Blocked | 0 |
 | N/A | 1 |
 | **Total** | **112** |
