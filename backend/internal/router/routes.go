@@ -238,6 +238,7 @@ func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.H
 	memoryRoutes := apiVersion.Group("/memory")
 	{
 		memoryRoutes.GET("/", memoryHandler.List)
+		memoryRoutes.GET("/query", memoryHandler.Query)
 		memoryRoutes.POST("/", memoryHandler.Create)
 		memoryRoutes.POST("/retrieve", memoryHandler.Retrieve)
 		memoryRoutes.GET("/export", memoryHandler.Export)

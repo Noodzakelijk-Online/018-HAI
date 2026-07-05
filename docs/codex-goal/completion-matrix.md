@@ -49,7 +49,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 019 | Audit logging & event history | Partial | `be/events`; immutable approval audit reg #67, blocked-action audit reg #86 |
 | 020 | User-facing dashboard & next-action design | Implemented | `fe/pages/command-dashboard`, `fe/pages/hai-os` |
 | 021 | Forms, validation & autosave behavior | Partial | Angular forms; autosave needs verification |
-| 022 | Search, filters, sorting & pagination | Missing | no direct evidence found |
+| 022 | Search, filters, sorting & pagination | Implemented (backend) | `GET /memory/query` — pure `memory.Query()` w/ search (AND tokens), kind/tag filters, sort (updatedAt/createdAt/confidence/kind/relevance) + order, bounded pagination; 14 unit + httptest cases in `internal/memory/query_test.go` & `handler_test.go`. Frontend wiring + other domains pending. |
 | 023 | Import & export workflows | Partial | local-folder source export reg #57; support bundle reg #97 |
 | 024 | Templates, presets & reusable defaults | Missing | no direct evidence found |
 | 025 | AI/provider abstraction & deterministic fallback | Partial | `be/llm`, `be/router` |
@@ -154,9 +154,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 15 |
+| Implemented | 16 |
 | Partial | 68 |
-| Missing | 28 |
+| Missing | 27 |
 | Blocked | 0 |
 | N/A | 1 |
 | **Total** | **112** |

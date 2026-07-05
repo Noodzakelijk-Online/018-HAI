@@ -31,6 +31,14 @@ This worklog makes the goal run auditable and resumable. Each checkpoint records
 - **Verified:** report cites only executed commands and observed structure.
 - **Remains:** next run should pick the highest-value Missing item(s) and implement real, tested behavior — candidate ordering in the final report's "Next run" section.
 
+## Checkpoint 4 — Phase 022: search, filters, sorting & pagination (implementation)
+
+- **Did:** Added a pure `memory.Query(items, QueryParams) PageResult` function (search with AND-token semantics over content/summary/tags; kind + exact-tag filters; sort by updatedAt/createdAt/confidence/kind/relevance with asc/desc; bounded pagination with defaults & clamps) and exposed it via a new additive `GET /memory/query` endpoint. Existing `GET /memory/` left untouched.
+- **Why non-breaking:** 5 packages (source, workflow, ambient, agentcycle, memoryengine) hand-write fakes of the `memory.Service` interface, so the interface was NOT extended — the feature is a pure function + handler, zero risk to those suites.
+- **Verified:** `go build ./...` PASS; `go test ./internal/memory/...` PASS (11 pure-function cases in `query_test.go` + 3 end-to-end httptest cases in `handler_test.go`); `go test ./internal/router/...` smoke PASS; input slice proven non-mutated.
+- **Matrix:** phase 022 Missing → Implemented (backend). Roll-up: 16 Implemented / 68 Partial / 27 Missing.
+- **Remains:** frontend memory page wiring to the new endpoint; extend the same pattern to sources/workflow/pursuit listings.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

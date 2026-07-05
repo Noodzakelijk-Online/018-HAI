@@ -44,6 +44,30 @@ func (h *Handler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, memories)
 }
 
+// Query lists memories with search, filtering, sorting, and pagination.
+// It preserves the existing List endpoint unchanged and adds a richer,
+// paginated envelope for clients that need to browse large memory sets.
+func (h *Handler) Query(c *gin.Context) {
+	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
+	memories, err := h.service.FindAll(c.Query("projectKey"), includeArchived)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	page, _ := strconv.Atoi(c.Query("page"))
+	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
+	result := Query(memories, QueryParams{
+		Search:   c.Query("q"),
+		Kind:     c.Query("kind"),
+		Tag:      c.Query("tag"),
+		Sort:     c.Query("sort"),
+		Order:    c.Query("order"),
+		Page:     page,
+		PageSize: pageSize,
+	})
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *Handler) Get(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
