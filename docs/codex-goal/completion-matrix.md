@@ -45,7 +45,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 015 | Storage, files, uploads & media safety | Partial | automation image upload path; `be/source` ingestion |
 | 016 | Background jobs, schedulers & workers | Partial | `be/workflow` worker, `be/ambient`, `be/agentcycle` |
 | 017 | Idempotency & duplicate action prevention | Partial | needs targeted verification; some guards in workflow worker |
-| 018 | Rate limits, cooldowns & provider quotas | Partial | provider quota reg #87, budget ledger reg #88 |
+| 018 | Rate limits, cooldowns & provider quotas | Implemented | provider quota reg #87 + new per-IP HTTP rate limiter: pure `internal/ratelimit` fixed-window limiter (clock-injected, tested) + `rateLimitMiddleware` returning 429/Retry-After, config-gated by `RATE_LIMIT_PER_MINUTE` (off by default). Tests in `internal/ratelimit/` & `router/rate_limit_test.go` |
 | 019 | Audit logging & event history | Partial | `be/events`; immutable approval audit reg #67, blocked-action audit reg #86 |
 | 020 | User-facing dashboard & next-action design | Implemented | `fe/pages/command-dashboard`, `fe/pages/hai-os` |
 | 021 | Forms, validation & autosave behavior | Partial | Angular forms; autosave needs verification |
@@ -56,7 +56,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 026 | Human review queue & approval gates | Implemented | approval records reg #66/67, review queue reg #60, `be/safety` |
 | 027 | Notifications & reminders | Partial | calendar reminders reg #65, follow-up scheduling reg #64 |
 | 028 | Privacy controls & data deletion | Partial | deletion/export path per phase 002 contract |
-| 029 | Security headers & web security | Partial | `gate/`, `nginx-config/`; header set needs verification |
+| 029 | Security headers & web security | Implemented | `securityHeadersMiddleware` on every response: X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy no-referrer, X-XSS-Protection 0, CORP same-origin, strict CSP (Swagger UI exempt from CSP only). Tested in `router/security_headers_test.go` |
 | 030 | Secrets management & credential rotation | Partial | secret redaction reg #11–20; rotation needs verification |
 | 031 | Local development one-command experience | Implemented | `makefile`, `docker-compose.local.yml`, `docker-compose.dev.yml` |
 | 032 | Docker & deployment readiness | Implemented | per-service `Dockerfile`, 3 compose stacks, nginx |
@@ -154,8 +154,8 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 17 |
-| Partial | 67 |
+| Implemented | 19 |
+| Partial | 65 |
 | Missing | 27 |
 | Blocked | 0 |
 | N/A | 1 |

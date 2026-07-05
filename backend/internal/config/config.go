@@ -25,6 +25,7 @@ const (
 	kafkaTopic       string = "KAFKA_TOPIC"
 	backendAPIKey    string = "BACKEND_API_SHARED_KEY"
 	memoryEngineKey  string = "HAI_MEMORY_ENCRYPTION_KEY"
+	rateLimitPerMin  string = "RATE_LIMIT_PER_MINUTE"
 )
 
 type Configuration struct {
@@ -42,8 +43,9 @@ type Configuration struct {
 	ImageSaveDir    string
 	Brokers         []string
 	Topic           string
-	BackendAPIKey   string
-	MemoryEngineKey string
+	BackendAPIKey      string
+	MemoryEngineKey    string
+	RateLimitPerMinute int
 }
 
 var AppConfig Configuration
@@ -75,8 +77,9 @@ func Init() {
 		ImageSaveDir:    getEnvString(imageSaveDir, "images"),
 		Brokers:         kafkaBrokersList,
 		Topic:           getEnvString(kafkaTopic, "automation-events"),
-		BackendAPIKey:   getEnvString(backendAPIKey, ""),
-		MemoryEngineKey: getEnvString(memoryEngineKey, ""),
+		BackendAPIKey:      getEnvString(backendAPIKey, ""),
+		MemoryEngineKey:    getEnvString(memoryEngineKey, ""),
+		RateLimitPerMinute: getEnvInt(rateLimitPerMin, 0),
 	}
 	ensureImageDirExists()
 }

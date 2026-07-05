@@ -1,7 +1,11 @@
 package router
 
 import (
+	"time"
+
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/ratelimit"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -11,6 +15,8 @@ func Initialize() error {
 	if err := router.SetTrustedProxies(nil); err != nil {
 		return err
 	}
+	router.Use(securityHeadersMiddleware())
+	router.Use(rateLimitMiddleware(ratelimit.New(config.AppConfig.RateLimitPerMinute, time.Minute)))
 	router.Use(localCaptureCORSMiddleware())
 
 	// initialize routes

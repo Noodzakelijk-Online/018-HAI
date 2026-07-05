@@ -47,6 +47,14 @@ This worklog makes the goal run auditable and resumable. Each checkpoint records
 - **Matrix:** phase 034 Partial → Implemented. Roll-up: 17 Implemented / 67 Partial / 27 Missing.
 - **Remains:** optional DB-ping runtime check; surface the same readiness in the operator dashboard (feeds 035/036).
 
+## Checkpoint 6 — Phases 029 & 018: security headers + rate limiting (implementation)
+
+- **Did (029):** `securityHeadersMiddleware` applied to the whole engine — nosniff, X-Frame-Options DENY, Referrer-Policy no-referrer, X-XSS-Protection 0, CORP same-origin, and a strict CSP (`default-src 'none'`) with the Swagger UI exempt from CSP only so it still renders.
+- **Did (018):** `internal/ratelimit` — a pure, clock-injected fixed-window limiter (deterministic, no sleeps) + `rateLimitMiddleware` (per-client-IP, 429 + Retry-After) wired into the engine and gated by a new `RATE_LIMIT_PER_MINUTE` config (default 0 = disabled, documented in `.env.example`). Off by default → zero behaviour change unless configured.
+- **Verified:** `go build ./...` PASS; `go test` PASS for `internal/ratelimit`, `internal/router`, `internal/doctor`, `internal/config`.
+- **Finding (not from this change):** `agentruntime.TestHermesAdapterInvokesControlledCli` is flaky under parallel `go test ./...` load — it shells out to a CLI with a 5s wall-clock timeout and starves. Passes 4/4 in isolation on both this branch and untouched base `0f7f12c`. Recorded for a future test-reliability phase (045/048).
+- **Matrix:** phases 018 & 029 Partial → Implemented. Roll-up: 19 Implemented / 65 Partial / 27 Missing.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:
