@@ -62,7 +62,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 032 | Docker & deployment readiness | Implemented | per-service `Dockerfile`, 3 compose stacks, nginx |
 | 033 | Database migrations & rollback safety | Partial | migration files reg #91; schema drift check reg #92 |
 | 034 | CLI & doctor/self-diagnostic command | Implemented | `backend doctor` subcommand → pure `doctor.Diagnose(config)` over 14 readiness checks (db/security/kafka/media), human-readable report, exit 1 on any failure; run verified (`go run ./cmd doctor` → "READY WITH WARNINGS"). Tests in `internal/doctor/doctor_test.go` |
-| 035 | Observability, health & readiness endpoints | Partial | health endpoints, HAI OS overview |
+| 035 | Observability, health & readiness endpoints | Implemented | `GET /healthz` liveness + new `GET /readyz` readiness returning the doctor diagnosis as JSON, 200 when ready / 503 on any failing check. Handler tested in `router/readiness_test.go` |
 
 ## Quality & product (036–072)
 
@@ -154,8 +154,8 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 19 |
-| Partial | 65 |
+| Implemented | 20 |
+| Partial | 64 |
 | Missing | 27 |
 | Blocked | 0 |
 | N/A | 1 |

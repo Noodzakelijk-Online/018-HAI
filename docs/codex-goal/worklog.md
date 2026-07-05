@@ -55,6 +55,12 @@ This worklog makes the goal run auditable and resumable. Each checkpoint records
 - **Finding (not from this change):** `agentruntime.TestHermesAdapterInvokesControlledCli` is flaky under parallel `go test ./...` load — it shells out to a CLI with a 5s wall-clock timeout and starves. Passes 4/4 in isolation on both this branch and untouched base `0f7f12c`. Recorded for a future test-reliability phase (045/048).
 - **Matrix:** phases 018 & 029 Partial → Implemented. Roll-up: 19 Implemented / 65 Partial / 27 Missing.
 
+## Checkpoint 7 — Phase 035: readiness endpoint (implementation)
+
+- **Did:** Added `GET /readyz` (readiness) alongside the existing `/healthz` (liveness). It runs `doctor.Diagnose(config)` and returns the checks as JSON with 200 when ready or 503 when any check fails, so orchestrators can gate traffic on real configuration readiness. `diagnose` is injected into the handler for testability.
+- **Verified:** `go build ./...` PASS; `go test ./internal/router/...` PASS (readiness ready/not-ready cases).
+- **Matrix:** phase 035 Partial → Implemented. Roll-up: 20 Implemented / 64 Partial / 27 Missing.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

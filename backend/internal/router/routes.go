@@ -15,6 +15,7 @@ import (
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
@@ -35,6 +36,9 @@ func initializeRoutes(router *gin.Engine) error {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
+	router.GET("/readyz", readinessHandler(func() doctor.Report {
+		return doctor.Diagnose(config.AppConfig)
+	}))
 
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"
 	docs.SwaggerInfo.BasePath = relativePathV1
