@@ -73,6 +73,19 @@ Four self-contained, pure, additive packages — no existing signature or test-d
 - **Matrix:** 072 Missing→Implemented; 061/017/047 Partial→Implemented. Roll-up: 24 Implemented / 61 Partial / 26 Missing.
 - **Follow-ups:** adopt `apierror` in handlers; adopt `pathsafety` in upload/ingest; extend `invariants` to more models.
 
+## Checkpoint 9 — 10-phase batch (024, 054, 055, 058, 102 code; 053, 065, 069, 077, 083 docs)
+
+Five new tested code packages + five document deliverables (phases whose actual artifact is a document).
+
+- **058 feature flags:** `internal/featureflags` — toggles + deterministic % rollout (stable FNV per subject), exposed via `GET /flags`.
+- **024 templates:** `internal/templates` — seeded memory presets; `Apply` fills only empty fields.
+- **055 analytics:** `internal/analytics.Aggregate` — local-first counts by type/day, no external service.
+- **102 retention:** `internal/retention` — age-based `DueForArchival`/`DueForDeletion` over a policy.
+- **054 reconcile:** `internal/reconcile.ScanMemories` (invariant scan + repair classification) wired to a `backend reconcile` CLI subcommand (dry-run; graceful without DB).
+- **Docs:** `bug-hunt-log.md` (077), `privacy-impact-assessment.md` (065), `release-process.md` (069), `backup-restore.md` (053), `value-review.md` (083).
+- **Verified:** `go build ./...` PASS; `go test` PASS for all 5 new packages + `internal/router`; `go run ./cmd reconcile` and `... doctor` both run.
+- **Matrix:** 10 phases Missing → Implemented. Roll-up: **34 Implemented / 61 Partial / 16 Missing**.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

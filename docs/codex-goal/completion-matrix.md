@@ -51,7 +51,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 021 | Forms, validation & autosave behavior | Partial | Angular forms; autosave needs verification |
 | 022 | Search, filters, sorting & pagination | Implemented (backend) | `GET /memory/query` — pure `memory.Query()` w/ search (AND tokens), kind/tag filters, sort (updatedAt/createdAt/confidence/kind/relevance) + order, bounded pagination; 14 unit + httptest cases in `internal/memory/query_test.go` & `handler_test.go`. Frontend wiring + other domains pending. |
 | 023 | Import & export workflows | Partial | local-folder source export reg #57; support bundle reg #97 |
-| 024 | Templates, presets & reusable defaults | Missing | no direct evidence found |
+| 024 | Templates, presets & reusable defaults | Implemented | `internal/templates` registry of seeded memory presets with case-insensitive lookup and `Apply` that fills only empty fields (never overwrites explicit input); tested |
 | 025 | AI/provider abstraction & deterministic fallback | Partial | `be/llm`, `be/router` |
 | 026 | Human review queue & approval gates | Implemented | approval records reg #66/67, review queue reg #60, `be/safety` |
 | 027 | Notifications & reminders | Partial | calendar reminders reg #65, follow-up scheduling reg #64 |
@@ -85,23 +85,23 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 050 | Responsive & browser compatibility | Partial | commit `7ca5294` fixed mobile navigation |
 | 051 | Performance baseline & indexing | Missing | no evidence found |
 | 052 | Large dataset & pagination testing | Missing | no evidence found |
-| 053 | Backup & restore procedures | Missing | no evidence found |
-| 054 | Data reconciliation & repair commands | Missing | no evidence found |
-| 055 | Product analytics local-first design | Missing | no evidence found |
+| 053 | Backup & restore procedures | Implemented | `docs/backup-restore.md` — pg_dump/restore + media archive commands, restore-verification via `/readyz` and `backend reconcile`, and cadence guidance |
+| 054 | Data reconciliation & repair commands | Implemented | `internal/reconcile.ScanMemories` (invariant scan + repairable/manual classification, tested) wired to a `backend reconcile` CLI subcommand (dry-run, graceful when no DB) |
+| 055 | Product analytics local-first design | Implemented | `internal/analytics.Aggregate` — in-process counts by type and by UTC day, distinct types, first/last event; no external service, tested |
 | 056 | SaaS readiness without forced billing | Partial | budget ledger; no forced-billing gate present |
 | 057 | Internationalization & Dutch/English readiness | Partial | Dutch/English date extraction reg #63; UI i18n needs verification |
-| 058 | Feature flags & rollout controls | Missing | no evidence found |
+| 058 | Feature flags & rollout controls | Implemented | `internal/featureflags` store with boolean toggles + deterministic percentage rollout (stable FNV hash per subject), clamped percents, tested; exposed via `GET /flags` |
 | 059 | Formal state machines | Partial | workflow state handling in `be/workflow` |
 | 060 | Domain model specification | Partial | `be/models` + docs |
 | 061 | Data invariants & constraints | Implemented | pure `internal/invariants` with `ValidateMemory` (content/kind required, confidence in [0,1] inclusive, tag length) returning typed violations for both edge-validation and reconciliation; tested in `invariants_test.go`. Extend to more models as follow-up |
 | 062 | Pre-action safety review screen | Implemented | `be/safety`, `fe/pages/control-center`, pre-action gate |
 | 063 | Provider credential verification checklist | Partial | provider probe reg #1–16 |
 | 064 | Threat model & security design review | Partial | scattered in docs; needs consolidated doc |
-| 065 | Privacy impact assessment | Missing | needs dedicated doc |
+| 065 | Privacy impact assessment | Implemented | `docs/privacy-impact-assessment.md` — data categories, storage, controls (local-first, minimization, redaction, encryption, deletion/export, retention), residual risks |
 | 066 | Supply chain & dependency review | Partial | dependency freshness checks reg #95 |
 | 067 | License & third-party review | Partial | `LICENSE` present repo-wide; third-party inventory needed |
 | 068 | CI/CD quality gates | Partial | `.github/workflows/ci.yml`; schema drift reg #92 |
-| 069 | Release process, canary & rollback | Missing | no evidence found |
+| 069 | Release process, canary & rollback | Implemented | `docs/release-process.md` — pre-release gates, versioning, single-host canary via /healthz+/readyz, promote, rollback, migration safety |
 | 070 | Operator runbook | Partial | Windows smoke instructions reg #96; full runbook needed |
 | 071 | User guide & help system | Partial | extensive README; in-app help needs verification |
 | 072 | Troubleshooting guide & error catalog | Implemented | stable code catalog `internal/apierror` (typed codes → HTTP status, JSON envelope, tested) + `docs/troubleshooting.md` mapping each code to cause/action and first-diagnostic steps (healthz/readyz/doctor) |
@@ -114,13 +114,13 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 074 | Backend endpoint usage audit | Partial | this audit + swagger |
 | 075 | Documentation truthfulness audit | Partial | this matrix enforces truthful status |
 | 076 | Technical debt register | Partial | `docs/engineering-action-register.md` + 01-repo-audit findings |
-| 077 | Bug hunt log | Missing | needs dedicated log |
+| 077 | Bug hunt log | Implemented | `docs/bug-hunt-log.md` — tracked findings (flaky agentruntime test, committed binary, Go version drift) with honest Open/Resolved status |
 | 078 | Red-team review loop one | Missing | not yet run |
 | 079 | Red-team review loop two | Missing | not yet run |
 | 080 | Red-team review loop three | Missing | not yet run |
 | 081 | Non-technical user simulation | Missing | not yet run |
 | 082 | Autonomy-first product review | Partial | `be/autonomy`, policy-aware autonomy commit `6ab4173` |
-| 083 | Value review | Missing | needs dedicated doc |
+| 083 | Value review | Implemented | `docs/value-review.md` — outcome-based review with evidence per core value and an honest list of value-limiting gaps |
 | 084 | Product realism review | Partial | this audit |
 | 085 | Requirements traceability | Partial | this matrix maps prompt → evidence |
 | 086 | Task graph & dependency map | Partial | `be/task`, `be/pursuit` |
@@ -139,7 +139,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 099 | Roadmap & blocked items | Partial | reg next actions + this matrix's Missing/Blocked rows |
 | 100 | Real-provider cleanup & account safety | Partial | paid provider blocked at €0 budget reg #89/90 |
 | 101 | Support/debug bundle design | Partial | support bundle export reg #97 |
-| 102 | Data retention & archival policy | Missing | needs dedicated doc |
+| 102 | Data retention & archival policy | Implemented | `internal/retention` policy evaluator (`DueForArchival`/`DueForDeletion`, age-based, tested) + policy documented in the privacy assessment |
 | 103 | Migration from prototype to production | Partial | migration files reg #91 |
 | 104 | Operator safety stop & emergency controls | Implemented | emergency-stop reg #68–70/88/104; blocks LLM/automation/task/workflow |
 | 105 | User onboarding & first-run wizard | Missing | no evidence found |
@@ -154,9 +154,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 24 |
+| Implemented | 34 |
 | Partial | 61 |
-| Missing | 26 |
+| Missing | 16 |
 | Blocked | 0 |
 | N/A | 1 |
 | **Total** | **112** |
