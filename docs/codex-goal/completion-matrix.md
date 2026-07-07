@@ -25,15 +25,15 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 000 | Repository integrity & true starting point | Implemented | clean tree, `main`, build passes — see 01-repo-audit.md |
 | 001 | Complete file & dependency audit | Implemented | `go build ./...` PASS; 01-repo-audit.md |
 | 002 | Product definition & user outcome contract | Implemented | `docs/product-definition.md` — what it is, who for, outcome-contract table (promise → guaranteed-by), non-goals, success definition |
-| 003 | Critical path definition & smoke test | Partial | build passes; full compose smoke not yet automated |
+| 003 | Critical path definition & smoke test | Partial | build passes; **blocked here — needs a live Docker compose stack (Postgres/Redis/Kafka) to run end-to-end; Docker unavailable in this environment** |
 | 004 | Architecture decision & current stack validation | Implemented | `docs/architecture-decision-records/` |
 | 005 | Data model, ownership & persistence design | Implemented | `be/models`, Gorm + `docs/data-model.md` — table/columns/indexes, persistence principles, ownership/scope, indexing-at-scale, migrations |
 | 006 | Configuration validation & startup guards | Implemented | `be/config`, `.env.example`, per-service env + startup guard: `router.Initialize` runs `doctor.Diagnose` and refuses to serve on any failing check (warnings still boot). `RUN_MODE` added + surfaced as a `runtime.mode` check |
 | 007 | Authentication model & session security | Implemented | `idp/`, `fe/services/auth`, `fe/pages/login`, backend API-key middleware + `internal/session` TTL/validity model (empty token never valid, clamped remaining); tested |
-| 008 | Authorization & resource ownership | Partial | `be/safety`, `be/autonomy`; owner/workspace boundary |
+| 008 | Authorization & resource ownership | Implemented | `be/safety`, `be/autonomy` + `router.requirePermission` RBAC middleware (X-HAI-Role → rbac.Can, unknown/absent → viewer least-privilege) wired to the admin support-bundle route; tested (owner 200 / operator+viewer 403) |
 | 009 | API contract & error envelope | Implemented | `be/router`, swagger + shared `respondError`/`respondErr` helpers writing the `apierror` envelope with code-derived status; tested. Handler-by-handler adoption ongoing |
 | 010 | Frontend architecture & navigation model | Implemented | 13 `fe/pages`, 11 `fe/services` |
-| 011 | Core workflow vertical slice | Partial | `be/workflow`, `be/workflowtask`, `fe/pages/workflow-engine` |
+| 011 | Core workflow vertical slice | Partial | `be/workflow`, `be/workflowtask`, `fe/pages/workflow-engine` — code present; **end-to-end slice needs a live stack to demonstrate (Docker unavailable here)** |
 
 ## Integrity & infrastructure (012–035)
 
@@ -48,7 +48,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 018 | Rate limits, cooldowns & provider quotas | Implemented | provider quota reg #87 + new per-IP HTTP rate limiter: pure `internal/ratelimit` fixed-window limiter (clock-injected, tested) + `rateLimitMiddleware` returning 429/Retry-After, config-gated by `RATE_LIMIT_PER_MINUTE` (off by default). Tests in `internal/ratelimit/` & `router/rate_limit_test.go` |
 | 019 | Audit logging & event history | Implemented | `be/events`, approval audit reg #67, blocked-action audit reg #86 + `internal/auditevent` redaction-aware structured entries (UTC, sensitive keys redacted); tested |
 | 020 | User-facing dashboard & next-action design | Implemented | `fe/pages/command-dashboard`, `fe/pages/hai-os` |
-| 021 | Forms, validation & autosave behavior | Partial | Angular forms; autosave needs verification |
+| 021 | Forms, validation & autosave behavior | Implemented | `fe/pages/quick-capture` reactive form — required/min/max validators, per-field error tips, debounced localStorage autosave with restore + clear; builds; specs pass |
 | 022 | Search, filters, sorting & pagination | Implemented (backend) | `GET /memory/query` — pure `memory.Query()` w/ search (AND tokens), kind/tag filters, sort (updatedAt/createdAt/confidence/kind/relevance) + order, bounded pagination; 14 unit + httptest cases in `internal/memory/query_test.go` & `handler_test.go`. Frontend wiring + other domains pending. |
 | 023 | Import & export workflows | Implemented | source export reg #57 + `internal/importexport` versioned envelope with round-trip and format-mismatch guard (rejects foreign data); tested |
 | 024 | Templates, presets & reusable defaults | Implemented | `internal/templates` registry of seeded memory presets with case-insensitive lookup and `Apply` that fills only empty fields (never overwrites explicit input); tested |
@@ -73,16 +73,16 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 038 | Fake provider lab for tests only | Implemented | mock fixtures reg #37/38 + `internal/fakeprovider` (controllable stub) and `Lab` registry of named fake providers; tested |
 | 039 | Test-data factories & fixtures | Implemented | seeded fixtures reg #40/41 + `internal/factories` producing invariant-valid memories with overrides; tested (generated entities pass invariants) |
 | 040 | Backend test suite | Implemented | 29 `*_test.go`; packages compile |
-| 041 | Frontend & component test suite | Partial | 8 `*.spec.ts` |
+| 041 | Frontend & component test suite | Implemented | full suite **20/20 green** in headless Chrome — 10 new component specs (onboarding/exceptions/quick-capture) + repaired 10 pre-existing broken specs (missing test providers). Verified via `ng test` |
 | 042 | Worker/job test suite | Implemented | existing scheduler/runner tests + `internal/worker.RunWithRetry` (deterministic retry over backoff, injected sleep) with retry/exhaustion/no-final-sleep tests |
-| 043 | End-to-end workflow tests | Partial | e2e acceptance test reg #100 |
+| 043 | End-to-end workflow tests | Partial | e2e acceptance test reg #100 — **needs a live Docker compose stack to execute; Docker unavailable in this environment** |
 | 044 | Acceptance test matrix | Implemented | `docs/acceptance-test-matrix.md` — capability → criterion → coverage (automated test file or manual/pending), plus the acceptance gate |
 | 045 | Adversarial break-the-app tests | Implemented | `memory/adversarial_test.go` — hostile inputs to the query surface (MaxInt/negative pagination, 200k-char search, control chars/unicode/SQL-ish strings, empty & 500k-char fields) asserting no panic and bounded output |
 | 046 | Cross-user isolation tests | Implemented | source revocation/pause reg #54/55 + `memory/isolation_test.go` proving project-scoped queries never leak another project's memories, and unscoped sees all |
 | 047 | File safety & path traversal tests | Implemented | pure `internal/pathsafety` `SafeJoin`/`IsSafeRelative` rejecting absolute paths and `..` escapes, with dedicated traversal tests (`pathsafety_test.go`). Adoption in upload/ingest paths tracked as follow-up |
 | 048 | Provider failure simulation | Implemented | retry/dead-letter reg #73–75 + `internal/fakeprovider` controllable stub (always-fail / fail-after-N, call counting) for deterministic failure testing |
-| 049 | Accessibility review | Missing | no evidence found |
-| 050 | Responsive & browser compatibility | Partial | commit `7ca5294` fixed mobile navigation |
+| 049 | Accessibility review | Implemented | `docs/accessibility-review.md` + accessible-by-default new components (main/aria-labelledby landmarks, aria-live status, labelled controls, scoped table headers, native keyboard-operable buttons) |
+| 050 | Responsive & browser compatibility | Implemented | mobile-nav fix `7ca5294` + `docs/responsive-review.md` + responsive new components (fluid max-width, ≤480px breakpoint, stacking action bars, no horizontal overflow); builds |
 | 051 | Performance baseline & indexing | Implemented | `memory/query_bench_test.go` benchmarks (filter+sort+paginate ~0.88ms/10k, search ~5.97ms/10k) + `docs/performance-baseline.md` documenting numbers, existing indexes, and the SQL-index path at scale |
 | 052 | Large dataset & pagination testing | Implemented | `memory/largedataset_test.go` — 50k-row pagination correctness (total/totalPages/page-size, non-overlapping boundaries) and filtered-set counts |
 | 053 | Backup & restore procedures | Implemented | `docs/backup-restore.md` — pg_dump/restore + media archive commands, restore-verification via `/readyz` and `backend reconcile`, and cadence guidance |
@@ -142,11 +142,11 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 102 | Data retention & archival policy | Implemented | `internal/retention` policy evaluator (`DueForArchival`/`DueForDeletion`, age-based, tested) + policy documented in the privacy assessment |
 | 103 | Migration from prototype to production | Implemented | `docs/prototype-to-production.md` — config/data/security/providers/ops checklist + cutover procedure |
 | 104 | Operator safety stop & emergency controls | Implemented | emergency-stop reg #68–70/88/104; blocks LLM/automation/task/workflow |
-| 105 | User onboarding & first-run wizard | Missing | no evidence found |
+| 105 | User onboarding & first-run wizard | Implemented | `fe/pages/onboarding` multi-step `nz-steps` wizard (welcome/remember/approve/safety), skip/back/next, persists completion to localStorage, routes to control-center; builds; specs pass |
 | 106 | Role-based settings & team permissions | Implemented | pure `internal/rbac` model — owner/operator/viewer roles → read/write/approve/admin grants, `Can()` checks (unknown role grants nothing), tested. Middleware enforcement is a follow-up |
 | 107 | Quality scoring & confidence display | Implemented | readiness score reg #98 + `internal/quality` (weighted confidence/evidence/freshness score + high/medium/low bands, bounded); tested |
 | 108 | Human decision minimization | Implemented | `be/autonomy` + `internal/autonomygate.Decide` (auto/review/block from confidence/risk/reversibility/approval; never auto-runs risky-irreversible); tested |
-| 109 | Exception-based workflow dashboard | Partial | `fe/pages/workflow-engine`, dead-letter state |
+| 109 | Exception-based workflow dashboard | Implemented | `fe/pages/exceptions` surfaces only items needing attention (awaiting_approval/failed/dead_letter/blocked/interrupted), colored state tags, all-clear empty state; builds; specs pass |
 | 110 | Safe retries & recovery strategy | Implemented | retry budget + backoff + dead-letter reg #73–75 |
 | 111 | Ambiguous external action resolution | Implemented | review queue + approval gates + `internal/actionresolver.Resolve` (proceed/clarify/block; destructive+low-confidence blocks, missing params clarify); tested |
 
@@ -154,9 +154,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 101 |
-| Partial | 8 |
-| Missing | 2 |
+| Implemented | 108 |
+| Partial | 3 |
+| Missing | 0 |
 | Blocked | 0 |
 | N/A | 1 |
 | **Total** | **112** |

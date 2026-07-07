@@ -10,6 +10,7 @@ closed.
 | BH-2 | Low (repo hygiene) | repo root | `hai-engine-control.zip` (2.2 MB) committed as a binary artifact; opaque to review, bloats clones. | Open — extract to source or move to release assets / `.gitignore`. |
 | BH-3 | Low (CI) | `backend/go.mod` | Declares Go 1.21 while local toolchain is 1.25.6; builds pass but the version is unpinned in CI. | Open — pin the Go version in `.github/workflows/ci.yml`. |
 | BH-4 | Info | `internal/router` | Before this work the API had no global security headers and no rate limiting. | Resolved — `securityHeadersMiddleware` + config-gated `rateLimitMiddleware` added (phases 029/018). |
+| BH-5 | Medium (tests) | `frontend` | 7 pre-existing specs failed — stale scaffold assertions (`AppComponent` expected "app is running") and missing test providers (`No provider for NzNotificationService`, no `HttpClientTestingModule`, unresolved DI tokens). | **Resolved** — added `HttpClientTestingModule` to service specs, mocked providers + `NO_ERRORS_SCHEMA` for component specs, corrected the AppComponent assertion. Full suite now 20/20 green in headless Chrome (phase 041). |
 
 ## How to add an entry
 

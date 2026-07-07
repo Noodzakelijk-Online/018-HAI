@@ -149,6 +149,21 @@ Then cleared 15 of the 23 Partial phases with real work:
 003 critical-path smoke (stack), 043 e2e workflow tests (stack), 021 forms/autosave (frontend), 041 frontend component tests (frontend), 050 responsive/browser (frontend), 109 exception-based dashboard (frontend), 008 authorization enforcement (multi-user request context), 011 core workflow vertical slice (needs stack to demonstrate end-to-end).
 **Missing (2):** 049 accessibility, 105 onboarding wizard — both frontend.
 
+## Checkpoint 15 — Frontend + authorization batch (7 phases); only stack-blocked remain
+
+Installed frontend deps and verified everything (`npm run build`, `ng test` in headless Chrome).
+
+- **008 authorization:** `router.requirePermission` RBAC middleware (X-HAI-Role → `rbac.Can`; absent/unknown → viewer least-privilege) wired to the admin support-bundle route; tested.
+- **105 onboarding:** `fe/pages/onboarding` multi-step wizard (persists completion). Builds.
+- **109 exceptions:** `fe/pages/exceptions` exception-only workflow dashboard. Builds.
+- **021 forms/autosave:** `fe/pages/quick-capture` reactive form with validators + debounced localStorage autosave. Builds.
+- **041 component test suite:** **20/20 green** in headless Chrome — 10 new specs + repaired 10 pre-existing broken specs (BH-5).
+- **049 accessibility / 050 responsive:** reviews + accessible/responsive-by-default new components.
+- **Verified:** backend `go build`/`go vet`/`go test` still green; frontend `npm run build` PASS; `ng test` 20/20.
+- **Roll-up:** **108 Implemented / 3 Partial / 0 Missing / 1 N/A**.
+
+**The final 3 Partial are genuinely blocked in this environment (not faked):** 003 critical-path smoke, 011 core-workflow slice demo, 043 e2e tests — all need a live Docker compose stack (Postgres/Redis/Kafka), and **Docker is unavailable here**. Their code exists; only the live end-to-end run is outstanding.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:
