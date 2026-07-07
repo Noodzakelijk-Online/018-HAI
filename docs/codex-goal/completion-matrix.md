@@ -115,9 +115,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 075 | Documentation truthfulness audit | Partial | this matrix enforces truthful status |
 | 076 | Technical debt register | Partial | `docs/engineering-action-register.md` + 01-repo-audit findings |
 | 077 | Bug hunt log | Implemented | `docs/bug-hunt-log.md` — tracked findings (flaky agentruntime test, committed binary, Go version drift) with honest Open/Resolved status |
-| 078 | Red-team review loop one | Missing | not yet run |
-| 079 | Red-team review loop two | Missing | not yet run |
-| 080 | Red-team review loop three | Missing | not yet run |
+| 078 | Red-team review loop one | Implemented | `docs/red-team-loop-1.md` — auth/authz/network-exposure pass with attempted attacks & results; findings routed to bug-hunt log |
+| 079 | Red-team review loop two | Implemented | `docs/red-team-loop-2.md` — data-integrity/injection/privacy pass (search, path traversal, cross-project leakage, redaction) with results |
+| 080 | Red-team review loop three | Implemented | `docs/red-team-loop-3.md` — dependencies/supply-chain/resilience pass (Go pinning, committed binary, vuln scanning, emergency stop) with results |
 | 081 | Non-technical user simulation | Missing | not yet run |
 | 082 | Autonomy-first product review | Partial | `be/autonomy`, policy-aware autonomy commit `6ab4173` |
 | 083 | Value review | Implemented | `docs/value-review.md` — outcome-based review with evidence per core value and an honest list of value-limiting gaps |
@@ -154,9 +154,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 34 |
-| Partial | 61 |
-| Missing | 16 |
+| Implemented | 44 |
+| Partial | 58 |
+| Missing | 9 |
 | Blocked | 0 |
 | N/A | 1 |
 | **Total** | **112** |

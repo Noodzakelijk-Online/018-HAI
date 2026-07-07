@@ -86,6 +86,22 @@ Five new tested code packages + five document deliverables (phases whose actual 
 - **Verified:** `go build ./...` PASS; `go test` PASS for all 5 new packages + `internal/router`; `go run ./cmd reconcile` and `... doctor` both run.
 - **Matrix:** 10 phases Missing → Implemented. Roll-up: **34 Implemented / 61 Partial / 16 Missing**.
 
+## Checkpoint 10 — 10-phase batch, pushed per-phase (025, 009, 106, 045, 052, 046, 051, 078, 079, 080)
+
+Each phase committed AND pushed individually (matches the client's "push each update right away").
+
+- **025 provider fallback:** `internal/providerfallback.Select` — deterministic, free-before-paid, never paid unless allowed.
+- **009 error envelope:** `router.respondError`/`respondErr` writing the `apierror` envelope with code-derived status (tested; adoption ongoing).
+- **106 RBAC:** `internal/rbac` — owner/operator/viewer → read/write/approve/admin; unknown role grants nothing.
+- **045 adversarial:** hostile inputs to the query surface — no panic, bounded output.
+- **052 large dataset:** 50k-row pagination correctness (boundaries, counts).
+- **046 cross-user isolation:** project-scoped queries never leak other projects.
+- **051 perf baseline:** query benchmarks (filter+sort+paginate ~0.88ms/10k, search ~5.97ms/10k) + `docs/performance-baseline.md`.
+- **078/079/080 red-team loops:** three distinct adversarial passes (auth/network; data/injection/privacy; dependencies/supply-chain/resilience) with attempted attacks, results, and findings routed to the bug-hunt log.
+- **Verified:** `go build ./...` + full `go test ./...` clean; benchmarks run.
+- **Matrix:** 10 phases advanced (7 Missing→Implemented, 3 Partial→Implemented). Roll-up: **44 Implemented / 58 Partial / 9 Missing**.
+- **Remaining Missing (9):** mostly frontend/QA-process — 049 accessibility, 050 responsive, 081 non-technical-user sim, 105 onboarding wizard, and a few others needing the Angular app or a running stack.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:
