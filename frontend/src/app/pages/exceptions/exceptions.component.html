@@ -1,0 +1,41 @@
+<main class="exceptions" role="main" aria-labelledby="exceptions-title">
+  <nz-card>
+    <h1 id="exceptions-title" class="exceptions__title">
+      Needs your attention
+      <nz-tag class="exceptions__count" [nzColor]="exceptions.length ? 'red' : 'green'">
+        {{ exceptions.length }}
+      </nz-tag>
+    </h1>
+
+    <nz-table
+      *ngIf="exceptions.length; else allClear"
+      #table
+      [nzData]="exceptions"
+      nzSize="small"
+      aria-label="Workflow items needing attention"
+    >
+      <thead>
+        <tr>
+          <th scope="col">Item</th>
+          <th scope="col">State</th>
+          <th scope="col">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let item of table.data">
+          <td>{{ item.title }}</td>
+          <td>
+            <nz-tag [nzColor]="tagColor(item.state)">{{ item.state }}</nz-tag>
+          </td>
+          <td>{{ item.updatedAt || '—' }}</td>
+        </tr>
+      </tbody>
+    </nz-table>
+
+    <ng-template #allClear>
+      <nz-empty
+        nzNotFoundContent="All clear — nothing needs your attention right now."
+      ></nz-empty>
+    </ng-template>
+  </nz-card>
+</main>
