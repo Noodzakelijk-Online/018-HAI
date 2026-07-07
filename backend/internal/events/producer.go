@@ -3,8 +3,10 @@ package events
 import (
 	"automation-hub-backend/internal/config"
 	"encoding/json"
-	"github.com/IBM/sarama"
 	"log"
+	"strings"
+
+	"github.com/IBM/sarama"
 )
 
 type Publisher struct {
@@ -29,19 +31,46 @@ func NewPublisher(brokers []string, topic string) (*Publisher, error) {
 	}, nil
 }
 
+// DefaultPublisher returns an event publisher. If no Kafka brokers are
+// configured, or the brokers are unreachable, it degrades to a no-op publisher
+// (logging a warning) rather than crashing the process — event publishing is a
+// non-critical side channel, so the API must still start and serve without it.
 func DefaultPublisher() *Publisher {
-	producer, err := NewPublisher(config.AppConfig.Brokers, config.AppConfig.Topic)
+	brokers := nonEmptyBrokers(config.AppConfig.Brokers)
+	if len(brokers) == 0 {
+		log.Printf("Kafka disabled: no brokers configured; events will not be published")
+		return &Publisher{producer: nil, topic: config.AppConfig.Topic}
+	}
+	producer, err := NewPublisher(brokers, config.AppConfig.Topic)
 	if err != nil {
-		log.Fatalf("Failed to create default producer: %v", err)
+		log.Printf("Kafka unavailable (%v); events will not be published", err)
+		return &Publisher{producer: nil, topic: config.AppConfig.Topic}
 	}
 	return producer
 }
 
+func nonEmptyBrokers(brokers []string) []string {
+	out := make([]string, 0, len(brokers))
+	for _, b := range brokers {
+		if strings.TrimSpace(b) != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 func (p *Publisher) Close() error {
+	if p.producer == nil {
+		return nil
+	}
 	return p.producer.Close()
 }
 
 func (p *Publisher) Publish(event *AutomationEvent) error {
+	if p.producer == nil {
+		// Kafka disabled/unavailable: publishing is a no-op.
+		return nil
+	}
 	message, err := json.Marshal(event)
 	if err != nil {
 		return err
