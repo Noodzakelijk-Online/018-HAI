@@ -1,9 +1,11 @@
 package router
 
 import (
+	"fmt"
 	"time"
 
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/idempotency"
 	"automation-hub-backend/internal/ratelimit"
 
@@ -11,6 +13,14 @@ import (
 )
 
 func Initialize() error {
+	// Startup config guard: refuse to serve with a broken configuration so a
+	// misconfigured deployment fails fast and loudly rather than half-working.
+	// Warnings (e.g. empty optional keys) do not block startup.
+	if report := doctor.Diagnose(config.AppConfig); report.HasFailures() {
+		_, _, fail := report.Counts()
+		return fmt.Errorf("configuration not ready: %d failing check(s); run `backend doctor` for details", fail)
+	}
+
 	// initialize Router
 	router := gin.Default()
 	if err := router.SetTrustedProxies(nil); err != nil {

@@ -28,7 +28,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 003 | Critical path definition & smoke test | Partial | build passes; full compose smoke not yet automated |
 | 004 | Architecture decision & current stack validation | Implemented | `docs/architecture-decision-records/` |
 | 005 | Data model, ownership & persistence design | Partial | `be/models`, Gorm; migrations tracked in reg #91 |
-| 006 | Configuration validation & startup guards | Partial | `be/config`, `.env.example` (10 KB), per-service env files |
+| 006 | Configuration validation & startup guards | Implemented | `be/config`, `.env.example`, per-service env + startup guard: `router.Initialize` runs `doctor.Diagnose` and refuses to serve on any failing check (warnings still boot). `RUN_MODE` added + surfaced as a `runtime.mode` check |
 | 007 | Authentication model & session security | Partial | `idp/`, `fe/services/auth`, `fe/pages/login` |
 | 008 | Authorization & resource ownership | Partial | `be/safety`, `be/autonomy`; owner/workspace boundary |
 | 009 | API contract & error envelope | Implemented | `be/router`, swagger + shared `respondError`/`respondErr` helpers writing the `apierror` envelope with code-derived status; tested. Handler-by-handler adoption ongoing |
@@ -154,8 +154,8 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 64 |
-| Partial | 39 |
+| Implemented | 65 |
+| Partial | 38 |
 | Missing | 8 |
 | Blocked | 0 |
 | N/A | 1 |

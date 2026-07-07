@@ -113,6 +113,18 @@ Each phase committed AND pushed individually (matches the client's "push each up
 - **Remaining Missing (8):** frontend/stack-dependent — 049 accessibility, 050 responsive/browser, 105 onboarding wizard, and a few requiring the Angular app or a live compose stack.
 - **Cross-cutting follow-ups captured in `docs/technical-debt.md`:** adopt the new utilities (`apierror`, `rbac`, `pathsafety`/`upload`, `auditevent`) at real call sites.
 
+## Checkpoint 12 — Adoption & wiring pass
+
+Turned built-but-unreachable utilities into live, wired behavior — additive only, no existing response contract or working code changed (existing image upload/traversal guards were already solid and left intact).
+
+- **006 config startup guard:** `router.Initialize` now runs `doctor.Diagnose` and refuses to serve on any failing check (warnings still boot). Safe: default config has 0 failures. Partial → Implemented.
+- **RUN_MODE wired:** new config `RUN_MODE` (default production), surfaced as a `runtime.mode` doctor/readiness check (adopts `demomode`), documented in `.env.example`.
+- **`GET /system/info`:** wires `buildinfo` + `demomode` + `i18n` + `doctor` into a reachable endpoint (build/version, run mode, side-effect policy, languages, readiness summary).
+- **`GET /system/support-bundle`:** wires `supportbundle` into a reachable endpoint (build + readiness + counts, secret-free).
+- **Verified:** `go build ./...` PASS; `go test ./...` clean (42 packages); `go run ./cmd doctor` shows `runtime.mode: production`; new endpoints covered by httptest.
+- **Matrix:** 006 Partial → Implemented. Roll-up: **65 Implemented / 38 Partial / 8 Missing**.
+- **Deliberately NOT changed:** existing error-response shapes (frontend depends on them) and the already-robust image upload/traversal code — adoption there would be a blind rewrite, which the core rule forbids.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:
