@@ -8,6 +8,7 @@ import (
 	"automation-hub-backend/internal/demomode"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/i18n"
+	"automation-hub-backend/internal/rbac"
 	"automation-hub-backend/internal/supportbundle"
 
 	"github.com/gin-gonic/gin"
@@ -50,6 +51,8 @@ func initializeSystemRoutes(apiVersion *gin.RouterGroup, diagnose func() doctor.
 	sys := apiVersion.Group("/system")
 	{
 		sys.GET("/info", systemInfoHandler(diagnose))
-		sys.GET("/support-bundle", supportBundleHandler(diagnose, counts))
+		// The support bundle is an operator/admin diagnostic, so it requires the
+		// admin permission (X-HAI-Role: owner).
+		sys.GET("/support-bundle", requirePermission(rbac.PermAdmin), supportBundleHandler(diagnose, counts))
 	}
 }
