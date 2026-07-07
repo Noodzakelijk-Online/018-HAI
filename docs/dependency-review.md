@@ -24,7 +24,7 @@ Angular 16 + ng-zorro-antd, pinned via `package-lock.json`.
 
 | Item | Action |
 | --- | --- |
-| No automated vulnerability scan | Add `govulncheck ./...` (Go) and `npm audit --production` (frontend) as CI gates. |
+| Vulnerability scanning | **Added** — CI runs `govulncheck` (backend) + `npm audit` (frontend), currently advisory. `govulncheck` found 20 code-affecting vulns; see `docs/dependency-vulnerabilities.md` for findings + exact remediation to make the gate blocking. |
 | Go version unpinned in CI | Pin the toolchain in `.github/workflows/ci.yml`. |
 | Committed binary `hai-engine-control.zip` | Remove from VCS; move to release assets. |
 | Dependency freshness | Adopt a scheduled `go list -m -u all` / `npm outdated` review (register #95). |

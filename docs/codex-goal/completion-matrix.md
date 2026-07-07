@@ -25,15 +25,15 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 000 | Repository integrity & true starting point | Implemented | clean tree, `main`, build passes — see 01-repo-audit.md |
 | 001 | Complete file & dependency audit | Implemented | `go build ./...` PASS; 01-repo-audit.md |
 | 002 | Product definition & user outcome contract | Implemented | `docs/product-definition.md` — what it is, who for, outcome-contract table (promise → guaranteed-by), non-goals, success definition |
-| 003 | Critical path definition & smoke test | Implemented | `scripts/smoke-critical-path.sh` boots a real Postgres + the backend and exercises the critical path end-to-end (healthz/readyz → memory create → memory search → workflow/os/system). **Ran 7/7 passing.** No Docker required |
+| 003 | Critical path definition & smoke test | Implemented | `scripts/smoke-critical-path.sh` boots a real local Postgres + backend and asserts the critical path incl. the full workflow lifecycle (healthz/readyz → memory create/search → workflow intake → approval gate → approval resolved → audit trail → verification runs surface). **Ran 15/15 passing.** Scope note: local Postgres, not the full Docker Compose topology (see 032); grounded LLM verification not exercised (no provider) |
 | 004 | Architecture decision & current stack validation | Implemented | `docs/architecture-decision-records/` |
 | 005 | Data model, ownership & persistence design | Implemented | `be/models`, Gorm + `docs/data-model.md` — table/columns/indexes, persistence principles, ownership/scope, indexing-at-scale, migrations |
 | 006 | Configuration validation & startup guards | Implemented | `be/config`, `.env.example`, per-service env + startup guard: `router.Initialize` runs `doctor.Diagnose` and refuses to serve on any failing check (warnings still boot). `RUN_MODE` added + surfaced as a `runtime.mode` check |
 | 007 | Authentication model & session security | Implemented | `idp/`, `fe/services/auth`, `fe/pages/login`, backend API-key middleware + `internal/session` TTL/validity model (empty token never valid, clamped remaining); tested |
-| 008 | Authorization & resource ownership | Implemented | `be/safety`, `be/autonomy` + `router.requirePermission` RBAC middleware (X-HAI-Role → rbac.Can, unknown/absent → viewer least-privilege) wired to the admin support-bundle route; tested (owner 200 / operator+viewer 403) |
+| 008 | Authorization & resource ownership | Partial | `be/safety`, `be/autonomy` + `router.requirePermission` RBAC middleware (X-HAI-Role → rbac.Can, absent/unknown → viewer least-privilege, 403 uses the apierror envelope) enforced on the admin support-bundle route; full owner/operator/viewer × read/write/approve/admin matrix tested. **Honest gap:** per-user resource-ownership enforcement across the user-facing routes is NOT applied — the backend authenticates with a shared API key (no per-request identity), so enforcing RBAC there would break the single-operator app. Next action: wire IDP identity → role into request context (tracked in technical-debt) |
 | 009 | API contract & error envelope | Implemented | `be/router`, swagger + shared `respondError`/`respondErr` helpers writing the `apierror` envelope with code-derived status; tested. Handler-by-handler adoption ongoing |
 | 010 | Frontend architecture & navigation model | Implemented | 13 `fe/pages`, 11 `fe/services` |
-| 011 | Core workflow vertical slice | Implemented | `be/workflow`, `be/workflowtask`, `fe/pages/workflow-engine` — vertical slice demonstrated end-to-end by the smoke run: memory created → persisted → retrieved via search, with the workflow/os surfaces live against real Postgres |
+| 011 | Core workflow vertical slice | Implemented | `be/workflow`, `be/workflowtask`, `fe/pages/workflow-engine` — vertical slice demonstrated end-to-end by the smoke run against real Postgres: workflow **intake → approval gate → approval resolved → audit trail (events/transitions/decisions) recorded**, item persisted & fetchable. Grounded execution/verification via LLM not exercised (no provider) |
 
 ## Integrity & infrastructure (012–035)
 
@@ -42,7 +42,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 012 | External provider reality review | Implemented | probes reg #1–16 + `docs/external-provider-reality-review.md` — per-provider status, reality checks, assisted-not-pretended, gaps |
 | 013 | Compliance & platform policy boundaries | Implemented | `be/safety` + `docs/compliance-boundaries.md` — operating stance, per-area boundaries, platform policy alignment, out-of-scope list |
 | 014 | No fake success / no mock production behavior | Implemented | capability registry reg #44 + `docs/no-fake-success-audit.md` — labelled demo/test, test-only fakes, evidence-backed status, anti-patterns searched |
-| 015 | Storage, files, uploads & media safety | Implemented | image upload path, `be/source` ingestion + `internal/upload` policy (safe-relative filename via pathsafety, extension allowlist, size limit); tested. Call-site adoption tracked in tech-debt |
+| 015 | Storage, files, uploads & media safety | Implemented | **live enforcement** in the real upload path: `automation.resolveImagePath` rejects path separators/`..`/absolute names and confirms the file stays inside the upload root; the save path validates size (`ImageMaxSize`), extension allowlist, and decodes to confirm a real image. Reusable `internal/upload`/`pathsafety` packages provide the same guards for other call sites (adoption tracked) |
 | 016 | Background jobs, schedulers & workers | Implemented | `be/workflow` worker, `be/ambient`, `be/agentcycle` + `internal/backoff` exponential retry schedule (capped, deterministic); tested |
 | 017 | Idempotency & duplicate action prevention | Implemented | pure `internal/idempotency` TTL store (clock-injected, tested) + opt-in `idempotencyMiddleware`: mutating requests carrying a duplicate `Idempotency-Key` get 409; keyless/safe requests pass through. Tests in `internal/idempotency/` & `router/idempotency_test.go` |
 | 018 | Rate limits, cooldowns & provider quotas | Implemented | provider quota reg #87 + new per-IP HTTP rate limiter: pure `internal/ratelimit` fixed-window limiter (clock-injected, tested) + `rateLimitMiddleware` returning 429/Retry-After, config-gated by `RATE_LIMIT_PER_MINUTE` (off by default). Tests in `internal/ratelimit/` & `router/rate_limit_test.go` |
@@ -59,7 +59,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 029 | Security headers & web security | Implemented | `securityHeadersMiddleware` on every response: X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy no-referrer, X-XSS-Protection 0, CORP same-origin, strict CSP (Swagger UI exempt from CSP only). Tested in `router/security_headers_test.go` |
 | 030 | Secrets management & credential rotation | Implemented | secret redaction reg #11–20 + `internal/secretrotation` age-based rotation policy (`Due`/`DaysUntilDue`); tested |
 | 031 | Local development one-command experience | Implemented | `makefile`, `docker-compose.local.yml`, `docker-compose.dev.yml` |
-| 032 | Docker & deployment readiness | Implemented | per-service `Dockerfile`, 3 compose stacks, nginx |
+| 032 | Docker & deployment readiness | Partial | per-service `Dockerfile`, 3 compose stacks, nginx gateway config, and CI `docker compose config` validation all present. **Honest gap:** a full multi-service `docker compose up` health/readiness boot (Postgres + Redis + Kafka + nginx + backend + frontend together) was NOT executed — the Docker daemon was unavailable in this environment. Next action: run the compose stack where Docker is available and assert `/readyz` green across services (see `docs/fresh-clone-dryrun.md`) |
 | 033 | Database migrations & rollback safety | Implemented | reg #91/#92 + `docs/migrations.md` — up/down file layout, rules (additive-first, every-up-has-a-down), rollback procedure, example |
 | 034 | CLI & doctor/self-diagnostic command | Implemented | `backend doctor` subcommand → pure `doctor.Diagnose(config)` over 14 readiness checks (db/security/kafka/media), human-readable report, exit 1 on any failure; run verified (`go run ./cmd doctor` → "READY WITH WARNINGS"). Tests in `internal/doctor/doctor_test.go` |
 | 035 | Observability, health & readiness endpoints | Implemented | `GET /healthz` liveness + new `GET /readyz` readiness returning the doctor diagnosis as JSON, 200 when ready / 503 on any failing check. Handler tested in `router/readiness_test.go` |
@@ -75,11 +75,11 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 040 | Backend test suite | Implemented | 29 `*_test.go`; packages compile |
 | 041 | Frontend & component test suite | Implemented | full suite **20/20 green** in headless Chrome — 10 new component specs (onboarding/exceptions/quick-capture) + repaired 10 pre-existing broken specs (missing test providers). Verified via `ng test` |
 | 042 | Worker/job test suite | Implemented | existing scheduler/runner tests + `internal/worker.RunWithRetry` (deterministic retry over backoff, injected sleep) with retry/exhaustion/no-final-sleep tests |
-| 043 | End-to-end workflow tests | Implemented | e2e acceptance test reg #100 + `scripts/smoke-critical-path.sh` — an executable end-to-end test that boots the stack and asserts the critical path against real persistence; **ran 7/7 passing**. Extendable with deeper workflow-lifecycle assertions |
+| 043 | End-to-end workflow tests | Implemented | reg #100 + `scripts/smoke-critical-path.sh` — executable e2e that boots backend + real Postgres and asserts the workflow **lifecycle** (intake → approval gate → resolve → audit trail) plus critical-path surfaces; **ran 15/15 passing**. Scope: local Postgres (not full Compose, see 032); LLM-grounded verification asserted only at the runs-surface level (no provider) |
 | 044 | Acceptance test matrix | Implemented | `docs/acceptance-test-matrix.md` — capability → criterion → coverage (automated test file or manual/pending), plus the acceptance gate |
 | 045 | Adversarial break-the-app tests | Implemented | `memory/adversarial_test.go` — hostile inputs to the query surface (MaxInt/negative pagination, 200k-char search, control chars/unicode/SQL-ish strings, empty & 500k-char fields) asserting no panic and bounded output |
 | 046 | Cross-user isolation tests | Implemented | source revocation/pause reg #54/55 + `memory/isolation_test.go` proving project-scoped queries never leak another project's memories, and unscoped sees all |
-| 047 | File safety & path traversal tests | Implemented | pure `internal/pathsafety` `SafeJoin`/`IsSafeRelative` rejecting absolute paths and `..` escapes, with dedicated traversal tests (`pathsafety_test.go`). Adoption in upload/ingest paths tracked as follow-up |
+| 047 | File safety & path traversal tests | Implemented | live traversal protection in `automation.resolveImagePath` (rejects separators/`..`/absolute, confirms inside upload root) + pure `internal/pathsafety` `SafeJoin`/`IsSafeRelative` with dedicated traversal tests. Broader adoption of the reusable package tracked as follow-up |
 | 048 | Provider failure simulation | Implemented | retry/dead-letter reg #73–75 + `internal/fakeprovider` controllable stub (always-fail / fail-after-N, call counting) for deterministic failure testing |
 | 049 | Accessibility review | Implemented | `docs/accessibility-review.md` + accessible-by-default new components (main/aria-labelledby landmarks, aria-live status, labelled controls, scoped table headers, native keyboard-operable buttons) |
 | 050 | Responsive & browser compatibility | Implemented | mobile-nav fix `7ca5294` + `docs/responsive-review.md` + responsive new components (fluid max-width, ≤480px breakpoint, stacking action bars, no horizontal overflow); builds |
@@ -98,9 +98,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 063 | Provider credential verification checklist | Implemented | probe reg #1–16 + `docs/provider-credential-checklist.md` — per-provider checklist (creds/scopes/probe/cost/rotation/audit) + sign-off |
 | 064 | Threat model & security design review | Implemented | `docs/threat-model.md` — STRIDE-lite over the critical path, assets, trust boundaries, mitigations, residual risks |
 | 065 | Privacy impact assessment | Implemented | `docs/privacy-impact-assessment.md` — data categories, storage, controls (local-first, minimization, redaction, encryption, deletion/export, retention), residual risks |
-| 066 | Supply chain & dependency review | Implemented | reg #95 + `docs/dependency-review.md` — pinned deps, gaps (vuln scan, Go pin, committed binary), policy |
+| 066 | Supply chain & dependency review | Implemented | reg #95 + `docs/dependency-review.md` + `docs/dependency-vulnerabilities.md` — `govulncheck` actually run (found 20 code-affecting vulns: x/net→0.17.0, pgx→5.5.2, stdlib), documented with exact remediation; CI runs `govulncheck` + `npm audit` (advisory, with a documented reason the gate is not yet blocking) |
 | 067 | License & third-party review | Implemented | `docs/third-party-licenses.md` — key dep licenses (all permissive), a `go-licenses` CI process, no copyleft found |
-| 068 | CI/CD quality gates | Implemented | `.github/workflows/ci.yml` now gates on `go vet` + build + test across backend/idp/nginx, frontend build, compose validate, and an advisory `govulncheck` scan |
+| 068 | CI/CD quality gates | Implemented | `.github/workflows/ci.yml` hard-gates on `go vet` + build + test (backend/idp/nginx), **frontend build + unit tests (headless Chrome via `karma.conf.js` no-sandbox launcher, verified 20/20 locally)**, and `docker compose config` validation; advisory `govulncheck` + `npm audit`. Go pinned to 1.21.13 |
 | 069 | Release process, canary & rollback | Implemented | `docs/release-process.md` — pre-release gates, versioning, single-host canary via /healthz+/readyz, promote, rollback, migration safety |
 | 070 | Operator runbook | Implemented | `docs/operator-runbook.md` — start/stop, health checks, routine tasks, incident response, escalation |
 | 071 | User guide & help system | Implemented | README + `docs/user-guide.md` covering first run, memory, search, templates, approvals, safety, help. In-app help pending |
@@ -154,8 +154,8 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 111 |
-| Partial | 0 |
+| Implemented | 109 |
+| Partial | 2 |
 | Missing | 0 |
 | Blocked | 0 |
 | N/A | 1 |

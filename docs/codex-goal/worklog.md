@@ -176,6 +176,19 @@ Docker daemon was unavailable, but local PostgreSQL 17 is installed — so I ran
 - **Verified:** backend `go vet` clean, `go test ./...` green (54 pkgs); smoke 7/7.
 - **Roll-up:** **111 Implemented / 0 Partial / 0 Missing / 1 N/A (090).** Every actionable phase is done.
 
+## Checkpoint 17 — Runtime-hardening pass (client review follow-up); 109/2/0/1
+
+Focused pass against the client's prompt-scope review. Did what was runnable/verifiable; honestly downgraded what isn't.
+
+- **#3 deeper e2e:** extended `scripts/smoke-critical-path.sh` to the full workflow lifecycle (intake → approval gate → resolve → **audit trail recorded** → verification runs surface). **Ran 15/15.**
+- **#6 CI frontend tests:** added `karma.conf.js` (no-sandbox launcher) + `ng test` step to CI (verified 20/20 locally); advisory `npm audit`.
+- **#7 supply chain:** ran `govulncheck` — 20 code-affecting vulns; attempted upgrade cascaded (go-directive bump → stricter vet on pre-existing code), so kept advisory and documented exact remediation in `docs/dependency-vulnerabilities.md`.
+- **#8 hygiene:** removed committed `hai-engine-control.zip`; raised flaky agentruntime timeouts (5s→30s, stable); pinned CI Go to 1.21.13. BH-1/2/3 resolved.
+- **#4/#5 safety wiring:** `apierror` envelope now used in the live RBAC 403; full owner/operator/viewer × read/write/approve/admin matrix tested; file-safety confirmed live-enforced in `resolveImagePath`.
+- **Honest downgrades (#1/#5):** **008 → Partial** (per-user RBAC needs IDP identity→role wiring; shared-key model) and **032 → Partial** (full Docker Compose boot not run — Docker unavailable). Exact reasons + next actions recorded.
+- **Verified:** `go vet` clean, `go test ./...` 54 pkgs 0 fail, smoke 15/15, `ng test` 20/20 (locally).
+- **Roll-up: 109 Implemented / 2 Partial / 0 Missing / 0 Blocked / 1 N/A.** Docs reconciled: matrix, final-verification-report, manual-verification-evidence, fresh-clone-dryrun, technical-debt, bug-hunt-log, roadmap, dependency-review, + new dependency-vulnerabilities.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:
