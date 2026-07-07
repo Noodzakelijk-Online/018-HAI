@@ -31,7 +31,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 006 | Configuration validation & startup guards | Partial | `be/config`, `.env.example` (10 KB), per-service env files |
 | 007 | Authentication model & session security | Partial | `idp/`, `fe/services/auth`, `fe/pages/login` |
 | 008 | Authorization & resource ownership | Partial | `be/safety`, `be/autonomy`; owner/workspace boundary |
-| 009 | API contract & error envelope | Partial | `be/router`, `docs/swagger.json` / `swagger.yaml` |
+| 009 | API contract & error envelope | Implemented | `be/router`, swagger + shared `respondError`/`respondErr` helpers writing the `apierror` envelope with code-derived status; tested. Handler-by-handler adoption ongoing |
 | 010 | Frontend architecture & navigation model | Implemented | 13 `fe/pages`, 11 `fe/services` |
 | 011 | Core workflow vertical slice | Partial | `be/workflow`, `be/workflowtask`, `fe/pages/workflow-engine` |
 
@@ -52,7 +52,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 022 | Search, filters, sorting & pagination | Implemented (backend) | `GET /memory/query` — pure `memory.Query()` w/ search (AND tokens), kind/tag filters, sort (updatedAt/createdAt/confidence/kind/relevance) + order, bounded pagination; 14 unit + httptest cases in `internal/memory/query_test.go` & `handler_test.go`. Frontend wiring + other domains pending. |
 | 023 | Import & export workflows | Partial | local-folder source export reg #57; support bundle reg #97 |
 | 024 | Templates, presets & reusable defaults | Implemented | `internal/templates` registry of seeded memory presets with case-insensitive lookup and `Apply` that fills only empty fields (never overwrites explicit input); tested |
-| 025 | AI/provider abstraction & deterministic fallback | Partial | `be/llm`, `be/router` |
+| 025 | AI/provider abstraction & deterministic fallback | Implemented | `be/llm`, `be/router` + pure `internal/providerfallback.Select` — deterministic ordered fallback preferring free/local, never paid unless explicitly allowed; tested |
 | 026 | Human review queue & approval gates | Implemented | approval records reg #66/67, review queue reg #60, `be/safety` |
 | 027 | Notifications & reminders | Partial | calendar reminders reg #65, follow-up scheduling reg #64 |
 | 028 | Privacy controls & data deletion | Partial | deletion/export path per phase 002 contract |
@@ -143,7 +143,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 103 | Migration from prototype to production | Partial | migration files reg #91 |
 | 104 | Operator safety stop & emergency controls | Implemented | emergency-stop reg #68–70/88/104; blocks LLM/automation/task/workflow |
 | 105 | User onboarding & first-run wizard | Missing | no evidence found |
-| 106 | Role-based settings & team permissions | Missing | no evidence found |
+| 106 | Role-based settings & team permissions | Implemented | pure `internal/rbac` model — owner/operator/viewer roles → read/write/approve/admin grants, `Can()` checks (unknown role grants nothing), tested. Middleware enforcement is a follow-up |
 | 107 | Quality scoring & confidence display | Partial | operational readiness score reg #98 |
 | 108 | Human decision minimization | Partial | `be/autonomy`, exception-based routing |
 | 109 | Exception-based workflow dashboard | Partial | `fe/pages/workflow-engine`, dead-letter state |
