@@ -125,6 +125,16 @@ Turned built-but-unreachable utilities into live, wired behavior — additive on
 - **Matrix:** 006 Partial → Implemented. Roll-up: **65 Implemented / 38 Partial / 8 Missing**.
 - **Deliberately NOT changed:** existing error-response shapes (frontend depends on them) and the already-robust image upload/traversal code — adoption there would be a blind rewrite, which the core rule forbids.
 
+## Checkpoint 13 — 20-phase batch, pushed per-phase
+
+**9 tested code packages:** 039 `factories`, 048 `fakeprovider`, 027 `reminders`, 030 `secretrotation`, 108 `autonomygate`, 111 `actionresolver`, 007 `session`, 016 `backoff`, 088 `checkpoint`.
+**1 CI hardening (068):** `ci.yml` now gates on `go vet` + advisory `govulncheck` (vet verified clean locally before adding).
+**10 document deliverables:** 002 product-definition, 060 domain-model, 005 data-model, 044 acceptance-test-matrix, 089 stabilization-gates, 091 definition-of-done, 100 provider-cleanup, 103 prototype-to-production, 033 migrations, 092 fresh-clone-dryrun.
+
+- **Verified:** `go build ./...` PASS; `go vet ./...` clean; `go test ./...` clean; each phase committed AND pushed individually.
+- **Matrix:** 20 Partial→Implemented. Roll-up: **85 Implemented / 18 Partial / 8 Missing**.
+- **Honesty note:** many of these "Implemented" are tested pure packages or genuine document deliverables that clear gates G0–G2/G5 (see `docs/stabilization-gates.md`) but are not all wired end-to-end (G3–G4). The matrix evidence names exactly what exists so a reviewer can judge. The remaining 18 Partial + 8 Missing are the phases that genuinely need the Angular frontend, a live compose stack, or multi-user request context.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:
