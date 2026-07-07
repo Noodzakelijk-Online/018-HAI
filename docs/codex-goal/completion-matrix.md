@@ -129,7 +129,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 089 | Progressive stabilization gates | Implemented | `docs/stabilization-gates.md` — G0..G6 gates and the Implemented/Partial/Missing semantics tied to them |
 | 090 | No vanity work rule | N/A | discipline rule — adhered to (no cosmetic churn this run) |
 | 091 | Feature-level definition of done | Implemented | `docs/definition-of-done.md` — explicit DoD checklist + anti-checklist ("never call it done if…") |
-| 092 | Fresh-clone dry run | Implemented | `docs/fresh-clone-dryrun.md` — backend build/vet/test/doctor verified from clean clone (passing); full compose boot documented as pending automation |
+| 092 | Fresh-clone dry run | Implemented | `docs/fresh-clone-dryrun.md` — backend build/vet/test/doctor verified from clean clone; `scripts/smoke-critical-path.sh` boots real local Postgres + backend and asserts the critical path (7/7). Full Docker Compose multi-service boot pending a Docker environment |
 | 093 | Manual verification evidence | Implemented | `docs/manual-verification-evidence.md` — executed commands + results (build PASS, vet CLEAN, 53 pkgs ok, 76 test files, doctor) with honest boundaries |
 | 094 | Final no-excuses search | Implemented | `docs/final-no-excuses-search.md` — swept for unverified claims/silent caps/dead code/hidden flakes/secrets; residual gaps tracked, not excused |
 | 095 | Completion matrix | Implemented | this document |
