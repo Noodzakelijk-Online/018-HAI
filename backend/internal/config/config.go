@@ -26,6 +26,7 @@ const (
 	backendAPIKey    string = "BACKEND_API_SHARED_KEY"
 	memoryEngineKey  string = "HAI_MEMORY_ENCRYPTION_KEY"
 	rateLimitPerMin  string = "RATE_LIMIT_PER_MINUTE"
+	runMode          string = "RUN_MODE"
 )
 
 type Configuration struct {
@@ -46,6 +47,7 @@ type Configuration struct {
 	BackendAPIKey      string
 	MemoryEngineKey    string
 	RateLimitPerMinute int
+	RunMode            string
 }
 
 var AppConfig Configuration
@@ -80,6 +82,7 @@ func Init() {
 		BackendAPIKey:      getEnvString(backendAPIKey, ""),
 		MemoryEngineKey:    getEnvString(memoryEngineKey, ""),
 		RateLimitPerMinute: getEnvInt(rateLimitPerMin, 0),
+		RunMode:            getEnvString(runMode, "production"),
 	}
 	ensureImageDirExists()
 }

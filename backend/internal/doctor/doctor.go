@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/demomode"
 )
 
 // Severity classifies a single diagnostic check.
@@ -148,6 +149,14 @@ func Diagnose(cfg config.Configuration) Report {
 		add("media.maxSize", SeverityWarn, "IMAGE_MAX_SIZE_IN_MB resolved to a non-positive limit")
 	} else {
 		add("media.maxSize", SeverityOK, fmt.Sprintf("%d bytes", cfg.ImageMaxSize))
+	}
+
+	// Run mode: production performs real side effects; demo/test are labelled and
+	// side-effect free, which is a warning if seen where production is expected.
+	if mode := demomode.Parse(cfg.RunMode); mode.IsProduction() {
+		add("runtime.mode", SeverityOK, "production")
+	} else {
+		add("runtime.mode", SeverityWarn, "running in "+string(mode)+" mode; real side effects are disabled")
 	}
 
 	return Report{Checks: checks}
