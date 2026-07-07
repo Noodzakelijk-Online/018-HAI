@@ -18,6 +18,7 @@ import (
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
+	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
@@ -107,7 +108,15 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeHAIOSRoutes(v1, osHandler)
 		initializeTaskRoutes(v1, task.NewHandler(taskService))
-		initializeFeatureFlagRoutes(v1, defaultFeatureFlags())
+		flagStore := defaultFeatureFlags()
+		initializeFeatureFlagRoutes(v1, flagStore)
+		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
+		initializeSystemRoutes(v1, diagnose, func() map[string]int {
+			return map[string]int{
+				"featureFlags": len(flagStore.List()),
+				"languages":    len(i18n.Supported()),
+			}
+		})
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
