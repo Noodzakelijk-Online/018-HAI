@@ -135,6 +135,20 @@ Turned built-but-unreachable utilities into live, wired behavior — additive on
 - **Matrix:** 20 Partial→Implemented. Roll-up: **85 Implemented / 18 Partial / 8 Missing**.
 - **Honesty note:** many of these "Implemented" are tested pure packages or genuine document deliverables that clear gates G0–G2/G5 (see `docs/stabilization-gates.md`) but are not all wired end-to-end (G3–G4). The matrix evidence names exactly what exists so a reviewer can judge. The remaining 18 Partial + 8 Missing are the phases that genuinely need the Angular frontend, a live compose stack, or multi-user request context.
 
+## Checkpoint 14 — Partial-clearing batch (15 phases) + roll-up correction
+
+First, a **correction** (per the documentation-truthfulness audit): the hand-maintained roll-up had drifted. Recomputed from actual rows — baseline was 86 Implemented / 23 Partial / 2 Missing / 1 N/A, not 85/18/8.
+
+Then cleared 15 of the 23 Partial phases with real work:
+- **Code (3):** 056 `entitlements` (no forced billing), 042 `worker` retry runner (over backoff), 038 `fakeprovider.Lab`.
+- **Audit/review docs (12):** 074 backend-endpoint-audit, 073 ui-action-audit, 075 documentation-truthfulness-audit, 082 autonomy-first-review, 084 product-realism-review, 085 requirements-traceability, 086 task-graph, 093 manual-verification-evidence (real command output), 094 final-no-excuses-search, 063 provider-credential-checklist, 012 external-provider-reality-review, 014 no-fake-success-audit.
+- **Verified:** build PASS, `go vet` CLEAN, `go test ./...` 53 packages ok; each phase pushed individually.
+- **Roll-up:** **101 Implemented / 8 Partial / 2 Missing / 1 N/A**.
+
+**Deliberately left Partial (8) — genuinely need frontend / live stack / multi-user context, NOT faked:**
+003 critical-path smoke (stack), 043 e2e workflow tests (stack), 021 forms/autosave (frontend), 041 frontend component tests (frontend), 050 responsive/browser (frontend), 109 exception-based dashboard (frontend), 008 authorization enforcement (multi-user request context), 011 core workflow vertical slice (needs stack to demonstrate end-to-end).
+**Missing (2):** 049 accessibility, 105 onboarding wizard — both frontend.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

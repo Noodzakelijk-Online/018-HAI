@@ -39,9 +39,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | # | Phase | Status | Evidence |
 | --- | --- | --- | --- |
-| 012 | External provider reality review | Partial | LLM provider probes reg #1–16; source connectors |
+| 012 | External provider reality review | Implemented | probes reg #1–16 + `docs/external-provider-reality-review.md` — per-provider status, reality checks, assisted-not-pretended, gaps |
 | 013 | Compliance & platform policy boundaries | Implemented | `be/safety` + `docs/compliance-boundaries.md` — operating stance, per-area boundaries, platform policy alignment, out-of-scope list |
-| 014 | No fake success / no mock production behavior | Partial | connector capability registry reg #44 (implemented/stub/disabled/blocked) |
+| 014 | No fake success / no mock production behavior | Implemented | capability registry reg #44 + `docs/no-fake-success-audit.md` — labelled demo/test, test-only fakes, evidence-backed status, anti-patterns searched |
 | 015 | Storage, files, uploads & media safety | Implemented | image upload path, `be/source` ingestion + `internal/upload` policy (safe-relative filename via pathsafety, extension allowlist, size limit); tested. Call-site adoption tracked in tech-debt |
 | 016 | Background jobs, schedulers & workers | Implemented | `be/workflow` worker, `be/ambient`, `be/agentcycle` + `internal/backoff` exponential retry schedule (capped, deterministic); tested |
 | 017 | Idempotency & duplicate action prevention | Implemented | pure `internal/idempotency` TTL store (clock-injected, tested) + opt-in `idempotencyMiddleware`: mutating requests carrying a duplicate `Idempotency-Key` get 409; keyless/safe requests pass through. Tests in `internal/idempotency/` & `router/idempotency_test.go` |
@@ -70,11 +70,11 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | --- | --- | --- | --- |
 | 036 | Admin/operator diagnostics | Implemented | runtime/allowlist diagnostics reg #78–84, `fe/pages/control-center` + `internal/buildinfo` self-describing build/version snapshot; tested |
 | 037 | Demo mode with explicit labelling | Implemented | capability states reg #44 + `internal/demomode` (production fail-safe default; only production allows real side effects; demo/test carry labels); tested |
-| 038 | Fake provider lab for tests only | Partial | Ollama/OpenAI mock fixtures reg #37/38 |
+| 038 | Fake provider lab for tests only | Implemented | mock fixtures reg #37/38 + `internal/fakeprovider` (controllable stub) and `Lab` registry of named fake providers; tested |
 | 039 | Test-data factories & fixtures | Implemented | seeded fixtures reg #40/41 + `internal/factories` producing invariant-valid memories with overrides; tested (generated entities pass invariants) |
 | 040 | Backend test suite | Implemented | 29 `*_test.go`; packages compile |
 | 041 | Frontend & component test suite | Partial | 8 `*.spec.ts` |
-| 042 | Worker/job test suite | Partial | worker tests within the 29 backend tests |
+| 042 | Worker/job test suite | Implemented | existing scheduler/runner tests + `internal/worker.RunWithRetry` (deterministic retry over backoff, injected sleep) with retry/exhaustion/no-final-sleep tests |
 | 043 | End-to-end workflow tests | Partial | e2e acceptance test reg #100 |
 | 044 | Acceptance test matrix | Implemented | `docs/acceptance-test-matrix.md` — capability → criterion → coverage (automated test file or manual/pending), plus the acceptance gate |
 | 045 | Adversarial break-the-app tests | Implemented | `memory/adversarial_test.go` — hostile inputs to the query surface (MaxInt/negative pagination, 200k-char search, control chars/unicode/SQL-ish strings, empty & 500k-char fields) asserting no panic and bounded output |
@@ -88,14 +88,14 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 053 | Backup & restore procedures | Implemented | `docs/backup-restore.md` — pg_dump/restore + media archive commands, restore-verification via `/readyz` and `backend reconcile`, and cadence guidance |
 | 054 | Data reconciliation & repair commands | Implemented | `internal/reconcile.ScanMemories` (invariant scan + repairable/manual classification, tested) wired to a `backend reconcile` CLI subcommand (dry-run, graceful when no DB) |
 | 055 | Product analytics local-first design | Implemented | `internal/analytics.Aggregate` — in-process counts by type and by UTC day, distinct types, first/last event; no external service, tested |
-| 056 | SaaS readiness without forced billing | Partial | budget ledger; no forced-billing gate present |
+| 056 | SaaS readiness without forced billing | Implemented | budget ledger + `internal/entitlements` — all 7 core features free (`RequiresPayment` always false), no forced-billing gate; tested |
 | 057 | Internationalization & Dutch/English readiness | Implemented | date extraction reg #63 + `internal/i18n` EN/NL message catalog with normalize + EN/key fallback; tested. UI consumption pending |
 | 058 | Feature flags & rollout controls | Implemented | `internal/featureflags` store with boolean toggles + deterministic percentage rollout (stable FNV hash per subject), clamped percents, tested; exposed via `GET /flags` |
 | 059 | Formal state machines | Implemented | `be/workflow` + pure `internal/statemachine` (declared transitions, `CanTransition`/`Transition` blocking illegal moves, terminal detection); tested |
 | 060 | Domain model specification | Implemented | `be/models` + `docs/domain-model.md` — entities, relationships diagram, lifecycles, ownership/scope |
 | 061 | Data invariants & constraints | Implemented | pure `internal/invariants` with `ValidateMemory` (content/kind required, confidence in [0,1] inclusive, tag length) returning typed violations for both edge-validation and reconciliation; tested in `invariants_test.go`. Extend to more models as follow-up |
 | 062 | Pre-action safety review screen | Implemented | `be/safety`, `fe/pages/control-center`, pre-action gate |
-| 063 | Provider credential verification checklist | Partial | provider probe reg #1–16 |
+| 063 | Provider credential verification checklist | Implemented | probe reg #1–16 + `docs/provider-credential-checklist.md` — per-provider checklist (creds/scopes/probe/cost/rotation/audit) + sign-off |
 | 064 | Threat model & security design review | Implemented | `docs/threat-model.md` — STRIDE-lite over the critical path, assets, trust boundaries, mitigations, residual risks |
 | 065 | Privacy impact assessment | Implemented | `docs/privacy-impact-assessment.md` — data categories, storage, controls (local-first, minimization, redaction, encryption, deletion/export, retention), residual risks |
 | 066 | Supply chain & dependency review | Implemented | reg #95 + `docs/dependency-review.md` — pinned deps, gaps (vuln scan, Go pin, committed binary), policy |
@@ -110,28 +110,28 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | # | Phase | Status | Evidence |
 | --- | --- | --- | --- |
-| 073 | UI action audit | Partial | this audit pass |
-| 074 | Backend endpoint usage audit | Partial | this audit + swagger |
-| 075 | Documentation truthfulness audit | Partial | this matrix enforces truthful status |
+| 073 | UI action audit | Implemented | `docs/ui-action-audit.md` — pages → backing endpoints (no dead buttons), not-yet-surfaced backend capabilities, method note |
+| 074 | Backend endpoint usage audit | Implemented | `docs/backend-endpoint-audit.md` — full route enumeration from routes.go, each maps to a handler, new surfaces flagged, no orphans |
+| 075 | Documentation truthfulness audit | Implemented | `docs/documentation-truthfulness-audit.md` — claims cross-checked vs code/tests, roll-up drift corrected, tested-vs-wired wording fixed |
 | 076 | Technical debt register | Implemented | engineering-action-register + `docs/technical-debt.md` — TD-1..7 with severity and concrete "done when" |
 | 077 | Bug hunt log | Implemented | `docs/bug-hunt-log.md` — tracked findings (flaky agentruntime test, committed binary, Go version drift) with honest Open/Resolved status |
 | 078 | Red-team review loop one | Implemented | `docs/red-team-loop-1.md` — auth/authz/network-exposure pass with attempted attacks & results; findings routed to bug-hunt log |
 | 079 | Red-team review loop two | Implemented | `docs/red-team-loop-2.md` — data-integrity/injection/privacy pass (search, path traversal, cross-project leakage, redaction) with results |
 | 080 | Red-team review loop three | Implemented | `docs/red-team-loop-3.md` — dependencies/supply-chain/resilience pass (Go pinning, committed binary, vuln scanning, emergency stop) with results |
 | 081 | Non-technical user simulation | Implemented | `docs/non-technical-user-simulation.md` — persona journey with expected vs actual per step and the friction (onboarding/UI) it surfaces |
-| 082 | Autonomy-first product review | Partial | `be/autonomy`, policy-aware autonomy commit `6ab4173` |
+| 082 | Autonomy-first product review | Implemented | `be/autonomy` + `docs/autonomy-first-review.md` — what runs autonomously, human checkpoints, assessment, gaps (wiring), verdict |
 | 083 | Value review | Implemented | `docs/value-review.md` — outcome-based review with evidence per core value and an honest list of value-limiting gaps |
-| 084 | Product realism review | Partial | this audit |
-| 085 | Requirements traceability | Partial | this matrix maps prompt → evidence |
-| 086 | Task graph & dependency map | Partial | `be/task`, `be/pursuit` |
+| 084 | Product realism review | Implemented | `docs/product-realism-review.md` — real/working vs honest seams, "is it real?", biggest lever |
+| 085 | Requirements traceability | Implemented | `docs/requirements-traceability.md` — each critical-path link → implementation → test/evidence, plus cross-cutting requirements |
+| 086 | Task graph & dependency map | Implemented | `docs/task-graph.md` — runtime task-flow diagram, module dependency map, observations (leaf utilities, memory coupling) |
 | 087 | Codex worklog & checkpoints | Implemented | `docs/codex-goal/worklog.md` |
 | 088 | Context-loss resume safety | Implemented | one-page-per-phase design + worklog checkpoints + `internal/checkpoint` resume-state serializer (JSON round-trip, idempotent MarkComplete, requires task); tested |
 | 089 | Progressive stabilization gates | Implemented | `docs/stabilization-gates.md` — G0..G6 gates and the Implemented/Partial/Missing semantics tied to them |
 | 090 | No vanity work rule | N/A | discipline rule — adhered to (no cosmetic churn this run) |
 | 091 | Feature-level definition of done | Implemented | `docs/definition-of-done.md` — explicit DoD checklist + anti-checklist ("never call it done if…") |
 | 092 | Fresh-clone dry run | Implemented | `docs/fresh-clone-dryrun.md` — backend build/vet/test/doctor verified from clean clone (passing); full compose boot documented as pending automation |
-| 093 | Manual verification evidence | Partial | build/test evidence captured — see final-verification-report.md |
-| 094 | Final no-excuses search | Partial | this audit sweep |
+| 093 | Manual verification evidence | Implemented | `docs/manual-verification-evidence.md` — executed commands + results (build PASS, vet CLEAN, 53 pkgs ok, 76 test files, doctor) with honest boundaries |
+| 094 | Final no-excuses search | Implemented | `docs/final-no-excuses-search.md` — swept for unverified claims/silent caps/dead code/hidden flakes/secrets; residual gaps tracked, not excused |
 | 095 | Completion matrix | Implemented | this document |
 | 096 | Final verification report | Implemented | `docs/codex-goal/final-verification-report.md` |
 | 097 | Final response requirements | Implemented | final-verification-report.md structure |
@@ -154,9 +154,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 85 |
-| Partial | 18 |
-| Missing | 8 |
+| Implemented | 101 |
+| Partial | 8 |
+| Missing | 2 |
 | Blocked | 0 |
 | N/A | 1 |
 | **Total** | **112** |
