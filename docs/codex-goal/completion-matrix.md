@@ -77,14 +77,14 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 042 | Worker/job test suite | Partial | worker tests within the 29 backend tests |
 | 043 | End-to-end workflow tests | Partial | e2e acceptance test reg #100 |
 | 044 | Acceptance test matrix | Partial | this matrix + reg |
-| 045 | Adversarial break-the-app tests | Missing | no dedicated suite found |
-| 046 | Cross-user isolation tests | Partial | source revocation/pause tests reg #54/55; owner boundary |
+| 045 | Adversarial break-the-app tests | Implemented | `memory/adversarial_test.go` — hostile inputs to the query surface (MaxInt/negative pagination, 200k-char search, control chars/unicode/SQL-ish strings, empty & 500k-char fields) asserting no panic and bounded output |
+| 046 | Cross-user isolation tests | Implemented | source revocation/pause reg #54/55 + `memory/isolation_test.go` proving project-scoped queries never leak another project's memories, and unscoped sees all |
 | 047 | File safety & path traversal tests | Implemented | pure `internal/pathsafety` `SafeJoin`/`IsSafeRelative` rejecting absolute paths and `..` escapes, with dedicated traversal tests (`pathsafety_test.go`). Adoption in upload/ingest paths tracked as follow-up |
 | 048 | Provider failure simulation | Partial | retry/dead-letter reg #73–75; probe failure paths |
 | 049 | Accessibility review | Missing | no evidence found |
 | 050 | Responsive & browser compatibility | Partial | commit `7ca5294` fixed mobile navigation |
-| 051 | Performance baseline & indexing | Missing | no evidence found |
-| 052 | Large dataset & pagination testing | Missing | no evidence found |
+| 051 | Performance baseline & indexing | Implemented | `memory/query_bench_test.go` benchmarks (filter+sort+paginate ~0.88ms/10k, search ~5.97ms/10k) + `docs/performance-baseline.md` documenting numbers, existing indexes, and the SQL-index path at scale |
+| 052 | Large dataset & pagination testing | Implemented | `memory/largedataset_test.go` — 50k-row pagination correctness (total/totalPages/page-size, non-overlapping boundaries) and filtered-set counts |
 | 053 | Backup & restore procedures | Implemented | `docs/backup-restore.md` — pg_dump/restore + media archive commands, restore-verification via `/readyz` and `backend reconcile`, and cadence guidance |
 | 054 | Data reconciliation & repair commands | Implemented | `internal/reconcile.ScanMemories` (invariant scan + repairable/manual classification, tested) wired to a `backend reconcile` CLI subcommand (dry-run, graceful when no DB) |
 | 055 | Product analytics local-first design | Implemented | `internal/analytics.Aggregate` — in-process counts by type and by UTC day, distinct types, first/last event; no external service, tested |
