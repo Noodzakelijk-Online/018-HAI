@@ -1,0 +1,63 @@
+.onboarding {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 24px 16px;
+  min-height: 100%;
+
+  &__card {
+    width: 100%;
+    max-width: 640px;
+  }
+
+  &__title {
+    margin: 0 0 24px;
+    font-size: 22px;
+    font-weight: 600;
+  }
+
+  &__body {
+    margin: 24px 0;
+    min-height: 96px;
+  }
+
+  &__step-title {
+    font-size: 18px;
+    margin: 0 0 8px;
+  }
+
+  &__step-desc {
+    color: rgba(0, 0, 0, 0.65);
+    line-height: 1.6;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  &__spacer {
+    flex: 1 1 auto;
+  }
+}
+
+// Responsive: stack the action bar on narrow screens.
+@media (max-width: 480px) {
+  .onboarding {
+    padding: 12px 8px;
+
+    &__actions {
+      justify-content: stretch;
+
+      button {
+        flex: 1 1 auto;
+      }
+    }
+
+    &__spacer {
+      display: none;
+    }
+  }
+}
