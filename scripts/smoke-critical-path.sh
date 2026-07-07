@@ -92,6 +92,25 @@ check "workflow overview" '{' "$(curl -sS "${hdr[@]}" "${BASE}/workflow/overview
 check "os overview" '{' "$(curl -sS "${hdr[@]}" "${BASE}/os/overview")"
 check "system info build" 'goVersion' "$(curl -sS "${hdr[@]}" "${BASE}/system/info")"
 
+echo "==> Workflow lifecycle (intake -> approval gate -> resolve -> audit trail)"
+intake="$(curl -sS "${hdr[@]}" -X POST "${BASE}/workflow/intake" \
+  -d '{"input":"Email from lawyer about legal hearing. Draft a formal reply for review only."}')"
+wf_id="$(echo "${intake}" | jq -r '.item.id // empty')"
+check "intake created a workflow item" 'true' "$([ -n "${wf_id}" ] && echo true)"
+check "item carries an approval gate" 'true' "$(echo "${intake}" | jq -r '(.item|has("approvalStatus"))')"
+check "item persisted & fetchable by id" "${wf_id}" "$(curl -sS "${hdr[@]}" "${BASE}/workflow/${wf_id}" | jq -r '.item.id')"
+check "approvals queue reachable" '200' "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" "${BASE}/workflow/approvals")"
+check "workflow dashboard reachable" '200' "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" "${BASE}/workflow/dashboard")"
+
+resolved="$(curl -sS "${hdr[@]}" -X POST "${BASE}/workflow/${wf_id}/approval" \
+  -d '{"approved":true,"note":"Reviewed and approved this exact draft.","actor":"smoke"}')"
+check "approval gate resolved" 'true' "$(echo "${resolved}" | jq -r 'has("item")')"
+check "audit trail recorded (events/transitions/decisions)" 'true' \
+  "$(echo "${resolved}" | jq -r '(((.events // [])|length) + ((.transitions // [])|length) + ((.decisions // [])|length)) > 0')"
+check "verification runs surface reachable" '200' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" "${BASE}/verification/runs")"
+
 echo ""
 echo "==> Result: ${pass} passed, ${fail} failed"
+echo "Note: grounded verification (LLM answer generation) is not exercised — no LLM provider is configured in this smoke; the verification runs surface is asserted instead."
 [ "${fail}" -eq 0 ]

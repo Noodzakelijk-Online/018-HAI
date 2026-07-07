@@ -1,9 +1,9 @@
 package router
 
 import (
-	"net/http"
 	"strings"
 
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/rbac"
 
 	"github.com/gin-gonic/gin"
@@ -22,9 +22,11 @@ func requirePermission(perm rbac.Permission) gin.HandlerFunc {
 			role = rbac.RoleViewer
 		}
 		if !rbac.Can(role, perm) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "forbidden: role does not grant the required permission",
-			})
+			// Live adoption of the shared apierror envelope on a real route.
+			err := apierror.New(apierror.CodeForbidden, "role does not grant the required permission").
+				WithDetail("requiredPermission", string(perm)).
+				WithDetail("role", string(role))
+			c.AbortWithStatusJSON(err.HTTPStatus(), err.Envelope())
 			return
 		}
 		c.Set("role", string(role))
