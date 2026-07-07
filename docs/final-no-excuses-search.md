@@ -15,13 +15,15 @@ recorded honestly.
 | Any test skipped "because obvious"? | No — new logic has real assertions; adversarial + large-dataset + isolation cases included. |
 | Any flaky test hidden? | No — the `agentruntime` flake is recorded openly in the bug-hunt log with a fix recommendation. |
 | Any secret committed? | No — `.env*` untouched; support bundle excludes secret values; audit entries redact sensitive keys. |
-| Any claim of full-stack boot? | No — explicitly marked pending automation. |
+| Any claim of full-stack boot? | Critical-path smoke ran 7/7 against a **real local Postgres**; the full **Docker Compose** multi-service boot is honestly **not run here** (Docker unavailable) — marked as such, not claimed. |
 
 ## Residual honest gaps (not excuses — tracked)
 
 1. Several new utilities are tested but not yet wired into the live app
    (rbac/upload/apierror/autonomygate/actionresolver) — `technical-debt.md`.
-2. Full-stack compose smoke not automated — `fresh-clone-dryrun.md`.
+2. Critical-path smoke is automated and passing (local Postgres); the full
+   **Docker Compose** multi-service smoke is not run here (Docker unavailable) —
+   `fresh-clone-dryrun.md`.
 3. Frontend polish (accessibility/responsive/onboarding) outstanding.
 
 ## Conclusion

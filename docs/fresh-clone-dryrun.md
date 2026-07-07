@@ -27,13 +27,18 @@ curl localhost/healthz     # expect {"status":"ok"}
 curl localhost/readyz      # expect 200 ready
 ```
 
-Status: **pending** — compose config is validated in CI, but a scripted,
-asserted end-to-end boot (health+readiness green) is not yet automated. This is
-the main gap between "builds from clean" and "boots from clean," tracked for a
-future phase (003/031/092).
+Status: a scripted, asserted end-to-end boot now exists —
+`scripts/smoke-critical-path.sh` boots a **real local Postgres** + the backend
+and asserts health/readiness + the critical path (**ran 7/7 passing**), no Docker
+required. What remains **pending** is the full **Docker Compose** multi-service
+boot (Postgres + Redis + Kafka + nginx together), which was not run here because
+the Docker daemon was unavailable; in that smoke, Kafka is degraded to a no-op
+and Redis is not exercised (feeds phases 031/035 for compose-topology coverage).
 
 ## Definition of pass
 
-Backend: build + vet + test + doctor all succeed from a clean clone (**met**).
-Full stack: `docker compose up` reaches `/readyz` ready with no manual fix-ups
-(**pending automation**).
+Backend: build + vet + test + doctor succeed from a clean clone (**met**).
+Critical path: `scripts/smoke-critical-path.sh` reaches `/readyz` ready and
+asserts the path against real Postgres (**met — 7/7**).
+Full Docker Compose stack: `docker compose up` reaches `/readyz` ready with all
+services (**pending — needs Docker**).

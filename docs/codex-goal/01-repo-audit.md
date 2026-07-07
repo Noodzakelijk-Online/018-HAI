@@ -71,7 +71,7 @@ Full runtime smoke (Postgres/Redis/Kafka/nginx via Docker Compose) was **not** e
 
 1. **`hai-engine-control.zip` (2.2 MB) committed at repo root.** Binary artifacts in git bloat the repo and are opaque to review. Recommend extracting to source or moving to release assets / `.gitignore`.
 2. **Toolchain drift.** `go.mod` declares Go 1.21; local toolchain is 1.25.6. Builds pass, but CI should pin the Go version to avoid silent drift (feeds phase 068 CI/CD quality gates).
-3. **Runtime smoke not yet automated locally.** Build passes, but there is no single verified command in this pass proving the full compose stack boots healthy end-to-end (feeds phases 031/035/092).
+3. **Runtime smoke.** *(Resolved for the critical path.)* `scripts/smoke-critical-path.sh` now boots a real local Postgres + the backend and asserts the critical path end-to-end (ran 7/7). The full **Docker Compose** multi-service boot remains pending a Docker environment (feeds phases 031/035).
 
 ## Verdict
 
