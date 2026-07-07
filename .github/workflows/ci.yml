@@ -18,8 +18,14 @@ jobs:
         with:
           go-version: "1.21.x"
           cache-dependency-path: backend/go.sum
+      - run: go vet ./...
       - run: go test ./...
       - run: go build ./...
+      - name: Vulnerability scan (advisory)
+        continue-on-error: true
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   idp:
     name: IDP build and tests

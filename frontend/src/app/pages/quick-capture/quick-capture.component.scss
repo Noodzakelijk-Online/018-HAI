@@ -1,0 +1,44 @@
+.quick-capture {
+  display: flex;
+  justify-content: center;
+  padding: 24px 16px;
+
+  &__card {
+    width: 100%;
+    max-width: 560px;
+  }
+
+  &__title {
+    margin: 0 0 16px;
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  &__status {
+    min-height: 20px;
+    margin-bottom: 12px;
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+  }
+
+  &__ok {
+    color: #52c41a;
+    margin-left: 8px;
+  }
+
+  &__actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .quick-capture {
+    padding: 12px 8px;
+
+    &__actions button {
+      flex: 1 1 auto;
+    }
+  }
+}

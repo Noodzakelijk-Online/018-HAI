@@ -15,7 +15,10 @@ import (
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/doctor"
+	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
+	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
@@ -35,6 +38,9 @@ func initializeRoutes(router *gin.Engine) error {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
+	router.GET("/readyz", readinessHandler(func() doctor.Report {
+		return doctor.Diagnose(config.AppConfig)
+	}))
 
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"
 	docs.SwaggerInfo.BasePath = relativePathV1
@@ -102,6 +108,15 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeHAIOSRoutes(v1, osHandler)
 		initializeTaskRoutes(v1, task.NewHandler(taskService))
+		flagStore := defaultFeatureFlags()
+		initializeFeatureFlagRoutes(v1, flagStore)
+		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
+		initializeSystemRoutes(v1, diagnose, func() map[string]int {
+			return map[string]int{
+				"featureFlags": len(flagStore.List()),
+				"languages":    len(i18n.Supported()),
+			}
+		})
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
@@ -238,6 +253,7 @@ func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.H
 	memoryRoutes := apiVersion.Group("/memory")
 	{
 		memoryRoutes.GET("/", memoryHandler.List)
+		memoryRoutes.GET("/query", memoryHandler.Query)
 		memoryRoutes.POST("/", memoryHandler.Create)
 		memoryRoutes.POST("/retrieve", memoryHandler.Retrieve)
 		memoryRoutes.GET("/export", memoryHandler.Export)
@@ -304,6 +320,19 @@ func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandl
 		verificationRoutes.GET("/runs", verificationHandler.Runs)
 		verificationRoutes.GET("/runs/:id", verificationHandler.RunDetails)
 	}
+}
+
+func defaultFeatureFlags() *featureflags.Store {
+	store := featureflags.New()
+	store.Set(featureflags.Flag{Key: "memory_query_search", Enabled: true, RolloutPercent: 100, Description: "Search/filter/sort/pagination on the memory list"})
+	store.Set(featureflags.Flag{Key: "readiness_probe", Enabled: true, RolloutPercent: 100, Description: "Expose /readyz readiness endpoint"})
+	return store
+}
+
+func initializeFeatureFlagRoutes(apiVersion *gin.RouterGroup, store *featureflags.Store) {
+	apiVersion.GET("/flags", func(c *gin.Context) {
+		c.JSON(200, gin.H{"flags": store.List()})
+	})
 }
 
 func initializeHAIOSRoutes(apiVersion *gin.RouterGroup, osHandler *haios.Handler) {

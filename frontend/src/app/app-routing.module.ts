@@ -98,6 +98,30 @@ const routes: Routes = [
       import("./pages/pursuits/pursuits.module").then((m) => m.PursuitsModule),
     canActivate: [authGuard],
   },
+  {
+    path: "onboarding",
+    loadChildren: () =>
+      import("./pages/onboarding/onboarding.module").then(
+        (m) => m.OnboardingModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "exceptions",
+    loadChildren: () =>
+      import("./pages/exceptions/exceptions.module").then(
+        (m) => m.ExceptionsModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "quick-capture",
+    loadChildren: () =>
+      import("./pages/quick-capture/quick-capture.module").then(
+        (m) => m.QuickCaptureModule
+      ),
+    canActivate: [authGuard],
+  },
   // {
   //   path: 'home',
   //   loadChildren: () =>
