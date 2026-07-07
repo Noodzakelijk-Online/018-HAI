@@ -1,0 +1,53 @@
+<main class="quick-capture" role="main" aria-labelledby="qc-title">
+  <nz-card class="quick-capture__card">
+    <h1 id="qc-title" class="quick-capture__title">Quick capture</h1>
+
+    <form nz-form [formGroup]="form" (ngSubmit)="submit()" nzLayout="vertical">
+      <nz-form-item>
+        <nz-form-label nzRequired nzFor="qc-title-input">Title</nz-form-label>
+        <nz-form-control [nzErrorTip]="titleError">
+          <input
+            id="qc-title-input"
+            nz-input
+            formControlName="title"
+            placeholder="A short title"
+            aria-describedby="qc-title-help"
+          />
+          <ng-template #titleError>
+            <span *ngIf="titleControl?.hasError('required')">Title is required.</span>
+            <span *ngIf="titleControl?.hasError('maxlength')">Keep the title under 120 characters.</span>
+          </ng-template>
+        </nz-form-control>
+      </nz-form-item>
+
+      <nz-form-item>
+        <nz-form-label nzRequired nzFor="qc-content-input">Content</nz-form-label>
+        <nz-form-control [nzErrorTip]="contentError">
+          <textarea
+            id="qc-content-input"
+            nz-input
+            formControlName="content"
+            rows="4"
+            placeholder="What do you want to remember?"
+          ></textarea>
+          <ng-template #contentError>
+            <span *ngIf="contentControl?.hasError('required')">Content is required.</span>
+            <span *ngIf="contentControl?.hasError('minlength')">Add at least a few characters.</span>
+          </ng-template>
+        </nz-form-control>
+      </nz-form-item>
+
+      <div class="quick-capture__status" aria-live="polite">
+        <span *ngIf="savedAt">Draft autosaved at {{ savedAt | date: 'shortTime' }}</span>
+        <span *ngIf="submitted" class="quick-capture__ok">Saved.</span>
+      </div>
+
+      <div class="quick-capture__actions">
+        <button nz-button nzType="default" type="button" (click)="clearDraft()">
+          Clear
+        </button>
+        <button nz-button nzType="primary" type="submit">Save</button>
+      </div>
+    </form>
+  </nz-card>
+</main>
