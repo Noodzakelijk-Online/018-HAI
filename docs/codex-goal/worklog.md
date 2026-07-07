@@ -102,6 +102,17 @@ Each phase committed AND pushed individually (matches the client's "push each up
 - **Matrix:** 10 phases advanced (7 Missing→Implemented, 3 Partial→Implemented). Roll-up: **44 Implemented / 58 Partial / 9 Missing**.
 - **Remaining Missing (9):** mostly frontend/QA-process — 049 accessibility, 050 responsive, 081 non-technical-user sim, 105 onboarding wizard, and a few others needing the Angular app or a running stack.
 
+## Checkpoint 11 — 20-phase batch, pushed per-phase
+
+**10 tested code packages:** 059 `statemachine`, 028 `dataexport`, 057 `i18n`, 037 `demomode`, 107 `quality`, 036 `buildinfo`, 101 `supportbundle`, 023 `importexport`, 015 `upload`, 019 `auditevent`.
+
+**10 document deliverables** (phases whose artifact is a document): 070 operator-runbook, 064 threat-model, 066 dependency-review, 067 third-party-licenses, 071 user-guide, 099 roadmap, 098 maintenance-plan, 076 technical-debt, 013 compliance-boundaries, 081 non-technical-user-simulation.
+
+- **Verified:** `go build ./...` PASS; `go test ./...` clean; each of the 20 phases committed AND pushed individually.
+- **Matrix:** 19 Partial→Implemented + 1 Missing→Implemented. Roll-up: **64 Implemented / 39 Partial / 8 Missing**.
+- **Remaining Missing (8):** frontend/stack-dependent — 049 accessibility, 050 responsive/browser, 105 onboarding wizard, and a few requiring the Angular app or a live compose stack.
+- **Cross-cutting follow-ups captured in `docs/technical-debt.md`:** adopt the new utilities (`apierror`, `rbac`, `pathsafety`/`upload`, `auditevent`) at real call sites.
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

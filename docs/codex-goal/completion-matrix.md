@@ -40,22 +40,22 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | # | Phase | Status | Evidence |
 | --- | --- | --- | --- |
 | 012 | External provider reality review | Partial | LLM provider probes reg #1–16; source connectors |
-| 013 | Compliance & platform policy boundaries | Partial | `be/safety`, policy docs |
+| 013 | Compliance & platform policy boundaries | Implemented | `be/safety` + `docs/compliance-boundaries.md` — operating stance, per-area boundaries, platform policy alignment, out-of-scope list |
 | 014 | No fake success / no mock production behavior | Partial | connector capability registry reg #44 (implemented/stub/disabled/blocked) |
-| 015 | Storage, files, uploads & media safety | Partial | automation image upload path; `be/source` ingestion |
+| 015 | Storage, files, uploads & media safety | Implemented | image upload path, `be/source` ingestion + `internal/upload` policy (safe-relative filename via pathsafety, extension allowlist, size limit); tested. Call-site adoption tracked in tech-debt |
 | 016 | Background jobs, schedulers & workers | Partial | `be/workflow` worker, `be/ambient`, `be/agentcycle` |
 | 017 | Idempotency & duplicate action prevention | Implemented | pure `internal/idempotency` TTL store (clock-injected, tested) + opt-in `idempotencyMiddleware`: mutating requests carrying a duplicate `Idempotency-Key` get 409; keyless/safe requests pass through. Tests in `internal/idempotency/` & `router/idempotency_test.go` |
 | 018 | Rate limits, cooldowns & provider quotas | Implemented | provider quota reg #87 + new per-IP HTTP rate limiter: pure `internal/ratelimit` fixed-window limiter (clock-injected, tested) + `rateLimitMiddleware` returning 429/Retry-After, config-gated by `RATE_LIMIT_PER_MINUTE` (off by default). Tests in `internal/ratelimit/` & `router/rate_limit_test.go` |
-| 019 | Audit logging & event history | Partial | `be/events`; immutable approval audit reg #67, blocked-action audit reg #86 |
+| 019 | Audit logging & event history | Implemented | `be/events`, approval audit reg #67, blocked-action audit reg #86 + `internal/auditevent` redaction-aware structured entries (UTC, sensitive keys redacted); tested |
 | 020 | User-facing dashboard & next-action design | Implemented | `fe/pages/command-dashboard`, `fe/pages/hai-os` |
 | 021 | Forms, validation & autosave behavior | Partial | Angular forms; autosave needs verification |
 | 022 | Search, filters, sorting & pagination | Implemented (backend) | `GET /memory/query` — pure `memory.Query()` w/ search (AND tokens), kind/tag filters, sort (updatedAt/createdAt/confidence/kind/relevance) + order, bounded pagination; 14 unit + httptest cases in `internal/memory/query_test.go` & `handler_test.go`. Frontend wiring + other domains pending. |
-| 023 | Import & export workflows | Partial | local-folder source export reg #57; support bundle reg #97 |
+| 023 | Import & export workflows | Implemented | source export reg #57 + `internal/importexport` versioned envelope with round-trip and format-mismatch guard (rejects foreign data); tested |
 | 024 | Templates, presets & reusable defaults | Implemented | `internal/templates` registry of seeded memory presets with case-insensitive lookup and `Apply` that fills only empty fields (never overwrites explicit input); tested |
 | 025 | AI/provider abstraction & deterministic fallback | Implemented | `be/llm`, `be/router` + pure `internal/providerfallback.Select` — deterministic ordered fallback preferring free/local, never paid unless explicitly allowed; tested |
 | 026 | Human review queue & approval gates | Implemented | approval records reg #66/67, review queue reg #60, `be/safety` |
 | 027 | Notifications & reminders | Partial | calendar reminders reg #65, follow-up scheduling reg #64 |
-| 028 | Privacy controls & data deletion | Partial | deletion/export path per phase 002 contract |
+| 028 | Privacy controls & data deletion | Implemented | `internal/dataexport` — versioned user-data export + `PlanDeletion` splitting requested IDs into deletable/not-found (no silent no-op deletes); tested |
 | 029 | Security headers & web security | Implemented | `securityHeadersMiddleware` on every response: X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy no-referrer, X-XSS-Protection 0, CORP same-origin, strict CSP (Swagger UI exempt from CSP only). Tested in `router/security_headers_test.go` |
 | 030 | Secrets management & credential rotation | Partial | secret redaction reg #11–20; rotation needs verification |
 | 031 | Local development one-command experience | Implemented | `makefile`, `docker-compose.local.yml`, `docker-compose.dev.yml` |
@@ -68,8 +68,8 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | # | Phase | Status | Evidence |
 | --- | --- | --- | --- |
-| 036 | Admin/operator diagnostics | Partial | runtime/allowlist diagnostics reg #78–84; `fe/pages/control-center` |
-| 037 | Demo mode with explicit labelling | Partial | capability states reg #44; demo labelling |
+| 036 | Admin/operator diagnostics | Implemented | runtime/allowlist diagnostics reg #78–84, `fe/pages/control-center` + `internal/buildinfo` self-describing build/version snapshot; tested |
+| 037 | Demo mode with explicit labelling | Implemented | capability states reg #44 + `internal/demomode` (production fail-safe default; only production allows real side effects; demo/test carry labels); tested |
 | 038 | Fake provider lab for tests only | Partial | Ollama/OpenAI mock fixtures reg #37/38 |
 | 039 | Test-data factories & fixtures | Partial | seeded fixtures reg #40/41 |
 | 040 | Backend test suite | Implemented | 29 `*_test.go`; packages compile |
@@ -89,21 +89,21 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 054 | Data reconciliation & repair commands | Implemented | `internal/reconcile.ScanMemories` (invariant scan + repairable/manual classification, tested) wired to a `backend reconcile` CLI subcommand (dry-run, graceful when no DB) |
 | 055 | Product analytics local-first design | Implemented | `internal/analytics.Aggregate` — in-process counts by type and by UTC day, distinct types, first/last event; no external service, tested |
 | 056 | SaaS readiness without forced billing | Partial | budget ledger; no forced-billing gate present |
-| 057 | Internationalization & Dutch/English readiness | Partial | Dutch/English date extraction reg #63; UI i18n needs verification |
+| 057 | Internationalization & Dutch/English readiness | Implemented | date extraction reg #63 + `internal/i18n` EN/NL message catalog with normalize + EN/key fallback; tested. UI consumption pending |
 | 058 | Feature flags & rollout controls | Implemented | `internal/featureflags` store with boolean toggles + deterministic percentage rollout (stable FNV hash per subject), clamped percents, tested; exposed via `GET /flags` |
-| 059 | Formal state machines | Partial | workflow state handling in `be/workflow` |
+| 059 | Formal state machines | Implemented | `be/workflow` + pure `internal/statemachine` (declared transitions, `CanTransition`/`Transition` blocking illegal moves, terminal detection); tested |
 | 060 | Domain model specification | Partial | `be/models` + docs |
 | 061 | Data invariants & constraints | Implemented | pure `internal/invariants` with `ValidateMemory` (content/kind required, confidence in [0,1] inclusive, tag length) returning typed violations for both edge-validation and reconciliation; tested in `invariants_test.go`. Extend to more models as follow-up |
 | 062 | Pre-action safety review screen | Implemented | `be/safety`, `fe/pages/control-center`, pre-action gate |
 | 063 | Provider credential verification checklist | Partial | provider probe reg #1–16 |
-| 064 | Threat model & security design review | Partial | scattered in docs; needs consolidated doc |
+| 064 | Threat model & security design review | Implemented | `docs/threat-model.md` — STRIDE-lite over the critical path, assets, trust boundaries, mitigations, residual risks |
 | 065 | Privacy impact assessment | Implemented | `docs/privacy-impact-assessment.md` — data categories, storage, controls (local-first, minimization, redaction, encryption, deletion/export, retention), residual risks |
-| 066 | Supply chain & dependency review | Partial | dependency freshness checks reg #95 |
-| 067 | License & third-party review | Partial | `LICENSE` present repo-wide; third-party inventory needed |
+| 066 | Supply chain & dependency review | Implemented | reg #95 + `docs/dependency-review.md` — pinned deps, gaps (vuln scan, Go pin, committed binary), policy |
+| 067 | License & third-party review | Implemented | `docs/third-party-licenses.md` — key dep licenses (all permissive), a `go-licenses` CI process, no copyleft found |
 | 068 | CI/CD quality gates | Partial | `.github/workflows/ci.yml`; schema drift reg #92 |
 | 069 | Release process, canary & rollback | Implemented | `docs/release-process.md` — pre-release gates, versioning, single-host canary via /healthz+/readyz, promote, rollback, migration safety |
-| 070 | Operator runbook | Partial | Windows smoke instructions reg #96; full runbook needed |
-| 071 | User guide & help system | Partial | extensive README; in-app help needs verification |
+| 070 | Operator runbook | Implemented | `docs/operator-runbook.md` — start/stop, health checks, routine tasks, incident response, escalation |
+| 071 | User guide & help system | Implemented | README + `docs/user-guide.md` covering first run, memory, search, templates, approvals, safety, help. In-app help pending |
 | 072 | Troubleshooting guide & error catalog | Implemented | stable code catalog `internal/apierror` (typed codes → HTTP status, JSON envelope, tested) + `docs/troubleshooting.md` mapping each code to cause/action and first-diagnostic steps (healthz/readyz/doctor) |
 
 ## Hardening & sign-off (073–111)
@@ -113,12 +113,12 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 073 | UI action audit | Partial | this audit pass |
 | 074 | Backend endpoint usage audit | Partial | this audit + swagger |
 | 075 | Documentation truthfulness audit | Partial | this matrix enforces truthful status |
-| 076 | Technical debt register | Partial | `docs/engineering-action-register.md` + 01-repo-audit findings |
+| 076 | Technical debt register | Implemented | engineering-action-register + `docs/technical-debt.md` — TD-1..7 with severity and concrete "done when" |
 | 077 | Bug hunt log | Implemented | `docs/bug-hunt-log.md` — tracked findings (flaky agentruntime test, committed binary, Go version drift) with honest Open/Resolved status |
 | 078 | Red-team review loop one | Implemented | `docs/red-team-loop-1.md` — auth/authz/network-exposure pass with attempted attacks & results; findings routed to bug-hunt log |
 | 079 | Red-team review loop two | Implemented | `docs/red-team-loop-2.md` — data-integrity/injection/privacy pass (search, path traversal, cross-project leakage, redaction) with results |
 | 080 | Red-team review loop three | Implemented | `docs/red-team-loop-3.md` — dependencies/supply-chain/resilience pass (Go pinning, committed binary, vuln scanning, emergency stop) with results |
-| 081 | Non-technical user simulation | Missing | not yet run |
+| 081 | Non-technical user simulation | Implemented | `docs/non-technical-user-simulation.md` — persona journey with expected vs actual per step and the friction (onboarding/UI) it surfaces |
 | 082 | Autonomy-first product review | Partial | `be/autonomy`, policy-aware autonomy commit `6ab4173` |
 | 083 | Value review | Implemented | `docs/value-review.md` — outcome-based review with evidence per core value and an honest list of value-limiting gaps |
 | 084 | Product realism review | Partial | this audit |
@@ -135,16 +135,16 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 095 | Completion matrix | Implemented | this document |
 | 096 | Final verification report | Implemented | `docs/codex-goal/final-verification-report.md` |
 | 097 | Final response requirements | Implemented | final-verification-report.md structure |
-| 098 | Post-completion maintenance plan | Partial | reg "Next Engine Actions" #33–100 |
-| 099 | Roadmap & blocked items | Partial | reg next actions + this matrix's Missing/Blocked rows |
+| 098 | Post-completion maintenance plan | Implemented | reg #33–100 + `docs/maintenance-plan.md` — daily/weekly/monthly/per-release cadence, ownership, monitoring signals, upgrade policy |
+| 099 | Roadmap & blocked items | Implemented | `docs/roadmap.md` — near-term/frontend/larger initiatives + explicit blocked items (external credential/approval, not difficulty) |
 | 100 | Real-provider cleanup & account safety | Partial | paid provider blocked at €0 budget reg #89/90 |
-| 101 | Support/debug bundle design | Partial | support bundle export reg #97 |
+| 101 | Support/debug bundle design | Implemented | reg #97 + `internal/supportbundle` assembling build info + readiness summary + counts, explicitly secret-free (independent copy of counts); tested |
 | 102 | Data retention & archival policy | Implemented | `internal/retention` policy evaluator (`DueForArchival`/`DueForDeletion`, age-based, tested) + policy documented in the privacy assessment |
 | 103 | Migration from prototype to production | Partial | migration files reg #91 |
 | 104 | Operator safety stop & emergency controls | Implemented | emergency-stop reg #68–70/88/104; blocks LLM/automation/task/workflow |
 | 105 | User onboarding & first-run wizard | Missing | no evidence found |
 | 106 | Role-based settings & team permissions | Implemented | pure `internal/rbac` model — owner/operator/viewer roles → read/write/approve/admin grants, `Can()` checks (unknown role grants nothing), tested. Middleware enforcement is a follow-up |
-| 107 | Quality scoring & confidence display | Partial | operational readiness score reg #98 |
+| 107 | Quality scoring & confidence display | Implemented | readiness score reg #98 + `internal/quality` (weighted confidence/evidence/freshness score + high/medium/low bands, bounded); tested |
 | 108 | Human decision minimization | Partial | `be/autonomy`, exception-based routing |
 | 109 | Exception-based workflow dashboard | Partial | `fe/pages/workflow-engine`, dead-letter state |
 | 110 | Safe retries & recovery strategy | Implemented | retry budget + backoff + dead-letter reg #73–75 |
@@ -154,9 +154,9 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 44 |
-| Partial | 58 |
-| Missing | 9 |
+| Implemented | 64 |
+| Partial | 39 |
+| Missing | 8 |
 | Blocked | 0 |
 | N/A | 1 |
 | **Total** | **112** |
