@@ -3,7 +3,7 @@
 Honest forward view. Nothing here is claimed done; the completion matrix is the
 source of truth for current state.
 
-## Near-term (closes the 2 remaining Partial + hardening)
+## Near-term (closes the 1 remaining Partial + hardening)
 
 - **Full Docker Compose runtime verification (phase 032, TD-8):** run `docker compose up` where Docker is available and assert `/readyz` green across Postgres/Redis/Kafka/nginx/backend/frontend. *(The only remaining Partial.)*
 - **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.

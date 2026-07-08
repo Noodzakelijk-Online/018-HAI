@@ -4,7 +4,7 @@
 
 This worklog makes the goal run auditable and resumable. Each checkpoint records what changed, what was verified, and what remains — so work can resume after a context reset or capacity pause without repeating or faking steps.
 
-> **Note on roll-up numbers:** this is a chronological log. Early checkpoints quote **point-in-time** roll-ups (e.g. 15/68/28 at checkpoint 2) that were accurate when written; they are history, not the final status. The **final reconciled roll-up is 111 Implemented / 0 Partial / 0 Missing / 0 Blocked / 1 N/A** (checkpoint 16), matching `completion-matrix.md` and `final-verification-report.md`.
+> **Note on roll-up numbers:** this is a chronological log. Earlier checkpoints quote **point-in-time** figures (roll-ups and smoke counts) that were accurate when written; they are history, not the final status. The **final reconciled roll-up is 110 Implemented / 1 Partial (032, full Docker Compose boot) / 0 Missing / 0 Blocked / 1 N/A** (checkpoint 18), matching `completion-matrix.md` and `final-verification-report.md`. The final smoke result is **19/19** (checkpoint 18).
 
 ## Run metadata
 
@@ -24,7 +24,7 @@ This worklog makes the goal run auditable and resumable. Each checkpoint records
 
 - **Did:** Mapped all 112 phases to real evidence in `completion-matrix.md` with honest status vocabulary.
 - **Verified:** each Implemented/Partial row names a concrete package/file; nothing marked done on docs alone.
-- **Result (point-in-time; final is 111/0/0/1):** 15 Implemented, 68 Partial, 28 Missing, 0 Blocked, 1 N/A. Critical path substantially built; gaps concentrate in product polish and formal QA/sign-off artifacts.
+- **Result (point-in-time; final is 110/1/0/1):** 15 Implemented, 68 Partial, 28 Missing, 0 Blocked, 1 N/A. Critical path substantially built; gaps concentrate in product polish and formal QA/sign-off artifacts.
 - **Remains:** convert Missing rows into real features in subsequent runs.
 
 ## Checkpoint 3 — Verification report & worklog (phases 087, 093–097)
