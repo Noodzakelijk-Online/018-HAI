@@ -5,9 +5,9 @@ source of truth for current state.
 
 ## Near-term (closes the 2 remaining Partial + hardening)
 
-- **Full Docker Compose runtime verification (phase 032, TD-8):** run `docker compose up` where Docker is available and assert `/readyz` green across Postgres/Redis/Kafka/nginx/backend/frontend.
-- **RBAC per-user ownership (phase 008, TD-9):** map IDP identity → `rbac.Role` in request context; enforce on ownership-sensitive routes.
-- **Make dependency scans blocking (TD-6/BH-6):** coordinated dependency+toolchain+vet upgrade (`docs/dependency-vulnerabilities.md`), then flip `govulncheck`/`npm audit` to hard gates.
+- **Full Docker Compose runtime verification (phase 032, TD-8):** run `docker compose up` where Docker is available and assert `/readyz` green across Postgres/Redis/Kafka/nginx/backend/frontend. *(The only remaining Partial.)*
+- **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
+- **Make dependency scans blocking (TD-6/BH-6):** x/net + pgx already bumped (20→17); finish with a Go 1.25.11+ toolchain bump + later dep jumps, then flip the scans to hard gates.
 - Adopt the `apierror` envelope across handlers in step with the frontend (TD-1).
 
 ## Frontend-dependent (need Angular work)

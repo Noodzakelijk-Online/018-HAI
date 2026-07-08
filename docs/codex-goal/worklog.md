@@ -189,6 +189,17 @@ Focused pass against the client's prompt-scope review. Did what was runnable/ver
 - **Verified:** `go vet` clean, `go test ./...` 54 pkgs 0 fail, smoke 15/15, `ng test` 20/20 (locally).
 - **Roll-up: 109 Implemented / 2 Partial / 0 Missing / 0 Blocked / 1 N/A.** Docs reconciled: matrix, final-verification-report, manual-verification-evidence, fresh-clone-dryrun, technical-debt, bug-hunt-log, roadmap, dependency-review, + new dependency-vulnerabilities.
 
+## Checkpoint 18 — Closed 3 of the 4 remaining limitations; 110/1/0/1
+
+Follow-up to close the honest limitations. Docker still unavailable → 032 stays the sole Partial.
+
+- **008 per-user RBAC → Implemented:** `internal/identity` (stdlib HS256 JWT verify, no new deps) + `identityMiddleware` verify an IDP JWT and map its `role` claim to the RBAC role; `requirePermission` enforces (JWT → header → viewer default; invalid → 401). Unit + matrix tested and **runtime-proven** in the smoke (viewer JWT → 403, owner JWT → 200).
+- **Grounded verification → exercised:** smoke now drives the anti-hallucination engine — a grounded run with claims when evidence supports the draft, and a documented refusal to fabricate without evidence. (LLM answer *generation* still needs a provider — honestly noted.)
+- **Dependency scans → real reduction:** upgraded x/net→0.17.0 + pgx→5.5.5 (via gorm driver 1.5.9) cleanly; govulncheck **20 → 17**. Remaining are mostly Go-stdlib CVEs (toolchain bump); gate stays advisory with path-to-zero documented.
+- **032 Docker Compose → still Partial:** Docker daemon unavailable; cannot boot the multi-service topology. Exact next action recorded.
+- **Verified:** `go vet` clean, `go test ./...` 55 pkgs 0 fail, smoke **19/19**, `ng test` 20/20 (local).
+- **Roll-up: 110 Implemented / 1 Partial (032) / 0 Missing / 0 Blocked / 1 N/A.**
+
 ## Resume instructions (context-loss safety)
 
 If resuming this run cold:

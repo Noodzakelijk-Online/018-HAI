@@ -46,6 +46,7 @@ func initializeRoutes(router *gin.Engine) error {
 	docs.SwaggerInfo.BasePath = relativePathV1
 	v1 := router.Group(relativePathV1)
 	v1.Use(backendAPIKeyMiddleware())
+	v1.Use(identityMiddleware())
 	{
 		automationService := automation.DefaultService()
 		runtimeRegistry := agentruntime.DefaultRegistry()
