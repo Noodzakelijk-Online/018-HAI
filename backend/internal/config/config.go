@@ -27,6 +27,7 @@ const (
 	memoryEngineKey  string = "HAI_MEMORY_ENCRYPTION_KEY"
 	rateLimitPerMin  string = "RATE_LIMIT_PER_MINUTE"
 	runMode          string = "RUN_MODE"
+	jwtSecret        string = "JWT_SECRET"
 )
 
 type Configuration struct {
@@ -48,6 +49,7 @@ type Configuration struct {
 	MemoryEngineKey    string
 	RateLimitPerMinute int
 	RunMode            string
+	JWTSecret          string
 }
 
 var AppConfig Configuration
@@ -83,6 +85,7 @@ func Init() {
 		MemoryEngineKey:    getEnvString(memoryEngineKey, ""),
 		RateLimitPerMinute: getEnvInt(rateLimitPerMin, 0),
 		RunMode:            getEnvString(runMode, "production"),
+		JWTSecret:          getEnvString(jwtSecret, ""),
 	}
 	ensureImageDirExists()
 }

@@ -60,7 +60,7 @@ mkdir -p "${IMAGES}"
 DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
   DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
   BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
-  RUN_MODE=production KAFKA_BROKERS="" \
+  RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="smoke-jwt-secret" \
   "${BIN}" > "${WORKDIR}/backend.log" 2>&1 &
 BACKEND_PID=$!
 
@@ -110,7 +110,40 @@ check "audit trail recorded (events/transitions/decisions)" 'true' \
 check "verification runs surface reachable" '200' \
   "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" "${BASE}/verification/runs")"
 
+echo "==> Grounded verification (anti-hallucination engine)"
+ver_grounded="$(curl -sS "${hdr[@]}" -X POST "${BASE}/verification/answer" -d '{
+  "question":"What is the dashboard built with?",
+  "draftAnswer":"The dashboard is built with Angular and the backend in Go.",
+  "projectKey":"smoke",
+  "externalEvidence":[{"sourceType":"note","snippet":"The dashboard is built with Angular and the backend in Go.","official":true,"primary":true}]
+}')"
+check "grounded run created with claims" 'true' \
+  "$(echo "${ver_grounded}" | jq -r '(.run.id != null) and ((.claims|length) > 0)')"
+ver_none="$(curl -sS "${hdr[@]}" -X POST "${BASE}/verification/answer" \
+  -d '{"question":"What is the private home address of the CEO?","projectKey":"no-evidence-here"}')"
+check "refuses to fabricate without evidence (anti-hallucination)" 'No grounded answer' \
+  "$(echo "${ver_none}" | jq -r '.run.answer')"
+
+echo "==> Authorization (per-user RBAC via IDP-style JWT)"
+mint_jwt() { # $1 = role
+  python3 - "$1" "smoke-jwt-secret" <<'PY'
+import sys, hmac, hashlib, base64, json, time
+role, secret = sys.argv[1], sys.argv[2]
+b = lambda x: base64.urlsafe_b64encode(x).rstrip(b'=').decode()
+h = b(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(',', ':')).encode())
+p = b(json.dumps({"sub": "smoke", "role": role, "exp": int(time.time()) + 3600}, separators=(',', ':')).encode())
+sig = b(hmac.new(secret.encode(), (h + '.' + p).encode(), hashlib.sha256).digest())
+print(h + '.' + p + '.' + sig)
+PY
+}
+owner_jwt="$(mint_jwt owner)"
+viewer_jwt="$(mint_jwt viewer)"
+check "viewer JWT denied on admin support-bundle (403)" '403' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" -H "Authorization: Bearer ${viewer_jwt}" "${BASE}/system/support-bundle")"
+check "owner JWT allowed on admin support-bundle (200)" '200' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" -H "Authorization: Bearer ${owner_jwt}" "${BASE}/system/support-bundle")"
+
 echo ""
 echo "==> Result: ${pass} passed, ${fail} failed"
-echo "Note: grounded verification (LLM answer generation) is not exercised — no LLM provider is configured in this smoke; the verification runs surface is asserted instead."
+echo "Note: the grounded-verification (evidence→claim) engine IS exercised above. LLM answer *generation* (task planning) is not — no LLM provider is configured in this smoke."
 [ "${fail}" -eq 0 ]
