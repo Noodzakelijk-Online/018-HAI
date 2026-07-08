@@ -30,7 +30,7 @@ curl localhost/readyz      # expect 200 ready
 Status: a scripted, asserted end-to-end boot now exists —
 `scripts/smoke-critical-path.sh` boots a **real local Postgres** + the backend
 and asserts health/readiness + the critical path **and the workflow lifecycle**
-(intake → approval gate → resolve → audit trail) (**ran 15/15 passing**), no Docker
+(intake → approval gate → resolve → audit trail, grounded verification, per-user JWT RBAC) (**ran 19/19 passing**), no Docker
 required. What remains **pending** is the full **Docker Compose** multi-service
 boot (Postgres + Redis + Kafka + nginx together), which was not run here because
 the Docker daemon was unavailable; in that smoke, Kafka is degraded to a no-op
@@ -40,6 +40,6 @@ and Redis is not exercised (feeds phases 031/035 for compose-topology coverage).
 
 Backend: build + vet + test + doctor succeed from a clean clone (**met**).
 Critical path + workflow lifecycle: `scripts/smoke-critical-path.sh` reaches
-`/readyz` ready and asserts the path + lifecycle against real Postgres (**met — 15/15**).
+`/readyz` ready and asserts the path + lifecycle against real Postgres (**met — 19/19**).
 Full Docker Compose stack: `docker compose up` reaches `/readyz` ready with all
 services (**pending — needs Docker**).

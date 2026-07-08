@@ -12,7 +12,7 @@ This directory contains the deliverables of the Giant Codex Goal Prompt run for 
 | [`final-verification-report.md`](final-verification-report.md) | Evidence-based verification & sign-off | 093–097 |
 
 **Run mode:** began as a broad audit pass, then implemented across all phases — real, tested code committed phase by phase, without fabricating completion.
-**Final roll-up:** **111 Implemented · 0 Partial · 0 Missing · 0 Blocked · 1 N/A (090, a process rule).**
+**Final roll-up:** **110 Implemented · 1 Partial (032, full Docker Compose boot — needs a Docker host) · 0 Missing · 0 Blocked · 1 N/A (090, a process rule).**
 **Base:** `main` @ `0f7f12c`; delivered via PR #13 (merged).
 
 Start with the completion matrix for the current state, then the final verification report for exactly what was and was not run.

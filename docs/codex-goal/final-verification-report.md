@@ -71,4 +71,4 @@ No secrets, credentials, tokens, API keys, private databases, or generated user 
 1. Run the **full Docker Compose** stack end-to-end (with Docker available) to cover event publishing + gateway routing that the local-Postgres smoke cannot.
 2. **Adopt the tested utilities at their call sites** (`apierror` envelope in handlers, `rbac` enforcement on more routes, `pathsafety`/`upload` on all file I/O) — converts "tested capability" into "wired everywhere". Tracked in `docs/technical-debt.md`.
 3. Make the dependency scans **blocking** gates after the coordinated dependency + toolchain + vet upgrade in `docs/dependency-vulnerabilities.md`.
-4. Wire IDP identity → role so RBAC can enforce per-user resource ownership across user-facing routes (closes the 008 gap).
+4. Run the full Docker Compose stack on a Docker-capable host and assert `/readyz` green across services — the only remaining Partial (032). *(Per-user identity → role RBAC was completed this run: verified IDP JWT → role, enforced and runtime-proven.)*
