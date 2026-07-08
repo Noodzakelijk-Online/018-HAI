@@ -3,18 +3,17 @@
 Honest forward view. Nothing here is claimed done; the completion matrix is the
 source of truth for current state.
 
-## Near-term (unblocks sign-off phases)
+## Near-term (closes the 2 remaining Partial + hardening)
 
-- Adopt `apierror` envelope across all handlers (finish phase 009 adoption).
-- Enforce `rbac.Can` in route middleware (phase 106 enforcement).
-- Route every file call site through `pathsafety`/`upload` (phase 015/047 adoption).
-- Automate the full compose smoke so 003/031/092 gain runtime evidence.
+- **Full Docker Compose runtime verification (phase 032, TD-8):** run `docker compose up` where Docker is available and assert `/readyz` green across Postgres/Redis/Kafka/nginx/backend/frontend. *(The only remaining Partial.)*
+- **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
+- **Make dependency scans blocking (TD-6/BH-6):** x/net + pgx already bumped (20→17); finish with a Go 1.25.11+ toolchain bump + later dep jumps, then flip the scans to hard gates.
+- Adopt the `apierror` envelope across handlers in step with the frontend (TD-1).
 
 ## Frontend-dependent (need Angular work)
 
-- Accessibility review (049), responsive/browser matrix (050).
-- Onboarding / first-run wizard (105).
-- Wire memory search UI and feature-flag/i18n surfaces into the dashboard.
+- Wire the memory search UI and feature-flag/i18n surfaces into the dashboard (TD-7).
+- Deeper accessibility + cross-browser visual passes on the existing pages.
 
 ## Larger initiatives
 
@@ -24,10 +23,14 @@ source of truth for current state.
 
 ## Blocked items
 
-| Item | Blocker |
-| --- | --- |
-| Real Gmail/Drive/Calendar connectors | Require live OAuth credentials + scope review (intentionally disabled). |
-| Paid LLM routing | Requires explicit paid-budget approval (currently €0). |
+| Item | Blocker | Next action |
+| --- | --- | --- |
+| Full Docker Compose runtime boot | Docker daemon unavailable in this environment | Run the compose stack where Docker is available (TD-8) |
+| Real Gmail/Drive/Calendar connectors | Live OAuth credentials + scope review (intentionally disabled) | Provide reviewed, minimal scopes |
+| Paid LLM routing / grounded LLM verification | Paid-budget approval (currently €0); no LLM provider configured | Approve budget / configure a local LLM provider |
+
+Blocked items are blocked by external credentials/approvals or an unavailable
+Docker daemon — not by engineering difficulty — and are documented rather than faked.
 
 Blocked items are blocked by external credentials/approvals, not by engineering
 difficulty, and are documented rather than faked.
