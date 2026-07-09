@@ -337,45 +337,92 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	}
 	foundLocal := false
 	foundJSONFeed := false
-	foundEmail := false
+	operational := map[string]bool{}
 	for _, connector := range connectors {
 		switch connector.ConnectorKey {
-		case "local-folder":
+		case "local-folder", "email", "calendar", "cloud-documents", "project-board", "github":
 			foundLocal = true
 			if !connector.Enabled || connector.AdapterStatus != "operational" {
-				t.Fatalf("local-folder connector = %#v, want operational enabled", connector)
+				t.Fatalf("%s connector = %#v, want operational enabled", connector.ConnectorKey, connector)
 			}
+			operational[connector.ConnectorKey] = true
 		case "json-feed":
 			foundJSONFeed = true
 			if !connector.Enabled || connector.AdapterStatus != "operational" {
 				t.Fatalf("json-feed connector = %#v, want operational enabled", connector)
 			}
-		case "email":
-			foundEmail = true
-			if connector.Enabled || connector.AdapterStatus != "not_implemented" {
-				t.Fatalf("email connector = %#v, want disabled not_implemented", connector)
-			}
 		}
 	}
-	if !foundLocal || !foundJSONFeed || !foundEmail {
-		t.Fatalf("expected local, json-feed, and email connectors, got %#v", connectors)
+	if !foundLocal || !foundJSONFeed || len(operational) != 6 {
+		t.Fatalf("expected six operational direct connectors plus json-feed, got %#v", connectors)
 	}
 }
 
-func TestCreateSourceRejectsUnimplementedConnector(t *testing.T) {
+func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	source, err := service.CreateSource(CreateSourceRequest{
 		ConnectorKey:  "email",
-		Name:          "Robert email",
+		Name:          "Robert email export",
 		Enabled:       true,
 		LocalOnly:     true,
 		SyncFrequency: "manual",
+		SyncTarget:    ".",
 	})
-	if err == nil {
-		t.Fatalf("expected unimplemented connector error")
+	if err != nil {
+		t.Fatalf("CreateSource: %v", err)
 	}
-	if source != nil {
-		t.Fatalf("source = %#v, want nil", source)
+	if source.ConnectorKey != "email" || !source.Enabled || source.Category != "email" {
+		t.Fatalf("source = %#v, want enabled email export source", source)
+	}
+}
+
+func TestSyncEmailExportUsesAllowlistedFolderAndEmailFilesOnly(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root+"/inbox.mbox", "From sender@example.com Sun Jun  1 10:00:00 2026\nSubject: Evidence request\n\nFollow up: prepare the requested evidence bundle.")
+	writeTestFile(t, root+"/ignore.txt", "This is not an email export.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, ConnectorKey: "email", Name: "Mailbox", Category: "email", Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "."})
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeHistoricalBackfill})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 || len(result.Extractions) != 1 || result.Extractions[0].ContentType != "email_export" {
+		t.Fatalf("email export result = %#v", result)
+	}
+}
+
+func TestSyncGitHubImportsReadOnlyRepositoryRecords(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/demo":
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/demo","html_url":"https://github.com/acme/demo","updated_at":"2026-07-09T10:00:00Z"}`))
+		case "/repos/acme/demo/issues":
+			_, _ = w.Write([]byte(`[{"id":2,"number":7,"title":"Fix source ingest","body":"Follow up: add safe connector tests.","html_url":"https://github.com/acme/demo/issues/7","updated_at":"2026-07-09T10:01:00Z","state":"open"}]`))
+		case "/repos/acme/demo/pulls", "/repos/acme/demo/commits":
+			_, _ = w.Write([]byte(`[]`))
+		case "/repos/acme/demo/actions/runs":
+			_, _ = w.Write([]byte(`{"workflow_runs":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, ConnectorKey: "github", Name: "Demo repo", Category: "github", Enabled: true, Status: "active", SyncTarget: "acme/demo"})
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 2 || result.Job.CursorAfter != "2026-07-09T10:01:00Z" {
+		t.Fatalf("GitHub sync result = %#v", result.Job)
+	}
+	if !repo.hasAudit("source.synced") {
+		t.Fatalf("expected GitHub sync audit record")
 	}
 }
 

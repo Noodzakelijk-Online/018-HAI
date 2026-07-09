@@ -435,6 +435,56 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
+    if (connectorKey === 'email') {
+      this.sourceForm.patchValue({
+        name: 'Email export folder',
+        syncFrequency: 'manual',
+        syncTarget: 'email',
+        localOnly: true,
+        excludePatterns: 'spam,trash',
+      });
+      return;
+    }
+    if (connectorKey === 'calendar') {
+      this.sourceForm.patchValue({
+        name: 'Calendar export folder',
+        syncFrequency: 'manual',
+        syncTarget: 'calendar',
+        localOnly: true,
+        excludePatterns: 'cancelled,spam',
+      });
+      return;
+    }
+    if (connectorKey === 'cloud-documents') {
+      this.sourceForm.patchValue({
+        name: 'Synced document folder',
+        syncFrequency: '15m',
+        syncTarget: 'documents',
+        localOnly: true,
+        excludePatterns: 'trash,temp,cache',
+      });
+      return;
+    }
+    if (connectorKey === 'project-board') {
+      this.sourceForm.patchValue({
+        name: 'Trello board exports',
+        syncFrequency: 'manual',
+        syncTarget: 'trello',
+        localOnly: true,
+        excludePatterns: 'archive,template',
+      });
+      return;
+    }
+    if (connectorKey === 'github') {
+      this.sourceForm.patchValue({
+        name: 'GitHub repository',
+        syncFrequency: '1h',
+        syncTarget: 'Noodzakelijk-Online/018-HAI',
+        localOnly: false,
+        excludePatterns: '',
+      });
+      return;
+    }
     if (connectorKey === 'whatsapp-export') {
       this.sourceForm.patchValue({
         name: 'WhatsApp exported chats',
@@ -464,6 +514,21 @@ export class ConnectedSourcesComponent implements OnInit {
     }
     if (this.sourceForm.value.connectorKey === 'whatsapp-export') {
       return 'Folder under connected-source root, e.g. whatsapp';
+    }
+    if (this.sourceForm.value.connectorKey === 'email') {
+      return 'Folder under connected-source root containing .mbox or .eml exports';
+    }
+    if (this.sourceForm.value.connectorKey === 'calendar') {
+      return 'Folder under connected-source root containing .ics exports';
+    }
+    if (this.sourceForm.value.connectorKey === 'cloud-documents') {
+      return 'Synced folder under connected-source root, e.g. documents';
+    }
+    if (this.sourceForm.value.connectorKey === 'project-board') {
+      return 'Folder under connected-source root containing Trello .json exports';
+    }
+    if (this.sourceForm.value.connectorKey === 'github') {
+      return 'GitHub owner/repository, e.g. Noodzakelijk-Online/018-HAI';
     }
     if (this.sourceForm.value.connectorKey === 'odoo-herp') {
       return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';

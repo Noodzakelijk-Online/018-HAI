@@ -22,7 +22,7 @@ Implemented:
 - Guarded Hermes, Odysseus, and OpenClaw agent runtime adapters. HAI can probe those runtimes, show configuration/readiness in the Command Dashboard, and execute approved tasks through the existing task/workflow engine. Runtime execution is disabled by default and remains subject to approval, emergency stop, allowlists, bounded output, timeouts, audit logs, and downstream verification.
 - Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
 - Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
-- Connected-source registry with manual import, allowlisted local-folder sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
+- Connected-source registry with manual import, allowlisted local-folder sync, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, read-only GitHub API sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
 - Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, source links, decision records, transition records, durable retry limits, task-engine worker execution, verification-gated completion, and audit events.
 - Guarded workflow scheduler that periodically runs due workflow items and due open-loop follow-ups through the existing approval-gated workflow/task engines.
 - Ambient proactive planning engine that continuously finds open work, ranks it against user-controlled need priorities, deduplicates repeated findings, and routes accepted proposals through the controlled workflow engine.
@@ -36,7 +36,7 @@ Not implemented yet:
 
 - Additional Claw-compatible task execution adapters for QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, generic MCP tools, browser automation, and richer API/tool workflows. Hermes, Odysseus, and OpenClaw now have controlled first-party adapters, but must still be installed/configured separately.
 - Full autonomous device control. Automation `launch` now has guarded adapters for host-allowlisted API calls, explicitly enabled allowlisted container-local scripts, and optionally Docker API container start requests for allowlisted containers, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
-- Real OAuth connectors, webhook sync, or local folder watchers. The operational connected-source paths today are manual import, allowlisted local-folder scanning, scheduled due-sync for enabled local-folder sources, and workflow intake from extracted action items. Email, calendar, cloud/document, project-board, and GitHub connectors are registered as disabled `not_implemented` adapter contracts until real adapters are added.
+- OAuth account authorization/refresh, provider webhooks, and local file-system watchers. The operational source paths are manual import, allowlisted local-folder scanning, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, GitHub REST read sync, and workflow intake from extracted action items. Live Gmail, Google Calendar, Drive, and Trello API authorization remains available through the normalized JSON feed bridge until dedicated OAuth adapters are added.
 - Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
 - Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
 - Production-grade secret management, migrations, RBAC hardening, and deployment configuration.
@@ -126,7 +126,7 @@ Local folder ingestion:
 
 The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. Supported file types are `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`.
 
-For recurring local-folder ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. Only the local-folder adapter is scheduled today; other connector categories stay registered until real adapters are implemented.
+For recurring source ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. The scheduler supports local folders, email/calendar/project-board exports, synced document folders, GitHub REST sources, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots.
 
 ## Developer Checks
 
@@ -555,7 +555,7 @@ Local folder sync is bounded by:
 - `SOURCE_SCHEDULER_RUN_ON_STARTUP`, default `false`; set to `true` only when startup should immediately scan due sources.
 - Incremental sync based on `LastSyncedAt`, unless mode is `historical_backfill`.
 
-Supported categories are represented for email, calendars, contacts/cloud documents, project boards, GitHub, local folders, and future connectors. Only `local-folder` is currently operational. Real account adapters must be added behind the existing service/repository interfaces before those connectors can be enabled or scheduled.
+HAI now ships the following read-only connector paths: local MBOX/EML email exports, ICS calendar exports, selected synced cloud-document folders, Trello JSON exports, GitHub REST repositories/issues/pull requests/commits/workflow runs, local folders, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots. The first four export/sync-folder adapters remain local-first: place the authorized export or folder under `connected-sources/`, select its connector in Connected Sources, and keep the source `Local only` switch enabled. For GitHub, use `owner/repository` as the source target and set `GITHUB_SOURCE_TOKEN` only when private-repository access or higher API rate limits are required. OAuth adapters and provider webhook subscriptions remain separate, future work rather than implied capabilities.
 
 ## Verification and Grounded Answers
 

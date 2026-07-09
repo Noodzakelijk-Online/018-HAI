@@ -156,7 +156,7 @@ var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var ErrSyncInProgress = errors.New("source sync is already in progress")
 
 const maxSyncErrorDetails = 20
-const defaultHTTPFeedAllowedHosts = "localhost,127.0.0.1,::1,host.docker.internal"
+const defaultHTTPFeedAllowedHosts = "localhost,127.0.0.1,::1,host.docker.internal,api.github.com"
 const defaultWhatsAppChunkMessages = 40
 
 var whatsAppMessageLine = regexp.MustCompile(`^\[?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[APap]\.?[Mm]\.?)?)\]?\s*[-\x{2013}]\s*([^:]{1,120}):\s*(.*)$`)
@@ -221,7 +221,7 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		ExcludePatterns:   joinValues(request.ExcludePatterns),
 		Status:            "active",
 	}
-	if connectorKey == "local-folder" && source.SyncTarget == "" {
+	if sourceUsesLocalFolder(connectorKey) && source.SyncTarget == "" {
 		source.SyncTarget = "."
 	}
 	if !request.Enabled {
@@ -296,10 +296,10 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
 	}
-	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" && source.ConnectorKey != "whatsapp-export" && source.ConnectorKey != "odoo-herp" && len(request.Items) == 0 {
+	if !sourceHasNativeAdapter(source.ConnectorKey) && len(request.Items) == 0 {
 		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
 	}
-	if source.ConnectorKey == "local-folder" {
+	if sourceUsesLocalFolder(source.ConnectorKey) {
 		request.FolderPath = firstNonEmpty(request.FolderPath, source.SyncTarget, ".")
 		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
 		source.SyncTarget = request.FolderPath
@@ -331,8 +331,9 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	items := request.Items
 	adapterCursor := ""
-	if len(items) == 0 && source.ConnectorKey == "local-folder" {
+	if len(items) == 0 && sourceUsesLocalFolder(source.ConnectorKey) {
 		items, err = s.localFolderItems(source, request)
+		items = filterConnectorLocalItems(items, source.ConnectorKey)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -345,6 +346,18 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if len(items) == 0 && source.ConnectorKey == "json-feed" {
 		items, adapterCursor, err = fetchJSONFeed(source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == "github" {
+		items, adapterCursor, err = fetchGitHubSource(source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -1413,13 +1426,12 @@ func (s *service) audit(sourceID uuid.UUID, action, message string) {
 
 func defaultConnectors() []models.SourceConnector {
 	modes := joinValues([]string{ModeManualImport, ModeScheduledSync, ModeWebhookSync, ModeHistoricalBackfill, ModeIncrementalSync})
-	notImplemented := "connector contract only; real OAuth/API adapter is not implemented in this stack yet"
 	return []models.SourceConnector{
-		{ConnectorKey: "email", Name: "Email accounts", Category: "email", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
-		{ConnectorKey: "calendar", Name: "Calendars", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
-		{ConnectorKey: "cloud-documents", Name: "Cloud drives and documents", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
-		{ConnectorKey: "project-board", Name: "Trello and project boards", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
-		{ConnectorKey: "github", Name: "GitHub repositories and issues", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: false, AdapterStatus: "not_implemented", StatusReason: notImplemented},
+		{ConnectorKey: "email", Name: "Email exports (MBOX/EML)", Category: "email", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only MBOX/EML exports from an allowlisted local folder are ingested incrementally"},
+		{ConnectorKey: "calendar", Name: "Calendar exports (ICS)", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only ICS exports from an allowlisted local folder are ingested incrementally"},
+		{ConnectorKey: "cloud-documents", Name: "Synced cloud document folders", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "selected local synced folders are read-only and bounded by the existing folder allowlist"},
+		{ConnectorKey: "project-board", Name: "Trello project-board exports", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only Trello JSON exports from an allowlisted local folder are ingested incrementally"},
+		{ConnectorKey: "github", Name: "GitHub repositories and work", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only GitHub REST repository, issue, pull request, commit, and workflow-run sync; optional token stays in GITHUB_SOURCE_TOKEN"},
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "manual and scheduled local-folder ingestion are implemented"},
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "scheduled and incremental normalized JSON ingestion are implemented with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "local WhatsApp .txt exports are parsed into bounded, sensitive, review-gated source records"},
@@ -1441,6 +1453,47 @@ func defaultModes(values []string) []string {
 		return values
 	}
 	return []string{ModeManualImport, ModeIncrementalSync}
+}
+
+func sourceUsesLocalFolder(connectorKey string) bool {
+	switch strings.TrimSpace(connectorKey) {
+	case "local-folder", "email", "calendar", "cloud-documents", "project-board":
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceHasNativeAdapter(connectorKey string) bool {
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == "whatsapp-export" || connectorKey == "odoo-herp"
+}
+
+func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
+	allowed := map[string]bool{}
+	itemType := ""
+	switch connectorKey {
+	case "email":
+		allowed = map[string]bool{".mbox": true, ".eml": true}
+		itemType = "email_export"
+	case "calendar":
+		allowed = map[string]bool{".ics": true}
+		itemType = "calendar_export"
+	case "project-board":
+		allowed = map[string]bool{".json": true}
+		itemType = "project_board_export"
+	default:
+		return items
+	}
+	filtered := make([]ImportItem, 0, len(items))
+	for _, item := range items {
+		ext := strings.ToLower(filepath.Ext(item.Title))
+		if !allowed[ext] {
+			continue
+		}
+		item.ItemType = itemType
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func minimalPermissions(category string, requested []string) []string {
@@ -1486,7 +1539,7 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 }
 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
-	if source.ConnectorKey != "local-folder" && source.ConnectorKey != "json-feed" && source.ConnectorKey != "whatsapp-export" && source.ConnectorKey != "odoo-herp" {
+	if !sourceHasNativeAdapter(source.ConnectorKey) {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
 	}
 	interval, ok := parseSyncFrequency(source.SyncFrequency)
@@ -1576,6 +1629,174 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 		return nil, "", fmt.Errorf("decode json-feed envelope: %w", err)
 	}
 	return normalizeFeedItems(envelope.Items, source), firstNonEmpty(strings.TrimSpace(envelope.NextCursor), source.Cursor), nil
+}
+
+func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, error) {
+	if source == nil {
+		return nil, "", fmt.Errorf("source is required")
+	}
+	repository := strings.Trim(strings.TrimSpace(source.SyncTarget), "/")
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return nil, "", fmt.Errorf("github syncTarget must be an owner/repository slug")
+	}
+	base := strings.TrimRight(firstNonEmpty(os.Getenv("GITHUB_SOURCE_API_BASE_URL"), "https://api.github.com"), "/")
+	parsedBase, err := url.Parse(base)
+	if err != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") || parsedBase.Hostname() == "" {
+		return nil, "", fmt.Errorf("GITHUB_SOURCE_API_BASE_URL must be an absolute HTTP(S) URL")
+	}
+	if !sourceHTTPHostAllowed(parsedBase.Hostname()) || sourceHTTPAddressBlocked(parsedBase.Hostname()) {
+		return nil, "", fmt.Errorf("github API host %s is not allowlisted", parsedBase.Hostname())
+	}
+	endpoints := []struct {
+		path string
+		kind string
+	}{
+		{"/repos/" + repository, "repository"},
+		{"/repos/" + repository + "/issues", "issue"},
+		{"/repos/" + repository + "/pulls", "pull_request"},
+		{"/repos/" + repository + "/commits", "commit"},
+		{"/repos/" + repository + "/actions/runs", "workflow_run"},
+	}
+	items := []ImportItem{}
+	latest := strings.TrimSpace(source.Cursor)
+	for _, endpoint := range endpoints {
+		value, err := fetchGitHubJSON(parsedBase, endpoint.path, source.Cursor)
+		if err != nil {
+			return nil, "", fmt.Errorf("fetch github %s: %w", endpoint.kind, err)
+		}
+		records := githubRecords(value, endpoint.kind)
+		for _, record := range records {
+			item, updated := githubImportItem(record, endpoint.kind, source.DefaultProjectKey, repository)
+			if item.ExternalID == "" || item.Content == "" {
+				continue
+			}
+			items = append(items, item)
+			if updated > latest {
+				latest = updated
+			}
+		}
+	}
+	return items, latest, nil
+}
+
+func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
+	target := *base
+	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
+	query := target.Query()
+	query.Set("per_page", "100")
+	query.Set("state", "all")
+	query.Set("sort", "updated")
+	query.Set("direction", "asc")
+	if cursor != "" && resourcePath != "" && resourcePath != "/repos/" {
+		if _, err := time.Parse(time.RFC3339, cursor); err == nil && (strings.HasSuffix(resourcePath, "/issues") || strings.HasSuffix(resourcePath, "/pulls")) {
+			query.Set("since", cursor)
+		}
+	}
+	target.RawQuery = query.Encode()
+	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	request.Header.Set("User-Agent", "HAI-connected-source")
+	if token := strings.TrimSpace(os.Getenv("GITHUB_SOURCE_TOKEN")); token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: sourceHTTPTimeout(), Transport: sourceHTTPTransport(), CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("GitHub returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, sourceHTTPMaxBytes()+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > sourceHTTPMaxBytes() {
+		return nil, fmt.Errorf("GitHub response exceeds %d bytes", sourceHTTPMaxBytes())
+	}
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil, fmt.Errorf("decode GitHub response: %w", err)
+	}
+	return value, nil
+}
+
+func githubRecords(value any, kind string) []map[string]any {
+	if object, ok := value.(map[string]any); ok {
+		if kind == "workflow_run" {
+			if runs, ok := object["workflow_runs"].([]any); ok {
+				return githubRecordSlice(runs)
+			}
+		}
+		return []map[string]any{object}
+	}
+	if list, ok := value.([]any); ok {
+		return githubRecordSlice(list)
+	}
+	return nil
+}
+
+func githubRecordSlice(items []any) []map[string]any {
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if record, ok := item.(map[string]any); ok {
+			result = append(result, record)
+		}
+	}
+	return result
+}
+
+func githubImportItem(record map[string]any, kind, projectKey, repository string) (ImportItem, string) {
+	identifier := githubString(record, "node_id", "id", "sha", "number", "name")
+	if identifier == "" {
+		return ImportItem{}, ""
+	}
+	title := githubString(record, "title", "full_name", "name", "display_title", "sha")
+	if title == "" {
+		title = kind + " from " + repository
+	}
+	body := githubString(record, "body", "message", "description", "name", "status")
+	if nested, ok := record["commit"].(map[string]any); ok {
+		body = firstNonEmpty(body, githubString(nested, "message"))
+	}
+	content := strings.TrimSpace(strings.Join([]string{
+		"GitHub " + strings.ReplaceAll(kind, "_", " ") + " from " + repository,
+		"Title: " + title,
+		"Status: " + githubString(record, "state", "status", "conclusion"),
+		body,
+	}, "\n"))
+	updated := githubString(record, "updated_at", "created_at", "run_started_at", "timestamp")
+	return ImportItem{
+		ExternalID: "github:" + kind + ":" + identifier,
+		Title:      compact(title, 500),
+		Content:    compact(content, 12000),
+		SourceURI:  githubString(record, "html_url", "url"),
+		ItemType:   "github_" + kind,
+		ProjectKey: projectKey,
+		Metadata:   fmt.Sprintf("source=github;repository=%s;kind=%s;updated=%s", repository, kind, updated),
+	}, updated
+}
+
+func githubString(record map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := record[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				if strings.TrimSpace(typed) != "" {
+					return strings.TrimSpace(typed)
+				}
+			case float64:
+				return strconv.FormatInt(int64(typed), 10)
+			}
+		}
+	}
+	return ""
 }
 
 func normalizeFeedItems(items []ImportItem, source *models.ConnectedSource) []ImportItem {
@@ -2086,7 +2307,7 @@ func readLocalTextFile(path string, maxBytes int64) (string, error) {
 
 func isReadableLocalFile(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".yaml", ".yml", ".log":
+	case ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".yaml", ".yml", ".log", ".mbox", ".eml", ".ics":
 		return true
 	default:
 		return false
