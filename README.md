@@ -1,8 +1,8 @@
 # 018-HAI
 
-018-HAI is a local-first automation hub and Personal AI Operating System in progress. It combines an Angular dashboard, Go backend APIs, an IDP service, nginx gateway routing, Postgres, Redis, and Kafka into one Docker Compose based workspace.
+018-HAI is a local-first Human Autonomous Intelligence Shell: a Personal AI Operating System for turning source material, memory, workflows, approvals, and controlled execution into inspectable operational work. It combines an Angular dashboard, Go APIs, an IDP, nginx gateway, Postgres, Redis, Kafka, and Docker Compose for a Windows 11-oriented local deployment.
 
-The repository now contains operational control surfaces for automations, LLM routing policy, context memory, connected-source ingestion, task success planning/execution, workflow state handling, source-grounded verification, and an HAI OS overview dashboard. The current engine can plan, route, gather context, import local files, identify actionable source extractions, create workflow items, generate checklists, gate approvals, verify grounded output, run controlled automation launches, and block unsafe or unsupported results. It also exposes controlled Hermes, Odysseus, and OpenClaw-compatible runtime adapters, but it is still not an unrestricted autonomous desktop agent.
+The canonical product is this Go/Angular/Postgres stack. It is a governed operations system, not an unrestricted desktop agent: planning, execution, verification, and approval are deliberately separate, and external effects remain blocked unless a reviewed runtime and approval path are configured.
 
 ## Canonical Stack Decision
 
@@ -10,36 +10,26 @@ The canonical product stack is this Codex-built Go backend, Angular dashboard, P
 
 This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-canonical-stack-and-readiness.md). The dashboard HAI OS page also exposes real-world readiness gates so internal AI logic is not mistaken for proven external integration behavior.
 
-## Current Status
+## Current State
 
-Implemented:
+The current `main` branch contains a working, tested operating layer:
 
-- Angular dashboard with pages for automations, Control Center, HAI OS, LLM Routing, Memory, Task Blueprint, Connected Sources, Grounded Answers, and Workflow Engine.
-- Go backend API with automation CRUD, launch metadata, health checks, diagnostics, LLM routing, memory, task, source, workflow, verification, and OS overview routes.
-- Local Docker Compose setup for Windows 11 and general Docker Desktop use.
-- Local-first LLM routing policy with configurable providers, local/free priority, paid usage disabled by default, provider readiness checks, selected-model explanation, and routing logs.
-- Real local/free LLM generation calls for configured Ollama and OpenAI-compatible endpoints. Unconfigured providers are skipped, unsafe link-local endpoints are blocked by default, and paid execution is blocked unless explicitly approved by policy.
-- Guarded Hermes, Odysseus, and OpenClaw agent runtime adapters. HAI can probe those runtimes, show configuration/readiness in the Command Dashboard, and execute approved tasks through the existing task/workflow engine. Runtime execution is disabled by default and remains subject to approval, emergency stop, allowlists, bounded output, timeouts, audit logs, and downstream verification.
-- Context memory CRUD/retrieve/export with deduplication, similarity merge, relevance scoring, archive/restore/delete, and source references.
-- Universal task success engine that classifies requests, defines success criteria, retrieves memory/source context, routes model/tool choices, applies risk gates, produces an execution result, verifies claims, retries/falls back, queues review, logs events, and stores lessons only after verified execution.
-- Connected-source registry with manual import, allowlisted local-folder sync, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, read-only GitHub API sync, scheduled due-sync worker, sync-job records, extraction, search, provenance, pause/resume/revoke, correction, archive/delete, connector readiness status, and audit logs.
-- Workflow engine that turns actionable connected-source extractions or manual input into persistent workflow items with state, priority, risk, approval gates, generated checklists, source links, decision records, transition records, durable retry limits, task-engine worker execution, verification-gated completion, and audit events.
-- Guarded workflow scheduler that periodically runs due workflow items and due open-loop follow-ups through the existing approval-gated workflow/task engines.
-- Ambient proactive planning engine that continuously finds open work, ranks it against user-controlled need priorities, deduplicates repeated findings, and routes accepted proposals through the controlled workflow engine.
-- Shared backend engine instances for LLM routing, task execution, source retrieval, memory, and verification within the running API process, so workflow-worker and dashboard-initiated task decisions appear in the same in-memory task/LLM logs.
-- Source-grounded answer and anti-hallucination layer that decomposes answers into claims, attaches evidence, validates source support, flags unsupported/conflicting claims, gates high-risk output, and records verification runs.
-- Backend API shared-key gate for local gateway traffic. When `BACKEND_API_SHARED_KEY` is set, `/api/v1` backend routes require `X-HAI-Backend-Key`; the checked-in local nginx config injects that header after IDP auth.
-- CI workflow for backend, IDP, nginx config manager, frontend build, and Docker Compose config validation.
-- Nginx config-manager hardening: Kafka automation events are revalidated before config writes, config file paths are constrained to the configured directory, public routes use the generated URL path instead of the upstream host, and Docker-socket reload is disabled by default.
+- **User experience:** onboarding, quick capture, command dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
+- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, and source-linked audit history.
+- **Knowledge and memory:** encrypted conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance.
+- **Connected sources:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync.
+- **Governance:** role-aware owner/operator/viewer RBAC when a verified IDP JWT includes a role claim (otherwise viewer), approval gates, emergency stop, request rate limits, idempotency support, redacted audit records, path safety, runtime allowlists, and paid-model policy disabled by default.
+- **Runtime and providers:** local/free model routing with Ollama and OpenAI-compatible endpoints, plus controlled Hermes, Odysseus, and OpenClaw adapters. All runtime execution is disabled until configured and remains approval-, workspace-, timeout-, audit-, and verification-gated.
+- **Operations:** `/healthz`, `/readyz`, `backend doctor`, `backend reconcile`, support-bundle and build-information endpoints, feature flags, CI checks, Docker Compose validation, and a real-Postgres critical-path smoke test.
 
-Not implemented yet:
+Verified evidence is maintained in [the completion matrix](docs/codex-goal/completion-matrix.md) and [final verification report](docs/codex-goal/final-verification-report.md). The critical-path smoke has passed against a real local Postgres instance; backend and IDP tests, the Angular production build, and Compose configuration validation are part of the routine verification path.
 
-- Additional Claw-compatible task execution adapters for QwenPaw, AnythingLLM, Khoj, LibreChat, Agent Zero, generic MCP tools, browser automation, and richer API/tool workflows. Hermes, Odysseus, and OpenClaw now have controlled first-party adapters, but must still be installed/configured separately.
-- Full autonomous device control. Automation `launch` now has guarded adapters for host-allowlisted API calls, explicitly enabled allowlisted container-local scripts, and optionally Docker API container start requests for allowlisted containers, but broader autonomous desktop/browser/MCP/agent execution is still not implemented.
-- OAuth account authorization/refresh, provider webhooks, and local file-system watchers. The operational source paths are manual import, allowlisted local-folder scanning, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, GitHub REST read sync, and workflow intake from extracted action items. Live Gmail, Google Calendar, Drive, and Trello API authorization remains available through the normalized JSON feed bridge until dedicated OAuth adapters are added.
-- Real vector embedding infrastructure. Current search and relevance are local deterministic scoring, not a production vector database.
-- Production-grade provider quota accounting across restarts. The current router records decisions and blocks paid calls by policy, but durable quota ledgers still need implementation.
-- Production-grade secret management, migrations, RBAC hardening, and deployment configuration.
+### Deliberate Boundaries
+
+- HAI does not send messages, spend money, post publicly, delete data, change accounts, or take broad device control by default.
+- OAuth account authorization/refresh, provider webhooks, file-system watchers, dedicated vector infrastructure, and additional Claw-compatible adapters remain follow-up work.
+- A configured provider or runtime is not considered proven until its live probe and approved workflow are exercised on the target machine.
+- The full Docker Compose topology has configuration and health checks, but its end-to-end multi-service boot remains the main outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
 
 ## Repository Layout
 
@@ -52,6 +42,8 @@ Not implemented yet:
 |-- nginx-config-manager/    Go service for nginx route config updates
 |-- automation-scripts/      Allowlisted scripts mounted read-only into backend
 |-- connected-sources/       Allowlisted local files mounted read-only for ingestion
+|-- browser-extension/       Explicit, user-authorized browser conversation capture
+|-- scripts/                 Smoke and operational verification scripts
 |-- generic-auto/            Placeholder generic automation service
 |-- gate/                    Gateway-related legacy/config files
 |-- kafka/                   Kafka-related config area
@@ -96,7 +88,7 @@ Password: ChangeMe123!
 
 Change `FIRST_RUN_ADMIN_PASSWORD` in `.env.local` before first start for a real local install. If the Postgres data folders already exist, changing first-run values will not rewrite the existing account.
 
-Change `BACKEND_API_SHARED_KEY` before a real local install and update the matching `X-HAI-Backend-Key` value in `nginx-config/nginx.conf`. The backend enforces this key only when it is non-empty; the gateway also still requires IDP authentication before proxying backend routes.
+Change `BACKEND_API_SHARED_KEY` before a real local install. Docker Compose injects the same `.env.local` value into nginx at startup; the backend requires `X-HAI-Backend-Key` only when the value is non-empty, and the gateway still requires IDP authentication before proxying backend routes.
 
 Local service ports:
 
@@ -124,7 +116,7 @@ Local folder ingestion:
 3. Connect a `Selected local folders` source if one does not exist.
 4. Use Local Folder Sync with a folder path relative to `connected-sources/`, for example `.`.
 
-The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. Supported file types are `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`.
+The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. General local ingestion supports `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`; the export connectors also accept `.mbox`, `.eml`, and `.ics` within the same allowlisted root.
 
 For recurring source ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. The scheduler supports local folders, email/calendar/project-board exports, synced document folders, GitHub REST sources, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots.
 
@@ -134,6 +126,7 @@ Backend:
 
 ```bash
 cd backend
+go vet ./...
 go test ./...
 go build ./...
 ```
@@ -144,6 +137,7 @@ Frontend:
 cd frontend
 npm ci
 npm run build
+npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
 ```
 
 Compose:
@@ -152,18 +146,24 @@ Compose:
 docker compose --env-file .env.example -f docker-compose.local.yml config
 ```
 
+On a Bash-capable developer shell with the smoke prerequisites available:
+
+```bash
+scripts/smoke-critical-path.sh
+```
+
 When Go is not installed locally, the backend can be checked through Docker:
 
 ```powershell
-docker run --rm -v "${PWD}\backend:/app" -w /app golang:1.21.0 go test ./...
+docker run --rm -v "${PWD}\backend:/app" -w /app golang:1.21.13 go test ./...
 docker compose --env-file .env.example -f docker-compose.local.yml build backend
 ```
-
-Known warning: the Angular production build currently exceeds the initial bundle budget by roughly 230 KB. The build succeeds, but the budget should be tightened or the bundle split before treating this as production-ready.
 
 ## Main API Areas
 
 All backend routes are served under `/api/v1` through the gateway. The local nginx config only proxies the exact backend namespaces, or paths below them, to the backend; unknown `/api/v1/...` paths fall through to the IDP route instead of being broadly forwarded.
+
+Platform and operator routes include `GET /healthz`, `GET /readyz`, `GET /api/v1/flags`, `GET /api/v1/system/info`, and the admin-protected `GET /api/v1/system/support-bundle`.
 
 Automation:
 
@@ -531,8 +531,8 @@ The source layer treats connected accounts and imports as structured context sou
 - Connector registry.
 - Source registry.
 - Manual import/sync.
-- Local folder scanning from the read-only `./connected-sources` mount.
-- Scheduled due-sync for enabled local-folder sources with non-manual sync frequencies.
+- Read-only local-folder, email-export, calendar-export, synced-document, Trello-export, GitHub REST, JSON-feed, WhatsApp-export, and Odoo/HERP source adapters.
+- Scheduled due-sync for enabled sources with non-manual sync frequencies.
 - Raw item metadata.
 - Text extraction and summaries.
 - Entity/date/task/decision/follow-up fields.
@@ -687,8 +687,12 @@ Architecture and feature blueprints live in `docs/`:
 - `docs/anti-hallucination-verification.md`
 - `docs/source-grounded-answer-engine.md`
 - `docs/hai-personal-ai-operating-system.md`
+- `docs/operator-runbook.md`
+- `docs/acceptance-test-matrix.md`
+- `docs/technical-debt.md`
+- `docs/codex-goal/final-verification-report.md`
 
-These documents describe the target direction. The README describes the current repository state and the constraints developers must preserve while implementing the remaining engine behavior.
+These documents cover the target direction, evidence, operator procedures, and known debt. The README is the concise current-state entrypoint; do not update it by claiming an external provider or runtime is live without an executed readiness/approval/verification record.
 
 ## License
 
