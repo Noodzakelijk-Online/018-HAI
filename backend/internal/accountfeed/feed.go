@@ -1,0 +1,125 @@
+// Package accountfeed is a generic, provider-agnostic JSON feed source (§10.11).
+// A feed is a named local source of raw items (e.g. exported inbox/task JSON)
+// that are normalized into operations.NewOperationInput for the Operation
+// Ledger. Phase 2A ships a local JSON-file reader only — no live provider
+// integrations are claimed. New providers implement the Reader interface.
+package accountfeed
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"automation-hub-backend/internal/idempotency"
+	"automation-hub-backend/internal/operations"
+
+	"github.com/google/uuid"
+)
+
+// SourceType identifies how a feed's raw items are obtained.
+type SourceType string
+
+const (
+	// SourceLocalJSONFile reads items from a local JSON file (Phase 2A).
+	SourceLocalJSONFile SourceType = "local_json_file"
+)
+
+// Feed is a registered account feed configuration.
+type Feed struct {
+	ID            uuid.UUID  `json:"id"`
+	Name          string     `json:"name"`
+	Provider      string     `json:"provider"`     // e.g. "local", "gmail" (label only in 2A)
+	AccountLabel  string     `json:"accountLabel"` // which account this feed represents
+	SourceType    SourceType `json:"sourceType"`
+	Path          string     `json:"path"` // for SourceLocalJSONFile, the item filename
+	WorkspaceID   string     `json:"workspaceId"`
+	OwnerUserID   string     `json:"ownerUserId"`
+	ProjectKey    string     `json:"projectKey"`
+	OperationType string     `json:"operationType"` // default op type for items lacking one
+	Enabled       bool       `json:"enabled"`
+}
+
+// Validate checks a feed is well-formed before it is used.
+func (f Feed) Validate() error {
+	if strings.TrimSpace(f.Name) == "" {
+		return fmt.Errorf("accountfeed: name required")
+	}
+	if strings.TrimSpace(f.OwnerUserID) == "" {
+		return fmt.Errorf("accountfeed: ownerUserId required")
+	}
+	switch f.SourceType {
+	case SourceLocalJSONFile:
+		if strings.TrimSpace(f.Path) == "" {
+			return fmt.Errorf("accountfeed: path required for %s", f.SourceType)
+		}
+	default:
+		return fmt.Errorf("accountfeed: unsupported sourceType %q", f.SourceType)
+	}
+	return nil
+}
+
+// FeedItem is a single normalized item from a feed's raw JSON.
+type FeedItem struct {
+	ExternalID    string         `json:"externalId"`
+	Title         string         `json:"title"`
+	Body          string         `json:"body"`
+	OperationType string         `json:"operationType"`
+	ReceivedAt    *time.Time     `json:"receivedAt"`
+	Metadata      map[string]any `json:"metadata"`
+	// RawJSON is the exact original item text, preserved for evidence/audit.
+	RawJSON string `json:"-"`
+}
+
+// Validate checks an item carries the minimum identifying content.
+func (it FeedItem) Validate() error {
+	if strings.TrimSpace(it.ExternalID) == "" {
+		return fmt.Errorf("accountfeed: item externalId required")
+	}
+	if strings.TrimSpace(it.Title) == "" {
+		return fmt.Errorf("accountfeed: item title required")
+	}
+	return nil
+}
+
+// ToOperationInput normalizes a feed item into an Operation creation input,
+// computing a stable source revision hash and dedupe key so repeated syncs of
+// the same item do not create duplicate Operations (§10.9).
+func (f Feed) ToOperationInput(it FeedItem) (operations.NewOperationInput, error) {
+	if err := it.Validate(); err != nil {
+		return operations.NewOperationInput{}, err
+	}
+	metaCanonical, err := idempotency.CanonicalJSONString(it.Metadata)
+	if err != nil {
+		return operations.NewOperationInput{}, err
+	}
+	revHash := idempotency.SourceRevisionHash(it.Body, metaCanonical)
+	dedupe := idempotency.FeedItemDedupeKey(f.Provider, f.AccountLabel, it.ExternalID, revHash)
+
+	opType := firstNonEmpty(it.OperationType, f.OperationType, "review_source_item")
+	evidence := firstNonEmpty(strings.TrimSpace(it.RawJSON), "{}")
+
+	return operations.NewOperationInput{
+		OwnerUserID:        f.OwnerUserID,
+		WorkspaceID:        firstNonEmpty(f.WorkspaceID, "local"),
+		Title:              it.Title,
+		Description:        it.Body,
+		OperationType:      opType,
+		SourceType:         string(f.SourceType),
+		SourceURI:          f.Provider + ":" + f.AccountLabel + ":" + it.ExternalID,
+		SourceReceivedAt:   it.ReceivedAt,
+		SourceRevisionHash: revHash,
+		ProjectKey:         f.ProjectKey,
+		AccountFeedID:      &f.ID,
+		DedupeKey:          dedupe,
+		EvidenceJSON:       evidence,
+	}, nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
