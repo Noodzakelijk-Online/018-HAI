@@ -85,6 +85,9 @@ func RunMigrations(db *gorm.DB) error {
 		&models.AutonomyActionTrace{},
 		&models.AutonomyEvaluation{},
 		&models.AutonomyStressRun{},
+		// Phase 2 — Operation Ledger (§7/§10.5).
+		&models.Operation{},
+		&models.OperationEvent{},
 	); err != nil {
 		return err
 	}
