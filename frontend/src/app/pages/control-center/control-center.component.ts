@@ -124,6 +124,7 @@ export class ControlCenterComponent implements OnInit {
       label: 'Work',
       items: [
         { label: 'Command Center', icon: 'appstore', section: 'overview' },
+        { label: 'Background Ops', icon: 'thunderbolt', route: '/background-operations' },
         { label: 'Pursuits', icon: 'flag', route: '/pursuits' },
         { label: 'Approvals', icon: 'check-square', section: 'attention' },
         { label: 'Workflows', icon: 'unordered-list', route: '/workflow-engine' },

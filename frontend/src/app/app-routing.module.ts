@@ -99,6 +99,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "background-operations",
+    loadChildren: () =>
+      import("./pages/background-operations/background-operations.module").then(
+        (m) => m.BackgroundOperationsModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "onboarding",
     loadChildren: () =>
       import("./pages/onboarding/onboarding.module").then(
