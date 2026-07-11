@@ -115,6 +115,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "runtime-lab",
+    loadChildren: () =>
+      import("./pages/runtime-lab/runtime-lab.module").then(
+        (m) => m.RuntimeLabModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "onboarding",
     loadChildren: () =>
       import("./pages/onboarding/onboarding.module").then(
