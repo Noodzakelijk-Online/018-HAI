@@ -123,6 +123,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "account-bridges",
+    loadChildren: () =>
+      import("./pages/account-bridges/account-bridges.module").then(
+        (m) => m.AccountBridgesModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "onboarding",
     loadChildren: () =>
       import("./pages/onboarding/onboarding.module").then(
