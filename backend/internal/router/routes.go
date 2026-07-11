@@ -18,14 +18,17 @@ import (
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
+	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
+	"automation-hub-backend/internal/modelintelligence"
+	"automation-hub-backend/internal/phase2"
+	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
-	"automation-hub-backend/internal/phase2"
 	"automation-hub-backend/internal/verification"
 	"automation-hub-backend/internal/workflow"
 	"automation-hub-backend/internal/workflowtask"
@@ -110,7 +113,11 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeHAIOSRoutes(v1, osHandler)
 		initializeTaskRoutes(v1, task.NewHandler(taskService))
-		initializePhase2Routes(v1, phase2.DefaultModule().Handler())
+		modelIntelService := modelintelligence.DefaultService()
+		initializeModelIntelligenceRoutes(v1, modelintelligence.NewHandler(modelIntelService))
+		initializeHardwareRoutes(v1, hardwareprofile.NewHandler(hardwareprofile.DefaultService()))
+		initializePrivacyRoutes(v1, privacyfilter.DefaultHandler())
+		initializePhase2Routes(v1, phase2.DefaultModuleWithModelIntel(modelIntelService).Handler())
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
@@ -337,6 +344,46 @@ func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler
 	}
 	apiVersion.POST("/background/run", handler.RunBackground)
 	apiVersion.GET("/account-feeds", handler.ListFeeds)
+}
+
+func initializeModelIntelligenceRoutes(apiVersion *gin.RouterGroup, handler *modelintelligence.Handler) {
+	mi := apiVersion.Group("/model-intelligence")
+	{
+		mi.GET("/overview", handler.Overview)
+		mi.GET("/profiles", handler.Profiles)
+		mi.GET("/profiles/:providerId/:modelId", handler.Profile)
+		mi.POST("/profiles/:providerId/:modelId/benchmark", handler.Benchmark)
+		mi.GET("/benchmarks", handler.Benchmarks)
+		mi.GET("/telemetry", handler.Telemetry)
+		mi.GET("/lane-winners", handler.LaneWinners)
+		mi.GET("/cache", handler.Cache)
+		mi.DELETE("/cache/:id", handler.DeleteCache)
+		mi.GET("/token-budgets", handler.TokenBudgets)
+		mi.PATCH("/token-budgets", handler.UpdateTokenBudgets)
+	}
+}
+
+func initializeHardwareRoutes(apiVersion *gin.RouterGroup, handler *hardwareprofile.Handler) {
+	hw := apiVersion.Group("/hardware")
+	{
+		hw.GET("/profile", handler.Profile)
+		hw.POST("/detect", handler.Detect)
+		hw.PATCH("/profile", handler.Patch)
+	}
+	power := apiVersion.Group("/power")
+	{
+		power.GET("/policy", handler.PowerPolicy)
+		power.PATCH("/policy", handler.UpdatePowerPolicy)
+	}
+}
+
+func initializePrivacyRoutes(apiVersion *gin.RouterGroup, handler *privacyfilter.Handler) {
+	privacy := apiVersion.Group("/privacy")
+	{
+		privacy.POST("/scan", handler.ScanContent)
+		privacy.GET("/scans", handler.Scans)
+		privacy.GET("/scans/:id", handler.ScanByID)
+	}
 }
 
 func defaultFeatureFlags() *featureflags.Store {

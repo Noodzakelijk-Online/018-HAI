@@ -13,6 +13,7 @@ import (
 	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/background"
 	"automation-hub-backend/internal/executionbroker"
+	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/operations"
 
 	"github.com/google/uuid"
@@ -76,6 +77,15 @@ func NewModule(svc *operations.Service, cfg Config) *Module {
 // DefaultModule builds the module from env over the default (DB-backed) service.
 func DefaultModule() *Module {
 	return NewModule(operations.DefaultService(), ConfigFromEnv())
+}
+
+// DefaultModuleWithModelIntel builds the default module and attaches a shared
+// model-intelligence service so the background loop drives the fast-triage lane
+// (its telemetry then surfaces on the model-intelligence dashboard).
+func DefaultModuleWithModelIntel(mi *modelintelligence.Service) *Module {
+	m := NewModule(operations.DefaultService(), ConfigFromEnv())
+	m.worker.WithModelIntelligence(mi)
+	return m
 }
 
 // Service exposes the Operation Ledger service.

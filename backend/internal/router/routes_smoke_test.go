@@ -121,6 +121,33 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	r.Group("/api/v1").POST("/background/run", mark("backgroundRun"))
 	r.Group("/api/v1").GET("/account-feeds", mark("accountFeeds"))
 
+	mi := r.Group("/api/v1").Group("/model-intelligence")
+	mi.GET("/overview", mark("miOverview"))
+	mi.GET("/profiles", mark("miProfiles"))
+	mi.GET("/profiles/:providerId/:modelId", mark("miProfile"))
+	mi.POST("/profiles/:providerId/:modelId/benchmark", mark("miBenchmark"))
+	mi.GET("/benchmarks", mark("miBenchmarks"))
+	mi.GET("/telemetry", mark("miTelemetry"))
+	mi.GET("/lane-winners", mark("miLaneWinners"))
+	mi.GET("/cache", mark("miCache"))
+	mi.DELETE("/cache/:id", mark("miCacheDelete"))
+	mi.GET("/token-budgets", mark("miBudgets"))
+	mi.PATCH("/token-budgets", mark("miBudgetsUpdate"))
+
+	hw := r.Group("/api/v1").Group("/hardware")
+	hw.GET("/profile", mark("hwProfile"))
+	hw.POST("/detect", mark("hwDetect"))
+	hw.PATCH("/profile", mark("hwPatch"))
+
+	power := r.Group("/api/v1").Group("/power")
+	power.GET("/policy", mark("powerPolicy"))
+	power.PATCH("/policy", mark("powerUpdate"))
+
+	privacy := r.Group("/api/v1").Group("/privacy")
+	privacy.POST("/scan", mark("privacyScan"))
+	privacy.GET("/scans", mark("privacyScans"))
+	privacy.GET("/scans/:id", mark("privacyScanByID"))
+
 	osRoutes := r.Group("/api/v1").Group("/os")
 	osRoutes.GET("/overview", mark("osOverview"))
 

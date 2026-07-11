@@ -17,6 +17,7 @@ import (
 	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/idempotency"
+	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/operations"
 	"automation-hub-backend/internal/privacyfilter"
@@ -38,12 +39,13 @@ type Options struct {
 
 // Worker orchestrates one background pass over feeds and the Operation Ledger.
 type Worker struct {
-	svc     *operations.Service
-	broker  *executionbroker.Broker
-	readers []accountfeed.Reader
-	opts    Options
-	now     func() time.Time
-	lease   *lease
+	svc      *operations.Service
+	broker   *executionbroker.Broker
+	readers  []accountfeed.Reader
+	modelInt *modelintelligence.Service // optional; drives the fast-triage lane
+	opts     Options
+	now      func() time.Time
+	lease    *lease
 }
 
 // New builds a worker. If opts.MaxOps <= 0 a default of 50 is used.
@@ -60,12 +62,21 @@ func New(svc *operations.Service, broker *executionbroker.Broker, readers []acco
 	return &Worker{svc: svc, broker: broker, readers: readers, opts: opts, now: time.Now, lease: newLease()}
 }
 
+// WithModelIntelligence attaches a model-intelligence service so the fast-triage
+// lane runs a real (bounded, local) model call per operation and records
+// telemetry. Returns the worker for chaining.
+func (w *Worker) WithModelIntelligence(mi *modelintelligence.Service) *Worker {
+	w.modelInt = mi
+	return w
+}
+
 // Report summarizes a RunOnce pass.
 type Report struct {
 	FeedsRead         int      `json:"feedsRead"`
 	ItemsIngested     int      `json:"itemsIngested"`
 	OperationsCreated int      `json:"operationsCreated"`
 	Classified        int      `json:"classified"`
+	Triaged           int      `json:"triaged"`
 	AutoExecuted      int      `json:"autoExecuted"`
 	Verified          int      `json:"verified"`
 	Failed            int      `json:"failed"`
@@ -157,7 +168,23 @@ func (w *Worker) processOne(ctx context.Context, op models.Operation, rep *Repor
 	}, now)
 
 	applyDecision(&op, decision, scan)
-	classified, err := w.svc.Transition(op, operations.StatusClassified, "hai", "", "classified: "+decision.Reason)
+
+	// Fast-triage lane (§16): if a model-intelligence service is attached, run a
+	// real bounded local model call to categorize the item. The lane affects the
+	// operation record (model provider/model fields) and records telemetry that
+	// surfaces on the model-intelligence dashboard.
+	classifyMsg := "classified: " + decision.Reason
+	highRisk := decision.Risk == operations.RiskHigh
+	if w.modelInt != nil {
+		if tri, tErr := w.modelInt.Triage(ctx, op.OperationType, op.Title, op.Description, scan.SafeForCloudModel, highRisk, op.ID.String()); tErr == nil && tri.Routed {
+			op.ModelProviderID = tri.ProviderID
+			op.ModelID = tri.ModelID
+			classifyMsg = "classified [" + tri.Category + "]: " + decision.Reason
+			rep.Triaged++
+		}
+	}
+
+	classified, err := w.svc.Transition(op, operations.StatusClassified, "hai", "", classifyMsg)
 	if err != nil {
 		return err
 	}

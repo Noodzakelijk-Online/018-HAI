@@ -9,6 +9,7 @@ import (
 	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/executionbroker"
+	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/operations"
 
 	"github.com/google/uuid"
@@ -90,6 +91,34 @@ func TestRunOnceVerticalSlice(t *testing.T) {
 	events, _ := svc.Events(completed[0].ID)
 	if len(events) < 2 {
 		t.Fatalf("completed operation must have an audit trail, got %d events", len(events))
+	}
+}
+
+func TestFastTriageLaneStampsOperations(t *testing.T) {
+	w, svc, _ := buildWorker(t, autonomypolicy.ModeAutonomousSafe, twoItemFeed)
+	mi := modelintelligence.NewService(modelintelligence.NewRegistryFromEnv())
+	w.WithModelIntelligence(mi)
+
+	rep, err := w.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Triaged != 2 {
+		t.Fatalf("both operations must be triaged by the fast-triage lane, got %d", rep.Triaged)
+	}
+	// The lane must have stamped the model provider on the operation record.
+	ops, _ := svc.List(operations.Filter{OwnerUserID: "user-1", WorkspaceID: "local"})
+	for _, op := range ops {
+		if op.ModelProviderID != modelintelligence.ProviderTestFastTriage {
+			t.Fatalf("operation %s missing triage model provider, got %q", op.ID, op.ModelProviderID)
+		}
+	}
+	// The lane must have produced real telemetry surfaced by model intelligence.
+	if len(mi.Telemetry()) < 2 {
+		t.Fatalf("fast-triage lane must record telemetry, got %d rows", len(mi.Telemetry()))
+	}
+	if len(mi.LaneWinners()) == 0 {
+		t.Fatalf("triage runs must yield a fast-triage lane winner")
 	}
 }
 
