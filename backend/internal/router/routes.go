@@ -26,6 +26,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
 	"automation-hub-backend/internal/modelintelligence"
+	"automation-hub-backend/internal/opscontrol"
 	"automation-hub-backend/internal/phase2"
 	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
@@ -131,6 +132,7 @@ func initializeRoutes(router *gin.Engine) error {
 		})
 		seedAccountFeeds(feedRegistry, phase2Module)
 		initializeAccountFeedRoutes(v1, accountfeed.NewHandler(feedRegistry, phase2Module.OwnerUserID(), phase2Module.WorkspaceID()))
+		initializeOpsControlRoutes(v1, opscontrol.NewHandler(phase2Module.OpsControl()))
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
@@ -431,6 +433,22 @@ func initializePrivacyRoutes(apiVersion *gin.RouterGroup, handler *privacyfilter
 		privacy.POST("/scan", handler.ScanContent)
 		privacy.GET("/scans", handler.Scans)
 		privacy.GET("/scans/:id", handler.ScanByID)
+	}
+}
+
+func initializeOpsControlRoutes(apiVersion *gin.RouterGroup, handler *opscontrol.Handler) {
+	bg := apiVersion.Group("/background")
+	{
+		bg.GET("/status", handler.Status)
+		bg.POST("/pause", handler.Pause)
+		bg.POST("/resume", handler.Resume)
+		bg.PATCH("/mode", handler.SetMode)
+	}
+	wr := apiVersion.Group("/windows-runtime")
+	{
+		wr.GET("/readiness", handler.Readiness)
+		wr.POST("/recovery", handler.Recovery)
+		wr.POST("/emergency-stop/verify", handler.VerifyEmergencyStop)
 	}
 }
 

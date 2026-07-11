@@ -43,6 +43,7 @@ type Worker struct {
 	broker   *executionbroker.Broker
 	readers  []accountfeed.Reader
 	modelInt *modelintelligence.Service // optional; drives the fast-triage lane
+	control  Control                    // optional; live mode + emergency stop
 	opts     Options
 	now      func() time.Time
 	lease    *lease
@@ -68,6 +69,34 @@ func New(svc *operations.Service, broker *executionbroker.Broker, readers []acco
 func (w *Worker) WithModelIntelligence(mi *modelintelligence.Service) *Worker {
 	w.modelInt = mi
 	return w
+}
+
+// Control supplies the live autonomy mode + emergency-stop state so pause/
+// resume/mode changes take effect on the next pass without rebuilding the
+// worker.
+type Control interface {
+	Mode() autonomypolicy.Mode
+	EmergencyStop() bool
+}
+
+// WithControl attaches a live control source. Returns the worker for chaining.
+func (w *Worker) WithControl(c Control) *Worker {
+	w.control = c
+	return w
+}
+
+func (w *Worker) effectiveMode() autonomypolicy.Mode {
+	if w.control != nil {
+		return w.control.Mode()
+	}
+	return w.opts.Mode
+}
+
+func (w *Worker) effectiveEmergencyStop() bool {
+	if w.control != nil {
+		return w.control.EmergencyStop()
+	}
+	return w.opts.EmergencyStop
 }
 
 // Report summarizes a RunOnce pass.
@@ -97,7 +126,7 @@ func (w *Worker) RunOnce(ctx context.Context) (Report, error) {
 
 	var rep Report
 	w.ingest(ctx, &rep)
-	if w.opts.EmergencyStop {
+	if w.effectiveEmergencyStop() {
 		// Emergency stop still ingests for the record but processes nothing.
 		return rep, nil
 	}
@@ -162,9 +191,9 @@ func (w *Worker) processOne(ctx context.Context, op models.Operation, rep *Repor
 		Content:       op.Description,
 		OperationType: op.OperationType,
 		Privacy:       scan,
-		Mode:          w.opts.Mode,
+		Mode:          w.effectiveMode(),
 		Reversible:    true, // feed items default reversible; risk classifier bumps dangerous ones to approval
-		EmergencyStop: w.opts.EmergencyStop,
+		EmergencyStop: w.effectiveEmergencyStop(),
 	}, now)
 
 	applyDecision(&op, decision, scan)

@@ -120,6 +120,17 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	operationsRoutes.POST("/:id/run", mark("operationsRun"))
 	r.Group("/api/v1").POST("/background/run", mark("backgroundRun"))
 
+	bgctl := r.Group("/api/v1").Group("/background")
+	bgctl.GET("/status", mark("bgStatus"))
+	bgctl.POST("/pause", mark("bgPause"))
+	bgctl.POST("/resume", mark("bgResume"))
+	bgctl.PATCH("/mode", mark("bgMode"))
+
+	wr := r.Group("/api/v1").Group("/windows-runtime")
+	wr.GET("/readiness", mark("wrReadiness"))
+	wr.POST("/recovery", mark("wrRecovery"))
+	wr.POST("/emergency-stop/verify", mark("wrEmergencyVerify"))
+
 	af := r.Group("/api/v1").Group("/account-feeds")
 	af.GET("", mark("afList"))
 	af.POST("", mark("afCreate"))

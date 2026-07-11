@@ -5,6 +5,7 @@
 package phase2
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/operations"
+	"automation-hub-backend/internal/opscontrol"
 
 	"github.com/google/uuid"
 )
@@ -26,6 +28,7 @@ type Config struct {
 	WorkspaceDir  string   // confined root for the local safe worker
 	FeedsDir      string   // directory holding local JSON feed files
 	FeedFiles     []string // JSON feed filenames within FeedsDir
+	StateDir      string   // persisted control state (emergency stop, mode)
 	Mode          autonomypolicy.Mode
 	EmergencyStop bool
 }
@@ -38,6 +41,7 @@ func ConfigFromEnv() Config {
 		WorkspaceDir:  env("HAI_PHASE2_WORKSPACE_DIR", filepath.Join("data", "phase2", "workspace")),
 		FeedsDir:      env("HAI_PHASE2_FEEDS_DIR", filepath.Join("data", "phase2", "feeds")),
 		FeedFiles:     splitList(env("HAI_PHASE2_FEED_FILES", "inbox.json")),
+		StateDir:      env("HAI_PHASE2_STATE_DIR", filepath.Join("data", "phase2", "state")),
 		Mode:          autonomypolicy.Mode(env("HAI_PHASE2_MODE", string(autonomypolicy.ModeAutonomousSafe))),
 		EmergencyStop: env("HAI_PHASE2_EMERGENCY_STOP", "") == "true",
 	}
@@ -108,6 +112,22 @@ func (m *Module) FeedFiles() []string { return m.cfg.FeedFiles }
 
 // Worker exposes the background worker.
 func (m *Module) Worker() *background.Worker { return m.worker }
+
+// OpsControl builds the always-on runtime control service, wires its controller
+// into the background worker (so pause/resume/mode take effect live), and
+// registers the background runner used by emergency-stop verification.
+func (m *Module) OpsControl() *opscontrol.Service {
+	svc := opscontrol.NewService(m.cfg.StateDir, m.broker, m.svc, m.cfg.OwnerUserID, m.cfg.WorkspaceID)
+	m.worker.WithControl(svc.Control())
+	svc.SetBackgroundRunner(func(ctx context.Context) (int, error) {
+		rep, err := m.worker.RunOnce(ctx)
+		if err != nil {
+			return 0, err
+		}
+		return rep.Classified + rep.AutoExecuted, nil
+	})
+	return svc
+}
 
 // Handler builds the HTTP handler for this module.
 func (m *Module) Handler() *Handler { return NewHandler(m) }
