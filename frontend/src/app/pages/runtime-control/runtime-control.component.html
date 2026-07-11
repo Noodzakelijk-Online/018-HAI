@@ -1,0 +1,80 @@
+<div class="rc">
+  <header class="rc__header">
+    <div>
+      <button nz-button nzType="text" (click)="goBack()">
+        <span nz-icon nzType="arrow-left"></span>
+      </button>
+      <h1>Runtime Control</h1>
+      <p class="rc__subtitle">
+        Always-on runtime control. The emergency stop actually halts background processing (self-verifiable) and
+        survives restart; Windows-specific readiness is honestly pending until verified on the target machine.
+      </p>
+    </div>
+    <button nz-button nzType="text" (click)="refresh()">
+      <span nz-icon nzType="reload"></span> Refresh
+    </button>
+  </header>
+
+  <section class="rc__control" *ngIf="status as s">
+    <nz-card
+      class="rc__estop"
+      [class.rc__estop--engaged]="s.emergencyStop.engaged"
+      nzSize="small"
+    >
+      <div class="rc__estop-head">
+        <span nz-icon [nzType]="s.emergencyStop.engaged ? 'stop' : 'check-circle'"></span>
+        <div>
+          <div class="rc__estop-title">
+            {{ s.emergencyStop.engaged ? 'EMERGENCY STOP ENGAGED' : 'Background processing active' }}
+          </div>
+          <div class="rc__muted">
+            {{ s.backgroundProcessingActive ? 'Processing runs on the next pass' : 'Processing is halted' }}
+          </div>
+        </div>
+      </div>
+      <div class="rc__estop-actions">
+        <button nz-button nzDanger *ngIf="!s.emergencyStop.engaged" [nzLoading]="busy" (click)="pause()">
+          Engage emergency stop
+        </button>
+        <button nz-button nzType="primary" *ngIf="s.emergencyStop.engaged" [nzLoading]="busy" (click)="resume()">
+          Resume
+        </button>
+        <button nz-button [nzLoading]="busy" (click)="verify()">Verify emergency stop</button>
+        <button nz-button [nzLoading]="busy" (click)="recover()">Run recovery</button>
+      </div>
+    </nz-card>
+
+    <nz-card nzTitle="Autonomy mode" nzSize="small" class="rc__mode">
+      <div class="rc__muted">Current: <strong>{{ s.storedMode }}</strong> (effective: {{ s.mode }})</div>
+      <nz-radio-group [ngModel]="s.storedMode" (ngModelChange)="setMode($event)">
+        <label nz-radio-button *ngFor="let m of modes" [nzValue]="m">{{ m }}</label>
+      </nz-radio-group>
+      <div class="rc__meta">
+        <div><span class="rc__muted">Done while away</span><span>{{ s.completedOperations }}</span></div>
+        <div><span class="rc__muted">Awaiting approval</span><span>{{ s.awaitingApproval }}</span></div>
+        <div><span class="rc__muted">Docker</span><span>{{ s.docker.daemonRunning ? 'running' : 'not running (not required)' }}</span></div>
+      </div>
+    </nz-card>
+  </section>
+
+  <nz-card nzTitle="Windows-runtime readiness checklist" nzSize="small" class="rc__readiness" *ngIf="readiness as r">
+    <div class="rc__ready-head">
+      <nz-tag [nzColor]="r.overallReady ? 'green' : 'red'">{{ r.overallReady ? 'control plane ready' : 'not ready' }}</nz-tag>
+      <span class="rc__muted">OS: {{ r.operatingSystem }}</span>
+      <nz-tag *ngIf="r.targetMachineVerificationPending" nzColor="blue">target-machine verification pending</nz-tag>
+    </div>
+    <nz-table #gateTable [nzData]="r.gates" nzSize="small" [nzShowPagination]="false">
+      <thead>
+        <tr><th>Gate</th><th>Status</th><th>Evidence</th><th>Remediation</th></tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let g of gateTable.data">
+          <td><code>{{ g.name }}</code></td>
+          <td><nz-tag [nzColor]="gateColor(g.status)">{{ g.status }}</nz-tag></td>
+          <td>{{ g.evidence }}</td>
+          <td class="rc__muted">{{ g.remediation }}</td>
+        </tr>
+      </tbody>
+    </nz-table>
+  </nz-card>
+</div>

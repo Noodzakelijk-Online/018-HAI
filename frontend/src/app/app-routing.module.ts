@@ -131,6 +131,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "runtime-control",
+    loadChildren: () =>
+      import("./pages/runtime-control/runtime-control.module").then(
+        (m) => m.RuntimeControlModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "onboarding",
     loadChildren: () =>
       import("./pages/onboarding/onboarding.module").then(
