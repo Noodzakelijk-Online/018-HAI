@@ -195,52 +195,17 @@ func (w *Worker) processOne(ctx context.Context, op models.Operation, rep *Repor
 // runSafe executes the local safe worker for a low-risk reversible operation and
 // gates completion on passing verification (§8/§10.15).
 func (w *Worker) runSafe(ctx context.Context, op models.Operation, rep *Report) error {
-	ready, err := w.svc.Transition(op, operations.StatusReady, "hai", "", "ready for safe local worker")
-	if err != nil {
-		return err
-	}
-	op = *ready
-	op.RuntimeID = executionbroker.LocalSafeWorkerID
-	op.VerificationStatus = string(operations.VerificationPending)
-	running, err := w.svc.Transition(op, operations.StatusRunning, "hai", "", "running safe local worker")
-	if err != nil {
-		return err
-	}
-	op = *running
 	rep.AutoExecuted++
-
-	res, execErr := w.broker.ExecuteLocalSafeWorker(ctx, safePayload(op))
-	if execErr != nil {
-		op.VerificationStatus = string(operations.VerificationFailed)
-		op.LastError = execErr.Error()
-		if _, err := w.svc.Transition(op, operations.StatusFailed, "hai", "", "safe worker error: "+execErr.Error()); err != nil {
-			return err
-		}
-		rep.Failed++
-		return nil
-	}
-
-	op.ResultSummary = res.Output.BoundedOutput
-	verifying, err := w.svc.Transition(op, operations.StatusVerifying, "hai", "", "verifying safe worker result")
+	outcome, err := ExecuteSafeOperation(ctx, w.svc, w.broker, op, w.now().UTC())
 	if err != nil {
 		return err
 	}
-	op = *verifying
-
-	if res.OK && res.Verification.Passed {
-		op.VerificationStatus = string(operations.VerificationPassed)
-		if _, err := w.svc.Transition(op, operations.StatusCompleted, "hai", "", "verified and completed"); err != nil {
-			return err
-		}
+	if outcome.Verified {
 		rep.Verified++
-		return nil
 	}
-	op.VerificationStatus = string(operations.VerificationFailed)
-	op.LastError = "safe worker verification failed"
-	if _, err := w.svc.Transition(op, operations.StatusFailed, "hai", "", "verification failed"); err != nil {
-		return err
+	if outcome.Failed {
+		rep.Failed++
 	}
-	rep.Failed++
 	return nil
 }
 

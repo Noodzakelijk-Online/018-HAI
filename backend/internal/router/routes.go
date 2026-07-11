@@ -25,6 +25,7 @@ import (
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
+	"automation-hub-backend/internal/phase2"
 	"automation-hub-backend/internal/verification"
 	"automation-hub-backend/internal/workflow"
 	"automation-hub-backend/internal/workflowtask"
@@ -109,6 +110,7 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeHAIOSRoutes(v1, osHandler)
 		initializeTaskRoutes(v1, task.NewHandler(taskService))
+		initializePhase2Routes(v1, phase2.DefaultModule().Handler())
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
@@ -321,6 +323,20 @@ func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandl
 		verificationRoutes.GET("/runs", verificationHandler.Runs)
 		verificationRoutes.GET("/runs/:id", verificationHandler.RunDetails)
 	}
+}
+
+func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler) {
+	ops := apiVersion.Group("/operations")
+	{
+		ops.GET("", handler.ListOperations)
+		ops.GET("/dashboard", handler.Dashboard)
+		ops.GET("/:id", handler.GetOperation)
+		ops.GET("/:id/events", handler.OperationEvents)
+		ops.POST("/:id/approve", handler.Approve)
+		ops.POST("/:id/run", handler.RunOperation)
+	}
+	apiVersion.POST("/background/run", handler.RunBackground)
+	apiVersion.GET("/account-feeds", handler.ListFeeds)
 }
 
 func defaultFeatureFlags() *featureflags.Store {

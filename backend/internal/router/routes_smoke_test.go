@@ -111,6 +111,16 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	verificationRoutes.GET("/runs", mark("verificationRuns"))
 	verificationRoutes.GET("/runs/:id", mark("verificationRunDetails"))
 
+	operationsRoutes := r.Group("/api/v1").Group("/operations")
+	operationsRoutes.GET("", mark("operationsList"))
+	operationsRoutes.GET("/dashboard", mark("operationsDashboard"))
+	operationsRoutes.GET("/:id", mark("operationsGet"))
+	operationsRoutes.GET("/:id/events", mark("operationsEvents"))
+	operationsRoutes.POST("/:id/approve", mark("operationsApprove"))
+	operationsRoutes.POST("/:id/run", mark("operationsRun"))
+	r.Group("/api/v1").POST("/background/run", mark("backgroundRun"))
+	r.Group("/api/v1").GET("/account-feeds", mark("accountFeeds"))
+
 	osRoutes := r.Group("/api/v1").Group("/os")
 	osRoutes.GET("/overview", mark("osOverview"))
 
