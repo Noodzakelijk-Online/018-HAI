@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
+	"os"
 	"strings"
 
 	"automation-hub-backend/docs"
+	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/agentcycle"
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
@@ -117,11 +119,18 @@ func initializeRoutes(router *gin.Engine) error {
 		modelIntelService := modelintelligence.DefaultService()
 		initializeModelIntelligenceRoutes(v1, modelintelligence.NewHandler(modelIntelService))
 		initializeHardwareRoutes(v1, hardwareprofile.NewHandler(hardwareprofile.DefaultService()))
-		initializePrivacyRoutes(v1, privacyfilter.DefaultHandler())
+		privacyService := privacyfilter.DefaultService()
+		initializePrivacyRoutes(v1, privacyfilter.NewHandler(privacyService))
 		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
 		initializePhase2Routes(v1, phase2Module.Handler())
 		runtimeLabService := runtimelab.NewService(phase2Module.Broker(), phase2Module.Service(), phase2Module.OwnerUserID(), phase2Module.WorkspaceID())
 		initializeRuntimeLabRoutes(v1, runtimelab.NewHandler(runtimeLabService))
+		feedRegistry := accountfeed.NewRegistry(phase2Module.Service(), privacyService, accountfeed.FetchOptions{
+			FeedsRoot: phase2Module.FeedsDir(),
+			AllowHTTP: strings.EqualFold(strings.TrimSpace(os.Getenv("HAI_PHASE2_ALLOW_HTTP_FEEDS")), "true"),
+		})
+		seedAccountFeeds(feedRegistry, phase2Module)
+		initializeAccountFeedRoutes(v1, accountfeed.NewHandler(feedRegistry, phase2Module.OwnerUserID(), phase2Module.WorkspaceID()))
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
@@ -347,7 +356,42 @@ func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler
 		ops.POST("/:id/run", handler.RunOperation)
 	}
 	apiVersion.POST("/background/run", handler.RunBackground)
-	apiVersion.GET("/account-feeds", handler.ListFeeds)
+}
+
+func initializeAccountFeedRoutes(apiVersion *gin.RouterGroup, handler *accountfeed.Handler) {
+	af := apiVersion.Group("/account-feeds")
+	{
+		af.GET("", handler.List)
+		af.POST("", handler.Create)
+		af.GET("/bridges", handler.Bridges)
+		af.GET("/permissions", handler.Permissions)
+		af.POST("/sync-due", handler.SyncDue)
+		af.GET("/:id", handler.Get)
+		af.PATCH("/:id", handler.Patch)
+		af.POST("/:id/sync", handler.Sync)
+		af.GET("/:id/audit", handler.Audit)
+	}
+}
+
+// seedAccountFeeds registers the module's configured local feed files so they
+// appear in the Account Feeds API and can be synced on demand.
+func seedAccountFeeds(reg *accountfeed.Registry, m *phase2.Module) {
+	for _, name := range m.FeedFiles() {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		_, _ = reg.Register(accountfeed.Feed{
+			Name:         strings.TrimSuffix(name, ".json"),
+			Provider:     string(accountfeed.ProviderGenericJSONFeed),
+			AccountLabel: name,
+			SourceType:   accountfeed.SourceLocalJSONFile,
+			Path:         name,
+			OwnerUserID:  m.OwnerUserID(),
+			WorkspaceID:  m.WorkspaceID(),
+			Enabled:      true,
+		})
+	}
 }
 
 func initializeModelIntelligenceRoutes(apiVersion *gin.RouterGroup, handler *modelintelligence.Handler) {

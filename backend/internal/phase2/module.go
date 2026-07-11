@@ -100,6 +100,12 @@ func (m *Module) OwnerUserID() string { return m.cfg.OwnerUserID }
 // WorkspaceID returns the configured workspace id.
 func (m *Module) WorkspaceID() string { return m.cfg.WorkspaceID }
 
+// FeedsDir returns the configured feeds directory (allowlisted feed root).
+func (m *Module) FeedsDir() string { return m.cfg.FeedsDir }
+
+// FeedFiles returns the configured local feed filenames.
+func (m *Module) FeedFiles() []string { return m.cfg.FeedFiles }
+
 // Worker exposes the background worker.
 func (m *Module) Worker() *background.Worker { return m.worker }
 

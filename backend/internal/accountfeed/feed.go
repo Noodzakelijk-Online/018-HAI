@@ -22,16 +22,19 @@ type SourceType string
 const (
 	// SourceLocalJSONFile reads items from a local JSON file (Phase 2A).
 	SourceLocalJSONFile SourceType = "local_json_file"
+	// SourceHTTPJSONFeed reads items from an HTTP JSON feed URL (only if enabled).
+	SourceHTTPJSONFeed SourceType = "http_json_feed"
 )
 
 // Feed is a registered account feed configuration.
 type Feed struct {
 	ID            uuid.UUID  `json:"id"`
 	Name          string     `json:"name"`
-	Provider      string     `json:"provider"`     // e.g. "local", "gmail" (label only in 2A)
+	Provider      string     `json:"provider"`     // one of the supported provider contracts
 	AccountLabel  string     `json:"accountLabel"` // which account this feed represents
 	SourceType    SourceType `json:"sourceType"`
-	Path          string     `json:"path"` // for SourceLocalJSONFile, the item filename
+	Path          string     `json:"path,omitempty"` // for SourceLocalJSONFile, the item filename
+	URL           string     `json:"url,omitempty"`  // for SourceHTTPJSONFeed
 	WorkspaceID   string     `json:"workspaceId"`
 	OwnerUserID   string     `json:"ownerUserId"`
 	ProjectKey    string     `json:"projectKey"`
@@ -51,6 +54,13 @@ func (f Feed) Validate() error {
 	case SourceLocalJSONFile:
 		if strings.TrimSpace(f.Path) == "" {
 			return fmt.Errorf("accountfeed: path required for %s", f.SourceType)
+		}
+	case SourceHTTPJSONFeed:
+		if strings.TrimSpace(f.URL) == "" {
+			return fmt.Errorf("accountfeed: url required for %s", f.SourceType)
+		}
+		if err := validateFeedURL(f.URL); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("accountfeed: unsupported sourceType %q", f.SourceType)

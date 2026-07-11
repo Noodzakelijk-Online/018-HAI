@@ -119,7 +119,17 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	operationsRoutes.POST("/:id/approve", mark("operationsApprove"))
 	operationsRoutes.POST("/:id/run", mark("operationsRun"))
 	r.Group("/api/v1").POST("/background/run", mark("backgroundRun"))
-	r.Group("/api/v1").GET("/account-feeds", mark("accountFeeds"))
+
+	af := r.Group("/api/v1").Group("/account-feeds")
+	af.GET("", mark("afList"))
+	af.POST("", mark("afCreate"))
+	af.GET("/bridges", mark("afBridges"))
+	af.GET("/permissions", mark("afPermissions"))
+	af.POST("/sync-due", mark("afSyncDue"))
+	af.GET("/:id", mark("afGet"))
+	af.PATCH("/:id", mark("afPatch"))
+	af.POST("/:id/sync", mark("afSync"))
+	af.GET("/:id/audit", mark("afAudit"))
 
 	mi := r.Group("/api/v1").Group("/model-intelligence")
 	mi.GET("/overview", mark("miOverview"))
