@@ -107,6 +107,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "model-intelligence",
+    loadChildren: () =>
+      import("./pages/model-intelligence/model-intelligence.module").then(
+        (m) => m.ModelIntelligenceModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "onboarding",
     loadChildren: () =>
       import("./pages/onboarding/onboarding.module").then(

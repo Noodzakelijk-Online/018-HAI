@@ -147,6 +147,7 @@ export class ControlCenterComponent implements OnInit {
       items: [
         { label: 'Brain Settings', icon: 'safety-certificate', route: '/ambient-brain' },
         { label: 'Models', icon: 'deployment-unit', route: '/llm-policy' },
+        { label: 'Model Intelligence', icon: 'experiment', route: '/model-intelligence' },
       ],
     },
   ]
