@@ -148,6 +148,12 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	privacy.GET("/scans", mark("privacyScans"))
 	privacy.GET("/scans/:id", mark("privacyScanByID"))
 
+	rl := r.Group("/api/v1").Group("/runtime-lab")
+	rl.GET("/overview", mark("rlOverview"))
+	rl.POST("/:runtimeId/probe", mark("rlProbe"))
+	rl.POST("/:runtimeId/self-test", mark("rlSelfTest"))
+	rl.GET("/:runtimeId/attempts", mark("rlAttempts"))
+
 	osRoutes := r.Group("/api/v1").Group("/os")
 	osRoutes.GET("/overview", mark("osOverview"))
 

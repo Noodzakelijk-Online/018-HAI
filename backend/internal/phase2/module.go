@@ -91,6 +91,15 @@ func DefaultModuleWithModelIntel(mi *modelintelligence.Service) *Module {
 // Service exposes the Operation Ledger service.
 func (m *Module) Service() *operations.Service { return m.svc }
 
+// Broker exposes the execution broker (e.g. for the Runtime Lab).
+func (m *Module) Broker() *executionbroker.Broker { return m.broker }
+
+// OwnerUserID returns the configured single operator id.
+func (m *Module) OwnerUserID() string { return m.cfg.OwnerUserID }
+
+// WorkspaceID returns the configured workspace id.
+func (m *Module) WorkspaceID() string { return m.cfg.WorkspaceID }
+
 // Worker exposes the background worker.
 func (m *Module) Worker() *background.Worker { return m.worker }
 

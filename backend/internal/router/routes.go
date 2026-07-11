@@ -27,6 +27,7 @@ import (
 	"automation-hub-backend/internal/phase2"
 	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/runtimelab"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
@@ -117,7 +118,10 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeModelIntelligenceRoutes(v1, modelintelligence.NewHandler(modelIntelService))
 		initializeHardwareRoutes(v1, hardwareprofile.NewHandler(hardwareprofile.DefaultService()))
 		initializePrivacyRoutes(v1, privacyfilter.DefaultHandler())
-		initializePhase2Routes(v1, phase2.DefaultModuleWithModelIntel(modelIntelService).Handler())
+		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
+		initializePhase2Routes(v1, phase2Module.Handler())
+		runtimeLabService := runtimelab.NewService(phase2Module.Broker(), phase2Module.Service(), phase2Module.OwnerUserID(), phase2Module.WorkspaceID())
+		initializeRuntimeLabRoutes(v1, runtimelab.NewHandler(runtimeLabService))
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
@@ -383,6 +387,16 @@ func initializePrivacyRoutes(apiVersion *gin.RouterGroup, handler *privacyfilter
 		privacy.POST("/scan", handler.ScanContent)
 		privacy.GET("/scans", handler.Scans)
 		privacy.GET("/scans/:id", handler.ScanByID)
+	}
+}
+
+func initializeRuntimeLabRoutes(apiVersion *gin.RouterGroup, handler *runtimelab.Handler) {
+	rl := apiVersion.Group("/runtime-lab")
+	{
+		rl.GET("/overview", handler.Overview)
+		rl.POST("/:runtimeId/probe", handler.Probe)
+		rl.POST("/:runtimeId/self-test", handler.SelfTest)
+		rl.GET("/:runtimeId/attempts", handler.Attempts)
 	}
 }
 
