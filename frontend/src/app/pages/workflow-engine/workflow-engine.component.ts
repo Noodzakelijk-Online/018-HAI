@@ -182,16 +182,25 @@ export class WorkflowEngineComponent implements OnInit {
       });
       return;
     }
-    this.workflowService.intake(this.intakeForm.value).subscribe({
-      next: (record) => {
-        this.selected = record;
+    this.pursuitService.routeIntake(this.intakeForm.value).subscribe({
+      next: (result) => {
         this.saving = false;
-        this.notification.success('Workflow created', 'Input classified, checklist generated, and audit event recorded.');
+        this.pursuitMatches = result.matches || [];
+        if (result.detail) {
+          this.selectNewestPursuitWorkflow(result.detail);
+        }
+        if (result.mode === 'matched_existing') {
+          this.notification.success('Workflow linked to pursuit', 'HAI matched this input to an existing pursuit before creating governed work.');
+        } else if (result.createdCandidate) {
+          this.notification.success('Pursuit candidate created', 'HAI created governed work and a reviewable pursuit candidate because no existing pursuit matched.');
+        } else {
+          this.notification.success('Workflow created', result.message || 'Input classified, checklist generated, and audit event recorded.');
+        }
         this.refresh(false, true);
       },
       error: () => {
         this.saving = false;
-        this.notification.error('Error', 'Failed to intake workflow input.');
+        this.notification.error('Error', 'Failed to match and intake workflow input.');
       },
     });
   }
