@@ -522,6 +522,9 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 	if title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
+	contextText := title + " " + request.Description + " " + request.DesiredOutcome
+	riskLevel := conservativeRisk(request.RiskLevel, classifyRisk(contextText))
+	autonomyLevel := conservativeAutonomy(request.AutonomyLevel, riskLevel)
 	now := time.Now().UTC()
 	nextReviewAt := parseOptionalTime(request.NextReviewAt)
 	pursuit := &models.Pursuit{
@@ -534,10 +537,10 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		CurrentStateSummary:   strings.TrimSpace(request.CurrentStateSummary),
 		Status:                firstNonEmpty(request.Status, StatusActive),
 		PriorityScore:         clampInt(request.PriorityScore, 0, 100, 50),
-		RiskLevel:             firstNonEmpty(request.RiskLevel, classifyRisk(title+" "+request.Description+" "+request.DesiredOutcome)),
+		RiskLevel:             riskLevel,
 		Confidence:            normalizeConfidence(request.Confidence, 0.7),
-		AutonomyLevel:         firstNonEmpty(request.AutonomyLevel, defaultAutonomy(classifyRisk(title+" "+request.Description+" "+request.DesiredOutcome))),
-		NeedCategory:          firstNonEmpty(request.NeedCategory, classifyNeed(title+" "+request.Description+" "+request.DesiredOutcome)),
+		AutonomyLevel:         autonomyLevel,
+		NeedCategory:          firstNonEmpty(request.NeedCategory, classifyNeed(contextText)),
 		SourceOfCreation:      firstNonEmpty(request.SourceOfCreation, "manual"),
 		NextRecommendedAction: strings.TrimSpace(request.NextRecommendedAction),
 		CompletionDefinition:  strings.TrimSpace(request.CompletionDefinition),
@@ -556,6 +559,9 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		return nil, err
 	}
 	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, firstNonEmpty(request.Actor, "operator"), "", "", "")
+	if policyWasNormalized(request.RiskLevel, request.AutonomyLevel, riskLevel, autonomyLevel) {
+		_, _ = s.recordActivity(created.ID, "pursuit.safety_normalized", "Pursuit safety policy normalized from the goal context: "+riskLevel+" risk / "+autonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	}
 	return created, nil
 }
 
@@ -578,6 +584,8 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 			return nil, fmt.Errorf("pursuit completion requires verified evidence, linked verification, or a verified completed workflow before it can be marked complete: %s", reason)
 		}
 	}
+	priorRiskLevel := pursuit.RiskLevel
+	priorAutonomyLevel := pursuit.AutonomyLevel
 	if strings.TrimSpace(request.Title) != "" {
 		pursuit.Title = strings.TrimSpace(request.Title)
 	}
@@ -592,12 +600,9 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 	if request.Status != "" {
 		pursuit.Status = strings.TrimSpace(request.Status)
 	}
-	if request.RiskLevel != "" {
-		pursuit.RiskLevel = strings.TrimSpace(request.RiskLevel)
-	}
-	if request.AutonomyLevel != "" {
-		pursuit.AutonomyLevel = strings.TrimSpace(request.AutonomyLevel)
-	}
+	contextText := pursuit.Title + " " + pursuit.Description + " " + pursuit.DesiredOutcome
+	pursuit.RiskLevel = conservativeRisk(firstNonEmpty(request.RiskLevel, pursuit.RiskLevel), classifyRisk(contextText))
+	pursuit.AutonomyLevel = conservativeAutonomy(firstNonEmpty(request.AutonomyLevel, pursuit.AutonomyLevel), pursuit.RiskLevel)
 	if request.CompletionState != "" {
 		pursuit.CompletionState = strings.TrimSpace(request.CompletionState)
 	}
@@ -628,6 +633,9 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 		return nil, err
 	}
 	_, _ = s.recordActivity(id, "pursuit.updated", "Pursuit details updated", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	if !strings.EqualFold(priorRiskLevel, updated.RiskLevel) || !strings.EqualFold(priorAutonomyLevel, updated.AutonomyLevel) {
+		_, _ = s.recordActivity(id, "pursuit.safety_normalized", "Pursuit safety policy recalculated from the current goal context: "+updated.RiskLevel+" risk / "+updated.AutonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	}
 	return updated, nil
 }
 
@@ -4067,6 +4075,89 @@ func defaultAutonomy(risk string) string {
 		return "suggest"
 	}
 	return "autonomous_safe"
+}
+
+// conservativeRisk prevents a manually supplied label from downgrading risk
+// detected from the pursuit's own goal, description, and desired outcome.
+// A caller can always make a pursuit more conservative, never less so.
+func conservativeRisk(requested, detected string) string {
+	requested = normalizeRisk(requested)
+	detected = normalizeRisk(detected)
+	if detected == "" {
+		detected = "medium"
+	}
+	if riskRank(requested) > riskRank(detected) {
+		return requested
+	}
+	return detected
+}
+
+func normalizeRisk(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func riskRank(value string) int {
+	switch normalizeRisk(value) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// conservativeAutonomy keeps the pursuit label no more permissive than its
+// risk class. It is a presentation and planning guard; the workflow/task
+// engine remains the authority for any real execution.
+func conservativeAutonomy(requested, risk string) string {
+	requested = normalizeAutonomy(requested)
+	switch normalizeRisk(risk) {
+	case "high":
+		switch requested {
+		case "manual", "suggest", "approve_before_execute":
+			return requested
+		default:
+			return "approve_before_execute"
+		}
+	case "medium":
+		switch requested {
+		case "manual", "suggest", "approve_before_execute":
+			return requested
+		default:
+			return "suggest"
+		}
+	default:
+		switch requested {
+		case "manual", "suggest", "approve_before_execute", "autonomous_safe":
+			return requested
+		default:
+			return "autonomous_safe"
+		}
+	}
+}
+
+func normalizeAutonomy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "manual", "suggest", "approve_before_execute", "autonomous_safe", "autonomous_full_local_only":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func policyWasNormalized(requestedRisk, requestedAutonomy, risk, autonomy string) bool {
+	if strings.TrimSpace(requestedRisk) != "" && !strings.EqualFold(normalizeRisk(requestedRisk), risk) {
+		return true
+	}
+	return strings.TrimSpace(requestedAutonomy) != "" && !strings.EqualFold(normalizeAutonomy(requestedAutonomy), autonomy)
 }
 
 func normalizeWords(text string) map[string]bool {

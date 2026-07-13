@@ -35,6 +35,67 @@ func TestCreateClassifiesAndAuditsPursuit(t *testing.T) {
 	}
 }
 
+func TestCreateCannotDowngradeDetectedHighRiskOrUpgradeAutonomy(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+
+	created, err := service.Create(CreateRequest{
+		Title:         "Send legal evidence to the government",
+		Description:   "Prepare the lawyer reply and attach the insurance evidence.",
+		RiskLevel:     "low",
+		AutonomyLevel: "autonomous_full_local_only",
+		Actor:         "test-operator",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if created.RiskLevel != "high" || created.AutonomyLevel != "approve_before_execute" {
+		t.Fatalf("unsafe policy override was accepted: %q/%q", created.RiskLevel, created.AutonomyLevel)
+	}
+	activity, _ := repo.FindActivities(created.ID, 10)
+	foundNormalization := false
+	for _, item := range activity {
+		if item.EventType == "pursuit.safety_normalized" && item.Actor == "test-operator" {
+			foundNormalization = true
+		}
+	}
+	if !foundNormalization {
+		t.Fatalf("safety normalization was not audited: %#v", activity)
+	}
+}
+
+func TestUpdateCannotDowngradeRiskWhenGoalBecomesHighRisk(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Organize documents", RiskLevel: "low", AutonomyLevel: "autonomous_safe"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	description := "Prepare the legal evidence bundle and lawyer reply."
+	updated, err := service.Update(created.ID, UpdateRequest{
+		Description:   &description,
+		RiskLevel:     "low",
+		AutonomyLevel: "autonomous_safe",
+		Actor:         "test-operator",
+	})
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if updated.RiskLevel != "high" || updated.AutonomyLevel != "approve_before_execute" {
+		t.Fatalf("unsafe update override was accepted: %q/%q", updated.RiskLevel, updated.AutonomyLevel)
+	}
+	activity, _ := repo.FindActivities(created.ID, 10)
+	foundNormalization := false
+	for _, item := range activity {
+		if item.EventType == "pursuit.safety_normalized" && item.Actor == "test-operator" {
+			foundNormalization = true
+		}
+	}
+	if !foundNormalization {
+		t.Fatalf("updated safety normalization was not audited: %#v", activity)
+	}
+}
+
 func TestMatchUsesProjectAndExistingSourceLink(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

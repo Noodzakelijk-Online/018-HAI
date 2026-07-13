@@ -27,6 +27,7 @@ func (h *Handler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = verifiedActor(c, "")
 	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Create(request)
 	if err != nil {

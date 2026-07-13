@@ -19,6 +19,15 @@ func TestVerifiedActorUsesAuthenticatedPrincipal(t *testing.T) {
 	}
 }
 
+func TestVerifiedActorCanLeaveOwnerUnsetWithoutSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	if got := verifiedActor(context, ""); got != "" {
+		t.Fatalf("verifiedActor() = %q, want empty owner without an authenticated session", got)
+	}
+}
+
 func TestVerifiedActorDoesNotUseClientSuppliedActor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
