@@ -78,6 +78,12 @@ services:
       IMAGE_SAVE_DIR: ${IMAGE_SAVE_DIR}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
+      REDIS_ADDR: ${REDIS_ADDR}
+      # Shared with the IDP so identityMiddleware can verify IDP-issued JWTs.
+      # Without it the backend cannot validate per-user tokens and silently
+      # falls back to the shared-key single-operator model.
+      JWT_SECRET: ${JWT_SECRET}
+      RUN_MODE: ${RUN_MODE}
       LLM_POLICY_JSON: ${LLM_POLICY_JSON}
       LLM_PROVIDERS_JSON: ${LLM_PROVIDERS_JSON}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
@@ -235,12 +241,19 @@ services:
       - ./automation-scripts:/root/automation-scripts:ro
       - ./connected-sources:/root/connected-sources:ro
       - ./agent-workspaces:/root/agent-workspaces
+    # /readyz, not a TCP probe: an open socket only proves the process is
+    # listening. curl -f fails on the 503 that /readyz returns when a critical
+    # dependency is unreachable, so `docker ps` stops reporting a backend with a
+    # dead database as healthy.
     healthcheck:
-      test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${SERVER_PORT}'"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${SERVER_PORT}/readyz > /dev/null"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      # 3 strikes (~30s) before unhealthy: long enough to ride out a dependency
+      # blip, short enough that a real outage is reflected quickly. start_period
+      # still covers the slower first boot while migrations run.
+      retries: 3
+      start_period: 40s
     networks:
       - service-hub
       - automation-hub-network
@@ -283,7 +296,7 @@ services:
       idp:
         condition: service_started
     ports:
-      - "80:80"
+      - "${GATEWAY_HOST_PORT:-8088}:80"
     volumes:
       - ./nginx-config/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ./nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro
@@ -329,7 +342,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${IDP_DB_NAME}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:${IDP_DB_HOST_PORT:-5433}:5432"
     volumes:
       - postgres-idp-data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -352,7 +365,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${AUTOMATION_DB_NAME}
     ports:
-      - "5434:5432"
+      - "127.0.0.1:${AUTOMATION_DB_HOST_PORT:-5434}:5432"
     volumes:
       - postgres-automation-data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -372,7 +385,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--port", "${REDIS_PORT}"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "${REDIS_PORT}", "ping"]
       interval: 10s
@@ -380,7 +393,11 @@ services:
       retries: 12
       start_period: 10s
     networks:
+      # Also on automation-hub-network so the backend can reach it: Redis was
+      # previously idp-network only, unreachable from the backend, which is why
+      # nothing but the IDP ever used it.
       - idp-network
+      - automation-hub-network
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1

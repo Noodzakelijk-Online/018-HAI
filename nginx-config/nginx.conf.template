@@ -16,7 +16,29 @@ http {
             proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
         }
 
-        location ~ ^/api/v1/(agent-runtimes|assistant|ambient|automation|autonomy|llm|memory|memory-engine|pursuits|task|sources|verification|os|workflow)(/|$) {
+        # Backend route groups. Anything not listed here falls through to the
+        # IDP below and 404s, so this list must track the groups the backend
+        # actually registers (agent-cycle, flags and system were previously
+        # served by the backend but unreachable through the gateway).
+        location ~ ^/api/v1/(agent-cycle|agent-runtimes|ambient|assistant|automation|autonomy|flags|llm|memory|memory-engine|pursuits|sources|system|task|verification|os|workflow)(/|$) {
+            auth_request /auth-verify;
+            proxy_pass http://backend:80;
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header Cookie $http_cookie;
+            proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
+        }
+
+        # Liveness: no authentication, and it reveals nothing beyond "the
+        # process is up" — safe for an uptime check to poll.
+        location = /healthz {
+            proxy_pass http://backend:80;
+        }
+
+        # Readiness names hosts, brokers and which secrets are still
+        # placeholders, so it stays behind the same auth as the API. Docker's
+        # healthcheck reaches the backend directly on the compose network and
+        # is unaffected by this.
+        location = /readyz {
             auth_request /auth-verify;
             proxy_pass http://backend:80;
             proxy_set_header X-Original-URI $request_uri;

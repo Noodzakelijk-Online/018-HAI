@@ -18,3 +18,7 @@ backend/images/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local verification artifacts (may contain session tokens, build logs).
+.verify/
+.playwright-mcp/
