@@ -18,6 +18,7 @@ import (
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
+	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
@@ -38,8 +39,13 @@ func initializeRoutes(router *gin.Engine) error {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
-	router.GET("/readyz", readinessHandler(func() doctor.Report {
-		return doctor.Diagnose(config.AppConfig)
+	router.GET("/readyz", readinessHandler(func(ctx context.Context) doctor.Report {
+		// Static configuration diagnosis, then live dependency probes. The
+		// second half is what makes the answer trustworthy: without it a
+		// process with an unreachable database still reports itself ready.
+		configured := doctor.Diagnose(config.AppConfig)
+		live := doctor.RunProbes(ctx, health.DefaultTimeout, health.Probes(config.AppConfig))
+		return configured.Merge(live...)
 	}))
 
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"

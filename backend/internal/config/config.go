@@ -28,6 +28,7 @@ const (
 	rateLimitPerMin  string = "RATE_LIMIT_PER_MINUTE"
 	runMode          string = "RUN_MODE"
 	jwtSecret        string = "JWT_SECRET"
+	redisAddr        string = "REDIS_ADDR"
 )
 
 type Configuration struct {
@@ -45,6 +46,7 @@ type Configuration struct {
 	ImageSaveDir    string
 	Brokers         []string
 	Topic           string
+	RedisAddr       string
 	BackendAPIKey      string
 	MemoryEngineKey    string
 	RateLimitPerMinute int
@@ -81,6 +83,7 @@ func Init() {
 		ImageSaveDir:    getEnvString(imageSaveDir, "images"),
 		Brokers:         kafkaBrokersList,
 		Topic:           getEnvString(kafkaTopic, "automation-events"),
+		RedisAddr:       getEnvString(redisAddr, ""),
 		BackendAPIKey:      getEnvString(backendAPIKey, ""),
 		MemoryEngineKey:    getEnvString(memoryEngineKey, ""),
 		RateLimitPerMinute: getEnvInt(rateLimitPerMin, 0),
