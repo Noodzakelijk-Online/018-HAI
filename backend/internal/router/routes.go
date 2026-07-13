@@ -360,7 +360,9 @@ func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler
 		ops.POST("/:id/later", handler.Later)
 		ops.POST("/:id/block-similar", handler.BlockSimilar)
 		ops.POST("/:id/run", handler.RunOperation)
+		ops.POST("/:id/evidence-pack", handler.GenerateEvidencePack)
 	}
+	apiVersion.GET("/evidence-packs/:id", handler.GetEvidencePack)
 	apiVersion.POST("/background/run", handler.RunBackground)
 }
 

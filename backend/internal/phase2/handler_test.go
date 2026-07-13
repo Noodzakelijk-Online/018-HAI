@@ -49,6 +49,8 @@ func newTestServer(t *testing.T) (*gin.Engine, *Module) {
 	ops.POST("/:id/later", h.Later)
 	ops.POST("/:id/block-similar", h.BlockSimilar)
 	ops.POST("/:id/run", h.RunOperation)
+	ops.POST("/:id/evidence-pack", h.GenerateEvidencePack)
+	r.GET("/evidence-packs/:id", h.GetEvidencePack)
 	r.POST("/background/run", h.RunBackground)
 	r.GET("/account-feeds", h.ListFeeds)
 	return r, m

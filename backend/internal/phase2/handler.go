@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/background"
+	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/operations"
+	"automation-hub-backend/internal/privacyfilter"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -210,6 +212,42 @@ func (h *Handler) Approvals(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"operationId": op.ID, "requiresApproval": op.RequiresApproval, "status": op.Status, "approvals": approvals})
+}
+
+// GenerateEvidencePack builds + stores an evidence pack for an operation (§10.18).
+func (h *Handler) GenerateEvidencePack(c *gin.Context) {
+	owner, workspace := h.owner(c)
+	op, ok := h.loadOp(c, owner, workspace)
+	if !ok {
+		return
+	}
+	events, err := h.m.svc.Events(op.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	scan := privacyfilter.Scan(op.Title+"\n"+op.Description, 280)
+	var telemetry []modelintelligence.ModelRunTelemetry
+	if h.m.modelInt != nil {
+		for _, t := range h.m.modelInt.Telemetry() {
+			if t.OperationID == op.ID.String() {
+				telemetry = append(telemetry, t)
+			}
+		}
+	}
+	pack := buildEvidencePack(*op, events, scan, telemetry, time.Now().UTC())
+	stored := h.m.evidence.put(pack)
+	c.JSON(http.StatusCreated, stored)
+}
+
+// GetEvidencePack returns a stored evidence pack (§10.19).
+func (h *Handler) GetEvidencePack(c *gin.Context) {
+	pack, ok := h.m.evidence.Get(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "evidence pack not found"})
+		return
+	}
+	c.JSON(http.StatusOK, pack)
 }
 
 func (h *Handler) loadOp(c *gin.Context, owner, workspace string) (*models.Operation, bool) {

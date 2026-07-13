@@ -55,6 +55,8 @@ type Module struct {
 	worker     *background.Worker
 	readers    []accountfeed.Reader
 	blockRules *BlockRuleStore
+	modelInt   *modelintelligence.Service
+	evidence   *EvidencePackStore
 }
 
 // NewModule wires a module over an operations service and config.
@@ -78,7 +80,7 @@ func NewModule(svc *operations.Service, cfg Config) *Module {
 	})
 	blockRules := NewBlockRuleStore()
 	worker.WithBlockRules(blockRules)
-	return &Module{cfg: cfg, svc: svc, broker: broker, worker: worker, readers: readers, blockRules: blockRules}
+	return &Module{cfg: cfg, svc: svc, broker: broker, worker: worker, readers: readers, blockRules: blockRules, evidence: NewEvidencePackStore()}
 }
 
 // DefaultModule builds the module from env over the default (DB-backed) service.
@@ -92,6 +94,7 @@ func DefaultModule() *Module {
 func DefaultModuleWithModelIntel(mi *modelintelligence.Service) *Module {
 	m := NewModule(operations.DefaultService(), ConfigFromEnv())
 	m.worker.WithModelIntelligence(mi)
+	m.modelInt = mi
 	return m
 }
 

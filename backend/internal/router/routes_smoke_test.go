@@ -122,6 +122,8 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	operationsRoutes.POST("/:id/later", mark("operationsLater"))
 	operationsRoutes.POST("/:id/block-similar", mark("operationsBlockSimilar"))
 	operationsRoutes.POST("/:id/run", mark("operationsRun"))
+	operationsRoutes.POST("/:id/evidence-pack", mark("operationsEvidencePack"))
+	r.Group("/api/v1").GET("/evidence-packs/:id", mark("evidencePackGet"))
 	r.Group("/api/v1").POST("/background/run", mark("backgroundRun"))
 
 	bgctl := r.Group("/api/v1").Group("/background")
