@@ -68,25 +68,32 @@ echo "==> Building and starting backend on :${API_PORT}"
 mkdir -p "${IMAGES}"
 ( cd "${ROOT}/backend" && go build -o "${BIN}" ./cmd )
 
-DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
-  DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
-  BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
-  RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="smoke-jwt-secret" \
-  HAI_PHASE2_FEEDS_DIR="${FEEDS}" HAI_PHASE2_WORKSPACE_DIR="${WORKSPACE}" \
-  HAI_PHASE2_FEED_FILES="inbox.json" HAI_PHASE2_MODE="autonomous_safe" \
-  "${BIN}" > "${WORKDIR}/backend.log" 2>&1 &
-BACKEND_PID=$!
+start_backend() {
+  DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
+    DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
+    BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
+    RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="smoke-jwt-secret" \
+    HAI_PHASE2_FEEDS_DIR="${FEEDS}" HAI_PHASE2_WORKSPACE_DIR="${WORKSPACE}" \
+    HAI_PHASE2_FEED_FILES="inbox.json" HAI_PHASE2_MODE="autonomous_safe" \
+    "${BIN}" > "${WORKDIR}/backend.log" 2>&1 &
+  BACKEND_PID=$!
+}
 
+wait_live() {
+  local ready=""
+  for i in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null 2>&1; then ready=1; break; fi
+    if ! kill -0 "${BACKEND_PID}" 2>/dev/null; then
+      echo "backend exited early; log:"; tail -20 "${WORKDIR}/backend.log"; exit 1
+    fi
+    sleep 1
+  done
+  [ -n "${ready}" ] || { echo "backend never became live; log:"; tail -20 "${WORKDIR}/backend.log"; exit 1; }
+}
+
+start_backend
 echo "==> Waiting for liveness"
-ready=""
-for i in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null 2>&1; then ready=1; break; fi
-  if ! kill -0 "${BACKEND_PID}" 2>/dev/null; then
-    echo "backend exited early; log:"; tail -20 "${WORKDIR}/backend.log"; exit 1
-  fi
-  sleep 1
-done
-[ -n "${ready}" ] || { echo "backend never became live; log:"; tail -20 "${WORKDIR}/backend.log"; exit 1; }
+wait_live
 
 hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
 
@@ -144,6 +151,14 @@ echo "==> Token budgets are conservative by default"
 budgets="$(curl -sS "${hdr[@]}" "${BASE}/model-intelligence/token-budgets")"
 check "default context strategy is evidence_only" 'evidence_only' "$(echo "${budgets}" | jq -r '.contextStrategy')"
 check "default reasoning effort is low" 'low' "$(echo "${budgets}" | jq -r '.maximumReasoningEffort')"
+
+echo "==> Model telemetry is durable across a real backend restart (§18)"
+before="$(curl -sS "${hdr[@]}" "${BASE}/model-intelligence/telemetry" | jq -r '.telemetry | length')"
+kill "${BACKEND_PID}" 2>/dev/null; wait "${BACKEND_PID}" 2>/dev/null || true
+start_backend; wait_live
+after="$(curl -sS "${hdr[@]}" "${BASE}/model-intelligence/telemetry" | jq -r '.telemetry | length')"
+check "telemetry persisted before restart" 'true' "$([ "${before}" -ge 1 ] && echo true)"
+check "telemetry survives restart (durable)" 'true' "$([ "${after}" -ge "${before}" ] && [ "${after}" -ge 1 ] && echo true)"
 
 echo ""
 echo "==> Result: ${pass} passed, ${fail} failed"
