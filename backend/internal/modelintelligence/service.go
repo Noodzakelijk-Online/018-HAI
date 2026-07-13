@@ -46,8 +46,25 @@ func NewService(reg *Registry) *Service {
 	}
 }
 
-// DefaultService builds a service from the environment.
-func DefaultService() *Service { return NewService(NewRegistryFromEnv()) }
+// DefaultService builds a service from the environment with durable telemetry
+// when a database is available (telemetry survives restart, §18).
+func DefaultService() *Service {
+	s := NewService(NewRegistryFromEnv())
+	if repo := DefaultTelemetryRepository(); repo != nil {
+		s.WithTelemetryRepository(repo)
+	}
+	return s
+}
+
+// WithTelemetryRepository seeds the store from durable telemetry and persists
+// every future row. Returns the service for chaining.
+func (s *Service) WithTelemetryRepository(repo TelemetryRepository) *Service {
+	if rows, err := repo.LoadAll(); err == nil {
+		s.telemetry.Seed(rows)
+	}
+	s.telemetry.SetPersist(func(t ModelRunTelemetry) { _ = repo.Save(t) })
+	return s
+}
 
 // ProviderSummary is a provider's truthful status for the overview.
 type ProviderSummary struct {

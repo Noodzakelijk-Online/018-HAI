@@ -88,6 +88,8 @@ func RunMigrations(db *gorm.DB) error {
 		// Phase 2 — Operation Ledger (§7/§10.5).
 		&models.Operation{},
 		&models.OperationEvent{},
+		// Phase 2 — durable model telemetry (§18/§10.9).
+		&models.ModelRunTelemetry{},
 	); err != nil {
 		return err
 	}

@@ -22,23 +22,46 @@ type ModelRunTelemetry struct {
 	CreatedAt       time.Time   `json:"createdAt"`
 }
 
-// TelemetryStore is an in-process store of model-run telemetry.
+// TelemetryStore is an in-process store of model-run telemetry. It fronts an
+// optional durable repository: rows are persisted on Record and seeded on start,
+// so telemetry survives restart while queries stay in-memory-fast.
 type TelemetryStore struct {
 	mu      sync.Mutex
 	records []ModelRunTelemetry
 	seq     int
+	persist func(ModelRunTelemetry) // optional durable sink
 }
 
 // NewTelemetryStore builds an empty store.
 func NewTelemetryStore() *TelemetryStore { return &TelemetryStore{} }
 
-// Record appends a telemetry row and returns it with an assigned id.
-func (s *TelemetryStore) Record(t ModelRunTelemetry) ModelRunTelemetry {
+// SetPersist installs a durable sink called for every recorded row.
+func (s *TelemetryStore) SetPersist(fn func(ModelRunTelemetry)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.persist = fn
+}
+
+// Seed loads pre-existing (durable) telemetry into the store on startup.
+func (s *TelemetryStore) Seed(rows []ModelRunTelemetry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records = append(s.records, rows...)
+	s.seq += len(rows)
+}
+
+// Record appends a telemetry row (persisting it if a sink is set) and returns it
+// with an assigned id.
+func (s *TelemetryStore) Record(t ModelRunTelemetry) ModelRunTelemetry {
+	s.mu.Lock()
 	s.seq++
 	t.ID = "mrt-" + itoa(s.seq)
 	s.records = append(s.records, t)
+	persist := s.persist
+	s.mu.Unlock()
+	if persist != nil {
+		persist(t)
+	}
 	return t
 }
 
