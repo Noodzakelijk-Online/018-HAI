@@ -44,6 +44,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   resolvingEvidenceUri = '';
   inspectedEvidence?: IPursuitEvidenceResolution;
   inspectedRuntimeEvidence?: IAutomationLaunchEvent;
+  inspectedAction?: IPursuitAction;
   showCreate = false;
   includeArchived = false;
   private requestedPursuitId = '';
@@ -303,7 +304,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.creating = true;
     this.pursuitsService.create({
       ...this.createForm.value,
-      ownerIdentity: 'Robert Velhorst',
       sourceOfCreation: 'dashboard',
     }).subscribe({
       next: (pursuit) => {
@@ -331,7 +331,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       ...this.intakeForm.value,
       projectKey: this.selected.pursuit.projectKey,
       trigger: 'pursuit_dashboard',
-      actor: 'robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -354,7 +353,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.routedIntakeRunning = true;
     this.pursuitsService.routeIntake({
       ...this.routedIntakeForm.value,
-      actor: 'robert',
       trigger: 'pursuit_dashboard_global_intake',
     }).subscribe({
       next: (result) => {
@@ -405,7 +403,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.reviewing = true;
     this.pursuitsService.review(this.selected.pursuit.id, {
       action: 'complete',
-      actor: 'robert',
       note: 'Scheduled pursuit review completed from the dashboard.',
     }).subscribe({
       next: (detail) => {
@@ -428,7 +425,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.reviewing = true;
     this.pursuitsService.review(this.selected.pursuit.id, {
       action: 'snooze',
-      actor: 'robert',
       snoozeDays: days,
       note: `Scheduled pursuit review snoozed for ${days} days from the dashboard.`,
     }).subscribe({
@@ -451,7 +447,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     }
     this.planning = true;
     this.pursuitsService.plan(this.selected.pursuit.id, {
-      actor: 'robert',
       requiresReview: this.selected.pursuit.riskLevel === 'high',
       reviewReason: this.selected.pursuit.riskLevel === 'high'
         ? 'High-risk pursuit planning requires Robert approval before execution.'
@@ -489,6 +484,18 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   openWorkflow(workflowId?: string): void {
     this.router.navigate(['/workflow-engine'], { queryParams: workflowId ? { workflowId } : undefined });
+  }
+
+  openAction(action: IPursuitAction): void {
+    if (action.workflowId) {
+      this.openWorkflow(action.workflowId);
+      return;
+    }
+    this.inspectedAction = action;
+  }
+
+  closeAction(): void {
+    this.inspectedAction = undefined;
   }
 
   openAutomations(): void {
@@ -653,7 +660,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.detailLoading = true;
     this.pursuitsService.link(this.selected.pursuit.id, {
       ...this.linkForm.value,
-      actor: 'Robert',
     }).subscribe({
       next: () => {
         this.notification.success('Link added', 'The pursuit now includes this operational record.');
@@ -934,7 +940,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
         sourceLabel: decision.evidenceLabel || 'Robert approved pursuit next action',
         contentType: decision.decisionType,
         trigger: 'pursuit_decision_approved',
-        actor: 'Robert',
         requiresReview: decision.requiresApproval,
         reviewReason: decision.reason,
       }).subscribe({
@@ -959,7 +964,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       note: decision.noConsequence || `Robert rejected the proposed next action: ${decision.recommended}`,
       evidenceUri: decision.evidenceUri,
       evidenceLabel: decision.evidenceLabel,
-      actor: 'Robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -987,7 +991,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       note: approved ? decision.yesConsequence || decision.recommended : decision.noConsequence || 'Keep runtime attempt blocked until reviewed.',
       evidenceUri: decision.evidenceUri,
       evidenceLabel: decision.evidenceLabel,
-      actor: 'Robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -1015,44 +1018,34 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       return;
     }
     this.resolvingDecisionId = decision.id;
-    if (approved) {
-      this.pursuitsService.update(this.selected.pursuit.id, {
-        status: 'completed',
-        completionState: 'verified',
-        currentStateSummary: decision.yesConsequence,
-        actor: 'Robert',
-      }).subscribe({
-        next: () => {
-          this.resolvingDecisionId = '';
-          this.notification.success('Pursuit completed', 'Verified completion was recorded through the evidence guard.');
-          this.reloadSelectedAfterDecision();
-        },
-        error: (error) => {
-          this.resolvingDecisionId = '';
-          this.notification.error('Completion blocked', error?.error?.error || 'HAI could not verify enough evidence to close this pursuit.');
-        },
-      });
-      return;
-    }
     this.pursuitsService.resolveDecision(this.selected.pursuit.id, {
       decisionId: decision.id,
       decisionType: decision.decisionType,
-      approved: false,
+      approved,
       reason: decision.reason,
-      note: decision.noConsequence || 'Robert kept the pursuit active after completion review.',
+      note: approved
+        ? decision.yesConsequence || 'Robert approved verified pursuit completion.'
+        : decision.noConsequence || 'Robert kept the pursuit active after completion review.',
       evidenceUri: decision.evidenceUri,
       evidenceLabel: decision.evidenceLabel,
-      actor: 'Robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.resolvingDecisionId = '';
-        this.notification.success('Pursuit kept active', 'The completion review decision was recorded.');
+        this.notification.success(
+          approved ? 'Pursuit completed' : 'Pursuit kept active',
+          approved
+            ? 'Verified completion and the Robert decision were recorded in the audit trail.'
+            : 'The completion review decision was recorded.'
+        );
         this.load();
       },
       error: (error) => {
         this.resolvingDecisionId = '';
-        this.notification.error('Decision blocked', error?.error?.error || 'The completion review decision could not be recorded.');
+        this.notification.error(
+          approved ? 'Completion blocked' : 'Decision blocked',
+          error?.error?.error || 'The completion review decision could not be recorded.'
+        );
       },
     });
   }
@@ -1064,7 +1057,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.resolvingDecisionId = decision.id;
     if (approved) {
       this.pursuitsService.plan(this.selected.pursuit.id, {
-        actor: 'Robert',
         requiresReview: decision.riskLevel === 'high',
         reviewReason: decision.reason,
       }).subscribe({

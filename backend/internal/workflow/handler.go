@@ -3,6 +3,9 @@ package workflow
 import (
 	"net/http"
 	"strconv"
+	"strings"
+
+	"automation-hub-backend/internal/identity"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,6 +29,7 @@ func (h *Handler) Intake(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedWorkflowActor(c, "operator")
 	record, err := h.service.Intake(request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -88,6 +92,7 @@ func (h *Handler) Transition(c *gin.Context) {
 	// Generic state transitions cannot establish approval provenance.
 	// Approval-required workflows must use ResolveApproval.
 	request.Approved = false
+	request.Actor = verifiedWorkflowActor(c, "operator")
 	record, err := h.service.Transition(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -106,6 +111,7 @@ func (h *Handler) ResolveApproval(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedWorkflowActor(c, "operator")
 	record, err := h.service.ResolveApproval(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -124,7 +130,7 @@ func (h *Handler) ResolveInterruptedExecution(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	request.Actor = "operator"
+	request.Actor = verifiedWorkflowActor(c, "operator")
 	record, err := h.service.ResolveInterruptedExecution(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -148,6 +154,7 @@ func (h *Handler) ResolveProposal(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedWorkflowActor(c, "operator")
 	record, err := h.service.ResolveProposal(id, proposalID, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -171,12 +178,26 @@ func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedWorkflowActor(c, "operator")
 	record, err := h.service.UpdateChecklistItem(id, itemID, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, record)
+}
+
+// verifiedWorkflowActor ignores any actor label supplied in request JSON.
+// The router writes the verified IDP JWT subject into the Gin context; when
+// that identity path is absent in local development, audit records retain the
+// explicit generic operator fallback instead of a forged user name.
+func verifiedWorkflowActor(c *gin.Context, fallback string) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok && strings.TrimSpace(subject) != "" {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return fallback
 }
 
 func (h *Handler) RunDue(c *gin.Context) {

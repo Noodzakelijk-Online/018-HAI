@@ -384,7 +384,7 @@
                   <span>Robert-only</span>
                   <strong>{{ detail.actionQueues.needsRobert.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.needsRobert" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.needsRobert" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
@@ -396,7 +396,7 @@
                   <span>VA-ready</span>
                   <strong>{{ detail.actionQueues.vaReady.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.vaReady" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.vaReady" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
@@ -408,7 +408,7 @@
                   <span>System-ready</span>
                   <strong>{{ detail.actionQueues.systemReady.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.systemReady" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.systemReady" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
@@ -420,7 +420,7 @@
                   <span>Waiting</span>
                   <strong>{{ detail.actionQueues.waiting.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.waiting" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.waiting" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
@@ -435,8 +435,8 @@
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} · {{ action.riskLevel }} risk</span>
                 </div>
-                <button nz-button nzType="default" *ngIf="action.workflowId" (click)="openWorkflow(action.workflowId)">
-                  Open workflow
+                <button nz-button nzType="default" (click)="openAction(action)">
+                  {{ action.workflowId ? 'Open workflow' : 'Inspect action' }}
                 </button>
               </article>
                 <nz-empty *ngIf="!detail.nextActions.length" nzNotFoundContent="No next action generated yet."></nz-empty>
@@ -932,6 +932,47 @@
     </nz-content>
   </nz-layout>
 </section>
+
+<nz-modal
+  [nzVisible]="!!inspectedAction"
+  nzTitle="Action context"
+  nzWidth="620px"
+  [nzFooter]="null"
+  (nzOnCancel)="closeAction()"
+>
+  <ng-container *nzModalContent>
+    <section class="evidence-inspector" *ngIf="inspectedAction as action">
+      <header>
+        <span>{{ action.owner || 'HAI' }} action</span>
+        <nz-tag [nzColor]="action.riskLevel === 'high' ? 'error' : action.riskLevel === 'medium' ? 'warning' : 'success'">
+          {{ action.riskLevel || 'unknown' }} risk
+        </nz-tag>
+      </header>
+      <h3>{{ action.label }}</h3>
+      <p>{{ action.reason || 'No further context was recorded for this action.' }}</p>
+      <dl>
+        <div>
+          <dt>Owner</dt>
+          <dd>{{ action.owner || 'HAI' }}</dd>
+        </div>
+        <div>
+          <dt>Approval</dt>
+          <dd>{{ action.requiresApproval ? 'Required before consequential execution' : 'No additional pursuit approval flag' }}</dd>
+        </div>
+        <div *ngIf="action.yesLabel || action.noLabel">
+          <dt>Decision framing</dt>
+          <dd>{{ action.yesLabel || 'Yes' }} / {{ action.noLabel || 'No' }}</dd>
+        </div>
+      </dl>
+      <footer>
+        <button nz-button nzType="primary" *ngIf="action.workflowId" (click)="openWorkflow(action.workflowId)">
+          Open linked workflow
+        </button>
+        <button nz-button nzType="default" (click)="closeAction()">Done</button>
+      </footer>
+    </section>
+  </ng-container>
+</nz-modal>
 
 <nz-modal
   [nzVisible]="!!inspectedRuntimeEvidence"
