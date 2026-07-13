@@ -96,6 +96,11 @@ export class WorkflowEngineComponent implements OnInit {
 
   ngOnInit(): void {
     this.refresh();
+    this.intakeForm.valueChanges.subscribe(() => {
+      // A changed signal must be matched again; never link edited intake to a stale pursuit choice.
+      this.selectedPursuitMatch = undefined;
+      this.pursuitMatches = [];
+    });
     const workflowId = this.route.snapshot.queryParamMap.get('workflowId');
     if (workflowId) {
       this.workflowService.get(workflowId).subscribe({
