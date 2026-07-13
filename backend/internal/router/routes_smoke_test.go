@@ -116,7 +116,11 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	operationsRoutes.GET("/dashboard", mark("operationsDashboard"))
 	operationsRoutes.GET("/:id", mark("operationsGet"))
 	operationsRoutes.GET("/:id/events", mark("operationsEvents"))
+	operationsRoutes.GET("/:id/approvals", mark("operationsApprovals"))
 	operationsRoutes.POST("/:id/approve", mark("operationsApprove"))
+	operationsRoutes.POST("/:id/reject", mark("operationsReject"))
+	operationsRoutes.POST("/:id/later", mark("operationsLater"))
+	operationsRoutes.POST("/:id/block-similar", mark("operationsBlockSimilar"))
 	operationsRoutes.POST("/:id/run", mark("operationsRun"))
 	r.Group("/api/v1").POST("/background/run", mark("backgroundRun"))
 

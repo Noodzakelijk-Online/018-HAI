@@ -354,7 +354,11 @@ func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler
 		ops.GET("/dashboard", handler.Dashboard)
 		ops.GET("/:id", handler.GetOperation)
 		ops.GET("/:id/events", handler.OperationEvents)
+		ops.GET("/:id/approvals", handler.Approvals)
 		ops.POST("/:id/approve", handler.Approve)
+		ops.POST("/:id/reject", handler.Reject)
+		ops.POST("/:id/later", handler.Later)
+		ops.POST("/:id/block-similar", handler.BlockSimilar)
 		ops.POST("/:id/run", handler.RunOperation)
 	}
 	apiVersion.POST("/background/run", handler.RunBackground)

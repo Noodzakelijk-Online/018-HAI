@@ -39,14 +39,15 @@ type Options struct {
 
 // Worker orchestrates one background pass over feeds and the Operation Ledger.
 type Worker struct {
-	svc      *operations.Service
-	broker   *executionbroker.Broker
-	readers  []accountfeed.Reader
-	modelInt *modelintelligence.Service // optional; drives the fast-triage lane
-	control  Control                    // optional; live mode + emergency stop
-	opts     Options
-	now      func() time.Time
-	lease    *lease
+	svc        *operations.Service
+	broker     *executionbroker.Broker
+	readers    []accountfeed.Reader
+	modelInt   *modelintelligence.Service // optional; drives the fast-triage lane
+	control    Control                    // optional; live mode + emergency stop
+	blockRules BlockRules                 // optional; operator "block similar" rules
+	opts       Options
+	now        func() time.Time
+	lease      *lease
 }
 
 // New builds a worker. If opts.MaxOps <= 0 a default of 50 is used.
@@ -82,6 +83,18 @@ type Control interface {
 // WithControl attaches a live control source. Returns the worker for chaining.
 func (w *Worker) WithControl(c Control) *Worker {
 	w.control = c
+	return w
+}
+
+// BlockRules decides whether an operation matches an operator "block similar"
+// rule and must be blocked without autonomous processing.
+type BlockRules interface {
+	ShouldBlock(operationType, title string) (bool, string)
+}
+
+// WithBlockRules attaches a block-rule source consulted for every operation.
+func (w *Worker) WithBlockRules(b BlockRules) *Worker {
+	w.blockRules = b
 	return w
 }
 
@@ -195,6 +208,27 @@ func (w *Worker) processOne(ctx context.Context, op models.Operation, rep *Repor
 		Reversible:    true, // feed items default reversible; risk classifier bumps dangerous ones to approval
 		EmergencyStop: w.effectiveEmergencyStop(),
 	}, now)
+
+	// Operator "block similar" rules override the decision: matching work is
+	// blocked without any autonomous processing (§10.19 block-similar).
+	if w.blockRules != nil {
+		if blocked, reason := w.blockRules.ShouldBlock(op.OperationType, op.Title); blocked {
+			applyDecision(&op, decision, scan)
+			op.RiskLevel = string(operations.RiskHigh)
+			op.CurrentDecision = string(operations.DecisionBlock)
+			op.RecommendedAction = "blocked by operator rule"
+			classified, err := w.svc.Transition(op, operations.StatusClassified, "hai", "", "classified (block rule): "+reason)
+			if err != nil {
+				return err
+			}
+			rep.Classified++
+			if _, err := w.svc.Transition(*classified, operations.StatusBlocked, "hai", "", "blocked by operator rule: "+reason); err != nil {
+				return err
+			}
+			rep.Blocked++
+			return nil
+		}
+	}
 
 	applyDecision(&op, decision, scan)
 

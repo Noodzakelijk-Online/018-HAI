@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/background"
+	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/operations"
 
 	"github.com/gin-gonic/gin"
@@ -123,6 +124,106 @@ func (h *Handler) Approve(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, approved)
+}
+
+// Reject dismisses an awaiting-approval operation (§10.19).
+func (h *Handler) Reject(c *gin.Context) {
+	owner, workspace := h.owner(c)
+	op, ok := h.loadOp(c, owner, workspace)
+	if !ok {
+		return
+	}
+	dismissed, err := h.m.svc.Transition(*op, operations.StatusDismissed, string(operations.OwnerRobert), owner, "rejected by operator")
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, dismissed)
+}
+
+// Later postpones an awaiting-approval operation, holding it for a future review
+// without changing its status (§10.19).
+func (h *Handler) Later(c *gin.Context) {
+	owner, workspace := h.owner(c)
+	op, ok := h.loadOp(c, owner, workspace)
+	if !ok {
+		return
+	}
+	if op.Status != string(operations.StatusAwaitingApproval) {
+		c.JSON(http.StatusConflict, gin.H{"error": "operation is not awaiting approval"})
+		return
+	}
+	review := time.Now().UTC().Add(24 * time.Hour)
+	op.NextReviewAt = &review
+	saved, err := h.m.svc.Save(*op, "postponed", string(operations.OwnerRobert), "postponed by operator; will resurface for review")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, saved)
+}
+
+// BlockSimilar blocks this operation and registers a rule so future similar
+// operations are auto-blocked (§10.19).
+func (h *Handler) BlockSimilar(c *gin.Context) {
+	owner, workspace := h.owner(c)
+	op, ok := h.loadOp(c, owner, workspace)
+	if !ok {
+		return
+	}
+	reason := "operator blocked similar work to: " + op.Title
+	h.m.blockRules.Add(BlockRule{
+		OperationType: op.OperationType,
+		Reason:        reason,
+		SourceOpID:    op.ID.String(),
+		CreatedAt:     time.Now().UTC(),
+	})
+	blocked, err := h.m.svc.Transition(*op, operations.StatusBlocked, string(operations.OwnerRobert), owner, reason)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"operation": blocked, "rule": "future " + op.OperationType + " operations will be auto-blocked"})
+}
+
+// Approvals returns the approval-related audit events for an operation (§10.19).
+func (h *Handler) Approvals(c *gin.Context) {
+	owner, workspace := h.owner(c)
+	op, ok := h.loadOp(c, owner, workspace)
+	if !ok {
+		return
+	}
+	events, err := h.m.svc.Events(op.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	approvals := make([]models.OperationEvent, 0, len(events))
+	for _, e := range events {
+		switch {
+		case e.AfterStatus == string(operations.StatusAwaitingApproval),
+			e.AfterStatus == string(operations.StatusApproved),
+			e.AfterStatus == string(operations.StatusDismissed),
+			e.AfterStatus == string(operations.StatusBlocked),
+			e.EventType == "postponed":
+			approvals = append(approvals, e)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"operationId": op.ID, "requiresApproval": op.RequiresApproval, "status": op.Status, "approvals": approvals})
+}
+
+func (h *Handler) loadOp(c *gin.Context, owner, workspace string) (*models.Operation, bool) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return nil, false
+	}
+	op, err := h.m.svc.Get(owner, workspace, id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return nil, false
+	}
+	return op, true
 }
 
 // RunOperation executes an operation via the local safe worker and verifies it.

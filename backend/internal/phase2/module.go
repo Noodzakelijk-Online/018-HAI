@@ -49,11 +49,12 @@ func ConfigFromEnv() Config {
 
 // Module is the composition of the Phase 2 services.
 type Module struct {
-	cfg     Config
-	svc     *operations.Service
-	broker  *executionbroker.Broker
-	worker  *background.Worker
-	readers []accountfeed.Reader
+	cfg        Config
+	svc        *operations.Service
+	broker     *executionbroker.Broker
+	worker     *background.Worker
+	readers    []accountfeed.Reader
+	blockRules *BlockRuleStore
 }
 
 // NewModule wires a module over an operations service and config.
@@ -75,7 +76,9 @@ func NewModule(svc *operations.Service, cfg Config) *Module {
 		Mode:          cfg.Mode,
 		EmergencyStop: cfg.EmergencyStop,
 	})
-	return &Module{cfg: cfg, svc: svc, broker: broker, worker: worker, readers: readers}
+	blockRules := NewBlockRuleStore()
+	worker.WithBlockRules(blockRules)
+	return &Module{cfg: cfg, svc: svc, broker: broker, worker: worker, readers: readers, blockRules: blockRules}
 }
 
 // DefaultModule builds the module from env over the default (DB-backed) service.
