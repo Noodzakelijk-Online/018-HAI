@@ -12,17 +12,32 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 ## Current State
 
-The current `main` branch contains a working, tested operating layer:
+**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. It is a local deployment candidate with code-level and local-service verification; it is **not** yet a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
 
-- **User experience:** onboarding, quick capture, command dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
+What is implemented in this repository:
+
+- **User experience:** onboarding, quick capture, Command Dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
 - **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, and source-linked audit history.
-- **Knowledge and memory:** encrypted conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance.
-- **Connected sources:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync.
-- **Governance:** browser sessions and API bearer tokens are independently verified by the backend before their signed identity is used for audit attribution; client-supplied actor labels are ignored. Role-aware owner/operator/viewer RBAC applies when a verified IDP JWT includes a role claim (otherwise viewer), alongside approval gates, emergency stop, request rate limits, idempotency support, redacted audit records, path safety, runtime allowlists, and paid-model policy disabled by default.
-- **Runtime and providers:** local/free model routing with Ollama and OpenAI-compatible endpoints, plus controlled Hermes, Odysseus, and OpenClaw adapters. All runtime execution is disabled until configured and remains approval-, workspace-, timeout-, audit-, and verification-gated.
-- **Operations:** `/healthz`, `/readyz`, `backend doctor`, `backend reconcile`, support-bundle and build-information endpoints, feature flags, CI checks, Docker Compose validation, and a real-Postgres critical-path smoke test.
+- **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance.
+- **Connected-source import paths:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync.
+- **Governance:** the backend independently verifies browser-session or bearer JWTs before using a signed principal for audit attribution; client-supplied actor labels are ignored. Approval gates, emergency stop, request rate limits, idempotency, redacted audit records, path safety, runtime allowlists, and a paid-model policy disabled by default are implemented.
+- **Runtime and providers:** local/free model routing supports Ollama and OpenAI-compatible endpoints. Hermes, Odysseus, and OpenClaw are controlled adapters with bounded inventory/probe/execute paths. Every runtime remains disabled until explicitly configured and is subject to approval, workspace, timeout, audit, and verification gates.
+- **Operations:** `/healthz`, `/readyz`, `backend doctor`, `backend reconcile`, support-bundle and build-information endpoints, feature flags, CI checks, Docker Compose configuration validation, and a real-Postgres critical-path smoke test.
 
-Verified evidence is maintained in [the completion matrix](docs/codex-goal/completion-matrix.md) and [final verification report](docs/codex-goal/final-verification-report.md). The critical-path smoke has passed against a real local Postgres instance; backend and IDP tests, the Angular production build, and Compose configuration validation are part of the routine verification path.
+### Readiness At A Glance
+
+| Area | Repository status | What remains before it is trusted for real work |
+| --- | --- | --- |
+| Go API and Angular dashboard | Implemented; backend/IDP tests, Angular production build, and Compose configuration validation are part of CI. | Run the full Compose stack on the target Windows machine and exercise the intended user flows. |
+| Workflow, verification, memory, and pursuits | Implemented with persistence, audit history, approval gates, retry/review states, and safety normalization. | Use representative, non-sensitive source fixtures and review the resulting audit trail before enabling automation. |
+| Local/export source ingestion | Implemented for allowlisted local files and authorized exports. | OAuth/API connectors, webhooks, and a real account-specific bridge need separate scoped setup and live validation. |
+| GitHub source sync | Implemented as a read-only REST connector, token optional for public repositories. | Configure a least-privilege token where required and validate against the chosen repository. |
+| LLM routing | Local/free routing, endpoint guards, provider probes, fallback logging, and a EUR 0 paid default are implemented. | Install/configure a local model or free provider and pass a bounded live probe plus a representative validated task. |
+| Controlled execution | API/script/Docker adapters and task evidence gates are implemented; script and Docker control are disabled by default. | Enable one narrowly scoped adapter, then prove an approved end-to-end workflow without expanding device permissions. |
+| Hermes, Odysseus, and OpenClaw | Controlled adapter code and configuration surfaces are present; upstream software is not bundled. | Install/configure each upstream runtime separately, use dedicated workspaces/credentials, and validate one low-risk approved task at a time. |
+| Authentication and RBAC | Signed identity is revalidated by the backend; explicit RBAC routes default to viewer when a JWT has no role. | Add IDP role issuance and broaden permission checks before relying on multi-role operation. |
+
+Verified evidence is maintained in [the completion matrix](docs/codex-goal/completion-matrix.md), [final verification report](docs/codex-goal/final-verification-report.md), and [fresh-clone dry run](docs/fresh-clone-dryrun.md). The critical-path smoke has passed against a real local Postgres instance. That evidence proves the exercised local path, not live LLM, email, calendar, Drive, browser, or third-party-runtime correctness.
 
 ### Deliberate Boundaries
 
@@ -31,6 +46,7 @@ Verified evidence is maintained in [the completion matrix](docs/codex-goal/compl
 - A configured provider or runtime is not considered proven until its live probe and approved workflow are exercised on the target machine.
 - The full Docker Compose topology has configuration and health checks, but its end-to-end multi-service boot remains the main outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
 - The bundled IDP currently issues a stable `user_id` for authenticated-session attribution. It does not yet issue role claims, so endpoints with explicit RBAC checks default to viewer until role issuance is implemented.
+- The dashboard is an operator surface, not evidence that an external action ran. Completion and audit records remain authoritative only when they contain the required runtime, source, verification, and approval evidence.
 
 ## Repository Layout
 

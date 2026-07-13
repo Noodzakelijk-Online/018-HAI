@@ -2371,7 +2371,7 @@ func TestDeleteLinkRequiresOwningPursuit(t *testing.T) {
 	}
 	activities, _ := repo.FindActivities(first.ID, 20)
 	for _, activity := range activities {
-		if activity.Kind == "pursuit.link_removed" {
+		if activity.EventType == "pursuit.link_removed" {
 			if activity.Actor != "test-operator" {
 				t.Fatalf("link removal actor = %q, want verified actor", activity.Actor)
 			}
