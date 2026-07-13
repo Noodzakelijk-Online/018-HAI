@@ -122,6 +122,14 @@ const routes: Routes = [
       ),
     canActivate: [authGuard],
   },
+  {
+    path: "system-status",
+    loadChildren: () =>
+      import("./pages/system-status/system-status.module").then(
+        (m) => m.SystemStatusModule
+      ),
+    canActivate: [authGuard],
+  },
   // {
   //   path: 'home',
   //   loadChildren: () =>
