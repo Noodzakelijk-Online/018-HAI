@@ -37,6 +37,7 @@ const (
 const defaultAutoLinkMinimumScore = 0.45
 
 type CreateRequest struct {
+	Actor                 string  `json:"-"`
 	OwnerIdentity         string  `json:"ownerIdentity,omitempty"`
 	Title                 string  `json:"title"`
 	Description           string  `json:"description,omitempty"`
@@ -486,7 +487,7 @@ type Service interface {
 	ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
 	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
 	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
-	DeleteLink(id uuid.UUID, linkID uuid.UUID) error
+	DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error
 	Match(request MatchRequest) ([]MatchCandidate, error)
 	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
 	AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult, error)
@@ -554,7 +555,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, "operator", "", "", "")
+	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, firstNonEmpty(request.Actor, "operator"), "", "", "")
 	return created, nil
 }
 
@@ -1065,14 +1066,14 @@ func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, 
 	return created, nil
 }
 
-func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID) error {
+func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error {
 	if _, err := s.repo.FindByID(id); err != nil {
 		return err
 	}
 	if err := s.repo.DeleteLink(id, linkID); err != nil {
 		return err
 	}
-	_, _ = s.recordActivity(id, "pursuit.link_removed", "Removed pursuit link", "operator", "", linkID.String(), "")
+	_, _ = s.recordActivity(id, "pursuit.link_removed", "Removed pursuit link", firstNonEmpty(actor, "operator"), "", linkID.String(), "")
 	return nil
 }
 

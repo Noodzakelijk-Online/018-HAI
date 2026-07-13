@@ -21,11 +21,29 @@ var (
 	ErrExpired   = errors.New("identity: token expired")
 )
 
+const (
+	// ContextRoleKey and ContextSubjectKey identify verified JWT claims stored
+	// on a Gin request. Route handlers use these values for audit provenance.
+	ContextRoleKey    = "role"
+	ContextSubjectKey = "subject"
+)
+
 // Claims are the subset of JWT claims the backend cares about.
 type Claims struct {
 	Subject string `json:"sub"`
+	UserID  string `json:"user_id"`
 	Role    string `json:"role"`
 	Expiry  int64  `json:"exp,omitempty"`
+}
+
+// Principal returns the stable identity claim used by the issuing IDP. HAI's
+// bundled IDP emits user_id, while external OpenID-compatible issuers normally
+// emit sub. Supporting both keeps audit attribution tied to a signed claim.
+func (c Claims) Principal() string {
+	if subject := strings.TrimSpace(c.Subject); subject != "" {
+		return subject
+	}
+	return strings.TrimSpace(c.UserID)
 }
 
 type header struct {

@@ -18,7 +18,7 @@ The current `main` branch contains a working, tested operating layer:
 - **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, and source-linked audit history.
 - **Knowledge and memory:** encrypted conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance.
 - **Connected sources:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync.
-- **Governance:** role-aware owner/operator/viewer RBAC when a verified IDP JWT includes a role claim (otherwise viewer), approval gates, emergency stop, request rate limits, idempotency support, redacted audit records, path safety, runtime allowlists, and paid-model policy disabled by default.
+- **Governance:** browser sessions and API bearer tokens are independently verified by the backend before their signed identity is used for audit attribution; client-supplied actor labels are ignored. Role-aware owner/operator/viewer RBAC applies when a verified IDP JWT includes a role claim (otherwise viewer), alongside approval gates, emergency stop, request rate limits, idempotency support, redacted audit records, path safety, runtime allowlists, and paid-model policy disabled by default.
 - **Runtime and providers:** local/free model routing with Ollama and OpenAI-compatible endpoints, plus controlled Hermes, Odysseus, and OpenClaw adapters. All runtime execution is disabled until configured and remains approval-, workspace-, timeout-, audit-, and verification-gated.
 - **Operations:** `/healthz`, `/readyz`, `backend doctor`, `backend reconcile`, support-bundle and build-information endpoints, feature flags, CI checks, Docker Compose validation, and a real-Postgres critical-path smoke test.
 
@@ -30,6 +30,7 @@ Verified evidence is maintained in [the completion matrix](docs/codex-goal/compl
 - OAuth account authorization/refresh, provider webhooks, file-system watchers, dedicated vector infrastructure, and additional Claw-compatible adapters remain follow-up work.
 - A configured provider or runtime is not considered proven until its live probe and approved workflow are exercised on the target machine.
 - The full Docker Compose topology has configuration and health checks, but its end-to-end multi-service boot remains the main outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
+- The bundled IDP currently issues a stable `user_id` for authenticated-session attribution. It does not yet issue role claims, so endpoints with explicit RBAC checks default to viewer until role issuance is implemented.
 
 ## Repository Layout
 
@@ -250,6 +251,28 @@ HAI OS:
 
 - `GET /os/overview`
 
+Pursuits:
+
+- `GET /pursuits/`
+- `POST /pursuits/`
+- `GET /pursuits/dashboard`
+- `GET /pursuits/brief`
+- `GET /pursuits/decisions`
+- `POST /pursuits/match`
+- `POST /pursuits/intake`
+- `GET /pursuits/:id`
+- `PATCH /pursuits/:id`
+- `POST /pursuits/:id/review`
+- `POST /pursuits/:id/decisions/resolve`
+- `GET /pursuits/:id/activity`
+- `GET /pursuits/:id/next-actions`
+- `GET /pursuits/:id/blockers`
+- `GET /pursuits/:id/approvals`
+- `POST /pursuits/:id/intake`
+- `POST /pursuits/:id/plan`
+- `POST /pursuits/:id/links`
+- `DELETE /pursuits/:id/links/:linkId`
+
 ## Engine Behavior
 
 The task success engine follows a completion-first loop:
@@ -382,6 +405,12 @@ blocked
 ```
 
 The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, expired claim and interrupted-review counts, due open loops, approval queue with approve/reject buttons, worker, follow-up, and stale-claim recovery controls, structured interrupted-execution resolution, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposal decision buttons, quality gate status, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
+
+## Pursuits Layer
+
+Pursuits are the durable objective containers above individual workflows. A pursuit groups related workflow items, source material, memories, verification evidence, runtime attempts, decisions, blockers, next actions, and approvals into one operator-facing objective. The `/pursuits` dashboard and detail view distinguish work that needs Robert's decision, is ready for delegation, can be processed by a bounded system workflow, or is waiting on an external party.
+
+Pursuit intake and matching reuse the existing source, workflow, memory, verification, and ambient-planning services rather than introducing a parallel agent implementation. Creation, planning, intake, review, decision resolution, archive operations, and link changes record the authenticated session principal when present; a client payload cannot claim another person as the actor. Local development without an IDP session records the fallback operator/system identity honestly. This supports traceable operation but does not itself authorize a sensitive action: the workflow approval queue, execution policy, and verification gates remain authoritative.
 
 ## LLM Routing Policy
 

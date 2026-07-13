@@ -2294,20 +2294,30 @@ func TestDeleteLinkRequiresOwningPursuit(t *testing.T) {
 		t.Fatalf("Link returned error: %v", err)
 	}
 
-	if err := service.DeleteLink(second.ID, link.ID); err == nil {
+	if err := service.DeleteLink(second.ID, link.ID, "test-operator"); err == nil {
 		t.Fatalf("expected deleting another pursuit's link to fail")
 	}
 	links, _ := repo.FindLinks(first.ID)
 	if len(links) != 1 {
 		t.Fatalf("link was removed from wrong pursuit: %#v", links)
 	}
-	if err := service.DeleteLink(first.ID, link.ID); err != nil {
+	if err := service.DeleteLink(first.ID, link.ID, "test-operator"); err != nil {
 		t.Fatalf("DeleteLink returned error for owner: %v", err)
 	}
 	links, _ = repo.FindLinks(first.ID)
 	if len(links) != 0 {
 		t.Fatalf("owned link still present: %#v", links)
 	}
+	activities, _ := repo.FindActivities(first.ID, 20)
+	for _, activity := range activities {
+		if activity.Kind == "pursuit.link_removed" {
+			if activity.Actor != "test-operator" {
+				t.Fatalf("link removal actor = %q, want verified actor", activity.Actor)
+			}
+			return
+		}
+	}
+	t.Fatal("expected pursuit.link_removed activity")
 }
 
 func timelineContains(items []PursuitTimelineItem, kind, messagePart string) bool {

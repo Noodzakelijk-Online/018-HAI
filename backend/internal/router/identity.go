@@ -12,20 +12,21 @@ import (
 )
 
 const (
-	contextRoleKey    = "role"
-	contextSubjectKey = "subject"
+	contextRoleKey    = identity.ContextRoleKey
+	contextSubjectKey = identity.ContextSubjectKey
 )
 
-// identityMiddleware resolves a per-user identity from an IDP-issued JWT
-// (Authorization: Bearer <token>), verified against the shared JWT secret, and
-// stores the caller's role + subject in the request context for RBAC. It is a
-// no-op when no JWT secret is configured or no bearer token is presented — so
-// the shared-API-key single-operator model keeps working — but a *present but
-// invalid* token is rejected with 401 rather than silently ignored.
+// identityMiddleware resolves a per-user identity from an IDP-issued JWT.
+// API clients may use Authorization: Bearer <token>; browser requests use
+// HAI's HttpOnly access_token cookie. Claims are verified against the shared
+// JWT secret before their role and principal are used for RBAC or auditing.
+// The middleware is a no-op when no JWT secret is configured or no token is
+// presented, so the shared-API-key single-operator model keeps working. A
+// present but invalid token is rejected with 401 rather than silently ignored.
 func identityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		secret := strings.TrimSpace(config.AppConfig.JWTSecret)
-		token := bearerToken(c)
+		token := identityToken(c)
 		if secret == "" || token == "" {
 			c.Next()
 			return
@@ -39,8 +40,8 @@ func identityMiddleware() gin.HandlerFunc {
 		if claims.Role != "" {
 			c.Set(contextRoleKey, strings.ToLower(strings.TrimSpace(claims.Role)))
 		}
-		if claims.Subject != "" {
-			c.Set(contextSubjectKey, claims.Subject)
+		if principal := claims.Principal(); principal != "" {
+			c.Set(contextSubjectKey, principal)
 		}
 		c.Next()
 	}
@@ -52,4 +53,19 @@ func bearerToken(c *gin.Context) string {
 		return strings.TrimSpace(h[7:])
 	}
 	return ""
+}
+
+// identityToken first accepts an explicit bearer token for API clients and then
+// falls back to HAI's HttpOnly IDP cookie. The gateway already validates that
+// cookie before forwarding protected API requests; the backend verifies the
+// signature again before using it for audit attribution.
+func identityToken(c *gin.Context) string {
+	if token := bearerToken(c); token != "" {
+		return token
+	}
+	token, err := c.Cookie("access_token")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }

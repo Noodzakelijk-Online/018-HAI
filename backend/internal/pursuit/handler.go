@@ -1,6 +1,7 @@
 package pursuit
 
 import (
+	"automation-hub-backend/internal/identity"
 	"net/http"
 	"strconv"
 
@@ -26,6 +27,7 @@ func (h *Handler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Create(request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -108,6 +110,7 @@ func (h *Handler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Update(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -126,6 +129,7 @@ func (h *Handler) Archive(c *gin.Context) {
 		Actor    string `json:"actor,omitempty"`
 	}
 	_ = c.ShouldBindJSON(&request)
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Archive(id, request.Archived, request.Actor)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -144,6 +148,7 @@ func (h *Handler) Link(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Link(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -162,7 +167,7 @@ func (h *Handler) DeleteLink(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid link id"})
 		return
 	}
-	if err := h.service.DeleteLink(id, linkID); err != nil {
+	if err := h.service.DeleteLink(id, linkID, verifiedActor(c, "operator")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -189,6 +194,7 @@ func (h *Handler) RouteIntake(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	result, err := h.service.RouteIntake(request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -207,6 +213,7 @@ func (h *Handler) Intake(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Intake(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -225,6 +232,7 @@ func (h *Handler) Plan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Plan(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -243,6 +251,7 @@ func (h *Handler) ResolveDecision(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.ResolveDecision(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -260,6 +269,7 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 		Actor string `json:"actor,omitempty"`
 	}
 	_ = c.ShouldBindJSON(&request)
+	request.Actor = verifiedActor(c, "system")
 	record, err := h.service.RefreshSummary(id, request.Actor)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -278,6 +288,7 @@ func (h *Handler) Review(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Review(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -345,4 +356,18 @@ func parsePursuitID(c *gin.Context) (uuid.UUID, bool) {
 		return uuid.UUID{}, false
 	}
 	return id, true
+}
+
+// verifiedActor deliberately ignores client-provided actor labels. When HAI is
+// running behind its local IDP gateway, the backend has independently verified
+// the signed session token and stores its subject in the Gin context. Local
+// development without that identity path is recorded honestly as an operator,
+// never as a user-supplied name such as "Robert".
+func verifiedActor(c *gin.Context, fallback string) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok && subject != "" {
+			return subject
+		}
+	}
+	return fallback
 }
