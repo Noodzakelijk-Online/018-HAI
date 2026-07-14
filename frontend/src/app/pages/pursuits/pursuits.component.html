@@ -589,6 +589,7 @@
             <nz-card nzTitle="Linked records">
               <dl class="link-counts">
                 <div><dt>Workflows</dt><dd>{{ detail.workflows.length }}</dd></div>
+                <div><dt>Quality gates</dt><dd>{{ detail.qualityGates.length }}</dd></div>
                 <div><dt>Decisions</dt><dd>{{ detail.decisionQueue.length }}</dd></div>
                 <div><dt>Timeline</dt><dd>{{ detail.timeline.length }}</dd></div>
                 <div><dt>Task runs</dt><dd>{{ detail.taskRuns.length }}</dd></div>
@@ -676,6 +677,27 @@
                   </tr>
                 </tbody>
               </nz-table>
+            </details>
+
+            <details>
+              <summary>Quality gates ({{ detail.summary.qualityGatesNeedingReview }} need review)</summary>
+              <nz-table [nzData]="detail.qualityGates" nzSize="small" [nzPageSize]="6">
+                <thead>
+                  <tr>
+                    <th>Gate</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let gate of detail.qualityGates" [class.table-row-warning]="gate.status === 'failed' || gate.status === 'needs_review'">
+                    <td>{{ gate.gate }}</td>
+                    <td>{{ gate.status }}</td>
+                    <td>{{ gate.reason || '-' }}</td>
+                  </tr>
+                </tbody>
+              </nz-table>
+              <nz-empty *ngIf="!detail.qualityGates.length" nzNotFoundContent="No workflow quality gates linked yet."></nz-empty>
             </details>
 
             <details>

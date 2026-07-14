@@ -825,6 +825,48 @@ func TestDetailSurfacesBlockersAndCompletionCandidate(t *testing.T) {
 	}
 }
 
+func TestDetailSurfacesFailedQualityGateAsPursuitBlocker(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Production-ready dashboard", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:                 workflowID,
+		Title:              "Validate dashboard build",
+		ProjectKey:         "018-HAI",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	repo.qualityGates = append(repo.qualityGates, models.WorkflowQualityGate{
+		ID:         uuid.New(),
+		WorkflowID: workflowID,
+		Gate:       "tests or build evidence",
+		Status:     "failed",
+		Reason:     "the production build evidence is missing",
+	})
+	_, _ = service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String()})
+
+	detail, err := service.Detail(created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.QualityGates) != 1 || detail.Summary.QualityGatesNeedingReview != 1 {
+		t.Fatalf("quality gate summary = gates=%#v summary=%#v", detail.QualityGates, detail.Summary)
+	}
+	if len(detail.Blockers) != 1 || !strings.Contains(detail.Blockers[0].Label, "tests or build evidence") {
+		t.Fatalf("quality gate blocker = %#v", detail.Blockers)
+	}
+	if len(detail.ActionQueues.NeedsRobert) != 1 || !strings.Contains(detail.ActionQueues.NeedsRobert[0].Label, "production build evidence") {
+		t.Fatalf("quality gate action queue = %#v", detail.ActionQueues)
+	}
+	if detail.Summary.CompletionCandidate {
+		t.Fatalf("failed quality gate must prevent a completion candidate: %#v", detail.Summary)
+	}
+}
+
 func TestDetailSurfacesCompletionReviewDecisionForVerifiedWorkflows(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -2530,6 +2572,7 @@ type fakeRepo struct {
 	workflows            map[uuid.UUID]models.WorkflowItem
 	openLoops            []models.WorkflowOpenLoop
 	proposals            []models.WorkflowProposal
+	qualityGates         []models.WorkflowQualityGate
 	decisions            []models.WorkflowDecision
 	transitions          []models.WorkflowTransition
 	sourceLinks          []models.WorkflowSourceLink
@@ -2710,6 +2753,20 @@ func (r *fakeRepo) FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.Workfl
 	for _, proposal := range r.proposals {
 		if workflowSet[proposal.WorkflowID] {
 			result = append(result, proposal)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedQualityGates(workflowIDs []uuid.UUID) ([]models.WorkflowQualityGate, error) {
+	workflowSet := map[uuid.UUID]bool{}
+	for _, id := range workflowIDs {
+		workflowSet[id] = true
+	}
+	result := []models.WorkflowQualityGate{}
+	for _, gate := range r.qualityGates {
+		if workflowSet[gate.WorkflowID] {
+			result = append(result, gate)
 		}
 	}
 	return result, nil

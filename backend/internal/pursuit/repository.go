@@ -25,6 +25,7 @@ type Repository interface {
 	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
 	FindLinkedOpenLoops(workflowIDs []uuid.UUID) ([]models.WorkflowOpenLoop, error)
 	FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.WorkflowProposal, error)
+	FindLinkedQualityGates(workflowIDs []uuid.UUID) ([]models.WorkflowQualityGate, error)
 	FindLinkedDecisions(workflowIDs []uuid.UUID) ([]models.WorkflowDecision, error)
 	FindLinkedTransitions(workflowIDs []uuid.UUID) ([]models.WorkflowTransition, error)
 	FindLinkedSourceLinks(workflowIDs []uuid.UUID) ([]models.WorkflowSourceLink, error)
@@ -197,6 +198,17 @@ func (r *GormRepository) FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.
 		return nil, err
 	}
 	return proposals, nil
+}
+
+func (r *GormRepository) FindLinkedQualityGates(workflowIDs []uuid.UUID) ([]models.WorkflowQualityGate, error) {
+	var gates []models.WorkflowQualityGate
+	if len(workflowIDs) == 0 {
+		return gates, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("updated_at DESC, created_at DESC").Find(&gates).Error; err != nil {
+		return nil, err
+	}
+	return gates, nil
 }
 
 func (r *GormRepository) FindLinkedDecisions(workflowIDs []uuid.UUID) ([]models.WorkflowDecision, error) {

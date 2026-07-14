@@ -13,6 +13,7 @@ import {
   IWorkflowItem,
   IWorkflowOpenLoop,
   IWorkflowProposal,
+  IWorkflowQualityGate,
   IWorkflowSourceLink,
   IWorkflowTransition,
 } from './workflow.model.interface';
@@ -184,6 +185,7 @@ export interface IPursuitSummary {
   linkedEvidence: number;
   verificationRuns: number;
   runtimeAttempts: number;
+  qualityGatesNeedingReview: number;
   confidence: number;
   planningNeeded: boolean;
   reviewDue: boolean;
@@ -305,6 +307,7 @@ export interface IPursuitDetail {
   workflows: IWorkflowItem[];
   openLoops: IWorkflowOpenLoop[];
   proposals: IWorkflowProposal[];
+  qualityGates: IWorkflowQualityGate[];
   decisions: IWorkflowDecision[];
   decisionQueue: IPursuitDecision[];
   transitions: IWorkflowTransition[];

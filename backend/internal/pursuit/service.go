@@ -271,6 +271,7 @@ type PursuitDetail struct {
 	Workflows            []models.WorkflowItem          `json:"workflows"`
 	OpenLoops            []models.WorkflowOpenLoop      `json:"openLoops"`
 	Proposals            []models.WorkflowProposal      `json:"proposals"`
+	QualityGates         []models.WorkflowQualityGate   `json:"qualityGates"`
 	Decisions            []models.WorkflowDecision      `json:"decisions"`
 	DecisionQueue        []PursuitDecision              `json:"decisionQueue"`
 	Transitions          []models.WorkflowTransition    `json:"transitions"`
@@ -430,25 +431,26 @@ type PursuitActionQueues struct {
 }
 
 type PursuitSummary struct {
-	CurrentState        string  `json:"currentState"`
-	WhatChanged         string  `json:"whatChanged"`
-	NeedsRobert         int     `json:"needsRobert"`
-	Blocked             int     `json:"blocked"`
-	OpenLoops           int     `json:"openLoops"`
-	RobertActions       int     `json:"robertActions"`
-	VAReadyActions      int     `json:"vaReadyActions"`
-	SystemReadyActions  int     `json:"systemReadyActions"`
-	WaitingActions      int     `json:"waitingActions"`
-	ReviewDue           bool    `json:"reviewDue"`
-	DecisionCards       int     `json:"decisionCards"`
-	TimelineItems       int     `json:"timelineItems"`
-	TaskRuns            int     `json:"taskRuns"`
-	LinkedEvidence      int     `json:"linkedEvidence"`
-	VerificationRuns    int     `json:"verificationRuns"`
-	RuntimeAttempts     int     `json:"runtimeAttempts"`
-	Confidence          float64 `json:"confidence"`
-	PlanningNeeded      bool    `json:"planningNeeded"`
-	CompletionCandidate bool    `json:"completionCandidate"`
+	CurrentState              string  `json:"currentState"`
+	WhatChanged               string  `json:"whatChanged"`
+	NeedsRobert               int     `json:"needsRobert"`
+	Blocked                   int     `json:"blocked"`
+	OpenLoops                 int     `json:"openLoops"`
+	RobertActions             int     `json:"robertActions"`
+	VAReadyActions            int     `json:"vaReadyActions"`
+	SystemReadyActions        int     `json:"systemReadyActions"`
+	WaitingActions            int     `json:"waitingActions"`
+	ReviewDue                 bool    `json:"reviewDue"`
+	DecisionCards             int     `json:"decisionCards"`
+	TimelineItems             int     `json:"timelineItems"`
+	TaskRuns                  int     `json:"taskRuns"`
+	LinkedEvidence            int     `json:"linkedEvidence"`
+	VerificationRuns          int     `json:"verificationRuns"`
+	RuntimeAttempts           int     `json:"runtimeAttempts"`
+	QualityGatesNeedingReview int     `json:"qualityGatesNeedingReview"`
+	Confidence                float64 `json:"confidence"`
+	PlanningNeeded            bool    `json:"planningNeeded"`
+	CompletionCandidate       bool    `json:"completionCandidate"`
 }
 
 type PursuitOperationalDigest struct {
@@ -791,6 +793,7 @@ func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
 	automationIDs := uniqueUUIDs(append(linkedAutomationIDs, workflowAutomationIDs(workflows)...))
 	openLoops, _ := s.repo.FindLinkedOpenLoops(workflowIDs)
 	proposals, _ := s.repo.FindLinkedProposals(workflowIDs)
+	qualityGates, _ := s.repo.FindLinkedQualityGates(workflowIDs)
 	decisions, _ := s.repo.FindLinkedDecisions(workflowIDs)
 	transitions, _ := s.repo.FindLinkedTransitions(workflowIDs)
 	sourceLinks, _ := s.repo.FindLinkedSourceLinks(workflowIDs)
@@ -810,6 +813,7 @@ func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
 	}
 	resolvedDecisions := resolvedPursuitDecisions(activity)
 	sourceBlockers := sourceRetractionBlockers(links, extractions)
+	qualityGateBlockers := qualityGateBlockers(qualityGates)
 
 	detail := &PursuitDetail{
 		Pursuit:              *pursuit,
@@ -818,6 +822,7 @@ func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
 		Workflows:            workflows,
 		OpenLoops:            openLoops,
 		Proposals:            proposals,
+		QualityGates:         qualityGates,
 		Decisions:            decisions,
 		Transitions:          transitions,
 		SourceLinks:          sourceLinks,
@@ -838,9 +843,11 @@ func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
 	detail.Timeline = pursuitTimeline(*pursuit, activity, workflows, transitions, sourceLinks, decisions, events, detail.TaskRuns, verificationRuns, runtimeAttempts)
 	detail.Blockers = append(blockers(workflows, openLoops), runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedDecisions)...)
 	detail.Blockers = append(detail.Blockers, sourceBlockers...)
-	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions)
+	detail.Blockers = append(detail.Blockers, qualityGateBlockers...)
+	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions, len(qualityGateBlockers) > 0)
 	detail.ActionQueues = actionQueues(*pursuit, detail.NextActions, detail.Blockers)
-	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, verificationRuns, runtimeAttempts, activity, sourceBlockers)
+	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, verificationRuns, runtimeAttempts, activity, sourceBlockers, qualityGateBlockers)
+	detail.Summary.QualityGatesNeedingReview = len(qualityGateBlockers)
 	if len(detail.Timeline) > 0 {
 		detail.Summary.WhatChanged = timelineChangeSummary(detail.Timeline[0])
 	}
@@ -2302,6 +2309,26 @@ func sourceRetractionBlockers(links []models.PursuitLink, extractions []models.S
 	return result
 }
 
+func qualityGateBlockers(gates []models.WorkflowQualityGate) []PursuitBlocker {
+	result := []PursuitBlocker{}
+	for _, gate := range gates {
+		status := strings.ToLower(strings.TrimSpace(gate.Status))
+		if status != "failed" && status != "needs_review" {
+			continue
+		}
+		result = append(result, PursuitBlocker{
+			Label:      "Quality gate: " + firstNonEmpty(gate.Gate, "workflow acceptance"),
+			Reason:     firstNonEmpty(gate.Reason, "linked workflow quality gate requires review before the pursuit can move forward"),
+			Owner:      "Robert or task owner",
+			WorkflowID: gate.WorkflowID.String(),
+		})
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Label < result[j].Label
+	})
+	return result
+}
+
 func sourceExtractionStatus(extraction models.SourceExtraction) string {
 	if extraction.Archived {
 		return "archived"
@@ -2325,7 +2352,7 @@ func sourceExtractionLinkRequiresEvidenceReview(relationship string) bool {
 		strings.Contains(relationship, "provenance")
 }
 
-func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, proposals []models.WorkflowProposal, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool) []PursuitAction {
+func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, proposals []models.WorkflowProposal, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool, qualityGateNeedsReview bool) []PursuitAction {
 	actions := []PursuitAction{}
 	if pursuitClosed(pursuit) {
 		return actions
@@ -2423,7 +2450,7 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 			NoLabel:          "Not now",
 		})
 	}
-	if len(actions) == 0 && workflowsReadyForCompletion(workflows) {
+	if len(actions) == 0 && !qualityGateNeedsReview && workflowsReadyForCompletion(workflows) {
 		actions = append(actions, PursuitAction{
 			Label:            "Review verified evidence and mark pursuit complete",
 			Owner:            "Robert",
@@ -2434,7 +2461,7 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 			NoLabel:          "Keep active",
 		})
 	}
-	if len(actions) == 0 {
+	if len(actions) == 0 && !qualityGateNeedsReview {
 		if resolvedDecisions["pursuit:"+pursuit.ID.String()+":next-action"] {
 			return actions
 		}
@@ -3006,10 +3033,10 @@ func firstTime(values ...time.Time) time.Time {
 	return time.Time{}
 }
 
-func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker) PursuitSummary {
+func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker, qualityGateBlockers []PursuitBlocker) PursuitSummary {
 	approvals := len(approvalWorkflows(workflows))
 	needsRobert := approvals
-	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers)
+	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers) + len(qualityGateBlockers)
 	linkedEvidence := len(evidence) + len(memories) + len(sourceItems) + activeSourceExtractions(extractions) + acceptedVerificationRuns(verificationRuns) + completedRuntimeAttempts(runtimeAttempts) + acceptedWorkflowCompletionEvidence(workflows) + acceptedAmbientOpportunityLinks(links)
 	completed := 0
 	for _, item := range workflows {
@@ -3034,6 +3061,9 @@ func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []m
 	}
 	if len(sourceBlockers) > 0 {
 		state = state + " Some linked source evidence was archived or is missing; review provenance before using it."
+	}
+	if len(qualityGateBlockers) > 0 {
+		state = state + " A linked workflow quality gate needs review before this pursuit can move forward."
 	}
 	reviewDue := isReviewDue(pursuit)
 	if reviewDue {
