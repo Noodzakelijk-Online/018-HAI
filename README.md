@@ -194,6 +194,11 @@ work from the command dashboard.
   keep them out of the executable path; an approval-capable user must use the
   separate candidate-acceptance action before HAI can create or unlock the
   governed workflow path.
+- An assistant command that creates or selects a pursuit candidate returns an
+  auditable review handoff instead of attempting a direct task plan. It links
+  the candidate back to the chat result, asks Robert to accept or archive it,
+  and creates no workflow, task attempt, runtime action, or side effect before
+  the explicit candidate-acceptance action.
 - Pursuit decision resolution requires approval capability both in route
   registration and in the handler. Alternate or future route wiring cannot
   turn a non-approver's request into a workflow or decision audit event.

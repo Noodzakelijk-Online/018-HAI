@@ -54,16 +54,17 @@ type CommandAction struct {
 }
 
 type CommandPursuitContext struct {
-	PursuitID        string                   `json:"pursuitId,omitempty"`
-	Title            string                   `json:"title,omitempty"`
-	Mode             string                   `json:"mode"`
-	Matched          bool                     `json:"matched"`
-	CreatedCandidate bool                     `json:"createdCandidate,omitempty"`
-	ExecutionQueued  bool                     `json:"executionQueued,omitempty"`
-	Score            float64                  `json:"score,omitempty"`
-	Reasons          []string                 `json:"reasons,omitempty"`
-	Message          string                   `json:"message,omitempty"`
-	Matches          []pursuit.MatchCandidate `json:"matches,omitempty"`
+	PursuitID          string                   `json:"pursuitId,omitempty"`
+	Title              string                   `json:"title,omitempty"`
+	Mode               string                   `json:"mode"`
+	Matched            bool                     `json:"matched"`
+	CreatedCandidate   bool                     `json:"createdCandidate,omitempty"`
+	AwaitingAcceptance bool                     `json:"awaitingAcceptance,omitempty"`
+	ExecutionQueued    bool                     `json:"executionQueued,omitempty"`
+	Score              float64                  `json:"score,omitempty"`
+	Reasons            []string                 `json:"reasons,omitempty"`
+	Message            string                   `json:"message,omitempty"`
+	Matches            []pursuit.MatchCandidate `json:"matches,omitempty"`
 }
 
 type CommandResult struct {
@@ -114,10 +115,6 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 		SafetySummary: "Assistant commands are routed through existing HAI engines; risky execution remains blocked by task risk gates, workflow approval gates, emergency stop, and runtime safety controls.",
 	}
 
-	if s.tasks == nil {
-		return nil, fmt.Errorf("task engine is not configured")
-	}
-
 	taskRequest := task.IntakeRequest{
 		OwnerIdentity:   request.OwnerIdentity,
 		Request:         message,
@@ -135,6 +132,17 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 		}
 		result.Pursuit = pursuitContext
 		if pursuitContext != nil {
+			if pursuitContext.AwaitingAcceptance {
+				// A candidate is durable context, not active work. Do not turn a
+				// valid candidate outcome into a direct task-plan failure or an
+				// unapproved execution attempt.
+				result.ReviewRequired = true
+				result.NextAction = "review the pursuit candidate and explicitly accept or archive it before planning work"
+				result.Summary = "HAI recorded a reviewable pursuit candidate and kept it outside the task and execution path until approval."
+				result.record("pursuit candidate", nil, "recorded a reviewable candidate; no direct task plan, workflow execution, or runtime action was created")
+				s.addLog(*result)
+				return result, nil
+			}
 			taskRequest.PursuitID = pursuitContext.PursuitID
 		}
 		if request.ExecuteAllowed && pursuitContext != nil && pursuitContext.ExecutionQueued {
@@ -142,6 +150,9 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 			// directly here, or a retry/scheduler could execute it twice.
 			taskRequest.ExecuteAllowed = false
 		}
+	}
+	if s.tasks == nil {
+		return nil, fmt.Errorf("task engine is not configured")
 	}
 
 	var plan *task.CompletionPlan
@@ -201,20 +212,34 @@ func (s *Service) routePursuit(message string, request CommandRequest) (*Command
 		RequiresReview: false,
 	}
 
-	if !request.ExecuteAllowed {
-		if requestedID := strings.TrimSpace(request.PursuitID); requestedID != "" {
-			id, err := uuid.Parse(requestedID)
-			if err != nil {
-				return nil, fmt.Errorf("invalid pursuit id")
-			}
-			detail, err := s.pursuits.DetailForOwner(request.OwnerIdentity, id)
-			if err != nil {
-				return nil, err
-			}
+	if requestedID := strings.TrimSpace(request.PursuitID); requestedID != "" {
+		id, err := uuid.Parse(requestedID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pursuit id")
+		}
+		detail, err := s.pursuits.DetailForOwner(request.OwnerIdentity, id)
+		if err != nil {
+			return nil, err
+		}
+		if detail == nil {
+			return nil, fmt.Errorf("selected pursuit was not found")
+		}
+		if pursuit.IsCandidate(detail.Pursuit) {
+			return candidatePursuitContext(detail, "selected_candidate"), nil
+		}
+		if !request.ExecuteAllowed {
 			context := pursuitContextFromDetail(detail, "selected", false)
 			context.Message = "Planning is scoped to the selected pursuit. No workflow was created until you run the command."
 			return context, nil
 		}
+		detail, err = s.pursuits.Intake(id, input)
+		if err != nil {
+			return nil, err
+		}
+		return pursuitContextFromDetail(detail, "selected", true), nil
+	}
+
+	if !request.ExecuteAllowed {
 		matches, err := s.pursuits.Match(pursuit.MatchRequest{
 			OwnerIdentity: request.OwnerIdentity,
 			Input:         message,
@@ -234,34 +259,27 @@ func (s *Service) routePursuit(message string, request CommandRequest) (*Command
 		}, nil
 	}
 
-	if requestedID := strings.TrimSpace(request.PursuitID); requestedID != "" {
-		id, err := uuid.Parse(requestedID)
-		if err != nil {
-			return nil, fmt.Errorf("invalid pursuit id")
-		}
-		if _, err := s.pursuits.DetailForOwner(request.OwnerIdentity, id); err != nil {
-			return nil, err
-		}
-		detail, err := s.pursuits.Intake(id, input)
-		if err != nil {
-			return nil, err
-		}
-		return pursuitContextFromDetail(detail, "selected", true), nil
-	}
-
 	routed, err := s.pursuits.RouteIntake(input)
 	if err != nil {
 		return nil, err
 	}
+	candidatePending := routed.CreatedCandidate || strings.EqualFold(strings.TrimSpace(routed.Mode), "matched_candidate")
+	if routed.Detail != nil && pursuit.IsCandidate(routed.Detail.Pursuit) {
+		candidatePending = true
+	}
 	context := &CommandPursuitContext{
-		Mode:             firstNonEmpty(routed.Mode, "routed"),
-		Matched:          routed.Matched,
-		CreatedCandidate: routed.CreatedCandidate,
-		Score:            routed.Score,
-		Reasons:          routed.Reasons,
-		Message:          routed.Message,
-		Matches:          routed.Matches,
-		ExecutionQueued:  true,
+		Mode:               firstNonEmpty(routed.Mode, "routed"),
+		Matched:            routed.Matched,
+		CreatedCandidate:   routed.CreatedCandidate,
+		AwaitingAcceptance: candidatePending,
+		Score:              routed.Score,
+		Reasons:            routed.Reasons,
+		Message:            routed.Message,
+		Matches:            routed.Matches,
+		ExecutionQueued:    !candidatePending,
+	}
+	if candidatePending && strings.TrimSpace(context.Message) == "" {
+		context.Message = "HAI recorded a reviewable pursuit candidate. Explicit acceptance is required before any task or workflow work is created."
 	}
 	if routed.PursuitID != uuid.Nil {
 		context.PursuitID = routed.PursuitID.String()
@@ -273,6 +291,13 @@ func (s *Service) routePursuit(message string, request CommandRequest) (*Command
 		}
 	}
 	return context, nil
+}
+
+func candidatePursuitContext(detail *pursuit.PursuitDetail, mode string) *CommandPursuitContext {
+	context := pursuitContextFromDetail(detail, mode, false)
+	context.AwaitingAcceptance = true
+	context.Message = "This pursuit is a reviewable candidate. Explicit approval is required before HAI creates a task plan, workflow, or execution attempt."
+	return context
 }
 
 func pursuitContextFromDetail(detail *pursuit.PursuitDetail, mode string, queued bool) *CommandPursuitContext {

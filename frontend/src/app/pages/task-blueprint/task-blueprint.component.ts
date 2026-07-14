@@ -565,7 +565,9 @@ export class TaskBlueprintComponent implements OnInit {
     }
     if (command.pursuit) {
       const pursuit = command.pursuit;
-      if (pursuit.executionQueued) {
+      if (pursuit.awaitingAcceptance) {
+        bullets.push('Pursuit: ' + (pursuit.title || pursuit.pursuitId || 'new candidate') + ' needs explicit acceptance before HAI creates a task, workflow, or execution attempt.');
+      } else if (pursuit.executionQueued) {
         bullets.push(`Pursuit: ${pursuit.title || pursuit.pursuitId || 'governed workflow'} is queued for the controlled worker.`);
       } else if (pursuit.matches?.length) {
         bullets.push(`Pursuit matches: ${pursuit.matches.map((match) => match.pursuit.title).join(', ')}.`);
@@ -575,7 +577,9 @@ export class TaskBlueprintComponent implements OnInit {
       id: this.newId(),
       role: 'assistant',
       title:
-        intent === 'cycle'
+        command.pursuit?.awaitingAcceptance
+          ? 'Pursuit candidate recorded'
+          : intent === 'cycle'
           ? 'Assistant cycle completed'
           : intent === 'run'
           ? 'Success engine result'

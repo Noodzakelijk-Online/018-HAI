@@ -167,7 +167,7 @@ func TestCommandPlanningSuggestsPursuitsWithoutCreatingWorkflowWork(t *testing.T
 	}
 }
 
-func TestCommandExecutionQueuesPursuitWorkflowInsteadOfDirectTaskRun(t *testing.T) {
+func TestCommandCandidateHandoffDoesNotCreateDirectTaskWork(t *testing.T) {
 	tasks := &fakeTaskEngine{}
 	cycle := &fakeAgentCycleRunner{}
 	pursuitID := uuid.New()
@@ -188,8 +188,8 @@ func TestCommandExecutionQueuesPursuitWorkflowInsteadOfDirectTaskRun(t *testing.
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
-	if tasks.planCalls != 1 || tasks.runCalls != 0 {
-		t.Fatalf("task calls plan=%d run=%d, want governed plan only", tasks.planCalls, tasks.runCalls)
+	if tasks.planCalls != 0 || tasks.runCalls != 0 {
+		t.Fatalf("task calls plan=%d run=%d, want no direct work before candidate acceptance", tasks.planCalls, tasks.runCalls)
 	}
 	if router.routeCalls != 1 || router.lastRoute.SourceType != "assistant_command" || router.lastRoute.SourceID == "" {
 		t.Fatalf("expected deduplicated assistant intake: %#v", router.lastRoute)
@@ -197,8 +197,44 @@ func TestCommandExecutionQueuesPursuitWorkflowInsteadOfDirectTaskRun(t *testing.
 	if cycle.calls != 0 {
 		t.Fatalf("cycle calls = %d, want 0 because only an explicit cycle may process unrelated ready workflows", cycle.calls)
 	}
-	if result.Pursuit == nil || !result.Pursuit.ExecutionQueued || result.Pursuit.PursuitID != pursuitID.String() {
+	if result.Plan != nil {
+		t.Fatalf("candidate handoff unexpectedly created task plan: %#v", result.Plan)
+	}
+	if !result.ReviewRequired {
+		t.Fatalf("candidate handoff must require review: %#v", result)
+	}
+	if result.Pursuit == nil || !result.Pursuit.AwaitingAcceptance || result.Pursuit.ExecutionQueued || result.Pursuit.PursuitID != pursuitID.String() {
 		t.Fatalf("pursuit context = %#v", result.Pursuit)
+	}
+}
+
+func TestCommandSelectedCandidateDoesNotCreatePlanOrWorkflow(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	pursuitID := uuid.New()
+	router := &fakePursuitCommandRouter{
+		detail: &pursuit.PursuitDetail{Pursuit: models.Pursuit{
+			ID:               pursuitID,
+			Title:            "Imported legal correspondence",
+			SourceOfCreation: "source_pursuit_candidate",
+		}},
+	}
+	service := NewService(tasks, nil, router)
+
+	result, err := service.Command(CommandRequest{
+		Message:   "Plan a response to the imported correspondence.",
+		PursuitID: pursuitID.String(),
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if tasks.planCalls != 0 || tasks.runCalls != 0 || router.intakeCalls != 0 {
+		t.Fatalf("candidate created task work: plan=%d run=%d intake=%d", tasks.planCalls, tasks.runCalls, router.intakeCalls)
+	}
+	if result.Pursuit == nil || !result.Pursuit.AwaitingAcceptance || result.Pursuit.PursuitID != pursuitID.String() {
+		t.Fatalf("candidate context = %#v", result.Pursuit)
+	}
+	if !result.ReviewRequired || !strings.Contains(result.NextAction, "explicitly accept") {
+		t.Fatalf("candidate result did not surface approval handoff: %#v", result)
 	}
 }
 
@@ -339,6 +375,7 @@ type fakePursuitCommandRouter struct {
 	detailCalls int
 	matches     []pursuit.MatchCandidate
 	routed      *pursuit.RoutedIntakeResult
+	detail      *pursuit.PursuitDetail
 	lastRoute   pursuit.IntakeRequest
 	lastMatch   pursuit.MatchRequest
 	lastOwner   string
@@ -367,6 +404,11 @@ func (f *fakePursuitCommandRouter) Intake(id uuid.UUID, request pursuit.IntakeRe
 func (f *fakePursuitCommandRouter) DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuit.PursuitDetail, error) {
 	f.detailCalls++
 	f.lastOwner = ownerIdentity
+	if f.detail != nil {
+		copy := *f.detail
+		copy.Pursuit.OwnerIdentity = firstNonEmpty(copy.Pursuit.OwnerIdentity, ownerIdentity)
+		return &copy, nil
+	}
 	return &pursuit.PursuitDetail{Pursuit: models.Pursuit{ID: id, Title: "Selected pursuit", OwnerIdentity: ownerIdentity}}, nil
 }
 

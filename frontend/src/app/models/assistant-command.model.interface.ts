@@ -20,6 +20,7 @@ export interface IAssistantCommandPursuitContext {
   mode: string;
   matched: boolean;
   createdCandidate?: boolean;
+  awaitingAcceptance?: boolean;
   executionQueued?: boolean;
   score?: number;
   reasons?: string[];
