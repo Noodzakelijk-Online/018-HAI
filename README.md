@@ -83,6 +83,9 @@ Recent hardening in the current baseline:
 - Pursuit activity feeds are owner-scoped by the service itself, so audit and
   source-derived history cannot be exposed by a future handler or worker that
   omits a separate visibility pre-check.
+- The agent-runtime registry enforces the emergency stop itself. Direct
+  Hermes, Odysseus, or OpenClaw registry calls are blocked even when they do
+  not pass through the automation launcher.
 - The shared local automation registry also requires a verified operator
   session before it exposes targets, accepts configuration changes, probes
   health, or launches/stops a controlled runtime.

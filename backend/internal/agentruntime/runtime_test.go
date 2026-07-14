@@ -30,6 +30,25 @@ func TestRegistryRequiresApproval(t *testing.T) {
 	}
 }
 
+func TestRegistryBlocksWhenEmergencyStopActive(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+	adapter := &fakeAdapter{info: Info{
+		ID:               "test",
+		Enabled:          true,
+		Configured:       true,
+		ExecutionEnabled: true,
+		RequiresApproval: true,
+	}}
+	registry := NewRegistry(adapter)
+	result := registry.Execute(context.Background(), "test", Task{Prompt: "run approved work", HumanApproved: true})
+	if result.Status != "blocked" || adapter.called {
+		t.Fatalf("emergency stop did not prevent runtime execution: %#v", result)
+	}
+	if !strings.Contains(result.Message, "emergency stop") || !containsString(result.AuditEvents, "emergency stop blocked agent runtime execution") {
+		t.Fatalf("emergency stop result lacks controlled audit evidence: %#v", result)
+	}
+}
+
 func TestRegistryExecutesApprovedTask(t *testing.T) {
 	adapter := &fakeAdapter{info: Info{
 		ID:               "test",
