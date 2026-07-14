@@ -4,6 +4,8 @@
 
 The canonical product is this Go/Angular/Postgres stack. It is a governed operations system, not an unrestricted desktop agent: planning, execution, verification, and approval are deliberately separate, and external effects remain blocked unless a reviewed runtime and approval path are configured.
 
+> **Repository state:** implemented local operating layer; locally validated Compose and critical-path checks; external accounts, third-party models, and host-control runtimes remain opt-in and must be proven separately. See [Current State](#current-state), [Quick Start](#quick-start), and [Deliberate Boundaries](#deliberate-boundaries).
+
 ## Canonical Stack Decision
 
 The canonical product stack is this Codex-built Go backend, Angular dashboard, Postgres persistence, and Docker Compose local runtime. The Manus React/tRPC/MySQL implementation should be treated as reference material only. Useful Manus behavior should be ported into this stack deliberately, not developed as a parallel product.
@@ -12,7 +14,27 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 ## Current State
 
-**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. The local Compose topology has been exercised in this repository with healthy backend, frontend, gateway, Postgres, Redis, and Kafka services; `GET /` returned the Angular shell, `GET /healthz` and `GET /readyz` reached the backend, and a protected engine route returned `401` without a session. Docker Compose configuration validates from `.env.example`, and the backend critical-path smoke has passed against local Postgres. This is a locally validated deployment path, **not** a claim that this checkout is currently running or a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
+**Last reviewed: 2026-07-14 on `main`.** 018-HAI has an implemented, safety-gated operating layer. The local Compose topology has been exercised in this repository with healthy backend, frontend, gateway, Postgres, Redis, and Kafka services; `GET /` returned the Angular shell, `GET /healthz` and `GET /readyz` reached the backend, and a protected engine route returned `401` without a session. Docker Compose configuration validates from `.env.example`, and the backend critical-path smoke has passed against local Postgres.
+
+This is a **locally validated deployment path**, not a claim that a checkout is currently running or that HAI has proven live access to accounts, providers, or unrestricted device control.
+
+### Start Here
+
+| Question | Current answer |
+| --- | --- |
+| What is the product? | This Go/Angular/Postgres Compose stack is the canonical HAI product. The former Manus React/tRPC/MySQL work is reference material, not a second product. |
+| Can I run it locally? | Yes. Use the Windows/Docker Compose path in [Quick Start](#quick-start), then check `ps`, `/healthz`, and `/readyz`. A target-machine fresh-clone run is still required before calling an installation operational. |
+| What can I safely try? | Owner-scoped pursuits, workflows, source-export ingestion, memory, task planning, approval/review queues, verification evidence, local-model configuration, and disabled-by-default runtime configuration. |
+| What does not work automatically? | Live Gmail, Calendar, Drive, Trello, WhatsApp, browser, and other account access; paid LLM usage; public posting; financial/account changes; deletion; and broad host control. Each needs a separate scoped integration and evidence. |
+| How is safety enforced? | Owner scoping, approval and verification gates, runtime/workspace/host allowlists, emergency stop, redacted audit records, and a EUR 0 paid-model default. |
+
+### Readiness Vocabulary
+
+- **Implemented:** code, persistence, API contract, and focused automated coverage are present in this repository.
+- **Locally validated:** a bounded local build, Compose, Postgres, gateway, or smoke check exercised the path. It is not third-party proof.
+- **Live-proven:** a configured account, provider, or runtime completed a bounded approved end-to-end check on the target machine with audit and verification evidence.
+
+No dashboard label, configured provider, or generated answer upgrades itself to live-proven.
 
 ### What You Can Use Today
 
@@ -106,16 +128,6 @@ For route-level ownership behavior, see the
 [backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that
 distinguishes local implementation from live external validation, see the
 [external provider reality review](docs/external-provider-reality-review.md).
-
-### How To Read This Status
-
-The repository uses three deliberately different readiness terms:
-
-- **Implemented** means the Go/Angular/Postgres path, persistence, API contract, and focused automated coverage exist in this repository.
-- **Locally validated** means a bounded local check has exercised the relevant code path, build, Compose configuration, real local Postgres smoke path, or local Compose gateway contract. It does not establish third-party correctness.
-- **Live-proven** requires an explicitly configured account, provider, or runtime to pass a bounded, approved end-to-end check on the target machine with inspectable audit and verification evidence.
-
-No dashboard status, model configuration, source connection, or generated answer upgrades itself to live-proven. Until that evidence exists, HAI keeps consequential work behind its existing review, approval, verification, runtime, and emergency-stop controls.
 
 ### Persistence And Execution Semantics
 
@@ -216,8 +228,8 @@ Verified evidence is maintained in [the completion matrix](docs/codex-goal/compl
 |-- connected-sources/       Allowlisted local files mounted read-only for ingestion
 |-- browser-extension/       Explicit, user-authorized browser conversation capture
 |-- scripts/                 Smoke and operational verification scripts
-|-- generic-auto/            Placeholder generic automation service
-|-- gate/                    Gateway-related legacy/config files
+|-- generic-auto/            Legacy generic automation service; not the canonical HAI engine
+|-- gate/                    Legacy gateway/config files; local Compose uses nginx-config/
 |-- kafka/                   Kafka-related config area
 |-- docs/                    Architecture and feature blueprints
 |-- .github/workflows/       CI pipeline
@@ -227,7 +239,7 @@ Verified evidence is maintained in [the completion matrix](docs/codex-goal/compl
 |-- init.sql                 Postgres extension/bootstrap SQL
 ```
 
-Important note: historical local state and `.env` files exist in this repository. New development should use `.env.example` copied to `.env.local`, and should avoid committing more runtime database files, image uploads, local secrets, or generated output.
+Important note: a legacy tracked `.env` exists for historical compatibility, but the documented local workflow uses `.env.example` copied to the untracked `.env.local`. Do not add runtime database files, image uploads, local secrets, or generated output to Git.
 
 ## Quick Start
 
@@ -241,8 +253,11 @@ Prerequisites:
 Local Docker start:
 
 ```powershell
-copy .env.example .env.local
-docker compose --env-file .env.local -f docker-compose.local.yml up --build
+Copy-Item .env.example .env.local
+# Set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY in .env.local.
+docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
+docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
+docker compose --env-file .env.local -f docker-compose.local.yml ps
 ```
 
 Open the dashboard:
@@ -258,7 +273,7 @@ Email: noodzakelijkonline@gmail.com
 Password: ChangeMe123!
 ```
 
-Change `FIRST_RUN_ADMIN_PASSWORD` in `.env.local` before first start for a real local install. If the Postgres data folders already exist, changing first-run values will not rewrite the existing account.
+The credentials above are development defaults only. Change `FIRST_RUN_ADMIN_PASSWORD` in `.env.local` before first start for a real local install. If the Postgres data folders already exist, changing first-run values will not rewrite the existing account.
 
 Change `BACKEND_API_SHARED_KEY` before a real local install. Docker Compose injects the same `.env.local` value into nginx at startup; the backend requires `X-HAI-Backend-Key` only when the value is non-empty, and the gateway still requires IDP authentication before proxying backend routes.
 
@@ -277,7 +292,15 @@ docker compose --env-file .env.local -f docker-compose.local.yml logs backend
 docker compose --env-file .env.local -f docker-compose.local.yml logs idp
 docker compose --env-file .env.local -f docker-compose.local.yml logs kafka
 docker compose --env-file .env.local -f docker-compose.local.yml config
+curl.exe -i http://localhost/healthz
+curl.exe -i http://localhost/readyz
 ```
+
+Expected result: the gateway serves the dashboard at `/`; `/healthz` reports
+liveness; `/readyz` reports backend configuration readiness. A protected API
+route without a session must return `401`, not anonymous application data. For
+the full target-machine proof sequence and its remaining gaps, use
+[fresh-clone dry run](docs/fresh-clone-dryrun.md).
 
 If port 80 is already in use, change the nginx port mapping in `docker-compose.local.yml` from `"80:80"` to another host port, for example `"8088:80"`, then open `http://localhost:8088`.
 
