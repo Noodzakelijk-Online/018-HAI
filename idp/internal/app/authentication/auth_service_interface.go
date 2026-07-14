@@ -2,6 +2,7 @@ package authentication
 
 import (
 	"automation-hub-idp/internal/app/dto"
+	"context"
 	"github.com/google/uuid"
 	"time"
 )
@@ -9,6 +10,11 @@ import (
 type IService interface {
 	Register(userDTO dto.UserDTO) (*dto.UserResponse, error)
 	Login(email, password string) (*dto.TokenDetails, error)
+	// GoogleAuthURL returns the Google consent URL for "Sign in with Google".
+	GoogleAuthURL() (string, error)
+	// LoginWithGoogle completes the Google flow and returns a HAI session,
+	// creating the user on first sign-in.
+	LoginWithGoogle(ctx context.Context, code, state string) (*dto.TokenDetails, error)
 	Logout(accessToken string) error
 	RefreshToken(refreshToken string) (*dto.TokenDetails, error)
 	IsUserAuthenticated(accessToken string) (bool, error)

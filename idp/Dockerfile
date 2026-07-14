@@ -1,5 +1,7 @@
-# Stage 1: Compiling the application
-FROM golang:1.21.0 AS builder
+# Stage 1: Compiling the application.
+# golang:1.23 (module targets go 1.21; Go is backward compatible): a supported
+# toolchain, and it avoids the stale 1.21.0 base whose pull is unreliable.
+FROM golang:1.23 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app

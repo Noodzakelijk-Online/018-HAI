@@ -47,6 +47,8 @@ func initializeAuthRoutes(apiVersion *gin.RouterGroup) error {
 	{
 		auth.POST("/register", authHandler.Register)
 		auth.POST("/login", authHandler.Login)
+		auth.GET("/google/login", authHandler.GoogleLogin)
+		auth.GET("/google/callback", authHandler.GoogleCallback)
 		auth.GET("/logout", authMiddleware, authHandler.Logout)
 		auth.POST("/request-password-reset", authHandler.RequestPasswordReset)
 		auth.POST("/confirm-password-reset/:reset-token", authHandler.ConfirmPasswordReset)

@@ -89,6 +89,20 @@
       >
         Log in
       </button>
+
+      <div class="login-divider"><span>or</span></div>
+
+      <button
+        type="button"
+        nz-button
+        class="login-form-button login-google"
+        [nzType]="'default'"
+        (click)="loginWithGoogle()"
+        data-testid="login-google"
+      >
+        <span nz-icon nzType="google" nzTheme="outline"></span>
+        Sign in with Google
+      </button>
     </nz-form-control>
   </form>
 </section>

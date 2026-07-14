@@ -38,6 +38,13 @@ export class LoginComponent implements OnInit {
     });
   }
 
+  // Full-page redirect into the IDP's Google OAuth flow. It is not an XHR: the
+  // browser must follow Google's redirects and land back on the app with the
+  // session cookies set by the callback.
+  loginWithGoogle(): void {
+    window.location.href = '/api/v1/auth/google/login';
+  }
+
   submitForm(): void {
     if (!this.validateForm.valid) {
       for (const i in this.validateForm.controls) {

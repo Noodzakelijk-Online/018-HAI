@@ -39,6 +39,12 @@ services:
       FIRST_RUN_ADMIN_EMAIL: ${FIRST_RUN_ADMIN_EMAIL}
       FIRST_RUN_ADMIN_PASSWORD: ${FIRST_RUN_ADMIN_PASSWORD}
       IDP_COOKIE_SECURE: ${IDP_COOKIE_SECURE}
+      # "Sign in with Google": the client id/secret are shared with the backend's
+      # Gmail connector, but the login redirect is a distinct path routed to the
+      # IDP, so it needs its own registered redirect URI on the Google app.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_LOGIN_REDIRECT_URL: ${GOOGLE_LOGIN_REDIRECT_URL:-}
     healthcheck:
       test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${WEB_SERVER_PORT}'"]
       interval: 10s
