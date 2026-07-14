@@ -289,17 +289,20 @@ func TestCommandScopesPursuitRoutingAndLogsToOwner(t *testing.T) {
 }
 
 type fakeTaskEngine struct {
-	planCalls int
-	runCalls  int
+	planCalls   int
+	runCalls    int
+	lastRequest task.IntakeRequest
 }
 
 func (f *fakeTaskEngine) Plan(request task.IntakeRequest) (*task.CompletionPlan, error) {
 	f.planCalls++
+	f.lastRequest = request
 	return fakePlan(request, "planned"), nil
 }
 
 func (f *fakeTaskEngine) Run(request task.IntakeRequest) (*task.CompletionPlan, error) {
 	f.runCalls++
+	f.lastRequest = request
 	return fakePlan(request, "validated"), nil
 }
 
@@ -321,8 +324,9 @@ func fakePlan(request task.IntakeRequest, status string) *task.CompletionPlan {
 }
 
 type fakeAgentCycleRunner struct {
-	calls  int
-	result *agentcycle.RunResult
+	calls       int
+	lastRequest agentcycle.RunRequest
+	result      *agentcycle.RunResult
 }
 
 type fakePursuitCommandRouter struct {
@@ -365,6 +369,7 @@ func (f *fakePursuitCommandRouter) DetailForOwner(ownerIdentity string, id uuid.
 
 func (f *fakeAgentCycleRunner) Run(request agentcycle.RunRequest) *agentcycle.RunResult {
 	f.calls++
+	f.lastRequest = request
 	if f.result != nil {
 		result := *f.result
 		result.Trigger = request.Trigger
@@ -380,5 +385,21 @@ func (f *fakeAgentCycleRunner) Run(request agentcycle.RunRequest) *agentcycle.Ru
 		},
 		NextAction:    "review approval queue",
 		SafetySummary: "approval gates remain enforced",
+	}
+}
+
+func TestCommandPassesAuthenticatedOwnerIntoAgentCycle(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	cycle := &fakeAgentCycleRunner{}
+	service := NewService(tasks, cycle)
+
+	if _, err := service.Command(CommandRequest{Message: "Run my operating refresh", RunCycle: true, OwnerIdentity: "alice"}); err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if cycle.lastRequest.OwnerIdentity != "alice" {
+		t.Fatalf("agent-cycle owner = %q, want alice", cycle.lastRequest.OwnerIdentity)
+	}
+	if tasks.lastRequest.OwnerIdentity != "alice" {
+		t.Fatalf("task owner = %q, want alice", tasks.lastRequest.OwnerIdentity)
 	}
 }

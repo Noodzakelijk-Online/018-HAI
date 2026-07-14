@@ -111,6 +111,20 @@ func (p fakePursuitBriefProvider) Decisions() ([]pursuit.PursuitDashboardDecisio
 	return p.decisions, nil
 }
 
+func (p fakePursuitBriefProvider) BriefForOwner(ownerIdentity string) (*pursuit.Brief, error) {
+	if p.calls != nil {
+		*p.calls = append(*p.calls, "pursuit-brief:"+ownerIdentity)
+	}
+	return p.Brief()
+}
+
+func (p fakePursuitBriefProvider) DecisionsForOwner(ownerIdentity string) ([]pursuit.PursuitDashboardDecision, error) {
+	if p.calls != nil {
+		*p.calls = append(*p.calls, "pursuit-decisions:"+ownerIdentity)
+	}
+	return p.Decisions()
+}
+
 func TestAgentCycleRunsEnginesInOperationalOrder(t *testing.T) {
 	calls := []string{}
 	service := NewService(
@@ -206,6 +220,38 @@ func TestAgentCycleRefreshesPursuitBriefAndPrioritizesRobertDecisions(t *testing
 	}
 	if !strings.Contains(mem.created[0].Content, "Pursuit operating brief") {
 		t.Fatalf("lesson content = %q, want pursuit operating brief", mem.created[0].Content)
+	}
+}
+
+func TestAuthenticatedAgentCycleOnlyRefreshesOwnerScopedOperatingState(t *testing.T) {
+	calls := []string{}
+	service := NewServiceWithPursuits(
+		fakeSourceSyncer{calls: &calls},
+		fakeWorkflowCoordinator{calls: &calls},
+		fakeAmbientScanner{calls: &calls},
+		fakePursuitBriefProvider{
+			calls:     &calls,
+			brief:     &pursuit.Brief{OperatingMode: "needs_robert", NeedsRobert: 1, PrimaryAction: "Review Alice decision."},
+			decisions: []pursuit.PursuitDashboardDecision{{Decision: pursuit.PursuitDecision{Recommended: "Review Alice decision."}}},
+		},
+	)
+
+	result := service.Run(RunRequest{OwnerIdentity: "alice", Trigger: "control-center"})
+
+	if result.Status != "completed" || result.ExecutionScope != "owner_scoped" {
+		t.Fatalf("owner cycle status/scope = %s/%s, want completed/owner_scoped: %#v", result.Status, result.ExecutionScope, result.Errors)
+	}
+	if result.SourceSync != nil || result.Recovery != nil || result.OpenLoops != nil || result.Workflows != nil || result.AmbientScan != nil || result.Dashboard != nil {
+		t.Fatalf("owner cycle invoked global worker output: %#v", result)
+	}
+	if result.PursuitBrief == nil || len(result.PursuitDecisions) != 1 || result.NextAction != "review pursuit decisions" {
+		t.Fatalf("owner pursuit state = %#v", result)
+	}
+	if got := fmt.Sprint(calls); got != "[pursuit-brief:alice pursuit-brief pursuit-decisions:alice pursuit-decisions]" {
+		t.Fatalf("owner cycle called global engines: %s", got)
+	}
+	if result.LearningNote == "" || len(result.LearningIDs) != 0 {
+		t.Fatalf("owner cycle stored shared learning: %#v", result)
 	}
 }
 

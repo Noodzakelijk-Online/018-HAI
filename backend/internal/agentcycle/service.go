@@ -35,7 +35,16 @@ type PursuitDecisionProvider interface {
 	Decisions() ([]pursuit.PursuitDashboardDecision, error)
 }
 
+type PursuitOwnerBriefProvider interface {
+	BriefForOwner(ownerIdentity string) (*pursuit.Brief, error)
+}
+
+type PursuitOwnerDecisionProvider interface {
+	DecisionsForOwner(ownerIdentity string) ([]pursuit.PursuitDashboardDecision, error)
+}
+
 type RunRequest struct {
+	OwnerIdentity  string `json:"-"`
 	Trigger        string `json:"trigger,omitempty"`
 	Limit          int    `json:"limit,omitempty"`
 	SkipSourceSync bool   `json:"skipSourceSync,omitempty"`
@@ -54,6 +63,7 @@ type WorkerStep struct {
 }
 
 type RunResult struct {
+	ExecutionScope   string                             `json:"executionScope"`
 	Trigger          string                             `json:"trigger"`
 	Status           string                             `json:"status"`
 	StartedAt        time.Time                          `json:"startedAt"`
@@ -114,14 +124,22 @@ func NewServiceWithPursuits(sources SourceSyncer, workflows WorkflowCoordinator,
 }
 
 func (s *Service) Run(request RunRequest) *RunResult {
+	if ownerIdentity := strings.TrimSpace(request.OwnerIdentity); ownerIdentity != "" {
+		return s.runForOwner(ownerIdentity, request)
+	}
+	return s.runSystem(request)
+}
+
+func (s *Service) runSystem(request RunRequest) *RunResult {
 	started := time.Now().UTC()
 	result := &RunResult{
-		Trigger:       firstNonEmpty(request.Trigger, "manual"),
-		Status:        "running",
-		StartedAt:     started,
-		Steps:         []WorkerStep{},
-		Errors:        []PhaseError{},
-		SafetySummary: "Agent cycle cannot approve its own high-risk actions; approval gates, emergency stop, and workflow retry limits remain enforced inside the called engines.",
+		ExecutionScope: "system_worker",
+		Trigger:        firstNonEmpty(request.Trigger, "manual"),
+		Status:         "running",
+		StartedAt:      started,
+		Steps:          []WorkerStep{},
+		Errors:         []PhaseError{},
+		SafetySummary:  "Agent cycle cannot approve its own high-risk actions; approval gates, emergency stop, and workflow retry limits remain enforced inside the called engines.",
 	}
 	limit := normalizeLimit(request.Limit)
 	workflowRequest := workflow.RunDueRequest{Limit: limit}
@@ -201,11 +219,79 @@ func (s *Service) Run(request RunRequest) *RunResult {
 	return result
 }
 
+// runForOwner is the authenticated operator path. It returns only the
+// caller's memory and pursuit operating state. Global sync, workflow retries,
+// background execution, and ambient scans stay with the system worker because
+// their current implementations are not per-owner schedulers.
+func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResult {
+	started := time.Now().UTC()
+	result := &RunResult{
+		ExecutionScope: "owner_scoped",
+		Trigger:        firstNonEmpty(request.Trigger, "manual"),
+		Status:         "running",
+		StartedAt:      started,
+		Steps:          []WorkerStep{},
+		Errors:         []PhaseError{},
+		SafetySummary:  "Personal operating refresh uses only owner-scoped context and pursuit state. Global source sync, workflow execution, ambient scans, and system learning remain reserved for the system worker.",
+	}
+
+	contextResult, err := s.retrieveOperationalContextForOwner(ownerIdentity, result.Trigger)
+	if err != nil {
+		result.record("retrieve personal operational context", err, "owner-scoped context retrieval failed")
+	} else {
+		result.AppliedContext = contextResult
+		result.ContextNote = appliedContextSummary(contextResult)
+		result.record("retrieve personal operational context", nil, result.ContextNote)
+	}
+	for _, step := range []string{
+		"recover stale claims",
+		"sync due sources",
+		"run due follow-ups",
+		"run safe workflows",
+		"scan ambient opportunities",
+		"refresh workflow dashboard",
+	} {
+		result.Steps = append(result.Steps, WorkerStep{
+			Name:    step,
+			Status:  "skipped",
+			Summary: "reserved for the separate system worker until per-owner scheduling is implemented",
+		})
+	}
+
+	if s.pursuits == nil {
+		result.addError("pursuits", fmt.Errorf("pursuit brief provider is not configured"))
+	} else if provider, ok := s.pursuits.(PursuitOwnerBriefProvider); !ok {
+		result.addError("pursuits", fmt.Errorf("owner-scoped pursuit brief is not configured"))
+	} else {
+		brief, err := provider.BriefForOwner(ownerIdentity)
+		result.PursuitBrief = brief
+		result.PursuitState = pursuitOperatingState(brief)
+		result.record("refresh personal pursuit operating brief", err, pursuitBriefSummary(brief))
+	}
+	if provider, ok := s.pursuits.(PursuitOwnerDecisionProvider); ok {
+		decisions, err := provider.DecisionsForOwner(ownerIdentity)
+		result.PursuitDecisions = decisions
+		result.record("refresh personal Robert decision queue", err, pursuitDecisionSummary(decisions))
+	} else if s.pursuits != nil {
+		result.addError("pursuit_decisions", fmt.Errorf("owner-scoped pursuit decisions are not configured"))
+	}
+
+	result.CompletedAt = time.Now().UTC()
+	result.Status = cycleStatus(result)
+	result.NextAction = nextAction(result)
+	result.LearningNote = "owner-scoped refresh does not write a shared operational lesson"
+	return result
+}
+
 func (s *Service) retrieveOperationalContext(trigger string) ([]memory.RankedMemory, error) {
+	return s.retrieveOperationalContextForOwner("", trigger)
+}
+
+func (s *Service) retrieveOperationalContextForOwner(ownerIdentity, trigger string) ([]memory.RankedMemory, error) {
 	if s.memory == nil {
 		return nil, nil
 	}
-	result, err := s.memory.Retrieve(memory.RetrieveRequest{
+	result, err := memory.RetrieveForOwner(s.memory, ownerIdentity, memory.RetrieveRequest{
 		Query: "agent cycle operational lesson source sync workflow retry blocked follow-up ambient approval safety " + trigger,
 		Limit: 5,
 	})

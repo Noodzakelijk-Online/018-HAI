@@ -26,8 +26,8 @@ func (h *Handler) Command(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if request.RunCycle && !mayRunGlobalCycle(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "a global agent cycle requires an owner session"})
+	if request.RunCycle && verifiedActor(c, "") == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to refresh an operating brief"})
 		return
 	}
 	request.OwnerIdentity = verifiedActor(c, "")
@@ -59,16 +59,4 @@ func (h *Handler) Logs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, h.service.LogsForOwner(verifiedActor(c, "")))
-}
-
-// Global maintenance scans and workers are system-wide. In the local
-// single-operator mode there is no JWT role, while an identity-enabled
-// deployment requires an explicitly verified owner role to start one.
-func mayRunGlobalCycle(c *gin.Context) bool {
-	value, exists := c.Get(identity.ContextRoleKey)
-	if !exists {
-		return true
-	}
-	role, ok := value.(string)
-	return ok && strings.EqualFold(strings.TrimSpace(role), "owner")
 }

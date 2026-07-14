@@ -1,7 +1,9 @@
 package agentcycle
 
 import (
+	"automation-hub-backend/internal/identity"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,12 +21,30 @@ func (h *Handler) Run(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent cycle service is not configured"})
 		return
 	}
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to refresh an operating brief"})
+		return
+	}
 	var request RunRequest
 	_ = c.ShouldBindJSON(&request)
+	request.OwnerIdentity = ownerIdentity
 	result := h.service.Run(request)
 	status := http.StatusOK
 	if result.Status == "failed" {
 		status = http.StatusServiceUnavailable
 	}
 	c.JSON(status, result)
+}
+
+func verifiedOwner(c *gin.Context) string {
+	value, ok := c.Get(identity.ContextSubjectKey)
+	if !ok {
+		return ""
+	}
+	owner, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(owner)
 }

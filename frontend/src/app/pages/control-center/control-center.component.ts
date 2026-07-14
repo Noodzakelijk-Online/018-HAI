@@ -317,7 +317,7 @@ export class ControlCenterComponent implements OnInit {
         this.scanning = false
         this.rebuildViewModel()
         if (result.status === 'completed') {
-          this.notification.success('Agent cycle completed', this.agentCycleSummary(result))
+          this.notification.success(result.executionScope === 'owner_scoped' ? 'Personal operating refresh completed' : 'Agent cycle completed', this.agentCycleSummary(result))
         } else if (result.status === 'partial_failure') {
           this.notification.warning('Agent cycle partially completed', this.agentCycleSummary(result))
         } else {
@@ -546,13 +546,13 @@ export class ControlCenterComponent implements OnInit {
       },
       {
         id: 'scan',
-        title: 'Run agent cycle',
-        detail: 'Sync, recover, follow up, execute safe work, and scan.',
+        title: 'Refresh my operating brief',
+        detail: 'Refresh your context, decisions, blockers, and next action.',
         icon: 'radar-chart',
         tone: 'blue',
         primaryMetric: this.lastAgentCycle ? this.readableState(this.lastAgentCycle.status) : `${this.reviewedItemCount()} reviewed`,
         secondaryMetric: this.agentCycleSecondaryMetric(),
-        context: 'Runs the operational brain once: recover stale work, sync due sources, run follow-ups, execute safe workflow steps, scan ambient opportunities, then refresh the dashboard.',
+        context: 'Uses your owner-scoped memory and pursuits to refresh decisions, blockers, and the next action. System sync, workflow execution, and ambient scanning run separately under the controlled worker.',
         execute: () => this.runScan(),
       },
       {

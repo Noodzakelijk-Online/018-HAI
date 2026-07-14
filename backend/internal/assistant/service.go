@@ -119,6 +119,7 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 	}
 
 	taskRequest := task.IntakeRequest{
+		OwnerIdentity:   request.OwnerIdentity,
 		Request:         message,
 		ProjectKey:      request.ProjectKey,
 		AutomationID:    request.AutomationID,
@@ -163,6 +164,7 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 			result.record("agent cycle", fmt.Errorf("agent cycle service is not configured"), "agent cycle unavailable")
 		} else {
 			cycle := s.cycle.Run(agentcycle.RunRequest{
+				OwnerIdentity:  request.OwnerIdentity,
 				Trigger:        "assistant." + intent,
 				Limit:          8,
 				SkipSourceSync: request.SkipSourceSync,
