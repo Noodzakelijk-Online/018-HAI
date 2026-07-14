@@ -43,6 +43,47 @@ func TestVerifiedActorDoesNotUseClientSuppliedActor(t *testing.T) {
 	}
 }
 
+func TestPursuitRoutesRequireAnAuthenticatedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	if _, err := service.Create(CreateRequest{Title: "Private pursuit", OwnerIdentity: "alice"}); err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+	handler := NewHandler(service)
+
+	unauthenticated := gin.New()
+	unauthenticatedRoutes := unauthenticated.Group("/pursuits")
+	unauthenticatedRoutes.Use(RequireAuthenticatedOwner())
+	unauthenticatedRoutes.GET("/", handler.List)
+	recorder := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/pursuits/", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated pursuit list status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+
+	authenticated := gin.New()
+	authenticated.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	authenticatedRoutes := authenticated.Group("/pursuits")
+	authenticatedRoutes.Use(RequireAuthenticatedOwner())
+	authenticatedRoutes.GET("/", handler.List)
+	recorder = httptest.NewRecorder()
+	authenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/pursuits/", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("authenticated pursuit list status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var records []models.Pursuit
+	if err := json.Unmarshal(recorder.Body.Bytes(), &records); err != nil {
+		t.Fatalf("decode authenticated pursuit list: %v", err)
+	}
+	if len(records) != 1 || records[0].OwnerIdentity != "alice" {
+		t.Fatalf("authenticated pursuit records = %#v", records)
+	}
+}
+
 func TestArchiveEndpointRequiresExplicitArchiveIntent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

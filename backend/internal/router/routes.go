@@ -371,6 +371,7 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 
 func initializePursuitRoutes(apiVersion *gin.RouterGroup, pursuitHandler *pursuit.Handler) {
 	pursuitRoutes := apiVersion.Group("/pursuits")
+	pursuitRoutes.Use(pursuit.RequireAuthenticatedOwner())
 	{
 		pursuitRoutes.GET("/", pursuitHandler.List)
 		pursuitRoutes.POST("/", pursuitHandler.Create)

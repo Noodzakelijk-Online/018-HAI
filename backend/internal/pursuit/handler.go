@@ -21,6 +21,20 @@ func DefaultHandler() *Handler {
 	return NewHandler(DefaultService())
 }
 
+// RequireAuthenticatedOwner protects the personal pursuit API boundary. The
+// service still supports ownerless calls for controlled in-process workers,
+// but browser and API traffic must carry a verified IDP principal before it
+// can read or mutate a person's pursuits.
+func RequireAuthenticatedOwner() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if pursuitOwner(c) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for pursuit access"})
+			return
+		}
+		c.Next()
+	}
+}
+
 func (h *Handler) Create(c *gin.Context) {
 	var request CreateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
