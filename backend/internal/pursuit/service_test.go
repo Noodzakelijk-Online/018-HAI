@@ -1781,6 +1781,26 @@ func TestLinkVerificationCreatesAuditableEvidenceLink(t *testing.T) {
 	}
 }
 
+func TestOwnerScopedVerificationLinkRejectsAnotherOwner(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	bob, err := service.Create(CreateRequest{Title: "Bob private verification", OwnerIdentity: "bob"})
+	if err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+
+	if err := service.LinkVerificationForOwner("alice", bob.ID, uuid.New()); err == nil {
+		t.Fatal("Alice could link verification evidence to Bob's pursuit")
+	}
+	links, err := repo.FindLinks(bob.ID)
+	if err != nil {
+		t.Fatalf("FindLinks: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("cross-owner verification link persisted: %#v", links)
+	}
+}
+
 func TestDetailSurfacesTaskRunEvidenceFromLinkedWorkflows(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

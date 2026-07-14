@@ -502,6 +502,7 @@ type Service interface {
 	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
 	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
 	LinkVerification(pursuitID, verificationID uuid.UUID) error
+	LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error
 	DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error
 	Match(request MatchRequest) ([]MatchCandidate, error)
 	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
@@ -1227,17 +1228,29 @@ func (s *service) validateLinkOwnership(pursuit models.Pursuit, ownerIdentity, l
 }
 
 func (s *service) LinkVerification(pursuitID, verificationID uuid.UUID) error {
+	return s.linkVerificationForOwner("", pursuitID, verificationID)
+}
+
+func (s *service) LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error {
+	if _, err := s.DetailForOwner(ownerIdentity, pursuitID); err != nil {
+		return err
+	}
+	return s.linkVerificationForOwner(ownerIdentity, pursuitID, verificationID)
+}
+
+func (s *service) linkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error {
 	if pursuitID == uuid.Nil || verificationID == uuid.Nil {
 		return fmt.Errorf("pursuit and verification ids are required")
 	}
 	if _, err := s.Link(pursuitID, LinkRequest{
-		LinkType:     LinkVerification,
-		LinkID:       verificationID.String(),
-		Relationship: "verification_evidence",
-		SourceURI:    "verification://" + verificationID.String(),
-		SourceLabel:  "Source-grounded verification run",
-		Confidence:   1,
-		Actor:        "verification-engine",
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkVerification,
+		LinkID:        verificationID.String(),
+		Relationship:  "verification_evidence",
+		SourceURI:     "verification://" + verificationID.String(),
+		SourceLabel:   "Source-grounded verification run",
+		Confidence:    1,
+		Actor:         "verification-engine",
 	}); err != nil {
 		return err
 	}

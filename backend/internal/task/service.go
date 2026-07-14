@@ -799,6 +799,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	}
 
 	verificationResult, err := s.verificationService.Answer(verification.AnswerRequest{
+		OwnerIdentity:     plan.OwnerIdentity,
 		Question:          plan.RealGoal,
 		ProjectKey:        plan.ProjectKey,
 		Mode:              result.Mode,

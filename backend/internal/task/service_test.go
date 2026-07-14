@@ -557,7 +557,15 @@ func (s *sequencedVerificationService) Runs() ([]models.VerificationRun, error) 
 	return nil, nil
 }
 
+func (s *sequencedVerificationService) RunsForOwner(string) ([]models.VerificationRun, error) {
+	return nil, nil
+}
+
 func (s *sequencedVerificationService) RunDetails(id uuid.UUID) (*verification.VerificationResult, error) {
+	return nil, nil
+}
+
+func (s *sequencedVerificationService) RunDetailsForOwner(string, uuid.UUID) (*verification.VerificationResult, error) {
 	return nil, nil
 }
 

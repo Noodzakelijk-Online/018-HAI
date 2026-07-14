@@ -45,6 +45,7 @@ type EvidenceInput struct {
 }
 
 type AnswerRequest struct {
+	OwnerIdentity     string          `json:"-"`
 	Question          string          `json:"question"`
 	ProjectKey        string          `json:"projectKey,omitempty"`
 	PursuitID         string          `json:"pursuitId,omitempty"`
@@ -71,11 +72,13 @@ type VerificationResult struct {
 type Service interface {
 	Answer(request AnswerRequest) (*VerificationResult, error)
 	Runs() ([]models.VerificationRun, error)
+	RunsForOwner(ownerIdentity string) ([]models.VerificationRun, error)
 	RunDetails(id uuid.UUID) (*VerificationResult, error)
+	RunDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error)
 }
 
 type PursuitLinker interface {
-	LinkVerification(pursuitID, verificationID uuid.UUID) error
+	LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error
 }
 
 type service struct {
@@ -109,6 +112,7 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 	questions := researchQuestions(request.Question, request.ProjectKey)
 	logs := []string{"converted request into research questions"}
 	run, err := s.repo.CreateRun(&models.VerificationRun{
+		OwnerIdentity:     strings.TrimSpace(request.OwnerIdentity),
 		Mode:              mode,
 		Question:          strings.TrimSpace(request.Question),
 		ProjectKey:        strings.TrimSpace(request.ProjectKey),
@@ -156,7 +160,7 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 	}
 	if pursuitID != uuid.Nil {
 		result.PursuitID = pursuitID.String()
-		if err := s.pursuitLinker.LinkVerification(pursuitID, run.ID); err != nil {
+		if err := s.pursuitLinker.LinkVerificationForOwner(request.OwnerIdentity, pursuitID, run.ID); err != nil {
 			result.PursuitLinkError = err.Error()
 			result.Logs = append(result.Logs, "verification was saved but could not be linked to the requested pursuit")
 			s.audit(run.ID, "verification.pursuit_link_failed", err.Error())
@@ -185,7 +189,34 @@ func (s *service) Runs() ([]models.VerificationRun, error) {
 	return s.repo.FindRuns()
 }
 
+func (s *service) RunsForOwner(ownerIdentity string) ([]models.VerificationRun, error) {
+	return s.repo.FindRunsForOwner(strings.TrimSpace(ownerIdentity))
+}
+
 func (s *service) RunDetails(id uuid.UUID) (*VerificationResult, error) {
+	return s.runDetailsForOwner("", id)
+}
+
+func (s *service) RunDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error) {
+	return s.runDetailsForOwner(strings.TrimSpace(ownerIdentity), id)
+}
+
+func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error) {
+	runs, err := s.RunsForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	var run *models.VerificationRun
+	for index := range runs {
+		if runs[index].ID == id {
+			copy := runs[index]
+			run = &copy
+			break
+		}
+	}
+	if run == nil {
+		return nil, fmt.Errorf("verification run not found")
+	}
 	claims, err := s.repo.FindClaims(id)
 	if err != nil {
 		return nil, err
@@ -195,6 +226,7 @@ func (s *service) RunDetails(id uuid.UUID) (*VerificationResult, error) {
 		return nil, err
 	}
 	return &VerificationResult{
+		Run:               *run,
 		Claims:            claims,
 		Evidence:          evidence,
 		UnsupportedClaims: unsupportedClaims(claims),
@@ -207,6 +239,7 @@ func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questi
 	if s.sourceService != nil {
 		for _, question := range questions {
 			result, err := s.sourceService.Search(source.SearchRequest{
+				OwnerIdentity:    request.OwnerIdentity,
 				Query:            question,
 				ProjectKey:       request.ProjectKey,
 				Limit:            6,
@@ -410,7 +443,7 @@ func (s *service) storeVerifiedMemory(request AnswerRequest, run *models.Verific
 		if claim.Status != StatusVerified && claim.Status != StatusSourceSupported && claim.Status != StatusHumanApproved {
 			continue
 		}
-		_, _ = s.memoryService.Create(memory.CreateRequest{
+		_, _ = memory.CreateForOwner(s.memoryService, request.OwnerIdentity, memory.CreateRequest{
 			ProjectKey:  request.ProjectKey,
 			Kind:        "verified_fact",
 			Content:     claim.ClaimText,

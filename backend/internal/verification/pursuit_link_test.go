@@ -33,9 +33,10 @@ func TestAnswerLinksExplicitPursuitEvidence(t *testing.T) {
 	service := NewService(repo, nil, nil, linker)
 
 	result, err := service.Answer(AnswerRequest{
-		Question:  "What does the supplied legal record establish?",
-		PursuitID: pursuitID.String(),
-		Mode:      ModeGrounded,
+		OwnerIdentity: "alice",
+		Question:      "What does the supplied legal record establish?",
+		PursuitID:     pursuitID.String(),
+		Mode:          ModeGrounded,
 		ExternalEvidence: []EvidenceInput{{
 			SourceType:  "legal_record",
 			SourceURI:   "local://vivare/record-1",
@@ -51,17 +52,59 @@ func TestAnswerLinksExplicitPursuitEvidence(t *testing.T) {
 	if !result.PursuitLinked || result.PursuitID != pursuitID.String() || result.PursuitLinkError != "" {
 		t.Fatalf("pursuit link result = %#v", result)
 	}
-	if linker.pursuitID != pursuitID || linker.verificationID != result.Run.ID {
+	if linker.ownerIdentity != "alice" || linker.pursuitID != pursuitID || linker.verificationID != result.Run.ID {
 		t.Fatalf("linker received pursuit=%s verification=%s; want pursuit=%s verification=%s", linker.pursuitID, linker.verificationID, pursuitID, result.Run.ID)
 	}
 }
 
+func TestVerificationRunsAndDetailsAreScopedToOwner(t *testing.T) {
+	repo := &fakeVerificationRepository{}
+	service := NewService(repo, nil, nil)
+
+	alice, err := service.Answer(AnswerRequest{
+		OwnerIdentity:    "alice",
+		Question:         "What does Alice's document establish?",
+		ExternalEvidence: []EvidenceInput{{SourceType: "document", Snippet: "Alice evidence", Primary: true}},
+	})
+	if err != nil {
+		t.Fatalf("create Alice verification: %v", err)
+	}
+	bob, err := service.Answer(AnswerRequest{
+		OwnerIdentity:    "bob",
+		Question:         "What does Bob's document establish?",
+		ExternalEvidence: []EvidenceInput{{SourceType: "document", Snippet: "Bob evidence", Primary: true}},
+	})
+	if err != nil {
+		t.Fatalf("create Bob verification: %v", err)
+	}
+
+	runs, err := service.RunsForOwner("alice")
+	if err != nil {
+		t.Fatalf("RunsForOwner: %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != alice.Run.ID || runs[0].OwnerIdentity != "alice" {
+		t.Fatalf("Alice-visible runs = %#v", runs)
+	}
+	if _, err := service.RunDetailsForOwner("alice", bob.Run.ID); err == nil {
+		t.Fatal("Alice could load Bob's verification run")
+	}
+	detail, err := service.RunDetailsForOwner("alice", alice.Run.ID)
+	if err != nil {
+		t.Fatalf("Alice RunDetailsForOwner: %v", err)
+	}
+	if detail.Run.ID != alice.Run.ID || detail.Run.OwnerIdentity != "alice" {
+		t.Fatalf("Alice detail run = %#v", detail.Run)
+	}
+}
+
 type capturingPursuitLinker struct {
+	ownerIdentity  string
 	pursuitID      uuid.UUID
 	verificationID uuid.UUID
 }
 
-func (l *capturingPursuitLinker) LinkVerification(pursuitID, verificationID uuid.UUID) error {
+func (l *capturingPursuitLinker) LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error {
+	l.ownerIdentity = ownerIdentity
 	l.pursuitID = pursuitID
 	l.verificationID = verificationID
 	return nil
@@ -112,6 +155,16 @@ func (r *fakeVerificationRepository) CreateAuditLog(*models.VerificationAuditLog
 
 func (r *fakeVerificationRepository) FindRuns() ([]models.VerificationRun, error) {
 	return r.runs, nil
+}
+
+func (r *fakeVerificationRepository) FindRunsForOwner(ownerIdentity string) ([]models.VerificationRun, error) {
+	result := []models.VerificationRun{}
+	for _, run := range r.runs {
+		if ownerIdentity == "" || run.OwnerIdentity == "" || run.OwnerIdentity == ownerIdentity {
+			result = append(result, run)
+		}
+	}
+	return result, nil
 }
 
 func (r *fakeVerificationRepository) FindClaims(runID uuid.UUID) ([]models.VerificationClaim, error) {
