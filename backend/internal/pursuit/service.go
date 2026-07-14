@@ -562,9 +562,13 @@ type Service interface {
 	RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error)
 	RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
 	Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
+	IntakeForOwner(ownerIdentity string, id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
 	Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
+	PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
 	ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
+	ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
 	RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error)
+	RefreshSummaryForOwner(ownerIdentity string, id uuid.UUID, actor string) (*PursuitDetail, error)
 	Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
 	Activity(id uuid.UUID) ([]models.PursuitActivity, error)
 }
@@ -1473,7 +1477,7 @@ func (s *service) linkVerificationForOwner(ownerIdentity string, pursuitID, veri
 	}); err != nil {
 		return err
 	}
-	_, err := s.RefreshSummary(pursuitID, "verification-engine")
+	_, err := s.RefreshSummaryForOwner(ownerIdentity, pursuitID, "verification-engine")
 	return err
 }
 
@@ -2081,9 +2085,16 @@ func autoLinkMinimum(value float64) float64 {
 }
 
 func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error) {
+	return s.IntakeForOwner("", id, request)
+}
+
+func (s *service) IntakeForOwner(ownerIdentity string, id uuid.UUID, request IntakeRequest) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	if err := ensurePursuitOpen(*pursuit, "add operational work to"); err != nil {
 		return nil, err
@@ -2094,8 +2105,9 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	if s.workflowService == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
+	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity, request.OwnerIdentity)
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
-		OwnerIdentity:  pursuit.OwnerIdentity,
+		OwnerIdentity:  effectiveOwner,
 		Input:          request.Input,
 		ProjectKey:     firstNonEmpty(request.ProjectKey, pursuit.ProjectKey),
 		AutomationID:   request.AutomationID,
@@ -2116,7 +2128,7 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	}
 	if record != nil {
 		_, err = s.Link(id, LinkRequest{
-			OwnerIdentity: firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity),
+			OwnerIdentity: effectiveOwner,
 			LinkType:      LinkWorkflow,
 			LinkID:        record.Item.ID.String(),
 			Relationship:  "operational_work",
@@ -2129,15 +2141,15 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 			return nil, err
 		}
 	}
-	if err := s.linkIntakeSourceReference(id, firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity), request); err != nil {
+	if err := s.linkIntakeSourceReference(id, effectiveOwner, request); err != nil {
 		return nil, err
 	}
-	if err := s.linkAssistantCommandReference(id, firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity), request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, firstNonEmpty(request.Actor, "system")); err != nil {
+	if err := s.linkAssistantCommandReference(id, effectiveOwner, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, firstNonEmpty(request.Actor, "system")); err != nil {
 		return nil, err
 	}
 	if launchID, ok := runtimeLaunchIDFromEvidenceURI(request.SourceURI); ok {
 		if _, err := s.Link(id, LinkRequest{
-			OwnerIdentity: firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity),
+			OwnerIdentity: effectiveOwner,
 			LinkType:      LinkAgentRuntime,
 			LinkID:        launchID.String(),
 			Relationship:  "execution_attempt",
@@ -2161,7 +2173,7 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 			Actor:         firstNonEmpty(request.Actor, "Robert"),
 		})
 	}
-	return s.RefreshSummary(id, "system")
+	return s.RefreshSummaryForOwner(ownerIdentity, id, "system")
 }
 
 func (s *service) linkIntakeSourceReference(id uuid.UUID, ownerIdentity string, request IntakeRequest) error {
@@ -2240,14 +2252,21 @@ func (s *service) linkExactSourceReference(id uuid.UUID, ownerIdentity, sourceTy
 }
 
 func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.PlanForOwner("", id, request)
+}
+
+func (s *service) PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
+	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
 	if err := ensurePursuitOpen(*pursuit, "plan"); err != nil {
 		return nil, err
 	}
-	existing, err := s.Detail(id)
+	existing, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2256,7 +2275,7 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 			if err := s.markPursuitCandidateAccepted(pursuit, firstNonEmpty(request.Actor, "Robert")); err != nil {
 				return nil, err
 			}
-			return s.RefreshSummary(id, firstNonEmpty(request.Actor, "pursuit-engine"))
+			return s.RefreshSummaryForOwner(ownerIdentity, id, firstNonEmpty(request.Actor, "pursuit-engine"))
 		}
 		return existing, nil
 	}
@@ -2269,8 +2288,9 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 		reviewReason = firstNonEmpty(request.ReviewReason, "high-risk pursuit planning requires Robert approval before execution")
 	}
 	input := firstNonEmpty(request.Input, pursuitPlanInput(*pursuit))
+	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity)
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
-		OwnerIdentity:  pursuit.OwnerIdentity,
+		OwnerIdentity:  effectiveOwner,
 		Input:          input,
 		ProjectKey:     pursuit.ProjectKey,
 		SourceType:     LinkPursuit,
@@ -2288,13 +2308,14 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 	}
 	if record != nil {
 		if _, err := s.Link(id, LinkRequest{
-			LinkType:     LinkWorkflow,
-			LinkID:       record.Item.ID.String(),
-			Relationship: "first_workflow_plan",
-			SourceURI:    "pursuit://" + pursuit.ID.String(),
-			SourceLabel:  pursuit.Title,
-			Confidence:   0.95,
-			Actor:        firstNonEmpty(request.Actor, "pursuit-engine"),
+			OwnerIdentity: effectiveOwner,
+			LinkType:      LinkWorkflow,
+			LinkID:        record.Item.ID.String(),
+			Relationship:  "first_workflow_plan",
+			SourceURI:     "pursuit://" + pursuit.ID.String(),
+			SourceLabel:   pursuit.Title,
+			Confidence:    0.95,
+			Actor:         firstNonEmpty(request.Actor, "pursuit-engine"),
 		}); err != nil {
 			return nil, err
 		}
@@ -2305,13 +2326,20 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 			return nil, err
 		}
 	}
-	return s.RefreshSummary(id, firstNonEmpty(request.Actor, "pursuit-engine"))
+	return s.RefreshSummaryForOwner(ownerIdentity, id, firstNonEmpty(request.Actor, "pursuit-engine"))
 }
 
 func (s *service) ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error) {
+	return s.ResolveDecisionForOwner("", id, request)
+}
+
+func (s *service) ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	if err := ensurePursuitOpen(*pursuit, "resolve a decision for"); err != nil {
 		return nil, err
@@ -2320,20 +2348,24 @@ func (s *service) ResolveDecision(id uuid.UUID, request DecisionResolutionReques
 		return nil, fmt.Errorf("decisionId is required")
 	}
 	if request.Approved && strings.EqualFold(strings.TrimSpace(request.DecisionType), "pursuit_completion_review") {
-		if err := s.completePursuitFromDecision(id, request); err != nil {
+		if err := s.completePursuitFromDecisionForOwner(ownerIdentity, id, request); err != nil {
 			return nil, err
 		}
 	}
-	if err := s.createApprovedDecisionWorkflow(id, request); err != nil {
+	if err := s.createApprovedDecisionWorkflowForOwner(ownerIdentity, id, request); err != nil {
 		return nil, err
 	}
 	if _, err := s.recordDecisionResolution(id, request); err != nil {
 		return nil, err
 	}
-	return s.RefreshSummary(id, firstNonEmpty(request.Actor, "Robert"))
+	return s.RefreshSummaryForOwner(ownerIdentity, id, firstNonEmpty(request.Actor, "Robert"))
 }
 
 func (s *service) completePursuitFromDecision(id uuid.UUID, request DecisionResolutionRequest) error {
+	return s.completePursuitFromDecisionForOwner("", id, request)
+}
+
+func (s *service) completePursuitFromDecisionForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
 	expectedID := completionReviewDecisionID(id)
 	if !strings.EqualFold(strings.TrimSpace(request.DecisionID), expectedID) {
 		return fmt.Errorf("completion review decision does not belong to this pursuit")
@@ -2345,12 +2377,12 @@ func (s *service) completePursuitFromDecision(id uuid.UUID, request DecisionReso
 	if pursuitClosed(*pursuit) {
 		return nil
 	}
-	if reason, err := s.completionActiveBlockerReason(id); err != nil {
+	if reason, err := s.completionActiveBlockerReasonForOwner(ownerIdentity, id); err != nil {
 		return err
 	} else if reason != "" {
 		return fmt.Errorf("pursuit completion is blocked by unresolved operational work: %s", reason)
 	}
-	allowed, reason, err := s.completionEvidenceAvailable(id)
+	allowed, reason, err := s.completionEvidenceAvailableForOwner(ownerIdentity, id)
 	if err != nil {
 		return err
 	}
@@ -2387,22 +2419,30 @@ func completionDecisionMessage(note string) string {
 }
 
 func (s *service) createApprovedDecisionWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
+	return s.createApprovedDecisionWorkflowForOwner("", id, request)
+}
+
+func (s *service) createApprovedDecisionWorkflowForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
 	if !request.Approved {
 		return nil
 	}
 	switch strings.ToLower(strings.TrimSpace(request.DecisionType)) {
 	case "runtime_attempt_review":
-		return s.createRuntimeRecoveryWorkflow(id, request)
+		return s.createRuntimeRecoveryWorkflowForOwner(ownerIdentity, id, request)
 	default:
 		return nil
 	}
 }
 
 func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
+	return s.createRuntimeRecoveryWorkflowForOwner("", id, request)
+}
+
+func (s *service) createRuntimeRecoveryWorkflowForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
 	if s.workflowService == nil {
 		return fmt.Errorf("workflow service is not configured")
 	}
-	detail, err := s.Detail(id)
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return err
 	}
@@ -2415,7 +2455,7 @@ func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionRe
 		return nil
 	}
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
-		OwnerIdentity:  detail.Pursuit.OwnerIdentity,
+		OwnerIdentity:  firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
 		Input:          runtimeRecoveryWorkflowInput(detail.Pursuit, attempt, request),
 		ProjectKey:     detail.Pursuit.ProjectKey,
 		SourceType:     "pursuit_decision",
@@ -2433,13 +2473,14 @@ func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionRe
 	}
 	if record != nil {
 		if _, err := s.Link(id, LinkRequest{
-			LinkType:     LinkWorkflow,
-			LinkID:       record.Item.ID.String(),
-			Relationship: "runtime_recovery_workflow",
-			SourceURI:    sourceURI,
-			SourceLabel:  firstNonEmpty(request.EvidenceLabel, runtimeAttemptLabel(attempt)),
-			Confidence:   0.95,
-			Actor:        firstNonEmpty(request.Actor, "pursuit-engine"),
+			OwnerIdentity: firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
+			LinkType:      LinkWorkflow,
+			LinkID:        record.Item.ID.String(),
+			Relationship:  "runtime_recovery_workflow",
+			SourceURI:     sourceURI,
+			SourceLabel:   firstNonEmpty(request.EvidenceLabel, runtimeAttemptLabel(attempt)),
+			Confidence:    0.95,
+			Actor:         firstNonEmpty(request.Actor, "pursuit-engine"),
 		}); err != nil {
 			return err
 		}
@@ -2457,7 +2498,11 @@ func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionRe
 }
 
 func (s *service) RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error) {
-	detail, err := s.Detail(id)
+	return s.RefreshSummaryForOwner("", id, actor)
+}
+
+func (s *service) RefreshSummaryForOwner(ownerIdentity string, id uuid.UUID, actor string) (*PursuitDetail, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2484,7 +2529,7 @@ func (s *service) RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, er
 	}
 	_, _ = s.recordActivity(id, "pursuit.summary_refreshed", "Pursuit summary refreshed from linked operational records", firstNonEmpty(actor, "system"), "", "", "")
 	detail.Pursuit = *updated
-	return s.Detail(id)
+	return s.DetailForOwner(ownerIdentity, id)
 }
 
 func (s *service) Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error) {
@@ -3741,7 +3786,15 @@ func requestsVerifiedCompletion(pursuit models.Pursuit, request UpdateRequest) b
 }
 
 func (s *service) completionActiveBlockerReason(id uuid.UUID) (string, error) {
+	return s.completionActiveBlockerReasonForOwner("", id)
+}
+
+func (s *service) completionActiveBlockerReasonForOwner(ownerIdentity string, id uuid.UUID) (string, error) {
 	links, err := s.repo.FindLinks(id)
+	if err != nil {
+		return "", err
+	}
+	links, err = s.visibleLinksForOwner(ownerIdentity, links)
 	if err != nil {
 		return "", err
 	}
@@ -3795,7 +3848,15 @@ func (s *service) completionActiveBlockerReason(id uuid.UUID) (string, error) {
 }
 
 func (s *service) completionEvidenceAvailable(id uuid.UUID) (bool, string, error) {
+	return s.completionEvidenceAvailableForOwner("", id)
+}
+
+func (s *service) completionEvidenceAvailableForOwner(ownerIdentity string, id uuid.UUID) (bool, string, error) {
 	links, err := s.repo.FindLinks(id)
+	if err != nil {
+		return false, "", err
+	}
+	links, err = s.visibleLinksForOwner(ownerIdentity, links)
 	if err != nil {
 		return false, "", err
 	}

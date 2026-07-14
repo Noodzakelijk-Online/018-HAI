@@ -264,7 +264,7 @@ func (h *Handler) Intake(c *gin.Context) {
 	}
 	request.OwnerIdentity = pursuitOwner(c)
 	request.Actor = verifiedActor(c, "operator")
-	_, err := h.service.Intake(id, request)
+	_, err := h.service.IntakeForOwner(pursuitOwner(c), id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -286,7 +286,7 @@ func (h *Handler) Plan(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	_, err := h.service.Plan(id, request)
+	_, err := h.service.PlanForOwner(pursuitOwner(c), id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -308,7 +308,7 @@ func (h *Handler) ResolveDecision(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	_, err := h.service.ResolveDecision(id, request)
+	_, err := h.service.ResolveDecisionForOwner(pursuitOwner(c), id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -329,7 +329,7 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&request)
 	request.Actor = verifiedActor(c, "system")
-	_, err := h.service.RefreshSummary(id, request.Actor)
+	_, err := h.service.RefreshSummaryForOwner(pursuitOwner(c), id, request.Actor)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

@@ -169,6 +169,56 @@ func TestDelegationPackageEndpointDoesNotExposeAnotherOwnersWork(t *testing.T) {
 	}
 }
 
+func TestResolveDecisionEndpointRejectsHiddenCrossOwnerCompletionEvidence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice completion", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:                 bobWorkflowID,
+		OwnerIdentity:      "bob",
+		Title:              "Bob verified workflow",
+		CurrentState:       "completed",
+		VerificationStatus: "verified",
+	}
+	// Simulate a malformed legacy link that predates owner-aware link checks.
+	legacyLinkID := uuid.New()
+	repo.links[legacyLinkID] = models.PursuitLink{
+		ID:           legacyLinkID,
+		PursuitID:    alice.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_evidence",
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.POST("/pursuits/:id/decisions/resolve", NewHandler(service).ResolveDecision)
+
+	recorder := httptest.NewRecorder()
+	body := fmt.Sprintf(`{"decisionId":%q,"decisionType":"pursuit_completion_review","approved":true}`, completionReviewDecisionID(alice.ID))
+	request := httptest.NewRequest(http.MethodPost, "/pursuits/"+alice.ID.String()+"/decisions/resolve", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("cross-owner completion status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	stored, err := repo.FindByID(alice.ID)
+	if err != nil {
+		t.Fatalf("Find Alice pursuit: %v", err)
+	}
+	if stored.Status == StatusCompleted || stored.CompletionState == CompletionVerified {
+		t.Fatalf("hidden cross-owner evidence completed Alice pursuit: %#v", stored)
+	}
+}
+
 func TestPursuitMatchDoesNotExposeAnotherOwnersSourceLink(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()
