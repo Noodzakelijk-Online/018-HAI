@@ -38,6 +38,20 @@ func NewHandlerWithPursuitIntakeRouter(service Service, pursuitIntakeRouter Purs
 	return &Handler{service: service, pursuitIntakeRouter: pursuitIntakeRouter}
 }
 
+// RequireAuthenticatedOwner protects workflow data and controls at the HTTP
+// boundary. System schedulers call the service directly, but a browser or API
+// caller must have a verified IDP subject before it can inspect or mutate a
+// person's workflow, approvals, evidence, or follow-up state.
+func RequireAuthenticatedOwner() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if verifiedWorkflowOwner(c) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for workflow access"})
+			return
+		}
+		c.Next()
+	}
+}
+
 func (h *Handler) Intake(c *gin.Context) {
 	var request IntakeRequest
 	if err := c.ShouldBindJSON(&request); err != nil {

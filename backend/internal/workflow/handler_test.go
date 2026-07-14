@@ -53,6 +53,34 @@ func TestResolveApprovalHandlerUsesVerifiedActor(t *testing.T) {
 	}
 }
 
+func TestWorkflowRoutesRequireVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	unauthenticated := gin.New()
+	unauthenticatedRoutes := unauthenticated.Group("/workflow")
+	unauthenticatedRoutes.Use(RequireAuthenticatedOwner())
+	unauthenticatedRoutes.GET("/overview", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	unauthenticatedRecorder := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(unauthenticatedRecorder, httptest.NewRequest(http.MethodGet, "/workflow/overview", nil))
+	if unauthenticatedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated workflow route status = %d, want %d: %s", unauthenticatedRecorder.Code, http.StatusUnauthorized, unauthenticatedRecorder.Body.String())
+	}
+
+	authenticated := gin.New()
+	authenticated.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	authenticatedRoutes := authenticated.Group("/workflow")
+	authenticatedRoutes.Use(RequireAuthenticatedOwner())
+	authenticatedRoutes.GET("/overview", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	authenticatedRecorder := httptest.NewRecorder()
+	authenticated.ServeHTTP(authenticatedRecorder, httptest.NewRequest(http.MethodGet, "/workflow/overview", nil))
+	if authenticatedRecorder.Code != http.StatusNoContent {
+		t.Fatalf("authenticated workflow route status = %d, want %d: %s", authenticatedRecorder.Code, http.StatusNoContent, authenticatedRecorder.Body.String())
+	}
+}
+
 func TestTransitionHandlerCannotApproveWorkflow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeWorkflowRepo()

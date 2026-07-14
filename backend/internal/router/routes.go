@@ -353,6 +353,7 @@ func initializeHAIOSRoutes(apiVersion *gin.RouterGroup, osHandler *haios.Handler
 
 func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *workflow.Handler) {
 	workflowRoutes := apiVersion.Group("/workflow")
+	workflowRoutes.Use(workflow.RequireAuthenticatedOwner())
 	{
 		workflowRoutes.GET("/overview", workflowHandler.Overview)
 		workflowRoutes.GET("/approvals", workflowHandler.ApprovalItems)

@@ -64,8 +64,10 @@ to a user's mail, calendar, browser, device, or paid provider by default.
 
 Recent hardening in the current baseline:
 
-- Authenticated pursuit, workflow, source, memory, verification, task, review,
-  and ambient operations retain the verified owner identity end to end.
+- Pursuit, workflow, source, memory, verification, task, review, ambient, and
+  HAI OS browser/API routes require a verified owner session. Their operations
+  retain that identity end to end; ownerless work is limited to controlled
+  in-process schedulers and workers.
 - Dashboard worker controls for **Run due**, **Recover stale**, **Run follow-ups**,
   and Connected Sources **Sync due** operate only on sources and workflow items
   explicitly owned by the signed-in user. They cannot invoke the global
