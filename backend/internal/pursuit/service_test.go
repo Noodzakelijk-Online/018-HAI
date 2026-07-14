@@ -511,23 +511,27 @@ func TestIntakeCreatesWorkflowAndLinksOperationalWork(t *testing.T) {
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{}
 	service := NewService(repo, workflowService)
-	created, err := service.Create(CreateRequest{Title: "Government letter response", ProjectKey: "letter", Description: "Legal/government reply"})
+	created, err := service.Create(CreateRequest{Title: "Government letter response", OwnerIdentity: "alice", ProjectKey: "letter", Description: "Legal/government reply"})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 
 	detail, err := service.Intake(created.ID, IntakeRequest{
-		Input:       "New government letter asks for a reply before Friday.",
-		SourceType:  "email",
-		SourceID:    "email-2",
-		SourceURI:   "local://email-2",
-		SourceLabel: "Government letter",
+		OwnerIdentity: "bob",
+		Input:         "New government letter asks for a reply before Friday.",
+		SourceType:    "email",
+		SourceID:      "email-2",
+		SourceURI:     "local://email-2",
+		SourceLabel:   "Government letter",
 	})
 	if err != nil {
 		t.Fatalf("Intake returned error: %v", err)
 	}
 	if workflowService.received.ProjectKey != "letter" {
 		t.Fatalf("workflow project key = %q", workflowService.received.ProjectKey)
+	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
 	}
 	if len(detail.Workflows) != 1 || len(detail.ApprovalItems) != 1 {
 		t.Fatalf("detail workflows/approvals = %#v / %#v", detail.Workflows, detail.ApprovalItems)
@@ -697,22 +701,24 @@ func TestRouteIntakeMatchesExistingPursuitAndCreatesGovernedWorkflow(t *testing.
 	workflowService := &fakeWorkflowIntake{}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{
-		Title:       "Vivare legal dispute",
-		ProjectKey:  "vivare",
-		Description: "Housing/legal evidence and formal replies.",
+		Title:         "Vivare legal dispute",
+		OwnerIdentity: "alice",
+		ProjectKey:    "vivare",
+		Description:   "Housing/legal evidence and formal replies.",
 	})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 
 	result, err := service.RouteIntake(IntakeRequest{
-		Input:       "New Vivare lawyer email asks for evidence before the hearing.",
-		ProjectKey:  "vivare",
-		SourceType:  "email",
-		SourceID:    "email-77",
-		SourceURI:   "local://email/vivare-77",
-		SourceLabel: "Vivare lawyer email",
-		Actor:       "source-worker",
+		Input:         "New Vivare lawyer email asks for evidence before the hearing.",
+		ProjectKey:    "vivare",
+		SourceType:    "email",
+		SourceID:      "email-77",
+		SourceURI:     "local://email/vivare-77",
+		SourceLabel:   "Vivare lawyer email",
+		Actor:         "source-worker",
+		OwnerIdentity: "alice",
 	})
 	if err != nil {
 		t.Fatalf("RouteIntake returned error: %v", err)
@@ -725,6 +731,9 @@ func TestRouteIntakeMatchesExistingPursuitAndCreatesGovernedWorkflow(t *testing.
 	}
 	if workflowService.received.ProjectKey != "vivare" || workflowService.received.SourceURI != "local://email/vivare-77" {
 		t.Fatalf("workflow intake provenance = %#v", workflowService.received)
+	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("matched workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
 	}
 	links, _ := repo.FindLinks(created.ID)
 	found := false
@@ -744,13 +753,14 @@ func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T)
 	service := NewService(repo, workflowService)
 
 	result, err := service.RouteIntake(IntakeRequest{
-		Input:       "Prepare YouTube removal appeal evidence and draft platform support follow-up.",
-		ProjectKey:  "youtube-removal",
-		SourceType:  "ai_chat",
-		SourceID:    "chat-99:action-1",
-		SourceURI:   "chat://youtube-removal/99",
-		SourceLabel: "YouTube appeal planning chat",
-		Actor:       "memory-engine",
+		OwnerIdentity: "alice",
+		Input:         "Prepare YouTube removal appeal evidence and draft platform support follow-up.",
+		ProjectKey:    "youtube-removal",
+		SourceType:    "ai_chat",
+		SourceID:      "chat-99:action-1",
+		SourceURI:     "chat://youtube-removal/99",
+		SourceLabel:   "YouTube appeal planning chat",
+		Actor:         "memory-engine",
 	})
 	if err != nil {
 		t.Fatalf("RouteIntake returned error: %v", err)
@@ -769,6 +779,9 @@ func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T)
 	}
 	if workflowService.received.Trigger != "pursuit_global_intake" {
 		t.Fatalf("workflow trigger = %q", workflowService.received.Trigger)
+	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("candidate workflow owner = %q, want alice", workflowService.received.OwnerIdentity)
 	}
 }
 
@@ -859,6 +872,7 @@ func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{
 		Title:                "Insurance claim evidence bundle",
+		OwnerIdentity:        "alice",
 		ProjectKey:           "asr",
 		Description:          "Collect evidence for insurer before any external response.",
 		DesiredOutcome:       "Verified evidence bundle and approved reply draft.",
@@ -878,6 +892,9 @@ func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	}
 	if workflowService.received.Trigger != "pursuit_planning" || !workflowService.received.RequiresReview {
 		t.Fatalf("workflow trigger/review = %s/%v", workflowService.received.Trigger, workflowService.received.RequiresReview)
+	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("planned workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
 	}
 	if !strings.Contains(workflowService.received.Input, "Verified evidence bundle") || !strings.Contains(workflowService.received.Input, "approval-gated") {
 		t.Fatalf("workflow input missing pursuit context: %s", workflowService.received.Input)
@@ -2276,7 +2293,7 @@ func TestApprovedRuntimeAttemptDecisionCreatesGovernedRecoveryWorkflow(t *testin
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{}
 	service := NewService(repo, workflowService)
-	created, err := service.Create(CreateRequest{Title: "Recover OpenClaw runtime safely", ProjectKey: "018-HAI"})
+	created, err := service.Create(CreateRequest{Title: "Recover OpenClaw runtime safely", OwnerIdentity: "alice", ProjectKey: "018-HAI"})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
@@ -2333,6 +2350,9 @@ func TestApprovedRuntimeAttemptDecisionCreatesGovernedRecoveryWorkflow(t *testin
 	}
 	if workflowService.received.ContentType != "runtime_attempt_review" || workflowService.received.Trigger != "pursuit_decision_approved" || !workflowService.received.RequiresReview {
 		t.Fatalf("workflow recovery metadata = %#v", workflowService.received)
+	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("recovery workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
 	}
 	for _, expected := range []string{"Route trace:", "skills=autoreview, gitcrawl", "Required controls:", "Validation checklist:", "Do not retry the runtime directly"} {
 		if !strings.Contains(workflowService.received.Input, expected) {

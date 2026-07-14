@@ -1456,6 +1456,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	reviewRequired := request.RequiresReview || strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high")
 	reviewReason := firstNonEmpty(request.ReviewReason, routedIntakeReviewReason(reviewRequired, request))
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  request.OwnerIdentity,
 		Input:          request.Input,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
@@ -1820,6 +1821,7 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  pursuit.OwnerIdentity,
 		Input:          request.Input,
 		ProjectKey:     firstNonEmpty(request.ProjectKey, pursuit.ProjectKey),
 		AutomationID:   request.AutomationID,
@@ -1989,6 +1991,7 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 	}
 	input := firstNonEmpty(request.Input, pursuitPlanInput(*pursuit))
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  pursuit.OwnerIdentity,
 		Input:          input,
 		ProjectKey:     pursuit.ProjectKey,
 		SourceType:     LinkPursuit,
@@ -2133,6 +2136,7 @@ func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionRe
 		return nil
 	}
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  detail.Pursuit.OwnerIdentity,
 		Input:          runtimeRecoveryWorkflowInput(detail.Pursuit, attempt, request),
 		ProjectKey:     detail.Pursuit.ProjectKey,
 		SourceType:     "pursuit_decision",
