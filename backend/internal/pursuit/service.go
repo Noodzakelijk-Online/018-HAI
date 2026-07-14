@@ -4202,7 +4202,7 @@ func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, prop
 			break
 		}
 	}
-	if len(result) == 0 && !isPursuitCandidate(pursuit) && workflowsReadyForCompletion(workflows) {
+	if !hasPendingPursuitDecision(result) && !isPursuitCandidate(pursuit) && workflowsReadyForCompletion(workflows) {
 		decisionID := completionReviewDecisionID(pursuit.ID)
 		if resolvedDecisions[decisionID] {
 			return result
@@ -4222,7 +4222,7 @@ func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, prop
 			CreatedAt:        optionalRFC3339(pursuit.UpdatedAt),
 		})
 	}
-	if len(result) == 0 && (strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")) {
+	if !hasPendingPursuitDecision(result) && (strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")) {
 		decisionID := nextActionDecisionID(pursuit.ID)
 		if resolvedDecisions[decisionID] {
 			return result
@@ -4261,6 +4261,18 @@ func pendingDecisionCards(cards []PursuitDecision) int {
 		}
 	}
 	return count
+}
+
+// hasPendingPursuitDecision separates decision history from work that still
+// needs an operator. Recorded or approved decisions remain visible in the
+// audit timeline but must not hide a valid completion review.
+func hasPendingPursuitDecision(cards []PursuitDecision) bool {
+	for _, card := range cards {
+		if strings.EqualFold(strings.TrimSpace(card.Status), "pending") || card.RequiresApproval {
+			return true
+		}
+	}
+	return false
 }
 
 func decisionStatus(decision models.WorkflowDecision) string {

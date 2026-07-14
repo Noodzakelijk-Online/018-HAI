@@ -1678,6 +1678,54 @@ func TestDetailSurfacesCompletionReviewDecisionForVerifiedWorkflows(t *testing.T
 	}
 }
 
+func TestDetailCompletionReviewIsNotHiddenByRecordedWorkflowDecision(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Close verified decision trail", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:                 workflowID,
+		Title:              "Verify the decision trail",
+		ProjectKey:         "018-HAI",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	repo.decisions = append(repo.decisions, models.WorkflowDecision{
+		ID:           uuid.New(),
+		WorkflowID:   workflowID,
+		DecisionType: "approval_gate",
+		Decision:     "approved",
+		Reason:       "Robert approved the governed workflow.",
+		Actor:        "Robert",
+		CreatedAt:    time.Now().UTC(),
+	})
+	_, _ = service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String()})
+
+	detail, err := service.Detail(created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if !detail.Summary.CompletionCandidate {
+		t.Fatalf("recorded decision hid completion candidate: %#v", detail.Summary)
+	}
+	foundRecorded := false
+	foundCompletionReview := false
+	for _, decision := range detail.DecisionQueue {
+		if decision.DecisionType == "approval_gate" && decision.Status == "recorded" {
+			foundRecorded = true
+		}
+		if decision.DecisionType == "pursuit_completion_review" && decision.Status == "pending" {
+			foundCompletionReview = true
+		}
+	}
+	if !foundRecorded || !foundCompletionReview {
+		t.Fatalf("decision queue = %#v, want recorded history and pending completion review", detail.DecisionQueue)
+	}
+}
+
 func TestResolveCompletionReviewDecisionMarksPursuitComplete(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
