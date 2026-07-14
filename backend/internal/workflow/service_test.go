@@ -1066,6 +1066,56 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 }
 
+func TestRunDuePassesSingleOwnerPursuitToTaskRunner(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "pursuit-linked-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create a low-risk pursuit workflow."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	pursuitID := uuid.New()
+	repo.pursuits[record.Item.ID] = []WorkflowPursuitContext{{ID: pursuitID, OwnerIdentity: "alice", Title: "Launch HAI"}}
+
+	if _, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1}); err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if len(runner.requests) != 1 || runner.requests[0].PursuitID != pursuitID.String() {
+		t.Fatalf("task runner pursuit context = %#v, want %s", runner.requests, pursuitID)
+	}
+}
+
+func TestRunDueDoesNotGuessPursuitForAmbiguousWorkflowLinks(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "ambiguous-pursuit-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create a low-risk shared evidence workflow."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	repo.pursuits[record.Item.ID] = []WorkflowPursuitContext{
+		{ID: uuid.New(), OwnerIdentity: "alice", Title: "First pursuit"},
+		{ID: uuid.New(), OwnerIdentity: "alice", Title: "Second pursuit"},
+	}
+
+	if _, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1}); err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if len(runner.requests) != 1 || runner.requests[0].PursuitID != "" {
+		t.Fatalf("ambiguous workflow was attributed to a pursuit: %#v", runner.requests)
+	}
+}
+
 func TestRunDueSkipsWorkflowClaimedByAnotherWorker(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	runner := &fakeTaskRunner{result: &TaskRunResult{

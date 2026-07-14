@@ -95,6 +95,7 @@ type ProposalResolutionRequest struct {
 
 type TaskRunRequest struct {
 	OwnerIdentity string `json:"-"`
+	PursuitID     string `json:"pursuitId,omitempty"`
 	WorkflowID    string `json:"workflowId"`
 	Request       string `json:"request"`
 	ProjectKey    string `json:"projectKey,omitempty"`
@@ -1565,8 +1566,13 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		return s.handleRunReviewRequired(&item, claimID, "autonomy policy blocked action: "+actionDecision, "needs_review")
 	}
 
+	pursuitID, pursuitErr := s.workflowTaskPursuitID(item)
+	if pursuitErr != nil {
+		return s.handleRunReviewRequired(&item, claimID, "linked pursuit context could not be resolved before task execution: "+pursuitErr.Error(), "needs_review")
+	}
 	runResult, err := s.runTaskWithLease(item.ID, claimID, TaskRunRequest{
 		OwnerIdentity: item.OwnerIdentity,
+		PursuitID:     pursuitID,
 		WorkflowID:    item.ID.String(),
 		Request:       item.Description,
 		ProjectKey:    item.ProjectKey,
@@ -1628,6 +1634,33 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		return s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
 	}
 	return s.handleRunFailure(&item, claimID, reason, runResult.VerificationStatus)
+}
+
+// workflowTaskPursuitID only attributes a workflow worker run when exactly
+// one pursuit link belongs to the same owner. A workflow can legitimately be
+// supporting context for several pursuits; guessing would attach task and
+// verification evidence to the wrong objective. The workflow evidence ledger
+// remains linked in that ambiguous case.
+func (s *service) workflowTaskPursuitID(item models.WorkflowItem) (string, error) {
+	linked, err := s.repo.FindLinkedPursuits(item.ID)
+	if err != nil {
+		return "", err
+	}
+	ownerIdentity := strings.TrimSpace(item.OwnerIdentity)
+	matched := uuid.Nil
+	for _, pursuit := range linked {
+		if pursuit.ID == uuid.Nil || strings.TrimSpace(pursuit.OwnerIdentity) != ownerIdentity {
+			continue
+		}
+		if matched != uuid.Nil {
+			return "", nil
+		}
+		matched = pursuit.ID
+	}
+	if matched == uuid.Nil {
+		return "", nil
+	}
+	return matched.String(), nil
 }
 
 func (s *service) storeTaskRuntimeEvidence(workflowID uuid.UUID, result *TaskRunResult) error {

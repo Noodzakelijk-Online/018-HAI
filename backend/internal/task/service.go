@@ -22,8 +22,11 @@ import (
 )
 
 type IntakeRequest struct {
-	OwnerIdentity   string   `json:"-"`
-	PursuitID       string   `json:"pursuitId,omitempty"`
+	OwnerIdentity string `json:"-"`
+	PursuitID     string `json:"pursuitId,omitempty"`
+	// WorkflowID is internal worker context. It prevents the workflow-owned
+	// task run from being duplicated in the direct pursuit task-attempt ledger.
+	WorkflowID      string   `json:"-"`
 	Request         string   `json:"request"`
 	ProjectKey      string   `json:"projectKey,omitempty"`
 	AutomationID    string   `json:"automationId,omitempty"`
@@ -477,7 +480,7 @@ func (s *service) validatePursuitAttemptRequest(request IntakeRequest) error {
 }
 
 func (s *service) persistPursuitAttempt(plan *CompletionPlan, request IntakeRequest, mode string, completed bool) error {
-	if plan == nil || strings.TrimSpace(request.PursuitID) == "" {
+	if plan == nil || strings.TrimSpace(request.PursuitID) == "" || strings.TrimSpace(request.WorkflowID) != "" {
 		return nil
 	}
 	pursuitID, err := uuid.Parse(strings.TrimSpace(request.PursuitID))

@@ -197,6 +197,30 @@ func TestPursuitScopedTaskRunPersistsStartAndFinalOutcome(t *testing.T) {
 	}
 }
 
+func TestWorkflowScopedPursuitTaskRunDoesNotDuplicateWorkflowAttempt(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		recorder,
+	)
+	if _, err := service.Run(IntakeRequest{
+		OwnerIdentity: "alice",
+		PursuitID:     uuid.NewString(),
+		WorkflowID:    uuid.NewString(),
+		Request:       "Create a bounded low-risk workflow summary.",
+		ProjectKey:    "018-HAI",
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(recorder.attempts) != 0 {
+		t.Fatalf("workflow-owned task run created duplicate pursuit attempts: %#v", recorder.attempts)
+	}
+}
+
 func TestPursuitScopedTaskPlanRejectsMalformedPursuitID(t *testing.T) {
 	service := NewServiceWithEnginesAndPursuitAttempts(
 		&fakeMemoryService{},

@@ -53,6 +53,8 @@ func DefaultRunner() (*Runner, error) {
 func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.TaskRunResult, error) {
 	plan, err := r.service.Run(task.IntakeRequest{
 		OwnerIdentity:  request.OwnerIdentity,
+		PursuitID:      request.PursuitID,
+		WorkflowID:     request.WorkflowID,
 		Request:        request.Request,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
