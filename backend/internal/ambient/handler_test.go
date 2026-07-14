@@ -171,3 +171,95 @@ func TestScanHandlerCreatesPrivatePursuitProposal(t *testing.T) {
 		t.Fatalf("private scan stored %#v, want Alice pursuit proposal", repo.opportunity)
 	}
 }
+
+func TestResolutionHandlersRequireVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &ambientResolutionService{}
+	handler := NewHandler(service)
+	engine := gin.New()
+	engine.POST("/accept/:id", handler.Accept)
+	engine.POST("/dismiss/:id", handler.Dismiss)
+
+	for _, path := range []string{"/accept/" + uuid.NewString(), "/dismiss/" + uuid.NewString()} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		engine.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s status = %d, want %d; body=%s", path, recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+		}
+	}
+	if service.acceptCalls != 0 || service.dismissCalls != 0 {
+		t.Fatalf("ambient resolution reached service without an owner: accept=%d dismiss=%d", service.acceptCalls, service.dismissCalls)
+	}
+}
+
+func TestResolutionHandlersUseVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &ambientResolutionService{}
+	handler := NewHandler(service)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	engine.POST("/accept/:id", handler.Accept)
+	engine.POST("/dismiss/:id", handler.Dismiss)
+
+	for _, path := range []string{"/accept/" + uuid.NewString(), "/dismiss/" + uuid.NewString()} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"note":"reviewed"}`))
+		request.Header.Set("Content-Type", "application/json")
+		engine.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d; body=%s", path, recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+	}
+	if service.acceptRequest.OwnerIdentity != "alice" || service.acceptRequest.Actor != "alice" {
+		t.Fatalf("accept request = %#v, want verified alice identity", service.acceptRequest)
+	}
+	if service.dismissRequest.OwnerIdentity != "alice" || service.dismissRequest.Actor != "alice" {
+		t.Fatalf("dismiss request = %#v, want verified alice identity", service.dismissRequest)
+	}
+}
+
+type ambientResolutionService struct {
+	acceptCalls    int
+	dismissCalls   int
+	acceptRequest  ResolutionRequest
+	dismissRequest ResolutionRequest
+}
+
+func (s *ambientResolutionService) Overview() (*Overview, error) {
+	return &Overview{}, nil
+}
+
+func (s *ambientResolutionService) OverviewForOwner(string) (*Overview, error) {
+	return &Overview{}, nil
+}
+
+func (s *ambientResolutionService) Scan(string) (*models.AmbientScan, error) {
+	return &models.AmbientScan{}, nil
+}
+
+func (s *ambientResolutionService) ScanForOwner(string, string) (*models.AmbientScan, error) {
+	return &models.AmbientScan{}, nil
+}
+
+func (s *ambientResolutionService) UpdateNeedForOwner(string, string, NeedUpdateRequest) (*models.AmbientNeed, error) {
+	return &models.AmbientNeed{}, nil
+}
+
+func (s *ambientResolutionService) Accept(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error) {
+	s.acceptCalls++
+	s.acceptRequest = request
+	return &models.AmbientOpportunity{ID: id}, nil
+}
+
+func (s *ambientResolutionService) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error) {
+	s.dismissCalls++
+	s.dismissRequest = request
+	return &models.AmbientOpportunity{ID: id}, nil
+}

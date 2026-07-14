@@ -26,7 +26,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals |
 | `/verification` | POST `/answer`, GET `/runs`, `/runs/:id` |
 | `/task` | owner-scoped plan, run, success, logs, review-queue, review resolution |
-| `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | command/logs, run, overview/stress, scan/needs, overview |
+| `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | command/logs, run, overview/stress, owner-scoped scan/needs/proposal resolution, overview |
 | **`/flags`** | GET — feature flags (added this goal run) |
 | **`/system`** | **GET `/info`**, **GET `/support-bundle`** (added this goal run) |
 
@@ -42,6 +42,9 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 - Task HTTP requests require a verified owner for planning, controlled execution,
   history, review visibility, and review resolution. The task service's
   ownerless/system methods remain in-process worker APIs and are not HTTP fallbacks.
+- Ambient proposal acceptance and dismissal require a verified owner before the
+  service may create workflow work. Ownerless ambient resolution remains an
+  in-process system-worker API only.
 - **Follow-up:** adopt the `apierror` envelope uniformly across handlers (error
   shapes currently vary; frontend depends on the existing shapes — migrate both
   together).

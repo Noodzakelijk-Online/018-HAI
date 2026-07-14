@@ -84,8 +84,15 @@ func (h *Handler) resolve(c *gin.Context, accept bool) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": bindErr.Error()})
 		return
 	}
-	request.OwnerIdentity = verifiedOwner(c)
-	request.Actor = verifiedActor(c, "operator")
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		// Accepting a proposal can create a governed workflow item. Keep the
+		// ownerless resolution path available only to in-process system workers.
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to resolve ambient proposals"})
+		return
+	}
+	request.OwnerIdentity = ownerIdentity
+	request.Actor = ownerIdentity
 	var result interface{}
 	if accept {
 		result, err = h.service.Accept(id, request)
