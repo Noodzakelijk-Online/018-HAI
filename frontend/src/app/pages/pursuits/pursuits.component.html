@@ -145,8 +145,10 @@
           <nz-select formControlName="domain" nzPlaceHolder="Domain">
             <nz-option *ngFor="let domain of domains" [nzValue]="domain" [nzLabel]="domain"></nz-option>
           </nz-select>
+          <textarea nz-input formControlName="description" rows="2" placeholder="Background context (optional)"></textarea>
           <textarea nz-input formControlName="whyItMatters" rows="2" placeholder="Why this matters"></textarea>
           <textarea nz-input formControlName="desiredOutcome" rows="2" placeholder="Desired outcome"></textarea>
+          <textarea nz-input formControlName="currentStateSummary" rows="2" placeholder="Current state (optional)"></textarea>
           <textarea nz-input formControlName="completionDefinition" rows="2" placeholder="Completion definition"></textarea>
           <div class="form-actions">
             <button nz-button nzType="primary" type="submit" [nzLoading]="creating">Create</button>
@@ -203,6 +205,10 @@
                 <i nz-icon nzType="sync" nzTheme="outline"></i>
                 Refresh summary
               </button>
+              <button nz-button nzType="default" title="Edit the goal context HAI uses for matching, planning, and safety classification." (click)="openContextEditor()">
+                <i nz-icon nzType="edit" nzTheme="outline"></i>
+                Edit context
+              </button>
               <button nz-button nzType="default" title="Run a source-grounded verification and attach the resulting evidence to this pursuit. It does not approve an action or mark the pursuit complete." (click)="verifySelectedEvidence()">
                 <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
                 Verify evidence
@@ -227,6 +233,47 @@
               </ng-template>
             </div>
           </header>
+
+          <section class="operational-digest" *ngIf="showContextEditor">
+            <header>
+              <div>
+                <span class="page-kicker">Pursuit context</span>
+                <h3>Keep HAI aligned with the real objective</h3>
+                <p>These fields guide matching, planning, and conservative safety classification. They do not approve or execute work.</p>
+              </div>
+              <button nz-button nzType="default" type="button" (click)="showContextEditor = false">Cancel</button>
+            </header>
+            <form class="detail-grid" [formGroup]="contextForm" (ngSubmit)="savePursuitContext()">
+              <nz-form-item>
+                <nz-form-label>Background context</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="description" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Why it matters</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="whyItMatters" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Desired outcome</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="desiredOutcome" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Current state</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="currentStateSummary" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Recommended next action</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="nextRecommendedAction" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Completion definition</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="completionDefinition" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <div class="form-actions">
+                <button nz-button nzType="primary" type="submit" [nzLoading]="detailLoading">Save context</button>
+                <button nz-button nzType="default" type="button" (click)="showContextEditor = false">Cancel</button>
+              </div>
+            </form>
+          </section>
 
           <div class="detail-summary">
             <article title="Current operational state inferred from linked records.">

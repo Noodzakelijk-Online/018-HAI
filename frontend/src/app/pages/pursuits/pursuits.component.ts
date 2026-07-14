@@ -49,6 +49,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   inspectedAction?: IPursuitAction;
   delegationPackage?: IPursuitDelegationPackage;
   showCreate = false;
+  showContextEditor = false;
   includeArchived = false;
   private requestedPursuitId = '';
   private requestedEvidenceUri = '';
@@ -78,11 +79,21 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   createForm: FormGroup = this.fb.group({
     title: ['', [Validators.required]],
+    description: [''],
     projectKey: [''],
     domain: ['operations'],
     whyItMatters: [''],
     desiredOutcome: [''],
     currentStateSummary: [''],
+    completionDefinition: [''],
+  });
+
+  contextForm: FormGroup = this.fb.group({
+    description: [''],
+    whyItMatters: [''],
+    desiredOutcome: [''],
+    currentStateSummary: [''],
+    nextRecommendedAction: [''],
     completionDefinition: [''],
   });
 
@@ -250,6 +261,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   private loadPursuitDetail(id: string, updateRoute: boolean): void {
     this.detailLoading = true;
     this.delegationPackage = undefined;
+    this.showContextEditor = false;
     this.pursuitsService.get(id).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -322,6 +334,45 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       error: (error) => {
         this.creating = false;
         this.notification.error('Create failed', error?.error?.error || 'The pursuit could not be created.');
+      },
+    });
+  }
+
+  openContextEditor(): void {
+    if (!this.selected) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.contextForm.reset({
+      description: pursuit.description || '',
+      whyItMatters: pursuit.whyItMatters || '',
+      desiredOutcome: pursuit.desiredOutcome || '',
+      currentStateSummary: pursuit.currentStateSummary || '',
+      nextRecommendedAction: pursuit.nextRecommendedAction || '',
+      completionDefinition: pursuit.completionDefinition || '',
+    });
+    this.showContextEditor = true;
+  }
+
+  savePursuitContext(): void {
+    if (!this.selected || this.detailLoading) {
+      return;
+    }
+    this.detailLoading = true;
+    const pursuitID = this.selected.pursuit.id;
+    this.pursuitsService.update(pursuitID, this.contextForm.value).subscribe({
+      next: (pursuit) => {
+        if (this.selected?.pursuit.id === pursuitID) {
+          this.selected = { ...this.selected, pursuit };
+        }
+        this.detailLoading = false;
+        this.showContextEditor = false;
+        this.notification.success('Pursuit context saved', 'HAI will use the updated goal context for matching, planning, and safety checks.');
+        this.load();
+      },
+      error: (error) => {
+        this.detailLoading = false;
+        this.notification.error('Context update failed', error?.error?.error || 'HAI could not save the pursuit context.');
       },
     });
   }
