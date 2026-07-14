@@ -53,6 +53,9 @@ func initializeRoutes(router *gin.Engine) error {
 	v1 := router.Group(relativePathV1)
 	v1.Use(backendAPIKeyMiddleware())
 	v1.Use(identityMiddleware())
+	// RBAC enforcement across the whole API: reads need viewer, mutations need
+	// operator/owner. Runs after identity so a verified JWT role is in context.
+	v1.Use(enforcePermissions())
 	{
 		automationService := automation.DefaultService()
 		runtimeRegistry := agentruntime.DefaultRegistry()

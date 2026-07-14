@@ -14,6 +14,10 @@ http {
             proxy_set_header X-Original-URI $request_uri;
             proxy_set_header Cookie $http_cookie;
             proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
+            # This request passed auth_verify, so the caller is the authenticated
+            # local operator: grant the owner role for backend RBAC. Set (not
+            # add) so a client cannot forge its own role header.
+            proxy_set_header X-HAI-Role owner;
         }
 
         # Backend route groups. Anything not listed here falls through to the
@@ -26,6 +30,9 @@ http {
             proxy_set_header X-Original-URI $request_uri;
             proxy_set_header Cookie $http_cookie;
             proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
+            # Authenticated session -> owner role for backend RBAC. Set (not add)
+            # so a client-supplied X-HAI-Role cannot escalate privileges.
+            proxy_set_header X-HAI-Role owner;
         }
 
         # Liveness: no authentication, and it reveals nothing beyond "the

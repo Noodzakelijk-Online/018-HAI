@@ -306,6 +306,42 @@ the catalog test now asserts the honest statuses.
 This is deliberately a downward change in the headline number — it removes an
 overstatement, which is the point. No connector lost any real capability.
 
+## 13. RBAC is now enforced (was built but wired to nothing)
+
+The `rbac` package (roles owner/operator/viewer; permissions read/write/approve/
+admin) was fully implemented and unit-tested but attached to **zero** routes —
+`requirePermission` appeared 0 times in `routes.go`. And no role reached the
+backend: the gateway forwarded only the cookie and shared key, so every caller
+defaulted to `viewer`, which meant wiring write-gates naively would have 403'd
+the entire UI.
+
+This wires it end to end:
+
+- `enforcePermissions()` gates the whole `/api/v1` group by HTTP method — reads
+  need `viewer`, mutations need `operator`/`owner`.
+- The gateway injects `X-HAI-Role: owner` for a request that passed
+  `auth_verify` (an authenticated session is the local operator). It is set, not
+  added, so a client cannot forge its own role.
+- An unauthenticated caller still resolves to `viewer`, so a leaked shared key
+  can read but cannot mutate.
+
+Verified on the running stack:
+
+| Caller | GET | POST/DELETE |
+| --- | --- | --- |
+| UI through the gateway (authenticated) | 200 | 201 — UI unaffected |
+| Direct backend, shared key only (viewer) | 200 | **403** — mutation blocked |
+| Direct backend, explicit `X-HAI-Role: owner` | 200 | 201 |
+
+So a bare shared key on the local network can no longer create, update, or
+delete — mutations now require an authenticated session. Unit tests cover the
+method→permission mapping and the viewer/operator/owner outcomes.
+
+Honest limitation: because the IDP does not issue per-user roles, an
+authenticated session maps to a single `owner` role rather than distinct
+per-user roles. True multi-user RBAC needs the IDP to carry a role claim; the
+enforcement and role-resolution path are now in place for when it does.
+
 ## What is NOT claimed here
 
 - No OAuth connector was implemented. Connector statuses are now honest about
@@ -315,6 +351,7 @@ overstatement, which is the point. No connector lost any real capability.
   `internal/llm` is still an in-process map. Persisting that is the natural next
   step; it was left out here because it cannot be exercised end to end until an
   LLM provider is configured, and this change set only ships what was verified.
-- RBAC/JWT enforcement is not yet wired onto individual routes.
+- RBAC is now enforced across the API (section 13), but as a single owner role
+  per authenticated session, not per-user roles — that needs IDP role support.
 
 These are called out honestly rather than presented as done.
