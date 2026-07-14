@@ -25,6 +25,7 @@ import {
   IPursuitListItem,
 } from '../../models/pursuit.model.interface';
 import { PursuitService } from '../../services/pursuit.service';
+import { WorkflowService } from '../../services/workflow/workflow.service';
 
 type CommandActionKey = 'manage-pursuits' | 'plan-next' | 'clear-blockers' | 'run-cycle' | 'run-safe';
 
@@ -141,6 +142,7 @@ export class CommandDashboardComponent implements OnInit {
     private agentRuntimes: AgentRuntimeService,
     private assistantCommands: AssistantCommandService,
     private pursuits: PursuitService,
+    private workflows: WorkflowService,
     private notification: NzNotificationService,
     private router: Router
   ) {}
@@ -699,14 +701,34 @@ export class CommandDashboardComponent implements OnInit {
   }
 
   canResolveDashboardDecision(card: IPursuitDashboardDecision): boolean {
-    return card.decision.status === 'pending' && (
-      card.decision.decisionType === 'runtime_attempt_review' ||
-      card.decision.decisionType === 'pursuit_next_action' ||
-      card.decision.decisionType === 'pursuit_candidate_review'
-    );
+    if (card.decision.status !== 'pending') {
+      return false;
+    }
+    switch (card.decision.decisionType) {
+      case 'runtime_attempt_review':
+      case 'pursuit_next_action':
+      case 'pursuit_candidate_review':
+      case 'pursuit_completion_review':
+        return true;
+      case 'approval':
+      case 'proposal':
+        return Boolean(card.decision.workflowId);
+      default:
+        return false;
+    }
   }
 
   dashboardDecisionTitle(card: IPursuitDashboardDecision, approved: boolean): string {
+    if (card.decision.decisionType === 'approval') {
+      return approved
+        ? 'Approve this workflow through its governed approval gate.'
+        : 'Reject this workflow and keep it blocked for revision.';
+    }
+    if (card.decision.decisionType === 'proposal') {
+      return approved
+        ? 'Accept this workflow proposal and advance the linked workflow.'
+        : 'Decline this proposal and return it for revision.';
+    }
     if (card.decision.decisionType === 'pursuit_candidate_review') {
       return approved
         ? 'Accept this pursuit candidate and create its first governed workflow.'
@@ -716,6 +738,11 @@ export class CommandDashboardComponent implements OnInit {
       return approved
         ? 'Approve this next action and create a governed workflow item from it.'
         : 'Reject this proposed next action and record the decision in the pursuit audit trail.';
+    }
+    if (card.decision.decisionType === 'pursuit_completion_review') {
+      return approved
+        ? 'Mark this pursuit complete after the server verifies its completion evidence.'
+        : 'Keep this pursuit active for more evidence or follow-up.';
     }
     return approved
       ? 'Approve this runtime recovery decision. HAI creates a governed recovery workflow instead of retrying OpenClaw directly.'
@@ -735,7 +762,101 @@ export class CommandDashboardComponent implements OnInit {
       this.resolvePursuitCandidateDecision(card, approved);
       return;
     }
+    if (card.decision.decisionType === 'approval') {
+      this.resolveWorkflowApprovalDecision(card, approved);
+      return;
+    }
+    if (card.decision.decisionType === 'proposal') {
+      this.resolveWorkflowProposalDecision(card, approved);
+      return;
+    }
+    if (card.decision.decisionType === 'pursuit_completion_review') {
+      this.resolvePursuitCompletionDecision(card, approved);
+      return;
+    }
     this.resolveRuntimeDecision(card, approved);
+  }
+
+  private resolveWorkflowApprovalDecision(card: IPursuitDashboardDecision, approved: boolean): void {
+    if (!card.decision.workflowId) {
+      return;
+    }
+    this.resolvingDashboardDecisionId = card.decision.id;
+    this.workflows.resolveApproval(card.decision.workflowId, {
+      approved,
+      note: approved ? card.decision.yesConsequence : card.decision.noConsequence,
+      actor: 'Robert',
+    }).subscribe({
+      next: () => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.success('Approval recorded', approved ? 'Workflow approved through the audited gate.' : 'Workflow rejected and blocked for review.');
+        this.refreshPursuits();
+      },
+      error: (error) => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.error('Approval blocked', error?.error?.error || 'The workflow approval could not be recorded.');
+      },
+    });
+  }
+
+  private resolveWorkflowProposalDecision(card: IPursuitDashboardDecision, approved: boolean): void {
+    const proposalID = card.decision.id.startsWith('proposal:') ? card.decision.id.substring('proposal:'.length) : '';
+    if (!card.decision.workflowId || !proposalID) {
+      this.notification.error('Proposal unavailable', 'The proposal ID or linked workflow is missing from this decision card.');
+      return;
+    }
+    this.resolvingDashboardDecisionId = card.decision.id;
+    this.workflows.resolveProposal(card.decision.workflowId, proposalID, {
+      approved,
+      status: approved ? 'approved' : 'rejected',
+      selectedOption: approved ? card.decision.yesLabel : card.decision.noLabel,
+      note: approved ? card.decision.yesConsequence : card.decision.noConsequence,
+      actor: 'Robert',
+    }).subscribe({
+      next: () => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.success('Proposal recorded', approved ? 'Proposal accepted through the workflow audit trail.' : 'Proposal rejected for revision.');
+        this.refreshPursuits();
+      },
+      error: (error) => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.error('Proposal blocked', error?.error?.error || 'The workflow proposal could not be recorded.');
+      },
+    });
+  }
+
+  private resolvePursuitCompletionDecision(card: IPursuitDashboardDecision, approved: boolean): void {
+    this.resolvingDashboardDecisionId = card.decision.id;
+    this.pursuits.resolveDecision(card.pursuit.id, {
+      decisionId: card.decision.id,
+      decisionType: card.decision.decisionType,
+      approved,
+      reason: card.decision.reason,
+      note: approved
+        ? card.decision.yesConsequence || 'Robert approved verified pursuit completion.'
+        : card.decision.noConsequence || 'Robert kept the pursuit active after completion review.',
+      evidenceUri: card.decision.evidenceUri,
+      evidenceLabel: card.decision.evidenceLabel,
+      actor: 'Robert',
+    }).subscribe({
+      next: () => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.success(
+          approved ? 'Pursuit completed' : 'Pursuit kept active',
+          approved
+            ? 'Verified completion and the Robert decision were recorded in the audit trail.'
+            : 'The completion review decision was recorded.'
+        );
+        this.refreshPursuits();
+      },
+      error: (error) => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.error(
+          approved ? 'Completion blocked' : 'Decision blocked',
+          error?.error?.error || 'The completion review could not be recorded.'
+        );
+      },
+    });
   }
 
   private resolvePursuitCandidateDecision(card: IPursuitDashboardDecision, approved: boolean): void {
