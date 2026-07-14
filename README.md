@@ -20,7 +20,7 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 | --- | --- | --- |
 | Organize a long-running objective | Create a pursuit, link workflow/source/memory/evidence records, inspect blockers and approvals, then explicitly archive or reopen it. | Authenticated records stay owner-scoped; a closed pursuit cannot be silently reactivated by later intake. |
 | Turn authorized material into work | Import allowlisted local files or supported exports, search the extracted context, and route actionable findings through workflow intake. | Local paths are constrained to the mounted source root; account OAuth and browser capture are not automatic connectors. |
-| Plan and progress work | Use the task, workflow, command-dashboard, and ambient proposal surfaces to create plans, checklists, open loops, review items, and next actions. | A proposal is not execution. High-risk or unresolved work stops for review. |
+| Plan and progress work | Use the task, workflow, command-dashboard, and ambient proposal surfaces to create plans, checklists, open loops, review items, next actions, and bounded VA handoff briefs. | A proposal or VA brief is not execution, assignment, or external authority. High-risk or unresolved work stops for review. |
 | Use a local model | Configure Ollama or another OpenAI-compatible local endpoint, probe it, and run a bounded validated task. | Paid usage is disabled by default with a EUR 0 daily budget. A configured endpoint is not treated as live-proven until it passes a live probe. |
 | Run a narrow automation or agent runtime | Configure a reviewed API, script, Docker, Hermes, Odysseus, or OpenClaw adapter and attach it to approved work. | Runtimes are disabled by default and remain limited by approval, allowlists, workspace, timeout, audit, verification, and emergency-stop controls. |
 
@@ -383,6 +383,7 @@ Pursuits:
 - `GET /pursuits/:id/next-actions`
 - `GET /pursuits/:id/blockers`
 - `GET /pursuits/:id/approvals`
+- `GET /pursuits/:id/delegation`
 - `POST /pursuits/:id/intake`
 - `POST /pursuits/:id/plan`
 - `POST /pursuits/:id/links`
@@ -538,7 +539,7 @@ The dashboard page at `/workflow-engine` shows the workflow inbox, operational m
 
 ## Pursuits Layer
 
-Pursuits are the durable objective containers above individual workflows. A pursuit groups related workflow items, source material, memories, verification evidence, runtime attempts, decisions, blockers, next actions, and approvals into one operator-facing objective. The `/pursuits` dashboard and detail view distinguish work that needs Robert's decision, is ready for delegation, can be processed by a bounded system workflow, or is waiting on an external party. Linked workflow quality gates are shown in pursuit detail; a failed or `needs_review` gate becomes a named pursuit blocker, is placed in Robert's action queue, and prevents a completion recommendation until reviewed.
+Pursuits are the durable objective containers above individual workflows. A pursuit groups related workflow items, source material, memories, verification evidence, runtime attempts, decisions, blockers, next actions, and approvals into one operator-facing objective. The `/pursuits` dashboard and detail view distinguish work that needs Robert's decision, is ready for delegation, can be processed by a bounded system workflow, or is waiting on an external party. The **Prepare VA brief** action compiles only VA-ready governed work, checklist steps, source references, delivery requirements, and escalation rules; it never assigns a person, sends a message, or grants authority to act externally. Linked workflow quality gates are shown in pursuit detail; a failed or `needs_review` gate becomes a named pursuit blocker, is placed in Robert's action queue, and prevents a completion recommendation until reviewed.
 
 Pursuit intake and matching reuse the existing source, workflow, memory, verification, and ambient-planning services rather than introducing a parallel agent implementation. Source sync, AI-memory extraction, ambient opportunities, HAI chat runs, and the legacy workflow-intake API all use the shared pursuit route when the pursuit service is configured. That route centralizes matching, candidate creation, approval requirements, and closed-pursuit protection before a workflow is created; producer-specific fallback mode remains available for isolated deployments and tests. Matching first resolves an existing source type/ID, then a stable source URI, before using project and text evidence; this avoids duplicate pursuit candidates when older or manual callers have a reliable URI but no provider item ID. Creation, planning, intake, review, decision resolution, archive operations, and link changes record the authenticated session principal when present; a client payload cannot claim another person as the actor. Local development without an IDP session records the fallback operator/system identity honestly. This supports traceable operation but does not itself authorize a sensitive action: the workflow approval queue, execution policy, and verification gates remain authoritative.
 

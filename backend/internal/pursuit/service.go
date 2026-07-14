@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -274,6 +275,7 @@ type PursuitDetail struct {
 	Links                []models.PursuitLink           `json:"links"`
 	Activity             []models.PursuitActivity       `json:"activity"`
 	Workflows            []models.WorkflowItem          `json:"workflows"`
+	ChecklistItems       []models.WorkflowChecklistItem `json:"checklistItems"`
 	OpenLoops            []models.WorkflowOpenLoop      `json:"openLoops"`
 	Proposals            []models.WorkflowProposal      `json:"proposals"`
 	QualityGates         []models.WorkflowQualityGate   `json:"qualityGates"`
@@ -299,6 +301,52 @@ type PursuitDetail struct {
 	ApprovalItems        []models.WorkflowItem          `json:"approvalItems"`
 	Summary              PursuitSummary                 `json:"summary"`
 	OperationalDigest    PursuitOperationalDigest       `json:"operationalDigest"`
+}
+
+// PursuitDelegationPackage is a read-only handoff brief. It turns the
+// existing pursuit context into bounded work for a VA without assigning a
+// person, sending a message, or bypassing workflow approval controls.
+type PursuitDelegationPackage struct {
+	GeneratedAt              time.Time                   `json:"generatedAt"`
+	Ready                    bool                        `json:"ready"`
+	Status                   string                      `json:"status"`
+	Reason                   string                      `json:"reason"`
+	PursuitID                string                      `json:"pursuitId"`
+	Title                    string                      `json:"title"`
+	Objective                string                      `json:"objective"`
+	CurrentState             string                      `json:"currentState"`
+	CompletionDefinition     string                      `json:"completionDefinition,omitempty"`
+	RiskLevel                string                      `json:"riskLevel"`
+	WorkItems                []PursuitDelegationWorkItem `json:"workItems"`
+	SourceContext            []PursuitDelegationSource   `json:"sourceContext"`
+	AllowedActions           []string                    `json:"allowedActions"`
+	BlockedActions           []string                    `json:"blockedActions"`
+	EscalationRules          []string                    `json:"escalationRules"`
+	DeliveryRequirements     []string                    `json:"deliveryRequirements"`
+	OutstandingRobertActions []PursuitAction             `json:"outstandingRobertActions"`
+}
+
+type PursuitDelegationWorkItem struct {
+	WorkflowID   string                           `json:"workflowId,omitempty"`
+	Title        string                           `json:"title"`
+	Instructions string                           `json:"instructions"`
+	State        string                           `json:"state,omitempty"`
+	DueAt        *time.Time                       `json:"dueAt,omitempty"`
+	Checklist    []PursuitDelegationChecklistItem `json:"checklist"`
+}
+
+type PursuitDelegationChecklistItem struct {
+	Label    string `json:"label"`
+	Status   string `json:"status"`
+	Required bool   `json:"required"`
+}
+
+type PursuitDelegationSource struct {
+	WorkflowID   string `json:"workflowId,omitempty"`
+	SourceType   string `json:"sourceType,omitempty"`
+	SourceURI    string `json:"sourceUri"`
+	SourceLabel  string `json:"sourceLabel,omitempty"`
+	Relationship string `json:"relationship,omitempty"`
 }
 
 type PursuitEvidenceResolution struct {
@@ -502,6 +550,8 @@ type Service interface {
 	ResolveEvidenceForOwner(ownerIdentity string, id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
 	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
 	ApprovalsForOwner(ownerIdentity string, id uuid.UUID) (*PursuitApprovalOverview, error)
+	DelegationPackage(id uuid.UUID) (*PursuitDelegationPackage, error)
+	DelegationPackageForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDelegationPackage, error)
 	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
 	LinkVerification(pursuitID, verificationID uuid.UUID) error
 	LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error
@@ -909,6 +959,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	linkedAutomationIDs := linkUUIDs(links, LinkAutomation)
 	linkedRuntimeAttemptIDs := linkUUIDs(links, LinkAgentRuntime)
 	workflows, _ := s.repo.FindLinkedWorkflows(workflowIDs)
+	checklistItems, _ := s.repo.FindLinkedChecklistItems(workflowIDs)
 	automationIDs := uniqueUUIDs(append(linkedAutomationIDs, workflowAutomationIDs(workflows)...))
 	openLoops, _ := s.repo.FindLinkedOpenLoops(workflowIDs)
 	proposals, _ := s.repo.FindLinkedProposals(workflowIDs)
@@ -939,6 +990,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 		Links:                links,
 		Activity:             activity,
 		Workflows:            workflows,
+		ChecklistItems:       checklistItems,
 		OpenLoops:            openLoops,
 		Proposals:            proposals,
 		QualityGates:         qualityGates,
@@ -1187,6 +1239,137 @@ func (s *service) ApprovalsForOwner(ownerIdentity string, id uuid.UUID) (*Pursui
 		},
 	}
 	return overview, nil
+}
+
+func (s *service) DelegationPackage(id uuid.UUID) (*PursuitDelegationPackage, error) {
+	return s.DelegationPackageForOwner("", id)
+}
+
+func (s *service) DelegationPackageForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDelegationPackage, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, id)
+	if err != nil {
+		return nil, err
+	}
+	return delegationPackage(*detail), nil
+}
+
+func delegationPackage(detail PursuitDetail) *PursuitDelegationPackage {
+	pursuit := detail.Pursuit
+	packageResult := &PursuitDelegationPackage{
+		GeneratedAt:          time.Now().UTC(),
+		PursuitID:            pursuit.ID.String(),
+		Title:                pursuit.Title,
+		Objective:            firstNonEmpty(pursuit.DesiredOutcome, pursuit.Description, pursuit.Title),
+		CurrentState:         firstNonEmpty(detail.Summary.CurrentState, pursuit.CurrentStateSummary, "No current state has been recorded yet."),
+		CompletionDefinition: pursuit.CompletionDefinition,
+		RiskLevel:            firstNonEmpty(pursuit.RiskLevel, "medium"),
+		AllowedActions: []string{
+			"Review the linked source references and organize the requested evidence.",
+			"Prepare drafts, checklists, summaries, and status updates inside the linked workflow.",
+			"Record missing information, blockers, and questions for Robert in HAI.",
+		},
+		BlockedActions: []string{
+			"Do not send external messages or make commitments on Robert's behalf.",
+			"Do not make legal, government, financial, medical, account, public-posting, or destructive decisions.",
+			"Do not delete or move source material outside the reviewed workflow path.",
+		},
+		DeliveryRequirements: []string{
+			"Keep work inside the linked workflow and preserve source references.",
+			"Mark only completed checklist steps that are supported by the linked evidence.",
+			"Post a concise status update with completed work, remaining blockers, and questions for Robert.",
+		},
+		OutstandingRobertActions: append([]PursuitAction{}, detail.ActionQueues.NeedsRobert...),
+	}
+
+	if len(detail.ActionQueues.VAReady) == 0 {
+		packageResult.Status = "not_ready"
+		packageResult.Reason = "HAI found no bounded VA-ready action. Resolve Robert approvals, evidence gaps, or blockers first."
+	} else {
+		packageResult.Ready = true
+		packageResult.Status = "ready"
+		packageResult.Reason = "The package contains only VA-ready preparation work. It does not authorize external execution."
+	}
+
+	byWorkflow := make(map[string]models.WorkflowItem, len(detail.Workflows))
+	for _, item := range detail.Workflows {
+		byWorkflow[item.ID.String()] = item
+	}
+	checklists := make(map[string][]PursuitDelegationChecklistItem, len(detail.ChecklistItems))
+	for _, item := range detail.ChecklistItems {
+		key := item.WorkflowID.String()
+		checklists[key] = append(checklists[key], PursuitDelegationChecklistItem{
+			Label:    item.Label,
+			Status:   item.Status,
+			Required: item.RequiresApproval,
+		})
+	}
+	seenWorkflows := map[string]bool{}
+	for _, action := range detail.ActionQueues.VAReady {
+		workflowID := strings.TrimSpace(action.WorkflowID)
+		if workflowID == "" || seenWorkflows[workflowID] {
+			continue
+		}
+		seenWorkflows[workflowID] = true
+		workflowItem := byWorkflow[workflowID]
+		packageResult.WorkItems = append(packageResult.WorkItems, PursuitDelegationWorkItem{
+			WorkflowID:   workflowID,
+			Title:        firstNonEmpty(workflowItem.Title, action.Label),
+			Instructions: firstNonEmpty(action.Label, workflowItem.NextAction, workflowItem.Description),
+			State:        workflowItem.CurrentState,
+			DueAt:        workflowItem.DueAt,
+			Checklist:    checklists[workflowID],
+		})
+	}
+	if packageResult.Ready && len(packageResult.WorkItems) == 0 {
+		packageResult.Ready = false
+		packageResult.Status = "not_ready"
+		packageResult.Reason = "VA-ready work was identified, but it is not linked to a governed workflow yet. Route it through pursuit planning first."
+	}
+
+	packageResult.SourceContext = delegationSources(detail, seenWorkflows)
+	for _, blocker := range detail.Blockers {
+		packageResult.EscalationRules = append(packageResult.EscalationRules, "Escalate to Robert: "+firstNonEmpty(blocker.Reason, blocker.Label, "a linked workflow is blocked"))
+	}
+	for _, action := range detail.ActionQueues.NeedsRobert {
+		packageResult.EscalationRules = append(packageResult.EscalationRules, "Do not proceed past Robert's decision: "+action.Label)
+	}
+	for _, extraction := range detail.SourceExtractions {
+		if extraction.Uncertain || extraction.Archived {
+			packageResult.EscalationRules = append(packageResult.EscalationRules, "Do not rely on uncertain or archived extracted material without Robert review: "+firstNonEmpty(extraction.SourceLabel, extraction.SourceURI, extraction.ID.String()))
+		}
+	}
+	packageResult.EscalationRules = uniqueStrings(packageResult.EscalationRules)
+	return packageResult
+}
+
+func delegationSources(detail PursuitDetail, selectedWorkflows map[string]bool) []PursuitDelegationSource {
+	result := []PursuitDelegationSource{}
+	seen := map[string]bool{}
+	add := func(workflowID, sourceType, uri, label, relationship string) {
+		uri = strings.TrimSpace(uri)
+		if uri == "" {
+			return
+		}
+		key := workflowID + "|" + uri
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		result = append(result, PursuitDelegationSource{WorkflowID: workflowID, SourceType: sourceType, SourceURI: uri, SourceLabel: label, Relationship: relationship})
+	}
+	for _, link := range detail.SourceLinks {
+		workflowID := link.WorkflowID.String()
+		if len(selectedWorkflows) > 0 && !selectedWorkflows[workflowID] {
+			continue
+		}
+		add(workflowID, link.SourceType, link.SourceURI, link.SourceLabel, link.Relationship)
+	}
+	for _, link := range detail.Links {
+		if link.LinkType == LinkSourceItem || link.LinkType == LinkSourceExtraction || link.LinkType == LinkMemory {
+			add("", link.LinkType, link.SourceURI, link.SourceLabel, link.Relationship)
+		}
+	}
+	return result
 }
 
 func (s *service) visibleLinksForOwner(ownerIdentity string, links []models.PursuitLink) ([]models.PursuitLink, error) {
@@ -2662,11 +2845,12 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 	now := time.Now().UTC()
 	for _, loop := range loops {
 		if loop.Status == "open" || loop.Status == "follow_up_due" || loop.FollowUpAt != nil && loop.FollowUpAt.Before(now) {
+			actionRisk := followUpActionRisk(pursuit.RiskLevel, loop.NextAction)
 			actions = append(actions, PursuitAction{
 				Label:            firstNonEmpty(loop.NextAction, "Follow up on waiting state"),
-				Owner:            "System or VA",
-				RiskLevel:        pursuit.RiskLevel,
-				RequiresApproval: strings.EqualFold(pursuit.RiskLevel, "high"),
+				Owner:            "VA",
+				RiskLevel:        actionRisk,
+				RequiresApproval: actionRisk == "high",
 				Reason:           "open loop is due or still waiting",
 				WorkflowID:       loop.WorkflowID.String(),
 				YesLabel:         "Prepare",
@@ -2729,6 +2913,48 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 		})
 	}
 	return actions
+}
+
+// followUpActionRisk classifies the proposed step, not the subject matter of
+// the entire pursuit. A legal or insurance pursuit can safely contain bounded
+// clerical preparation, while sending, filing, spending, publishing, deleting,
+// or changing accounts must still remain high-risk and approval-gated.
+func followUpActionRisk(pursuitRisk, action string) string {
+	lower := strings.ToLower(strings.TrimSpace(action))
+	if containsActionPhrase(lower,
+		"send", "submit", "file", "publish", "post", "sign", "accept", "agree",
+		"pay", "spend", "transfer", "delete", "remove", "change account", "change setting",
+		"escalate", "contact", "call", "message", "email") {
+		return "high"
+	}
+	if containsActionPhrase(lower,
+		"prepare", "organize", "collect", "list", "summarize", "classify", "catalog",
+		"review", "compare", "extract", "attach", "draft", "research") {
+		return "low"
+	}
+	if detected := classifyRisk(lower); detected != "low" {
+		return detected
+	}
+	if normalizeRisk(pursuitRisk) == "high" {
+		return "high"
+	}
+	return firstNonEmpty(normalizeRisk(pursuitRisk), "low")
+}
+
+func containsActionPhrase(text string, values ...string) bool {
+	normalized := " " + strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, text) + " "
+	for _, value := range values {
+		candidate := " " + strings.TrimSpace(strings.ToLower(value)) + " "
+		if strings.Contains(normalized, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func actionQueues(pursuit models.Pursuit, actions []PursuitAction, blockers []PursuitBlocker) PursuitActionQueues {
@@ -4666,6 +4892,20 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func uniqueStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 func assignString(value *string, target *string) {

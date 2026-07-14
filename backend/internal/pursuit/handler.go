@@ -417,6 +417,19 @@ func (h *Handler) Approvals(c *gin.Context) {
 	c.JSON(http.StatusOK, record)
 }
 
+func (h *Handler) DelegationPackage(c *gin.Context) {
+	id, ok := parsePursuitID(c)
+	if !ok {
+		return
+	}
+	record, err := h.service.DelegationPackageForOwner(pursuitOwner(c), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
+		return
+	}
+	c.JSON(http.StatusOK, record)
+}
+
 func parsePursuitID(c *gin.Context) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

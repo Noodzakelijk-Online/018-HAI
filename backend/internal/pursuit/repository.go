@@ -26,6 +26,7 @@ type Repository interface {
 	CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error)
 	FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error)
 	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
+	FindLinkedChecklistItems(workflowIDs []uuid.UUID) ([]models.WorkflowChecklistItem, error)
 	FindLinkedOpenLoops(workflowIDs []uuid.UUID) ([]models.WorkflowOpenLoop, error)
 	FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.WorkflowProposal, error)
 	FindLinkedQualityGates(workflowIDs []uuid.UUID) ([]models.WorkflowQualityGate, error)
@@ -287,6 +288,17 @@ func (r *GormRepository) FindLinkedWorkflows(ids []uuid.UUID) ([]models.Workflow
 		return items, nil
 	}
 	if err := r.DB.Where("id IN ?", ids).Order("priority_score DESC, updated_at DESC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *GormRepository) FindLinkedChecklistItems(workflowIDs []uuid.UUID) ([]models.WorkflowChecklistItem, error) {
+	var items []models.WorkflowChecklistItem
+	if len(workflowIDs) == 0 {
+		return items, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("workflow_id ASC, position ASC, created_at ASC").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil

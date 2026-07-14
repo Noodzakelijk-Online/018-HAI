@@ -2724,6 +2724,103 @@ func TestDashboardAggregatesRobertDecisionCards(t *testing.T) {
 	}
 }
 
+func TestDelegationPackageCompilesBoundedVAWorkWithChecklistAndSources(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{
+		Title:          "Organize insurance evidence",
+		DesiredOutcome: "A complete, source-linked evidence bundle is ready for Robert to review.",
+		RiskLevel:      "low",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:           workflowID,
+		Title:        "Collect and organize evidence",
+		Description:  "Review the source material and organize the evidence list.",
+		CurrentState: "waiting_external_input",
+		RiskLevel:    "low",
+		NextAction:   "Prepare the evidence list from the linked sources.",
+	}
+	repo.openLoops = append(repo.openLoops, models.WorkflowOpenLoop{
+		ID:               uuid.New(),
+		WorkflowID:       workflowID,
+		ResponsibleParty: "VA",
+		WaitingFor:       "evidence review",
+		NextAction:       "Prepare the evidence list from the linked sources.",
+		Status:           "open",
+	})
+	repo.checklistItems = append(repo.checklistItems, models.WorkflowChecklistItem{
+		ID:         uuid.New(),
+		WorkflowID: workflowID,
+		Label:      "List each source with its date and relevance.",
+		Status:     "pending",
+		Position:   1,
+	})
+	repo.sourceLinks = append(repo.sourceLinks, models.WorkflowSourceLink{
+		ID:           uuid.New(),
+		WorkflowID:   workflowID,
+		SourceType:   "email_export",
+		SourceURI:    "file:///connected-sources/claim.mbox",
+		SourceLabel:  "Claim correspondence export",
+		Relationship: "evidence",
+	})
+	if _, err := service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "operational_work"}); err != nil {
+		t.Fatalf("Link workflow returned error: %v", err)
+	}
+
+	brief, err := service.DelegationPackage(created.ID)
+	if err != nil {
+		t.Fatalf("DelegationPackage returned error: %v", err)
+	}
+	if !brief.Ready || brief.Status != "ready" {
+		t.Fatalf("delegation package not ready: %#v", brief)
+	}
+	if len(brief.WorkItems) != 1 || brief.WorkItems[0].WorkflowID != workflowID.String() || len(brief.WorkItems[0].Checklist) != 1 {
+		t.Fatalf("delegation work items missing workflow/checklist: %#v", brief.WorkItems)
+	}
+	if len(brief.SourceContext) != 1 || brief.SourceContext[0].SourceURI != "file:///connected-sources/claim.mbox" {
+		t.Fatalf("delegation source context missing: %#v", brief.SourceContext)
+	}
+	if len(brief.BlockedActions) == 0 || len(brief.DeliveryRequirements) == 0 {
+		t.Fatalf("delegation safety boundaries missing: %#v", brief)
+	}
+}
+
+func TestDelegationPackageDoesNotReleaseHighRiskWorkToVA(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Send legal position to municipality", RiskLevel: "high"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{ID: workflowID, Title: "Prepare legal response", CurrentState: "needs_approval", RiskLevel: "high", RequiresApproval: true, ApprovalStatus: "pending"}
+	repo.openLoops = append(repo.openLoops, models.WorkflowOpenLoop{ID: uuid.New(), WorkflowID: workflowID, ResponsibleParty: "VA", NextAction: "Send the legal response to the municipality", Status: "open"})
+	if _, err := service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "operational_work"}); err != nil {
+		t.Fatalf("Link workflow returned error: %v", err)
+	}
+
+	brief, err := service.DelegationPackage(created.ID)
+	if err != nil {
+		t.Fatalf("DelegationPackage returned error: %v", err)
+	}
+	if brief.Ready || brief.Status != "not_ready" || len(brief.OutstandingRobertActions) == 0 {
+		t.Fatalf("high-risk work leaked into VA handoff: %#v", brief)
+	}
+}
+
+func TestFollowUpActionRiskUsesWholeActionTerms(t *testing.T) {
+	if got := followUpActionRisk("high", "Prepare the applicant profile for Robert to review"); got != "low" {
+		t.Fatalf("preparation action risk = %q, want low", got)
+	}
+	if got := followUpActionRisk("low", "File the completed response with the municipality"); got != "high" {
+		t.Fatalf("filing action risk = %q, want high", got)
+	}
+}
+
 func TestDashboardSurfacesDuePursuitReview(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -3104,6 +3201,7 @@ type fakeRepo struct {
 	links                map[uuid.UUID]models.PursuitLink
 	activity             map[uuid.UUID][]models.PursuitActivity
 	workflows            map[uuid.UUID]models.WorkflowItem
+	checklistItems       []models.WorkflowChecklistItem
 	openLoops            []models.WorkflowOpenLoop
 	proposals            []models.WorkflowProposal
 	qualityGates         []models.WorkflowQualityGate
@@ -3338,6 +3436,20 @@ func (r *fakeRepo) FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, 
 	result := []models.WorkflowItem{}
 	for _, id := range ids {
 		if item, ok := r.workflows[id]; ok {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedChecklistItems(workflowIDs []uuid.UUID) ([]models.WorkflowChecklistItem, error) {
+	workflowSet := map[uuid.UUID]bool{}
+	for _, id := range workflowIDs {
+		workflowSet[id] = true
+	}
+	result := []models.WorkflowChecklistItem{}
+	for _, item := range r.checklistItems {
+		if workflowSet[item.WorkflowID] {
 			result = append(result, item)
 		}
 	}

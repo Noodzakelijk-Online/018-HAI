@@ -129,6 +129,46 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestDelegationPackageEndpointDoesNotExposeAnotherOwnersWork(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice delegation", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	bob, err := service.Create(CreateRequest{Title: "Bob delegation", OwnerIdentity: "bob"})
+	if err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.GET("/pursuits/:id/delegation", NewHandler(service).DelegationPackage)
+
+	visible := httptest.NewRecorder()
+	router.ServeHTTP(visible, httptest.NewRequest(http.MethodGet, "/pursuits/"+alice.ID.String()+"/delegation", nil))
+	if visible.Code != http.StatusOK {
+		t.Fatalf("own delegation package status = %d, body=%s", visible.Code, visible.Body.String())
+	}
+	var packageResult PursuitDelegationPackage
+	if err := json.Unmarshal(visible.Body.Bytes(), &packageResult); err != nil {
+		t.Fatalf("decode delegation package: %v", err)
+	}
+	if packageResult.PursuitID != alice.ID.String() || packageResult.Title != alice.Title {
+		t.Fatalf("delegation package identity = %#v", packageResult)
+	}
+
+	denied := httptest.NewRecorder()
+	router.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, "/pursuits/"+bob.ID.String()+"/delegation", nil))
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner delegation status = %d, want %d; body=%s", denied.Code, http.StatusNotFound, denied.Body.String())
+	}
+}
+
 func TestPursuitMatchDoesNotExposeAnotherOwnersSourceLink(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

@@ -23,7 +23,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | `/memory-engine` | import, dashboard, search, conversations, insights |
 | `/sources` | connectors, list/create, search, owner-scoped sync-due, sync-jobs, extractions, audit-logs, per-source sync/pause/resume/revoke |
 | `/workflow` | overview, approvals, dashboard, list, intake, owner-scoped run-due/recovery/follow-up controls, transitions, approval/interruption/proposal resolve, checklist |
-| `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals |
+| `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals, read-only VA delegation package |
 | `/verification` | POST `/answer`, GET `/runs`, `/runs/:id` |
 | `/task` | owner-scoped plan, run, success, logs, review-queue, review resolution |
 | `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | command/logs, run, overview/stress, owner-scoped scan/needs/proposal resolution, overview |
@@ -49,6 +49,10 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
   owner before reaching a runtime adapter or filesystem operation. Read-only
   runtime inventory, health, and skill discovery remain available to the
   authenticated gateway surface.
+- `GET /pursuits/:id/delegation` is owner-scoped through pursuit detail access.
+  It compiles only already VA-ready workflow context, checklists, source links,
+  delivery expectations, and escalation rules. It creates no assignment, does
+  not grant external authority, and cannot execute or send anything.
 - **Follow-up:** adopt the `apierror` envelope uniformly across handlers (error
   shapes currently vary; frontend depends on the existing shapes — migrate both
   together).

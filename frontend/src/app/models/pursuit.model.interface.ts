@@ -332,6 +332,49 @@ export interface IPursuitDetail {
   operationalDigest: IPursuitOperationalDigest;
 }
 
+export interface IPursuitDelegationChecklistItem {
+  label: string;
+  status: string;
+  required: boolean;
+}
+
+export interface IPursuitDelegationWorkItem {
+  workflowId?: string;
+  title: string;
+  instructions: string;
+  state?: string;
+  dueAt?: string;
+  checklist: IPursuitDelegationChecklistItem[];
+}
+
+export interface IPursuitDelegationSource {
+  workflowId?: string;
+  sourceType?: string;
+  sourceUri: string;
+  sourceLabel?: string;
+  relationship?: string;
+}
+
+export interface IPursuitDelegationPackage {
+  generatedAt: string;
+  ready: boolean;
+  status: string;
+  reason: string;
+  pursuitId: string;
+  title: string;
+  objective: string;
+  currentState: string;
+  completionDefinition?: string;
+  riskLevel: string;
+  workItems: IPursuitDelegationWorkItem[];
+  sourceContext: IPursuitDelegationSource[];
+  allowedActions: string[];
+  blockedActions: string[];
+  escalationRules: string[];
+  deliveryRequirements: string[];
+  outstandingRobertActions: IPursuitAction[];
+}
+
 export interface IPursuitEvidenceResolution {
   uri: string;
   kind: string;

@@ -396,6 +396,16 @@
                 <h3>Action lanes</h3>
                 <span>Robert decisions stay separate from VA-ready, system-ready, and waiting work.</span>
               </div>
+              <button
+                nz-button
+                nzType="default"
+                title="Compile the current VA-ready work, linked checklists, sources, and escalation rules. This does not assign anyone or authorize external actions."
+                [nzLoading]="delegationLoading"
+                (click)="prepareDelegationPackage()"
+              >
+                <i nz-icon nzType="team" nzTheme="outline"></i>
+                Prepare VA brief
+              </button>
             </div>
             <div class="action-lanes">
               <article class="action-lane action-lane--robert">
@@ -446,6 +456,43 @@
                 <nz-empty *ngIf="!detail.actionQueues.waiting.length" nzNotFoundContent="Nothing waiting."></nz-empty>
               </article>
             </div>
+            <section class="operational-digest" *ngIf="delegationPackage as package">
+              <header>
+                <div>
+                  <span class="page-kicker">VA handoff</span>
+                  <h4>{{ package.ready ? 'Bounded handoff package' : 'Handoff not ready' }}</h4>
+                  <p>{{ package.reason }}</p>
+                </div>
+                <nz-tag [nzColor]="package.ready ? 'success' : 'warning'">{{ package.status }}</nz-tag>
+              </header>
+              <p><strong>Objective:</strong> {{ package.objective }}</p>
+              <div class="detail-grid">
+                <nz-card nzTitle="Work">
+                  <div *ngFor="let item of package.workItems" class="delegation-work-item">
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ item.instructions }}</span>
+                    <ul *ngIf="item.checklist.length">
+                      <li *ngFor="let step of item.checklist">{{ step.label }} <em>{{ step.status }}</em></li>
+                    </ul>
+                  </div>
+                  <span *ngIf="!package.workItems.length">No governed VA work is ready.</span>
+                </nz-card>
+                <nz-card nzTitle="Source context">
+                  <button nz-button nzType="link" *ngFor="let source of package.sourceContext" (click)="openSource(source.sourceUri)">
+                    {{ source.sourceLabel || source.sourceUri }}
+                  </button>
+                  <span *ngIf="!package.sourceContext.length">No linked source references yet.</span>
+                </nz-card>
+                <nz-card nzTitle="Authority limits">
+                  <ul><li *ngFor="let rule of package.allowedActions">{{ rule }}</li></ul>
+                  <ul><li *ngFor="let rule of package.blockedActions">{{ rule }}</li></ul>
+                </nz-card>
+                <nz-card nzTitle="Escalate">
+                  <ul><li *ngFor="let rule of package.escalationRules">{{ rule }}</li></ul>
+                  <span *ngIf="!package.escalationRules.length">No additional escalation rule was generated.</span>
+                </nz-card>
+              </div>
+            </section>
             <details class="legacy-actions">
               <summary>All generated actions</summary>
               <div class="action-list">

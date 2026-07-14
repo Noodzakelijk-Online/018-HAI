@@ -11,6 +11,7 @@ import {
   IPursuitCreateRequest,
   IPursuitDashboard,
   IPursuitDashboardDecision,
+  IPursuitDelegationPackage,
   IPursuitDecisionResolutionRequest,
   IPursuitDetail,
   IPursuitEvidenceResolution,
@@ -127,5 +128,9 @@ export class PursuitService {
 
   approvals(id: string): Observable<IPursuitApprovalOverview> {
     return this.http.get<IPursuitApprovalOverview>(`${this.apiUrl}/${id}/approvals`);
+  }
+
+  delegationPackage(id: string): Observable<IPursuitDelegationPackage> {
+    return this.http.get<IPursuitDelegationPackage>(`${this.apiUrl}/${id}/delegation`);
   }
 }

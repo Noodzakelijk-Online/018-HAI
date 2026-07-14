@@ -14,6 +14,7 @@ import {
   IPursuitBlocker,
   IPursuitDashboard,
   IPursuitDashboardDecision,
+  IPursuitDelegationPackage,
   IPursuitDecision,
   IPursuitDetail,
   IPursuitEvidenceResolution,
@@ -39,12 +40,14 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   routedIntakeRunning = false;
   reviewing = false;
   planning = false;
+  delegationLoading = false;
   resolvingDecisionId = '';
   stoppingAutomationId = '';
   resolvingEvidenceUri = '';
   inspectedEvidence?: IPursuitEvidenceResolution;
   inspectedRuntimeEvidence?: IAutomationLaunchEvent;
   inspectedAction?: IPursuitAction;
+  delegationPackage?: IPursuitDelegationPackage;
   showCreate = false;
   includeArchived = false;
   private requestedPursuitId = '';
@@ -245,6 +248,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   private loadPursuitDetail(id: string, updateRoute: boolean): void {
     this.detailLoading = true;
+    this.delegationPackage = undefined;
     this.pursuitsService.get(id).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -461,6 +465,25 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       error: (error) => {
         this.planning = false;
         this.notification.error('Planning failed', error?.error?.error || 'HAI could not create the first workflow for this pursuit.');
+      },
+    });
+  }
+
+  prepareDelegationPackage(): void {
+    if (!this.selected || this.delegationLoading) {
+      return;
+    }
+    this.delegationLoading = true;
+    this.pursuitsService.delegationPackage(this.selected.pursuit.id).subscribe({
+      next: (delegationPackage) => {
+        this.delegationPackage = delegationPackage;
+        this.delegationLoading = false;
+        const title = delegationPackage.ready ? 'VA brief ready' : 'VA brief blocked';
+        this.notification.info(title, delegationPackage.reason);
+      },
+      error: (error) => {
+        this.delegationLoading = false;
+        this.notification.error('VA brief unavailable', error?.error?.error || 'HAI could not prepare the delegation package.');
       },
     });
   }

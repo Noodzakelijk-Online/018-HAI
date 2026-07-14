@@ -385,6 +385,7 @@ func initializePursuitRoutes(apiVersion *gin.RouterGroup, pursuitHandler *pursui
 		pursuitRoutes.GET("/:id/next-actions", pursuitHandler.NextActions)
 		pursuitRoutes.GET("/:id/blockers", pursuitHandler.Blockers)
 		pursuitRoutes.GET("/:id/approvals", pursuitHandler.Approvals)
+		pursuitRoutes.GET("/:id/delegation", pursuitHandler.DelegationPackage)
 		pursuitRoutes.POST("/:id/intake", pursuitHandler.Intake)
 		pursuitRoutes.POST("/:id/plan", pursuitHandler.Plan)
 		pursuitRoutes.POST("/:id/links", pursuitHandler.Link)
