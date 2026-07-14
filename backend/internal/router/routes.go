@@ -101,7 +101,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeAmbientRoutes(v1, ambient.NewHandler(ambientService))
 		agentCycleService := agentcycle.NewServiceWithPursuits(sourceService, workflowService, ambientService, pursuitService, memoryService)
 		initializeAgentCycleRoutes(v1, agentcycle.NewHandler(agentCycleService))
-		initializeAssistantRoutes(v1, assistant.NewHandler(assistant.NewService(taskService, agentCycleService)))
+		initializeAssistantRoutes(v1, assistant.NewHandler(assistant.NewService(taskService, agentCycleService, pursuitService)))
 		initializeAutonomyRoutes(v1, autonomy.NewHandler(autonomy.DefaultService()))
 		osHandler, err := haios.DefaultHandlerWithPursuits(pursuitService)
 		if err != nil {

@@ -500,6 +500,20 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     });
   }
 
+  openAssistant(): void {
+    if (!this.selected) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.router.navigate(['/task-blueprint'], {
+      queryParams: {
+        pursuitId: pursuit.id,
+        projectKey: pursuit.projectKey || undefined,
+        request: pursuit.nextRecommendedAction || pursuit.desiredOutcome || pursuit.title,
+      },
+    });
+  }
+
   openAction(action: IPursuitAction): void {
     if (action.workflowId) {
       this.openWorkflow(action.workflowId);

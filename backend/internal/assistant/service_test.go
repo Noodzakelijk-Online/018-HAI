@@ -139,6 +139,90 @@ func TestCommandPlanOnlyForOrdinaryRequest(t *testing.T) {
 	}
 }
 
+func TestCommandPlanningSuggestsPursuitsWithoutCreatingWorkflowWork(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	pursuitID := uuid.New()
+	router := &fakePursuitCommandRouter{matches: []pursuit.MatchCandidate{{
+		Pursuit: models.Pursuit{ID: pursuitID, Title: "Dashboard recovery"},
+		Score:   0.82,
+		Reasons: []string{"project key matches"},
+	}}}
+	service := NewService(tasks, nil, router)
+
+	result, err := service.Command(CommandRequest{
+		Message:    "Plan the next dashboard recovery step.",
+		ProjectKey: "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if tasks.planCalls != 1 || tasks.runCalls != 0 {
+		t.Fatalf("task calls plan=%d run=%d, want plan only", tasks.planCalls, tasks.runCalls)
+	}
+	if router.matchCalls != 1 || router.routeCalls != 0 || router.intakeCalls != 0 {
+		t.Fatalf("pursuit router calls match=%d route=%d intake=%d, want match only", router.matchCalls, router.routeCalls, router.intakeCalls)
+	}
+	if result.Pursuit == nil || result.Pursuit.Mode != "suggested" || len(result.Pursuit.Matches) != 1 {
+		t.Fatalf("pursuit context = %#v", result.Pursuit)
+	}
+}
+
+func TestCommandExecutionQueuesPursuitWorkflowInsteadOfDirectTaskRun(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	cycle := &fakeAgentCycleRunner{}
+	pursuitID := uuid.New()
+	router := &fakePursuitCommandRouter{routed: &pursuit.RoutedIntakeResult{
+		Mode:             "candidate_created",
+		CreatedCandidate: true,
+		PursuitID:        pursuitID,
+		Message:          "pursuit candidate created from source-derived workflow",
+		Detail:           &pursuit.PursuitDetail{Pursuit: models.Pursuit{ID: pursuitID, Title: "Local runtime recovery"}},
+	}}
+	service := NewService(tasks, cycle, router)
+
+	result, err := service.Command(CommandRequest{
+		Message:        "Run the local runtime recovery workflow safely.",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if tasks.planCalls != 1 || tasks.runCalls != 0 {
+		t.Fatalf("task calls plan=%d run=%d, want governed plan only", tasks.planCalls, tasks.runCalls)
+	}
+	if router.routeCalls != 1 || router.lastRoute.SourceType != "assistant_command" || router.lastRoute.SourceID == "" {
+		t.Fatalf("expected deduplicated assistant intake: %#v", router.lastRoute)
+	}
+	if cycle.calls != 0 {
+		t.Fatalf("cycle calls = %d, want 0 because only an explicit cycle may process unrelated ready workflows", cycle.calls)
+	}
+	if result.Pursuit == nil || !result.Pursuit.ExecutionQueued || result.Pursuit.PursuitID != pursuitID.String() {
+		t.Fatalf("pursuit context = %#v", result.Pursuit)
+	}
+}
+
+func TestCommandPlanningWithinSelectedPursuitDoesNotCreateWorkflow(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	pursuitID := uuid.New()
+	router := &fakePursuitCommandRouter{}
+	service := NewService(tasks, nil, router)
+
+	result, err := service.Command(CommandRequest{
+		Message:   "Plan the evidence review.",
+		PursuitID: pursuitID.String(),
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if router.matchCalls != 0 || router.routeCalls != 0 || router.intakeCalls != 0 {
+		t.Fatalf("planning should not create workflow work: match=%d route=%d intake=%d", router.matchCalls, router.routeCalls, router.intakeCalls)
+	}
+	if result.Pursuit == nil || result.Pursuit.PursuitID != pursuitID.String() || result.Pursuit.Mode != "selected" {
+		t.Fatalf("pursuit context = %#v", result.Pursuit)
+	}
+}
+
 func TestCommandCanRunCycleOnlyFromExplicitFlag(t *testing.T) {
 	tasks := &fakeTaskEngine{}
 	cycle := &fakeAgentCycleRunner{}
@@ -216,6 +300,34 @@ func fakePlan(request task.IntakeRequest, status string) *task.CompletionPlan {
 type fakeAgentCycleRunner struct {
 	calls  int
 	result *agentcycle.RunResult
+}
+
+type fakePursuitCommandRouter struct {
+	matchCalls  int
+	routeCalls  int
+	intakeCalls int
+	matches     []pursuit.MatchCandidate
+	routed      *pursuit.RoutedIntakeResult
+	lastRoute   pursuit.IntakeRequest
+}
+
+func (f *fakePursuitCommandRouter) Match(request pursuit.MatchRequest) ([]pursuit.MatchCandidate, error) {
+	f.matchCalls++
+	return f.matches, nil
+}
+
+func (f *fakePursuitCommandRouter) RouteIntake(request pursuit.IntakeRequest) (*pursuit.RoutedIntakeResult, error) {
+	f.routeCalls++
+	f.lastRoute = request
+	if f.routed != nil {
+		return f.routed, nil
+	}
+	return &pursuit.RoutedIntakeResult{Mode: "candidate_created"}, nil
+}
+
+func (f *fakePursuitCommandRouter) Intake(id uuid.UUID, request pursuit.IntakeRequest) (*pursuit.PursuitDetail, error) {
+	f.intakeCalls++
+	return &pursuit.PursuitDetail{Pursuit: models.Pursuit{ID: id, Title: "Selected pursuit"}}, nil
 }
 
 func (f *fakeAgentCycleRunner) Run(request agentcycle.RunRequest) *agentcycle.RunResult {

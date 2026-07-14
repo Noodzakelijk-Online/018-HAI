@@ -1,12 +1,14 @@
 package assistant
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"automation-hub-backend/internal/agentcycle"
+	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/task"
 
 	"github.com/google/uuid"
@@ -21,15 +23,26 @@ type AgentCycleRunner interface {
 	Run(request agentcycle.RunRequest) *agentcycle.RunResult
 }
 
+// PursuitCommandRouter is deliberately narrow: the assistant can inspect a
+// possible parent pursuit and turn an explicit execution request into the
+// existing governed workflow path, but it cannot bypass pursuit policy.
+type PursuitCommandRouter interface {
+	Match(request pursuit.MatchRequest) ([]pursuit.MatchCandidate, error)
+	RouteIntake(request pursuit.IntakeRequest) (*pursuit.RoutedIntakeResult, error)
+	Intake(id uuid.UUID, request pursuit.IntakeRequest) (*pursuit.PursuitDetail, error)
+}
+
 type CommandRequest struct {
 	Message         string   `json:"message"`
 	ProjectKey      string   `json:"projectKey,omitempty"`
+	PursuitID       string   `json:"pursuitId,omitempty"`
 	AutomationID    string   `json:"automationId,omitempty"`
 	SuccessCriteria []string `json:"successCriteria,omitempty"`
 	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
 	RunCycle        bool     `json:"runCycle,omitempty"`
 	SkipSourceSync  bool     `json:"skipSourceSync,omitempty"`
 	SkipAmbient     bool     `json:"skipAmbient,omitempty"`
+	Actor           string   `json:"-"`
 }
 
 type CommandAction struct {
@@ -38,28 +51,47 @@ type CommandAction struct {
 	Summary string `json:"summary"`
 }
 
+type CommandPursuitContext struct {
+	PursuitID        string                   `json:"pursuitId,omitempty"`
+	Title            string                   `json:"title,omitempty"`
+	Mode             string                   `json:"mode"`
+	Matched          bool                     `json:"matched"`
+	CreatedCandidate bool                     `json:"createdCandidate,omitempty"`
+	ExecutionQueued  bool                     `json:"executionQueued,omitempty"`
+	Score            float64                  `json:"score,omitempty"`
+	Reasons          []string                 `json:"reasons,omitempty"`
+	Message          string                   `json:"message,omitempty"`
+	Matches          []pursuit.MatchCandidate `json:"matches,omitempty"`
+}
+
 type CommandResult struct {
-	ID             string                `json:"id"`
-	CreatedAt      time.Time             `json:"createdAt"`
-	Intent         string                `json:"intent"`
-	Summary        string                `json:"summary"`
-	NextAction     string                `json:"nextAction"`
-	SafetySummary  string                `json:"safetySummary"`
-	Actions        []CommandAction       `json:"actions"`
-	ReviewRequired bool                  `json:"reviewRequired"`
-	Plan           *task.CompletionPlan  `json:"plan,omitempty"`
-	AgentCycle     *agentcycle.RunResult `json:"agentCycle,omitempty"`
+	ID             string                 `json:"id"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	Intent         string                 `json:"intent"`
+	Summary        string                 `json:"summary"`
+	NextAction     string                 `json:"nextAction"`
+	SafetySummary  string                 `json:"safetySummary"`
+	Actions        []CommandAction        `json:"actions"`
+	ReviewRequired bool                   `json:"reviewRequired"`
+	Plan           *task.CompletionPlan   `json:"plan,omitempty"`
+	AgentCycle     *agentcycle.RunResult  `json:"agentCycle,omitempty"`
+	Pursuit        *CommandPursuitContext `json:"pursuit,omitempty"`
 }
 
 type Service struct {
-	tasks TaskEngine
-	cycle AgentCycleRunner
-	mu    sync.Mutex
-	logs  []CommandResult
+	tasks    TaskEngine
+	cycle    AgentCycleRunner
+	pursuits PursuitCommandRouter
+	mu       sync.Mutex
+	logs     []CommandResult
 }
 
-func NewService(tasks TaskEngine, cycle AgentCycleRunner) *Service {
-	return &Service{tasks: tasks, cycle: cycle}
+func NewService(tasks TaskEngine, cycle AgentCycleRunner, pursuitRouters ...PursuitCommandRouter) *Service {
+	var pursuits PursuitCommandRouter
+	if len(pursuitRouters) > 0 {
+		pursuits = pursuitRouters[0]
+	}
+	return &Service{tasks: tasks, cycle: cycle, pursuits: pursuits}
 }
 
 func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
@@ -90,14 +122,32 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 		ExecuteAllowed:  request.ExecuteAllowed,
 	}
 
+	if s.pursuits != nil && shouldTrackCommand(message, request, intent) {
+		pursuitContext, err := s.routePursuit(message, request)
+		if err != nil {
+			result.record("pursuit intake", err, "could not persist the command in the governed workflow path")
+			return result, err
+		}
+		result.Pursuit = pursuitContext
+		if request.ExecuteAllowed && pursuitContext != nil && pursuitContext.ExecutionQueued {
+			// The durable workflow worker owns execution. Do not run the same command
+			// directly here, or a retry/scheduler could execute it twice.
+			taskRequest.ExecuteAllowed = false
+		}
+	}
+
 	var plan *task.CompletionPlan
 	var err error
-	if request.ExecuteAllowed {
+	if request.ExecuteAllowed && (result.Pursuit == nil || !result.Pursuit.ExecutionQueued) {
 		plan, err = s.tasks.Run(taskRequest)
 		result.record("task success engine", err, "ran safe allowed task steps")
 	} else {
 		plan, err = s.tasks.Plan(taskRequest)
-		result.record("task planner", err, "created completion-first plan")
+		if result.Pursuit != nil && result.Pursuit.ExecutionQueued {
+			result.record("task planner", err, "created a completion-first plan; execution is queued in the governed workflow worker")
+		} else {
+			result.record("task planner", err, "created completion-first plan")
+		}
 	}
 	if err != nil {
 		return result, err
@@ -124,6 +174,124 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 	result.Summary = deriveSummary(result)
 	s.addLog(*result)
 	return result, nil
+}
+
+func (s *Service) routePursuit(message string, request CommandRequest) (*CommandPursuitContext, error) {
+	input := pursuit.IntakeRequest{
+		Input:          message,
+		ProjectKey:     request.ProjectKey,
+		AutomationID:   request.AutomationID,
+		SourceType:     "assistant_command",
+		SourceID:       assistantCommandSourceID(message, request),
+		SourceURI:      "assistant://command/" + assistantCommandSourceID(message, request),
+		SourceLabel:    "HAI chat command",
+		ContentType:    "assistant_command",
+		Trigger:        "assistant_command",
+		Actor:          firstNonEmpty(request.Actor, "assistant"),
+		RequiresReview: false,
+	}
+
+	if !request.ExecuteAllowed {
+		if requestedID := strings.TrimSpace(request.PursuitID); requestedID != "" {
+			if _, err := uuid.Parse(requestedID); err != nil {
+				return nil, fmt.Errorf("invalid pursuit id")
+			}
+			return &CommandPursuitContext{
+				PursuitID: requestedID,
+				Mode:      "selected",
+				Matched:   true,
+				Message:   "Planning is scoped to the selected pursuit. No workflow was created until you run the command.",
+			}, nil
+		}
+		matches, err := s.pursuits.Match(pursuit.MatchRequest{
+			Input:      message,
+			ProjectKey: request.ProjectKey,
+			SourceType: input.SourceType,
+			SourceID:   input.SourceID,
+			SourceURI:  input.SourceURI,
+			Limit:      3,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &CommandPursuitContext{
+			Mode:    "suggested",
+			Matches: matches,
+			Message: "Planning did not create work. Select a pursuit or run the command to create a governed workflow.",
+		}, nil
+	}
+
+	if requestedID := strings.TrimSpace(request.PursuitID); requestedID != "" {
+		id, err := uuid.Parse(requestedID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pursuit id")
+		}
+		detail, err := s.pursuits.Intake(id, input)
+		if err != nil {
+			return nil, err
+		}
+		return pursuitContextFromDetail(detail, "selected", true), nil
+	}
+
+	routed, err := s.pursuits.RouteIntake(input)
+	if err != nil {
+		return nil, err
+	}
+	context := &CommandPursuitContext{
+		Mode:             firstNonEmpty(routed.Mode, "routed"),
+		Matched:          routed.Matched,
+		CreatedCandidate: routed.CreatedCandidate,
+		Score:            routed.Score,
+		Reasons:          routed.Reasons,
+		Message:          routed.Message,
+		Matches:          routed.Matches,
+		ExecutionQueued:  true,
+	}
+	if routed.PursuitID != uuid.Nil {
+		context.PursuitID = routed.PursuitID.String()
+	}
+	if routed.Detail != nil {
+		context.Title = routed.Detail.Pursuit.Title
+		if context.PursuitID == "" {
+			context.PursuitID = routed.Detail.Pursuit.ID.String()
+		}
+	}
+	return context, nil
+}
+
+func pursuitContextFromDetail(detail *pursuit.PursuitDetail, mode string, queued bool) *CommandPursuitContext {
+	if detail == nil {
+		return &CommandPursuitContext{Mode: mode, ExecutionQueued: queued}
+	}
+	return &CommandPursuitContext{
+		PursuitID:       detail.Pursuit.ID.String(),
+		Title:           detail.Pursuit.Title,
+		Mode:            mode,
+		Matched:         true,
+		ExecutionQueued: queued,
+		Message:         "Command was added to the selected pursuit as governed workflow work.",
+	}
+}
+
+func shouldTrackCommand(message string, request CommandRequest, intent string) bool {
+	if strings.TrimSpace(request.PursuitID) != "" {
+		return true
+	}
+	if request.ExecuteAllowed {
+		return true
+	}
+	return !shouldRunCycle(message, request, intent)
+}
+
+func assistantCommandSourceID(message string, request CommandRequest) string {
+	value := strings.Join([]string{
+		strings.ToLower(strings.Join(strings.Fields(message), " ")),
+		strings.ToLower(strings.TrimSpace(request.ProjectKey)),
+		strings.ToLower(strings.TrimSpace(request.AutomationID)),
+		strings.Join(request.SuccessCriteria, "\n"),
+	}, "\n")
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("assistant-%x", sum[:12])
 }
 
 func (s *Service) Logs() []CommandResult {

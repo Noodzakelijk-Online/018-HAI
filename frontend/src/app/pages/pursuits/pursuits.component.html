@@ -205,6 +205,10 @@
                 <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
                 Verify evidence
               </button>
+              <button nz-button nzType="default" title="Continue this pursuit through HAI chat. Commands are linked to this pursuit and run through the workflow policy." (click)="openAssistant()">
+                <i nz-icon nzType="message" nzTheme="outline"></i>
+                Continue in HAI
+              </button>
               <button nz-button nzType="default" title="Archive or restore this pursuit." (click)="archiveSelected()">
                 {{ detail.pursuit.archived ? 'Restore' : 'Archive' }}
               </button>

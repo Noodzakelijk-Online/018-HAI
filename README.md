@@ -17,7 +17,7 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 What is implemented in this repository:
 
 - **User experience:** onboarding, quick capture, Command Dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
-- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, and source-linked audit history.
+- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work.
 - **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance.
 - **Connected-source import paths:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync.
 - **Governance:** the backend independently verifies browser-session or bearer JWTs before using a signed principal for audit attribution; client-supplied actor labels are ignored. Approval gates, emergency stop, request rate limits, idempotency, redacted audit records, path safety, runtime allowlists, and a paid-model policy disabled by default are implemented.
@@ -223,6 +223,11 @@ Task engine:
 - `GET /task/review-queue`
 - `POST /task/review-queue/:id/resolve`
 
+Assistant command bridge:
+
+- `POST /assistant/command`
+- `GET /assistant/logs`
+
 Workflow engine:
 
 - `GET /workflow/overview`
@@ -427,6 +432,8 @@ The dashboard page at `/workflow-engine` shows the workflow inbox, operational m
 Pursuits are the durable objective containers above individual workflows. A pursuit groups related workflow items, source material, memories, verification evidence, runtime attempts, decisions, blockers, next actions, and approvals into one operator-facing objective. The `/pursuits` dashboard and detail view distinguish work that needs Robert's decision, is ready for delegation, can be processed by a bounded system workflow, or is waiting on an external party.
 
 Pursuit intake and matching reuse the existing source, workflow, memory, verification, and ambient-planning services rather than introducing a parallel agent implementation. Creation, planning, intake, review, decision resolution, archive operations, and link changes record the authenticated session principal when present; a client payload cannot claim another person as the actor. Local development without an IDP session records the fallback operator/system identity honestly. This supports traceable operation but does not itself authorize a sensitive action: the workflow approval queue, execution policy, and verification gates remain authoritative.
+
+The HAI chat at `/task-blueprint` can be opened from a pursuit detail page. A planning-only command shows matching pursuit context without creating operational work. An explicit **Run** command receives a deterministic `assistant_command` source identity, is routed into the selected or matched pursuit, and creates or reuses a governed workflow. The command bridge then creates a task plan and queues that workflow for the existing worker scheduler; it does not directly execute the task as a second parallel path or run unrelated ready workflows. An explicit maintenance-cycle command processes due work through the existing global cycle. This prevents duplicate execution when the scheduler retries or processes the same workflow. High-risk work still enters approval review, and completion remains dependent on the worker's runtime, verification, and quality-gate evidence.
 
 ## LLM Routing Policy
 

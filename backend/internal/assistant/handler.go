@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"automation-hub-backend/internal/identity"
 	"net/http"
 	"strings"
 
@@ -25,6 +26,7 @@ func (h *Handler) Command(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.Actor = verifiedActor(c, "operator")
 	if strings.TrimSpace(request.Message) == "" && !request.RunCycle {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "message is required"})
 		return
@@ -35,6 +37,15 @@ func (h *Handler) Command(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func verifiedActor(c *gin.Context, fallback string) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok && strings.TrimSpace(subject) != "" {
+			return subject
+		}
+	}
+	return fallback
 }
 
 func (h *Handler) Logs(c *gin.Context) {
