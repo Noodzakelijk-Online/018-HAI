@@ -68,6 +68,11 @@ Recent hardening in the current baseline:
   HAI OS browser/API routes require a verified owner session. Their operations
   retain that identity end to end; ownerless work is limited to controlled
   in-process schedulers and workers.
+- Task execution classifies external communication, legal/government,
+  financial, account, publication, and deletion requests as high risk. State
+  changes such as deployment or repository mutation are medium risk. Both are
+  prepared for explicit review; only bounded low-risk work can execute under
+  its configured runtime policy without an approval decision.
 - Dashboard worker controls for **Run due**, **Recover stale**, **Run follow-ups**,
   and Connected Sources **Sync due** operate only on sources and workflow items
   explicitly owned by the signed-in user. They cannot invoke the global

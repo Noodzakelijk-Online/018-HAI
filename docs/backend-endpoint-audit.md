@@ -37,7 +37,9 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 - New reachable surfaces added this run: `/memory/query`, `/flags`, `/system/info`,
   `/system/support-bundle`, plus `/readyz`.
 - No orphaned/dead routes found in `routes.go`.
-- Workflow worker controls use the verified request owner when one is present. Global workflow scheduling remains an in-process system-worker operation rather than a dashboard capability.
+- Workflow browser/API routes require a verified owner. Their worker controls
+  operate only on that owner's work; global workflow scheduling remains an
+  in-process system-worker operation rather than a dashboard capability.
 - A manual source `sync-due` request requires a verified owner and refreshes only that owner's explicitly owned sources. The global source scheduler remains in-process.
 - Task HTTP requests require a verified owner for planning, controlled execution,
   history, review visibility, and review resolution. The task service's

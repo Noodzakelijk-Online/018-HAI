@@ -295,6 +295,41 @@ func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	}
 }
 
+func TestTaskClassificationProtectsExternalCommunicationAndMutations(t *testing.T) {
+	communication := analyzeIntake(IntakeRequest{Request: "Send a reply email to the client"})
+	if communication.RiskLevel != "high" || !communication.NeedsApproval {
+		t.Fatalf("external communication risk = %#v, want high risk with approval", communication)
+	}
+
+	mutation := analyzeIntake(IntakeRequest{Request: "Commit and push the repository update"})
+	if mutation.RiskLevel != "medium" || !mutation.NeedsApproval {
+		t.Fatalf("repository mutation risk = %#v, want medium risk with approval", mutation)
+	}
+}
+
+func TestRunQueuesReviewForMediumRiskRuntimeMutation(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Commit and push the repository update",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.RiskAssessment.Level != "medium" {
+		t.Fatalf("medium-risk mutation was not queued for review: %#v", plan.RiskAssessment)
+	}
+	if plan.ReviewQueueItem == nil || executor.calls != 0 {
+		t.Fatalf("medium-risk runtime mutation bypassed review: item=%#v calls=%d", plan.ReviewQueueItem, executor.calls)
+	}
+}
+
 func TestRunBlocksExecutionWhenEmergencyStopActive(t *testing.T) {
 	t.Setenv("HAI_EMERGENCY_STOP", "true")
 	mem := &fakeMemoryService{}

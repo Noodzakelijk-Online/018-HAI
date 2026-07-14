@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"automation-hub-backend/internal/automation"
+	"automation-hub-backend/internal/autonomygate"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
@@ -1321,11 +1322,14 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 		reasoning = maxReasoning(reasoning, "high")
 		reasons = append(reasons, "architecture terms detected")
 	}
-	if containsAny(text, "delete", "financial", "legal", "government", "email sending", "public posting", "account change") {
-		risk = "high"
+	risk = classifyTaskRisk(text, needsTools)
+	if risk == "high" {
 		difficulty = maxInt(difficulty, 4)
 		reasoning = maxReasoning(reasoning, "high")
 		reasons = append(reasons, "approval-sensitive terms detected")
+	} else if risk == "medium" {
+		difficulty = maxInt(difficulty, 3)
+		reasons = append(reasons, "state-changing or externally consequential terms detected")
 	}
 
 	successCriteria := request.SuccessCriteria
@@ -1344,9 +1348,30 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 		NeedsDocuments:      needsDocs,
 		NeedsWebAccess:      needsWeb,
 		NeedsLocalExecution: needsLocal,
-		NeedsApproval:       risk == "high",
+		NeedsApproval:       risk != "low",
 		Reason:              strings.Join(reasons, "; "),
 	}
+}
+
+// classifyTaskRisk errs on the side of review for any task that can change
+// external state. Read-only analysis and allowlisted build/test work stay low
+// risk; sending, publication, legal/government, money, account, and deletion
+// actions remain high risk even when the request is otherwise well formed.
+func classifyTaskRisk(text string, needsTools bool) string {
+	if containsWordOrPhrase(text,
+		"delete", "financial", "payment", "pay", "spend", "bank", "legal", "lawyer",
+		"government", "municipality", "insurer", "insurance", "account", "credential",
+		"secret", "password", "publish", "public posting", "post publicly",
+	) || (containsWordOrPhrase(text, "send") && containsWordOrPhrase(text, "email", "message", "reply")) {
+		return "high"
+	}
+	if needsTools && containsWordOrPhrase(text,
+		"deploy", "install", "commit", "push", "merge", "apply", "change", "modify",
+		"move", "rename", "write", "create", "update", "call api", "invoke api",
+	) {
+		return "medium"
+	}
+	return "low"
 }
 
 func buildValidationPlan(intake IntakeAnalysis, minimality MinimalityDecision) ValidationPlan {
@@ -1439,16 +1464,25 @@ func routeTools(intake IntakeAnalysis) ToolRouteDecision {
 
 func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) RiskAssessment {
 	reasons := []string{"read-only planning is allowed"}
-	allowed := true
-	approvalGranted := false
 	needsExplicitExecution := intake.NeedsTools || intake.NeedsLocalExecution
+	approvalGranted := intake.NeedsApproval && executeAllowed && humanApproved
+	gateDecision := autonomygate.Decide(autonomygate.Signals{
+		Confidence: 0.9,
+		Risk:       intake.RiskLevel,
+		Reversible: intake.RiskLevel != "high",
+		Approved:   approvalGranted,
+	})
 	if intake.NeedsApproval {
-		reasons = append(reasons, "request contains high-risk action terms")
-		approvalGranted = executeAllowed && humanApproved
-		allowed = approvalGranted
-		if approvalGranted {
-			reasons = append(reasons, "human approval recorded for this run")
-		}
+		reasons = append(reasons, "request risk classification requires explicit human approval before execution")
+	}
+	if approvalGranted {
+		reasons = append(reasons, "human approval recorded for this run")
+	}
+	switch gateDecision {
+	case autonomygate.Review:
+		reasons = append(reasons, "autonomy gate routed the action to review")
+	case autonomygate.Block:
+		reasons = append(reasons, "autonomy gate blocked an unapproved irreversible high-risk action")
 	}
 	if intake.NeedsLocalExecution {
 		reasons = append(reasons, "local execution is constrained to non-destructive steps")
@@ -1459,7 +1493,7 @@ func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) 
 	if !executeAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
 		reasons = append(reasons, "execution not requested; plan remains non-executing")
 	}
-	allowedNow := allowed
+	allowedNow := gateDecision == autonomygate.Auto
 	if needsExplicitExecution && !executeAllowed {
 		allowedNow = false
 	}

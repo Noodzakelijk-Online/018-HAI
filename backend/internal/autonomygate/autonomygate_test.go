@@ -23,12 +23,12 @@ func TestHighRiskOrLowConfidenceReviews(t *testing.T) {
 	}
 }
 
-func TestSafeCasesAuto(t *testing.T) {
+func TestOnlyLowRiskHighConfidenceCasesAuto(t *testing.T) {
 	if Decide(Signals{Confidence: 0.9, Risk: "low", Reversible: true}) != Auto {
 		t.Fatalf("safe case should auto")
 	}
-	if Decide(Signals{Confidence: 0.9, Risk: "medium", Reversible: true}) != Auto {
-		t.Fatalf("medium risk reversible high-confidence should auto")
+	if Decide(Signals{Confidence: 0.9, Risk: "medium", Reversible: true}) != Review {
+		t.Fatalf("medium risk should require review before execution")
 	}
 	if Decide(Signals{Confidence: 0.9, Risk: "medium", Reversible: false}) != Review {
 		t.Fatalf("medium risk irreversible should review")
