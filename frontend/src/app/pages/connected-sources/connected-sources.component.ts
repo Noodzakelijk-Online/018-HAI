@@ -17,7 +17,7 @@ import { CONNECTED_SOURCE_SERVICE_TOKEN } from '../../services/connected-source/
 import { IConnectedSourceService } from '../../services/connected-source.service.interface';
 import { ThemeMode, ThemeService } from '../../services/theme.service';
 
-type SourceAction = 'connect' | 'odoo' | 'import' | 'folder' | 'whatsapp' | 'search';
+type SourceAction = 'connect' | 'gmail' | 'odoo' | 'import' | 'folder' | 'whatsapp' | 'search';
 
 interface SourceActionCard {
   id: SourceAction;
@@ -252,6 +252,14 @@ export class ConnectedSourcesComponent implements OnInit {
         icon: 'folder-open',
         metric: `${this.localSourceCount()} local`,
         tone: 'green',
+      },
+      {
+        id: 'gmail',
+        title: 'Connect Gmail',
+        detail: 'Live read-only sync over Google OAuth.',
+        icon: 'mail',
+        metric: `${this.operationalConnectorCount()} live`,
+        tone: 'blue',
       },
       {
         id: 'whatsapp',
@@ -642,6 +650,45 @@ export class ConnectedSourcesComponent implements OnInit {
         this.notification.error('Error', 'Scheduled sync check failed.');
       },
     });
+  }
+
+  // Creates a gmail source, then opens Google's consent screen so the user
+  // authorizes in their own browser. On return, Google redirects to the backend
+  // callback which stores the tokens.
+  connectGmail(): void {
+    const connector = this.connectors.find((item) => item.connectorKey === 'gmail');
+    if (!connector?.enabled || connector.adapterStatus === 'not_implemented') {
+      this.notification.warning(
+        'Gmail not configured',
+        'The backend needs GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REDIRECT_URL set before Gmail can be connected.'
+      );
+      return;
+    }
+    this.sourceService
+      .createSource({
+        connectorKey: 'gmail',
+        name: 'Gmail (Google account)',
+        category: 'email',
+        enabled: true,
+        localOnly: false,
+        syncFrequency: 'manual',
+        permissions: ['metadata:read', 'gmail.readonly'],
+      })
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (source) => {
+          this.sourceService.startGoogleOAuth(source.id).subscribe({
+            next: ({ authorizeUrl }) => {
+              this.notification.info('Redirecting to Google', 'Approve access in the window that opens.');
+              window.open(authorizeUrl, '_blank', 'noopener,noreferrer');
+              this.refresh();
+            },
+            error: (error) =>
+              this.notification.error('Error', error?.error?.error || 'Could not start Google authorization.'),
+          });
+        },
+        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to create Gmail source.'),
+      });
   }
 
   connectWhatsAppSource(): void {

@@ -224,6 +224,31 @@
             </form>
           </div>
 
+          <div *ngSwitchCase="'gmail'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Connect Gmail</h2>
+                <p>
+                  Live, read-only Gmail sync over Google OAuth (message metadata only —
+                  headers and snippet, never full bodies). You approve access in your own
+                  Google account; the tokens are stored encrypted and can be revoked.
+                </p>
+              </div>
+            </div>
+            <div class="operation-form">
+              <p *ngIf="operationalConnectorCount() === 0" class="hint">
+                The backend needs GOOGLE_OAUTH_CLIENT_ID, _SECRET and _REDIRECT_URL set
+                before Gmail can be connected.
+              </p>
+              <div class="form-footer">
+                <button type="button" nz-button nzType="primary" (click)="connectGmail()">
+                  <span nz-icon nzType="google"></span>
+                  Connect Google account
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div *ngSwitchCase="'whatsapp'" class="operation">
             <div class="panel-heading compact">
               <div>

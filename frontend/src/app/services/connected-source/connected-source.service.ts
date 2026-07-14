@@ -46,6 +46,15 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.post<IConnectedSource>(this.apiUrl + '/', request);
   }
 
+  // Returns the Google consent URL to open so the user authorizes a gmail source
+  // in their own browser. The backend issues a signed state tying it to sourceId.
+  startGoogleOAuth(sourceId: string): Observable<{ authorizeUrl: string }> {
+    return this.http.get<{ authorizeUrl: string }>(
+      `${this.apiUrl}/oauth/google/start`,
+      { params: { sourceId } }
+    );
+  }
+
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult> {
     return this.http.post<ISourceSyncResult>(`${this.apiUrl}/${sourceId}/sync`, request);
   }
