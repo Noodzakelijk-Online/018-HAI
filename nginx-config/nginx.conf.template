@@ -65,8 +65,6 @@ http {
             proxy_set_header Cookie $http_cookie;
         }
 
-        error_page 401 /login;
-
         include /etc/nginx/sites-enabled/*.conf;
 
         location / {

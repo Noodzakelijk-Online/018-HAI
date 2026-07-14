@@ -98,6 +98,9 @@ the workflow remains the restart-safe execution ledger.
   protected routes, and nginx relays that refreshed cookie to the browser, so
   access-token expiry does not strand an active local session on the login
   screen or send the backend a stale credential.
+- Gateway API authentication failures remain JSON `401` responses. Angular's
+  session guard, rather than nginx rewriting API errors to HTML, directs the
+  browser to `/login` when a session is no longer refreshable.
 - Owner-scoped pursuit detail, dashboards, activity, evidence, decisions, and
   links filter legacy records that are not visible to the current owner.
 - High-risk communication, legal/government, financial, account, public-post,
