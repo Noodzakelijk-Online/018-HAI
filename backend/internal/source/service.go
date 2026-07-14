@@ -822,8 +822,11 @@ func (s *service) DeleteExtraction(id uuid.UUID) error {
 	if err := s.retractWorkflowForExtraction(extraction, "source extraction was deleted by the operator"); err != nil {
 		return err
 	}
+	if err := s.repo.DeleteExtraction(id); err != nil {
+		return err
+	}
 	s.audit(extraction.SourceID, "extraction.deleted", "operator deleted extraction")
-	return s.repo.DeleteExtraction(id)
+	return nil
 }
 
 func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {

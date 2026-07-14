@@ -221,7 +221,12 @@ func (r *GormRepository) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 }
 
 func (r *GormRepository) DeleteExtraction(id uuid.UUID) error {
-	return r.DB.Delete(&models.SourceExtraction{}, id).Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("extraction_id = ?", id).Delete(&models.SourceIndexEntry{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&models.SourceExtraction{}, id).Error
+	})
 }
 
 func (r *GormRepository) SaveIndexEntry(entry *models.SourceIndexEntry) (*models.SourceIndexEntry, error) {

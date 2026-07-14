@@ -1236,6 +1236,76 @@ func TestArchiveExtractionRetractsPendingWorkflowCandidate(t *testing.T) {
 	}
 }
 
+func TestDeleteExtractionRetractsWorkflowAndRemovesDerivedIndexMetadata(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-delete",
+		Title:      "Delete",
+		Content:    "Follow up: prepare the detailed project checklist for review.",
+		SourceURI:  "local://delete",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	extractionID := result.Extractions[0].ID
+	repo.index = append(repo.index, models.SourceIndexEntry{
+		ID:           uuid.New(),
+		SourceID:     sourceID,
+		ExtractionID: extractionID,
+		IndexType:    "vector_ref",
+		VectorRef:    "configured-local-vector:" + extractionID.String(),
+	})
+	if err := service.DeleteExtraction(extractionID); err != nil {
+		t.Fatalf("DeleteExtraction: %v", err)
+	}
+	if _, err := repo.FindExtraction(extractionID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("deleted extraction lookup error = %v, want not found", err)
+	}
+	if len(repo.index) != 0 {
+		t.Fatalf("derived index metadata remained after deletion: %#v", repo.index)
+	}
+	if len(workflowSpy.retractions) != 1 || workflowSpy.retractions[0].sourceID != extractionID.String() {
+		t.Fatalf("workflow retractions = %#v", workflowSpy.retractions)
+	}
+	if !repo.hasAudit("extraction.deleted") {
+		t.Fatalf("expected deletion audit after successful deletion")
+	}
+}
+
+func TestDeleteExtractionDoesNotAuditWhenRepositoryDeleteFails(t *testing.T) {
+	sourceID := uuid.New()
+	extractionID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, ConnectorKey: "email", Name: "Project mailbox", Category: "email", Enabled: true, Status: "active"})
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: extractionID, SourceID: sourceID, Summary: "Private source context"}); err != nil {
+		t.Fatalf("SaveExtraction: %v", err)
+	}
+	repo.index = append(repo.index, models.SourceIndexEntry{ID: uuid.New(), SourceID: sourceID, ExtractionID: extractionID, IndexType: "keyword", Keywords: "private,source,context"})
+	repo.deleteExtractionErr = errors.New("storage unavailable")
+	if err := NewService(repo, nil).DeleteExtraction(extractionID); err == nil {
+		t.Fatal("expected repository delete failure")
+	}
+	if repo.hasAudit("extraction.deleted") {
+		t.Fatalf("deletion audit was recorded before storage deletion succeeded: %#v", repo.auditLogs)
+	}
+	if _, err := repo.FindExtraction(extractionID); err != nil {
+		t.Fatalf("failed deletion removed extraction: %v", err)
+	}
+	if len(repo.index) != 1 {
+		t.Fatalf("failed deletion removed derived metadata: %#v", repo.index)
+	}
+}
+
 func TestCorrectingAwayActionableFieldsRetractsWorkflowCandidate(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
@@ -1473,6 +1543,7 @@ type fakeSourceRepo struct {
 	index                   []models.SourceIndexEntry
 	lastExtractionSourceIDs []uuid.UUID
 	auditLogs               []models.SourceAuditLog
+	deleteExtractionErr     error
 }
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
@@ -1686,7 +1757,17 @@ func (r *fakeSourceRepo) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 }
 
 func (r *fakeSourceRepo) DeleteExtraction(id uuid.UUID) error {
+	if r.deleteExtractionErr != nil {
+		return r.deleteExtractionErr
+	}
 	delete(r.extractions, id)
+	filtered := r.index[:0]
+	for _, entry := range r.index {
+		if entry.ExtractionID != id {
+			filtered = append(filtered, entry)
+		}
+	}
+	r.index = filtered
 	return nil
 }
 

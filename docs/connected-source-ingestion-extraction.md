@@ -36,6 +36,8 @@ same source registry and sync-job table.
 10. Promote useful non-sensitive records into context memory.
 11. Log sync, extraction, correction, archive, delete, pause, re-index, and
     revoke actions.
+12. Delete derived index records in the same database transaction when an
+    extraction is deleted; record the delete audit event only after it commits.
 
 ## API Surface
 
