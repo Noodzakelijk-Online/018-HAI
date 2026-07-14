@@ -197,7 +197,7 @@ export class WorkflowEngineComponent implements OnInit {
         if (result.mode === 'matched_existing') {
           this.notification.success('Workflow linked to pursuit', 'HAI matched this input to an existing pursuit before creating governed work.');
         } else if (result.createdCandidate) {
-          this.notification.success('Pursuit candidate created', 'HAI created governed work and a reviewable pursuit candidate because no existing pursuit matched.');
+          this.notification.info('Pursuit candidate needs review', 'HAI recorded the unmatched input as a reviewable pursuit candidate. No workflow was created until an approver accepts it.');
         } else {
           this.notification.success('Workflow created', result.message || 'Input classified, checklist generated, and audit event recorded.');
         }
