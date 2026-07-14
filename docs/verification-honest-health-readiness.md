@@ -264,10 +264,53 @@ all return 200, so normal use is unaffected. Unit tests cover the limit
 boundary, per-key isolation, and fail-open/fail-closed behaviour when Redis is
 unavailable, using a deterministic fake so they need no running Redis.
 
+## 12. Honest connector status
+
+The connector catalog reported all 9 connectors as `operational`, and the
+dashboard showed "9 connectors operational". But only two make a live network
+connection (GitHub REST, and the JSON feed); four are named after cloud services
+(email, calendar, cloud-documents, project-board) while actually reading export
+files from a local folder; one (`odoo-herp`) generates built-in domain models
+with no live connection; the rest read local folders/exports. There is no OAuth
+anywhere in the backend.
+
+`AdapterStatus` was overloaded: it was both the UI label and the gate deciding
+whether a source can be created (`service.go`). So the fix separates the two:
+
+- Honest status values: `operational` (live remote), `local_only` (reads local
+  files/folders), `modeled` (built-in models), `not_implemented` (contract only).
+- A new `adapterIsUsable` helper gates source creation: everything except
+  `not_implemented` can still be created, so the local-folder connectors that
+  genuinely work keep working.
+
+Verified:
+
+```
+# catalog now reports honestly:
+github, json-feed          -> operational   (2)
+email, calendar, cloud-documents,
+project-board, local-folder,
+whatsapp-export            -> local_only    (6)
+odoo-herp                  -> modeled       (1)
+
+# creating a local_only source still succeeds (function preserved):
+POST /api/v1/sources {connectorKey: "email"} -> HTTP 201
+```
+
+The dashboard now reads **"2 live · 6 local · 1 modeled of 9 connectors"** instead
+of "9 operational", and each connector in the picker is labelled honestly
+("… — local files only", "… — live", "… — built-in model"). Screenshot:
+`docs/evidence/connectors-honest-status.png`. All 55 backend test packages pass;
+the catalog test now asserts the honest statuses.
+
+This is deliberately a downward change in the headline number — it removes an
+overstatement, which is the point. No connector lost any real capability.
+
 ## What is NOT claimed here
 
-- No OAuth connector was implemented; connector adapter statuses were not changed
-  in this change set (tracked separately).
+- No OAuth connector was implemented. Connector statuses are now honest about
+  that (section 12), but building an actual Gmail/Drive/Calendar/Trello adapter
+  is still outstanding and needs the client's OAuth credentials.
 - Redis now backs rate-limit counters, but the LLM usage/budget accounting in
   `internal/llm` is still an in-process map. Persisting that is the natural next
   step; it was left out here because it cannot be exercised end to end until an

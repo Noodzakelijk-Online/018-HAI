@@ -31,9 +31,9 @@
         <strong>{{ enabledSources().length }}</strong>
         <span>active sources</span>
       </button>
-      <button type="button" title="Connector adapters exposed by the backend and currently operational">
-        <strong>{{ operationalConnectorCount() }}/{{ connectors.length }}</strong>
-        <span>connectors operational</span>
+      <button type="button" title="Live connectors fetch from the external service directly (GitHub, JSON feed). Local connectors read exported files from an allowlisted folder. Modeled connectors generate built-in records. None connect to Gmail/Drive/Calendar/Trello via OAuth yet.">
+        <strong>{{ operationalConnectorCount() }} live · {{ localOnlyConnectorCount() }} local · {{ modeledConnectorCount() }} modeled</strong>
+        <span>of {{ connectors.length }} connectors</span>
       </button>
       <button type="button" title="Extracted records available for source-grounded memory and task context">
         <strong>{{ extractions.length }}</strong>

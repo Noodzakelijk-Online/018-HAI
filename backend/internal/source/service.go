@@ -200,7 +200,7 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 	if err != nil {
 		return nil, err
 	}
-	if !connector.Enabled || connector.AdapterStatus != "operational" {
+	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
 	}
 	category := firstNonEmpty(request.Category, connector.Category)
@@ -1424,18 +1424,49 @@ func (s *service) audit(sourceID uuid.UUID, action, message string) {
 	})
 }
 
+// Adapter status values. These describe honestly what a connector actually does,
+// which is not the same question as whether it can be used:
+//
+//	AdapterOperational — connects to and fetches from the live external service.
+//	AdapterLocalOnly   — functional, but ingests from local files/folders/exports
+//	                     rather than the live cloud service its name suggests.
+//	AdapterModeled     — functional, but produces built-in domain models rather
+//	                     than reading a real source.
+//	AdapterNotImplemented — registered as a contract only; no working adapter.
+//
+// All but AdapterNotImplemented are "usable" (see adapterIsUsable): a source can
+// be created and will ingest. The distinction exists so the UI can stop
+// reporting a local-folder reader as a live Gmail/Trello/Drive connector.
+const (
+	AdapterOperational    = "operational"
+	AdapterLocalOnly      = "local_only"
+	AdapterModeled        = "modeled"
+	AdapterNotImplemented = "not_implemented"
+)
+
+// adapterIsUsable reports whether a connector with the given status can back a
+// created source. Everything except an unimplemented (or unset) adapter can.
+func adapterIsUsable(status string) bool {
+	switch strings.TrimSpace(status) {
+	case AdapterOperational, AdapterLocalOnly, AdapterModeled:
+		return true
+	default:
+		return false
+	}
+}
+
 func defaultConnectors() []models.SourceConnector {
 	modes := joinValues([]string{ModeManualImport, ModeScheduledSync, ModeWebhookSync, ModeHistoricalBackfill, ModeIncrementalSync})
 	return []models.SourceConnector{
-		{ConnectorKey: "email", Name: "Email exports (MBOX/EML)", Category: "email", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only MBOX/EML exports from an allowlisted local folder are ingested incrementally"},
-		{ConnectorKey: "calendar", Name: "Calendar exports (ICS)", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only ICS exports from an allowlisted local folder are ingested incrementally"},
-		{ConnectorKey: "cloud-documents", Name: "Synced cloud document folders", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "selected local synced folders are read-only and bounded by the existing folder allowlist"},
-		{ConnectorKey: "project-board", Name: "Trello project-board exports", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only Trello JSON exports from an allowlisted local folder are ingested incrementally"},
-		{ConnectorKey: "github", Name: "GitHub repositories and work", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: "operational", StatusReason: "read-only GitHub REST repository, issue, pull request, commit, and workflow-run sync; optional token stays in GITHUB_SOURCE_TOKEN"},
-		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "manual and scheduled local-folder ingestion are implemented"},
-		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "scheduled and incremental normalized JSON ingestion are implemented with host allowlisting and bounded responses"},
-		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "local WhatsApp .txt exports are parsed into bounded, sensitive, review-gated source records"},
-		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: "operational", StatusReason: "Odoo app-domain modeling and manual/API-snapshot imports are implemented; write-back remains approval-gated and disabled by default"},
+		{ConnectorKey: "email", Name: "Email exports (MBOX/EML)", Category: "email", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads MBOX/EML export files from an allowlisted local folder; does not connect to Gmail/IMAP"},
+		{ConnectorKey: "calendar", Name: "Calendar exports (ICS)", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads ICS export files from an allowlisted local folder; does not connect to Google/Outlook Calendar"},
+		{ConnectorKey: "cloud-documents", Name: "Synced cloud document folders", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads a locally-synced folder (bounded by the folder allowlist); does not connect to a Drive/Dropbox API"},
+		{ConnectorKey: "project-board", Name: "Trello project-board exports", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads Trello JSON export files from an allowlisted local folder; does not connect to the Trello API"},
+		{ConnectorKey: "github", Name: "GitHub repositories and work", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only GitHub REST sync of repositories, issues, pull requests, commits, and workflow runs; optional token in GITHUB_SOURCE_TOKEN"},
+		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "manual and scheduled ingestion of an allowlisted local folder"},
+		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
+		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
+		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 	}
 }
 
