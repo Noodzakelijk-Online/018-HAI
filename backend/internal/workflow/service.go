@@ -196,6 +196,7 @@ type WorkflowPursuitContext struct {
 	Confidence            float64   `json:"confidence"`
 	AutonomyLevel         string    `json:"autonomyLevel"`
 	NeedCategory          string    `json:"needCategory,omitempty"`
+	WhyItMatters          string    `json:"whyItMatters,omitempty"`
 	DesiredOutcome        string    `json:"desiredOutcome,omitempty"`
 	CurrentStateSummary   string    `json:"currentStateSummary,omitempty"`
 	NextRecommendedAction string    `json:"nextRecommendedAction,omitempty"`

@@ -189,6 +189,7 @@ func TestGetIncludesLinkedPursuitContext(t *testing.T) {
 			RiskLevel:             "medium",
 			PriorityScore:         83,
 			AutonomyLevel:         "approve_before_execute",
+			WhyItMatters:          "A source-linked claim prevents an unsupported insurance response.",
 			DesiredOutcome:        "Complete the claim with source-linked evidence.",
 			CurrentStateSummary:   "Evidence collection is in progress.",
 			NextRecommendedAction: "Ask Robert to approve the missing-document request.",
@@ -212,8 +213,8 @@ func TestGetIncludesLinkedPursuitContext(t *testing.T) {
 	if got.ID != pursuitID || got.LinkID != linkID || got.Title != "Finish ASR insurance claim" {
 		t.Fatalf("unexpected pursuit context: %#v", got)
 	}
-	if got.NextRecommendedAction == "" || got.Relationship != "operational_work" {
-		t.Fatalf("pursuit context lost next action/relationship: %#v", got)
+	if got.NextRecommendedAction == "" || got.WhyItMatters == "" || got.Relationship != "operational_work" {
+		t.Fatalf("pursuit context lost rationale, next action, or relationship: %#v", got)
 	}
 }
 

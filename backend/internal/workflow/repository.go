@@ -445,6 +445,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 		Confidence            float64
 		AutonomyLevel         string
 		NeedCategory          string
+		WhyItMatters          string
 		DesiredOutcome        string
 		CurrentStateSummary   string
 		NextRecommendedAction string
@@ -466,6 +467,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 			pursuits.confidence,
 			pursuits.autonomy_level,
 			pursuits.need_category,
+			pursuits.why_it_matters,
 			pursuits.desired_outcome,
 			pursuits.current_state_summary,
 			pursuits.next_recommended_action,
@@ -495,6 +497,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 			Confidence:            row.Confidence,
 			AutonomyLevel:         row.AutonomyLevel,
 			NeedCategory:          row.NeedCategory,
+			WhyItMatters:          row.WhyItMatters,
 			DesiredOutcome:        row.DesiredOutcome,
 			CurrentStateSummary:   row.CurrentStateSummary,
 			NextRecommendedAction: row.NextRecommendedAction,

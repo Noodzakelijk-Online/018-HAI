@@ -88,6 +88,7 @@ export interface IWorkflowPursuitContext {
   confidence: number;
   autonomyLevel: string;
   needCategory?: string;
+  whyItMatters?: string;
   desiredOutcome?: string;
   currentStateSummary?: string;
   nextRecommendedAction?: string;
