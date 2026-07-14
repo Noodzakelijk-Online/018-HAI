@@ -36,7 +36,7 @@ for the canonical-stack decision.
 | Area | Implemented capability | Important operating boundary |
 | --- | --- | --- |
 | Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, and task planning. | A dashboard card is operational visibility, not proof that an external action occurred. |
-| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, and ambient opportunity routing. | New source or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Completion still needs workflow, verification, source, runtime, and approval evidence where applicable. |
+| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, and ambient opportunity routing. | In the canonical routed stack, new source, assistant, or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Completion still needs workflow, verification, source, runtime, and approval evidence where applicable. |
 | Memory and knowledge | Compact memory, retrieval, deduplication, correction, export/deletion planning, provenance, encrypted user-authorized conversation capture, and source/extraction links. | Raw imported conversations are not automatically promoted to trusted facts. |
 | Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, and read-only GitHub sync. | Gmail, Calendar, Drive, Trello, WhatsApp, and browser accounts are export/local-folder paths, not live OAuth or browser connectors. |
 | LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
@@ -100,6 +100,11 @@ pursuit may create or reuse a governed workflow. An unmatched opportunity, or
 one matched only to a candidate pursuit, is recorded with its provenance and
 waits for an approval-capable operator to accept the candidate. It does not
 create an orphaned executable workflow.
+
+Standalone compatibility configurations that omit the native pursuit lifecycle
+router are intentionally more limited: derived workflows are held in review
+rather than treated as candidate-first operational intake. They are not the
+supported production wiring.
 
 Direct \`/task/*\` planning and run sessions are useful for bounded operator
 work, but their full plan/review history is process-local. When explicitly
