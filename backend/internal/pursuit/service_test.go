@@ -4113,6 +4113,9 @@ func TestSummaryRefreshDoesNotMaskStalePursuit(t *testing.T) {
 	record := repo.pursuits[created.ID]
 	record.LastActivityAt = &staleAt
 	repo.pursuits[created.ID] = record
+	for index := range repo.activity[created.ID] {
+		repo.activity[created.ID][index].CreatedAt = staleAt
+	}
 
 	if _, err := service.RefreshSummary(created.ID, "system"); err != nil {
 		t.Fatalf("RefreshSummary returned error: %v", err)
@@ -4133,6 +4136,13 @@ func TestSummaryRefreshDoesNotMaskStalePursuit(t *testing.T) {
 	}
 	if !activityContains(activity, "pursuit.summary_refreshed") {
 		t.Fatalf("summary refresh was not retained in the audit feed: %#v", activity)
+	}
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard returned error: %v", err)
+	}
+	if len(dashboard.Stale) != 1 || dashboard.Stale[0].Pursuit.ID != created.ID {
+		t.Fatalf("summary-only audit activity hid stale work from dashboard: %#v", dashboard.Stale)
 	}
 }
 

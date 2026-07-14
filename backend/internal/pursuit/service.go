@@ -3499,7 +3499,13 @@ func pursuitDetailLoadError(component string, err error) error {
 // active, while real workflow, task, verification, source, and runtime work
 // must keep a pursuit out of the stale queue.
 func effectivePursuitActivity(pursuit models.Pursuit, detail *PursuitDetail) time.Time {
-	latest := firstTime(timeFromPointer(pursuit.LastActivityAt), pursuit.UpdatedAt)
+	// LastActivityAt is the semantic progress marker. UpdatedAt also changes
+	// when HAI writes a derived summary, so it is a legacy fallback only when a
+	// pursuit has never recorded an activity timestamp.
+	latest := timeFromPointer(pursuit.LastActivityAt)
+	if latest.IsZero() {
+		latest = pursuit.UpdatedAt
+	}
 	if detail == nil {
 		return latest
 	}
@@ -3525,6 +3531,9 @@ func effectivePursuitActivity(pursuit models.Pursuit, detail *PursuitDetail) tim
 		latest = latestTime(latest, item.UpdatedAt, item.CreatedAt)
 	}
 	for _, item := range detail.Activity {
+		if !activityUpdatesFreshness(item.EventType) {
+			continue
+		}
 		latest = latestTime(latest, item.CreatedAt)
 	}
 	return latest
