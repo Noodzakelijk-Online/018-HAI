@@ -2789,6 +2789,9 @@ func (s *service) ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, re
 	if err := ensurePursuitOpen(*pursuit, "resolve a decision for"); err != nil {
 		return nil, err
 	}
+	if isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("pursuit candidate must be accepted through the explicit approval action before resolving operational decisions")
+	}
 	if strings.TrimSpace(request.DecisionID) == "" {
 		return nil, fmt.Errorf("decisionId is required")
 	}

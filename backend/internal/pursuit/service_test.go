@@ -1678,6 +1678,33 @@ func TestCandidateCannotCompleteUntilAcceptedAndPlanned(t *testing.T) {
 	}
 }
 
+func TestCandidateRejectsOperationalDecisionResolution(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Candidate with runtime evidence",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "agent_runtime_pursuit_candidate",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = service.ResolveDecisionForOwner("alice", candidate.ID, DecisionResolutionRequest{
+		DecisionID:   "runtime-attempt:retry",
+		DecisionType: "runtime_attempt_review",
+		Approved:     true,
+		Actor:        "Robert",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("candidate operational decision resolution = %v, want acceptance guard", err)
+	}
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("candidate decision created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
+	}
+}
+
 func TestOwnerScopedCompletionIgnoresForeignLinkedEvidence(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
