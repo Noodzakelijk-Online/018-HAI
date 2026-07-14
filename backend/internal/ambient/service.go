@@ -68,6 +68,7 @@ type NeedUpdateRequest struct {
 type ResolutionRequest struct {
 	Note          string `json:"note,omitempty"`
 	OwnerIdentity string `json:"-"`
+	Actor         string `json:"-"`
 }
 
 type WorkflowService interface {
@@ -362,6 +363,7 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	if item.Status != StatusProposed {
 		return nil, fmt.Errorf("opportunity in %s state cannot be accepted", item.Status)
 	}
+	actor := firstNonEmpty(strings.TrimSpace(request.Actor), "operator")
 	if item.WorkflowID == nil {
 		if s.workflows == nil {
 			return nil, fmt.Errorf("workflow service is not configured")
@@ -374,7 +376,7 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 			SourceLabel:    item.Title,
 			ContentType:    "ambient_proposal",
 			Trigger:        "ambient.accept",
-			Actor:          "operator",
+			Actor:          actor,
 			RequiresReview: item.RequiresApproval,
 			ReviewReason:   firstNonEmpty(strings.TrimSpace(request.Note), item.Rationale),
 		})
@@ -385,7 +387,7 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 			return nil, fmt.Errorf("workflow intake did not return a workflow record")
 		}
 		item.WorkflowID = &record.Item.ID
-		if err := s.linkAcceptedPursuitOpportunity(item, record); err != nil {
+		if err := s.linkAcceptedPursuitOpportunity(item, record, actor); err != nil {
 			return nil, err
 		}
 	}
@@ -399,7 +401,7 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	return saved, nil
 }
 
-func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity, record *workflow.WorkflowRecord) error {
+func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity, record *workflow.WorkflowRecord, actor string) error {
 	if s.pursuits == nil || item == nil || record == nil || record.Item.ID == uuid.Nil || !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
 		return nil
 	}
@@ -414,7 +416,7 @@ func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity
 		SourceURI:    item.SourceURI,
 		SourceLabel:  item.Title,
 		Confidence:   float64(clamp(item.Confidence, 0, 100)) / 100,
-		Actor:        "ambient",
+		Actor:        actor,
 	})
 	if err != nil {
 		return fmt.Errorf("link accepted ambient workflow to pursuit: %w", err)
@@ -427,7 +429,7 @@ func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity
 		SourceURI:    sourceURI,
 		SourceLabel:  item.Title,
 		Confidence:   float64(clamp(item.Confidence, 0, 100)) / 100,
-		Actor:        "ambient",
+		Actor:        actor,
 	})
 	if err != nil {
 		return fmt.Errorf("link accepted ambient proposal to pursuit: %w", err)

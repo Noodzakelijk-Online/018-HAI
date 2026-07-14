@@ -49,3 +49,38 @@ func TestAcceptHandlerRejectsAnotherOwnersPursuitOpportunity(t *testing.T) {
 		t.Fatalf("cross-owner ambient acceptance created workflow work: %#v", workflowSpy.intakeRequests)
 	}
 }
+
+func TestAcceptHandlerUsesVerifiedActor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	opportunity := &models.AmbientOpportunity{
+		ID:         uuid.New(),
+		Status:     StatusProposed,
+		NeedKey:    "growth",
+		Title:      "Prepare an internal draft",
+		Rationale:  "Low-risk preparation.",
+		NextAction: "Prepare the internal draft.",
+		SourceType: "workflow",
+		SourceID:   "shared-workflow",
+	}
+	workflowSpy := &ambientWorkflowSpy{}
+	handler := NewHandler(NewService(&ambientRepositoryStub{opportunity: opportunity}, workflowSpy, nil))
+
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	engine.POST("/ambient/:id/accept", handler.Accept)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/ambient/"+opportunity.ID.String()+"/accept", strings.NewReader(`{"note":"approve","actor":"untrusted"}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("accept status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(workflowSpy.intakeRequests) != 1 || workflowSpy.intakeRequests[0].Actor != "alice" {
+		t.Fatalf("workflow request actor = %#v, want verified alice", workflowSpy.intakeRequests)
+	}
+}

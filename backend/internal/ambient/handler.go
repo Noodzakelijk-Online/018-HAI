@@ -75,6 +75,7 @@ func (h *Handler) resolve(c *gin.Context, accept bool) {
 		return
 	}
 	request.OwnerIdentity = verifiedOwner(c)
+	request.Actor = verifiedActor(c, "operator")
 	var result interface{}
 	if accept {
 		result, err = h.service.Accept(id, request)
@@ -89,10 +90,16 @@ func (h *Handler) resolve(c *gin.Context, accept bool) {
 }
 
 func verifiedOwner(c *gin.Context) string {
+	return verifiedActor(c, "")
+}
+
+func verifiedActor(c *gin.Context, fallback string) string {
 	if value, ok := c.Get(identity.ContextSubjectKey); ok {
 		if subject, ok := value.(string); ok {
-			return strings.TrimSpace(subject)
+			if subject = strings.TrimSpace(subject); subject != "" {
+				return subject
+			}
 		}
 	}
-	return ""
+	return fallback
 }

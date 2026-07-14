@@ -189,7 +189,7 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	pursuitSpy := &ambientPursuitSpy{}
 	engine := NewServiceWithPursuits(&ambientRepositoryStub{opportunity: opportunity}, workflowSpy, nil, pursuitSpy)
 
-	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{Note: "Approve draft creation."})
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{Note: "Approve draft creation.", Actor: "verified-operator"})
 	if err != nil {
 		t.Fatalf("Accept returned error: %v", err)
 	}
@@ -198,6 +198,9 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	}
 	if len(workflowSpy.intakeRequests) != 1 || !workflowSpy.intakeRequests[0].RequiresReview {
 		t.Fatalf("workflow intake requests = %#v", workflowSpy.intakeRequests)
+	}
+	if workflowSpy.intakeRequests[0].Actor != "verified-operator" {
+		t.Fatalf("workflow actor = %q, want verified operator", workflowSpy.intakeRequests[0].Actor)
 	}
 	if len(pursuitSpy.links) != 2 || pursuitSpy.linkedPursuitIDs[0] != pursuitID || pursuitSpy.linkedPursuitIDs[1] != pursuitID {
 		t.Fatalf("pursuit links = %#v ids=%#v", pursuitSpy.links, pursuitSpy.linkedPursuitIDs)
@@ -212,6 +215,9 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	}
 	if proposalLink.SourceURI != opportunity.SourceURI || proposalLink.SourceLabel != opportunity.Title {
 		t.Fatalf("proposal provenance was not preserved: %#v", proposalLink)
+	}
+	if link.Actor != "verified-operator" || proposalLink.Actor != "verified-operator" {
+		t.Fatalf("pursuit link actors were not attributed to verified operator: %#v %#v", link, proposalLink)
 	}
 }
 
