@@ -209,9 +209,20 @@
                 <i nz-icon nzType="message" nzTheme="outline"></i>
                 Continue in HAI
               </button>
-              <button nz-button nzType="default" title="Archive or restore this pursuit." (click)="archiveSelected()">
-                {{ detail.pursuit.archived ? 'Restore' : 'Archive' }}
+              <button
+                *ngIf="isClosedPursuit(detail.pursuit); else archivePursuit"
+                nz-button
+                nzType="default"
+                title="Reopen this pursuit for additional governed work. It does not run any task automatically."
+                (click)="reopenSelected()"
+              >
+                Reopen
               </button>
+              <ng-template #archivePursuit>
+                <button nz-button nzType="default" title="Archive this pursuit and remove it from active operating queues." (click)="archiveSelected()">
+                  Archive
+                </button>
+              </ng-template>
             </div>
           </header>
 

@@ -73,6 +73,10 @@ export class PursuitService {
     return this.http.post<IPursuit>(`${this.apiUrl}/${id}/archive`, { archived, actor });
   }
 
+  reopen(id: string, note: string = ''): Observable<IPursuit> {
+    return this.http.post<IPursuit>(`${this.apiUrl}/${id}/reopen`, { note });
+  }
+
   refreshSummary(id: string, actor: string = 'hai'): Observable<IPursuitDetail> {
     return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/summary`, { actor });
   }

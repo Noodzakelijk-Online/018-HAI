@@ -482,6 +482,7 @@ type Service interface {
 	Create(request CreateRequest) (*models.Pursuit, error)
 	Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, error)
 	Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error)
+	Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, error)
 	List(includeArchived bool) ([]models.Pursuit, error)
 	Dashboard() (*Dashboard, error)
 	Decisions() ([]PursuitDashboardDecision, error)
@@ -579,6 +580,9 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 	if err != nil {
 		return nil, err
 	}
+	if updateAttemptsReopen(*pursuit, request) {
+		return nil, fmt.Errorf("cannot reopen a closed pursuit through a generic update; use the explicit reopen action")
+	}
 	if requestsVerifiedCompletion(*pursuit, request) {
 		if reason, err := s.completionActiveBlockerReason(id); err != nil {
 			return nil, err
@@ -649,7 +653,36 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 }
 
 func (s *service) Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error) {
+	if !archived {
+		return s.Reopen(id, actor, "")
+	}
 	return s.Update(id, UpdateRequest{Archived: &archived, Actor: actor})
+}
+
+// Reopen is the explicit, auditable transition from a completed or archived
+// pursuit back to active work. It never creates a workflow; subsequent intake
+// still flows through the normal approval and verification controls.
+func (s *service) Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !pursuitClosed(*pursuit) {
+		return pursuit, nil
+	}
+	now := time.Now().UTC()
+	pursuit.Archived = false
+	pursuit.Status = StatusActive
+	pursuit.CompletionState = CompletionOpen
+	pursuit.LastActivityAt = &now
+	pursuit.CurrentStateSummary = firstNonEmpty(strings.TrimSpace(note), "Pursuit reopened for further governed work. Review the prior evidence and define the next concrete action.")
+	pursuit.NextRecommendedAction = "Review the previous closure evidence and add the next governed workflow item if more work is needed."
+	updated, err := s.repo.Update(pursuit)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(id, "pursuit.reopened", firstNonEmpty(strings.TrimSpace(note), "Pursuit reopened for further governed work."), firstNonEmpty(actor, "operator"), "", "", "")
+	return updated, nil
 }
 
 func (s *service) List(includeArchived bool) ([]models.Pursuit, error) {
@@ -3599,6 +3632,22 @@ func ensurePursuitOpen(pursuit models.Pursuit, action string) error {
 		return nil
 	}
 	return fmt.Errorf("cannot %s a closed pursuit; reopen it explicitly or create a new pursuit", action)
+}
+
+func updateAttemptsReopen(pursuit models.Pursuit, request UpdateRequest) bool {
+	if !pursuitClosed(pursuit) {
+		return false
+	}
+	if request.Archived != nil && !*request.Archived {
+		return true
+	}
+	if status := strings.TrimSpace(request.Status); status != "" && !strings.EqualFold(status, pursuit.Status) {
+		return true
+	}
+	if completion := strings.TrimSpace(request.CompletionState); completion != "" && !strings.EqualFold(completion, pursuit.CompletionState) {
+		return true
+	}
+	return false
 }
 
 func isPursuitCandidate(pursuit models.Pursuit) bool {

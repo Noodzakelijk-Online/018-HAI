@@ -377,6 +377,7 @@ func initializePursuitRoutes(apiVersion *gin.RouterGroup, pursuitHandler *pursui
 		pursuitRoutes.GET("/:id", pursuitHandler.Get)
 		pursuitRoutes.PATCH("/:id", pursuitHandler.Update)
 		pursuitRoutes.POST("/:id/archive", pursuitHandler.Archive)
+		pursuitRoutes.POST("/:id/reopen", pursuitHandler.Reopen)
 		pursuitRoutes.POST("/:id/summary", pursuitHandler.RefreshSummary)
 		pursuitRoutes.POST("/:id/review", pursuitHandler.Review)
 		pursuitRoutes.POST("/:id/decisions/resolve", pursuitHandler.ResolveDecision)

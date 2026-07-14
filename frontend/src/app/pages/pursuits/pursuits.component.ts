@@ -469,10 +469,14 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     if (!this.selected) {
       return;
     }
-    const archived = !this.selected.pursuit.archived;
+    if (this.isClosedPursuit(this.selected.pursuit)) {
+      this.reopenSelected();
+      return;
+    }
+    const archived = true;
     this.pursuitsService.archive(this.selected.pursuit.id, archived).subscribe({
       next: () => {
-        this.notification.success(archived ? 'Pursuit archived' : 'Pursuit restored', 'The pursuit registry was updated.');
+        this.notification.success('Pursuit archived', 'The pursuit registry was updated.');
         this.selected = undefined;
         this.requestedPursuitId = '';
         this.setSelectedQuery();
@@ -480,6 +484,25 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       },
       error: (error) => this.notification.error('Archive failed', error?.error?.error || 'The pursuit could not be updated.'),
     });
+  }
+
+  reopenSelected(): void {
+    if (!this.selected || !this.isClosedPursuit(this.selected.pursuit)) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.pursuitsService.reopen(pursuit.id).subscribe({
+      next: () => {
+        this.notification.success('Pursuit reopened', 'HAI can now prepare new governed work for this pursuit.');
+        this.loadPursuitDetail(pursuit.id, false);
+        this.load();
+      },
+      error: (error) => this.notification.error('Reopen failed', error?.error?.error || 'HAI could not reopen this pursuit.'),
+    });
+  }
+
+  isClosedPursuit(pursuit: IPursuit): boolean {
+    return pursuit.archived || pursuit.status === 'completed' || pursuit.completionState === 'verified';
   }
 
   openWorkflow(workflowId?: string): void {

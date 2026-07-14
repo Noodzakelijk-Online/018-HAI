@@ -1182,6 +1182,56 @@ func TestClosedPursuitRejectsOperationalMutationAndSummaryRefresh(t *testing.T) 
 	}
 }
 
+func TestReopenRequiresExplicitTransitionAndRestoresGovernedIntake(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Archived automation recovery", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	stored, _ := repo.FindByID(created.ID)
+	stored.Status = StatusCompleted
+	stored.CompletionState = CompletionVerified
+	stored.Archived = true
+	if _, err := repo.Update(stored); err != nil {
+		t.Fatalf("close pursuit: %v", err)
+	}
+
+	if _, err := service.Update(created.ID, UpdateRequest{Status: StatusActive, Actor: "operator"}); err == nil || !strings.Contains(err.Error(), "explicit reopen") {
+		t.Fatalf("generic reactivation error = %v, want explicit reopen rejection", err)
+	}
+	if _, err := service.Archive(created.ID, false, "Robert"); err != nil {
+		t.Fatalf("Archive restore should use reopen transition: %v", err)
+	}
+	reopened, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("Find reopened pursuit: %v", err)
+	}
+	if reopened.Archived || reopened.Status != StatusActive || reopened.CompletionState != CompletionOpen {
+		t.Fatalf("reopened pursuit = %#v", reopened)
+	}
+	activity, _ := repo.FindActivities(created.ID, 20)
+	if !activityContains(activity, "pursuit.reopened") {
+		t.Fatalf("reopen was not audited: %#v", activity)
+	}
+	if _, err := service.Intake(created.ID, IntakeRequest{Input: "Create a governed recovery workflow"}); err != nil {
+		t.Fatalf("reopened pursuit intake returned error: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("reopened pursuit created %d workflows, want 1", workflowService.calls)
+	}
+}
+
+func activityContains(activity []models.PursuitActivity, eventType string) bool {
+	for _, item := range activity {
+		if item.EventType == eventType {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDetailSeparatesRobertVAAndSystemActionQueues(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

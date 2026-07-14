@@ -139,6 +139,23 @@ func (h *Handler) Archive(c *gin.Context) {
 	c.JSON(http.StatusOK, record)
 }
 
+func (h *Handler) Reopen(c *gin.Context) {
+	id, ok := parsePursuitID(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Note string `json:"note,omitempty"`
+	}
+	_ = c.ShouldBindJSON(&request)
+	record, err := h.service.Reopen(id, verifiedActor(c, "operator"), request.Note)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, record)
+}
+
 func (h *Handler) Link(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
