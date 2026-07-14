@@ -428,10 +428,17 @@ export class PursuitsComponent implements OnInit, OnDestroy {
         if (result.detail) {
           this.selected = result.detail;
         }
-        this.notification.success(
-          result.createdCandidate ? 'Pursuit candidate created' : 'Input routed',
-          result.message || 'HAI matched the input and created governed workflow context.'
-        );
+        if (result.createdCandidate) {
+          this.notification.info(
+            'Pursuit candidate needs review',
+            'HAI recorded the unmatched input as a reviewable pursuit candidate. No workflow was created until an approver accepts it.'
+          );
+        } else {
+          this.notification.success(
+            'Input routed',
+            result.message || 'HAI matched the input and created governed workflow context.'
+          );
+        }
         this.load();
         if (result.pursuitId) {
           this.selectPursuitById(result.pursuitId, true);

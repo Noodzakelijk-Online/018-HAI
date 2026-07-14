@@ -88,6 +88,28 @@ describe('PursuitsComponent action lanes', () => {
     expect(notification.success).toHaveBeenCalledWith('Candidate accepted', 'HAI converted the candidate into governed pursuit work.');
   });
 
+  it('does not claim that routed candidate intake created governed work', () => {
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.routeIntake = jasmine.createSpy('routeIntake').and.returnValue(of({
+      mode: 'candidate_created',
+      createdCandidate: true,
+      pursuitId: 'candidate-1',
+      matches: [],
+    }));
+    spyOn(component, 'load');
+    const selectPursuit = spyOn<any>(component as any, 'selectPursuitById');
+    component.routedIntakeForm.patchValue({ input: 'An unmatched source signal' });
+
+    component.routeIntake();
+
+    expect(notification.info).toHaveBeenCalledWith(
+      'Pursuit candidate needs review',
+      'HAI recorded the unmatched input as a reviewable pursuit candidate. No workflow was created until an approver accepts it.'
+    );
+    expect(notification.success).not.toHaveBeenCalledWith('Pursuit candidate created', jasmine.anything());
+    expect(selectPursuit).toHaveBeenCalledWith('candidate-1', true);
+  });
+
   it('opens a linked pursuit from the relationship ledger', () => {
     const router = (component as any).router;
     router.navigate = jasmine.createSpy('navigate');
