@@ -3596,6 +3596,92 @@ func TestDashboardAggregatesRobertDecisionCards(t *testing.T) {
 	}
 }
 
+func TestApprovedPursuitNextActionCreatesGovernedWorkflowOnServer(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{
+		Title:                 "Prepare legal recovery plan",
+		OwnerIdentity:         "alice",
+		ProjectKey:            "018-HAI",
+		RiskLevel:             "high",
+		AutonomyLevel:         "approve_before_execute",
+		NextRecommendedAction: "Prepare a source-linked legal recovery workflow for Robert to review.",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	decisionID := nextActionDecisionID(created.ID)
+
+	detail, err := service.ResolveDecisionForOwner("alice", created.ID, DecisionResolutionRequest{
+		DecisionID:   decisionID,
+		DecisionType: "pursuit_next_action",
+		Approved:     true,
+		Reason:       "Robert approved creating the governed workflow.",
+		Actor:        "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveDecisionForOwner returned error: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("workflow intake calls = %d, want 1", workflowService.calls)
+	}
+	if workflowService.received.OwnerIdentity != "alice" || workflowService.received.SourceID != decisionID || workflowService.received.SourceType != "pursuit_decision" {
+		t.Fatalf("workflow decision provenance = %#v", workflowService.received)
+	}
+	if workflowService.received.ContentType != "pursuit_next_action" || workflowService.received.Trigger != "pursuit_decision_approved" || !workflowService.received.RequiresReview {
+		t.Fatalf("workflow decision guard = %#v", workflowService.received)
+	}
+	if !strings.Contains(workflowService.received.Input, "Recommended next action: Prepare a source-linked legal recovery workflow") {
+		t.Fatalf("workflow input lost pursuit context: %q", workflowService.received.Input)
+	}
+	if len(detail.Workflows) != 1 || !detail.Workflows[0].RequiresApproval || detail.Workflows[0].SourceID != decisionID {
+		t.Fatalf("governed workflow not linked to approved pursuit decision: %#v", detail.Workflows)
+	}
+	foundWorkflowLink := false
+	for _, link := range detail.Links {
+		if link.LinkType == LinkWorkflow && link.Relationship == "approved_next_action_workflow" && link.LinkID == detail.Workflows[0].ID.String() {
+			foundWorkflowLink = true
+		}
+	}
+	if !foundWorkflowLink {
+		t.Fatalf("approved next-action workflow link missing: %#v", detail.Links)
+	}
+	for _, decision := range detail.DecisionQueue {
+		if decision.ID == decisionID {
+			t.Fatalf("approved next-action decision was regenerated: %#v", detail.DecisionQueue)
+		}
+	}
+
+	if _, err := service.ResolveDecisionForOwner("alice", created.ID, DecisionResolutionRequest{
+		DecisionID: decisionID, DecisionType: "pursuit_next_action", Approved: true, Actor: "Robert",
+	}); err != nil {
+		t.Fatalf("replayed approval should be idempotent: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("replayed approval created duplicate workflow work: %d calls", workflowService.calls)
+	}
+}
+
+func TestPursuitNextActionDecisionRejectsForgedOrNoLongerPendingAction(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Low-risk notes", OwnerIdentity: "alice", RiskLevel: "low"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	_, err = service.ResolveDecisionForOwner("alice", created.ID, DecisionResolutionRequest{
+		DecisionID: nextActionDecisionID(created.ID), DecisionType: "pursuit_next_action", Approved: true, Actor: "Robert",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not pending") {
+		t.Fatalf("forged next-action decision error = %v, want pending-decision guard", err)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("forged next-action decision created workflow work: %d calls", workflowService.calls)
+	}
+}
+
 func TestDelegationPackageCompilesBoundedVAWorkWithChecklistAndSources(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

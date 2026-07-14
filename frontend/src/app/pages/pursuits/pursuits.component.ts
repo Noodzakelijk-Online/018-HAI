@@ -1075,50 +1075,34 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       return;
     }
     this.resolvingDecisionId = decision.id;
-    if (approved) {
-      this.pursuitsService.intake(this.selected.pursuit.id, {
-        input: decision.recommended,
-        projectKey: this.selected.pursuit.projectKey,
-        sourceType: 'pursuit_decision',
-        sourceId: decision.id,
-        sourceUri: decision.evidenceUri,
-        sourceLabel: decision.evidenceLabel || 'Robert approved pursuit next action',
-        contentType: decision.decisionType,
-        trigger: 'pursuit_decision_approved',
-        requiresReview: decision.requiresApproval,
-        reviewReason: decision.reason,
-      }).subscribe({
-        next: (detail) => {
-          this.selected = detail;
-          this.resolvingDecisionId = '';
-          this.notification.success('Workflow created', 'The pursuit decision became a governed workflow item.');
-          this.load();
-        },
-        error: (error) => {
-          this.resolvingDecisionId = '';
-          this.notification.error('Workflow creation blocked', error?.error?.error || 'HAI could not create the governed workflow.');
-        },
-      });
-      return;
-    }
     this.pursuitsService.resolveDecision(this.selected.pursuit.id, {
       decisionId: decision.id,
       decisionType: decision.decisionType,
-      approved: false,
+      approved,
       reason: decision.reason,
-      note: decision.noConsequence || `Robert rejected the proposed next action: ${decision.recommended}`,
+      note: approved
+        ? decision.yesConsequence || `Robert approved the proposed next action: ${decision.recommended}`
+        : decision.noConsequence || `Robert rejected the proposed next action: ${decision.recommended}`,
       evidenceUri: decision.evidenceUri,
       evidenceLabel: decision.evidenceLabel,
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.resolvingDecisionId = '';
-        this.notification.success('Decision recorded', 'The pursuit decision is now resolved in the audit trail.');
+        this.notification.success(
+          approved ? 'Workflow created' : 'Decision recorded',
+          approved
+            ? 'The approved pursuit decision became a governed workflow item.'
+            : 'The pursuit decision is now resolved in the audit trail.'
+        );
         this.load();
       },
       error: (error) => {
         this.resolvingDecisionId = '';
-        this.notification.error('Decision blocked', error?.error?.error || 'The pursuit decision could not be recorded.');
+        this.notification.error(
+          approved ? 'Workflow creation blocked' : 'Decision blocked',
+          error?.error?.error || 'The pursuit decision could not be recorded.'
+        );
       },
     });
   }

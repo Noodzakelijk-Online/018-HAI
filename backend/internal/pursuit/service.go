@@ -3077,6 +3077,14 @@ func (s *service) ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, re
 	if strings.TrimSpace(request.DecisionID) == "" {
 		return nil, fmt.Errorf("decisionId is required")
 	}
+	if detail, err := s.DetailForOwner(ownerIdentity, id); err != nil {
+		return nil, err
+	} else if resolvedPursuitDecisions(detail.Activity)[strings.TrimSpace(request.DecisionID)] {
+		// Decision requests can be retried by the UI or a client after a network
+		// timeout. Returning the current detail avoids duplicating work or audit
+		// records after the first governed resolution succeeded.
+		return detail, nil
+	}
 	if request.Approved && strings.EqualFold(strings.TrimSpace(request.DecisionType), "pursuit_completion_review") {
 		if err := s.completePursuitFromDecisionForOwner(ownerIdentity, id, request); err != nil {
 			return nil, err
@@ -3160,11 +3168,92 @@ func (s *service) createApprovedDecisionWorkflowForOwner(ownerIdentity string, i
 		return nil
 	}
 	switch strings.ToLower(strings.TrimSpace(request.DecisionType)) {
+	case "pursuit_next_action":
+		return s.createNextActionWorkflowForOwner(ownerIdentity, id, request)
 	case "runtime_attempt_review":
 		return s.createRuntimeRecoveryWorkflowForOwner(ownerIdentity, id, request)
 	default:
 		return nil
 	}
+}
+
+// createNextActionWorkflowForOwner is the only server-side path from a
+// high-risk pursuit's Yes/No decision to operational work. It preserves the
+// decision provenance and creates a separately approval-gated workflow rather
+// than letting a client turn a dashboard action into direct execution.
+func (s *service) createNextActionWorkflowForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
+	if !strings.EqualFold(strings.TrimSpace(request.DecisionID), nextActionDecisionID(id)) {
+		return fmt.Errorf("next-action decision does not belong to this pursuit")
+	}
+	if s.workflowService == nil {
+		return fmt.Errorf("workflow service is not configured")
+	}
+	detail, err := s.DetailForOwner(ownerIdentity, id)
+	if err != nil {
+		return err
+	}
+	if !pendingDecision(detail.DecisionQueue, request.DecisionID, "pursuit_next_action") {
+		return fmt.Errorf("next-action decision is not pending for this pursuit")
+	}
+	if !pursuitNeedsPlanning(detail.Pursuit, len(detail.Workflows)) {
+		return nil
+	}
+	actor := firstNonEmpty(request.Actor, "Robert")
+	sourceURI := firstNonEmpty(strings.TrimSpace(request.EvidenceURI), "pursuit://"+id.String())
+	sourceLabel := firstNonEmpty(strings.TrimSpace(request.EvidenceLabel), detail.Pursuit.Title)
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
+		Input:          pursuitPlanInput(detail.Pursuit),
+		ProjectKey:     detail.Pursuit.ProjectKey,
+		SourceType:     "pursuit_decision",
+		SourceID:       strings.TrimSpace(request.DecisionID),
+		SourceURI:      sourceURI,
+		SourceLabel:    sourceLabel,
+		ContentType:    "pursuit_next_action",
+		Trigger:        "pursuit_decision_approved",
+		Actor:          actor,
+		RequiresReview: true,
+		ReviewReason:   firstNonEmpty(request.Reason, "Robert approved creation of a governed workflow; consequential execution remains approval-gated"),
+	})
+	if err != nil {
+		return err
+	}
+	if record == nil || record.Item.ID == uuid.Nil {
+		return fmt.Errorf("workflow intake did not return a workflow record")
+	}
+	if _, err := s.Link(id, LinkRequest{
+		OwnerIdentity: firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
+		LinkType:      LinkWorkflow,
+		LinkID:        record.Item.ID.String(),
+		Relationship:  "approved_next_action_workflow",
+		SourceURI:     sourceURI,
+		SourceLabel:   sourceLabel,
+		Confidence:    1,
+		Actor:         actor,
+	}); err != nil {
+		return err
+	}
+	_, _ = s.recordActivity(
+		id,
+		"pursuit.next_action_workflow_created",
+		"Created governed workflow from Robert-approved next action: "+record.Item.Title,
+		actor,
+		LinkWorkflow,
+		record.Item.ID.String(),
+		sourceURI,
+	)
+	return nil
+}
+
+func pendingDecision(decisions []PursuitDecision, id, decisionType string) bool {
+	for _, decision := range decisions {
+		if strings.EqualFold(strings.TrimSpace(decision.ID), strings.TrimSpace(id)) &&
+			strings.EqualFold(strings.TrimSpace(decision.DecisionType), strings.TrimSpace(decisionType)) &&
+			strings.EqualFold(strings.TrimSpace(decision.Status), "pending") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
@@ -4088,7 +4177,7 @@ func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, prop
 		})
 	}
 	if len(result) == 0 && (strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")) {
-		decisionID := "pursuit:" + pursuit.ID.String() + ":next-action"
+		decisionID := nextActionDecisionID(pursuit.ID)
 		if resolvedDecisions[decisionID] {
 			return result
 		}
@@ -4112,6 +4201,10 @@ func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, prop
 
 func completionReviewDecisionID(id uuid.UUID) string {
 	return "pursuit:" + id.String() + ":completion-review"
+}
+
+func nextActionDecisionID(id uuid.UUID) string {
+	return "pursuit:" + id.String() + ":next-action"
 }
 
 func pendingDecisionCards(cards []PursuitDecision) int {
