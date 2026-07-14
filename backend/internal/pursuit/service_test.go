@@ -727,6 +727,47 @@ func TestAutoLinkMemoryLinksStableContextToPursuit(t *testing.T) {
 	}
 }
 
+func TestAutoLinkMemoryRefreshDoesNotPersistOtherOwnerWorkflowState(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Alice evidence pursuit", OwnerIdentity: "alice", ProjectKey: "housing"})
+	if err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{ID: bobWorkflowID, OwnerIdentity: "bob", Title: "Bob private workflow"}
+	repo.links[uuid.New()] = models.PursuitLink{
+		ID:           uuid.New(),
+		PursuitID:    pursuit.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_malformed",
+	}
+	memoryID := uuid.New()
+	repo.memories[memoryID] = models.ContextMemory{ID: memoryID, OwnerIdentity: "alice", ProjectKey: "housing", Content: "Use the verified housing evidence timeline."}
+
+	result, err := service.AutoLinkMemory(AutoLinkMemoryRequest{
+		OwnerIdentity: "alice",
+		MemoryID:      memoryID,
+		Input:         "Update Alice evidence pursuit with the verified housing evidence timeline.",
+		ProjectKey:    "housing",
+		Actor:         "memory-engine",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkMemory: %v", err)
+	}
+	if !result.Linked || result.PursuitID != pursuit.ID {
+		t.Fatalf("auto-link result = %#v", result)
+	}
+	updated, err := repo.FindByID(pursuit.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if strings.Contains(updated.CurrentStateSummary, "1 linked workflows") || strings.Contains(updated.CurrentStateSummary, "Bob private workflow") {
+		t.Fatalf("owner-scoped refresh persisted other-owner workflow state: %#v", updated)
+	}
+}
+
 func TestIntakeCreatesWorkflowAndLinksOperationalWork(t *testing.T) {
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{repo: repo}

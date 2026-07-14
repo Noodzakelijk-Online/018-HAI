@@ -157,6 +157,9 @@ work from the command dashboard.
   links filter legacy records that are not visible to the current owner.
 - Pursuit-to-pursuit relationships are owner-scoped too, so authenticated users
   cannot create or view a cross-owner case reference through pursuit metadata.
+- Pursuit auto-linking and candidate creation refresh their operational summary
+  inside the same authenticated owner scope, so malformed legacy links cannot
+  persist another user's workflow state into a personal pursuit.
 - Runtime launch and stop records retain the authenticated initiating owner.
   Owner-scoped pursuits reject unknown or other-owner runtime evidence, and
   shared automation history cannot make one operator's runtime output visible
