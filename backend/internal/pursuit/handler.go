@@ -96,7 +96,7 @@ func (h *Handler) ResolveEvidence(c *gin.Context) {
 		return
 	}
 	uri := c.Query("uri")
-	record, err := h.service.ResolveEvidence(id, uri)
+	record, err := h.service.ResolveEvidenceForOwner(pursuitOwner(c), id, uri)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -264,12 +264,12 @@ func (h *Handler) Intake(c *gin.Context) {
 	}
 	request.OwnerIdentity = pursuitOwner(c)
 	request.Actor = verifiedActor(c, "operator")
-	record, err := h.service.Intake(id, request)
+	_, err := h.service.Intake(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, record)
+	h.respondScopedDetail(c, id, http.StatusCreated)
 }
 
 func (h *Handler) Plan(c *gin.Context) {
@@ -286,12 +286,12 @@ func (h *Handler) Plan(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	record, err := h.service.Plan(id, request)
+	_, err := h.service.Plan(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, record)
+	h.respondScopedDetail(c, id, http.StatusCreated)
 }
 
 func (h *Handler) ResolveDecision(c *gin.Context) {
@@ -308,12 +308,12 @@ func (h *Handler) ResolveDecision(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	record, err := h.service.ResolveDecision(id, request)
+	_, err := h.service.ResolveDecision(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedDetail(c, id, http.StatusOK)
 }
 
 func (h *Handler) RefreshSummary(c *gin.Context) {
@@ -329,12 +329,12 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&request)
 	request.Actor = verifiedActor(c, "system")
-	record, err := h.service.RefreshSummary(id, request.Actor)
+	_, err := h.service.RefreshSummary(id, request.Actor)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedDetail(c, id, http.StatusOK)
 }
 
 func (h *Handler) Review(c *gin.Context) {
@@ -351,12 +351,12 @@ func (h *Handler) Review(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	record, err := h.service.Review(id, request)
+	_, err := h.service.Review(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedDetail(c, id, http.StatusOK)
 }
 
 func (h *Handler) Activity(c *gin.Context) {
@@ -409,7 +409,7 @@ func (h *Handler) Approvals(c *gin.Context) {
 	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
-	record, err := h.service.Approvals(id)
+	record, err := h.service.ApprovalsForOwner(pursuitOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -434,6 +434,15 @@ func (h *Handler) ensurePursuitVisible(c *gin.Context, id uuid.UUID) bool {
 		return false
 	}
 	return true
+}
+
+func (h *Handler) respondScopedDetail(c *gin.Context, id uuid.UUID, status int) {
+	record, err := h.service.DetailForOwner(pursuitOwner(c), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
+		return
+	}
+	c.JSON(status, record)
 }
 
 func pursuitOwner(c *gin.Context) string {

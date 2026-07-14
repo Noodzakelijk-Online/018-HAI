@@ -499,7 +499,9 @@ type Service interface {
 	Detail(id uuid.UUID) (*PursuitDetail, error)
 	DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDetail, error)
 	ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
+	ResolveEvidenceForOwner(ownerIdentity string, id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
 	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
+	ApprovalsForOwner(ownerIdentity string, id uuid.UUID) (*PursuitApprovalOverview, error)
 	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
 	LinkVerification(pursuitID, verificationID uuid.UUID) error
 	LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error
@@ -894,6 +896,10 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	if err != nil {
 		return nil, err
 	}
+	links, err = s.visibleLinksForOwner(ownerIdentity, links)
+	if err != nil {
+		return nil, err
+	}
 	activity, _ := s.repo.FindActivities(id, 50)
 	workflowIDs := linkUUIDs(links, LinkWorkflow)
 	memoryIDs := linkUUIDs(links, LinkMemory)
@@ -984,11 +990,15 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 }
 
 func (s *service) ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error) {
+	return s.ResolveEvidenceForOwner("", id, uri)
+}
+
+func (s *service) ResolveEvidenceForOwner(ownerIdentity string, id uuid.UUID, uri string) (*PursuitEvidenceResolution, error) {
 	uri = strings.TrimSpace(uri)
 	if uri == "" {
 		return nil, fmt.Errorf("evidence uri is required")
 	}
-	detail, err := s.Detail(id)
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1151,7 +1161,11 @@ func (s *service) ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceRes
 }
 
 func (s *service) Approvals(id uuid.UUID) (*PursuitApprovalOverview, error) {
-	detail, err := s.Detail(id)
+	return s.ApprovalsForOwner("", id)
+}
+
+func (s *service) ApprovalsForOwner(ownerIdentity string, id uuid.UUID) (*PursuitApprovalOverview, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1173,6 +1187,28 @@ func (s *service) Approvals(id uuid.UUID) (*PursuitApprovalOverview, error) {
 		},
 	}
 	return overview, nil
+}
+
+func (s *service) visibleLinksForOwner(ownerIdentity string, links []models.PursuitLink) ([]models.PursuitLink, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return links, nil
+	}
+	validator, ok := s.repo.(ownerScopedLinkValidator)
+	if !ok {
+		return links, nil
+	}
+	visible := make([]models.PursuitLink, 0, len(links))
+	for _, link := range links {
+		handled, allowed, err := validator.LinkVisibleToOwner(ownerIdentity, link.LinkType, link.LinkID)
+		if err != nil {
+			return nil, err
+		}
+		if !handled || allowed {
+			visible = append(visible, link)
+		}
+	}
+	return visible, nil
 }
 
 func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error) {
@@ -1366,24 +1402,25 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 	actor := firstNonEmpty(request.Actor, "system")
 	links := []models.PursuitLink{}
 	workflowLink, err := s.Link(match.Pursuit.ID, LinkRequest{
-		LinkType:     LinkWorkflow,
-		LinkID:       request.WorkflowID.String(),
-		Relationship: "operational_work",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   match.Score,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      LinkWorkflow,
+		LinkID:        request.WorkflowID.String(),
+		Relationship:  "operational_work",
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    match.Score,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, err
 	}
 	links = append(links, *workflowLink)
-	if sourceLink, linked, err := s.linkExactSourceReference(match.Pursuit.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, match.Score, actor); err != nil {
+	if sourceLink, linked, err := s.linkExactSourceReference(match.Pursuit.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, match.Score, actor); err != nil {
 		return nil, err
 	} else if linked {
 		links = append(links, *sourceLink)
 	}
-	if err := s.linkAssistantCommandReference(match.Pursuit.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
+	if err := s.linkAssistantCommandReference(match.Pursuit.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
 		return nil, err
 	}
 	if sourceItemLink, linked, err := s.linkOptionalUUID(match.Pursuit.ID, LinkSourceItem, request.RawItemID, "source_record", request, match.Score, actor); err != nil {
@@ -1439,13 +1476,14 @@ func (s *service) AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult
 	}
 	actor := firstNonEmpty(request.Actor, "system")
 	link, err := s.Link(match.Pursuit.ID, LinkRequest{
-		LinkType:     LinkMemory,
-		LinkID:       request.MemoryID.String(),
-		Relationship: "context_memory",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   match.Score,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      LinkMemory,
+		LinkID:        request.MemoryID.String(),
+		Relationship:  "context_memory",
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    match.Score,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, err
@@ -1483,7 +1521,10 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 	minimumScore := defaultAutoLinkMinimumScore
 	if len(matches) > 0 && matches[0].Score >= minimumScore && !pursuitClosed(matches[0].Pursuit) {
-		detail, err := s.Intake(matches[0].Pursuit.ID, request)
+		if _, err := s.Intake(matches[0].Pursuit.ID, request); err != nil {
+			return nil, err
+		}
+		detail, err := s.DetailForOwner(request.OwnerIdentity, matches[0].Pursuit.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -1565,7 +1606,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		result.Score = autoLink.Score
 		result.Reasons = autoLink.Reasons
 		if autoLink.PursuitID != uuid.Nil {
-			detail, err := s.Detail(autoLink.PursuitID)
+			detail, err := s.DetailForOwner(request.OwnerIdentity, autoLink.PursuitID)
 			if err != nil {
 				return nil, err
 			}
@@ -1672,24 +1713,25 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 	}
 	links := []models.PursuitLink{}
 	workflowLink, err := s.Link(created.ID, LinkRequest{
-		LinkType:     LinkWorkflow,
-		LinkID:       request.WorkflowID.String(),
-		Relationship: "candidate_operational_work",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   1,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      LinkWorkflow,
+		LinkID:        request.WorkflowID.String(),
+		Relationship:  "candidate_operational_work",
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    1,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, err
 	}
 	links = append(links, *workflowLink)
-	if sourceLink, linked, err := s.linkExactSourceReference(created.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, 1, actor); err != nil {
+	if sourceLink, linked, err := s.linkExactSourceReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, 1, actor); err != nil {
 		return nil, err
 	} else if linked {
 		links = append(links, *sourceLink)
 	}
-	if err := s.linkAssistantCommandReference(created.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
+	if err := s.linkAssistantCommandReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
 		return nil, err
 	}
 	if sourceItemLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceItem, request.RawItemID, "candidate_source_record", request, 1, actor); err != nil {
@@ -1730,13 +1772,14 @@ func (s *service) createMemoryCandidate(request AutoLinkMemoryRequest) (*AutoLin
 		return nil, err
 	}
 	link, err := s.Link(created.ID, LinkRequest{
-		LinkType:     LinkMemory,
-		LinkID:       request.MemoryID.String(),
-		Relationship: "candidate_context_memory",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   1,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      LinkMemory,
+		LinkID:        request.MemoryID.String(),
+		Relationship:  "candidate_context_memory",
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    1,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, err
@@ -1832,13 +1875,14 @@ func (s *service) linkOptionalUUID(pursuitID uuid.UUID, linkType, rawID, relatio
 		return nil, false, nil
 	}
 	link, err := s.Link(pursuitID, LinkRequest{
-		LinkType:     linkType,
-		LinkID:       id,
-		Relationship: relationship,
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   confidence,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      linkType,
+		LinkID:        id,
+		Relationship:  relationship,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    confidence,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, false, err
@@ -1889,33 +1933,35 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	}
 	if record != nil {
 		_, err = s.Link(id, LinkRequest{
-			LinkType:     LinkWorkflow,
-			LinkID:       record.Item.ID.String(),
-			Relationship: "operational_work",
-			SourceURI:    request.SourceURI,
-			SourceLabel:  request.SourceLabel,
-			Confidence:   0.9,
-			Actor:        "system",
+			OwnerIdentity: firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity),
+			LinkType:      LinkWorkflow,
+			LinkID:        record.Item.ID.String(),
+			Relationship:  "operational_work",
+			SourceURI:     request.SourceURI,
+			SourceLabel:   request.SourceLabel,
+			Confidence:    0.9,
+			Actor:         "system",
 		})
 		if err != nil {
 			return nil, err
 		}
 	}
-	if err := s.linkIntakeSourceReference(id, request); err != nil {
+	if err := s.linkIntakeSourceReference(id, firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity), request); err != nil {
 		return nil, err
 	}
-	if err := s.linkAssistantCommandReference(id, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, firstNonEmpty(request.Actor, "system")); err != nil {
+	if err := s.linkAssistantCommandReference(id, firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity), request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, firstNonEmpty(request.Actor, "system")); err != nil {
 		return nil, err
 	}
 	if launchID, ok := runtimeLaunchIDFromEvidenceURI(request.SourceURI); ok {
 		if _, err := s.Link(id, LinkRequest{
-			LinkType:     LinkAgentRuntime,
-			LinkID:       launchID.String(),
-			Relationship: "execution_attempt",
-			SourceURI:    request.SourceURI,
-			SourceLabel:  firstNonEmpty(request.SourceLabel, "Runtime launch evidence"),
-			Confidence:   0.95,
-			Actor:        "system",
+			OwnerIdentity: firstNonEmpty(pursuit.OwnerIdentity, request.OwnerIdentity),
+			LinkType:      LinkAgentRuntime,
+			LinkID:        launchID.String(),
+			Relationship:  "execution_attempt",
+			SourceURI:     request.SourceURI,
+			SourceLabel:   firstNonEmpty(request.SourceLabel, "Runtime launch evidence"),
+			Confidence:    0.95,
+			Actor:         "system",
 		}); err != nil {
 			return nil, err
 		}
@@ -1935,7 +1981,7 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	return s.RefreshSummary(id, "system")
 }
 
-func (s *service) linkIntakeSourceReference(id uuid.UUID, request IntakeRequest) error {
+func (s *service) linkIntakeSourceReference(id uuid.UUID, ownerIdentity string, request IntakeRequest) error {
 	sourceID := strings.TrimSpace(request.SourceID)
 	if sourceID == "" {
 		return nil
@@ -1956,29 +2002,31 @@ func (s *service) linkIntakeSourceReference(id uuid.UUID, request IntakeRequest)
 		return nil
 	}
 	_, err := s.Link(id, LinkRequest{
-		LinkType:     linkType,
-		LinkID:       sourceID,
-		Relationship: relationship,
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   0.9,
-		Actor:        "system",
+		OwnerIdentity: ownerIdentity,
+		LinkType:      linkType,
+		LinkID:        sourceID,
+		Relationship:  relationship,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    0.9,
+		Actor:         "system",
 	})
 	return err
 }
 
-func (s *service) linkAssistantCommandReference(id uuid.UUID, sourceType, sourceID, sourceURI, sourceLabel, actor string) error {
+func (s *service) linkAssistantCommandReference(id uuid.UUID, ownerIdentity, sourceType, sourceID, sourceURI, sourceLabel, actor string) error {
 	if !strings.EqualFold(strings.TrimSpace(sourceType), LinkAssistantCommand) || strings.TrimSpace(sourceID) == "" {
 		return nil
 	}
 	_, err := s.Link(id, LinkRequest{
-		LinkType:     LinkAssistantCommand,
-		LinkID:       strings.TrimSpace(sourceID),
-		Relationship: "command_origin",
-		SourceURI:    strings.TrimSpace(sourceURI),
-		SourceLabel:  firstNonEmpty(strings.TrimSpace(sourceLabel), "HAI chat command"),
-		Confidence:   1,
-		Actor:        firstNonEmpty(actor, "assistant"),
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkAssistantCommand,
+		LinkID:        strings.TrimSpace(sourceID),
+		Relationship:  "command_origin",
+		SourceURI:     strings.TrimSpace(sourceURI),
+		SourceLabel:   firstNonEmpty(strings.TrimSpace(sourceLabel), "HAI chat command"),
+		Confidence:    1,
+		Actor:         firstNonEmpty(actor, "assistant"),
 	})
 	return err
 }
@@ -1986,20 +2034,21 @@ func (s *service) linkAssistantCommandReference(id uuid.UUID, sourceType, source
 // linkExactSourceReference preserves source identity for deterministic
 // re-matching. This is distinct from the workflow link, which identifies the
 // generated operational work rather than the input that produced it.
-func (s *service) linkExactSourceReference(id uuid.UUID, sourceType, sourceID, sourceURI, sourceLabel string, confidence float64, actor string) (*models.PursuitLink, bool, error) {
+func (s *service) linkExactSourceReference(id uuid.UUID, ownerIdentity, sourceType, sourceID, sourceURI, sourceLabel string, confidence float64, actor string) (*models.PursuitLink, bool, error) {
 	sourceType = strings.TrimSpace(sourceType)
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceType == "" || sourceID == "" || strings.EqualFold(sourceType, LinkAssistantCommand) {
 		return nil, false, nil
 	}
 	link, err := s.Link(id, LinkRequest{
-		LinkType:     sourceType,
-		LinkID:       sourceID,
-		Relationship: "intake_origin",
-		SourceURI:    strings.TrimSpace(sourceURI),
-		SourceLabel:  strings.TrimSpace(sourceLabel),
-		Confidence:   confidence,
-		Actor:        firstNonEmpty(actor, "system"),
+		OwnerIdentity: ownerIdentity,
+		LinkType:      sourceType,
+		LinkID:        sourceID,
+		Relationship:  "intake_origin",
+		SourceURI:     strings.TrimSpace(sourceURI),
+		SourceLabel:   strings.TrimSpace(sourceLabel),
+		Confidence:    confidence,
+		Actor:         firstNonEmpty(actor, "system"),
 	})
 	if err != nil {
 		return nil, false, err

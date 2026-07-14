@@ -305,7 +305,7 @@ func TestAutoLinkWorkflowDoesNotAttachOperationalWorkToClosedPursuit(t *testing.
 
 func TestRouteIntakeCreatesCandidateInsteadOfReopeningClosedPursuit(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	closed, err := service.Create(CreateRequest{Title: "Completed ASR insurance claim", ProjectKey: "asr"})
 	if err != nil {
@@ -509,7 +509,7 @@ func TestAutoLinkMemoryLinksStableContextToPursuit(t *testing.T) {
 
 func TestIntakeCreatesWorkflowAndLinksOperationalWork(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "Government letter response", OwnerIdentity: "alice", ProjectKey: "letter", Description: "Legal/government reply"})
 	if err != nil {
@@ -553,7 +553,7 @@ func TestIntakeCreatesWorkflowAndLinksOperationalWork(t *testing.T) {
 
 func TestIntakeLinksSourceReferenceIntoPursuitEvidence(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "ASR claim evidence", ProjectKey: "asr"})
 	if err != nil {
@@ -614,7 +614,7 @@ func TestIntakeLinksSourceReferenceIntoPursuitEvidence(t *testing.T) {
 
 func TestIntakePreservesDecisionEvidenceOnWorkflowLink(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "Recover failed runtime", ProjectKey: "hai"})
 	if err != nil {
@@ -698,7 +698,7 @@ func TestIntakePreservesDecisionEvidenceOnWorkflowLink(t *testing.T) {
 
 func TestRouteIntakeMatchesExistingPursuitAndCreatesGovernedWorkflow(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{
 		Title:         "Vivare legal dispute",
@@ -747,9 +747,95 @@ func TestRouteIntakeMatchesExistingPursuitAndCreatesGovernedWorkflow(t *testing.
 	}
 }
 
+func TestDetailForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alicePursuit, err := service.Create(CreateRequest{
+		Title:         "Alice private pursuit",
+		OwnerIdentity: "alice",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:               bobWorkflowID,
+		OwnerIdentity:    "bob",
+		Title:            "Bob private approval workflow",
+		CurrentState:     workflow.StateNeedsApproval,
+		RequiresApproval: true,
+		ApprovalStatus:   "pending",
+	}
+	foreignURI := "workflow://private/bob-approval"
+	foreignLinkID := uuid.New()
+	repo.links[foreignLinkID] = models.PursuitLink{
+		ID:           foreignLinkID,
+		PursuitID:    alicePursuit.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_import",
+		SourceURI:    foreignURI,
+		SourceLabel:  "Bob private workflow",
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	detail, err := service.DetailForOwner("alice", alicePursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if len(detail.Links) != 0 || len(detail.Workflows) != 0 || len(detail.ApprovalItems) != 0 {
+		t.Fatalf("owner detail exposed legacy foreign workflow: %#v", detail)
+	}
+	if _, err := service.ResolveEvidenceForOwner("alice", alicePursuit.ID, foreignURI); err == nil {
+		t.Fatalf("ResolveEvidenceForOwner resolved evidence from a hidden legacy link")
+	}
+	overview, err := service.ApprovalsForOwner("alice", alicePursuit.ID)
+	if err != nil {
+		t.Fatalf("ApprovalsForOwner returned error: %v", err)
+	}
+	if len(overview.ApprovalItems) != 0 || overview.Counts["approvalItems"] != 0 {
+		t.Fatalf("owner approval overview exposed legacy foreign workflow: %#v", overview)
+	}
+}
+
+func TestAutoLinkWorkflowRejectsForeignOwnerWorkflow(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	if _, err := service.Create(CreateRequest{
+		Title:         "Prepare Vivare evidence bundle",
+		Description:   "Collect evidence for the Vivare hearing.",
+		OwnerIdentity: "alice",
+		ProjectKey:    "vivare",
+	}); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:            bobWorkflowID,
+		OwnerIdentity: "bob",
+		Title:         "Bob private evidence workflow",
+		ProjectKey:    "vivare",
+		CurrentState:  workflow.StateReady,
+	}
+
+	_, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
+		OwnerIdentity: "alice",
+		WorkflowID:    bobWorkflowID,
+		Input:         "Prepare Vivare evidence bundle for the hearing.",
+		ProjectKey:    "vivare",
+		SourceURI:     "local://alice/vivare-intake",
+		SourceLabel:   "Alice evidence intake",
+	})
+	if err == nil {
+		t.Fatalf("AutoLinkWorkflow accepted a workflow owned by another user")
+	}
+}
+
 func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 
 	result, err := service.RouteIntake(IntakeRequest{
@@ -821,7 +907,7 @@ func TestRouteWorkflowIntakeReturnsPursuitLinkedWorkflowRecord(t *testing.T) {
 
 func TestRouteIntakeReusesPursuitLinkedByAssistantCommandIdentity(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	request := IntakeRequest{
 		Input:       "Prepare a local runtime recovery workflow safely.",
@@ -868,7 +954,7 @@ func pursuitLinkExists(links []models.PursuitLink, linkType, linkID, relationshi
 
 func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{
 		Title:                "Insurance claim evidence bundle",
@@ -1263,7 +1349,7 @@ func TestDashboardExcludesClosedPursuitsFromOperationalQueues(t *testing.T) {
 
 func TestClosedPursuitRejectsOperationalMutationAndSummaryRefresh(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "Completed legal evidence pursuit", ProjectKey: "vivare"})
 	if err != nil {
@@ -1322,7 +1408,7 @@ func TestClosedPursuitRejectsOperationalMutationAndSummaryRefresh(t *testing.T) 
 
 func TestReopenRequiresExplicitTransitionAndRestoresGovernedIntake(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "Archived automation recovery", ProjectKey: "018-HAI"})
 	if err != nil {
@@ -2311,7 +2397,7 @@ func TestResolvedRuntimeAttemptDecisionStaysBlockedWithoutRepromptingRobert(t *t
 
 func TestApprovedRuntimeAttemptDecisionCreatesGovernedRecoveryWorkflow(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "Recover OpenClaw runtime safely", OwnerIdentity: "alice", ProjectKey: "018-HAI"})
 	if err != nil {
@@ -3477,6 +3563,7 @@ func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.W
 	record := &workflow.WorkflowRecord{
 		Item: models.WorkflowItem{
 			ID:               id,
+			OwnerIdentity:    request.OwnerIdentity,
 			Title:            request.Input,
 			ProjectKey:       request.ProjectKey,
 			SourceType:       request.SourceType,
