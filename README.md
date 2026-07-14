@@ -94,6 +94,9 @@ the workflow remains the restart-safe execution ledger.
   owner-scoped state, operators can plan and edit it, and execution or approval
   resolution requires approval capability. System-wide source sync and due-work
   runners remain owner-only controls.
+- The IDP refreshes a valid refresh-token session before resolving the user on
+  protected routes, so access-token expiry does not strand an active local
+  session on the login screen.
 - Owner-scoped pursuit detail, dashboards, activity, evidence, decisions, and
   links filter legacy records that are not visible to the current owner.
 - High-risk communication, legal/government, financial, account, public-post,
