@@ -701,11 +701,17 @@ export class CommandDashboardComponent implements OnInit {
   canResolveDashboardDecision(card: IPursuitDashboardDecision): boolean {
     return card.decision.status === 'pending' && (
       card.decision.decisionType === 'runtime_attempt_review' ||
-      card.decision.decisionType === 'pursuit_next_action'
+      card.decision.decisionType === 'pursuit_next_action' ||
+      card.decision.decisionType === 'pursuit_candidate_review'
     );
   }
 
   dashboardDecisionTitle(card: IPursuitDashboardDecision, approved: boolean): string {
+    if (card.decision.decisionType === 'pursuit_candidate_review') {
+      return approved
+        ? 'Accept this pursuit candidate and create its first governed workflow.'
+        : 'Archive this candidate without creating workflow work.';
+    }
     if (card.decision.decisionType === 'pursuit_next_action') {
       return approved
         ? 'Approve this next action and create a governed workflow item from it.'
@@ -725,7 +731,43 @@ export class CommandDashboardComponent implements OnInit {
       this.resolvePursuitNextActionDecision(card, approved);
       return;
     }
+    if (card.decision.decisionType === 'pursuit_candidate_review') {
+      this.resolvePursuitCandidateDecision(card, approved);
+      return;
+    }
     this.resolveRuntimeDecision(card, approved);
+  }
+
+  private resolvePursuitCandidateDecision(card: IPursuitDashboardDecision, approved: boolean): void {
+    this.resolvingDashboardDecisionId = card.decision.id;
+    if (approved) {
+      this.pursuits.acceptCandidate(card.pursuit.id, {
+        requiresReview: card.decision.riskLevel === 'high',
+        reviewReason: card.decision.reason,
+      }).subscribe({
+        next: () => {
+          this.resolvingDashboardDecisionId = '';
+          this.notification.success('Candidate accepted', 'HAI converted the candidate into governed pursuit work.');
+          this.refreshPursuits();
+        },
+        error: (error) => {
+          this.resolvingDashboardDecisionId = '';
+          this.notification.error('Candidate blocked', error?.error?.error || 'HAI could not accept and plan this candidate.');
+        },
+      });
+      return;
+    }
+    this.pursuits.archive(card.pursuit.id, true).subscribe({
+      next: () => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.success('Candidate archived', 'The auto-created candidate was removed from active queues.');
+        this.refreshPursuits();
+      },
+      error: (error) => {
+        this.resolvingDashboardDecisionId = '';
+        this.notification.error('Archive blocked', error?.error?.error || 'HAI could not archive this candidate.');
+      },
+    });
   }
 
   private resolvePursuitNextActionDecision(card: IPursuitDashboardDecision, approved: boolean): void {
