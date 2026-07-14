@@ -36,7 +36,7 @@ for the canonical-stack decision.
 | Area | Implemented capability | Important operating boundary |
 | --- | --- | --- |
 | Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, and task planning. | A dashboard card is operational visibility, not proof that an external action occurred. |
-| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, and read-only VA delegation briefs. | Completion needs workflow, verification, source, runtime, and approval evidence where applicable. |
+| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, and ambient opportunity routing. | New source or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Completion still needs workflow, verification, source, runtime, and approval evidence where applicable. |
 | Memory and knowledge | Compact memory, retrieval, deduplication, correction, export/deletion planning, provenance, encrypted user-authorized conversation capture, and source/extraction links. | Raw imported conversations are not automatically promoted to trusted facts. |
 | Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, and read-only GitHub sync. | Gmail, Calendar, Drive, Trello, WhatsApp, and browser accounts are export/local-folder paths, not live OAuth or browser connectors. |
 | LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
@@ -86,13 +86,20 @@ After authentication, an operator can:
 The normal durable path is:
 
 \`\`\`text
-assistant command or source intake
-  -> pursuit
-  -> persisted workflow
+assistant command, source intake, or ambient opportunity
+  -> pursuit match
+  -> active pursuit + persisted workflow
+     or candidate pursuit + explicit acceptance
   -> bounded task plan/run
   -> verification and audit evidence
   -> completion, review, retry, or follow-up
 \`\`\`
+
+Ambient opportunities use the same path. An opportunity matched to an active
+pursuit may create or reuse a governed workflow. An unmatched opportunity, or
+one matched only to a candidate pursuit, is recorded with its provenance and
+waits for an approval-capable operator to accept the candidate. It does not
+create an orphaned executable workflow.
 
 Direct \`/task/*\` planning and run sessions are useful for bounded operator
 work, but their full plan/review history is process-local. When explicitly
@@ -126,8 +133,9 @@ the workflow remains the restart-safe execution ledger.
   deletion, destructive-file, and broad-host actions require explicit approval
   and do not run from a generic transition or chat request.
 - Auto-created pursuit candidates are not active operational work. Generic
-  pursuit intake and planning reject them; an approval-capable user must use
-  the separate candidate-acceptance action before HAI can create or unlock the
+  pursuit intake, planning, task attempts, and ambient opportunity routing
+  keep them out of the executable path; an approval-capable user must use the
+  separate candidate-acceptance action before HAI can create or unlock the
   governed workflow path.
 - Source and AI-chat producers that are configured with candidate correlation
   but without the native pursuit lifecycle router hold derived workflows in the
