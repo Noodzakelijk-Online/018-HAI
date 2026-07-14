@@ -114,6 +114,12 @@ func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.
 	if src.refreshCalls != 0 {
 		t.Fatalf("owner-scoped task triggered global source refresh %d times", src.refreshCalls)
 	}
+	if len(src.ownerRefreshOwners) != 1 || src.ownerRefreshOwners[0] != "alice" {
+		t.Fatalf("owner-scoped refresh owners = %#v, want alice", src.ownerRefreshOwners)
+	}
+	if plan.ContextPlan.SourceRefresh == nil {
+		t.Fatal("owner-scoped task did not retain its source refresh result")
+	}
 	if len(src.searchRequests) != 1 || src.searchRequests[0].OwnerIdentity != "alice" {
 		t.Fatalf("source search requests = %#v, want owner alice", src.searchRequests)
 	}
@@ -601,10 +607,11 @@ func (f *fakeMemoryService) CreateForOwner(ownerIdentity string, request memory.
 }
 
 type fakeTaskSourceService struct {
-	refreshCalls   int
-	searchCalls    int
-	order          []string
-	searchRequests []source.SearchRequest
+	refreshCalls       int
+	ownerRefreshOwners []string
+	searchCalls        int
+	order              []string
+	searchRequests     []source.SearchRequest
 }
 
 func (s *fakeTaskSourceService) Connectors() ([]models.SourceConnector, error) {
@@ -634,6 +641,12 @@ func (s *fakeTaskSourceService) Sync(sourceID uuid.UUID, request source.ImportRe
 func (s *fakeTaskSourceService) RunDueScheduledSyncs(now time.Time) (*source.ScheduledSyncRun, error) {
 	s.refreshCalls++
 	s.order = append(s.order, "refresh")
+	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
+}
+
+func (s *fakeTaskSourceService) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*source.ScheduledSyncRun, error) {
+	s.ownerRefreshOwners = append(s.ownerRefreshOwners, ownerIdentity)
+	s.order = append(s.order, "owner-refresh")
 	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
 }
 

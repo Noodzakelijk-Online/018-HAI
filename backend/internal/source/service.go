@@ -129,6 +129,7 @@ type Service interface {
 	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
+	RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*ScheduledSyncRun, error)
 	Reindex(sourceID uuid.UUID) (*SyncResult, error)
 	Pause(sourceID uuid.UUID, paused bool) (*models.ConnectedSource, error)
 	Revoke(sourceID uuid.UUID) (*models.ConnectedSource, error)
@@ -486,6 +487,31 @@ func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 	if err != nil {
 		return nil, err
 	}
+	return s.runDueScheduledSyncs(now, sources)
+}
+
+// RunDueScheduledSyncsForOwner refreshes only sources explicitly owned by the
+// authenticated user. Ownerless legacy sources remain readable for local
+// compatibility but are never modified by an owner-scoped task request.
+func (s *service) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*ScheduledSyncRun, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return s.RunDueScheduledSyncs(now)
+	}
+	sources, err := s.repo.FindSources(false)
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]models.ConnectedSource, 0, len(sources))
+	for _, item := range sources {
+		if item.OwnerIdentity == ownerIdentity {
+			owned = append(owned, item)
+		}
+	}
+	return s.runDueScheduledSyncs(now, owned)
+}
+
+func (s *service) runDueScheduledSyncs(now time.Time, sources []models.ConnectedSource) (*ScheduledSyncRun, error) {
 	run := &ScheduledSyncRun{Checked: len(sources)}
 	for _, source := range sources {
 		due, reason := scheduledSourceDue(source, now)

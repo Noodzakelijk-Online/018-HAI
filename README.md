@@ -14,6 +14,16 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 **Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. It is a local deployment candidate with code-level and local-service verification; it is **not** yet a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
 
+### How To Read This Status
+
+The repository uses three deliberately different readiness terms:
+
+- **Implemented** means the Go/Angular/Postgres path, persistence, API contract, and focused automated coverage exist in this repository.
+- **Locally validated** means a bounded local check has exercised the relevant code path, build, Compose configuration, or real local Postgres smoke path. It does not establish third-party correctness.
+- **Live-proven** requires an explicitly configured account, provider, or runtime to pass a bounded, approved end-to-end check on the target machine with inspectable audit and verification evidence.
+
+No dashboard status, model configuration, source connection, or generated answer upgrades itself to live-proven. Until that evidence exists, HAI keeps consequential work behind its existing review, approval, verification, runtime, and emergency-stop controls.
+
 What is implemented in this repository:
 
 - **User experience:** onboarding, quick capture, Command Dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
@@ -36,6 +46,8 @@ What is implemented in this repository:
 | Controlled execution | API/script/Docker adapters and task evidence gates are implemented; script and Docker control are disabled by default. | Enable one narrowly scoped adapter, then prove an approved end-to-end workflow without expanding device permissions. |
 | Hermes, Odysseus, and OpenClaw | Controlled adapter code and configuration surfaces are present; upstream software is not bundled. | Install/configure each upstream runtime separately, use dedicated workspaces/credentials, and validate one low-risk approved task at a time. |
 | Authentication and RBAC | Signed identity is revalidated by the backend; explicit RBAC routes default to viewer when a JWT has no role. | Add IDP role issuance and broaden permission checks before relying on multi-role operation. |
+| Owner-scoped operating work | Authenticated sources, memory, pursuits, verification, workflows, task history, reviews, and direct source preflight preserve the caller identity. | Exercise two real local accounts before relying on isolation for shared or multi-user operation. |
+| Scheduled source refresh | A system worker processes globally due sources; an authenticated task preflights only that caller's explicitly owned due sources before source search. | Add per-owner scheduler dispatch only after account and source-credential boundaries are live-validated. |
 
 ### Operator Entry Points
 
@@ -59,7 +71,7 @@ Verified evidence is maintained in [the completion matrix](docs/codex-goal/compl
 - The full Docker Compose topology has configuration and health checks, but its end-to-end multi-service boot remains the main outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
 - The bundled IDP currently issues a stable `user_id` for authenticated-session attribution. It does not yet issue role claims, so endpoints with explicit RBAC checks default to viewer until role issuance is implemented.
 - Owner boundaries protect owner-scoped sources, memories, conversation imports, pursuits, verification runs/evidence links, authenticated workflow/task execution, task-history and review-queue views, review resolution, and explicit ambient feedback. Verification uses only the caller's visible source context, persists the caller on the verification run, owner-scopes history/detail views, owner-scopes verified memory writes, and validates a requested pursuit before attaching evidence. Authenticated pursuit links validate workflow, memory, and source targets against the same owner before they are persisted. Legacy ownerless records are read-compatible for local development but are never adopted or modified by an authenticated owner. Background/system workers retain a separate ownerless view and must not be exposed through authenticated operator endpoints.
-- An authenticated task only searches sources visible to that owner. It does not run the global due-source scheduler, which remains a controlled system-worker operation until per-owner scheduled execution is implemented.
+- An authenticated task searches only sources visible to that owner and can preflight only sources explicitly owned by that caller. It never invokes the global due-source scheduler or modifies ownerless legacy sources; the global worker remains a separate controlled system operation.
 - An authenticated agent-cycle request is an owner-scoped operating refresh: it reads only that owner's memory and pursuit state and does not start global source sync, workflow execution, ambient scans, or shared operational learning. The HTTP routes reject unauthenticated cycle runs; system-worker phases are invoked in-process by controlled schedulers until per-owner scheduling is implemented.
 - The dashboard is an operator surface, not evidence that an external action ran. Completion and audit records remain authoritative only when they contain the required runtime, source, verification, and approval evidence.
 
@@ -150,7 +162,7 @@ Local folder ingestion:
 
 The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. General local ingestion supports `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`; the export connectors also accept `.mbox`, `.eml`, and `.ics` within the same allowlisted root.
 
-For recurring source ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power system scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. Authenticated task requests use owner-scoped source search and intentionally do not start this global scheduler. The scheduler supports local folders, email/calendar/project-board exports, synced document folders, GitHub REST sources, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots.
+For recurring source ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power system scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. Authenticated task requests use owner-scoped source search and, when fresh source context is needed, preflight only their explicitly owned due sources. They never start the global scheduler or modify ownerless legacy sources. The scheduler supports local folders, email/calendar/project-board exports, synced document folders, GitHub REST sources, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots.
 
 ## Developer Checks
 
@@ -355,7 +367,7 @@ The automation launch adapters can call bounded API targets, run a single allowl
 
 High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. An approved review item is marked completed only when the rerun is actually validated; unresolved runtime or verification blockers reuse the original queue item as actionable `needs_review` work instead of creating duplicate reviews. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its configured automation, context, model, verification, and memory workflow.
 
-The task engine treats connected sources as an active preflight dependency. System/background requests that mention project/source/file/folder/document/repo context, or require local/document context, run due scheduled source syncs before source search. Authenticated requests instead use owner-scoped cached source search; they do not fan out into another user's scheduled sources. This avoids a request from one user becoming a global sync trigger while per-owner scheduling is still follow-up work.
+The task engine treats connected sources as an active preflight dependency. System/background requests that mention project/source/file/folder/document/repo context, or require local/document context, run due scheduled source syncs before source search. Authenticated requests run the same preflight only for their explicitly owned due sources, then use owner-scoped search. They do not fan out into another user's scheduled sources or modify ownerless legacy sources.
 
 ## Workflow Engine
 

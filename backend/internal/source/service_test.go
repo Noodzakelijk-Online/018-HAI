@@ -293,6 +293,49 @@ func TestRunDueScheduledSyncsRunsDueLocalFolderSource(t *testing.T) {
 	}
 }
 
+func TestRunDueScheduledSyncsForOwnerDoesNotTouchAnotherOwnersSources(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(root+"/alice", 0o755); err != nil {
+		t.Fatalf("create Alice fixture directory: %v", err)
+	}
+	if err := os.MkdirAll(root+"/bob", 0o755); err != nil {
+		t.Fatalf("create Bob fixture directory: %v", err)
+	}
+	writeTestFile(t, root+"/alice/brief.md", "Follow up: Alice source should be refreshed only for Alice.")
+	writeTestFile(t, root+"/bob/brief.md", "Follow up: Bob source must not be refreshed by Alice's task.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{
+			ID: aliceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Alice folder", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "active", SyncFrequency: "1m", SyncTarget: "alice",
+		},
+		&models.ConnectedSource{
+			ID: bobID, OwnerIdentity: "bob", ConnectorKey: "local-folder", Name: "Bob folder", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "active", SyncFrequency: "1m", SyncTarget: "bob",
+		},
+	)
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	run, err := service.RunDueScheduledSyncsForOwner(time.Now().UTC(), "alice")
+	if err != nil {
+		t.Fatalf("RunDueScheduledSyncsForOwner: %v", err)
+	}
+	if run.Checked != 1 || run.Due != 1 || run.Completed != 1 || run.Failed != 0 {
+		t.Fatalf("owner run = %#v, want Alice-only successful sync", run)
+	}
+	alice, _ := repo.FindSource(aliceID)
+	bob, _ := repo.FindSource(bobID)
+	if alice.LastSyncedAt == nil {
+		t.Fatal("Alice source was not refreshed")
+	}
+	if bob.LastSyncedAt != nil {
+		t.Fatal("Alice task refreshed Bob's source")
+	}
+}
+
 func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	lastSync := time.Now().UTC()
 	repo := newFakeSourceRepo(

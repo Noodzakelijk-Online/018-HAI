@@ -1077,7 +1077,11 @@ func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnal
 		return nil, "Connected-source refresh skipped because the task does not appear to need source-backed context."
 	}
 	if strings.TrimSpace(request.OwnerIdentity) != "" {
-		return nil, "Connected-source refresh skipped because owner-scoped scheduled sync is not configured; cached owner-visible source context remains available."
+		result, err := s.sourceService.RunDueScheduledSyncsForOwner(time.Now().UTC(), request.OwnerIdentity)
+		if err != nil {
+			return nil, "Owner-scoped connected-source refresh failed before context retrieval: " + err.Error()
+		}
+		return result, fmt.Sprintf("Owner-scoped connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped)
 	}
 	result, err := s.sourceService.RunDueScheduledSyncs(time.Now().UTC())
 	if err != nil {
