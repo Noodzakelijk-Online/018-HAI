@@ -49,3 +49,28 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 		t.Fatalf("foreign pause status = %d, body=%s", foreignResponse.Code, foreignResponse.Body.String())
 	}
 }
+
+func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := NewService(newFakeSourceRepo(), nil)
+	handler := NewHandler(service)
+	router := gin.New()
+	router.POST("/sources/sync-due", handler.RunDueScheduledSyncs)
+
+	unauthenticatedResponse := httptest.NewRecorder()
+	router.ServeHTTP(unauthenticatedResponse, httptest.NewRequest(http.MethodPost, "/sources/sync-due", nil))
+	if unauthenticatedResponse.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated status = %d, want 403: %s", unauthenticatedResponse.Code, unauthenticatedResponse.Body.String())
+	}
+
+	authenticatedRouter := gin.New()
+	authenticatedRouter.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	authenticatedRouter.POST("/sources/sync-due", handler.RunDueScheduledSyncs)
+	authenticatedResponse := httptest.NewRecorder()
+	authenticatedRouter.ServeHTTP(authenticatedResponse, httptest.NewRequest(http.MethodPost, "/sources/sync-due", nil))
+	if authenticatedResponse.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d, want 200: %s", authenticatedResponse.Code, authenticatedResponse.Body.String())
+	}
+}

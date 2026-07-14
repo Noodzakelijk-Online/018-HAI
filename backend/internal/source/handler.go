@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -154,9 +155,20 @@ func (h *Handler) Reindex(c *gin.Context) {
 }
 
 func (h *Handler) RunDueScheduledSyncs(c *gin.Context) {
-	// Scheduled syncs are executed by the internal scheduler. An HTTP caller
-	// cannot safely run every user's due sources as a single cross-owner batch.
-	c.JSON(http.StatusForbidden, gin.H{"error": "scheduled source sync is worker-only"})
+	ownerIdentity := sourceOwner(c)
+	if ownerIdentity == "" {
+		// The global scheduler is the only allowed ownerless source worker.
+		// An HTTP request must carry a verified identity so it cannot trigger a
+		// cross-owner refresh batch.
+		c.JSON(http.StatusForbidden, gin.H{"error": "scheduled source sync requires an authenticated owner"})
+		return
+	}
+	result, err := h.service.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) Pause(c *gin.Context) {

@@ -21,7 +21,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | `/llm` | GET `/policy`, `/probes`, `/logs`; POST `/route`, `/generate` |
 | `/memory` | GET `/`, **GET `/query`**, GET `/:id`, `/export`; POST `/`, `/retrieve`, `/:id/archive|restore`; PATCH/DELETE `/:id` |
 | `/memory-engine` | import, dashboard, search, conversations, insights |
-| `/sources` | connectors, list/create, search, sync-due, sync-jobs, extractions, audit-logs, per-source sync/pause/resume/revoke |
+| `/sources` | connectors, list/create, search, owner-scoped sync-due, sync-jobs, extractions, audit-logs, per-source sync/pause/resume/revoke |
 | `/workflow` | overview, approvals, dashboard, list, intake, owner-scoped run-due/recovery/follow-up controls, transitions, approval/interruption/proposal resolve, checklist |
 | `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals |
 | `/verification` | POST `/answer`, GET `/runs`, `/runs/:id` |
@@ -38,6 +38,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
   `/system/support-bundle`, plus `/readyz`.
 - No orphaned/dead routes found in `routes.go`.
 - Workflow worker controls use the verified request owner when one is present. Global workflow scheduling remains an in-process system-worker operation rather than a dashboard capability.
+- A manual source `sync-due` request requires a verified owner and refreshes only that owner's explicitly owned sources. The global source scheduler remains in-process.
 - **Follow-up:** adopt the `apierror` envelope uniformly across handlers (error
   shapes currently vary; frontend depends on the existing shapes — migrate both
   together).

@@ -1797,7 +1797,15 @@ func (s *fakeSourceWorkflowService) Items(includeArchived bool) ([]models.Workfl
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) ItemsForOwner(ownerIdentity string, includeArchived bool) ([]models.WorkflowItem, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) ApprovalItems() ([]models.WorkflowItem, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) ApprovalItemsForOwner(ownerIdentity string) ([]models.WorkflowItem, error) {
 	return nil, nil
 }
 
@@ -1805,7 +1813,15 @@ func (s *fakeSourceWorkflowService) Dashboard() (*workflow.WorkflowDashboard, er
 	return &workflow.WorkflowDashboard{}, nil
 }
 
+func (s *fakeSourceWorkflowService) DashboardForOwner(ownerIdentity string) (*workflow.WorkflowDashboard, error) {
+	return &workflow.WorkflowDashboard{}, nil
+}
+
 func (s *fakeSourceWorkflowService) Get(id uuid.UUID) (*workflow.WorkflowRecord, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *fakeSourceWorkflowService) GetForOwner(ownerIdentity string, id uuid.UUID) (*workflow.WorkflowRecord, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -1887,11 +1903,23 @@ func (s *fakeSourceWorkflowService) RecoverStaleClaims(request workflow.RunDueRe
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) RecoverStaleClaimsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) RunDue(request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) RunDueForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) RunDueOpenLoopsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
 	return nil, nil
 }
 
