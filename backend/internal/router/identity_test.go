@@ -79,6 +79,32 @@ func TestJWTDisabledWhenNoSecret(t *testing.T) {
 	}
 }
 
+func TestRequireAuthenticatedOwnerRejectsMissingPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(requireAuthenticatedOwner())
+	engine.GET("/private", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	unauthenticated := httptest.NewRecorder()
+	engine.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/private", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("missing owner status = %d, want %d", unauthenticated.Code, http.StatusUnauthorized)
+	}
+
+	authenticated := gin.New()
+	authenticated.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "alice")
+		c.Next()
+	})
+	authenticated.Use(requireAuthenticatedOwner())
+	authenticated.GET("/private", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	recorder := httptest.NewRecorder()
+	authenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/private", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("authenticated owner status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
 func TestIDPCookieSetsBundledUserIDAsSubject(t *testing.T) {
 	prev := config.AppConfig.JWTSecret
 	config.AppConfig.JWTSecret = "router-secret"

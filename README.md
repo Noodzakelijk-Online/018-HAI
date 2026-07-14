@@ -71,6 +71,11 @@ Recent hardening in the current baseline:
 - Assistant chat commands and command history use the same verified owner
   boundary, so an HTTP caller cannot create or inspect an ownerless task plan
   through the conversational surface.
+- Model routing and generation, memory and conversation archives, connected
+  sources, verification history, task controls, agent-cycle refreshes,
+  autonomy diagnostics, and runtime inventory now share a router-level owner
+  gate. A missing session cannot become an ownerless request or consume local
+  model/runtime capacity through those HTTP APIs.
 - The shared local automation registry also requires a verified operator
   session before it exposes targets, accepts configuration changes, probes
   health, or launches/stops a controlled runtime.

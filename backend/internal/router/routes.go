@@ -139,6 +139,7 @@ func initializeAssistantRoutes(apiVersion *gin.RouterGroup, handler *assistant.H
 
 func initializeAgentCycleRoutes(apiVersion *gin.RouterGroup, handler *agentcycle.Handler) {
 	routes := apiVersion.Group("/agent-cycle")
+	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.POST("/run", handler.Run)
 	}
@@ -146,6 +147,7 @@ func initializeAgentCycleRoutes(apiVersion *gin.RouterGroup, handler *agentcycle
 
 func initializeAutonomyRoutes(apiVersion *gin.RouterGroup, handler *autonomy.Handler) {
 	routes := apiVersion.Group("/autonomy")
+	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/overview", handler.Overview)
 		routes.POST("/stress", handler.Stress)
@@ -166,6 +168,7 @@ func initializeAmbientRoutes(apiVersion *gin.RouterGroup, handler *ambient.Handl
 
 func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentruntime.Handler) {
 	routes := apiVersion.Group("/agent-runtimes")
+	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/", handler.Registry)
 		routes.GET("/health", handler.Health)
@@ -249,6 +252,7 @@ func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *autom
 
 func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {
 	llmRoutes := apiVersion.Group("/llm")
+	llmRoutes.Use(requireAuthenticatedOwner())
 	{
 		llmRoutes.GET("/policy", llmHandler.Policy)
 		llmRoutes.GET("/probes", llmHandler.ProviderProbes)
@@ -261,6 +265,7 @@ func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {
 
 func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.Handler) {
 	memoryRoutes := apiVersion.Group("/memory")
+	memoryRoutes.Use(requireAuthenticatedOwner())
 	{
 		memoryRoutes.GET("/", memoryHandler.List)
 		memoryRoutes.GET("/query", memoryHandler.Query)
@@ -277,6 +282,7 @@ func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.H
 
 func initializeMemoryEngineRoutes(apiVersion *gin.RouterGroup, handler *memoryengine.Handler) {
 	routes := apiVersion.Group("/memory-engine")
+	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.POST("/import", handler.Import)
 		routes.GET("/dashboard", handler.Dashboard)
@@ -290,6 +296,7 @@ func initializeMemoryEngineRoutes(apiVersion *gin.RouterGroup, handler *memoryen
 
 func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.Handler) {
 	sourceRoutes := apiVersion.Group("/sources")
+	sourceRoutes.Use(requireAuthenticatedOwner())
 	{
 		sourceRoutes.GET("/connectors", sourceHandler.Connectors)
 		sourceRoutes.GET("/", sourceHandler.Sources)
@@ -313,6 +320,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 
 func initializeTaskRoutes(apiVersion *gin.RouterGroup, taskHandler *task.Handler) {
 	taskRoutes := apiVersion.Group("/task")
+	taskRoutes.Use(requireAuthenticatedOwner())
 	{
 		taskRoutes.POST("/plan", taskHandler.Plan)
 		taskRoutes.POST("/run", taskHandler.Run)
@@ -325,6 +333,7 @@ func initializeTaskRoutes(apiVersion *gin.RouterGroup, taskHandler *task.Handler
 
 func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandler *verification.Handler) {
 	verificationRoutes := apiVersion.Group("/verification")
+	verificationRoutes.Use(requireAuthenticatedOwner())
 	{
 		verificationRoutes.POST("/answer", verificationHandler.Answer)
 		verificationRoutes.GET("/runs", verificationHandler.Runs)

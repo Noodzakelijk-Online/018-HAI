@@ -47,6 +47,23 @@ func identityMiddleware() gin.HandlerFunc {
 	}
 }
 
+// requireAuthenticatedOwner separates browser and API requests from controlled
+// in-process workers. Owner-scoped handlers must not interpret a missing
+// principal as a global or legacy owner when a request crosses the HTTP
+// boundary.
+func requireAuthenticatedOwner() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		value, ok := c.Get(contextSubjectKey)
+		owner, ok := value.(string)
+		if !ok || strings.TrimSpace(owner) == "" {
+			e := apierror.New(apierror.CodeUnauthorized, "an authenticated owner session is required for this operation")
+			c.AbortWithStatusJSON(e.HTTPStatus(), e.Envelope())
+			return
+		}
+		c.Next()
+	}
+}
+
 func bearerToken(c *gin.Context) string {
 	h := strings.TrimSpace(c.GetHeader("Authorization"))
 	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {

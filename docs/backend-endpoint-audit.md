@@ -17,16 +17,16 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | Group | Representative routes |
 | --- | --- |
 | `/automation` | verified-operator shared local registry: GET `/`, GET `/:id`, POST `/`, PATCH `/`, DELETE `/:id`, POST `/:id/launch`, health/diagnostics, `/images/:imageName` |
-| `/agent-runtimes` | read-only registry/health/skills; owner-gated runtime stop and OpenClaw ecosystem set/refresh/upload |
-| `/llm` | GET `/policy`, `/probes`, `/probes/history`, `/logs`; POST `/route`, `/generate` |
-| `/memory` | GET `/`, **GET `/query`**, GET `/:id`, `/export`; POST `/`, `/retrieve`, `/:id/archive|restore`; PATCH/DELETE `/:id` |
-| `/memory-engine` | import, dashboard, search, conversations, insights |
-| `/sources` | connectors, list/create, search, owner-scoped sync-due, sync-jobs, extractions, audit-logs, per-source sync/pause/resume/revoke |
+| `/agent-runtimes` | owner-gated registry/health/skills, runtime stop, and OpenClaw ecosystem set/refresh/upload |
+| `/llm` | owner-gated GET `/policy`, `/probes`, `/probes/history`, `/logs`; POST `/route`, `/generate` |
+| `/memory` | owner-gated GET `/`, **GET `/query`**, GET `/:id`, `/export`; POST `/`, `/retrieve`, `/:id/archive|restore`; PATCH/DELETE `/:id` |
+| `/memory-engine` | owner-gated import, dashboard, search, conversations, insights |
+| `/sources` | owner-gated connectors, list/create, search, sync-due, sync-jobs, extractions, audit-logs, per-source sync/pause/resume/revoke |
 | `/workflow` | overview, approvals, dashboard, list, intake, owner-scoped run-due/recovery/follow-up controls, transitions, approval/interruption/proposal resolve, checklist |
 | `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals, read-only VA delegation package |
-| `/verification` | POST `/answer`, GET `/runs`, `/runs/:id` |
-| `/task` | owner-scoped plan, run, success, logs, review-queue, review resolution |
-| `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | owner-gated command/logs, owner-gated run, overview/stress, owner-scoped scan/needs/proposal resolution, overview |
+| `/verification` | owner-gated POST `/answer`, GET `/runs`, `/runs/:id` |
+| `/task` | owner-gated plan, run, success, logs, review-queue, review resolution |
+| `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | owner-gated command/logs, run, overview/stress, scan/needs/proposal resolution, overview |
 | **`/flags`** | GET — feature flags (added this goal run) |
 | **`/system`** | **GET `/info`**, **GET `/support-bundle`** (added this goal run) |
 
