@@ -12,7 +12,24 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 ## Current State
 
-**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. It is a local deployment candidate with code-level and local-service verification; it is **not** yet a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
+**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. Docker Compose configuration validates from `.env.example`; the backend critical-path smoke has passed against local Postgres. It is a local deployment candidate, **not** a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
+
+### What You Can Use Today
+
+| Operator outcome | Current path | Guardrail |
+| --- | --- | --- |
+| Organize a long-running objective | Create a pursuit, link workflow/source/memory/evidence records, inspect blockers and approvals, then explicitly archive or reopen it. | Authenticated records stay owner-scoped; a closed pursuit cannot be silently reactivated by later intake. |
+| Turn authorized material into work | Import allowlisted local files or supported exports, search the extracted context, and route actionable findings through workflow intake. | Local paths are constrained to the mounted source root; account OAuth and browser capture are not automatic connectors. |
+| Plan and progress work | Use the task, workflow, command-dashboard, and ambient proposal surfaces to create plans, checklists, open loops, review items, and next actions. | A proposal is not execution. High-risk or unresolved work stops for review. |
+| Use a local model | Configure Ollama or another OpenAI-compatible local endpoint, probe it, and run a bounded validated task. | Paid usage is disabled by default with a EUR 0 daily budget. A configured endpoint is not treated as live-proven until it passes a live probe. |
+| Run a narrow automation or agent runtime | Configure a reviewed API, script, Docker, Hermes, Odysseus, or OpenClaw adapter and attach it to approved work. | Runtimes are disabled by default and remain limited by approval, allowlists, workspace, timeout, audit, verification, and emergency-stop controls. |
+
+### What Still Needs Separate Setup or Evidence
+
+- Gmail, Calendar, Drive, Trello, WhatsApp, browser, and other account access need a deliberately scoped connector or authorized export plus a live validation. HAI does not use a user's accounts merely because the dashboard is running.
+- Hermes, Odysseus, and OpenClaw are adapters, not bundled dependencies. Install and configure each upstream runtime in a dedicated workspace before enabling one low-risk approved task.
+- Script and Docker execution, outbound communication, public posting, financial actions, account changes, deletion, and broad host control remain disabled or blocked by default.
+- The multi-service `docker compose up --build` boot needs to be exercised on the target Windows 11 machine before calling the deployment operational. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
 
 ### Current Main Baseline
 
