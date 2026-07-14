@@ -92,9 +92,32 @@ func TestRunHandlerUsesVerifiedOwner(t *testing.T) {
 	}
 }
 
+func TestLogsHandlerUsesVerifiedOwnerScopedView(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &capturingTaskService{}
+	handler := NewHandler(service)
+	request := httptest.NewRequest(http.MethodGet, "/task/logs", nil)
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
+
+	handler.Logs(context)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if service.logsOwner != "alice" {
+		t.Fatalf("logs owner = %q, want verified owner alice", service.logsOwner)
+	}
+}
+
 type capturingTaskService struct {
-	planRequest IntakeRequest
-	runRequest  IntakeRequest
+	planRequest  IntakeRequest
+	runRequest   IntakeRequest
+	logsOwner    string
+	queueOwner   string
+	resolveOwner string
 }
 
 func (s *capturingTaskService) Plan(request IntakeRequest) (*CompletionPlan, error) {
@@ -116,5 +139,20 @@ func (s *capturingTaskService) ReviewQueue() []ReviewQueueItem {
 }
 
 func (s *capturingTaskService) ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	return nil, nil
+}
+
+func (s *capturingTaskService) LogsForOwner(ownerIdentity string) []CompletionPlan {
+	s.logsOwner = ownerIdentity
+	return nil
+}
+
+func (s *capturingTaskService) ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem {
+	s.queueOwner = ownerIdentity
+	return nil
+}
+
+func (s *capturingTaskService) ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	s.resolveOwner = ownerIdentity
 	return nil, nil
 }

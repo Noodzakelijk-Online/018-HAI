@@ -119,6 +119,41 @@ func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.
 	}
 }
 
+func TestOwnerScopedTaskHistoryAndReviewQueueDoNotLeakAcrossOwners(t *testing.T) {
+	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t))
+	scoped, ok := service.(OwnerScopedService)
+	if !ok {
+		t.Fatal("native task service does not implement OwnerScopedService")
+	}
+	if _, err := service.Plan(IntakeRequest{OwnerIdentity: "alice", Request: "Plan Alice project context"}); err != nil {
+		t.Fatalf("Plan alice: %v", err)
+	}
+	if _, err := service.Plan(IntakeRequest{OwnerIdentity: "bob", Request: "Plan Bob project context"}); err != nil {
+		t.Fatalf("Plan bob: %v", err)
+	}
+	if logs := scoped.LogsForOwner("alice"); len(logs) != 1 || logs[0].OwnerIdentity != "alice" {
+		t.Fatalf("alice logs = %#v, want only Alice record", logs)
+	}
+
+	aliceReview, err := service.Run(IntakeRequest{OwnerIdentity: "alice", Request: "Delete Alice account data"})
+	if err != nil || aliceReview.ReviewQueueItem == nil {
+		t.Fatalf("Run alice high-risk task = %#v, %v", aliceReview, err)
+	}
+	bobReview, err := service.Run(IntakeRequest{OwnerIdentity: "bob", Request: "Delete Bob account data"})
+	if err != nil || bobReview.ReviewQueueItem == nil {
+		t.Fatalf("Run bob high-risk task = %#v, %v", bobReview, err)
+	}
+	if queue := scoped.ReviewQueueForOwner("alice"); len(queue) != 1 || queue[0].Request.OwnerIdentity != "alice" {
+		t.Fatalf("alice review queue = %#v, want only Alice item", queue)
+	}
+	if _, err := scoped.ResolveReviewItemForOwner("alice", bobReview.ReviewQueueItem.ID, ApprovalDecision{Approved: false}); err == nil {
+		t.Fatal("expected cross-owner review resolution to be rejected")
+	}
+	if _, err := scoped.ResolveReviewItemForOwner("alice", aliceReview.ReviewQueueItem.ID, ApprovalDecision{Approved: false, Note: "not approved"}); err != nil {
+		t.Fatalf("owner could not resolve own review item: %v", err)
+	}
+}
+
 func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)

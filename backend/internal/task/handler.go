@@ -78,11 +78,31 @@ func verifiedTaskOwner(c *gin.Context) string {
 }
 
 func (h *Handler) Logs(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service.Logs())
+	ownerIdentity := verifiedTaskOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusOK, h.service.Logs())
+		return
+	}
+	scoped, ok := h.service.(OwnerScopedService)
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "owner-scoped task history is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, scoped.LogsForOwner(ownerIdentity))
 }
 
 func (h *Handler) ReviewQueue(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service.ReviewQueue())
+	ownerIdentity := verifiedTaskOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusOK, h.service.ReviewQueue())
+		return
+	}
+	scoped, ok := h.service.(OwnerScopedService)
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "owner-scoped task review is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, scoped.ReviewQueueForOwner(ownerIdentity))
 }
 
 func (h *Handler) ResolveReviewItem(c *gin.Context) {
@@ -96,9 +116,24 @@ func (h *Handler) ResolveReviewItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.service.ResolveReviewItem(id, decision)
+	ownerIdentity := verifiedTaskOwner(c)
+	if ownerIdentity == "" {
+		result, err := h.service.ResolveReviewItem(id, decision)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
+	scoped, ok := h.service.(OwnerScopedService)
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "owner-scoped task review is unavailable"})
+		return
+	}
+	result, err := scoped.ResolveReviewItemForOwner(ownerIdentity, id, decision)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "review item not found"})
 		return
 	}
 	c.JSON(http.StatusOK, result)

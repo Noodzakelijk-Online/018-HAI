@@ -233,6 +233,15 @@ type Service interface {
 	ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
 }
 
+// OwnerScopedService is the authenticated view over task history and approvals.
+// It is intentionally separate from Service so background workers can retain
+// their system-level access without becoming an HTTP data-leak path.
+type OwnerScopedService interface {
+	LogsForOwner(ownerIdentity string) []CompletionPlan
+	ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem
+	ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
+}
+
 type service struct {
 	memoryService       memory.Service
 	sourceService       source.Service
@@ -484,29 +493,58 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 }
 
 func (s *service) Logs() []CompletionPlan {
+	return s.LogsForOwner("")
+}
+
+func (s *service) LogsForOwner(ownerIdentity string) []CompletionPlan {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	copied := make([]CompletionPlan, len(s.logs))
-	copy(copied, s.logs)
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	copied := make([]CompletionPlan, 0, len(s.logs))
+	for _, plan := range s.logs {
+		if ownerIdentity != "" && plan.OwnerIdentity != ownerIdentity {
+			continue
+		}
+		copied = append(copied, plan)
+	}
 	return copied
 }
 
 func (s *service) ReviewQueue() []ReviewQueueItem {
+	return s.ReviewQueueForOwner("")
+}
+
+func (s *service) ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	copied := make([]ReviewQueueItem, len(s.reviewQueue))
-	copy(copied, s.reviewQueue)
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	copied := make([]ReviewQueueItem, 0, len(s.reviewQueue))
+	for _, item := range s.reviewQueue {
+		if ownerIdentity != "" && item.Request.OwnerIdentity != ownerIdentity {
+			continue
+		}
+		copied = append(copied, item)
+	}
 	return copied
 }
 
 func (s *service) ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	return s.resolveReviewItemForOwner("", id, decision)
+}
+
+func (s *service) ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	return s.resolveReviewItemForOwner(ownerIdentity, id, decision)
+}
+
+func (s *service) resolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	s.mu.Lock()
 	index := -1
 	var item ReviewQueueItem
 	for i := range s.reviewQueue {
-		if s.reviewQueue[i].ID == id {
+		if s.reviewQueue[i].ID == id && (ownerIdentity == "" || s.reviewQueue[i].Request.OwnerIdentity == ownerIdentity) {
 			index = i
 			item = s.reviewQueue[i]
 			break
