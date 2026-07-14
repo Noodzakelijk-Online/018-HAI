@@ -144,7 +144,7 @@ func (h *Handler) Transition(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowVisible(c, id) {
+	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
 	var request TransitionRequest
@@ -169,7 +169,7 @@ func (h *Handler) ResolveApproval(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowVisible(c, id) {
+	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
 	var request ApprovalResolutionRequest
@@ -191,7 +191,7 @@ func (h *Handler) ResolveInterruptedExecution(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowVisible(c, id) {
+	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
 	var request InterruptedExecutionResolutionRequest
@@ -213,7 +213,7 @@ func (h *Handler) ResolveProposal(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowVisible(c, id) {
+	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
 	proposalID, err := uuid.Parse(c.Param("proposalId"))
@@ -240,7 +240,7 @@ func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowVisible(c, id) {
+	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
 	itemID, err := uuid.Parse(c.Param("itemId"))
@@ -284,8 +284,14 @@ func verifiedWorkflowOwner(c *gin.Context) string {
 	return ""
 }
 
-func (h *Handler) ensureWorkflowVisible(c *gin.Context, id uuid.UUID) bool {
-	if _, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id); err != nil {
+// ensureWorkflowMutable is stricter than read visibility. Ownerless legacy
+// workflows remain inspectable during local migration, but a signed-in caller
+// cannot adopt or change one through the HTTP API. System workers use the
+// service directly with an empty owner identity when that maintenance is
+// deliberately required.
+func (h *Handler) ensureWorkflowMutable(c *gin.Context, id uuid.UUID) bool {
+	record, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id)
+	if err != nil || strings.TrimSpace(record.Item.OwnerIdentity) != verifiedWorkflowOwner(c) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "workflow not found"})
 		return false
 	}

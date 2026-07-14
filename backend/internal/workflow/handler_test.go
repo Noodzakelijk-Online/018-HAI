@@ -18,7 +18,7 @@ func TestResolveApprovalHandlerUsesVerifiedActor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeWorkflowRepo()
 	service := NewService(repo)
-	record, err := service.Intake(IntakeRequest{Input: "Draft and send a legal reply to the lawyer."})
+	record, err := service.Intake(IntakeRequest{OwnerIdentity: "verified-operator", Input: "Draft and send a legal reply to the lawyer."})
 	if err != nil {
 		t.Fatalf("Intake: %v", err)
 	}
@@ -86,8 +86,9 @@ func TestTransitionHandlerCannotApproveWorkflow(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	service := NewService(repo)
 	record, err := service.Intake(IntakeRequest{
-		Input:      "Draft and send a legal reply to the lawyer.",
-		ProjectKey: "legal-case",
+		OwnerIdentity: "verified-operator",
+		Input:         "Draft and send a legal reply to the lawyer.",
+		ProjectKey:    "legal-case",
 	})
 	if err != nil {
 		t.Fatalf("Intake: %v", err)
@@ -108,6 +109,7 @@ func TestTransitionHandlerCannotApproveWorkflow(t *testing.T) {
 	context, _ := gin.CreateTestContext(response)
 	context.Params = gin.Params{{Key: "id", Value: record.Item.ID.String()}}
 	context.Request = request
+	context.Set(identity.ContextSubjectKey, "verified-operator")
 
 	handler.Transition(context)
 
@@ -120,6 +122,42 @@ func TestTransitionHandlerCannotApproveWorkflow(t *testing.T) {
 	}
 	if updated.Item.ApprovalStatus == "approved" || updated.Item.CurrentState == StateReady {
 		t.Fatalf("generic transition established approval: %#v", updated.Item)
+	}
+}
+
+func TestWorkflowHandlerRejectsOwnerlessLegacyWorkflowMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{Input: "Draft and send a legal reply to the lawyer."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.OwnerIdentity != "" {
+		t.Fatalf("legacy workflow owner = %q, want empty", record.Item.OwnerIdentity)
+	}
+
+	handler := NewHandler(service)
+	body, _ := json.Marshal(ApprovalResolutionRequest{Approved: true})
+	request := httptest.NewRequest(http.MethodPost, "/workflow/"+record.Item.ID.String()+"/approval", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Params = gin.Params{{Key: "id", Value: record.Item.ID.String()}}
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
+
+	handler.ResolveApproval(context)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("ownerless workflow mutation status = %d, want 404: %s", response.Code, response.Body.String())
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.ApprovalStatus == "approved" || updated.Item.CurrentState == StateReady {
+		t.Fatalf("ownerless workflow was mutated through authenticated handler: %#v", updated.Item)
 	}
 }
 
