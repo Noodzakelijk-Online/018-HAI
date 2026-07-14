@@ -680,7 +680,7 @@ func TestSyncRoutesActionableExtractionThroughPursuitGateway(t *testing.T) {
 	pursuitGateway := &fakeSourcePursuitGateway{}
 	service := NewServiceWithWorkflowAndPursuitLinker(repo, &fakeSourceMemoryService{}, workflowSpy, pursuitGateway)
 
-	_, err := service.Sync(sourceID, ImportRequest{
+	result, err := service.Sync(sourceID, ImportRequest{
 		Mode: ModeManualImport,
 		Items: []ImportItem{{
 			ExternalID: "email-pursuit-gateway",
@@ -706,6 +706,9 @@ func TestSyncRoutesActionableExtractionThroughPursuitGateway(t *testing.T) {
 	if len(pursuitGateway.requests) != 0 {
 		t.Fatalf("workflow was linked twice after pursuit routing: %#v", pursuitGateway.requests)
 	}
+	if len(result.PursuitOutcomes) != 1 || result.PursuitOutcomes[0].Status != "pursuit_routed" || result.PursuitOutcomes[0].WorkflowID == "" || result.PursuitOutcomes[0].PursuitID != pursuitGateway.pursuitID.String() {
+		t.Fatalf("pursuit routing outcome = %#v, want routed workflow context", result.PursuitOutcomes)
+	}
 }
 
 func TestSyncDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *testing.T) {
@@ -729,7 +732,7 @@ func TestSyncDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *testi
 	}}}
 	service := NewServiceWithWorkflowAndPursuitLinker(repo, &fakeSourceMemoryService{}, workflowSpy, pursuitGateway)
 
-	_, err := service.Sync(sourceID, ImportRequest{Mode: ModeManualImport, Items: []ImportItem{{
+	result, err := service.Sync(sourceID, ImportRequest{Mode: ModeManualImport, Items: []ImportItem{{
 		ExternalID: "email-candidate-pending",
 		Title:      "Lawyer follow-up",
 		Content:    "Follow up: draft a formal reply for the legal case before tomorrow.",
@@ -745,6 +748,9 @@ func TestSyncDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *testi
 	}
 	if !repo.hasAudit("pursuit.intake_deferred") || repo.hasAudit("workflow.intake_failed") {
 		t.Fatalf("candidate pending source audit was not a successful deferral")
+	}
+	if len(result.PursuitOutcomes) != 1 || result.PursuitOutcomes[0].Status != "candidate_pending" || result.PursuitOutcomes[0].PursuitID != pursuitGateway.err.(*pursuit.CandidatePendingError).Result.PursuitID.String() {
+		t.Fatalf("candidate pursuit outcome = %#v, want the reviewable candidate", result.PursuitOutcomes)
 	}
 }
 
@@ -1884,8 +1890,9 @@ type fakeSourcePursuitLinker struct {
 
 type fakeSourcePursuitGateway struct {
 	fakeSourcePursuitLinker
-	routed []workflow.IntakeRequest
-	err    error
+	routed    []workflow.IntakeRequest
+	err       error
+	pursuitID uuid.UUID
 }
 
 func (f *fakeSourcePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
@@ -1893,7 +1900,15 @@ func (f *fakeSourcePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRe
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &workflow.WorkflowRecord{Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey}}, nil
+	if f.pursuitID == uuid.Nil {
+		f.pursuitID = uuid.New()
+	}
+	return &workflow.WorkflowRecord{
+		Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey},
+		Pursuits: []workflow.WorkflowPursuitContext{{
+			ID: f.pursuitID,
+		}},
+	}, nil
 }
 
 func (f *fakeSourcePursuitLinker) AutoLinkWorkflow(request pursuit.AutoLinkWorkflowRequest) (*pursuit.AutoLinkResult, error) {

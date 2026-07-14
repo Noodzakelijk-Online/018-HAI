@@ -85,10 +85,21 @@ type ImportRequest struct {
 }
 
 type SyncResult struct {
-	Job         models.SourceSyncJob      `json:"job"`
-	Extractions []models.SourceExtraction `json:"extractions"`
-	Message     string                    `json:"message"`
-	Errors      []string                  `json:"errors,omitempty"`
+	Job             models.SourceSyncJob      `json:"job"`
+	Extractions     []models.SourceExtraction `json:"extractions"`
+	PursuitOutcomes []PursuitRoutingOutcome   `json:"pursuitOutcomes,omitempty"`
+	Message         string                    `json:"message"`
+	Errors          []string                  `json:"errors,omitempty"`
+}
+
+// PursuitRoutingOutcome makes source-created pursuit candidates and deferred
+// routing visible without exposing a path that can execute or accept work.
+type PursuitRoutingOutcome struct {
+	ExtractionID string `json:"extractionId,omitempty"`
+	WorkflowID   string `json:"workflowId,omitempty"`
+	PursuitID    string `json:"pursuitId,omitempty"`
+	Status       string `json:"status"`
+	Message      string `json:"message"`
 }
 
 type SearchRequest struct {
@@ -166,6 +177,7 @@ var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var ErrSyncInProgress = errors.New("source sync is already in progress")
 
 const maxSyncErrorDetails = 20
+const maxSyncPursuitOutcomes = 20
 const defaultHTTPFeedAllowedHosts = "localhost,127.0.0.1,::1,host.docker.internal,api.github.com"
 const defaultWhatsAppChunkMessages = 40
 
@@ -348,6 +360,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 
 	extractions := []models.SourceExtraction{}
+	pursuitOutcomes := []PursuitRoutingOutcome{}
 	added := 0
 	updated := 0
 	failed := 0
@@ -436,7 +449,11 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			recordFailure(item, "index update failed", errIndex)
 			continue
 		}
-		if errWorkflow := s.createWorkflowFromExtraction(source, extraction); errWorkflow != nil {
+		pursuitOutcome, errWorkflow := s.createWorkflowFromExtraction(source, extraction)
+		if pursuitOutcome != nil && len(pursuitOutcomes) < maxSyncPursuitOutcomes {
+			pursuitOutcomes = append(pursuitOutcomes, *pursuitOutcome)
+		}
+		if errWorkflow != nil {
 			recordFailure(item, "workflow intake failed", errWorkflow)
 			continue
 		}
@@ -482,7 +499,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 		s.audit(sourceID, action, job.Message)
 	}
-	return &SyncResult{Job: *job, Extractions: extractions, Message: job.Message, Errors: itemErrors}, err
+	return &SyncResult{Job: *job, Extractions: extractions, PursuitOutcomes: pursuitOutcomes, Message: job.Message, Errors: itemErrors}, err
 }
 
 func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error) {
@@ -1326,13 +1343,13 @@ func extractionCorrectionValue(label, value string) string {
 	return fmt.Sprintf("%s: %s.", label, compact(value, 260))
 }
 
-func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) error {
+func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) (*PursuitRoutingOutcome, error) {
 	if s.workflowService == nil {
-		return nil
+		return nil, nil
 	}
 	taskSignal := firstNonEmpty(extraction.Tasks, extraction.FollowUps)
 	if taskSignal == "" {
-		return nil
+		return nil, nil
 	}
 	input := strings.Join([]string{
 		firstNonEmpty(extraction.Summary, extraction.SourceLabel),
@@ -1360,24 +1377,46 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 	if err != nil {
 		if routed, pending := pursuit.IsCandidatePending(err); pending {
 			message := "actionable extraction created or matched a pursuit candidate; workflow creation awaits explicit acceptance"
+			outcome := &PursuitRoutingOutcome{ExtractionID: extraction.ID.String(), Status: "candidate_pending", Message: message}
 			if routed != nil && strings.TrimSpace(routed.Message) != "" {
 				message = routed.Message
+				outcome.Message = message
+			}
+			if routed != nil && routed.PursuitID != uuid.Nil {
+				outcome.PursuitID = routed.PursuitID.String()
 			}
 			s.audit(source.ID, "pursuit.intake_deferred", compact(message, 260))
-			return nil
+			return outcome, nil
 		}
 		if errors.Is(err, pursuit.ErrLifecycleRouterRequired) {
-			s.audit(source.ID, "pursuit.intake_deferred", "actionable extraction retained; configured pursuit linker is missing the lifecycle router")
-			return nil
+			message := "actionable extraction retained; configured pursuit linker is missing the lifecycle router"
+			s.audit(source.ID, "pursuit.intake_deferred", message)
+			return &PursuitRoutingOutcome{ExtractionID: extraction.ID.String(), Status: "routing_deferred", Message: message}, nil
 		}
 		s.audit(source.ID, "workflow.intake_failed", err.Error())
-		return err
+		return nil, err
+	}
+	outcome := &PursuitRoutingOutcome{ExtractionID: extraction.ID.String(), Status: "workflow_created", Message: "actionable extraction created a governed workflow"}
+	if record != nil && record.Item.ID != uuid.Nil {
+		outcome.WorkflowID = record.Item.ID.String()
 	}
 	if record != nil && !s.routesWorkflowThroughPursuits() {
-		s.autoLinkPursuitWorkflow(source, extraction, record, input)
+		if linked := s.autoLinkPursuitWorkflow(source, extraction, record, input); linked != nil && linked.PursuitID != uuid.Nil {
+			outcome.PursuitID = linked.PursuitID.String()
+			if linked.Linked {
+				outcome.Status = "pursuit_linked"
+				outcome.Message = "actionable extraction linked to a matching pursuit"
+			}
+		}
+	} else if record != nil && s.routesWorkflowThroughPursuits() {
+		outcome.Status = "pursuit_routed"
+		outcome.Message = "actionable extraction routed through the pursuit lifecycle"
+		if len(record.Pursuits) > 0 && record.Pursuits[0].ID != uuid.Nil {
+			outcome.PursuitID = record.Pursuits[0].ID.String()
+		}
 	}
 	s.audit(source.ID, "workflow.intake_created", "actionable extraction sent to workflow engine")
-	return nil
+	return outcome, nil
 }
 
 func sourceRawItemID(extraction *models.SourceExtraction) string {
@@ -1387,9 +1426,9 @@ func sourceRawItemID(extraction *models.SourceExtraction) string {
 	return extraction.RawItemID.String()
 }
 
-func (s *service) autoLinkPursuitWorkflow(source *models.ConnectedSource, extraction *models.SourceExtraction, record *workflow.WorkflowRecord, input string) {
+func (s *service) autoLinkPursuitWorkflow(source *models.ConnectedSource, extraction *models.SourceExtraction, record *workflow.WorkflowRecord, input string) *pursuit.AutoLinkResult {
 	if s.pursuitLinker == nil || source == nil || record == nil || record.Item.ID == uuid.Nil {
-		return
+		return nil
 	}
 	request := pursuit.AutoLinkWorkflowRequest{
 		OwnerIdentity:        source.OwnerIdentity,
@@ -1417,15 +1456,16 @@ func (s *service) autoLinkPursuitWorkflow(source *models.ConnectedSource, extrac
 	result, err := s.pursuitLinker.AutoLinkWorkflow(request)
 	if err != nil {
 		s.audit(source.ID, "pursuit.auto_link_failed", compact(err.Error(), 260))
-		return
+		return nil
 	}
 	if result != nil && result.Linked {
 		s.audit(source.ID, "pursuit.auto_linked", fmt.Sprintf("workflow %s linked to pursuit %s with %.2f confidence", record.Item.ID, result.PursuitID, result.Score))
-		return
+		return result
 	}
 	if result != nil && result.Message != "" {
 		s.audit(source.ID, "pursuit.auto_link_skipped", result.Message)
 	}
+	return result
 }
 
 func (s *service) autoLinkPursuitMemory(source *models.ConnectedSource, extraction *models.SourceExtraction, memoryRecord *models.ContextMemory) {
@@ -1476,7 +1516,7 @@ func (s *service) reconcileWorkflowFromExtraction(extraction *models.SourceExtra
 		s.audit(extraction.SourceID, "workflow.reconcile_failed", err.Error())
 		return err
 	}
-	if err := s.createWorkflowFromExtraction(source, extraction); err != nil {
+	if _, err := s.createWorkflowFromExtraction(source, extraction); err != nil {
 		s.audit(extraction.SourceID, "workflow.reconcile_failed", err.Error())
 		return err
 	}

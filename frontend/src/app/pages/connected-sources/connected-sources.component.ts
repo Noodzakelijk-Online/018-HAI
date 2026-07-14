@@ -9,6 +9,7 @@ import {
   ISourceAuditLog,
   ISourceConnector,
   ISourceExtraction,
+  ISourcePursuitRoutingOutcome,
   ISourceSearchResult,
   ISourceSyncJob,
   ISourceSyncResult,
@@ -40,6 +41,7 @@ export class ConnectedSourcesComponent implements OnInit {
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
   searchResult?: ISourceSearchResult;
+  lastSyncResult?: ISourceSyncResult;
   includeDisabled = true;
   includeArchived = false;
   loading = false;
@@ -334,6 +336,31 @@ export class ConnectedSourcesComponent implements OnInit {
 
   recentSyncJobs(): ISourceSyncJob[] {
     return this.syncJobs.slice(0, 6);
+  }
+
+  pursuitRoutingOutcomes(): ISourcePursuitRoutingOutcome[] {
+    return this.lastSyncResult?.pursuitOutcomes || [];
+  }
+
+  pursuitRoutingLabel(outcome: ISourcePursuitRoutingOutcome): string {
+    switch (outcome.status) {
+      case 'candidate_pending':
+        return 'Decision needed';
+      case 'pursuit_linked':
+        return 'Pursuit linked';
+      case 'pursuit_routed':
+        return 'Governed workflow routed';
+      case 'routing_deferred':
+        return 'Routing needs repair';
+      default:
+        return 'Workflow created';
+    }
+  }
+
+  openPursuitOutcome(outcome: ISourcePursuitRoutingOutcome): void {
+    this.router.navigate(['/pursuits'], {
+      queryParams: outcome.pursuitId ? { selected: outcome.pursuitId } : undefined,
+    });
   }
 
   latestJobFor(source: IConnectedSource): ISourceSyncJob | undefined {
@@ -800,6 +827,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   private notifySyncResult(label: string, result: ISourceSyncResult): void {
+    this.lastSyncResult = result;
     const summary = `${result.job.itemsSeen} seen, ${result.job.itemsFailed || 0} failed. ${result.message}`;
     if (result.job.status === 'completed') {
       this.notification.success(label, summary);
