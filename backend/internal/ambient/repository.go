@@ -13,7 +13,9 @@ import (
 type Repository interface {
 	EnsureNeeds(needs []models.AmbientNeed) error
 	Needs() ([]models.AmbientNeed, error)
-	UpdateNeed(need *models.AmbientNeed) (*models.AmbientNeed, error)
+	NeedOverridesForOwner(ownerIdentity string) ([]models.AmbientNeedOverride, error)
+	FindNeedOverride(ownerIdentity, needKey string) (*models.AmbientNeedOverride, error)
+	SaveNeedOverride(override *models.AmbientNeedOverride) (*models.AmbientNeedOverride, error)
 	FindOpportunity(id uuid.UUID) (*models.AmbientOpportunity, error)
 	FindOpportunityByFingerprint(fingerprint string) (*models.AmbientOpportunity, error)
 	SaveOpportunity(opportunity *models.AmbientOpportunity) (*models.AmbientOpportunity, error)
@@ -60,11 +62,29 @@ func (r *GormRepository) Needs() ([]models.AmbientNeed, error) {
 	return needs, err
 }
 
-func (r *GormRepository) UpdateNeed(need *models.AmbientNeed) (*models.AmbientNeed, error) {
-	if err := r.db.Save(need).Error; err != nil {
+func (r *GormRepository) NeedOverridesForOwner(ownerIdentity string) ([]models.AmbientNeedOverride, error) {
+	var overrides []models.AmbientNeedOverride
+	err := r.db.Where("owner_identity = ?", ownerIdentity).Order("need_key asc").Find(&overrides).Error
+	return overrides, err
+}
+
+func (r *GormRepository) FindNeedOverride(ownerIdentity, needKey string) (*models.AmbientNeedOverride, error) {
+	var override models.AmbientNeedOverride
+	err := r.db.Where("owner_identity = ? AND need_key = ?", ownerIdentity, needKey).First(&override).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	return need, nil
+	return &override, nil
+}
+
+func (r *GormRepository) SaveNeedOverride(override *models.AmbientNeedOverride) (*models.AmbientNeedOverride, error) {
+	if err := r.db.Save(override).Error; err != nil {
+		return nil, err
+	}
+	return override, nil
 }
 
 func (r *GormRepository) FindOpportunity(id uuid.UUID) (*models.AmbientOpportunity, error) {

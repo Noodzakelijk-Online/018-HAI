@@ -164,6 +164,7 @@ func TestDismissOpportunityWithoutUsefulNoteDoesNotStoreMemory(t *testing.T) {
 type ambientRepositoryStub struct {
 	opportunity *models.AmbientOpportunity
 	needs       []models.AmbientNeed
+	overrides   []models.AmbientNeedOverride
 	scans       []models.AmbientScan
 }
 
@@ -175,8 +176,36 @@ func (r *ambientRepositoryStub) Needs() ([]models.AmbientNeed, error) {
 	return r.needs, nil
 }
 
-func (r *ambientRepositoryStub) UpdateNeed(need *models.AmbientNeed) (*models.AmbientNeed, error) {
-	return need, nil
+func (r *ambientRepositoryStub) NeedOverridesForOwner(ownerIdentity string) ([]models.AmbientNeedOverride, error) {
+	result := make([]models.AmbientNeedOverride, 0, len(r.overrides))
+	for _, override := range r.overrides {
+		if override.OwnerIdentity == ownerIdentity {
+			result = append(result, override)
+		}
+	}
+	return result, nil
+}
+
+func (r *ambientRepositoryStub) FindNeedOverride(ownerIdentity, needKey string) (*models.AmbientNeedOverride, error) {
+	for _, override := range r.overrides {
+		if override.OwnerIdentity == ownerIdentity && override.NeedKey == needKey {
+			copy := override
+			return &copy, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *ambientRepositoryStub) SaveNeedOverride(override *models.AmbientNeedOverride) (*models.AmbientNeedOverride, error) {
+	copy := *override
+	for index, existing := range r.overrides {
+		if existing.OwnerIdentity == copy.OwnerIdentity && existing.NeedKey == copy.NeedKey {
+			r.overrides[index] = copy
+			return &copy, nil
+		}
+	}
+	r.overrides = append(r.overrides, copy)
+	return &copy, nil
 }
 
 func (r *ambientRepositoryStub) FindOpportunity(uuid.UUID) (*models.AmbientOpportunity, error) {

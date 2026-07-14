@@ -288,6 +288,72 @@ func TestScanForOwnerBuildsPrivatePursuitProposalsOnly(t *testing.T) {
 	}
 }
 
+func TestAmbientNeedProfilesArePrivateToEachOwner(t *testing.T) {
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	engine := NewService(repo, nil, nil).(*service)
+	priority := 17
+	note := "Prioritize stabilizing this account's legal and financial exposure."
+
+	updated, err := engine.UpdateNeedForOwner("alice", "safety", NeedUpdateRequest{PriorityWeight: &priority, Notes: &note})
+	if err != nil {
+		t.Fatalf("UpdateNeedForOwner: %v", err)
+	}
+	if updated.PriorityWeight != priority || updated.Notes != note {
+		t.Fatalf("alice update = %#v", updated)
+	}
+
+	aliceNeeds, err := engine.needsForOwner("alice")
+	if err != nil {
+		t.Fatalf("alice needs: %v", err)
+	}
+	bobNeeds, err := engine.needsForOwner("bob")
+	if err != nil {
+		t.Fatalf("bob needs: %v", err)
+	}
+	if findAmbientNeed(aliceNeeds, "safety").PriorityWeight != priority {
+		t.Fatalf("alice safety profile was not applied: %#v", aliceNeeds)
+	}
+	if findAmbientNeed(bobNeeds, "safety").PriorityWeight != 100 {
+		t.Fatalf("bob did not retain the system default: %#v", bobNeeds)
+	}
+	if findAmbientNeed(bobNeeds, "safety").Notes != "" {
+		t.Fatalf("bob received alice's ambient notes: %#v", bobNeeds)
+	}
+}
+
+func TestOwnerScanUsesPrivateNeedProfile(t *testing.T) {
+	pursuitID := uuid.New()
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	engine := NewServiceWithPursuits(repo, nil, nil, &ambientPursuitSpy{
+		dashboard: &pursuitpkg.Dashboard{PlanningNeeded: []pursuitpkg.PursuitListItem{{
+			Pursuit:    models.Pursuit{ID: pursuitID, OwnerIdentity: "alice", Title: "Draft a future plan", NeedCategory: "growth", RiskLevel: "low", Confidence: 0.8, PriorityScore: 72},
+			NextAction: "Prepare a safe first plan.",
+		}}},
+		pursuits: []models.Pursuit{{ID: pursuitID, OwnerIdentity: "alice", Status: pursuitpkg.StatusActive}},
+	}).(*service)
+	disabled := false
+	if _, err := engine.UpdateNeedForOwner("alice", "growth", NeedUpdateRequest{Enabled: &disabled}); err != nil {
+		t.Fatalf("disable Alice growth need: %v", err)
+	}
+
+	scan, err := engine.ScanForOwner("alice", "manual")
+	if err != nil {
+		t.Fatalf("ScanForOwner: %v", err)
+	}
+	if scan.Created != 0 || repo.opportunity != nil {
+		t.Fatalf("disabled private need still produced a proposal: scan=%#v opportunity=%#v", scan, repo.opportunity)
+	}
+}
+
+func findAmbientNeed(needs []models.AmbientNeed, key string) models.AmbientNeed {
+	for _, need := range needs {
+		if need.Key == key {
+			return need
+		}
+	}
+	return models.AmbientNeed{}
+}
+
 func testNeedMap() map[string]models.AmbientNeed {
 	result := map[string]models.AmbientNeed{}
 	for _, need := range defaultNeeds() {

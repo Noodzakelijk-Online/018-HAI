@@ -47,12 +47,17 @@ func (h *Handler) Scan(c *gin.Context) {
 }
 
 func (h *Handler) UpdateNeed(c *gin.Context) {
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to update ambient planning preferences"})
+		return
+	}
 	var request NeedUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.service.UpdateNeed(c.Param("key"), request)
+	result, err := h.service.UpdateNeedForOwner(ownerIdentity, c.Param("key"), request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

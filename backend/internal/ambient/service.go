@@ -93,7 +93,7 @@ type Service interface {
 	OverviewForOwner(ownerIdentity string) (*Overview, error)
 	Scan(trigger string) (*models.AmbientScan, error)
 	ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error)
-	UpdateNeed(key string, request NeedUpdateRequest) (*models.AmbientNeed, error)
+	UpdateNeedForOwner(ownerIdentity, key string, request NeedUpdateRequest) (*models.AmbientNeed, error)
 	Accept(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error)
 	Dismiss(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error)
 }
@@ -120,10 +120,7 @@ func (s *service) Overview() (*Overview, error) {
 }
 
 func (s *service) OverviewForOwner(ownerIdentity string) (*Overview, error) {
-	if err := s.ensureNeeds(); err != nil {
-		return nil, err
-	}
-	needs, err := s.repo.Needs()
+	needs, err := s.needsForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +351,7 @@ func (s *service) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientSc
 		_, _ = s.repo.UpdateScan(scan)
 		return scan, scanErr
 	}
-	needs, err := s.repo.Needs()
+	needs, err := s.needsForOwner(ownerIdentity)
 	if err != nil {
 		return fail(err)
 	}
@@ -449,34 +446,59 @@ func (s *service) storeCandidates(scan *models.AmbientScan, candidates []models.
 	return nil
 }
 
-func (s *service) UpdateNeed(key string, request NeedUpdateRequest) (*models.AmbientNeed, error) {
+func (s *service) UpdateNeedForOwner(ownerIdentity, key string, request NeedUpdateRequest) (*models.AmbientNeed, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	key = strings.TrimSpace(key)
+	if ownerIdentity == "" {
+		return nil, fmt.Errorf("an authenticated owner is required to update ambient planning preferences")
+	}
 	if err := s.ensureNeeds(); err != nil {
 		return nil, err
 	}
-	needs, err := s.repo.Needs()
+	defaults, err := s.repo.Needs()
 	if err != nil {
 		return nil, err
 	}
-	for _, need := range needs {
-		if need.Key != strings.TrimSpace(key) {
+	for _, need := range defaults {
+		if need.Key != key {
 			continue
 		}
+		override, err := s.repo.FindNeedOverride(ownerIdentity, key)
+		if err != nil {
+			return nil, err
+		}
+		if override == nil {
+			override = &models.AmbientNeedOverride{
+				OwnerIdentity:  ownerIdentity,
+				NeedKey:        need.Key,
+				CurrentLevel:   need.CurrentLevel,
+				TargetLevel:    need.TargetLevel,
+				PriorityWeight: need.PriorityWeight,
+				Enabled:        need.Enabled,
+				Notes:          need.Notes,
+			}
+		}
 		if request.CurrentLevel != nil {
-			need.CurrentLevel = clamp(*request.CurrentLevel, 0, 100)
+			override.CurrentLevel = clamp(*request.CurrentLevel, 0, 100)
 		}
 		if request.TargetLevel != nil {
-			need.TargetLevel = clamp(*request.TargetLevel, 0, 100)
+			override.TargetLevel = clamp(*request.TargetLevel, 0, 100)
 		}
 		if request.PriorityWeight != nil {
-			need.PriorityWeight = clamp(*request.PriorityWeight, 0, 100)
+			override.PriorityWeight = clamp(*request.PriorityWeight, 0, 100)
 		}
 		if request.Enabled != nil {
-			need.Enabled = *request.Enabled
+			override.Enabled = *request.Enabled
 		}
 		if request.Notes != nil {
-			need.Notes = strings.TrimSpace(*request.Notes)
+			override.Notes = strings.TrimSpace(*request.Notes)
 		}
-		return s.repo.UpdateNeed(&need)
+		saved, err := s.repo.SaveNeedOverride(override)
+		if err != nil {
+			return nil, err
+		}
+		resolved := applyNeedOverride(need, *saved)
+		return &resolved, nil
 	}
 	return nil, fmt.Errorf("ambient need %q not found", key)
 }
@@ -662,6 +684,46 @@ func (s *service) rememberOpportunityFeedback(item *models.AmbientOpportunity, o
 
 func (s *service) ensureNeeds() error {
 	return s.repo.EnsureNeeds(defaultNeeds())
+}
+
+func (s *service) needsForOwner(ownerIdentity string) ([]models.AmbientNeed, error) {
+	if err := s.ensureNeeds(); err != nil {
+		return nil, err
+	}
+	needs, err := s.repo.Needs()
+	if err != nil {
+		return nil, err
+	}
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return needs, nil
+	}
+	overrides, err := s.repo.NeedOverridesForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	byNeedKey := make(map[string]models.AmbientNeedOverride, len(overrides))
+	for _, override := range overrides {
+		byNeedKey[override.NeedKey] = override
+	}
+	resolved := make([]models.AmbientNeed, len(needs))
+	for index, need := range needs {
+		if override, ok := byNeedKey[need.Key]; ok {
+			resolved[index] = applyNeedOverride(need, override)
+			continue
+		}
+		resolved[index] = need
+	}
+	return resolved, nil
+}
+
+func applyNeedOverride(need models.AmbientNeed, override models.AmbientNeedOverride) models.AmbientNeed {
+	need.CurrentLevel = override.CurrentLevel
+	need.TargetLevel = override.TargetLevel
+	need.PriorityWeight = override.PriorityWeight
+	need.Enabled = override.Enabled
+	need.Notes = override.Notes
+	return need
 }
 
 func defaultNeeds() []models.AmbientNeed {

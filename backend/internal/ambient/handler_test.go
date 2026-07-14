@@ -102,6 +102,46 @@ func TestScanHandlerRequiresVerifiedOwner(t *testing.T) {
 	}
 }
 
+func TestUpdateNeedHandlerRequiresVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(&ambientRepositoryStub{needs: defaultNeeds()}, nil, nil))
+	engine := gin.New()
+	engine.PATCH("/ambient/needs/:key", handler.UpdateNeed)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/ambient/needs/safety", strings.NewReader(`{"priorityWeight": 100}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("update status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+}
+
+func TestUpdateNeedHandlerStoresPrivateOwnerProfile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	handler := NewHandler(NewService(repo, nil, nil))
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	engine.PATCH("/ambient/needs/:key", handler.UpdateNeed)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/ambient/needs/safety", strings.NewReader(`{"priorityWeight": 100}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.overrides) != 1 || repo.overrides[0].OwnerIdentity != "alice" || repo.overrides[0].NeedKey != "safety" || repo.overrides[0].PriorityWeight != 100 {
+		t.Fatalf("stored override = %#v", repo.overrides)
+	}
+}
+
 func TestScanHandlerCreatesPrivatePursuitProposal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pursuitID := uuid.New()

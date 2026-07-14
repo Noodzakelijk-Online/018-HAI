@@ -20,6 +20,21 @@ type AmbientNeed struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
+// AmbientNeedOverride stores a private copy of a planning preference. The
+// shared AmbientNeed rows remain the system defaults for ownerless workers.
+type AmbientNeedOverride struct {
+	ID             uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	OwnerIdentity  string    `gorm:"type:varchar(255);not null;uniqueIndex:idx_ambient_need_override_owner_key" json:"-"`
+	NeedKey        string    `gorm:"type:varchar(80);not null;uniqueIndex:idx_ambient_need_override_owner_key" json:"needKey"`
+	CurrentLevel   int       `gorm:"default:0" json:"currentLevel"`
+	TargetLevel    int       `gorm:"default:100" json:"targetLevel"`
+	PriorityWeight int       `gorm:"default:50" json:"priorityWeight"`
+	Enabled        bool      `gorm:"default:true;index" json:"enabled"`
+	Notes          string    `gorm:"type:text" json:"notes,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
 type AmbientOpportunity struct {
 	ID               uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
 	OwnerIdentity    string     `gorm:"type:varchar(255);index" json:"ownerIdentity,omitempty"`
