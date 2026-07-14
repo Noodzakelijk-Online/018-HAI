@@ -263,6 +263,53 @@ func TestAcceptPursuitOpportunityRetriesLinkWithoutDuplicatingWorkflow(t *testin
 	}
 }
 
+func TestAcceptNonPursuitOpportunityRoutesExistingWorkflowIntoPursuit(t *testing.T) {
+	pursuitID := uuid.New()
+	workflowID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:               uuid.New(),
+		OwnerIdentity:    "alice",
+		Status:           StatusProposed,
+		NeedKey:          "safety",
+		Title:            "Resolve conflicting account evidence",
+		Rationale:        "A source-backed contradiction needs review before it can guide action.",
+		NextAction:       "Review the conflicting evidence and prepare the safest next step.",
+		SourceType:       "memory_insight",
+		SourceID:         uuid.NewString(),
+		Confidence:       88,
+		RequiresApproval: true,
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{recordID: workflowID}
+	pursuitSpy := &ambientPursuitSpy{autoLinkResult: &pursuitpkg.AutoLinkResult{Linked: true, Created: true, PursuitID: pursuitID}}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, pursuitSpy)
+
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "verified-operator"})
+	if err != nil {
+		t.Fatalf("Accept returned error: %v", err)
+	}
+	if accepted.Status != StatusAccepted || accepted.WorkflowID == nil || *accepted.WorkflowID != workflowID {
+		t.Fatalf("accepted opportunity = %#v", accepted)
+	}
+	if len(workflowSpy.intakeRequests) != 1 {
+		t.Fatalf("workflow intake calls = %d, want 1", len(workflowSpy.intakeRequests))
+	}
+	if len(pursuitSpy.autoLinkRequests) != 1 {
+		t.Fatalf("auto-link requests = %#v, want one", pursuitSpy.autoLinkRequests)
+	}
+	routed := pursuitSpy.autoLinkRequests[0]
+	if routed.WorkflowID != workflowID || routed.SourceType != pursuitpkg.LinkAmbientOpportunity || routed.SourceID != opportunity.ID.String() || !routed.AllowCreateCandidate {
+		t.Fatalf("ambient pursuit route = %#v", routed)
+	}
+	if len(pursuitSpy.links) != 1 || pursuitSpy.linkedPursuitIDs[0] != pursuitID {
+		t.Fatalf("accepted proposal metadata link = ids=%#v links=%#v", pursuitSpy.linkedPursuitIDs, pursuitSpy.links)
+	}
+	link := pursuitSpy.links[0]
+	if link.LinkType != pursuitpkg.LinkAmbientOpportunity || link.LinkID != opportunity.ID.String() || link.Relationship != "ambient_proposal_accepted" {
+		t.Fatalf("accepted proposal link = %#v", link)
+	}
+}
+
 func TestPursuitOpportunityOwnerCannotAcceptAnotherOwnersOpportunity(t *testing.T) {
 	pursuitID := uuid.New()
 	opportunity := &models.AmbientOpportunity{
@@ -440,6 +487,9 @@ type ambientPursuitSpy struct {
 	linkedPursuitIDs []uuid.UUID
 	owners           map[uuid.UUID]string
 	linkFailures     int
+	autoLinkRequests []pursuitpkg.AutoLinkWorkflowRequest
+	autoLinkResult   *pursuitpkg.AutoLinkResult
+	autoLinkErr      error
 }
 
 func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {
@@ -484,6 +534,17 @@ func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (
 		SourceLabel:  request.SourceLabel,
 		Confidence:   request.Confidence,
 	}, nil
+}
+
+func (s *ambientPursuitSpy) AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error) {
+	s.autoLinkRequests = append(s.autoLinkRequests, request)
+	if s.autoLinkErr != nil {
+		return nil, s.autoLinkErr
+	}
+	if s.autoLinkResult != nil {
+		return s.autoLinkResult, nil
+	}
+	return &pursuitpkg.AutoLinkResult{}, nil
 }
 
 func (s *ambientPursuitSpy) DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuitpkg.PursuitDetail, error) {

@@ -287,7 +287,7 @@ export class AmbientBrainComponent implements OnInit {
         this.notification.success(
           accept ? 'Opportunity accepted' : 'Opportunity dismissed',
           accept
-            ? 'The item is linked to the controlled workflow engine.'
+            ? 'The item is linked to controlled workflow work and, when the signal is sufficient, a matched or reviewable pursuit.'
             : 'The item is hidden until its cooldown expires.'
         );
         this.refresh();

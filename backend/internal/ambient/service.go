@@ -88,6 +88,13 @@ type PursuitService interface {
 	DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuitpkg.PursuitDetail, error)
 }
 
+// pursuitWorkflowAutoLinker is deliberately optional. It lets the ambient
+// engine attach already-created controlled workflow work to the native pursuit
+// layer without requiring a second intake or task-execution path.
+type pursuitWorkflowAutoLinker interface {
+	AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error)
+}
+
 type Service interface {
 	Overview() (*Overview, error)
 	OverviewForOwner(ownerIdentity string) (*Overview, error)
@@ -569,8 +576,11 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 }
 
 func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity, workflowID uuid.UUID, actor string) error {
-	if s.pursuits == nil || item == nil || workflowID == uuid.Nil || !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
+	if s.pursuits == nil || item == nil || workflowID == uuid.Nil {
 		return nil
+	}
+	if !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
+		return s.routeAcceptedOpportunityToPursuit(item, workflowID, actor)
 	}
 	pursuitID, err := uuid.Parse(strings.TrimSpace(item.SourceID))
 	if err != nil {
@@ -589,8 +599,47 @@ func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity
 	if err != nil {
 		return fmt.Errorf("link accepted ambient workflow to pursuit: %w", err)
 	}
+	if err := s.linkAmbientOpportunityMetadata(pursuitID, item, actor); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *service) routeAcceptedOpportunityToPursuit(item *models.AmbientOpportunity, workflowID uuid.UUID, actor string) error {
+	autoLinker, ok := s.pursuits.(pursuitWorkflowAutoLinker)
+	if !ok {
+		return nil
+	}
 	sourceURI := firstNonEmpty(item.SourceURI, "ambient://opportunities/"+item.ID.String())
-	_, err = s.pursuits.Link(pursuitID, pursuitpkg.LinkRequest{
+	result, err := autoLinker.AutoLinkWorkflow(pursuitpkg.AutoLinkWorkflowRequest{
+		OwnerIdentity:        item.OwnerIdentity,
+		WorkflowID:           workflowID,
+		Input:                strings.TrimSpace(strings.Join([]string{item.Title, item.Rationale, item.NextAction}, "\n")),
+		SourceType:           pursuitpkg.LinkAmbientOpportunity,
+		SourceID:             item.ID.String(),
+		SourceURI:            sourceURI,
+		SourceLabel:          item.Title,
+		Actor:                actor,
+		AllowCreateCandidate: true,
+	})
+	if err != nil {
+		return fmt.Errorf("route accepted ambient workflow to pursuit: %w", err)
+	}
+	if result == nil || !result.Linked || result.PursuitID == uuid.Nil {
+		return nil
+	}
+	if err := s.linkAmbientOpportunityMetadata(result.PursuitID, item, actor); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *service) linkAmbientOpportunityMetadata(pursuitID uuid.UUID, item *models.AmbientOpportunity, actor string) error {
+	if item == nil || pursuitID == uuid.Nil {
+		return nil
+	}
+	sourceURI := firstNonEmpty(item.SourceURI, "ambient://opportunities/"+item.ID.String())
+	_, err := s.pursuits.Link(pursuitID, pursuitpkg.LinkRequest{
 		OwnerIdentity: item.OwnerIdentity,
 		LinkType:      pursuitpkg.LinkAmbientOpportunity,
 		LinkID:        item.ID.String(),
