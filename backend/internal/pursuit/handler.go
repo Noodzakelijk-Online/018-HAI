@@ -126,12 +126,19 @@ func (h *Handler) Archive(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Archived bool   `json:"archived"`
+		Archived *bool  `json:"archived"`
 		Actor    string `json:"actor,omitempty"`
 	}
-	_ = c.ShouldBindJSON(&request)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if request.Archived == nil || !*request.Archived {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "archive requests must set archived=true; use the explicit reopen action to reactivate a pursuit"})
+		return
+	}
 	request.Actor = verifiedActor(c, "operator")
-	record, err := h.service.Archive(id, request.Archived, request.Actor)
+	record, err := h.service.Archive(id, true, request.Actor)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
