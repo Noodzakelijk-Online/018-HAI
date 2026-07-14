@@ -123,7 +123,14 @@ it is not supported production wiring.
 Direct `/task/*` planning and run sessions are useful for bounded operator
 work, but their full plan/review history is process-local. When explicitly
 scoped to a valid pursuit, HAI also persists a compact task-attempt projection;
-the workflow remains the restart-safe execution ledger.
+the workflow remains the restart-safe execution ledger. Workflow-owned runs
+retain the same pursuit context through planning and verification, but write
+only that canonical workflow ledger rather than a duplicate task-attempt
+record.
+
+Refreshing a pursuit summary is documentation activity, not operational
+progress. It cannot reset the pursuit's last-activity signal or remove stale
+work from the command dashboard.
 
 ## Safety and Ownership
 
