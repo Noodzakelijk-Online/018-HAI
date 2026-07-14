@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/models"
 	pursuitpkg "automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/workflow"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -214,6 +215,44 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	}
 }
 
+func TestPursuitOpportunityOwnerCannotAcceptAnotherOwnersOpportunity(t *testing.T) {
+	pursuitID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:         uuid.New(),
+		Status:     StatusProposed,
+		NeedKey:    "safety",
+		Title:      "Private pursuit decision",
+		Rationale:  "Requires review.",
+		NextAction: "Review private evidence.",
+		SourceType: "pursuit_decision",
+		SourceID:   pursuitID.String(),
+	}
+	workflowSpy := &ambientWorkflowSpy{}
+	pursuitSpy := &ambientPursuitSpy{owners: map[uuid.UUID]string{pursuitID: "bob"}}
+	engine := NewServiceWithPursuits(&ambientRepositoryStub{opportunity: opportunity}, workflowSpy, nil, pursuitSpy)
+
+	if _, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice"}); err == nil {
+		t.Fatal("expected cross-owner pursuit opportunity acceptance to be rejected")
+	}
+	if len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("cross-owner acceptance created workflow work: %#v", workflowSpy.intakeRequests)
+	}
+}
+
+func TestPursuitOpportunitiesAreFilteredForAuthenticatedOwner(t *testing.T) {
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	engine := NewServiceWithPursuits(nil, nil, nil, &ambientPursuitSpy{owners: map[uuid.UUID]string{aliceID: "alice", bobID: "bob"}}).(*service)
+	visible := engine.visibleOpportunities("alice", []models.AmbientOpportunity{
+		{ID: uuid.New(), SourceType: "pursuit_stale", SourceID: aliceID.String()},
+		{ID: uuid.New(), SourceType: "pursuit_stale", SourceID: bobID.String()},
+		{ID: uuid.New(), SourceType: "workflow", SourceID: "shared-workflow"},
+	})
+	if len(visible) != 2 || visible[0].SourceID != aliceID.String() || visible[1].SourceType != "workflow" {
+		t.Fatalf("owner-visible opportunities = %#v", visible)
+	}
+}
+
 func testNeedMap() map[string]models.AmbientNeed {
 	result := map[string]models.AmbientNeed{}
 	for _, need := range defaultNeeds() {
@@ -255,6 +294,7 @@ type ambientPursuitSpy struct {
 	dashboard        *pursuitpkg.Dashboard
 	links            []pursuitpkg.LinkRequest
 	linkedPursuitIDs []uuid.UUID
+	owners           map[uuid.UUID]string
 }
 
 func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {
@@ -281,6 +321,13 @@ func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (
 		SourceLabel:  request.SourceLabel,
 		Confidence:   request.Confidence,
 	}, nil
+}
+
+func (s *ambientPursuitSpy) DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuitpkg.PursuitDetail, error) {
+	if owner, found := s.owners[id]; found && owner != "" && owner != ownerIdentity {
+		return nil, errors.New("pursuit not found")
+	}
+	return &pursuitpkg.PursuitDetail{Pursuit: models.Pursuit{ID: id, OwnerIdentity: ownerIdentity}}, nil
 }
 
 func TestClosedPursuitOpportunityUpdatesCompleteOnlyOpenPursuitWork(t *testing.T) {

@@ -66,7 +66,8 @@ type NeedUpdateRequest struct {
 }
 
 type ResolutionRequest struct {
-	Note string `json:"note,omitempty"`
+	Note          string `json:"note,omitempty"`
+	OwnerIdentity string `json:"-"`
 }
 
 type WorkflowService interface {
@@ -81,10 +82,12 @@ type PursuitService interface {
 	Dashboard() (*pursuitpkg.Dashboard, error)
 	List(includeArchived bool) ([]models.Pursuit, error)
 	Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error)
+	DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuitpkg.PursuitDetail, error)
 }
 
 type Service interface {
 	Overview() (*Overview, error)
+	OverviewForOwner(ownerIdentity string) (*Overview, error)
 	Scan(trigger string) (*models.AmbientScan, error)
 	UpdateNeed(key string, request NeedUpdateRequest) (*models.AmbientNeed, error)
 	Accept(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error)
@@ -109,6 +112,10 @@ func NewServiceWithPursuits(repo Repository, workflows WorkflowService, memoryEn
 }
 
 func (s *service) Overview() (*Overview, error) {
+	return s.OverviewForOwner("")
+}
+
+func (s *service) OverviewForOwner(ownerIdentity string) (*Overview, error) {
 	if err := s.ensureNeeds(); err != nil {
 		return nil, err
 	}
@@ -120,6 +127,7 @@ func (s *service) Overview() (*Overview, error) {
 	if err != nil {
 		return nil, err
 	}
+	opportunities = s.visibleOpportunities(ownerIdentity, opportunities)
 	scans, err := s.repo.Scans(12)
 	if err != nil {
 		return nil, err
@@ -342,6 +350,9 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensurePursuitOpportunityVisible(*item, request.OwnerIdentity); err != nil {
+		return nil, err
+	}
 	if item.Status == StatusCompleted {
 		return item, nil
 	}
@@ -429,6 +440,9 @@ func (s *service) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.Ambi
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensurePursuitOpportunityVisible(*item, request.OwnerIdentity); err != nil {
+		return nil, err
+	}
 	if item.Status == StatusDismissed {
 		return item, nil
 	}
@@ -445,6 +459,33 @@ func (s *service) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.Ambi
 	}
 	s.rememberOpportunityFeedback(saved, "ambient_opportunity_dismissed", request.Note)
 	return saved, nil
+}
+
+func (s *service) visibleOpportunities(ownerIdentity string, opportunities []models.AmbientOpportunity) []models.AmbientOpportunity {
+	if strings.TrimSpace(ownerIdentity) == "" || s.pursuits == nil {
+		return opportunities
+	}
+	visible := make([]models.AmbientOpportunity, 0, len(opportunities))
+	for _, item := range opportunities {
+		if s.ensurePursuitOpportunityVisible(item, ownerIdentity) == nil {
+			visible = append(visible, item)
+		}
+	}
+	return visible
+}
+
+func (s *service) ensurePursuitOpportunityVisible(item models.AmbientOpportunity, ownerIdentity string) error {
+	if strings.TrimSpace(ownerIdentity) == "" || s.pursuits == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.SourceType)), "pursuit") {
+		return nil
+	}
+	pursuitID, err := uuid.Parse(strings.TrimSpace(item.SourceID))
+	if err != nil {
+		return fmt.Errorf("ambient opportunity not found")
+	}
+	if _, err := s.pursuits.DetailForOwner(ownerIdentity, pursuitID); err != nil {
+		return fmt.Errorf("ambient opportunity not found")
+	}
+	return nil
 }
 
 func (s *service) rememberOpportunityFeedback(item *models.AmbientOpportunity, signal, note string) {

@@ -1,9 +1,11 @@
 package ambient
 
 import (
+	"automation-hub-backend/internal/identity"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -18,7 +20,7 @@ func NewHandler(service Service) *Handler {
 }
 
 func (h *Handler) Overview(c *gin.Context) {
-	result, err := h.service.Overview()
+	result, err := h.service.OverviewForOwner(verifiedOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -72,6 +74,7 @@ func (h *Handler) resolve(c *gin.Context, accept bool) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": bindErr.Error()})
 		return
 	}
+	request.OwnerIdentity = verifiedOwner(c)
 	var result interface{}
 	if accept {
 		result, err = h.service.Accept(id, request)
@@ -83,4 +86,13 @@ func (h *Handler) resolve(c *gin.Context, accept bool) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func verifiedOwner(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
 }
