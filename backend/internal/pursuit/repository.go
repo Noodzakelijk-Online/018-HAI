@@ -19,6 +19,7 @@ type Repository interface {
 	DeleteLink(pursuitID uuid.UUID, id uuid.UUID) error
 	FindLinks(pursuitID uuid.UUID) ([]models.PursuitLink, error)
 	FindLink(linkType, linkID string) (*models.PursuitLink, error)
+	FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error)
 	CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error)
 	FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error)
 	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
@@ -131,6 +132,14 @@ func (r *GormRepository) FindLinks(pursuitID uuid.UUID) ([]models.PursuitLink, e
 func (r *GormRepository) FindLink(linkType, linkID string) (*models.PursuitLink, error) {
 	var link models.PursuitLink
 	if err := r.DB.Where("link_type = ? AND link_id = ?", linkType, linkID).Order("confidence DESC, created_at DESC").First(&link).Error; err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
+func (r *GormRepository) FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error) {
+	var link models.PursuitLink
+	if err := r.DB.Where("source_uri = ?", sourceURI).Order("confidence DESC, created_at DESC").First(&link).Error; err != nil {
 		return nil, err
 	}
 	return &link, nil

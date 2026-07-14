@@ -1123,6 +1123,13 @@ func (s *service) Match(request MatchRequest) ([]MatchCandidate, error) {
 			}
 		}
 	}
+	if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
+		if link, err := s.repo.FindLinkBySourceURI(sourceURI); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil {
+				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.97, Reasons: []string{"source URI is already linked to this pursuit"}, Confidence: "high"}}, nil
+			}
+		}
+	}
 	query := normalizeWords(request.Input + " " + request.ProjectKey + " " + request.SourceURI)
 	result := []MatchCandidate{}
 	for _, pursuit := range pursuits {

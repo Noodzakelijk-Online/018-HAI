@@ -114,6 +114,21 @@ func TestMatchUsesProjectAndExistingSourceLink(t *testing.T) {
 	if len(sourceMatches) != 1 || sourceMatches[0].Score < 0.9 {
 		t.Fatalf("source match = %#v", sourceMatches)
 	}
+	if _, err := service.Link(created.ID, LinkRequest{
+		LinkType:     LinkWorkflow,
+		LinkID:       uuid.New().String(),
+		Relationship: "operational_work",
+		SourceURI:    "local://email/asr-claim-12",
+	}); err != nil {
+		t.Fatalf("Link source URI returned error: %v", err)
+	}
+	uriMatches, err := service.Match(MatchRequest{SourceURI: "local://email/asr-claim-12"})
+	if err != nil {
+		t.Fatalf("Match source URI returned error: %v", err)
+	}
+	if len(uriMatches) != 1 || uriMatches[0].Pursuit.ID != created.ID || uriMatches[0].Score < 0.9 {
+		t.Fatalf("source URI match = %#v", uriMatches)
+	}
 
 	projectMatches, err := service.Match(MatchRequest{Input: "follow up insurance claim documents", ProjectKey: "asr"})
 	if err != nil {
@@ -2626,6 +2641,16 @@ func (r *fakeRepo) FindLinks(pursuitID uuid.UUID) ([]models.PursuitLink, error) 
 func (r *fakeRepo) FindLink(linkType, linkID string) (*models.PursuitLink, error) {
 	for _, link := range r.links {
 		if link.LinkType == linkType && link.LinkID == linkID {
+			copyLink := link
+			return &copyLink, nil
+		}
+	}
+	return nil, errNotFound("link")
+}
+
+func (r *fakeRepo) FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error) {
+	for _, link := range r.links {
+		if link.SourceURI == sourceURI {
 			copyLink := link
 			return &copyLink, nil
 		}
