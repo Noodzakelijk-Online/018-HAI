@@ -330,6 +330,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	}
 	projectKey := firstNonEmpty(request.ProjectKey, analysis.projectKey)
 	item := &models.WorkflowItem{
+		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
 		Title:            analysis.title,
 		Description:      input,
 		ProjectKey:       projectKey,
@@ -391,7 +392,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 			ReminderAt: reminderBefore(*analysis.dueAt),
 		})
 	}
-	s.applyMemoryContext(created.ID, input, projectKey, firstNonEmpty(request.Actor, "engine"))
+	s.applyMemoryContext(created.ID, input, projectKey, request.OwnerIdentity, firstNonEmpty(request.Actor, "engine"))
 	if created.SourceURI != "" || created.SourceLabel != "" {
 		s.linkSource(created.ID, created.SourceType, request.SourceID, created.SourceURI, created.SourceLabel, "origin")
 		s.decide(created.ID, "source_link", "linked", "source provenance captured for workflow", "source link created at intake", false, firstNonEmpty(request.Actor, "engine"))
@@ -441,11 +442,11 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	return s.Get(created.ID)
 }
 
-func (s *service) applyMemoryContext(workflowID uuid.UUID, input, projectKey, actor string) {
+func (s *service) applyMemoryContext(workflowID uuid.UUID, input, projectKey, ownerIdentity, actor string) {
 	if s.memoryService == nil {
 		return
 	}
-	result, err := s.memoryService.Retrieve(memory.RetrieveRequest{
+	result, err := memory.RetrieveForOwner(s.memoryService, ownerIdentity, memory.RetrieveRequest{
 		Query:      input,
 		ProjectKey: projectKey,
 		Limit:      3,
@@ -1003,7 +1004,7 @@ func (s *service) rememberCorrection(item *models.WorkflowItem, signal, note, ac
 	sourceURI := firstNonEmpty(item.SourceURI, "workflow://"+item.ID.String())
 	sourceLabel := firstNonEmpty(item.SourceLabel, "Workflow feedback: "+item.Title)
 	content := feedbackLessonContent(*item, signal, note)
-	_, err := s.memoryService.Create(memory.CreateRequest{
+	_, err := memory.CreateForOwner(s.memoryService, item.OwnerIdentity, memory.CreateRequest{
 		ProjectKey:  item.ProjectKey,
 		Kind:        "lesson",
 		Content:     content,

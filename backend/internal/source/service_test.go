@@ -1631,6 +1631,8 @@ type fakeSourceMemoryService struct {
 	ownerCreated []ownerMemoryCreate
 }
 
+var _ memory.OwnerScopedService = (*fakeSourceMemoryService)(nil)
+
 type ownerMemoryCreate struct {
 	ownerIdentity string
 	request       memory.CreateRequest
@@ -1673,7 +1675,7 @@ func (s *fakeSourceMemoryService) Update(id uuid.UUID, request memory.UpdateRequ
 	return nil, nil
 }
 
-func (s *fakeSourceMemoryService) UpdateForOwner(string, uuid.UUID, memory.UpdateRequest) (*models.ContextMemory, error) {
+func (s *fakeSourceMemoryService) UpdateForOwner(ownerIdentity string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
 	return nil, nil
 }
 
@@ -1681,7 +1683,7 @@ func (s *fakeSourceMemoryService) FindAll(projectKey string, includeArchived boo
 	return nil, nil
 }
 
-func (s *fakeSourceMemoryService) FindAllForOwner(string, string, bool) ([]models.ContextMemory, error) {
+func (s *fakeSourceMemoryService) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
 	return nil, nil
 }
 
@@ -1689,7 +1691,7 @@ func (s *fakeSourceMemoryService) FindByID(id uuid.UUID) (*models.ContextMemory,
 	return nil, gorm.ErrRecordNotFound
 }
 
-func (s *fakeSourceMemoryService) FindByIDForOwner(string, uuid.UUID) (*models.ContextMemory, error) {
+func (s *fakeSourceMemoryService) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -1697,7 +1699,7 @@ func (s *fakeSourceMemoryService) Archive(id uuid.UUID, archived bool) (*models.
 	return nil, nil
 }
 
-func (s *fakeSourceMemoryService) ArchiveForOwner(string, uuid.UUID, bool) (*models.ContextMemory, error) {
+func (s *fakeSourceMemoryService) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
 	return nil, nil
 }
 
@@ -1705,13 +1707,15 @@ func (s *fakeSourceMemoryService) Delete(id uuid.UUID) error {
 	return nil
 }
 
-func (s *fakeSourceMemoryService) DeleteForOwner(string, uuid.UUID) error { return nil }
+func (s *fakeSourceMemoryService) DeleteForOwner(ownerIdentity string, id uuid.UUID) error {
+	return nil
+}
 
 func (s *fakeSourceMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{Query: request.Query}, nil
 }
 
-func (s *fakeSourceMemoryService) RetrieveForOwner(string, memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+func (s *fakeSourceMemoryService) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{}, nil
 }
 

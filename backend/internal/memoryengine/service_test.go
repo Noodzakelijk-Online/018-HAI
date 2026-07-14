@@ -332,7 +332,7 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 		t.Fatalf("workflow ids = %#v, want none for stable memory insight", result.WorkflowIDs)
 	}
 	if len(result.PursuitLinks) != 1 || !result.PursuitLinks[0].Linked {
-		t.Fatalf("pursuit memory link result = %#v, want visible linked pursuit", result.PursuitLinks)
+		t.Fatalf("pursuit memory link result = %#v warnings=%#v insights=%#v, want visible linked pursuit", result.PursuitLinks, result.Warnings, result.Insights)
 	}
 	if len(pursuitSpy.memoryRequests) != 1 {
 		t.Fatalf("memory link requests = %d, want 1", len(pursuitSpy.memoryRequests))
@@ -608,6 +608,8 @@ type memoryEngineMemoryStub struct {
 	memories []models.ContextMemory
 }
 
+var _ memory.OwnerScopedService = (*memoryEngineMemoryStub)(nil)
+
 func (s *memoryEngineMemoryStub) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
 	return &models.ContextMemory{
 		ID:          uuid.New(),
@@ -636,7 +638,7 @@ func (s *memoryEngineMemoryStub) Update(id uuid.UUID, request memory.UpdateReque
 	return &models.ContextMemory{ID: id, Content: request.Content, Kind: request.Kind}, nil
 }
 
-func (s *memoryEngineMemoryStub) UpdateForOwner(string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+func (s *memoryEngineMemoryStub) UpdateForOwner(ownerIdentity string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
 	return s.Update(id, request)
 }
 
@@ -669,7 +671,7 @@ func (s *memoryEngineMemoryStub) FindByID(id uuid.UUID) (*models.ContextMemory, 
 	return nil, gorm.ErrRecordNotFound
 }
 
-func (s *memoryEngineMemoryStub) FindByIDForOwner(string, uuid.UUID) (*models.ContextMemory, error) {
+func (s *memoryEngineMemoryStub) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -677,7 +679,7 @@ func (s *memoryEngineMemoryStub) Archive(id uuid.UUID, archived bool) (*models.C
 	return &models.ContextMemory{ID: id, Archived: archived}, nil
 }
 
-func (s *memoryEngineMemoryStub) ArchiveForOwner(string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+func (s *memoryEngineMemoryStub) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
 	return s.Archive(id, archived)
 }
 
@@ -685,13 +687,13 @@ func (s *memoryEngineMemoryStub) Delete(id uuid.UUID) error {
 	return nil
 }
 
-func (s *memoryEngineMemoryStub) DeleteForOwner(string, uuid.UUID) error { return nil }
+func (s *memoryEngineMemoryStub) DeleteForOwner(ownerIdentity string, id uuid.UUID) error { return nil }
 
 func (s *memoryEngineMemoryStub) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{Query: request.Query, ProjectKey: request.ProjectKey}, nil
 }
 
-func (s *memoryEngineMemoryStub) RetrieveForOwner(string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+func (s *memoryEngineMemoryStub) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return s.Retrieve(request)
 }
 

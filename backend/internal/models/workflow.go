@@ -7,7 +7,10 @@ import (
 )
 
 type WorkflowItem struct {
-	ID                 uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	ID uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	// OwnerIdentity is the verified user whose intake created this workflow.
+	// It is not client-controlled or exposed in workflow API payloads.
+	OwnerIdentity      string     `gorm:"type:varchar(255);index" json:"-"`
 	Title              string     `gorm:"type:varchar(512);index;not null" json:"title"`
 	Description        string     `gorm:"type:text" json:"description,omitempty"`
 	ProjectKey         string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`

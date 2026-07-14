@@ -73,6 +73,22 @@ func TestIntakeCreatesApprovalGatedLegalWorkflow(t *testing.T) {
 	}
 }
 
+func TestIntakePersistsVerifiedOwnerIdentity(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Create a low-risk source-linked checklist for Alice's project.",
+		SourceType:    "manual",
+		SourceID:      "alice-intake-1",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.OwnerIdentity != "alice" {
+		t.Fatalf("workflow owner = %q, want alice", record.Item.OwnerIdentity)
+	}
+}
+
 func TestGetIncludesLinkedPursuitContext(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	service := NewService(repo)

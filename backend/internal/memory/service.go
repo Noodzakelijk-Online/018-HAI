@@ -113,6 +113,18 @@ func CreateForOwner(service Service, ownerIdentity string, request CreateRequest
 	return scoped.CreateForOwner(ownerIdentity, request)
 }
 
+func RetrieveForOwner(service Service, ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return service.Retrieve(request)
+	}
+	scoped, ok := service.(OwnerScopedService)
+	if !ok {
+		return nil, fmt.Errorf("owner-scoped memory service is unavailable")
+	}
+	return scoped.RetrieveForOwner(ownerIdentity, request)
+}
+
 func (s *service) createForOwner(ownerIdentity string, request CreateRequest) (*models.ContextMemory, error) {
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	content := strings.TrimSpace(request.Content)
