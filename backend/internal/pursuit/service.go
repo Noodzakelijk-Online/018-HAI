@@ -5139,6 +5139,12 @@ func isPursuitCandidate(pursuit models.Pursuit) bool {
 	return source == "pursuit_candidate" || strings.Contains(source, "_pursuit_candidate")
 }
 
+// IsCandidate exposes the pursuit lifecycle boundary to orchestrators without
+// letting them infer candidate state from storage fields themselves.
+func IsCandidate(pursuit models.Pursuit) bool {
+	return isPursuitCandidate(pursuit)
+}
+
 func (s *service) markPursuitCandidateAccepted(pursuit *models.Pursuit, actor string) error {
 	if pursuit == nil || !isPursuitCandidate(*pursuit) {
 		return nil

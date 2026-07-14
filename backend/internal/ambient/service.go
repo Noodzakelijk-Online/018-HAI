@@ -537,6 +537,35 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	actor := firstNonEmpty(strings.TrimSpace(request.Actor), "operator")
 	routedThroughPursuit := false
 	nonPursuitOpportunity := !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit")
+	if !nonPursuitOpportunity && s.pursuits != nil {
+		pursuitID, parseErr := uuid.Parse(strings.TrimSpace(item.SourceID))
+		if parseErr != nil {
+			return nil, fmt.Errorf("pursuit-derived opportunity is missing a valid pursuit id")
+		}
+		detail, detailErr := s.pursuits.DetailForOwner(request.OwnerIdentity, pursuitID)
+		if detailErr != nil {
+			return nil, fmt.Errorf("load pursuit for ambient acceptance: %w", detailErr)
+		}
+		if detail == nil {
+			return nil, fmt.Errorf("pursuit lookup returned no detail for ambient acceptance")
+		}
+		if pursuitpkg.IsCandidate(detail.Pursuit) {
+			if item.WorkflowID != nil && *item.WorkflowID != uuid.Nil {
+				return nil, fmt.Errorf("pursuit candidate has a retained workflow reference and requires manual review before ambient acceptance")
+			}
+			if err := s.linkAmbientOpportunityMetadata(pursuitID, item, actor); err != nil {
+				return nil, err
+			}
+			item.Status = StatusAccepted
+			item.ResolutionNote = appendNote(item.ResolutionNote, firstNonEmpty(request.Note, "Linked as pursuit candidate context; explicit candidate acceptance is required before workflow work."))
+			saved, saveErr := s.repo.SaveOpportunity(item)
+			if saveErr != nil {
+				return nil, saveErr
+			}
+			s.rememberOpportunityFeedback(saved, request.OwnerIdentity, "ambient_opportunity_accepted", request.Note)
+			return saved, nil
+		}
+	}
 	if nonPursuitOpportunity && s.pursuits != nil {
 		router, ok := s.pursuits.(pursuitAmbientOpportunityRouter)
 		if !ok {
