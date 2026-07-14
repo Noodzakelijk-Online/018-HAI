@@ -745,7 +745,20 @@
                     <tr *ngFor="let link of detail.links">
                       <td>{{ link.linkType }}</td>
                       <td>{{ link.relationship }}</td>
-                      <td>{{ link.linkId }}</td>
+                      <td>
+                        <span>{{ link.linkId }}</span>
+                        <button
+                          *ngIf="link.linkType === 'pursuit'"
+                          nz-button
+                          nzType="link"
+                          nzSize="small"
+                          type="button"
+                          title="Open linked pursuit"
+                          (click)="openLinkedPursuit(link)"
+                        >
+                          <i nz-icon nzType="arrow-right" nzTheme="outline"></i>
+                        </button>
+                      </td>
                       <td>
                         <button nz-button nzType="link" *ngIf="link.sourceUri" (click)="openSource(link.sourceUri)">
                           {{ link.sourceLabel || 'source' }}

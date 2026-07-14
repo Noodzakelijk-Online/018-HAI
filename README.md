@@ -328,7 +328,7 @@ and `.ics` within the same allowlisted root.
 | --- | --- |
 | `/control-center` | Primary operational overview and bounded maintenance actions. |
 | `/command-dashboard` | Robert-only decisions, open loops, source-backed context, and memory-derived work. |
-| `/pursuits` | Long-running objectives with workflow, source, memory, verification, blocker, approval, and activity links. |
+| `/pursuits` | Long-running objectives with workflow, source, memory, verification, blocker, approval, activity, and related-pursuit links. |
 | `/workflow-engine` | Work queue, approvals, quality gates, interruptions, retries, and follow-ups. |
 | `/connected-sources` | Source configuration, sync history, extraction inspection, reindexing, pause/resume, and revocation. |
 | `/memory` | Compact memory search, correction, archive, retrieval, and export controls. |
@@ -349,7 +349,7 @@ areas are:
 - `/llm`: policy, probes, routing, generation, and redacted decision history.
 - `/memory` and `/memory-engine`: compact memory, encrypted conversation import, search, and insights.
 - `/sources`: source registry, connectors, sync, extraction management, search, and audit records.
-- `/pursuits`: high-level objectives, matching, intake, links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
+- `/pursuits`: high-level objectives, matching, intake, navigable related-pursuit links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
 - `/workflow`: intake, state transitions, approvals, due work, follow-ups, quality/review state, and dashboard data.
 - `/task`: bounded plans/runs, logs, and review queue.
 - `/verification`: grounded answers and verification run history.

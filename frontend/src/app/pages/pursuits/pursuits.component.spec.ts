@@ -1,6 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { of } from 'rxjs';
-import { IPursuitAction, IPursuitDecision, IPursuitDetail } from '../../models/pursuit.model.interface';
+import { IPursuitAction, IPursuitDecision, IPursuitDetail, IPursuitLink } from '../../models/pursuit.model.interface';
 import { PursuitsComponent } from './pursuits.component';
 
 describe('PursuitsComponent action lanes', () => {
@@ -86,5 +86,23 @@ describe('PursuitsComponent action lanes', () => {
       reviewReason: decision.reason,
     });
     expect(notification.success).toHaveBeenCalledWith('Candidate accepted', 'HAI converted the candidate into governed pursuit work.');
+  });
+
+  it('opens a linked pursuit from the relationship ledger', () => {
+    const router = (component as any).router;
+    router.navigate = jasmine.createSpy('navigate');
+    const link: IPursuitLink = {
+      id: 'link-1',
+      pursuitId: 'pursuit-1',
+      linkType: 'pursuit',
+      linkId: 'pursuit-2',
+      relationship: 'related_case',
+      confidence: 0.9,
+      createdAt: '2026-07-14T00:00:00Z',
+    };
+
+    component.openLinkedPursuit(link);
+
+    expect(router.navigate).toHaveBeenCalledWith(['/pursuits'], { queryParams: { selected: 'pursuit-2' } });
   });
 });

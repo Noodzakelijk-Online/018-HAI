@@ -18,6 +18,7 @@ import {
   IPursuitDecision,
   IPursuitDetail,
   IPursuitEvidenceResolution,
+  IPursuitLink,
   IPursuitListItem,
 } from '../../models/pursuit.model.interface';
 import { AutomationsService } from '../../services/automations/automations.service';
@@ -68,6 +69,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   ];
 
   readonly linkTypes = [
+    'pursuit',
     'workflow',
     'memory',
     'ai_conversation',
@@ -222,6 +224,13 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   openDashboardDecision(card: IPursuitDashboardDecision): void {
     this.selectPursuit(card.pursuit);
+  }
+
+  openLinkedPursuit(link: IPursuitLink): void {
+    if (link.linkType !== 'pursuit' || !link.linkId) {
+      return;
+    }
+    this.router.navigate(['/pursuits'], { queryParams: { selected: link.linkId } });
   }
 
   resolveDashboardDecision(card: IPursuitDashboardDecision, approved: boolean): void {
