@@ -22,6 +22,23 @@ reviewed runtime, policy, and evidence path are configured.
 > signed-in Windows browser journey and any real third-party account, paid
 > model, browser-control, or broad-host-control journey remain release gates.
 
+### Current Change Boundary
+
+The repository has recently completed a safety-focused pursuit hardening pass.
+Pursuit dashboards, detail views, links, task-attempt summaries, runtime
+evidence, source resolution, candidate routing, and decision handling are all
+evaluated in the authenticated owner's scope. Related pursuits are navigable in
+the dashboard, but a pursuit cannot link to itself and a relationship cannot
+be used to expose another owner's operational record. Candidate pursuits remain
+non-executable until an approval-capable user explicitly accepts them; decision
+resolution is also permission-checked in the handler, not only in route wiring.
+
+This is an implementation and focused-test milestone. It does not replace the
+release gates in the verification snapshot below: a real two-account exercise,
+fresh-machine browser flow, configured source import, local-model task, and
+reviewed runtime dry run are still required before relying on those paths for
+personal work.
+
 ## Product Boundary
 
 HAI is the product. A pursuit is the high-level objective or case that connects
@@ -38,7 +55,7 @@ for the canonical-stack decision.
 | Area | Implemented capability | Important operating boundary |
 | --- | --- | --- |
 | Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, and task planning. | A dashboard card is operational visibility, not proof that an external action occurred. |
-| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, and ambient opportunity routing. | In the canonical routed stack, new source, assistant, or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Completion still needs workflow, verification, source, runtime, and approval evidence where applicable. |
+| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, ambient opportunity routing, and navigable related-pursuit links. | In the canonical routed stack, new source, assistant, or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Links, evidence, and operational summaries stay owner-scoped; completion still needs workflow, verification, source, runtime, and approval evidence where applicable. |
 | Memory and knowledge | Compact memory, retrieval, deduplication, correction, export/deletion planning, provenance, encrypted user-authorized conversation capture, and source/extraction links. | Raw imported conversations are not automatically promoted to trusted facts. |
 | Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, and read-only GitHub sync. | Gmail, Calendar, Drive, Trello, WhatsApp, and browser accounts are export/local-folder paths, not live OAuth or browser connectors. |
 | LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
@@ -157,6 +174,8 @@ work from the command dashboard.
   links filter legacy records that are not visible to the current owner.
 - Pursuit-to-pursuit relationships are owner-scoped too, so authenticated users
   cannot create or view a cross-owner case reference through pursuit metadata.
+  A pursuit cannot create a self-referential relationship, and related-pursuit
+  navigation is available only for records visible in the current owner's scope.
 - Pursuit auto-linking and candidate creation refresh their operational summary
   inside the same authenticated owner scope, so malformed legacy links cannot
   persist another user's workflow state into a personal pursuit.
@@ -175,6 +194,9 @@ work from the command dashboard.
   keep them out of the executable path; an approval-capable user must use the
   separate candidate-acceptance action before HAI can create or unlock the
   governed workflow path.
+- Pursuit decision resolution requires approval capability both in route
+  registration and in the handler. Alternate or future route wiring cannot
+  turn a non-approver's request into a workflow or decision audit event.
 - Source, AI-chat, and ambient producers configured with pursuit correlation
   but without the native pursuit lifecycle router fail closed. Imported signals
   and proposed ambient opportunities remain visible for repair, but no workflow
