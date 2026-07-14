@@ -714,16 +714,32 @@ func (s *memoryEngineWorkflowStub) Items(bool) ([]models.WorkflowItem, error) {
 	return nil, nil
 }
 
+func (s *memoryEngineWorkflowStub) ItemsForOwner(_ string, includeArchived bool) ([]models.WorkflowItem, error) {
+	return s.Items(includeArchived)
+}
+
 func (s *memoryEngineWorkflowStub) ApprovalItems() ([]models.WorkflowItem, error) {
 	return nil, nil
+}
+
+func (s *memoryEngineWorkflowStub) ApprovalItemsForOwner(string) ([]models.WorkflowItem, error) {
+	return s.ApprovalItems()
 }
 
 func (s *memoryEngineWorkflowStub) Dashboard() (*workflow.WorkflowDashboard, error) {
 	return &workflow.WorkflowDashboard{}, nil
 }
 
+func (s *memoryEngineWorkflowStub) DashboardForOwner(string) (*workflow.WorkflowDashboard, error) {
+	return s.Dashboard()
+}
+
 func (s *memoryEngineWorkflowStub) Get(uuid.UUID) (*workflow.WorkflowRecord, error) {
 	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *memoryEngineWorkflowStub) GetForOwner(_ string, id uuid.UUID) (*workflow.WorkflowRecord, error) {
+	return s.Get(id)
 }
 
 func (s *memoryEngineWorkflowStub) Transition(uuid.UUID, workflow.TransitionRequest) (*workflow.WorkflowRecord, error) {
@@ -754,12 +770,24 @@ func (s *memoryEngineWorkflowStub) RecoverStaleClaims(workflow.RunDueRequest) (*
 	return &workflow.ClaimRecoverySummary{}, nil
 }
 
+func (s *memoryEngineWorkflowStub) RecoverStaleClaimsForOwner(_ string, request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {
+	return s.RecoverStaleClaims(request)
+}
+
 func (s *memoryEngineWorkflowStub) RunDue(workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
 	return &workflow.WorkflowRunSummary{}, nil
 }
 
+func (s *memoryEngineWorkflowStub) RunDueForOwner(_ string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
+	return s.RunDue(request)
+}
+
 func (s *memoryEngineWorkflowStub) RunDueOpenLoops(workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
 	return &workflow.OpenLoopRunSummary{}, nil
+}
+
+func (s *memoryEngineWorkflowStub) RunDueOpenLoopsForOwner(_ string, request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
+	return s.RunDueOpenLoops(request)
 }
 
 func (s *memoryEngineWorkflowStub) Overview() workflow.Overview {

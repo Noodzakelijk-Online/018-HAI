@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,7 @@ func TestRunHandlerIgnoresClientHumanApproval(t *testing.T) {
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
 
 	handler.Run(context)
 
@@ -59,6 +61,7 @@ func TestPlanHandlerClearsExecutionAndApprovalClaims(t *testing.T) {
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
 
 	handler.Plan(context)
 
@@ -109,6 +112,84 @@ func TestLogsHandlerUsesVerifiedOwnerScopedView(t *testing.T) {
 	}
 	if service.logsOwner != "alice" {
 		t.Fatalf("logs owner = %q, want verified owner alice", service.logsOwner)
+	}
+}
+
+func TestTaskHandlersRejectRequestsWithoutVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		invoke func(*Handler, *gin.Context)
+	}{
+		{name: "plan", method: http.MethodPost, path: "/task/plan", body: `{"request":"Plan private work"}`, invoke: (*Handler).Plan},
+		{name: "run", method: http.MethodPost, path: "/task/run", body: `{"request":"Run private work"}`, invoke: (*Handler).Run},
+		{name: "logs", method: http.MethodGet, path: "/task/logs", invoke: (*Handler).Logs},
+		{name: "review queue", method: http.MethodGet, path: "/task/review-queue", invoke: (*Handler).ReviewQueue},
+		{name: "review resolution", method: http.MethodPost, path: "/task/review-queue/item/resolve", body: `{}`, invoke: (*Handler).ResolveReviewItem},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &capturingTaskService{}
+			handler := NewHandler(service)
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = request
+			if test.name == "review resolution" {
+				context.Params = gin.Params{{Key: "id", Value: "item"}}
+			}
+
+			test.invoke(handler, context)
+
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestTaskReviewHandlersUseVerifiedOwnerScopedView(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &capturingTaskService{}
+	handler := NewHandler(service)
+
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		invoke func(*Handler, *gin.Context)
+	}{
+		{name: "review queue", method: http.MethodGet, path: "/task/review-queue", invoke: (*Handler).ReviewQueue},
+		{name: "review resolution", method: http.MethodPost, path: "/task/review-queue/item/resolve", body: `{}`, invoke: (*Handler).ResolveReviewItem},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = request
+			if test.name == "review resolution" {
+				context.Params = gin.Params{{Key: "id", Value: "item"}}
+			}
+			context.Set(identity.ContextSubjectKey, "alice")
+
+			test.invoke(handler, context)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+			}
+		})
+	}
+	if service.queueOwner != "alice" {
+		t.Fatalf("review queue owner = %q, want alice", service.queueOwner)
+	}
+	if service.resolveOwner != "alice" {
+		t.Fatalf("review resolution owner = %q, want alice", service.resolveOwner)
 	}
 }
 

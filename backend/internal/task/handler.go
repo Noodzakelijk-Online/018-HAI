@@ -34,8 +34,12 @@ func (h *Handler) Plan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "request is required"})
 		return
 	}
+	ownerIdentity, ok := requireTaskOwner(c)
+	if !ok {
+		return
+	}
 	request.ExecuteAllowed = false
-	request.OwnerIdentity = verifiedTaskOwner(c)
+	request.OwnerIdentity = ownerIdentity
 	request.HumanApproved = false
 	request.ApprovalNote = ""
 	plan, err := h.service.Plan(request)
@@ -56,8 +60,12 @@ func (h *Handler) Run(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "request is required"})
 		return
 	}
+	ownerIdentity, ok := requireTaskOwner(c)
+	if !ok {
+		return
+	}
 	request.ExecuteAllowed = true
-	request.OwnerIdentity = verifiedTaskOwner(c)
+	request.OwnerIdentity = ownerIdentity
 	request.HumanApproved = false
 	request.ApprovalNote = ""
 	plan, err := h.service.Run(request)
@@ -77,10 +85,22 @@ func verifiedTaskOwner(c *gin.Context) string {
 	return ""
 }
 
-func (h *Handler) Logs(c *gin.Context) {
+// requireTaskOwner keeps HTTP operator requests separate from in-process
+// system workers. Task plans, review queues, and resolution decisions can
+// contain source-derived private context, so they must never fall back to an
+// ownerless/global view when the identity boundary is unavailable.
+func requireTaskOwner(c *gin.Context) (string, bool) {
 	ownerIdentity := verifiedTaskOwner(c)
 	if ownerIdentity == "" {
-		c.JSON(http.StatusOK, h.service.Logs())
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for task operations"})
+		return "", false
+	}
+	return ownerIdentity, true
+}
+
+func (h *Handler) Logs(c *gin.Context) {
+	ownerIdentity, ok := requireTaskOwner(c)
+	if !ok {
 		return
 	}
 	scoped, ok := h.service.(OwnerScopedService)
@@ -92,9 +112,8 @@ func (h *Handler) Logs(c *gin.Context) {
 }
 
 func (h *Handler) ReviewQueue(c *gin.Context) {
-	ownerIdentity := verifiedTaskOwner(c)
-	if ownerIdentity == "" {
-		c.JSON(http.StatusOK, h.service.ReviewQueue())
+	ownerIdentity, ok := requireTaskOwner(c)
+	if !ok {
 		return
 	}
 	scoped, ok := h.service.(OwnerScopedService)
@@ -116,14 +135,8 @@ func (h *Handler) ResolveReviewItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ownerIdentity := verifiedTaskOwner(c)
-	if ownerIdentity == "" {
-		result, err := h.service.ResolveReviewItem(id, decision)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, result)
+	ownerIdentity, ok := requireTaskOwner(c)
+	if !ok {
 		return
 	}
 	scoped, ok := h.service.(OwnerScopedService)

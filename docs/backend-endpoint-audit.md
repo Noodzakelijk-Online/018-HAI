@@ -25,7 +25,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | `/workflow` | overview, approvals, dashboard, list, intake, owner-scoped run-due/recovery/follow-up controls, transitions, approval/interruption/proposal resolve, checklist |
 | `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals |
 | `/verification` | POST `/answer`, GET `/runs`, `/runs/:id` |
-| `/task` | plan, run, success, logs, review-queue |
+| `/task` | owner-scoped plan, run, success, logs, review-queue, review resolution |
 | `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | command/logs, run, overview/stress, scan/needs, overview |
 | **`/flags`** | GET — feature flags (added this goal run) |
 | **`/system`** | **GET `/info`**, **GET `/support-bundle`** (added this goal run) |
@@ -39,6 +39,9 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 - No orphaned/dead routes found in `routes.go`.
 - Workflow worker controls use the verified request owner when one is present. Global workflow scheduling remains an in-process system-worker operation rather than a dashboard capability.
 - A manual source `sync-due` request requires a verified owner and refreshes only that owner's explicitly owned sources. The global source scheduler remains in-process.
+- Task HTTP requests require a verified owner for planning, controlled execution,
+  history, review visibility, and review resolution. The task service's
+  ownerless/system methods remain in-process worker APIs and are not HTTP fallbacks.
 - **Follow-up:** adopt the `apierror` envelope uniformly across handlers (error
   shapes currently vary; frontend depends on the existing shapes — migrate both
   together).
