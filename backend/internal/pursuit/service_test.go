@@ -1013,6 +1013,50 @@ func TestDetailForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
 	}
 }
 
+func TestDashboardForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alicePursuit, err := service.Create(CreateRequest{
+		Title:         "Alice dashboard pursuit",
+		OwnerIdentity: "alice",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:               bobWorkflowID,
+		OwnerIdentity:    "bob",
+		Title:            "Bob private approval workflow",
+		CurrentState:     workflow.StateNeedsApproval,
+		RequiresApproval: true,
+		ApprovalStatus:   "pending",
+	}
+	foreignLinkID := uuid.New()
+	repo.links[foreignLinkID] = models.PursuitLink{
+		ID:           foreignLinkID,
+		PursuitID:    alicePursuit.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_import",
+		SourceURI:    "workflow://private/bob-dashboard-approval",
+		SourceLabel:  "Bob private workflow",
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if dashboard.Counts["needsRobert"] != 0 || dashboard.Counts["decisionQueue"] != 0 || len(dashboard.NeedsRobert) != 0 || len(dashboard.DecisionQueue) != 0 {
+		t.Fatalf("owner dashboard exposed legacy foreign workflow: %#v", dashboard)
+	}
+	if len(dashboard.RecentlyChanged) != 1 || dashboard.RecentlyChanged[0].NeedsRobert != 0 || dashboard.RecentlyChanged[0].DecisionCards != 0 {
+		t.Fatalf("dashboard list item retained foreign workflow state: %#v", dashboard.RecentlyChanged)
+	}
+}
+
 func TestAutoLinkWorkflowRejectsForeignOwnerWorkflow(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

@@ -926,7 +926,7 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
 			dashboard.Counts["completed"]++
 			continue
 		}
-		item, detail, detailErr := s.listItemWithDetail(pursuit)
+		item, detail, detailErr := s.listItemWithDetailForOwner(ownerIdentity, pursuit)
 		if detailErr != nil {
 			item = detailUnavailableListItem(pursuit)
 		}
@@ -2961,6 +2961,19 @@ func (s *service) listItem(pursuit models.Pursuit) (PursuitListItem, error) {
 
 func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *PursuitDetail, error) {
 	detail, err := s.Detail(pursuit.ID)
+	return pursuitListItemWithDetail(pursuit, detail, err)
+}
+
+// listItemWithDetailForOwner keeps dashboard projections subject to the same
+// linked-record visibility checks as the underlying pursuit detail endpoint.
+// This protects owner dashboards from malformed links created before
+// owner-aware link validation was introduced.
+func (s *service) listItemWithDetailForOwner(ownerIdentity string, pursuit models.Pursuit) (PursuitListItem, *PursuitDetail, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, pursuit.ID)
+	return pursuitListItemWithDetail(pursuit, detail, err)
+}
+
+func pursuitListItemWithDetail(pursuit models.Pursuit, detail *PursuitDetail, err error) (PursuitListItem, *PursuitDetail, error) {
 	if err != nil {
 		return PursuitListItem{Pursuit: pursuit, NextAction: pursuit.NextRecommendedAction, EffectiveLastActivityAt: pursuit.LastActivityAt, Stale: isStale(pursuit), ReviewDue: isReviewDue(pursuit), PlanningNeeded: pursuitNeedsPlanning(pursuit, 0)}, nil, err
 	}

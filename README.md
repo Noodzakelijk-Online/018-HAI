@@ -76,6 +76,10 @@ Recent hardening in the current baseline:
   autonomy diagnostics, and runtime inventory now share a router-level owner
   gate. A missing session cannot become an ownerless request or consume local
   model/runtime capacity through those HTTP APIs.
+- Owner-scoped pursuit dashboards derive their cards through the same
+  owner-aware linked-record filter as pursuit detail. Legacy links to another
+  owner's private workflow, memory, source, or verification data are excluded
+  rather than affecting queues, counts, or suggested actions.
 - The shared local automation registry also requires a verified operator
   session before it exposes targets, accepts configuration changes, probes
   health, or launches/stops a controlled runtime.
