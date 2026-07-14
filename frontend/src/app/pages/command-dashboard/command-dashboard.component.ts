@@ -730,50 +730,34 @@ export class CommandDashboardComponent implements OnInit {
 
   private resolvePursuitNextActionDecision(card: IPursuitDashboardDecision, approved: boolean): void {
     this.resolvingDashboardDecisionId = card.decision.id;
-    if (approved) {
-      this.pursuits.intake(card.pursuit.id, {
-        input: card.decision.recommended,
-        projectKey: card.pursuit.projectKey,
-        sourceType: 'pursuit_decision',
-        sourceId: card.decision.id,
-        sourceUri: card.decision.evidenceUri,
-        sourceLabel: card.decision.evidenceLabel || 'Robert approved pursuit next action',
-        contentType: card.decision.decisionType,
-        trigger: 'pursuit_decision_approved',
-        actor: 'Robert',
-        requiresReview: card.decision.requiresApproval,
-        reviewReason: card.decision.reason,
-      }).subscribe({
-        next: () => {
-          this.resolvingDashboardDecisionId = '';
-          this.notification.success('Workflow created', 'The approved pursuit decision became a governed workflow item.');
-          this.refreshPursuits();
-        },
-        error: (error) => {
-          this.resolvingDashboardDecisionId = '';
-          this.notification.error('Workflow creation blocked', error?.error?.error || 'HAI could not create the governed workflow.');
-        },
-      });
-      return;
-    }
     this.pursuits.resolveDecision(card.pursuit.id, {
       decisionId: card.decision.id,
       decisionType: card.decision.decisionType,
-      approved: false,
+      approved,
       reason: card.decision.reason,
-      note: card.decision.noConsequence || `Robert rejected the proposed next action: ${card.decision.recommended}`,
+      note: approved
+        ? card.decision.yesConsequence || `Robert approved the proposed next action: ${card.decision.recommended}`
+        : card.decision.noConsequence || `Robert rejected the proposed next action: ${card.decision.recommended}`,
       evidenceUri: card.decision.evidenceUri,
       evidenceLabel: card.decision.evidenceLabel,
       actor: 'Robert',
     }).subscribe({
       next: () => {
         this.resolvingDashboardDecisionId = '';
-        this.notification.success('Decision recorded', 'The pursuit decision is now resolved in the audit trail.');
+        this.notification.success(
+          approved ? 'Workflow created' : 'Decision recorded',
+          approved
+            ? 'The approved pursuit decision became a governed workflow item.'
+            : 'The pursuit decision is now resolved in the audit trail.'
+        );
         this.refreshPursuits();
       },
       error: (error) => {
         this.resolvingDashboardDecisionId = '';
-        this.notification.error('Decision blocked', error?.error?.error || 'The pursuit decision could not be recorded.');
+        this.notification.error(
+          approved ? 'Workflow creation blocked' : 'Decision blocked',
+          error?.error?.error || 'The pursuit decision could not be recorded.'
+        );
       },
     });
   }
