@@ -1402,6 +1402,78 @@ func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	}
 }
 
+func TestRouteAmbientOpportunityCreatesCandidateBeforeWorkflow(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	opportunityID := uuid.New()
+	repo.ambientOpportunities[opportunityID] = models.AmbientOpportunity{ID: opportunityID, OwnerIdentity: "alice"}
+
+	result, err := service.RouteAmbientOpportunity(AmbientOpportunityRouteRequest{
+		OwnerIdentity: "alice",
+		OpportunityID: opportunityID,
+		Title:         "Review an unresolved supplier dispute",
+		Rationale:     "A source-backed issue needs a deliberate objective before work begins.",
+		NextAction:    "Review the evidence and decide whether this should become active work.",
+		SourceURI:     "ambient://opportunities/" + opportunityID.String(),
+		Actor:         "alice",
+	})
+	if err != nil {
+		t.Fatalf("RouteAmbientOpportunity returned error: %v", err)
+	}
+	if !result.CreatedCandidate || result.PursuitID == uuid.Nil || result.WorkflowID != uuid.Nil {
+		t.Fatalf("ambient route result = %#v, want candidate without workflow", result)
+	}
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("unmatched ambient opportunity created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
+	}
+	candidate, err := repo.FindByID(result.PursuitID)
+	if err != nil || !isPursuitCandidate(*candidate) {
+		t.Fatalf("ambient candidate = %#v err=%v", candidate, err)
+	}
+	links, err := repo.FindLinks(result.PursuitID)
+	if err != nil || len(links) != 1 || links[0].LinkType != LinkAmbientOpportunity || links[0].LinkID != opportunityID.String() {
+		t.Fatalf("ambient candidate provenance links = %#v err=%v", links, err)
+	}
+}
+
+func TestRouteAmbientOpportunityCreatesWorkflowForActiveMatch(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	active, err := service.Create(CreateRequest{Title: "Supplier dispute", OwnerIdentity: "alice", ProjectKey: "legal"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	opportunityID := uuid.New()
+	repo.ambientOpportunities[opportunityID] = models.AmbientOpportunity{ID: opportunityID, OwnerIdentity: "alice"}
+
+	result, err := service.RouteAmbientOpportunity(AmbientOpportunityRouteRequest{
+		OwnerIdentity:  "alice",
+		OpportunityID:  opportunityID,
+		Title:          "Prepare supplier dispute evidence",
+		NextAction:     "Prepare the evidence bundle for review.",
+		ProjectKey:     "legal",
+		SourceURI:      "ambient://opportunities/" + opportunityID.String(),
+		RequiresReview: true,
+		ReviewReason:   "evidence needs review before action",
+		Actor:          "alice",
+	})
+	if err != nil {
+		t.Fatalf("RouteAmbientOpportunity returned error: %v", err)
+	}
+	if result.PursuitID != active.ID || result.WorkflowID == uuid.Nil || result.CreatedCandidate {
+		t.Fatalf("ambient route result = %#v, want active pursuit workflow", result)
+	}
+	if workflowService.calls != 1 || !workflowService.received.RequiresReview || workflowService.received.SourceType != LinkAmbientOpportunity || workflowService.received.SourceID != opportunityID.String() {
+		t.Fatalf("ambient workflow intake = %#v calls=%d", workflowService.received, workflowService.calls)
+	}
+	links, err := repo.FindLinks(active.ID)
+	if err != nil || len(links) != 2 {
+		t.Fatalf("active ambient links = %#v err=%v", links, err)
+	}
+}
+
 func TestDetailSurfacesBlockersAndCompletionCandidate(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

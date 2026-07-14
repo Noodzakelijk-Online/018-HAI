@@ -310,6 +310,46 @@ func TestAcceptNonPursuitOpportunityRoutesExistingWorkflowIntoPursuit(t *testing
 	}
 }
 
+func TestAcceptNonPursuitOpportunityDefersCandidateWithoutWorkflow(t *testing.T) {
+	opportunity := &models.AmbientOpportunity{
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		Status:        StatusProposed,
+		NeedKey:       "safety",
+		Title:         "Review unmatched evidence",
+		Rationale:     "This needs an explicit pursuit decision.",
+		NextAction:    "Review the evidence and decide whether to create work.",
+		SourceType:    "memory_insight",
+		SourceID:      uuid.NewString(),
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{recordID: uuid.New()}
+	router := &ambientPursuitRouterSpy{
+		ambientPursuitSpy: &ambientPursuitSpy{},
+		result: &pursuitpkg.AmbientOpportunityRouteResult{
+			Mode:             "candidate_created",
+			PursuitID:        uuid.New(),
+			CreatedCandidate: true,
+			Message:          "candidate is awaiting explicit pursuit acceptance",
+		},
+	}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, router)
+
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "alice"})
+	if err != nil {
+		t.Fatalf("Accept returned error: %v", err)
+	}
+	if accepted.Status != StatusAccepted || accepted.WorkflowID != nil {
+		t.Fatalf("accepted ambient candidate = %#v", accepted)
+	}
+	if len(workflowSpy.intakeRequests) != 0 || len(router.requests) != 1 {
+		t.Fatalf("candidate acceptance created work or skipped routing: intake=%#v routes=%#v", workflowSpy.intakeRequests, router.requests)
+	}
+	if router.requests[0].OpportunityID != opportunity.ID || router.requests[0].OwnerIdentity != "alice" {
+		t.Fatalf("candidate route request = %#v", router.requests[0])
+	}
+}
+
 func TestPursuitOpportunityOwnerCannotAcceptAnotherOwnersOpportunity(t *testing.T) {
 	pursuitID := uuid.New()
 	opportunity := &models.AmbientOpportunity{
@@ -490,6 +530,21 @@ type ambientPursuitSpy struct {
 	autoLinkRequests []pursuitpkg.AutoLinkWorkflowRequest
 	autoLinkResult   *pursuitpkg.AutoLinkResult
 	autoLinkErr      error
+}
+
+type ambientPursuitRouterSpy struct {
+	*ambientPursuitSpy
+	requests []pursuitpkg.AmbientOpportunityRouteRequest
+	result   *pursuitpkg.AmbientOpportunityRouteResult
+	err      error
+}
+
+func (s *ambientPursuitRouterSpy) RouteAmbientOpportunity(request pursuitpkg.AmbientOpportunityRouteRequest) (*pursuitpkg.AmbientOpportunityRouteResult, error) {
+	s.requests = append(s.requests, request)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.result, nil
 }
 
 func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {

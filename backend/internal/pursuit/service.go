@@ -213,6 +213,30 @@ type RoutedIntakeResult struct {
 	AutoLink         *AutoLinkResult  `json:"autoLink,omitempty"`
 }
 
+// AmbientOpportunityRouteRequest describes an operator-accepted ambient
+// proposal before it becomes workflow work. It keeps pursuit matching ahead of
+// execution so an unaccepted candidate never acquires an orphan workflow.
+type AmbientOpportunityRouteRequest struct {
+	OwnerIdentity  string    `json:"-"`
+	OpportunityID  uuid.UUID `json:"opportunityId"`
+	Title          string    `json:"title"`
+	Rationale      string    `json:"rationale,omitempty"`
+	NextAction     string    `json:"nextAction"`
+	ProjectKey     string    `json:"projectKey,omitempty"`
+	SourceURI      string    `json:"sourceUri,omitempty"`
+	RequiresReview bool      `json:"requiresReview,omitempty"`
+	ReviewReason   string    `json:"reviewReason,omitempty"`
+	Actor          string    `json:"actor,omitempty"`
+}
+
+type AmbientOpportunityRouteResult struct {
+	Mode             string    `json:"mode"`
+	PursuitID        uuid.UUID `json:"pursuitId"`
+	WorkflowID       uuid.UUID `json:"workflowId,omitempty"`
+	CreatedCandidate bool      `json:"createdCandidate"`
+	Message          string    `json:"message,omitempty"`
+}
+
 type Dashboard struct {
 	Counts               map[string]int64           `json:"counts"`
 	DecisionQueue        []PursuitDashboardDecision `json:"decisionQueue"`
@@ -618,6 +642,7 @@ type Service interface {
 	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
 	AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult, error)
 	RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error)
+	RouteAmbientOpportunity(request AmbientOpportunityRouteRequest) (*AmbientOpportunityRouteResult, error)
 	RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
 	Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
 	IntakeForOwner(ownerIdentity string, id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
@@ -2176,6 +2201,138 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		}
 	}
 	return result, nil
+}
+
+// RouteAmbientOpportunity handles an already accepted ambient proposal before
+// a workflow exists. An existing active pursuit receives governed intake; a
+// candidate match or no match remains a reviewable candidate with provenance
+// instead of creating executable work that has no accepted pursuit owner.
+func (s *service) RouteAmbientOpportunity(request AmbientOpportunityRouteRequest) (*AmbientOpportunityRouteResult, error) {
+	if request.OpportunityID == uuid.Nil {
+		return nil, fmt.Errorf("ambient opportunity id is required")
+	}
+	request.Title = strings.TrimSpace(request.Title)
+	request.NextAction = strings.TrimSpace(request.NextAction)
+	if request.Title == "" || request.NextAction == "" {
+		return nil, fmt.Errorf("ambient opportunity title and next action are required")
+	}
+	ownerIdentity := strings.TrimSpace(request.OwnerIdentity)
+	sourceID := request.OpportunityID.String()
+	sourceURI := firstNonEmpty(strings.TrimSpace(request.SourceURI), "ambient://opportunities/"+sourceID)
+	actor := firstNonEmpty(strings.TrimSpace(request.Actor), "ambient-engine")
+	input := strings.TrimSpace(strings.Join([]string{request.Title, request.Rationale, request.NextAction}, "\n"))
+	matches, err := s.Match(MatchRequest{
+		OwnerIdentity: ownerIdentity,
+		Input:         input,
+		ProjectKey:    request.ProjectKey,
+		SourceType:    LinkAmbientOpportunity,
+		SourceID:      sourceID,
+		SourceURI:     sourceURI,
+		Limit:         1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) > 0 && matches[0].Score >= defaultAutoLinkMinimumScore && !pursuitClosed(matches[0].Pursuit) {
+		match := matches[0]
+		if isPursuitCandidate(match.Pursuit) {
+			if err := s.linkAcceptedAmbientOpportunity(match.Pursuit.ID, ownerIdentity, sourceID, sourceURI, request.Title, match.Score, actor); err != nil {
+				return nil, err
+			}
+			return &AmbientOpportunityRouteResult{
+				Mode:      "matched_candidate",
+				PursuitID: match.Pursuit.ID,
+				Message:   "accepted ambient proposal was linked as candidate context; explicit pursuit acceptance is still required before workflow work",
+			}, nil
+		}
+		detail, err := s.IntakeForOwner(ownerIdentity, match.Pursuit.ID, IntakeRequest{
+			OwnerIdentity:  ownerIdentity,
+			Input:          input,
+			ProjectKey:     request.ProjectKey,
+			SourceType:     LinkAmbientOpportunity,
+			SourceID:       sourceID,
+			SourceURI:      sourceURI,
+			SourceLabel:    request.Title,
+			ContentType:    "ambient_proposal",
+			Trigger:        "ambient.accept",
+			Actor:          actor,
+			RequiresReview: request.RequiresReview,
+			ReviewReason:   request.ReviewReason,
+		})
+		if err != nil {
+			return nil, err
+		}
+		workflowID := workflowIDForSource(detail, LinkAmbientOpportunity, sourceID, sourceURI)
+		if workflowID == uuid.Nil {
+			return nil, fmt.Errorf("ambient pursuit intake did not identify its workflow record")
+		}
+		if err := s.linkAcceptedAmbientOpportunity(match.Pursuit.ID, ownerIdentity, sourceID, sourceURI, request.Title, match.Score, actor); err != nil {
+			return nil, err
+		}
+		return &AmbientOpportunityRouteResult{
+			Mode:       "matched_existing",
+			PursuitID:  match.Pursuit.ID,
+			WorkflowID: workflowID,
+			Message:    "accepted ambient proposal created governed workflow work under the matched pursuit",
+		}, nil
+	}
+
+	candidate, err := s.Create(CreateRequest{
+		OwnerIdentity:         ownerIdentity,
+		Title:                 request.Title,
+		Description:           request.Rationale,
+		WhyItMatters:          "An accepted ambient proposal needs an explicit pursuit decision before HAI creates operational work.",
+		ProjectKey:            request.ProjectKey,
+		DesiredOutcome:        request.NextAction,
+		CurrentStateSummary:   "Ambient proposal accepted as context. This reviewable pursuit candidate has no workflow work until Robert explicitly accepts the objective.",
+		SourceOfCreation:      "ambient_pursuit_candidate",
+		NextRecommendedAction: "Review this ambient pursuit candidate and accept it to create the first governed workflow plan.",
+		CompletionDefinition:  "Robert accepts the candidate, the governed workflow path is completed, and completion evidence is verified.",
+		Actor:                 actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.linkAcceptedAmbientOpportunity(candidate.ID, ownerIdentity, sourceID, sourceURI, request.Title, 1, actor); err != nil {
+		return nil, err
+	}
+	return &AmbientOpportunityRouteResult{
+		Mode:             "candidate_created",
+		PursuitID:        candidate.ID,
+		CreatedCandidate: true,
+		Message:          "accepted ambient proposal created a reviewable pursuit candidate; no workflow work was created before explicit candidate acceptance",
+	}, nil
+}
+
+func (s *service) linkAcceptedAmbientOpportunity(pursuitID uuid.UUID, ownerIdentity, sourceID, sourceURI, title string, confidence float64, actor string) error {
+	_, err := s.Link(pursuitID, LinkRequest{
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkAmbientOpportunity,
+		LinkID:        sourceID,
+		Relationship:  "ambient_proposal_accepted",
+		SourceURI:     sourceURI,
+		SourceLabel:   title,
+		Confidence:    normalizeConfidence(confidence, 0.7),
+		Actor:         actor,
+	})
+	return err
+}
+
+func workflowIDForSource(detail *PursuitDetail, sourceType, sourceID, sourceURI string) uuid.UUID {
+	if detail == nil {
+		return uuid.Nil
+	}
+	for _, item := range detail.Workflows {
+		if strings.EqualFold(strings.TrimSpace(item.SourceType), strings.TrimSpace(sourceType)) && item.SourceID == sourceID {
+			return item.ID
+		}
+	}
+	for _, item := range detail.Workflows {
+		if sourceURI != "" && item.SourceURI == sourceURI {
+			return item.ID
+		}
+	}
+	return uuid.Nil
 }
 
 // RouteWorkflowIntake adapts the legacy workflow endpoint to the native

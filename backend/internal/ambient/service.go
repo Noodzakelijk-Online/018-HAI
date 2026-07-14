@@ -95,6 +95,13 @@ type pursuitWorkflowAutoLinker interface {
 	AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error)
 }
 
+// pursuitAmbientOpportunityRouter resolves an accepted proposal before a
+// workflow exists. It is optional for compatibility with lightweight test and
+// standalone deployments; the canonical pursuit service implements it.
+type pursuitAmbientOpportunityRouter interface {
+	RouteAmbientOpportunity(request pursuitpkg.AmbientOpportunityRouteRequest) (*pursuitpkg.AmbientOpportunityRouteResult, error)
+}
+
 type Service interface {
 	Overview() (*Overview, error)
 	OverviewForOwner(ownerIdentity string) (*Overview, error)
@@ -528,6 +535,43 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 		return nil, fmt.Errorf("opportunity in %s state cannot be accepted", item.Status)
 	}
 	actor := firstNonEmpty(strings.TrimSpace(request.Actor), "operator")
+	routedThroughPursuit := false
+	if item.WorkflowID == nil && !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
+		if router, ok := s.pursuits.(pursuitAmbientOpportunityRouter); ok {
+			route, routeErr := router.RouteAmbientOpportunity(pursuitpkg.AmbientOpportunityRouteRequest{
+				OwnerIdentity:  request.OwnerIdentity,
+				OpportunityID:  item.ID,
+				Title:          item.Title,
+				Rationale:      item.Rationale,
+				NextAction:     item.NextAction,
+				SourceURI:      item.SourceURI,
+				RequiresReview: item.RequiresApproval,
+				ReviewReason:   firstNonEmpty(strings.TrimSpace(request.Note), item.Rationale),
+				Actor:          actor,
+			})
+			if routeErr != nil {
+				return nil, fmt.Errorf("route accepted ambient opportunity through pursuit: %w", routeErr)
+			}
+			if route == nil || route.PursuitID == uuid.Nil {
+				return nil, fmt.Errorf("pursuit router did not return a pursuit for the accepted ambient opportunity")
+			}
+			routedThroughPursuit = true
+			if route.WorkflowID == uuid.Nil {
+				item.Status = StatusAccepted
+				item.ResolutionNote = appendNote(item.ResolutionNote, firstNonEmpty(request.Note, route.Message))
+				saved, err := s.repo.SaveOpportunity(item)
+				if err != nil {
+					return nil, err
+				}
+				s.rememberOpportunityFeedback(saved, request.OwnerIdentity, "ambient_opportunity_accepted", request.Note)
+				return saved, nil
+			}
+			item.WorkflowID = &route.WorkflowID
+			if _, err := s.repo.SaveOpportunity(item); err != nil {
+				return nil, fmt.Errorf("persist ambient workflow reference: %w", err)
+			}
+		}
+	}
 	if item.WorkflowID == nil {
 		if s.workflows == nil {
 			return nil, fmt.Errorf("workflow service is not configured")
@@ -561,8 +605,10 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 		}
 	}
 	if item.WorkflowID != nil && *item.WorkflowID != uuid.Nil {
-		if err := s.linkAcceptedPursuitOpportunity(item, *item.WorkflowID, actor); err != nil {
-			return nil, err
+		if !routedThroughPursuit {
+			if err := s.linkAcceptedPursuitOpportunity(item, *item.WorkflowID, actor); err != nil {
+				return nil, err
+			}
 		}
 	}
 	item.Status = StatusAccepted
