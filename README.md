@@ -32,6 +32,10 @@ the dashboard, but a pursuit cannot link to itself and a relationship cannot
 be used to expose another owner's operational record. Candidate pursuits remain
 non-executable until an approval-capable user explicitly accepts them; decision
 resolution is also permission-checked in the handler, not only in route wiring.
+The Command Dashboard is the unified operator queue for governed workflow
+approvals, proposal choices, candidate acceptance or archival, approved next
+actions, runtime recovery, and verified pursuit completion; each control calls
+the existing audited API rather than bypassing the relevant gate.
 
 This is an implementation and focused-test milestone. It does not replace the
 release gates in the verification snapshot below: a real two-account exercise,
@@ -359,7 +363,7 @@ and `.ics` within the same allowlisted root.
 | Route | Purpose |
 | --- | --- |
 | `/control-center` | Primary operational overview and bounded maintenance actions. |
-| `/command-dashboard` | Robert-only decisions, open loops, source-backed context, and memory-derived work. |
+| `/command-dashboard` | Robert-only decisions, open loops, source-backed context, memory-derived work, and unified approval actions for pursuits and linked workflows. |
 | `/pursuits` | Long-running objectives with workflow, source, memory, verification, blocker, approval, activity, and related-pursuit links. |
 | `/workflow-engine` | Work queue, approvals, quality gates, interruptions, retries, and follow-ups. |
 | `/connected-sources` | Source configuration, sync history, extraction inspection, reindexing, pause/resume, and revocation. |
