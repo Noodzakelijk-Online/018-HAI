@@ -1280,6 +1280,7 @@ type fakeSourceRepo struct {
 	extractions map[uuid.UUID]*models.SourceExtraction
 	index       []models.SourceIndexEntry
 	auditLogs   []models.SourceAuditLog
+	oauthTokens map[uuid.UUID]*models.SourceOAuthToken
 }
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
@@ -1288,11 +1289,29 @@ func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
 		sources:     map[uuid.UUID]*models.ConnectedSource{},
 		rawItems:    map[uuid.UUID]*models.SourceRawItem{},
 		extractions: map[uuid.UUID]*models.SourceExtraction{},
+		oauthTokens: map[uuid.UUID]*models.SourceOAuthToken{},
 	}
 	for _, source := range sources {
 		repo.sources[source.ID] = source
 	}
 	return repo
+}
+
+func (r *fakeSourceRepo) SaveOAuthToken(token *models.SourceOAuthToken) error {
+	if r.oauthTokens == nil {
+		r.oauthTokens = map[uuid.UUID]*models.SourceOAuthToken{}
+	}
+	stored := *token
+	r.oauthTokens[token.SourceID] = &stored
+	return nil
+}
+
+func (r *fakeSourceRepo) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error) {
+	if token, ok := r.oauthTokens[sourceID]; ok {
+		copy := *token
+		return &copy, nil
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *fakeSourceRepo) SaveConnector(connector *models.SourceConnector) (*models.SourceConnector, error) {

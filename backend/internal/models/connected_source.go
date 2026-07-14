@@ -119,3 +119,19 @@ type SourceAuditLog struct {
 	Message   string    `gorm:"type:text" json:"message"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+// SourceOAuthToken stores the OAuth tokens for one connected source. The access
+// and refresh tokens are AES-256-GCM ciphertext, never plaintext — a refresh
+// token is a long-lived credential to the user's account. The tokens are
+// deliberately not exposed in JSON: they must never leave the backend.
+type SourceOAuthToken struct {
+	ID           uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	SourceID     uuid.UUID `gorm:"type:uuid;uniqueIndex;not null" json:"sourceId"`
+	Provider     string    `gorm:"type:varchar(50);index;not null" json:"provider"`
+	AccessToken  []byte    `gorm:"type:bytea" json:"-"`
+	RefreshToken []byte    `gorm:"type:bytea" json:"-"`
+	Scope        string    `gorm:"type:varchar(1024)" json:"scope,omitempty"`
+	Expiry       time.Time `json:"expiry,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}

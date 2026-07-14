@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -546,6 +547,14 @@ func (s *fakeTaskSourceService) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSy
 
 func (s *fakeTaskSourceService) Sync(sourceID uuid.UUID, request source.ImportRequest) (*source.SyncResult, error) {
 	return nil, nil
+}
+
+func (s *fakeTaskSourceService) StartGoogleOAuth(sourceID uuid.UUID) (string, error) {
+	return "", nil
+}
+
+func (s *fakeTaskSourceService) CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error) {
+	return uuid.Nil, nil
 }
 
 func (s *fakeTaskSourceService) RunDueScheduledSyncs(now time.Time) (*source.ScheduledSyncRun, error) {

@@ -35,6 +35,17 @@ http {
             proxy_set_header X-HAI-Role owner;
         }
 
+        # OAuth callback: Google redirects the user's browser here after
+        # consent, with no HAI session, so it cannot sit behind auth_request.
+        # It is protected instead by the HMAC-signed state the backend issued.
+        # No X-HAI-Role, so it runs as viewer (a GET), but it still needs the
+        # shared key to reach the backend API.
+        location = /api/v1/sources/oauth/google/callback {
+            proxy_pass http://backend:80;
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
+        }
+
         # Liveness: no authentication, and it reveals nothing beyond "the
         # process is up" — safe for an uptime check to poll.
         location = /healthz {

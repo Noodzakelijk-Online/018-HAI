@@ -292,6 +292,8 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 	sourceRoutes := apiVersion.Group("/sources")
 	{
 		sourceRoutes.GET("/connectors", sourceHandler.Connectors)
+		sourceRoutes.GET("/oauth/google/start", sourceHandler.StartGoogleOAuth)
+		sourceRoutes.GET("/oauth/google/callback", sourceHandler.GoogleOAuthCallback)
 		sourceRoutes.GET("/", sourceHandler.Sources)
 		sourceRoutes.POST("/", sourceHandler.CreateSource)
 		sourceRoutes.POST("/search", sourceHandler.Search)

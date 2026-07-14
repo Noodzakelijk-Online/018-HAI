@@ -136,6 +136,8 @@ type Service interface {
 	ArchiveExtraction(id uuid.UUID, archived bool) (*models.SourceExtraction, error)
 	DeleteExtraction(id uuid.UUID) error
 	AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
+	StartGoogleOAuth(sourceID uuid.UUID) (string, error)
+	CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error)
 }
 
 type service struct {
@@ -181,7 +183,21 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if err := s.ensureConnectors(); err != nil {
 		return nil, err
 	}
-	return s.repo.FindConnectors()
+	connectors, err := s.repo.FindConnectors()
+	if err != nil {
+		return nil, err
+	}
+	// Be honest about Gmail: the adapter is real, but it cannot do anything until
+	// the Google OAuth app is configured, so report not_implemented until it is.
+	if !googleOAuthConfig().Configured() {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == gmailConnectorKey {
+				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].StatusReason = "real Gmail OAuth adapter is implemented but GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REDIRECT_URL are not set, so it cannot connect yet"
+			}
+		}
+	}
+	return connectors, nil
 }
 
 func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error) {
@@ -358,6 +374,18 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if len(items) == 0 && source.ConnectorKey == "github" {
 		items, adapterCursor, err = fetchGitHubSource(source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
+		items, adapterCursor, err = s.fetchGmailSource(context.Background(), source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -1463,6 +1491,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "cloud-documents", Name: "Synced cloud document folders", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads a locally-synced folder (bounded by the folder allowlist); does not connect to a Drive/Dropbox API"},
 		{ConnectorKey: "project-board", Name: "Trello project-board exports", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads Trello JSON export files from an allowlisted local folder; does not connect to the Trello API"},
 		{ConnectorKey: "github", Name: "GitHub repositories and work", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only GitHub REST sync of repositories, issues, pull requests, commits, and workflow runs; optional token in GITHUB_SOURCE_TOKEN"},
+		{ConnectorKey: gmailConnectorKey, Name: "Gmail (Google OAuth)", Category: "email", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "gmail.readonly", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Gmail REST sync over Google OAuth (metadata only); connect a Google account per source. Requires GOOGLE_OAUTH_* configuration."},
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "manual and scheduled ingestion of an allowlisted local folder"},
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
@@ -1496,7 +1525,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == "whatsapp-export" || connectorKey == "odoo-herp"
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "odoo-herp"
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
