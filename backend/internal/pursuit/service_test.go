@@ -2312,6 +2312,66 @@ func TestApprovedRuntimeAttemptDecisionCreatesGovernedRecoveryWorkflow(t *testin
 	}
 }
 
+func TestApprovedRuntimeDecisionRemainsPendingWhenRecoveryWorkflowFails(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{err: errNotFound("workflow intake")}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Keep failed runtime recovery actionable", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	launchID := uuid.New()
+	sourceURI := "automation-launch://" + launchID.String()
+	repo.launchEvents = append(repo.launchEvents, models.AutomationLaunchEvent{
+		ID:          launchID,
+		RuntimeType: "openclaw",
+		LaunchType:  "agent_runtime",
+		Status:      "blocked",
+		Message:     "agent runtime registry is not configured",
+		ExitCode:    -1,
+		StartedAt:   time.Now().UTC(),
+		CompletedAt: time.Now().UTC(),
+	})
+	if _, err := service.Link(created.ID, LinkRequest{
+		LinkType:     LinkAgentRuntime,
+		LinkID:       launchID.String(),
+		Relationship: "execution_attempt",
+		SourceURI:    sourceURI,
+		SourceLabel:  "OpenClaw blocked launch",
+	}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+	decisionID := "runtime:" + launchID.String() + ":review"
+
+	_, err = service.ResolveDecision(created.ID, DecisionResolutionRequest{
+		DecisionID:   decisionID,
+		DecisionType: "runtime_attempt_review",
+		Approved:     true,
+		EvidenceURI:  sourceURI,
+		Actor:        "Robert",
+	})
+	if err == nil || !strings.Contains(err.Error(), "workflow intake not found") {
+		t.Fatalf("ResolveDecision error = %v, want recovery workflow failure", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("workflow intake calls = %d, want 1", workflowService.calls)
+	}
+
+	detail, err := service.Detail(created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if detail.Summary.NeedsRobert == 0 || detail.Summary.Blocked == 0 {
+		t.Fatalf("failed recovery decision was removed from operator queues: summary=%#v", detail.Summary)
+	}
+	for _, decision := range detail.DecisionQueue {
+		if decision.ID == decisionID && decision.Status == "pending" {
+			return
+		}
+	}
+	t.Fatalf("failed recovery decision was incorrectly resolved: %#v", detail.DecisionQueue)
+}
+
 func TestRecoveredRuntimeAttemptStopsBlockingPursuit(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -3200,11 +3260,15 @@ type fakeWorkflowIntake struct {
 	calls    int
 	records  map[uuid.UUID]*workflow.WorkflowRecord
 	repo     *fakeRepo
+	err      error
 }
 
 func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	f.calls++
 	f.received = request
+	if f.err != nil {
+		return nil, f.err
+	}
 	id := uuid.New()
 	record := &workflow.WorkflowRecord{
 		Item: models.WorkflowItem{

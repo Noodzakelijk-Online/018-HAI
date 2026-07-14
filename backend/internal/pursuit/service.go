@@ -1967,10 +1967,10 @@ func (s *service) ResolveDecision(id uuid.UUID, request DecisionResolutionReques
 			return nil, err
 		}
 	}
-	if _, err := s.recordDecisionResolution(id, request); err != nil {
+	if err := s.createApprovedDecisionWorkflow(id, request); err != nil {
 		return nil, err
 	}
-	if err := s.createApprovedDecisionWorkflow(id, request); err != nil {
+	if _, err := s.recordDecisionResolution(id, request); err != nil {
 		return nil, err
 	}
 	return s.RefreshSummary(id, firstNonEmpty(request.Actor, "Robert"))
