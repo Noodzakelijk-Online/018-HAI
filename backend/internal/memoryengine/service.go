@@ -33,6 +33,7 @@ type ChatMessage struct {
 }
 
 type ImportRequest struct {
+	OwnerIdentity string        `json:"-"`
 	Platform      string        `json:"platform"`
 	ExternalID    string        `json:"externalId,omitempty"`
 	Title         string        `json:"title"`
@@ -89,11 +90,17 @@ type SearchResult struct {
 type Service interface {
 	Import(request ImportRequest) (*ImportResult, error)
 	Conversations(limit int) ([]models.AIConversationArchive, error)
+	ConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error)
 	Conversation(id uuid.UUID) (*ConversationDetail, error)
+	ConversationForOwner(ownerIdentity string, id uuid.UUID) (*ConversationDetail, error)
 	DeleteConversation(id uuid.UUID) error
+	DeleteConversationForOwner(ownerIdentity string, id uuid.UUID) error
 	Insights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
+	InsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
 	Dashboard() (*CommandDashboard, error)
+	DashboardForOwner(ownerIdentity string) (*CommandDashboard, error)
 	Search(query, projectKey string, limit int) (*SearchResult, error)
+	SearchForOwner(ownerIdentity, query, projectKey string, limit int) (*SearchResult, error)
 }
 
 type service struct {
@@ -157,12 +164,13 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	existing, err := s.repo.FindConversation(normalized.Platform, normalized.ExternalID)
+	normalized.OwnerIdentity = strings.TrimSpace(normalized.OwnerIdentity)
+	existing, err := s.repo.FindConversationForOwner(normalized.OwnerIdentity, normalized.Platform, normalized.ExternalID)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
 	if existing != nil && existing.ContentHash == contentHash {
-		insights, _ := s.repo.FindInsights("", normalized.ProjectKey, nil, 100)
+		insights, _ := s.repo.FindInsightsForOwner(normalized.OwnerIdentity, "", normalized.ProjectKey, nil, 100)
 		return &ImportResult{
 			Conversation: *existing,
 			Insights:     filterConversationInsights(insights, existing.ID, existing.Revision),
@@ -170,7 +178,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		}, nil
 	}
 	if existing != nil {
-		oldInsights, errInsights := s.repo.FindInsights("", "", nil, 500)
+		oldInsights, errInsights := s.repo.FindInsightsForOwner(normalized.OwnerIdentity, "", "", nil, 500)
 		if errInsights != nil {
 			return nil, errInsights
 		}
@@ -196,10 +204,11 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 	conversation := existing
 	if conversation == nil {
 		conversation = &models.AIConversationArchive{
-			ID:         uuid.New(),
-			Platform:   normalized.Platform,
-			ExternalID: normalized.ExternalID,
-			Revision:   1,
+			ID:            uuid.New(),
+			OwnerIdentity: normalized.OwnerIdentity,
+			Platform:      normalized.Platform,
+			ExternalID:    normalized.ExternalID,
+			Revision:      1,
 		}
 	} else {
 		conversation.Revision++
@@ -298,6 +307,7 @@ func (s *service) autoLinkPursuitWorkflow(conversation models.AIConversationArch
 		return nil, nil
 	}
 	result, err := s.pursuitLinker.AutoLinkWorkflow(pursuitpkg.AutoLinkWorkflowRequest{
+		OwnerIdentity:        conversation.OwnerIdentity,
 		WorkflowID:           record.Item.ID,
 		Input:                strings.Join([]string{conversation.Title, insight.Text}, "\n"),
 		ProjectKey:           insight.ProjectKey,
@@ -331,12 +341,13 @@ func (s *service) autoLinkPursuitMemory(conversation models.AIConversationArchiv
 		sourceLabel = memoryRecord.SourceLabel
 	}
 	result, err := s.pursuitLinker.AutoLinkMemory(pursuitpkg.AutoLinkMemoryRequest{
-		MemoryID:    memoryRecord.ID,
-		Input:       strings.Join([]string{conversation.Title, insight.Text, memoryRecord.Summary}, "\n"),
-		ProjectKey:  projectKey,
-		SourceURI:   sourceURI,
-		SourceLabel: sourceLabel,
-		Actor:       "memory-engine",
+		OwnerIdentity: conversation.OwnerIdentity,
+		MemoryID:      memoryRecord.ID,
+		Input:         strings.Join([]string{conversation.Title, insight.Text, memoryRecord.Summary}, "\n"),
+		ProjectKey:    projectKey,
+		SourceURI:     sourceURI,
+		SourceLabel:   sourceLabel,
+		Actor:         "memory-engine",
 	})
 	if err != nil {
 		return nil, err
@@ -345,14 +356,22 @@ func (s *service) autoLinkPursuitMemory(conversation models.AIConversationArchiv
 }
 
 func (s *service) Conversations(limit int) ([]models.AIConversationArchive, error) {
-	return s.repo.FindConversations(limit)
+	return s.ConversationsForOwner("", limit)
+}
+
+func (s *service) ConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error) {
+	return s.repo.FindConversationsForOwner(strings.TrimSpace(ownerIdentity), limit)
 }
 
 func (s *service) Conversation(id uuid.UUID) (*ConversationDetail, error) {
+	return s.ConversationForOwner("", id)
+}
+
+func (s *service) ConversationForOwner(ownerIdentity string, id uuid.UUID) (*ConversationDetail, error) {
 	if len(s.encryptionKey) != 32 {
 		return nil, fmt.Errorf("memory encryption key is not configured")
 	}
-	conversation, err := s.repo.FindConversationByID(id)
+	conversation, err := s.repo.FindConversationByIDForOwner(strings.TrimSpace(ownerIdentity), id)
 	if err != nil {
 		return nil, err
 	}
@@ -368,11 +387,16 @@ func (s *service) Conversation(id uuid.UUID) (*ConversationDetail, error) {
 }
 
 func (s *service) DeleteConversation(id uuid.UUID) error {
-	conversation, err := s.repo.FindConversationByID(id)
+	return s.DeleteConversationForOwner("", id)
+}
+
+func (s *service) DeleteConversationForOwner(ownerIdentity string, id uuid.UUID) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	conversation, err := s.repo.FindConversationByIDForOwner(ownerIdentity, id)
 	if err != nil {
 		return err
 	}
-	insights, err := s.repo.FindInsights("", "", nil, 500)
+	insights, err := s.repo.FindInsightsForOwner(ownerIdentity, "", "", nil, 500)
 	if err != nil {
 		return err
 	}
@@ -392,20 +416,29 @@ func (s *service) DeleteConversation(id uuid.UUID) error {
 }
 
 func (s *service) Insights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
-	return s.repo.FindInsights(strings.TrimSpace(kind), strings.TrimSpace(projectKey), needsReview, limit)
+	return s.InsightsForOwner("", kind, projectKey, needsReview, limit)
+}
+
+func (s *service) InsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
+	return s.repo.FindInsightsForOwner(strings.TrimSpace(ownerIdentity), strings.TrimSpace(kind), strings.TrimSpace(projectKey), needsReview, limit)
 }
 
 func (s *service) Dashboard() (*CommandDashboard, error) {
-	conversations, err := s.repo.FindConversations(50)
+	return s.DashboardForOwner("")
+}
+
+func (s *service) DashboardForOwner(ownerIdentity string) (*CommandDashboard, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	conversations, err := s.repo.FindConversationsForOwner(ownerIdentity, 50)
 	if err != nil {
 		return nil, err
 	}
-	insights, err := s.repo.FindInsights("", "", nil, 500)
+	insights, err := s.repo.FindInsightsForOwner(ownerIdentity, "", "", nil, 500)
 	if err != nil {
 		return nil, err
 	}
 	workflowDashboard := &workflow.WorkflowDashboard{}
-	if s.workflowService != nil {
+	if ownerIdentity == "" && s.workflowService != nil {
 		workflowDashboard, err = s.workflowService.Dashboard()
 		if err != nil {
 			return nil, err
@@ -429,13 +462,16 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 			"AI-extracted actions and uncertain facts remain approval-gated.",
 		},
 	}
-	if s.memoryService != nil {
+	if ownerIdentity == "" && s.memoryService != nil {
 		memories, errMemory := s.memoryService.FindAll("", false)
 		if errMemory != nil {
 			result.Warnings = append(result.Warnings, "Correction memory review is unavailable: "+errMemory.Error())
 		} else {
 			result.SourceCorrections = sourceCorrectionMemories(memories)
 		}
+	}
+	if ownerIdentity != "" {
+		result.Warnings = append(result.Warnings, "Workflow queues are shown through the owner-scoped Pursuits dashboard until workflow ownership is persisted.")
 	}
 	projects := map[string]*ProjectSummary{}
 	for _, insight := range insights {
@@ -492,21 +528,35 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 }
 
 func (s *service) Search(query, projectKey string, limit int) (*SearchResult, error) {
+	return s.SearchForOwner("", query, projectKey, limit)
+}
+
+func (s *service) SearchForOwner(ownerIdentity, query, projectKey string, limit int) (*SearchResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("query is required")
 	}
 	if limit <= 0 || limit > 30 {
 		limit = 12
 	}
-	retrieved, err := s.memoryService.Retrieve(memory.RetrieveRequest{
-		Query:      query,
-		ProjectKey: projectKey,
-		Limit:      limit,
-	})
-	if err != nil {
-		return nil, err
+	retrieved := &memory.RetrieveResult{
+		Query:       query,
+		ProjectKey:  projectKey,
+		UsedContext: []memory.RankedMemory{},
+		Explanation: "Owner-scoped AI-history facts only. Generic context-memory results remain unavailable until those records carry owner identity.",
 	}
-	all, err := s.repo.FindInsights("", projectKey, nil, 500)
+	if ownerIdentity == "" && s.memoryService != nil {
+		var err error
+		retrieved, err = s.memoryService.Retrieve(memory.RetrieveRequest{
+			Query:      query,
+			ProjectKey: projectKey,
+			Limit:      limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	all, err := s.repo.FindInsightsForOwner(ownerIdentity, "", projectKey, nil, 500)
 	if err != nil {
 		return nil, err
 	}
@@ -630,17 +680,18 @@ func extractInsights(conversation models.AIConversationArchive, request ImportRe
 				confidence = 0.55
 			}
 			result = append(result, models.AIMemoryInsight{
-				Kind:         kind,
-				Text:         sentence,
-				ProjectKey:   request.ProjectKey,
-				Owner:        owner,
-				RobertNeeded: robertNeeded,
-				RiskLevel:    risk,
-				Confidence:   confidence,
-				SourceURI:    conversation.SourceURI,
-				SourceLabel:  conversation.Platform + ": " + conversation.Title,
-				NeedsReview:  needsReview,
-				Status:       "open",
+				OwnerIdentity: conversation.OwnerIdentity,
+				Kind:          kind,
+				Text:          sentence,
+				ProjectKey:    request.ProjectKey,
+				Owner:         owner,
+				RobertNeeded:  robertNeeded,
+				RiskLevel:     risk,
+				Confidence:    confidence,
+				SourceURI:     conversation.SourceURI,
+				SourceLabel:   conversation.Platform + ": " + conversation.Title,
+				NeedsReview:   needsReview,
+				Status:        "open",
 			})
 		}
 	}

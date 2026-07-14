@@ -1,8 +1,10 @@
 package memoryengine
 
 import (
+	"automation-hub-backend/internal/identity"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -22,6 +24,7 @@ func (h *Handler) Import(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = verifiedOwner(c)
 	result, err := h.service.Import(request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -36,7 +39,7 @@ func (h *Handler) Import(c *gin.Context) {
 
 func (h *Handler) Conversations(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
-	result, err := h.service.Conversations(limit)
+	result, err := h.service.ConversationsForOwner(verifiedOwner(c), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -49,7 +52,7 @@ func (h *Handler) Conversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.Conversation(id)
+	result, err := h.service.ConversationForOwner(verifiedOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -62,7 +65,7 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteConversation(id); err != nil {
+	if err := h.service.DeleteConversationForOwner(verifiedOwner(c), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -80,7 +83,7 @@ func (h *Handler) Insights(c *gin.Context) {
 		}
 		needsReview = &value
 	}
-	result, err := h.service.Insights(c.Query("kind"), c.Query("projectKey"), needsReview, limit)
+	result, err := h.service.InsightsForOwner(verifiedOwner(c), c.Query("kind"), c.Query("projectKey"), needsReview, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -89,7 +92,7 @@ func (h *Handler) Insights(c *gin.Context) {
 }
 
 func (h *Handler) Dashboard(c *gin.Context) {
-	result, err := h.service.Dashboard()
+	result, err := h.service.DashboardForOwner(verifiedOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -107,7 +110,7 @@ func (h *Handler) Search(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.service.Search(request.Query, request.ProjectKey, request.Limit)
+	result, err := h.service.SearchForOwner(verifiedOwner(c), request.Query, request.ProjectKey, request.Limit)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -122,4 +125,15 @@ func parseID(c *gin.Context) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	return id, true
+}
+
+// verifiedOwner is populated by the gateway after validating the session. It
+// deliberately ignores any owner field supplied in browser JSON.
+func verifiedOwner(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
 }

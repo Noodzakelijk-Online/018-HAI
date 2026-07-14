@@ -114,11 +114,12 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 	)
 
 	result, err := service.Import(ImportRequest{
-		Platform:   "chatgpt",
-		ExternalID: "thread-vivare-action",
-		Title:      "Vivare legal dispute",
-		SourceURI:  "https://chatgpt.com/c/thread-vivare-action",
-		ProjectKey: "vivare",
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-vivare-action",
+		Title:         "Vivare legal dispute",
+		SourceURI:     "https://chatgpt.com/c/thread-vivare-action",
+		ProjectKey:    "vivare",
 		Messages: []ChatMessage{{
 			Role:    "assistant",
 			Content: "Action: draft the legal reply for Vivare and attach evidence.",
@@ -310,11 +311,12 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 	)
 
 	result, err := service.Import(ImportRequest{
-		Platform:   "chatgpt",
-		ExternalID: "thread-vivare-rule",
-		Title:      "Vivare legal dispute",
-		SourceURI:  "https://chatgpt.com/c/thread-vivare-rule",
-		ProjectKey: "vivare",
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-vivare-rule",
+		Title:         "Vivare legal dispute",
+		SourceURI:     "https://chatgpt.com/c/thread-vivare-rule",
+		ProjectKey:    "vivare",
 		Messages: []ChatMessage{{
 			Role:    "assistant",
 			Content: "Rule: Always use formal Dutch tone for Vivare correspondence.",
@@ -333,7 +335,7 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 		t.Fatalf("memory link requests = %d, want 1", len(pursuitSpy.memoryRequests))
 	}
 	linkRequest := pursuitSpy.memoryRequests[0]
-	if linkRequest.MemoryID == uuid.Nil || linkRequest.ProjectKey != "vivare" {
+	if linkRequest.MemoryID == uuid.Nil || linkRequest.ProjectKey != "vivare" || linkRequest.OwnerIdentity != "alice" {
 		t.Fatalf("memory link request = %#v", linkRequest)
 	}
 	if linkRequest.AllowCreateCandidate {
@@ -344,6 +346,62 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 	}
 	if linkRequest.SourceURI != "https://chatgpt.com/c/thread-vivare-rule" || linkRequest.SourceLabel != "chatgpt: Vivare legal dispute" {
 		t.Fatalf("source ref = %q/%q", linkRequest.SourceURI, linkRequest.SourceLabel)
+	}
+}
+
+func TestImportedConversationAndInsightsAreScopedToOwner(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	service := NewService(repo, &memoryEngineMemoryStub{}, nil, "test-memory-encryption-secret")
+
+	alice, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "shared-thread",
+		Title:         "Alice thread",
+		SourceURI:     "https://chatgpt.com/c/shared-thread",
+		Messages:      []ChatMessage{{Role: "user", Content: "Follow up with the insurer about the claim evidence."}},
+	})
+	if err != nil {
+		t.Fatalf("import alice: %v", err)
+	}
+	bob, err := service.Import(ImportRequest{
+		OwnerIdentity: "bob",
+		Platform:      "chatgpt",
+		ExternalID:    "shared-thread",
+		Title:         "Bob thread",
+		SourceURI:     "https://chatgpt.com/c/shared-thread",
+		Messages:      []ChatMessage{{Role: "user", Content: "Follow up with the developer about the deployment."}},
+	})
+	if err != nil {
+		t.Fatalf("import bob: %v", err)
+	}
+	if alice.Conversation.ID == bob.Conversation.ID || alice.Conversation.OwnerIdentity != "alice" || bob.Conversation.OwnerIdentity != "bob" {
+		t.Fatalf("owner-specific conversations = %#v / %#v", alice.Conversation, bob.Conversation)
+	}
+
+	aliceConversations, err := service.ConversationsForOwner("alice", 10)
+	if err != nil || len(aliceConversations) != 1 || aliceConversations[0].ID != alice.Conversation.ID {
+		t.Fatalf("alice conversations = %#v, err=%v", aliceConversations, err)
+	}
+	bobConversations, err := service.ConversationsForOwner("bob", 10)
+	if err != nil || len(bobConversations) != 1 || bobConversations[0].ID != bob.Conversation.ID {
+		t.Fatalf("bob conversations = %#v, err=%v", bobConversations, err)
+	}
+
+	if _, err := service.ConversationForOwner("bob", alice.Conversation.ID); err == nil {
+		t.Fatal("bob could read alice conversation")
+	}
+	if err := service.DeleteConversationForOwner("bob", alice.Conversation.ID); err == nil {
+		t.Fatal("bob could delete alice conversation")
+	}
+	aliceInsights, err := service.InsightsForOwner("alice", "", "", nil, 10)
+	if err != nil || len(aliceInsights) == 0 || aliceInsights[0].OwnerIdentity != "alice" {
+		t.Fatalf("alice insights = %#v, err=%v", aliceInsights, err)
+	}
+	for _, insight := range aliceInsights {
+		if insight.OwnerIdentity != "alice" {
+			t.Fatalf("alice received another owner's insight: %#v", insight)
+		}
 	}
 }
 
@@ -411,10 +469,30 @@ type memoryEngineRepoStub struct {
 }
 
 func (r *memoryEngineRepoStub) FindConversation(platform, externalID string) (*models.AIConversationArchive, error) {
+	return r.FindConversationForOwner("", platform, externalID)
+}
+
+func (r *memoryEngineRepoStub) FindConversationForOwner(ownerIdentity, platform, externalID string) (*models.AIConversationArchive, error) {
+	for _, conversation := range r.conversations {
+		if conversation.Platform == platform && conversation.ExternalID == externalID && !conversation.Archived && memoryEngineRecordVisibleTo(conversation.OwnerIdentity, ownerIdentity) {
+			copyConversation := conversation
+			return &copyConversation, nil
+		}
+	}
 	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *memoryEngineRepoStub) FindConversationByID(id uuid.UUID) (*models.AIConversationArchive, error) {
+	return r.FindConversationByIDForOwner("", id)
+}
+
+func (r *memoryEngineRepoStub) FindConversationByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.AIConversationArchive, error) {
+	for _, conversation := range r.conversations {
+		if conversation.ID == id && memoryEngineRecordVisibleTo(conversation.OwnerIdentity, ownerIdentity) {
+			copyConversation := conversation
+			return &copyConversation, nil
+		}
+	}
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -422,11 +500,28 @@ func (r *memoryEngineRepoStub) SaveConversation(conversation *models.AIConversat
 	if conversation.ID == uuid.Nil {
 		conversation.ID = uuid.New()
 	}
+	for index, stored := range r.conversations {
+		if stored.ID == conversation.ID {
+			r.conversations[index] = *conversation
+			return conversation, nil
+		}
+	}
+	r.conversations = append(r.conversations, *conversation)
 	return conversation, nil
 }
 
 func (r *memoryEngineRepoStub) FindConversations(limit int) ([]models.AIConversationArchive, error) {
-	return r.conversations, nil
+	return r.FindConversationsForOwner("", limit)
+}
+
+func (r *memoryEngineRepoStub) FindConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error) {
+	result := []models.AIConversationArchive{}
+	for _, conversation := range r.conversations {
+		if !conversation.Archived && memoryEngineRecordVisibleTo(conversation.OwnerIdentity, ownerIdentity) {
+			result = append(result, conversation)
+		}
+	}
+	return result, nil
 }
 
 func (r *memoryEngineRepoStub) DeleteConversation(id uuid.UUID) error {
@@ -437,12 +532,20 @@ func (r *memoryEngineRepoStub) SaveInsight(insight *models.AIMemoryInsight) (*mo
 	if insight.ID == uuid.Nil {
 		insight.ID = uuid.New()
 	}
+	r.insights = append(r.insights, *insight)
 	return insight, nil
 }
 
 func (r *memoryEngineRepoStub) FindInsights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
+	return r.FindInsightsForOwner("", kind, projectKey, needsReview, limit)
+}
+
+func (r *memoryEngineRepoStub) FindInsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
 	result := []models.AIMemoryInsight{}
 	for _, insight := range r.insights {
+		if !memoryEngineRecordVisibleTo(insight.OwnerIdentity, ownerIdentity) {
+			continue
+		}
 		if kind != "" && insight.Kind != kind {
 			continue
 		}
@@ -455,6 +558,10 @@ func (r *memoryEngineRepoStub) FindInsights(kind, projectKey string, needsReview
 		result = append(result, insight)
 	}
 	return result, nil
+}
+
+func memoryEngineRecordVisibleTo(recordOwner, ownerIdentity string) bool {
+	return ownerIdentity == "" || recordOwner == "" || recordOwner == ownerIdentity
 }
 
 func (r *memoryEngineRepoStub) ArchiveInsights(conversationID uuid.UUID, revision int) error {
