@@ -1302,6 +1302,106 @@ func TestResolveCompletionReviewDecisionRejectsUnverifiedRequest(t *testing.T) {
 	}
 }
 
+func TestCandidateCannotCompleteUntilAcceptedAndPlanned(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Candidate from a chat import",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "ai_chat_pursuit_candidate",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:                 workflowID,
+		OwnerIdentity:      "alice",
+		Title:              "Completed imported workflow",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	repo.evidence = append(repo.evidence, models.WorkflowEvidenceClaim{
+		ID:         uuid.New(),
+		WorkflowID: workflowID,
+		ClaimText:  "Imported work has verified evidence.",
+		SourceURI:  "local://evidence/imported-work",
+		Status:     "verified",
+	})
+	if _, err := service.Link(candidate.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "candidate_operational_work"}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+
+	detail, err := service.DetailForOwner("alice", candidate.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if detail.Summary.CompletionCandidate {
+		t.Fatalf("unaccepted candidate must not be a completion candidate: %#v", detail.Summary)
+	}
+	for _, decision := range detail.DecisionQueue {
+		if decision.DecisionType == "pursuit_completion_review" {
+			t.Fatalf("unaccepted candidate exposed completion decision: %#v", detail.DecisionQueue)
+		}
+	}
+	if _, err := service.UpdateForOwner("alice", candidate.ID, UpdateRequest{Status: StatusCompleted, Actor: "Robert"}); err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("UpdateForOwner error = %v, want candidate acceptance guard", err)
+	}
+	if _, err := service.ResolveDecisionForOwner("alice", candidate.ID, DecisionResolutionRequest{
+		DecisionID:   completionReviewDecisionID(candidate.ID),
+		DecisionType: "pursuit_completion_review",
+		Approved:     true,
+		Actor:        "Robert",
+	}); err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("ResolveDecisionForOwner error = %v, want candidate acceptance guard", err)
+	}
+	stored, err := repo.FindByID(candidate.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if pursuitClosed(*stored) {
+		t.Fatalf("candidate was closed without acceptance: %#v", stored)
+	}
+}
+
+func TestOwnerScopedCompletionIgnoresForeignLinkedEvidence(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice private completion", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:                 bobWorkflowID,
+		OwnerIdentity:      "bob",
+		Title:              "Bob verified private workflow",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	foreignLinkID := uuid.New()
+	repo.links[foreignLinkID] = models.PursuitLink{
+		ID:           foreignLinkID,
+		PursuitID:    alice.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_import",
+		SourceURI:    "workflow://private/bob-completion",
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	if _, err := service.UpdateForOwner("alice", alice.ID, UpdateRequest{Status: StatusCompleted, Actor: "Alice"}); err == nil || !strings.Contains(err.Error(), "requires verified evidence") {
+		t.Fatalf("UpdateForOwner error = %v, want owner-visible evidence guard", err)
+	}
+	stored, err := repo.FindByID(alice.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if pursuitClosed(*stored) {
+		t.Fatalf("foreign evidence closed Alice pursuit: %#v", stored)
+	}
+}
+
 func TestDashboardUsesComputedCompletionCandidate(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

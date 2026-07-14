@@ -682,12 +682,15 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 		return nil, fmt.Errorf("cannot reopen a closed pursuit through a generic update; use the explicit reopen action")
 	}
 	if requestsVerifiedCompletion(*pursuit, request) {
-		if reason, err := s.completionActiveBlockerReason(id); err != nil {
+		if isPursuitCandidate(*pursuit) {
+			return nil, fmt.Errorf("pursuit candidate must be accepted and planned before it can be marked complete")
+		}
+		if reason, err := s.completionActiveBlockerReasonForOwner(ownerIdentity, id); err != nil {
 			return nil, err
 		} else if reason != "" {
 			return nil, fmt.Errorf("pursuit completion is blocked by unresolved operational work: %s", reason)
 		}
-		allowed, reason, err := s.completionEvidenceAvailable(id)
+		allowed, reason, err := s.completionEvidenceAvailableForOwner(ownerIdentity, id)
 		if err != nil {
 			return nil, err
 		}
@@ -2538,6 +2541,9 @@ func (s *service) completePursuitFromDecisionForOwner(ownerIdentity string, id u
 	if pursuitClosed(*pursuit) {
 		return nil
 	}
+	if isPursuitCandidate(*pursuit) {
+		return fmt.Errorf("pursuit candidate must be accepted and planned before completion review")
+	}
 	if reason, err := s.completionActiveBlockerReasonForOwner(ownerIdentity, id); err != nil {
 		return err
 	} else if reason != "" {
@@ -3456,7 +3462,7 @@ func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, prop
 			break
 		}
 	}
-	if len(result) == 0 && workflowsReadyForCompletion(workflows) {
+	if len(result) == 0 && !isPursuitCandidate(pursuit) && workflowsReadyForCompletion(workflows) {
 		decisionID := completionReviewDecisionID(pursuit.ID)
 		if resolvedDecisions[decisionID] {
 			return result
@@ -3856,7 +3862,7 @@ func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []m
 		Confidence:          pursuit.Confidence,
 		PlanningNeeded:      planningNeeded,
 		ReviewDue:           reviewDue,
-		CompletionCandidate: !pursuitClosed(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0,
+		CompletionCandidate: !pursuitClosed(pursuit) && !isPursuitCandidate(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0,
 	}
 }
 

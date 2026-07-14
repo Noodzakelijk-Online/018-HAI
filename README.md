@@ -93,6 +93,10 @@ Recent hardening in the current baseline:
   changed** lane is ranked by that effective activity, so a real worker update
   is neither misclassified as stale nor hidden behind older pursuit records;
   a passive page refresh still cannot alter the durable pursuit record.
+- Auto-created pursuit candidates remain Robert-owned review items. They cannot
+  surface a completion decision or be closed through a generic update until
+  Robert accepts and plans them; owner-scoped closure checks ignore any legacy
+  link whose underlying evidence belongs to another user.
 
 For route-level ownership behavior, see the
 [backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that
