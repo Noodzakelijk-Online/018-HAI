@@ -342,11 +342,52 @@ authenticated session maps to a single `owner` role rather than distinct
 per-user roles. True multi-user RBAC needs the IDP to carry a role claim; the
 enforcement and role-resolution path are now in place for when it does.
 
+## 14. First real OAuth connector: Gmail (read-only)
+
+The first connector that talks to a live external account instead of reading
+local files. Built against the developer's own Google OAuth app.
+
+Architecture:
+- `internal/googleoauth`: the authorization-code flow (consent URL with
+  `access_type=offline` for a refresh token, code exchange, refresh), an
+  AES-256-GCM codec for tokens at rest, and a read-only Gmail REST client
+  (metadata only). All unit-tested against mock servers.
+- `internal/source/oauth.go`: HMAC-signed, stateless CSRF state; encrypted token
+  storage (`SourceOAuthToken`); transparent token refresh; and a Gmail fetch
+  wired into the sync dispatch.
+- Routes: `sources/oauth/google/start` (authenticated) and `.../callback`. The
+  gateway serves the callback publicly — Google has no HAI session — protected
+  by the signed state, not the login.
+
+Verified on the running stack:
+
+```
+# Not configured (GOOGLE_OAUTH_* empty) — honest, does not pretend to work:
+gmail connector adapterStatus            -> not_implemented
+GET sources/oauth/google/start           -> HTTP 400 "google oauth is not configured"
+
+# Configured — the flow produces a real Google consent URL:
+gmail connector adapterStatus            -> operational
+GET sources/oauth/google/start           -> authorizeUrl =
+    https://accounts.google.com/o/oauth2/v2/auth?...
+      client_id=<configured>
+      scope=https://www.googleapis.com/auth/gmail.readonly
+      access_type=offline
+      redirect_uri=<gateway>/api/v1/sources/oauth/google/callback
+      state=<hmac-signed>
+```
+
+This is verified up to the consent boundary. The final step — a real Google
+account clicking "Allow", the callback storing tokens, and a sync pulling real
+messages — requires the OAuth app's real credentials and a human consent, and is
+performed with the operator during the live/remote session. It is deliberately
+not claimed as done here.
+
 ## What is NOT claimed here
 
-- No OAuth connector was implemented. Connector statuses are now honest about
-  that (section 12), but building an actual Gmail/Drive/Calendar/Trello adapter
-  is still outstanding and needs the client's OAuth credentials.
+- A real Gmail OAuth connector now exists and is verified to the consent
+  boundary (section 14); the live pull of real mail awaits real credentials and
+  consent. Drive/Calendar/Trello adapters are still outstanding.
 - Redis now backs rate-limit counters, but the LLM usage/budget accounting in
   `internal/llm` is still an in-process map. Persisting that is the natural next
   step; it was left out here because it cannot be exercised end to end until an

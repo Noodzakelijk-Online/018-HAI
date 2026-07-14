@@ -79,6 +79,11 @@ services:
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
       REDIS_ADDR: ${REDIS_ADDR}
+      # Google OAuth (Gmail connector). Empty by default; when unset the Gmail
+      # connector honestly reports not_implemented instead of pretending to work.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URL: ${GOOGLE_OAUTH_REDIRECT_URL:-}
       # Per-client-IP request cap per minute; 0 disables it. Enforced through
       # Redis (REDIS_ADDR) so the count survives restarts and is shared across
       # instances. Was previously not passed through, so the limiter could never

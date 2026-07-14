@@ -1,5 +1,8 @@
-# Stage 1: Compiling the application
-FROM golang:1.21.0 AS builder
+# Stage 1: Compiling the application.
+# golang:1.23 (the module targets go 1.21, and Go is backward compatible): a
+# supported toolchain that also builds the go-redis dependency, which requires
+# go >= 1.18.
+FROM golang:1.23 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
