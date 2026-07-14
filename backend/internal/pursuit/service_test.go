@@ -1154,6 +1154,12 @@ func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T)
 	if workflowService.received.OwnerIdentity != "alice" {
 		t.Fatalf("candidate workflow owner = %q, want alice", workflowService.received.OwnerIdentity)
 	}
+	if !workflowService.received.RequiresReview {
+		t.Fatalf("unmatched candidate workflow must be held for approval: %#v", workflowService.received)
+	}
+	if !strings.Contains(workflowService.received.ReviewReason, "pursuit candidate") {
+		t.Fatalf("candidate workflow review reason = %q", workflowService.received.ReviewReason)
+	}
 }
 
 func TestRouteWorkflowIntakeReturnsPursuitLinkedWorkflowRecord(t *testing.T) {
@@ -1161,14 +1167,15 @@ func TestRouteWorkflowIntakeReturnsPursuitLinkedWorkflowRecord(t *testing.T) {
 	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	request := workflow.IntakeRequest{
-		Input:       "Prepare the evidence bundle for the government hearing.",
-		ProjectKey:  "vivare",
-		SourceType:  "workflow_api",
-		SourceID:    "workflow-api-vivare-01",
-		SourceURI:   "workflow-api://intake/workflow-api-vivare-01",
-		SourceLabel: "Direct workflow API intake",
-		Trigger:     "workflow_api_intake",
-		Actor:       "verified-operator",
+		OwnerIdentity: "alice",
+		Input:         "Prepare the evidence bundle for the government hearing.",
+		ProjectKey:    "vivare",
+		SourceType:    "workflow_api",
+		SourceID:      "workflow-api-vivare-01",
+		SourceURI:     "workflow-api://intake/workflow-api-vivare-01",
+		SourceLabel:   "Direct workflow API intake",
+		Trigger:       "workflow_api_intake",
+		Actor:         "verified-operator",
 	}
 
 	record, err := service.RouteWorkflowIntake(request)
@@ -1180,6 +1187,9 @@ func TestRouteWorkflowIntakeReturnsPursuitLinkedWorkflowRecord(t *testing.T) {
 	}
 	if workflowService.calls != 1 || workflowService.received.Trigger != request.Trigger || !workflowService.received.RequiresReview {
 		t.Fatalf("workflow intake was not governed by the pursuit route: %#v", workflowService)
+	}
+	if workflowService.lastGetOwner != "alice" {
+		t.Fatalf("routed workflow record was reloaded for %q, want alice", workflowService.lastGetOwner)
 	}
 	matches, err := service.Match(MatchRequest{SourceType: request.SourceType, SourceID: request.SourceID})
 	if err != nil {
@@ -4487,11 +4497,12 @@ func (r *fakeRepo) FindLinkedAutomationLaunches(automationIDs []uuid.UUID, launc
 }
 
 type fakeWorkflowIntake struct {
-	received workflow.IntakeRequest
-	calls    int
-	records  map[uuid.UUID]*workflow.WorkflowRecord
-	repo     *fakeRepo
-	err      error
+	received     workflow.IntakeRequest
+	calls        int
+	lastGetOwner string
+	records      map[uuid.UUID]*workflow.WorkflowRecord
+	repo         *fakeRepo
+	err          error
 }
 
 func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
@@ -4528,9 +4539,13 @@ func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.W
 	return record, nil
 }
 
-func (f *fakeWorkflowIntake) Get(id uuid.UUID) (*workflow.WorkflowRecord, error) {
+func (f *fakeWorkflowIntake) GetForOwner(ownerIdentity string, id uuid.UUID) (*workflow.WorkflowRecord, error) {
 	record, ok := f.records[id]
 	if !ok {
+		return nil, errNotFound("workflow")
+	}
+	f.lastGetOwner = ownerIdentity
+	if record.Item.OwnerIdentity != "" && record.Item.OwnerIdentity != ownerIdentity {
 		return nil, errNotFound("workflow")
 	}
 	return record, nil

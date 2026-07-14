@@ -648,8 +648,8 @@ type workflowIntakeService interface {
 	Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
 }
 
-type workflowRecordReader interface {
-	Get(id uuid.UUID) (*workflow.WorkflowRecord, error)
+type workflowOwnerScopedRecordReader interface {
+	GetForOwner(ownerIdentity string, id uuid.UUID) (*workflow.WorkflowRecord, error)
 }
 
 type service struct {
@@ -2032,8 +2032,17 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		}, nil
 	}
 
-	reviewRequired := request.RequiresReview || strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high")
+	// An unmatched intake can only become a new pursuit candidate after a
+	// workflow record exists to preserve its audit trail. Hold that workflow
+	// until an approval-capable operator has reviewed the candidate; otherwise a
+	// low-risk worker could start before Robert decides that the new objective is
+	// relevant at all.
+	candidateEligible := candidateHasEnoughSignal(request.Input, request.ProjectKey, request.SourceLabel, request.SourceURI)
+	reviewRequired := request.RequiresReview || candidateEligible || strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high")
 	reviewReason := firstNonEmpty(request.ReviewReason, routedIntakeReviewReason(reviewRequired, request))
+	if candidateEligible && strings.TrimSpace(request.ReviewReason) == "" && !strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high") {
+		reviewReason = "unmatched intake created a pursuit candidate; accept the candidate and explicitly approve the linked workflow before execution"
+	}
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
 		OwnerIdentity:  request.OwnerIdentity,
 		Input:          request.Input,
@@ -2075,13 +2084,13 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		ConversationSourceURI: request.SourceURI,
 		ConversationLabel:     request.SourceLabel,
 		Actor:                 actor,
-		AllowCreateCandidate:  true,
+		AllowCreateCandidate:  candidateEligible,
 	}
 	autoLink, err := s.AutoLinkWorkflow(autoLinkRequest)
 	if err != nil {
 		return nil, err
 	}
-	if (autoLink == nil || !autoLink.Linked) && workflowCandidateAllowed(autoLinkRequest) {
+	if (autoLink == nil || !autoLink.Linked) && candidateEligible {
 		autoLink, err = s.createWorkflowCandidate(autoLinkRequest)
 		if err != nil {
 			return nil, err
@@ -2138,15 +2147,15 @@ func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow
 	if err != nil {
 		return nil, err
 	}
-	reader, ok := s.workflowService.(workflowRecordReader)
+	reader, ok := s.workflowService.(workflowOwnerScopedRecordReader)
 	if !ok {
-		return nil, fmt.Errorf("workflow service does not support record retrieval")
+		return nil, fmt.Errorf("workflow service does not support owner-scoped record retrieval")
 	}
 	workflowID := routedWorkflowID(routed, request)
 	if workflowID == uuid.Nil {
 		return nil, fmt.Errorf("pursuit intake did not identify the created workflow record")
 	}
-	return reader.Get(workflowID)
+	return reader.GetForOwner(request.OwnerIdentity, workflowID)
 }
 
 func routedWorkflowID(routed *RoutedIntakeResult, request workflow.IntakeRequest) uuid.UUID {
