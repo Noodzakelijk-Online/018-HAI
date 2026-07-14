@@ -106,13 +106,14 @@ type DecisionResolutionRequest struct {
 }
 
 type LinkRequest struct {
-	LinkType     string  `json:"linkType"`
-	LinkID       string  `json:"linkId"`
-	Relationship string  `json:"relationship,omitempty"`
-	SourceURI    string  `json:"sourceUri,omitempty"`
-	SourceLabel  string  `json:"sourceLabel,omitempty"`
-	Confidence   float64 `json:"confidence,omitempty"`
-	Actor        string  `json:"actor,omitempty"`
+	OwnerIdentity string  `json:"-"`
+	LinkType      string  `json:"linkType"`
+	LinkID        string  `json:"linkId"`
+	Relationship  string  `json:"relationship,omitempty"`
+	SourceURI     string  `json:"sourceUri,omitempty"`
+	SourceLabel   string  `json:"sourceLabel,omitempty"`
+	Confidence    float64 `json:"confidence,omitempty"`
+	Actor         string  `json:"actor,omitempty"`
 }
 
 type MatchRequest struct {
@@ -517,6 +518,13 @@ type Service interface {
 
 type ownerScopedRepository interface {
 	FindAllForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
+}
+
+// ownerScopedLinkValidator protects direct links to records that carry private
+// user context. System-wide operational records retain their existing runtime
+// and approval controls.
+type ownerScopedLinkValidator interface {
+	LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (handled bool, visible bool, err error)
 }
 
 type workflowIntakeService interface {
@@ -1167,13 +1175,17 @@ func (s *service) Approvals(id uuid.UUID) (*PursuitApprovalOverview, error) {
 }
 
 func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error) {
-	if _, err := s.repo.FindByID(id); err != nil {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
 		return nil, err
 	}
 	linkType := strings.TrimSpace(request.LinkType)
 	linkID := strings.TrimSpace(request.LinkID)
 	if linkType == "" || linkID == "" {
 		return nil, fmt.Errorf("linkType and linkId are required")
+	}
+	if err := s.validateLinkOwnership(*pursuit, request.OwnerIdentity, linkType, linkID); err != nil {
+		return nil, err
 	}
 	link := &models.PursuitLink{
 		PursuitID:    id,
@@ -1190,6 +1202,28 @@ func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, 
 	}
 	_, _ = s.recordActivity(id, "pursuit.linked", fmt.Sprintf("Linked %s %s", linkType, linkID), firstNonEmpty(request.Actor, "system"), linkType, linkID, request.SourceURI)
 	return created, nil
+}
+
+func (s *service) validateLinkOwnership(pursuit models.Pursuit, ownerIdentity, linkType, linkID string) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil
+	}
+	if owner := strings.TrimSpace(pursuit.OwnerIdentity); owner != "" && owner != ownerIdentity {
+		return fmt.Errorf("pursuit is not visible to the authenticated owner")
+	}
+	validator, ok := s.repo.(ownerScopedLinkValidator)
+	if !ok {
+		return nil
+	}
+	handled, visible, err := validator.LinkVisibleToOwner(ownerIdentity, linkType, linkID)
+	if err != nil {
+		return err
+	}
+	if handled && !visible {
+		return fmt.Errorf("linked %s record is not visible to the authenticated owner", linkType)
+	}
+	return nil
 }
 
 func (s *service) LinkVerification(pursuitID, verificationID uuid.UUID) error {

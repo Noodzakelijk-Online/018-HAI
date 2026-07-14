@@ -188,6 +188,7 @@ func (h *Handler) Link(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = pursuitOwner(c)
 	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Link(id, request)
 	if err != nil {

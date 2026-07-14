@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -101,6 +102,69 @@ func (r *GormRepository) findAllForOwner(ownerIdentity string, includeArchived b
 		return nil, err
 	}
 	return pursuits, nil
+}
+
+// LinkVisibleToOwner verifies links to records that are private to a user. A
+// source item inherits its owner from ConnectedSource rather than duplicating
+// the identity on every raw item and extraction.
+func (r *GormRepository) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (bool, bool, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return false, true, nil
+	}
+	visibleOwner := "owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL"
+
+	switch strings.TrimSpace(linkType) {
+	case LinkWorkflow:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.WorkflowItem{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkMemory:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.ContextMemory{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkSourceItem:
+		return r.sourceItemVisibleToOwner(ownerIdentity, linkID)
+	case LinkSourceExtraction:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.SourceExtraction{}).
+			Where("id = ?", id).
+			Where("source_id IN (?)", r.visibleSourceIDs(ownerIdentity)).
+			Count(&count).Error
+		return true, count > 0, err
+	default:
+		return false, true, nil
+	}
+}
+
+func (r *GormRepository) sourceItemVisibleToOwner(ownerIdentity, linkID string) (bool, bool, error) {
+	query := r.DB.Model(&models.SourceRawItem{}).Where("source_id IN (?)", r.visibleSourceIDs(ownerIdentity))
+	if id, err := uuid.Parse(strings.TrimSpace(linkID)); err == nil {
+		query = query.Where("id = ? OR external_id = ?", id, linkID)
+	} else {
+		query = query.Where("external_id = ?", linkID)
+	}
+	var count int64
+	err := query.Count(&count).Error
+	return true, count > 0, err
+}
+
+func (r *GormRepository) visibleSourceIDs(ownerIdentity string) *gorm.DB {
+	return r.DB.Model(&models.ConnectedSource{}).
+		Select("id").
+		Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
 }
 
 func (r *GormRepository) CreateLink(link *models.PursuitLink) (*models.PursuitLink, error) {

@@ -3014,6 +3014,7 @@ type fakeRepo struct {
 	verificationEvidence map[uuid.UUID]models.VerificationEvidence
 	sourceItems          map[uuid.UUID]models.SourceRawItem
 	extractions          map[uuid.UUID]models.SourceExtraction
+	sourceOwners         map[uuid.UUID]string
 }
 
 func newFakeRepo() *fakeRepo {
@@ -3029,6 +3030,7 @@ func newFakeRepo() *fakeRepo {
 		verificationEvidence: map[uuid.UUID]models.VerificationEvidence{},
 		sourceItems:          map[uuid.UUID]models.SourceRawItem{},
 		extractions:          map[uuid.UUID]models.SourceExtraction{},
+		sourceOwners:         map[uuid.UUID]string{},
 	}
 }
 
@@ -3088,6 +3090,47 @@ func (r *fakeRepo) CreateLink(link *models.PursuitLink) (*models.PursuitLink, er
 		}
 	}
 	return link, nil
+}
+
+func (r *fakeRepo) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (bool, bool, error) {
+	switch linkType {
+	case LinkWorkflow:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.workflows[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkMemory:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.memories[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkSourceItem:
+		for id, item := range r.sourceItems {
+			if linkID != id.String() && linkID != item.ExternalID {
+				continue
+			}
+			owner := r.sourceOwners[item.SourceID]
+			return true, owner == "" || owner == ownerIdentity, nil
+		}
+		return true, false, nil
+	case LinkSourceExtraction:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.extractions[id]
+		if !ok {
+			return true, false, nil
+		}
+		owner := r.sourceOwners[item.SourceID]
+		return true, owner == "" || owner == ownerIdentity, nil
+	default:
+		return false, true, nil
+	}
 }
 
 func (r *fakeRepo) DeleteLink(pursuitID uuid.UUID, id uuid.UUID) error {

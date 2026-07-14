@@ -1,7 +1,9 @@
 package pursuit
 
 import (
+	"automation-hub-backend/internal/models"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"automation-hub-backend/internal/identity"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func TestVerifiedActorUsesAuthenticatedPrincipal(t *testing.T) {
@@ -158,5 +161,54 @@ func TestPursuitMatchDoesNotExposeAnotherOwnersSourceLink(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("cross-owner source link was matched: %#v", matches)
+	}
+}
+
+func TestPursuitLinkRejectsAnotherOwnersPrivateRecords(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Alice pursuit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{ID: bobWorkflowID, OwnerIdentity: "bob", Title: "Bob private workflow"}
+	bobMemoryID := uuid.New()
+	repo.memories[bobMemoryID] = models.ContextMemory{ID: bobMemoryID, OwnerIdentity: "bob", Content: "Bob private memory"}
+	bobSourceID := uuid.New()
+	repo.sourceOwners[bobSourceID] = "bob"
+	repo.sourceItems[uuid.New()] = models.SourceRawItem{ID: uuid.New(), SourceID: bobSourceID, ExternalID: "bob-private-source", Title: "Bob private source"}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.POST("/pursuits/:id/links", NewHandler(service).Link)
+
+	for _, target := range []struct {
+		linkType string
+		linkID   string
+	}{
+		{linkType: LinkWorkflow, linkID: bobWorkflowID.String()},
+		{linkType: LinkMemory, linkID: bobMemoryID.String()},
+		{linkType: LinkSourceItem, linkID: "bob-private-source"},
+	} {
+		recorder := httptest.NewRecorder()
+		body := fmt.Sprintf(`{"linkType":%q,"linkId":%q,"relationship":"evidence"}`, target.linkType, target.linkID)
+		request := httptest.NewRequest(http.MethodPost, "/pursuits/"+pursuit.ID.String()+"/links", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("cross-owner %s link status = %d, want %d; body=%s", target.linkType, recorder.Code, http.StatusBadRequest, recorder.Body.String())
+		}
+	}
+	links, err := repo.FindLinks(pursuit.ID)
+	if err != nil {
+		t.Fatalf("FindLinks: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("cross-owner link was persisted: %#v", links)
 	}
 }
