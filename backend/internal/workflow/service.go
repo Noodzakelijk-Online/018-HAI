@@ -92,6 +92,7 @@ type ProposalResolutionRequest struct {
 }
 
 type TaskRunRequest struct {
+	OwnerIdentity string `json:"-"`
 	WorkflowID    string `json:"workflowId"`
 	Request       string `json:"request"`
 	ProjectKey    string `json:"projectKey,omitempty"`
@@ -1435,6 +1436,7 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	}
 
 	runResult, err := s.runTaskWithLease(item.ID, claimID, TaskRunRequest{
+		OwnerIdentity: item.OwnerIdentity,
 		WorkflowID:    item.ID.String(),
 		Request:       item.Description,
 		ProjectKey:    item.ProjectKey,

@@ -1290,6 +1290,32 @@ func TestRunDueRecoversTaskRunnerPanicIntoRetry(t *testing.T) {
 	}
 }
 
+func TestRunDuePassesWorkflowOwnerToTaskRunner(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Create Trello checklist for low risk admin work",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if _, err := service.RunDue(RunDueRequest{Limit: 5}); err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("task runner calls = %d, want 1", len(runner.requests))
+	}
+	if runner.requests[0].OwnerIdentity != "alice" {
+		t.Fatalf("task run owner = %q, want alice for workflow %s", runner.requests[0].OwnerIdentity, record.Item.ID)
+	}
+}
+
 func TestRunDueCannotPersistResultAfterClaimOwnershipChanges(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	var workflowID uuid.UUID

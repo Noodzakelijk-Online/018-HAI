@@ -90,7 +90,7 @@ func TestAcceptOpportunityStoresAmbientLearningMemory(t *testing.T) {
 	memorySpy := &ambientMemorySpy{}
 	engine := NewService(&ambientRepositoryStub{opportunity: item}, nil, nil, memorySpy)
 
-	if _, err := engine.Accept(item.ID, ResolutionRequest{}); err != nil {
+	if _, err := engine.Accept(item.ID, ResolutionRequest{OwnerIdentity: "alice"}); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 	if len(memorySpy.created) != 1 {
@@ -102,6 +102,9 @@ func TestAcceptOpportunityStoresAmbientLearningMemory(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(created.Tags, ","), "ambient_opportunity_accepted") {
 		t.Fatalf("memory tags = %#v, want accepted ambient signal", created.Tags)
+	}
+	if len(memorySpy.ownerCreateOwners) != 1 || memorySpy.ownerCreateOwners[0] != "alice" {
+		t.Fatalf("ambient lesson owners = %#v, want alice", memorySpy.ownerCreateOwners)
 	}
 }
 
@@ -209,12 +212,22 @@ func (r *ambientRepositoryStub) PruneScans(int) error {
 }
 
 type ambientMemorySpy struct {
-	created []memory.CreateRequest
+	created           []memory.CreateRequest
+	ownerCreateOwners []string
 }
 
 func (s *ambientMemorySpy) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
 	s.created = append(s.created, request)
 	return &models.ContextMemory{ID: uuid.New(), Kind: request.Kind, Content: request.Content, Summary: request.Summary, Confidence: request.Confidence}, nil
+}
+
+func (s *ambientMemorySpy) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	s.ownerCreateOwners = append(s.ownerCreateOwners, ownerIdentity)
+	created, err := s.Create(request)
+	if created != nil {
+		created.OwnerIdentity = ownerIdentity
+	}
+	return created, err
 }
 
 func (s *ambientMemorySpy) Update(uuid.UUID, memory.UpdateRequest) (*models.ContextMemory, error) {
@@ -239,4 +252,28 @@ func (s *ambientMemorySpy) Delete(uuid.UUID) error {
 
 func (s *ambientMemorySpy) Retrieve(memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{}, nil
+}
+
+func (s *ambientMemorySpy) UpdateForOwner(_ string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return s.Update(id, request)
+}
+
+func (s *ambientMemorySpy) FindAllForOwner(_ string, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	return s.FindAll(projectKey, includeArchived)
+}
+
+func (s *ambientMemorySpy) FindByIDForOwner(_ string, id uuid.UUID) (*models.ContextMemory, error) {
+	return s.FindByID(id)
+}
+
+func (s *ambientMemorySpy) ArchiveForOwner(_ string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return s.Archive(id, archived)
+}
+
+func (s *ambientMemorySpy) DeleteForOwner(_ string, id uuid.UUID) error {
+	return s.Delete(id)
+}
+
+func (s *ambientMemorySpy) RetrieveForOwner(_ string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	return s.Retrieve(request)
 }

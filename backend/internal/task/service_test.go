@@ -92,6 +92,33 @@ func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	}
 }
 
+func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.T) {
+	mem := &fakeMemoryService{}
+	src := &fakeTaskSourceService{}
+	service := NewService(mem, newTaskTestLLMService(t), src)
+
+	plan, err := service.Plan(IntakeRequest{
+		OwnerIdentity: "alice",
+		Request:       "Summarize local project files and source context",
+		ProjectKey:    "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if plan.OwnerIdentity != "alice" {
+		t.Fatalf("plan owner = %q, want alice", plan.OwnerIdentity)
+	}
+	if len(mem.ownerRetrieveOwners) != 1 || mem.ownerRetrieveOwners[0] != "alice" {
+		t.Fatalf("owner-scoped memory retrieval = %#v, want alice", mem.ownerRetrieveOwners)
+	}
+	if src.refreshCalls != 0 {
+		t.Fatalf("owner-scoped task triggered global source refresh %d times", src.refreshCalls)
+	}
+	if len(src.searchRequests) != 1 || src.searchRequests[0].OwnerIdentity != "alice" {
+		t.Fatalf("source search requests = %#v, want owner alice", src.searchRequests)
+	}
+}
+
 func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)
@@ -414,7 +441,10 @@ func newTaskTestLLMService(t *testing.T) *llm.Service {
 	return llmService
 }
 
-type fakeMemoryService struct{}
+type fakeMemoryService struct {
+	ownerCreateOwners   []string
+	ownerRetrieveOwners []string
+}
 
 type fakeToolExecutor struct {
 	result   *ToolExecutionResult
@@ -518,10 +548,20 @@ func (fakeMemoryService) Create(request memory.CreateRequest) (*models.ContextMe
 	}, nil
 }
 
+func (f *fakeMemoryService) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	f.ownerCreateOwners = append(f.ownerCreateOwners, ownerIdentity)
+	created, err := f.Create(request)
+	if created != nil {
+		created.OwnerIdentity = ownerIdentity
+	}
+	return created, err
+}
+
 type fakeTaskSourceService struct {
-	refreshCalls int
-	searchCalls  int
-	order        []string
+	refreshCalls   int
+	searchCalls    int
+	order          []string
+	searchRequests []source.SearchRequest
 }
 
 func (s *fakeTaskSourceService) Connectors() ([]models.SourceConnector, error) {
@@ -569,6 +609,7 @@ func (s *fakeTaskSourceService) Revoke(sourceID uuid.UUID) (*models.ConnectedSou
 func (s *fakeTaskSourceService) Search(request source.SearchRequest) (*source.SearchResult, error) {
 	s.searchCalls++
 	s.order = append(s.order, "search")
+	s.searchRequests = append(s.searchRequests, request)
 	return &source.SearchResult{
 		Query: request.Query,
 		UsedContext: []source.RankedExtraction{
@@ -648,4 +689,29 @@ func (fakeMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.Retri
 		},
 		Explanation: "retrieved fake context",
 	}, nil
+}
+
+func (f *fakeMemoryService) UpdateForOwner(_ string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return f.Update(id, request)
+}
+
+func (f *fakeMemoryService) FindAllForOwner(_ string, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	return f.FindAll(projectKey, includeArchived)
+}
+
+func (f *fakeMemoryService) FindByIDForOwner(_ string, id uuid.UUID) (*models.ContextMemory, error) {
+	return f.FindByID(id)
+}
+
+func (f *fakeMemoryService) ArchiveForOwner(_ string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return f.Archive(id, archived)
+}
+
+func (f *fakeMemoryService) DeleteForOwner(_ string, id uuid.UUID) error {
+	return f.Delete(id)
+}
+
+func (f *fakeMemoryService) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	f.ownerRetrieveOwners = append(f.ownerRetrieveOwners, ownerIdentity)
+	return f.Retrieve(request)
 }

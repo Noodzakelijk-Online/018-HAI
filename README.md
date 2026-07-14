@@ -17,8 +17,8 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 What is implemented in this repository:
 
 - **User experience:** onboarding, quick capture, Command Dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
-- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work. Pursuits have an explicit completion/reopen lifecycle: new evidence never silently reopens completed work.
-- **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance. Authenticated memory APIs, AI-conversation imports, source-derived consolidation, and workflow intake/feedback context are owner-scoped; task and ambient worker ownership still need propagation before every derived lesson can be scoped automatically.
+- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work. Pursuits have an explicit completion/reopen lifecycle: new evidence never silently reopens completed work. An authenticated owner now flows from workflow intake through the task runner into task context retrieval and verified lesson storage.
+- **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance. Authenticated memory APIs, AI-conversation imports, source-derived consolidation, workflow intake/feedback, direct task planning/runs, and explicit ambient accept/dismiss feedback are owner-scoped. Background/system work is deliberately ownerless unless it originates from an owner-bound source or workflow.
 - **Connected-source import paths:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync. New authenticated source records are owner-scoped through source search, extraction management, sync history, audits, workflow intake, and pursuit linking; ownerless legacy records remain visible in local-development compatibility mode.
 - **Governance:** the backend independently verifies browser-session or bearer JWTs before using a signed principal for audit attribution; client-supplied actor labels are ignored. Approval gates, emergency stop, request rate limits, idempotency, redacted audit records, path safety, runtime allowlists, and a paid-model policy disabled by default are implemented.
 - **Runtime and providers:** local/free model routing supports Ollama and OpenAI-compatible endpoints. Hermes, Odysseus, and OpenClaw are controlled adapters with bounded inventory/probe/execute paths. Every runtime remains disabled until explicitly configured and is subject to approval, workspace, timeout, audit, and verification gates.
@@ -58,6 +58,8 @@ Verified evidence is maintained in [the completion matrix](docs/codex-goal/compl
 - A configured provider or runtime is not considered proven until its live probe and approved workflow are exercised on the target machine.
 - The full Docker Compose topology has configuration and health checks, but its end-to-end multi-service boot remains the main outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
 - The bundled IDP currently issues a stable `user_id` for authenticated-session attribution. It does not yet issue role claims, so endpoints with explicit RBAC checks default to viewer until role issuance is implemented.
+- Owner boundaries currently protect owner-scoped sources, memories, conversation imports, pursuits, authenticated workflow/task execution, and explicit ambient feedback. Legacy ownerless records are read-compatible for local development but are never adopted or modified by an authenticated owner. Task-log and review-queue visibility still need full owner filtering before a multi-operator deployment should be trusted.
+- An authenticated task only searches sources visible to that owner. It does not run the global due-source scheduler, which remains a controlled system-worker operation until per-owner scheduled execution is implemented.
 - The dashboard is an operator surface, not evidence that an external action ran. Completion and audit records remain authoritative only when they contain the required runtime, source, verification, and approval evidence.
 
 ## Repository Layout
@@ -147,7 +149,7 @@ Local folder ingestion:
 
 The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. General local ingestion supports `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`; the export connectors also accept `.mbox`, `.eml`, and `.ics` within the same allowlisted root.
 
-For recurring source ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. The scheduler supports local folders, email/calendar/project-board exports, synced document folders, GitHub REST sources, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots.
+For recurring source ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power system scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. Authenticated task requests use owner-scoped source search and intentionally do not start this global scheduler. The scheduler supports local folders, email/calendar/project-board exports, synced document folders, GitHub REST sources, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots.
 
 ## Developer Checks
 
@@ -334,7 +336,7 @@ The task success engine follows a completion-first loop:
 1. Classify the request.
 2. Infer the real goal.
 3. Define success criteria.
-4. Refresh due connected sources when the request likely depends on project, file, document, or local context.
+4. For system work, refresh due connected sources when the request likely depends on project, file, document, or local context. For authenticated work, search only the caller's visible sources and do not start the global scheduler.
 5. Retrieve relevant memory and connected-source context.
 6. Route a suitable model by capability and cost policy.
 7. Route tools and mark unsafe tools as blocked.
@@ -352,7 +354,7 @@ The automation launch adapters can call bounded API targets, run a single allowl
 
 High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. An approved review item is marked completed only when the rerun is actually validated; unresolved runtime or verification blockers reuse the original queue item as actionable `needs_review` work instead of creating duplicate reviews. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its configured automation, context, model, verification, and memory workflow.
 
-The task engine now treats connected sources as an active preflight dependency. For requests that mention project/source/file/folder/document/repo context, or that require local/document context, it runs due scheduled source syncs before source search. This uses the same bounded local-folder scheduler path and does not force a full re-read when sources are not due.
+The task engine treats connected sources as an active preflight dependency. System/background requests that mention project/source/file/folder/document/repo context, or require local/document context, run due scheduled source syncs before source search. Authenticated requests instead use owner-scoped cached source search; they do not fan out into another user's scheduled sources. This avoids a request from one user becoming a global sync trigger while per-owner scheduling is still follow-up work.
 
 ## Workflow Engine
 

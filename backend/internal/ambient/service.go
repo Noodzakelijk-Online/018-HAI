@@ -369,6 +369,7 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 			return nil, fmt.Errorf("workflow service is not configured")
 		}
 		record, intakeErr := s.workflows.Intake(workflow.IntakeRequest{
+			OwnerIdentity:  request.OwnerIdentity,
 			Input:          item.NextAction,
 			SourceType:     "ambient_opportunity",
 			SourceID:       item.ID.String(),
@@ -397,7 +398,7 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	if err != nil {
 		return nil, err
 	}
-	s.rememberOpportunityFeedback(saved, "ambient_opportunity_accepted", request.Note)
+	s.rememberOpportunityFeedback(saved, request.OwnerIdentity, "ambient_opportunity_accepted", request.Note)
 	return saved, nil
 }
 
@@ -459,7 +460,7 @@ func (s *service) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.Ambi
 	if err != nil {
 		return nil, err
 	}
-	s.rememberOpportunityFeedback(saved, "ambient_opportunity_dismissed", request.Note)
+	s.rememberOpportunityFeedback(saved, request.OwnerIdentity, "ambient_opportunity_dismissed", request.Note)
 	return saved, nil
 }
 
@@ -490,12 +491,12 @@ func (s *service) ensurePursuitOpportunityVisible(item models.AmbientOpportunity
 	return nil
 }
 
-func (s *service) rememberOpportunityFeedback(item *models.AmbientOpportunity, signal, note string) {
+func (s *service) rememberOpportunityFeedback(item *models.AmbientOpportunity, ownerIdentity, signal, note string) {
 	if s.memory == nil || item == nil || !ambientFeedbackUseful(signal, note, *item) {
 		return
 	}
 	sourceURI := firstNonEmpty(item.SourceURI, "ambient://opportunities/"+item.ID.String())
-	_, _ = s.memory.Create(memory.CreateRequest{
+	_, _ = memory.CreateForOwner(s.memory, ownerIdentity, memory.CreateRequest{
 		Kind:        "lesson",
 		Content:     ambientFeedbackContent(*item, signal, note),
 		Summary:     ambientFeedbackSummary(*item, signal, note),

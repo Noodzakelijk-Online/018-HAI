@@ -1,7 +1,9 @@
 package task
 
 import (
+	"automation-hub-backend/internal/identity"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,6 +35,7 @@ func (h *Handler) Plan(c *gin.Context) {
 		return
 	}
 	request.ExecuteAllowed = false
+	request.OwnerIdentity = verifiedTaskOwner(c)
 	request.HumanApproved = false
 	request.ApprovalNote = ""
 	plan, err := h.service.Plan(request)
@@ -54,6 +57,7 @@ func (h *Handler) Run(c *gin.Context) {
 		return
 	}
 	request.ExecuteAllowed = true
+	request.OwnerIdentity = verifiedTaskOwner(c)
 	request.HumanApproved = false
 	request.ApprovalNote = ""
 	plan, err := h.service.Run(request)
@@ -62,6 +66,15 @@ func (h *Handler) Run(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, plan)
+}
+
+func verifiedTaskOwner(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
 }
 
 func (h *Handler) Logs(c *gin.Context) {

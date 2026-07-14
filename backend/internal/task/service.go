@@ -20,6 +20,7 @@ import (
 )
 
 type IntakeRequest struct {
+	OwnerIdentity   string   `json:"-"`
 	Request         string   `json:"request"`
 	ProjectKey      string   `json:"projectKey,omitempty"`
 	AutomationID    string   `json:"automationId,omitempty"`
@@ -199,6 +200,7 @@ type MemoryUpdateProposal struct {
 
 type CompletionPlan struct {
 	ID                    string                 `json:"id"`
+	OwnerIdentity         string                 `json:"-"`
 	CreatedAt             time.Time              `json:"createdAt"`
 	Request               string                 `json:"request"`
 	ProjectKey            string                 `json:"projectKey,omitempty"`
@@ -396,7 +398,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
 	intake := analyzeIntake(request)
 	sourceRefresh, sourceRefreshExplanation := s.refreshSourcesForTask(request, intake)
-	contextResult, err := s.memoryService.Retrieve(memory.RetrieveRequest{
+	contextResult, err := memory.RetrieveForOwner(s.memoryService, request.OwnerIdentity, memory.RetrieveRequest{
 		Query:      request.Request,
 		ProjectKey: request.ProjectKey,
 		Limit:      8,
@@ -422,12 +424,13 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	validationPlan := buildValidationPlan(intake, minimalityDecision)
 	memoryProposals := proposeMemoryUpdates(request, intake)
 	plan := &CompletionPlan{
-		ID:         uuid.New().String(),
-		CreatedAt:  time.Now().UTC(),
-		Request:    request.Request,
-		ProjectKey: request.ProjectKey,
-		RealGoal:   inferRealGoal(request, intake),
-		Intake:     intake,
+		ID:            uuid.New().String(),
+		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
+		CreatedAt:     time.Now().UTC(),
+		Request:       request.Request,
+		ProjectKey:    request.ProjectKey,
+		RealGoal:      inferRealGoal(request, intake),
+		Intake:        intake,
 		ContextPlan: ContextPlan{
 			Strategy: []string{
 				"filter by project key when provided",
@@ -628,7 +631,7 @@ func (s *service) storeLessons(plan *CompletionPlan) []string {
 		return stored
 	}
 	for _, lesson := range plan.LessonsLearned {
-		created, err := s.memoryService.Create(memory.CreateRequest{
+		created, err := memory.CreateForOwner(s.memoryService, plan.OwnerIdentity, memory.CreateRequest{
 			ProjectKey:  plan.ProjectKey,
 			Kind:        lesson.Kind,
 			Content:     lesson.Content,
@@ -1034,6 +1037,9 @@ func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnal
 	if !shouldRefreshSourcesForTask(request, intake) {
 		return nil, "Connected-source refresh skipped because the task does not appear to need source-backed context."
 	}
+	if strings.TrimSpace(request.OwnerIdentity) != "" {
+		return nil, "Connected-source refresh skipped because owner-scoped scheduled sync is not configured; cached owner-visible source context remains available."
+	}
 	result, err := s.sourceService.RunDueScheduledSyncs(time.Now().UTC())
 	if err != nil {
 		return nil, "Connected-source refresh failed before context retrieval: " + err.Error()
@@ -1064,9 +1070,10 @@ func (s *service) retrieveSourceContext(request IntakeRequest) ([]source.RankedE
 		return []source.RankedExtraction{}, "Connected-source retrieval is not configured."
 	}
 	result, err := s.sourceService.Search(source.SearchRequest{
-		Query:      request.Request,
-		ProjectKey: request.ProjectKey,
-		Limit:      6,
+		OwnerIdentity: request.OwnerIdentity,
+		Query:         request.Request,
+		ProjectKey:    request.ProjectKey,
+		Limit:         6,
 	})
 	if err != nil {
 		return []source.RankedExtraction{}, "Connected-source retrieval failed or has no available index."
