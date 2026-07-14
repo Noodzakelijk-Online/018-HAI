@@ -27,6 +27,7 @@ const (
 
 	LinkWorkflow           = "workflow"
 	LinkMemory             = "memory"
+	LinkAIConversation     = "ai_conversation"
 	LinkSourceExtraction   = "source_extraction"
 	LinkSourceItem         = "source_item"
 	LinkVerification       = "verification"
@@ -138,31 +139,37 @@ type MatchCandidate struct {
 }
 
 type AutoLinkWorkflowRequest struct {
-	OwnerIdentity        string    `json:"-"`
-	WorkflowID           uuid.UUID `json:"workflowId"`
-	Input                string    `json:"input,omitempty"`
-	ProjectKey           string    `json:"projectKey,omitempty"`
-	SourceType           string    `json:"sourceType,omitempty"`
-	SourceID             string    `json:"sourceId,omitempty"`
-	SourceURI            string    `json:"sourceUri,omitempty"`
-	SourceLabel          string    `json:"sourceLabel,omitempty"`
-	ExtractionID         string    `json:"extractionId,omitempty"`
-	RawItemID            string    `json:"rawItemId,omitempty"`
-	Actor                string    `json:"actor,omitempty"`
-	MinimumScore         float64   `json:"minimumScore,omitempty"`
-	AllowCreateCandidate bool      `json:"allowCreateCandidate,omitempty"`
+	OwnerIdentity         string    `json:"-"`
+	WorkflowID            uuid.UUID `json:"workflowId"`
+	Input                 string    `json:"input,omitempty"`
+	ProjectKey            string    `json:"projectKey,omitempty"`
+	SourceType            string    `json:"sourceType,omitempty"`
+	SourceID              string    `json:"sourceId,omitempty"`
+	SourceURI             string    `json:"sourceUri,omitempty"`
+	SourceLabel           string    `json:"sourceLabel,omitempty"`
+	ExtractionID          string    `json:"extractionId,omitempty"`
+	RawItemID             string    `json:"rawItemId,omitempty"`
+	ConversationID        uuid.UUID `json:"conversationId,omitempty"`
+	ConversationSourceURI string    `json:"conversationSourceUri,omitempty"`
+	ConversationLabel     string    `json:"conversationLabel,omitempty"`
+	Actor                 string    `json:"actor,omitempty"`
+	MinimumScore          float64   `json:"minimumScore,omitempty"`
+	AllowCreateCandidate  bool      `json:"allowCreateCandidate,omitempty"`
 }
 
 type AutoLinkMemoryRequest struct {
-	OwnerIdentity        string    `json:"-"`
-	MemoryID             uuid.UUID `json:"memoryId"`
-	Input                string    `json:"input,omitempty"`
-	ProjectKey           string    `json:"projectKey,omitempty"`
-	SourceURI            string    `json:"sourceUri,omitempty"`
-	SourceLabel          string    `json:"sourceLabel,omitempty"`
-	Actor                string    `json:"actor,omitempty"`
-	MinimumScore         float64   `json:"minimumScore,omitempty"`
-	AllowCreateCandidate bool      `json:"allowCreateCandidate,omitempty"`
+	OwnerIdentity         string    `json:"-"`
+	MemoryID              uuid.UUID `json:"memoryId"`
+	Input                 string    `json:"input,omitempty"`
+	ProjectKey            string    `json:"projectKey,omitempty"`
+	SourceURI             string    `json:"sourceUri,omitempty"`
+	SourceLabel           string    `json:"sourceLabel,omitempty"`
+	ConversationID        uuid.UUID `json:"conversationId,omitempty"`
+	ConversationSourceURI string    `json:"conversationSourceUri,omitempty"`
+	ConversationLabel     string    `json:"conversationLabel,omitempty"`
+	Actor                 string    `json:"actor,omitempty"`
+	MinimumScore          float64   `json:"minimumScore,omitempty"`
+	AllowCreateCandidate  bool      `json:"allowCreateCandidate,omitempty"`
 }
 
 type AutoLinkResult struct {
@@ -291,6 +298,7 @@ type PursuitDetail struct {
 	Timeline             []PursuitTimelineItem          `json:"timeline"`
 	Evidence             []models.WorkflowEvidenceClaim `json:"evidence"`
 	Memories             []models.ContextMemory         `json:"memories"`
+	Conversations        []PursuitConversation          `json:"conversations"`
 	TaskRuns             []PursuitTaskRun               `json:"taskRuns"`
 	TaskAttempts         []models.PursuitTaskAttempt    `json:"taskAttempts"`
 	VerificationRuns     []models.VerificationRun       `json:"verificationRuns"`
@@ -306,6 +314,22 @@ type PursuitDetail struct {
 	ApprovalItems        []models.WorkflowItem          `json:"approvalItems"`
 	Summary              PursuitSummary                 `json:"summary"`
 	OperationalDigest    PursuitOperationalDigest       `json:"operationalDigest"`
+}
+
+// PursuitConversation exposes only archive metadata needed for provenance.
+// It intentionally omits Preview and encrypted payload fields so a pursuit
+// detail response cannot become a second conversation-content endpoint.
+type PursuitConversation struct {
+	ID            uuid.UUID  `json:"id"`
+	Platform      string     `json:"platform"`
+	ExternalID    string     `json:"externalId"`
+	Title         string     `json:"title,omitempty"`
+	SourceURI     string     `json:"sourceUri,omitempty"`
+	Revision      int        `json:"revision"`
+	MessageCount  int        `json:"messageCount"`
+	CapturedAt    time.Time  `json:"capturedAt"`
+	LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
+	Archived      bool       `json:"archived"`
 }
 
 // PursuitDelegationPackage is a read-only handoff brief. It turns the
@@ -1117,6 +1141,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	}
 	workflowIDs := linkUUIDs(links, LinkWorkflow)
 	memoryIDs := linkUUIDs(links, LinkMemory)
+	conversationIDs := linkUUIDs(links, LinkAIConversation)
 	sourceItemIDs := linkUUIDs(links, LinkSourceItem)
 	extractionIDs := linkUUIDs(links, LinkSourceExtraction)
 	verificationIDs := linkUUIDs(links, LinkVerification)
@@ -1166,6 +1191,13 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	memories, err := s.repo.FindLinkedMemories(memoryIDs)
 	if err != nil {
 		return nil, pursuitDetailLoadError("linked memories", err)
+	}
+	conversations, err := s.repo.FindLinkedConversations(conversationIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked conversations", err)
+	}
+	if conversations == nil {
+		conversations = []models.AIConversationArchive{}
 	}
 	sourceItems, err := s.repo.FindLinkedSourceItems(sourceItemIDs)
 	if err != nil {
@@ -1218,6 +1250,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 		Events:               events,
 		Evidence:             evidence,
 		Memories:             memories,
+		Conversations:        compactConversations(conversations),
 		TaskRuns:             taskRunsFromWorkflows(workflows),
 		TaskAttempts:         taskAttempts,
 		VerificationRuns:     verificationRuns,
@@ -1834,6 +1867,11 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 	} else if linked {
 		links = append(links, *sourceLink)
 	}
+	if conversationLink, linked, err := s.linkConversationReference(match.Pursuit.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
 	if err := s.linkAssistantCommandReference(match.Pursuit.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
 		return nil, err
 	}
@@ -1902,9 +1940,15 @@ func (s *service) AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult
 	if err != nil {
 		return nil, err
 	}
+	links := []models.PursuitLink{*link}
+	if conversationLink, linked, err := s.linkConversationReference(match.Pursuit.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
 	_, _ = s.recordActivity(match.Pursuit.ID, "pursuit.memory_auto_linked", fmt.Sprintf("Context memory auto-linked to pursuit with %.2f confidence", match.Score), actor, LinkMemory, request.MemoryID.String(), request.SourceURI)
 	result.Linked = true
-	result.Links = []models.PursuitLink{*link}
+	result.Links = links
 	result.Message = "context memory linked to pursuit"
 	if _, err := s.RefreshSummary(match.Pursuit.ID, actor); err != nil {
 		result.Message = "context memory linked to pursuit; summary refresh failed: " + err.Error()
@@ -1986,16 +2030,19 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 
 	autoLinkRequest := AutoLinkWorkflowRequest{
-		OwnerIdentity:        request.OwnerIdentity,
-		WorkflowID:           record.Item.ID,
-		Input:                request.Input,
-		ProjectKey:           request.ProjectKey,
-		SourceType:           request.SourceType,
-		SourceID:             request.SourceID,
-		SourceURI:            request.SourceURI,
-		SourceLabel:          request.SourceLabel,
-		Actor:                actor,
-		AllowCreateCandidate: true,
+		OwnerIdentity:         request.OwnerIdentity,
+		WorkflowID:            record.Item.ID,
+		Input:                 request.Input,
+		ProjectKey:            request.ProjectKey,
+		SourceType:            request.SourceType,
+		SourceID:              request.SourceID,
+		SourceURI:             request.SourceURI,
+		SourceLabel:           request.SourceLabel,
+		ConversationID:        conversationIDFromAIChatSource(request.SourceType, request.SourceID),
+		ConversationSourceURI: request.SourceURI,
+		ConversationLabel:     request.SourceLabel,
+		Actor:                 actor,
+		AllowCreateCandidate:  true,
 	}
 	autoLink, err := s.AutoLinkWorkflow(autoLinkRequest)
 	if err != nil {
@@ -2098,6 +2145,24 @@ func routedIntakeReviewReason(reviewRequired bool, request IntakeRequest) string
 	return "global pursuit intake requires review before consequential execution"
 }
 
+// conversationIDFromAIChatSource accepts only the internal source-id format
+// emitted by memory-engine imports: <conversation UUID>:<insight UUID>. The
+// result is still checked by LinkVisibleToOwner before it can be persisted.
+func conversationIDFromAIChatSource(sourceType, sourceID string) uuid.UUID {
+	if !strings.EqualFold(strings.TrimSpace(sourceType), "ai_chat") {
+		return uuid.Nil
+	}
+	conversationID, _, found := strings.Cut(strings.TrimSpace(sourceID), ":")
+	if !found {
+		return uuid.Nil
+	}
+	id, err := uuid.Parse(strings.TrimSpace(conversationID))
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
+}
+
 func autoLinkMessage(result *AutoLinkResult) string {
 	if result == nil {
 		return ""
@@ -2144,6 +2209,11 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 		return nil, err
 	} else if linked {
 		links = append(links, *sourceLink)
+	}
+	if conversationLink, linked, err := s.linkConversationReference(created.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
 	}
 	if err := s.linkAssistantCommandReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
 		return nil, err
@@ -2198,11 +2268,38 @@ func (s *service) createMemoryCandidate(request AutoLinkMemoryRequest) (*AutoLin
 	if err != nil {
 		return nil, err
 	}
+	links := []models.PursuitLink{*link}
+	if conversationLink, linked, err := s.linkConversationReference(created.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
 	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from memory insight because no existing pursuit matched.", actor, LinkMemory, request.MemoryID.String(), request.SourceURI)
 	if _, err := s.RefreshSummary(created.ID, actor); err != nil {
-		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: []models.PursuitLink{*link}}, nil
+		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: links}, nil
 	}
-	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created from memory insight", Links: []models.PursuitLink{*link}}, nil
+	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created from memory insight", Links: links}, nil
+}
+
+func (s *service) linkConversationReference(pursuitID uuid.UUID, ownerIdentity string, conversationID uuid.UUID, sourceURI, sourceLabel, relationship string, confidence float64, actor string) (*models.PursuitLink, bool, error) {
+	if conversationID == uuid.Nil {
+		return nil, false, nil
+	}
+	link, err := s.Link(pursuitID, LinkRequest{
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkAIConversation,
+		LinkID:        conversationID.String(),
+		Relationship:  firstNonEmpty(strings.TrimSpace(relationship), "conversation_context"),
+		SourceURI:     strings.TrimSpace(sourceURI),
+		SourceLabel:   firstNonEmpty(strings.TrimSpace(sourceLabel), "AI conversation archive"),
+		Confidence:    confidence,
+		Actor:         firstNonEmpty(actor, "memory-engine"),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	_, _ = s.recordActivity(pursuitID, "pursuit.conversation_linked", "Encrypted AI conversation archive linked as source context.", firstNonEmpty(actor, "memory-engine"), LinkAIConversation, conversationID.String(), strings.TrimSpace(sourceURI))
+	return link, true, nil
 }
 
 func workflowCandidateAllowed(request AutoLinkWorkflowRequest) bool {
@@ -4296,6 +4393,25 @@ func compactSourceItems(items []models.SourceRawItem) []PursuitSourceItem {
 			FetchedAt:  item.FetchedAt,
 			CreatedAt:  item.CreatedAt,
 			UpdatedAt:  item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func compactConversations(items []models.AIConversationArchive) []PursuitConversation {
+	result := make([]PursuitConversation, 0, len(items))
+	for _, item := range items {
+		result = append(result, PursuitConversation{
+			ID:            item.ID,
+			Platform:      item.Platform,
+			ExternalID:    item.ExternalID,
+			Title:         item.Title,
+			SourceURI:     item.SourceURI,
+			Revision:      item.Revision,
+			MessageCount:  item.MessageCount,
+			CapturedAt:    item.CapturedAt,
+			LastMessageAt: item.LastMessageAt,
+			Archived:      item.Archived,
 		})
 	}
 	return result

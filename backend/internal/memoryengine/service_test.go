@@ -154,7 +154,7 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 		t.Fatalf("pursuit linker requests = %d, want 1", len(pursuitSpy.requests))
 	}
 	linkRequest := pursuitSpy.requests[0]
-	if linkRequest.WorkflowID != workflowID || linkRequest.ProjectKey != "vivare" || linkRequest.SourceType != "ai_chat" {
+	if linkRequest.WorkflowID != workflowID || linkRequest.ProjectKey != "vivare" || linkRequest.SourceType != "ai_chat" || linkRequest.ConversationID != result.Conversation.ID || linkRequest.ConversationSourceURI != result.Conversation.SourceURI || linkRequest.ConversationLabel != result.Conversation.Title {
 		t.Fatalf("pursuit link request = %#v", linkRequest)
 	}
 	if !linkRequest.AllowCreateCandidate {
@@ -338,7 +338,7 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 		t.Fatalf("memory link requests = %d, want 1", len(pursuitSpy.memoryRequests))
 	}
 	linkRequest := pursuitSpy.memoryRequests[0]
-	if linkRequest.MemoryID == uuid.Nil || linkRequest.ProjectKey != "vivare" || linkRequest.OwnerIdentity != "alice" {
+	if linkRequest.MemoryID == uuid.Nil || linkRequest.ProjectKey != "vivare" || linkRequest.OwnerIdentity != "alice" || linkRequest.ConversationID != result.Conversation.ID || linkRequest.ConversationSourceURI != result.Conversation.SourceURI || linkRequest.ConversationLabel != result.Conversation.Title {
 		t.Fatalf("memory link request = %#v", linkRequest)
 	}
 	if linkRequest.AllowCreateCandidate {

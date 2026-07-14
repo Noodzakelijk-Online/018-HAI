@@ -38,6 +38,7 @@ type Repository interface {
 	FindLinkedEvents(workflowIDs []uuid.UUID) ([]models.WorkflowEvent, error)
 	FindLinkedEvidence(workflowIDs []uuid.UUID) ([]models.WorkflowEvidenceClaim, error)
 	FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, error)
+	FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversationArchive, error)
 	FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error)
 	FindLinkedExtractions(ids []uuid.UUID) ([]models.SourceExtraction, error)
 	FindLinkedVerificationRuns(ids []uuid.UUID) ([]models.VerificationRun, error)
@@ -133,6 +134,14 @@ func (r *GormRepository) LinkVisibleToOwner(ownerIdentity, linkType, linkID stri
 		}
 		var count int64
 		err = r.DB.Model(&models.ContextMemory{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkAIConversation:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.AIConversationArchive{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
 		return true, count > 0, err
 	case LinkSourceItem:
 		return r.sourceItemVisibleToOwner(ownerIdentity, linkID)
@@ -437,6 +446,23 @@ func (r *GormRepository) FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMe
 		return nil, err
 	}
 	return memories, nil
+}
+
+// FindLinkedConversations deliberately selects metadata only. Conversation
+// payloads remain encrypted and are available only through the memory-engine
+// conversation endpoint after its separate owner and key checks.
+func (r *GormRepository) FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversationArchive, error) {
+	var conversations []models.AIConversationArchive
+	if len(ids) == 0 {
+		return conversations, nil
+	}
+	if err := r.DB.Select("id", "owner_identity", "platform", "external_id", "title", "source_uri", "content_hash", "revision", "message_count", "captured_at", "last_message_at", "archived", "created_at", "updated_at").
+		Where("id IN ?", ids).
+		Order("captured_at DESC").
+		Find(&conversations).Error; err != nil {
+		return nil, err
+	}
+	return conversations, nil
 }
 
 func (r *GormRepository) FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error) {

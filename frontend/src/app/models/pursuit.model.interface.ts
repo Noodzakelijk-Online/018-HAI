@@ -241,6 +241,19 @@ export interface IPursuitSourceItem {
   updatedAt: string;
 }
 
+export interface IPursuitConversation {
+  id: string;
+  platform: string;
+  externalId: string;
+  title?: string;
+  sourceUri?: string;
+  revision: number;
+  messageCount: number;
+  capturedAt: string;
+  lastMessageAt?: string;
+  archived: boolean;
+}
+
 export interface IPursuitAutomation {
   id: string;
   name: string;
@@ -340,6 +353,7 @@ export interface IPursuitDetail {
   timeline: IPursuitTimelineItem[];
   evidence: IWorkflowEvidenceClaim[];
   memories: IContextMemory[];
+  conversations: IPursuitConversation[];
   taskRuns: IPursuitTaskRun[];
   taskAttempts: IPursuitTaskAttempt[];
   verificationRuns: IVerificationRun[];

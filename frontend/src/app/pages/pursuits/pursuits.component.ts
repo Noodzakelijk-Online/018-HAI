@@ -70,6 +70,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   readonly linkTypes = [
     'workflow',
     'memory',
+    'ai_conversation',
     'source_item',
     'source_extraction',
     'verification',

@@ -35,6 +35,25 @@ func TestDashboardSerializesEmptyQueuesAsArrays(t *testing.T) {
 	}
 }
 
+func TestDetailSerializesEmptyConversationsAsArray(t *testing.T) {
+	service := NewService(newFakeRepo(), nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Empty conversation context", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	if strings.Contains(string(payload), `"conversations":null`) {
+		t.Fatalf("conversation metadata serialized as null: %s", payload)
+	}
+}
+
 func TestDetailLoadFailureBlocksDashboardInsteadOfInventingEmptyState(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -61,6 +80,95 @@ func TestDetailLoadFailureBlocksDashboardInsteadOfInventingEmptyState(t *testing
 	if len(dashboard.SystemReady) != 0 || len(dashboard.VAReady) != 0 || item.CompletionCandidate {
 		t.Fatalf("failed detail was treated as ready: %#v", dashboard)
 	}
+}
+
+func TestConversationArchiveLinksAreOwnerScopedAndMetadataOnly(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Resolve housing dispute", OwnerIdentity: "alice", ProjectKey: "housing"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	memoryID := uuid.New()
+	repo.memories[memoryID] = models.ContextMemory{ID: memoryID, OwnerIdentity: "alice", ProjectKey: "housing", Summary: "Collect the housing evidence."}
+	conversationID := uuid.New()
+	repo.conversations[conversationID] = models.AIConversationArchive{
+		ID:               conversationID,
+		OwnerIdentity:    "alice",
+		Platform:         "chatgpt",
+		ExternalID:       "thread-housing-1",
+		Title:            "Housing evidence discussion",
+		SourceURI:        "chatgpt://thread-housing-1",
+		MessageCount:     8,
+		Preview:          "private conversation preview must not leak through pursuit detail",
+		EncryptedPayload: []byte("private encrypted payload"),
+		CapturedAt:       time.Now().UTC(),
+	}
+
+	result, err := service.AutoLinkMemory(AutoLinkMemoryRequest{
+		OwnerIdentity:         "alice",
+		MemoryID:              memoryID,
+		Input:                 "Resolve housing dispute evidence",
+		ProjectKey:            "housing",
+		ConversationID:        conversationID,
+		ConversationSourceURI: "chatgpt://thread-housing-1",
+		ConversationLabel:     "Housing evidence discussion",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkMemory returned error: %v", err)
+	}
+	if !result.Linked || !hasPursuitLink(result.Links, LinkAIConversation, conversationID.String()) {
+		t.Fatalf("conversation metadata link missing from auto-link result: %#v", result)
+	}
+
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if len(detail.Conversations) != 1 || detail.Conversations[0].ID != conversationID || detail.Conversations[0].Title != "Housing evidence discussion" {
+		t.Fatalf("conversation metadata = %#v", detail.Conversations)
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	if strings.Contains(string(payload), "private encrypted payload") || strings.Contains(string(payload), "private conversation preview") || strings.Contains(string(payload), "encryptedPayload") || strings.Contains(string(payload), "preview") {
+		t.Fatalf("pursuit detail exposed archive content: %s", payload)
+	}
+
+	bobConversationID := uuid.New()
+	repo.conversations[bobConversationID] = models.AIConversationArchive{ID: bobConversationID, OwnerIdentity: "bob", Platform: "chatgpt", ExternalID: "thread-bob", SourceURI: "chatgpt://thread-bob"}
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAIConversation, LinkID: bobConversationID.String(), Relationship: "conversation_context"}); err == nil {
+		t.Fatal("owner could link another user's conversation archive")
+	}
+}
+
+func TestConversationIDFromAIChatSourceRejectsUntrustedFormats(t *testing.T) {
+	conversationID := uuid.New()
+	if got := conversationIDFromAIChatSource("ai_chat", conversationID.String()+":"+uuid.NewString()); got != conversationID {
+		t.Fatalf("conversation ID = %s, want %s", got, conversationID)
+	}
+	for _, test := range []struct {
+		sourceType string
+		sourceID   string
+	}{
+		{sourceType: "email", sourceID: conversationID.String() + ":" + uuid.NewString()},
+		{sourceType: "ai_chat", sourceID: conversationID.String()},
+		{sourceType: "ai_chat", sourceID: "not-a-uuid:" + uuid.NewString()},
+	} {
+		if got := conversationIDFromAIChatSource(test.sourceType, test.sourceID); got != uuid.Nil {
+			t.Fatalf("conversation ID for %#v = %s, want nil", test, got)
+		}
+	}
+}
+
+func hasPursuitLink(links []models.PursuitLink, linkType, linkID string) bool {
+	for _, link := range links {
+		if link.LinkType == linkType && link.LinkID == linkID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCreateClassifiesAndAuditsPursuit(t *testing.T) {
@@ -3737,6 +3845,7 @@ type fakeRepo struct {
 	events               []models.WorkflowEvent
 	evidence             []models.WorkflowEvidenceClaim
 	memories             map[uuid.UUID]models.ContextMemory
+	conversations        map[uuid.UUID]models.AIConversationArchive
 	automations          map[uuid.UUID]models.Automation
 	launchEvents         []models.AutomationLaunchEvent
 	verificationRuns     map[uuid.UUID]models.VerificationRun
@@ -3756,6 +3865,7 @@ func newFakeRepo() *fakeRepo {
 		taskAttempts:         map[string]models.PursuitTaskAttempt{},
 		workflows:            map[uuid.UUID]models.WorkflowItem{},
 		memories:             map[uuid.UUID]models.ContextMemory{},
+		conversations:        map[uuid.UUID]models.AIConversationArchive{},
 		automations:          map[uuid.UUID]models.Automation{},
 		verificationRuns:     map[uuid.UUID]models.VerificationRun{},
 		verificationClaims:   map[uuid.UUID]models.VerificationClaim{},
@@ -3839,6 +3949,13 @@ func (r *fakeRepo) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (b
 			return true, false, nil
 		}
 		item, ok := r.memories[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkAIConversation:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.conversations[id]
 		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
 	case LinkSourceItem:
 		for id, item := range r.sourceItems {
@@ -4125,6 +4242,16 @@ func (r *fakeRepo) FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, 
 	result := []models.ContextMemory{}
 	for _, id := range ids {
 		if item, ok := r.memories[id]; ok {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversationArchive, error) {
+	result := []models.AIConversationArchive{}
+	for _, id := range ids {
+		if item, ok := r.conversations[id]; ok {
 			result = append(result, item)
 		}
 	}

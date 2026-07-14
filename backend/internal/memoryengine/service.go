@@ -314,16 +314,19 @@ func (s *service) autoLinkPursuitWorkflow(conversation models.AIConversationArch
 		return nil, nil
 	}
 	result, err := s.pursuitLinker.AutoLinkWorkflow(pursuitpkg.AutoLinkWorkflowRequest{
-		OwnerIdentity:        conversation.OwnerIdentity,
-		WorkflowID:           record.Item.ID,
-		Input:                strings.Join([]string{conversation.Title, insight.Text}, "\n"),
-		ProjectKey:           insight.ProjectKey,
-		SourceType:           "ai_chat",
-		SourceID:             conversation.ID.String() + ":" + insight.ID.String(),
-		SourceURI:            insight.SourceURI,
-		SourceLabel:          insight.SourceLabel,
-		Actor:                "memory-engine",
-		AllowCreateCandidate: true,
+		OwnerIdentity:         conversation.OwnerIdentity,
+		WorkflowID:            record.Item.ID,
+		Input:                 strings.Join([]string{conversation.Title, insight.Text}, "\n"),
+		ProjectKey:            insight.ProjectKey,
+		SourceType:            "ai_chat",
+		SourceID:              conversation.ID.String() + ":" + insight.ID.String(),
+		SourceURI:             insight.SourceURI,
+		SourceLabel:           insight.SourceLabel,
+		ConversationID:        conversation.ID,
+		ConversationSourceURI: conversation.SourceURI,
+		ConversationLabel:     conversation.Title,
+		Actor:                 "memory-engine",
+		AllowCreateCandidate:  true,
 	})
 	if err != nil {
 		return nil, err
@@ -348,13 +351,16 @@ func (s *service) autoLinkPursuitMemory(conversation models.AIConversationArchiv
 		sourceLabel = memoryRecord.SourceLabel
 	}
 	result, err := s.pursuitLinker.AutoLinkMemory(pursuitpkg.AutoLinkMemoryRequest{
-		OwnerIdentity: conversation.OwnerIdentity,
-		MemoryID:      memoryRecord.ID,
-		Input:         strings.Join([]string{conversation.Title, insight.Text, memoryRecord.Summary}, "\n"),
-		ProjectKey:    projectKey,
-		SourceURI:     sourceURI,
-		SourceLabel:   sourceLabel,
-		Actor:         "memory-engine",
+		OwnerIdentity:         conversation.OwnerIdentity,
+		MemoryID:              memoryRecord.ID,
+		Input:                 strings.Join([]string{conversation.Title, insight.Text, memoryRecord.Summary}, "\n"),
+		ProjectKey:            projectKey,
+		SourceURI:             sourceURI,
+		SourceLabel:           sourceLabel,
+		ConversationID:        conversation.ID,
+		ConversationSourceURI: conversation.SourceURI,
+		ConversationLabel:     conversation.Title,
+		Actor:                 "memory-engine",
 	})
 	if err != nil {
 		return nil, err

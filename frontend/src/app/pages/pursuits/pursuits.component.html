@@ -704,6 +704,7 @@
                 <div><dt>Evidence</dt><dd>{{ detail.evidence.length }}</dd></div>
                 <div><dt>Verification</dt><dd>{{ detail.verificationRuns.length }}</dd></div>
                 <div><dt>Memory</dt><dd>{{ detail.memories.length }}</dd></div>
+                <div><dt>Conversations</dt><dd>{{ detail.conversations.length }}</dd></div>
                 <div><dt>Sources</dt><dd>{{ detail.sourceItems.length + detail.sourceExtractions.length }}</dd></div>
                 <div><dt>Runtime</dt><dd>{{ detail.runtimeAttempts.length }}</dd></div>
               </dl>
@@ -1028,6 +1029,11 @@
                   <span>Memory · {{ memory.kind }}</span>
                   <strong>{{ memory.summary || memory.content }}</strong>
                   <button nz-button nzType="link" (click)="openSource(memory.sourceUri)">Open source</button>
+                </article>
+                <article *ngFor="let conversation of detail.conversations">
+                  <span>Conversation · {{ conversation.platform }} · {{ conversation.messageCount }} messages</span>
+                  <strong>{{ conversation.title || conversation.externalId || 'AI conversation archive' }}</strong>
+                  <button nz-button nzType="link" *ngIf="conversation.sourceUri" (click)="openSource(conversation.sourceUri)">Open source</button>
                 </article>
                 <article *ngFor="let item of detail.sourceItems">
                   <span>Source item - {{ item.itemType || 'record' }}</span>
