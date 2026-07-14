@@ -1,15 +1,31 @@
 import { IAgentCycleRunResult } from './agent-cycle.model.interface';
+import { IPursuitMatchCandidate } from './pursuit.model.interface';
 import { ICompletionPlan } from './task-plan.model.interface';
 
 export interface IAssistantCommandRequest {
   message: string;
   projectKey?: string;
+  pursuitId?: string;
   automationId?: string;
   successCriteria?: string[];
   executeAllowed?: boolean;
   runCycle?: boolean;
   skipSourceSync?: boolean;
   skipAmbient?: boolean;
+}
+
+export interface IAssistantCommandPursuitContext {
+  pursuitId?: string;
+  title?: string;
+  mode: string;
+  matched: boolean;
+  createdCandidate?: boolean;
+  awaitingAcceptance?: boolean;
+  executionQueued?: boolean;
+  score?: number;
+  reasons?: string[];
+  message?: string;
+  matches?: IPursuitMatchCandidate[];
 }
 
 export interface IAssistantCommandAction {
@@ -29,4 +45,5 @@ export interface IAssistantCommandResult {
   reviewRequired: boolean;
   plan?: ICompletionPlan;
   agentCycle?: IAgentCycleRunResult;
+  pursuit?: IAssistantCommandPursuitContext;
 }

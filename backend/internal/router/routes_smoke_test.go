@@ -26,7 +26,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	}
 
 	a := r.Group("/api/v1").Group("/automation")
-	a.GET("/swap/:id1/:id2", mark("swap"))
+	a.PATCH("/swap/:id1/:id2", mark("swap"))
 	a.GET("/", mark("getAll"))
 	a.GET("/health/summary", mark("summary"))
 	a.GET("/health-summary", mark("summary"))
@@ -221,6 +221,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	pursuits.GET("/:id/approvals", mark("pursuitApprovals"))
 	pursuits.POST("/:id/intake", mark("pursuitIntake"))
 	pursuits.POST("/:id/plan", mark("pursuitPlan"))
+	pursuits.POST("/:id/candidate/accept", mark("pursuitCandidateAccept"))
 	pursuits.POST("/:id/links", mark("pursuitLink"))
 	pursuits.DELETE("/:id/links/:linkId", mark("pursuitDeleteLink"))
 
@@ -235,7 +236,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/automation/abc/diagnostics", "diagnostics"},
 		{"GET", "/api/v1/automation/abc", "getByID"},
 		{"GET", "/api/v1/automation/images/logo.png", "image"},
-		{"GET", "/api/v1/automation/swap/1/2", "swap"},
+		{"PATCH", "/api/v1/automation/swap/1/2", "swap"},
 		{"GET", "/api/v1/agent-runtimes/", "agentRuntimeRegistry"},
 		{"GET", "/api/v1/agent-runtimes/health", "agentRuntimeHealth"},
 		{"GET", "/api/v1/agent-runtimes/openclaw/skills", "agentRuntimeSkills"},
@@ -322,6 +323,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/pursuits/abc/approvals", "pursuitApprovals"},
 		{"POST", "/api/v1/pursuits/abc/intake", "pursuitIntake"},
 		{"POST", "/api/v1/pursuits/abc/plan", "pursuitPlan"},
+		{"POST", "/api/v1/pursuits/abc/candidate/accept", "pursuitCandidateAccept"},
 		{"POST", "/api/v1/pursuits/abc/links", "pursuitLink"},
 		{"DELETE", "/api/v1/pursuits/abc/links/def", "pursuitDeleteLink"},
 	}
@@ -378,6 +380,9 @@ func TestLocalCaptureCORSAllowsExtensionPreflight(t *testing.T) {
 	}
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "chrome-extension://example-extension" {
 		t.Fatalf("allow origin = %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, X-HAI-Backend-Key" {
+		t.Fatalf("allow headers = %q", got)
 	}
 }
 

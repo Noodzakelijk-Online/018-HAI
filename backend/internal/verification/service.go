@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/source"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -44,8 +45,10 @@ type EvidenceInput struct {
 }
 
 type AnswerRequest struct {
+	OwnerIdentity     string          `json:"-"`
 	Question          string          `json:"question"`
 	ProjectKey        string          `json:"projectKey,omitempty"`
+	PursuitID         string          `json:"pursuitId,omitempty"`
 	Mode              string          `json:"mode,omitempty"`
 	DraftAnswer       string          `json:"draftAnswer,omitempty"`
 	ExternalEvidence  []EvidenceInput `json:"externalEvidence,omitempty"`
@@ -56,6 +59,9 @@ type AnswerRequest struct {
 
 type VerificationResult struct {
 	Run               models.VerificationRun        `json:"run"`
+	PursuitID         string                        `json:"pursuitId,omitempty"`
+	PursuitLinked     bool                          `json:"pursuitLinked,omitempty"`
+	PursuitLinkError  string                        `json:"pursuitLinkError,omitempty"`
 	Claims            []models.VerificationClaim    `json:"claims"`
 	Evidence          []models.VerificationEvidence `json:"evidence"`
 	UnsupportedClaims []models.VerificationClaim    `json:"unsupportedClaims"`
@@ -66,17 +72,28 @@ type VerificationResult struct {
 type Service interface {
 	Answer(request AnswerRequest) (*VerificationResult, error)
 	Runs() ([]models.VerificationRun, error)
+	RunsForOwner(ownerIdentity string) ([]models.VerificationRun, error)
 	RunDetails(id uuid.UUID) (*VerificationResult, error)
+	RunDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error)
+}
+
+type PursuitLinker interface {
+	LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error
 }
 
 type service struct {
 	repo          Repository
 	sourceService source.Service
 	memoryService memory.Service
+	pursuitLinker PursuitLinker
 }
 
-func NewService(repo Repository, sourceService source.Service, memoryService memory.Service) Service {
-	return &service{repo: repo, sourceService: sourceService, memoryService: memoryService}
+func NewService(repo Repository, sourceService source.Service, memoryService memory.Service, pursuitLinkers ...PursuitLinker) Service {
+	var pursuitLinker PursuitLinker
+	if len(pursuitLinkers) > 0 {
+		pursuitLinker = pursuitLinkers[0]
+	}
+	return &service{repo: repo, sourceService: sourceService, memoryService: memoryService, pursuitLinker: pursuitLinker}
 }
 
 func DefaultService() Service {
@@ -84,10 +101,18 @@ func DefaultService() Service {
 }
 
 func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
+	pursuitID, err := requestedPursuitID(request.PursuitID)
+	if err != nil {
+		return nil, err
+	}
+	if pursuitID != uuid.Nil && s.pursuitLinker == nil {
+		return nil, fmt.Errorf("pursuit linking is not configured")
+	}
 	mode := normalizeMode(request.Mode)
 	questions := researchQuestions(request.Question, request.ProjectKey)
 	logs := []string{"converted request into research questions"}
 	run, err := s.repo.CreateRun(&models.VerificationRun{
+		OwnerIdentity:     strings.TrimSpace(request.OwnerIdentity),
 		Mode:              mode,
 		Question:          strings.TrimSpace(request.Question),
 		ProjectKey:        strings.TrimSpace(request.ProjectKey),
@@ -125,21 +150,73 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 	if request.AllowMemoryUpdate {
 		s.storeVerifiedMemory(request, run, verifiedClaims)
 	}
-	return &VerificationResult{
+	result := &VerificationResult{
 		Run:               *run,
 		Claims:            verifiedClaims,
 		Evidence:          evidence,
 		UnsupportedClaims: unsupported,
 		ResearchQuestions: questions,
 		Logs:              append(logs, "verification status logged for every important claim"),
-	}, nil
+	}
+	if pursuitID != uuid.Nil {
+		result.PursuitID = pursuitID.String()
+		if err := s.pursuitLinker.LinkVerificationForOwner(request.OwnerIdentity, pursuitID, run.ID); err != nil {
+			result.PursuitLinkError = err.Error()
+			result.Logs = append(result.Logs, "verification was saved but could not be linked to the requested pursuit")
+			s.audit(run.ID, "verification.pursuit_link_failed", err.Error())
+		} else {
+			result.PursuitLinked = true
+			result.Logs = append(result.Logs, "verification linked to the requested pursuit")
+			s.audit(run.ID, "verification.pursuit_linked", "verification run linked to requested pursuit "+pursuitID.String())
+		}
+	}
+	return result, nil
+}
+
+func requestedPursuitID(value string) (uuid.UUID, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return uuid.Nil, nil
+	}
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid pursuitId")
+	}
+	return id, nil
 }
 
 func (s *service) Runs() ([]models.VerificationRun, error) {
 	return s.repo.FindRuns()
 }
 
+func (s *service) RunsForOwner(ownerIdentity string) ([]models.VerificationRun, error) {
+	return s.repo.FindRunsForOwner(strings.TrimSpace(ownerIdentity))
+}
+
 func (s *service) RunDetails(id uuid.UUID) (*VerificationResult, error) {
+	return s.runDetailsForOwner("", id)
+}
+
+func (s *service) RunDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error) {
+	return s.runDetailsForOwner(strings.TrimSpace(ownerIdentity), id)
+}
+
+func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error) {
+	runs, err := s.RunsForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	var run *models.VerificationRun
+	for index := range runs {
+		if runs[index].ID == id {
+			copy := runs[index]
+			run = &copy
+			break
+		}
+	}
+	if run == nil {
+		return nil, fmt.Errorf("verification run not found")
+	}
 	claims, err := s.repo.FindClaims(id)
 	if err != nil {
 		return nil, err
@@ -149,6 +226,7 @@ func (s *service) RunDetails(id uuid.UUID) (*VerificationResult, error) {
 		return nil, err
 	}
 	return &VerificationResult{
+		Run:               *run,
 		Claims:            claims,
 		Evidence:          evidence,
 		UnsupportedClaims: unsupportedClaims(claims),
@@ -158,30 +236,35 @@ func (s *service) RunDetails(id uuid.UUID) (*VerificationResult, error) {
 
 func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questions []string, logs *[]string) []models.VerificationEvidence {
 	evidence := []models.VerificationEvidence{}
-	for _, question := range questions {
-		result, err := s.sourceService.Search(source.SearchRequest{
-			Query:            question,
-			ProjectKey:       request.ProjectKey,
-			Limit:            6,
-			IncludeSensitive: request.IncludeSensitive,
-		})
-		if err == nil {
-			for _, ranked := range result.UsedContext {
-				evidence = append(evidence, models.VerificationEvidence{
-					RunID:        runID,
-					SourceType:   "connected_source",
-					SourceID:     ranked.Extraction.ID.String(),
-					SourceURI:    ranked.Extraction.SourceURI,
-					SourceLabel:  ranked.Extraction.SourceLabel,
-					Snippet:      firstNonEmpty(ranked.Extraction.Summary, ranked.Extraction.Text),
-					Authority:    "connected_account",
-					Freshness:    freshnessLabel(ranked.Extraction.UpdatedAt),
-					QualityScore: math.Min(1, 0.62+ranked.Score/2),
-					Used:         true,
-				})
+	if s.sourceService != nil {
+		for _, question := range questions {
+			result, err := s.sourceService.Search(source.SearchRequest{
+				OwnerIdentity:    request.OwnerIdentity,
+				Query:            question,
+				ProjectKey:       request.ProjectKey,
+				Limit:            6,
+				IncludeSensitive: request.IncludeSensitive,
+			})
+			if err == nil {
+				for _, ranked := range result.UsedContext {
+					evidence = append(evidence, models.VerificationEvidence{
+						RunID:        runID,
+						SourceType:   "connected_source",
+						SourceID:     ranked.Extraction.ID.String(),
+						SourceURI:    ranked.Extraction.SourceURI,
+						SourceLabel:  ranked.Extraction.SourceLabel,
+						Snippet:      firstNonEmpty(ranked.Extraction.Summary, ranked.Extraction.Text),
+						Authority:    "connected_account",
+						Freshness:    freshnessLabel(ranked.Extraction.UpdatedAt),
+						QualityScore: math.Min(1, 0.62+ranked.Score/2),
+						Used:         true,
+					})
+				}
+				*logs = append(*logs, "searched connected-source index")
 			}
-			*logs = append(*logs, "searched connected-source index")
 		}
+	} else {
+		*logs = append(*logs, "connected-source index is not configured; using only supplied evidence")
 	}
 	for _, input := range request.ExternalEvidence {
 		score := evidenceQuality(input, request.Question)
@@ -360,7 +443,7 @@ func (s *service) storeVerifiedMemory(request AnswerRequest, run *models.Verific
 		if claim.Status != StatusVerified && claim.Status != StatusSourceSupported && claim.Status != StatusHumanApproved {
 			continue
 		}
-		_, _ = s.memoryService.Create(memory.CreateRequest{
+		_, _ = memory.CreateForOwner(s.memoryService, request.OwnerIdentity, memory.CreateRequest{
 			ProjectKey:  request.ProjectKey,
 			Kind:        "verified_fact",
 			Content:     claim.ClaimText,

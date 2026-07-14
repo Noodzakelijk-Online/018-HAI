@@ -41,9 +41,10 @@ func TestScanRejectsConcurrentRun(t *testing.T) {
 func TestAcceptedOpportunityCannotBeDismissed(t *testing.T) {
 	workflowID := uuid.New()
 	item := &models.AmbientOpportunity{
-		ID:         uuid.New(),
-		WorkflowID: &workflowID,
-		Status:     StatusAccepted,
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		WorkflowID:    &workflowID,
+		Status:        StatusAccepted,
 	}
 	engine := NewService(&ambientRepositoryStub{opportunity: item}, nil, nil)
 
@@ -55,9 +56,10 @@ func TestAcceptedOpportunityCannotBeDismissed(t *testing.T) {
 func TestAcceptProposedOpportunityStoresResolutionNote(t *testing.T) {
 	workflowID := uuid.New()
 	item := &models.AmbientOpportunity{
-		ID:         uuid.New(),
-		WorkflowID: &workflowID,
-		Status:     StatusProposed,
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		WorkflowID:    &workflowID,
+		Status:        StatusProposed,
 	}
 	repo := &ambientRepositoryStub{opportunity: item}
 	engine := NewService(repo, nil, nil)
@@ -77,20 +79,21 @@ func TestAcceptProposedOpportunityStoresResolutionNote(t *testing.T) {
 func TestAcceptOpportunityStoresAmbientLearningMemory(t *testing.T) {
 	workflowID := uuid.New()
 	item := &models.AmbientOpportunity{
-		ID:         uuid.New(),
-		WorkflowID: &workflowID,
-		Status:     StatusProposed,
-		NeedKey:    "safety",
-		Title:      "Prepare lawyer follow-up",
-		Rationale:  "A legal workflow is waiting for a reply.",
-		NextAction: "Draft a formal lawyer follow-up with evidence links.",
-		SourceType: "workflow",
-		SourceURI:  "workflow://legal-follow-up",
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		WorkflowID:    &workflowID,
+		Status:        StatusProposed,
+		NeedKey:       "safety",
+		Title:         "Prepare lawyer follow-up",
+		Rationale:     "A legal workflow is waiting for a reply.",
+		NextAction:    "Draft a formal lawyer follow-up with evidence links.",
+		SourceType:    "workflow",
+		SourceURI:     "workflow://legal-follow-up",
 	}
 	memorySpy := &ambientMemorySpy{}
 	engine := NewService(&ambientRepositoryStub{opportunity: item}, nil, nil, memorySpy)
 
-	if _, err := engine.Accept(item.ID, ResolutionRequest{}); err != nil {
+	if _, err := engine.Accept(item.ID, ResolutionRequest{OwnerIdentity: "alice"}); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 	if len(memorySpy.created) != 1 {
@@ -103,23 +106,27 @@ func TestAcceptOpportunityStoresAmbientLearningMemory(t *testing.T) {
 	if !strings.Contains(strings.Join(created.Tags, ","), "ambient_opportunity_accepted") {
 		t.Fatalf("memory tags = %#v, want accepted ambient signal", created.Tags)
 	}
+	if len(memorySpy.ownerCreateOwners) != 1 || memorySpy.ownerCreateOwners[0] != "alice" {
+		t.Fatalf("ambient lesson owners = %#v, want alice", memorySpy.ownerCreateOwners)
+	}
 }
 
 func TestDismissOpportunityStoresCorrectionMemoryWhenNoteIsUseful(t *testing.T) {
 	item := &models.AmbientOpportunity{
-		ID:         uuid.New(),
-		Status:     StatusProposed,
-		NeedKey:    "belonging",
-		Title:      "Follow up with client",
-		Rationale:  "A message appears unanswered.",
-		NextAction: "Send a client follow-up draft.",
-		SourceType: "workflow_open_loop",
-		SourceURI:  "workflow://client-loop",
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		Status:        StatusProposed,
+		NeedKey:       "belonging",
+		Title:         "Follow up with client",
+		Rationale:     "A message appears unanswered.",
+		NextAction:    "Send a client follow-up draft.",
+		SourceType:    "workflow_open_loop",
+		SourceURI:     "workflow://client-loop",
 	}
 	memorySpy := &ambientMemorySpy{}
 	engine := NewService(&ambientRepositoryStub{opportunity: item}, nil, nil, memorySpy)
 
-	_, err := engine.Dismiss(item.ID, ResolutionRequest{Note: "Do not suggest client follow-ups until the quote status has been checked."})
+	_, err := engine.Dismiss(item.ID, ResolutionRequest{OwnerIdentity: "alice", Note: "Do not suggest client follow-ups until the quote status has been checked."})
 	if err != nil {
 		t.Fatalf("Dismiss: %v", err)
 	}
@@ -156,6 +163,9 @@ func TestDismissOpportunityWithoutUsefulNoteDoesNotStoreMemory(t *testing.T) {
 
 type ambientRepositoryStub struct {
 	opportunity *models.AmbientOpportunity
+	needs       []models.AmbientNeed
+	overrides   []models.AmbientNeedOverride
+	scans       []models.AmbientScan
 }
 
 func (r *ambientRepositoryStub) EnsureNeeds([]models.AmbientNeed) error {
@@ -163,11 +173,39 @@ func (r *ambientRepositoryStub) EnsureNeeds([]models.AmbientNeed) error {
 }
 
 func (r *ambientRepositoryStub) Needs() ([]models.AmbientNeed, error) {
+	return r.needs, nil
+}
+
+func (r *ambientRepositoryStub) NeedOverridesForOwner(ownerIdentity string) ([]models.AmbientNeedOverride, error) {
+	result := make([]models.AmbientNeedOverride, 0, len(r.overrides))
+	for _, override := range r.overrides {
+		if override.OwnerIdentity == ownerIdentity {
+			result = append(result, override)
+		}
+	}
+	return result, nil
+}
+
+func (r *ambientRepositoryStub) FindNeedOverride(ownerIdentity, needKey string) (*models.AmbientNeedOverride, error) {
+	for _, override := range r.overrides {
+		if override.OwnerIdentity == ownerIdentity && override.NeedKey == needKey {
+			copy := override
+			return &copy, nil
+		}
+	}
 	return nil, nil
 }
 
-func (r *ambientRepositoryStub) UpdateNeed(need *models.AmbientNeed) (*models.AmbientNeed, error) {
-	return need, nil
+func (r *ambientRepositoryStub) SaveNeedOverride(override *models.AmbientNeedOverride) (*models.AmbientNeedOverride, error) {
+	copy := *override
+	for index, existing := range r.overrides {
+		if existing.OwnerIdentity == copy.OwnerIdentity && existing.NeedKey == copy.NeedKey {
+			r.overrides[index] = copy
+			return &copy, nil
+		}
+	}
+	r.overrides = append(r.overrides, copy)
+	return &copy, nil
 }
 
 func (r *ambientRepositoryStub) FindOpportunity(uuid.UUID) (*models.AmbientOpportunity, error) {
@@ -189,10 +227,25 @@ func (r *ambientRepositoryStub) SaveOpportunity(item *models.AmbientOpportunity)
 }
 
 func (r *ambientRepositoryStub) Opportunities(string, int) ([]models.AmbientOpportunity, error) {
-	return nil, nil
+	if r.opportunity == nil {
+		return nil, nil
+	}
+	return []models.AmbientOpportunity{*r.opportunity}, nil
+}
+
+func (r *ambientRepositoryStub) OpportunitiesForOwner(ownerIdentity, status string, limit int) ([]models.AmbientOpportunity, error) {
+	items, _ := r.Opportunities(status, limit)
+	result := make([]models.AmbientOpportunity, 0, len(items))
+	for _, item := range items {
+		if item.OwnerIdentity == ownerIdentity {
+			result = append(result, item)
+		}
+	}
+	return result, nil
 }
 
 func (r *ambientRepositoryStub) CreateScan(scan *models.AmbientScan) (*models.AmbientScan, error) {
+	r.scans = append(r.scans, *scan)
 	return scan, nil
 }
 
@@ -201,7 +254,17 @@ func (r *ambientRepositoryStub) UpdateScan(scan *models.AmbientScan) (*models.Am
 }
 
 func (r *ambientRepositoryStub) Scans(int) ([]models.AmbientScan, error) {
-	return nil, nil
+	return r.scans, nil
+}
+
+func (r *ambientRepositoryStub) ScansForOwner(ownerIdentity string, _ int) ([]models.AmbientScan, error) {
+	result := []models.AmbientScan{}
+	for _, scan := range r.scans {
+		if scan.OwnerIdentity == ownerIdentity {
+			result = append(result, scan)
+		}
+	}
+	return result, nil
 }
 
 func (r *ambientRepositoryStub) PruneScans(int) error {
@@ -209,12 +272,22 @@ func (r *ambientRepositoryStub) PruneScans(int) error {
 }
 
 type ambientMemorySpy struct {
-	created []memory.CreateRequest
+	created           []memory.CreateRequest
+	ownerCreateOwners []string
 }
 
 func (s *ambientMemorySpy) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
 	s.created = append(s.created, request)
 	return &models.ContextMemory{ID: uuid.New(), Kind: request.Kind, Content: request.Content, Summary: request.Summary, Confidence: request.Confidence}, nil
+}
+
+func (s *ambientMemorySpy) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	s.ownerCreateOwners = append(s.ownerCreateOwners, ownerIdentity)
+	created, err := s.Create(request)
+	if created != nil {
+		created.OwnerIdentity = ownerIdentity
+	}
+	return created, err
 }
 
 func (s *ambientMemorySpy) Update(uuid.UUID, memory.UpdateRequest) (*models.ContextMemory, error) {
@@ -239,4 +312,28 @@ func (s *ambientMemorySpy) Delete(uuid.UUID) error {
 
 func (s *ambientMemorySpy) Retrieve(memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{}, nil
+}
+
+func (s *ambientMemorySpy) UpdateForOwner(_ string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return s.Update(id, request)
+}
+
+func (s *ambientMemorySpy) FindAllForOwner(_ string, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	return s.FindAll(projectKey, includeArchived)
+}
+
+func (s *ambientMemorySpy) FindByIDForOwner(_ string, id uuid.UUID) (*models.ContextMemory, error) {
+	return s.FindByID(id)
+}
+
+func (s *ambientMemorySpy) ArchiveForOwner(_ string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return s.Archive(id, archived)
+}
+
+func (s *ambientMemorySpy) DeleteForOwner(_ string, id uuid.UUID) error {
+	return s.Delete(id)
+}
+
+func (s *ambientMemorySpy) RetrieveForOwner(_ string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	return s.Retrieve(request)
 }

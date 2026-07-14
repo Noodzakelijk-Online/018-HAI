@@ -19,6 +19,18 @@ func TestVerifyValidToken(t *testing.T) {
 	}
 }
 
+func TestClaimsPrincipalUsesBundledIDPUserID(t *testing.T) {
+	claims := Claims{UserID: "idp-user"}
+	if got := claims.Principal(); got != "idp-user" {
+		t.Fatalf("Principal() = %q, want bundled IDP user_id", got)
+	}
+
+	claims.Subject = "openid-subject"
+	if got := claims.Principal(); got != "openid-subject" {
+		t.Fatalf("Principal() = %q, want OpenID sub to take precedence", got)
+	}
+}
+
 func TestVerifyRejectsWrongSecret(t *testing.T) {
 	now := time.Now()
 	tok := SignToken(Claims{Subject: "u", Role: "owner"}, secret)

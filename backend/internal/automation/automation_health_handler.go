@@ -21,7 +21,7 @@ func (h *Handler) Launch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
 		return
 	}
-	result, err := h.service.Launch(id)
+	result, err := h.service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: verifiedAutomationActor(c)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -35,7 +35,7 @@ func (h *Handler) StopRuntimeTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
 		return
 	}
-	result, err := h.service.StopRuntimeTask(id)
+	result, err := h.service.StopRuntimeTaskForOwner(id, verifiedAutomationActor(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

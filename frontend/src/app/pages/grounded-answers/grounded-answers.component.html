@@ -44,10 +44,17 @@
               </nz-form-control>
             </nz-form-item>
           </div>
+          <div class="linked-pursuit" *ngIf="answerForm.value.pursuitId as pursuitId">
+            <span title="This verification run will be linked to the selected pursuit as evidence. It does not mark the pursuit complete or approve any external action.">
+              Linked pursuit evidence
+            </span>
+            <button type="button" nz-button nzType="link" (click)="openPursuit(pursuitId)">Open pursuit</button>
+            <button type="button" nz-button nzType="link" (click)="clearPursuitLink()">Clear</button>
+          </div>
           <div class="form-row">
             <label nz-checkbox formControlName="includeSensitive">Include sensitive</label>
-            <label nz-checkbox formControlName="humanApproved">Human approved</label>
             <label nz-checkbox formControlName="allowMemoryUpdate">Allow memory update</label>
+            <span class="approval-notice" title="Only a server-recorded approval can authorize a high-risk action. Browser form values are never treated as approval.">Action-mode approval comes from the workflow queue.</span>
           </div>
           <div class="form-row">
             <input nz-input formControlName="evidenceLabel" />
@@ -67,6 +74,7 @@
       <div class="answer-grid" *ngIf="result as r">
         <nz-card nzSize="small" nzTitle="Answer">
           <p><strong>Status:</strong> {{ r.run.status }}</p>
+          <p *ngIf="r.pursuitId"><strong>Pursuit:</strong> {{ r.pursuitLinked ? 'linked as evidence' : 'link requires attention' }}</p>
           <p>{{ r.run.answer }}</p>
           <p *ngIf="r.run.missingSources"><strong>Missing:</strong> {{ r.run.missingSources }}</p>
         </nz-card>

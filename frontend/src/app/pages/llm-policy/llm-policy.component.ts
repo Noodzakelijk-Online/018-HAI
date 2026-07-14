@@ -96,6 +96,7 @@ export class LLMPolicyComponent implements OnInit {
       },
     });
     this.loadLogs();
+    this.loadProbeHistory();
   }
 
   toggleTheme(): void {
@@ -124,6 +125,30 @@ export class LLMPolicyComponent implements OnInit {
         this.notification.error('Error', 'Failed to probe configured LLM providers.');
       },
     });
+  }
+
+  private loadProbeHistory(): void {
+    this.llmPolicyService.getProbeHistory().subscribe({
+      next: (probes) => {
+        this.probes = this.latestProbeByProvider(probes || []);
+        this.rebuildActionCards();
+      },
+      error: () => {
+        // A missing history table must not hide routing policy or live probes.
+        this.rebuildActionCards();
+      },
+    });
+  }
+
+  private latestProbeByProvider(probes: ILLMProviderProbe[]): ILLMProviderProbe[] {
+    const latest = new Map<string, ILLMProviderProbe>();
+    probes.forEach((probe) => {
+      const current = latest.get(probe.providerId);
+      if (!current || new Date(probe.checkedAt).getTime() > new Date(current.checkedAt).getTime()) {
+        latest.set(probe.providerId, probe);
+      }
+    });
+    return Array.from(latest.values()).sort((left, right) => left.providerName.localeCompare(right.providerName));
   }
 
   routeTask(): void {
@@ -307,6 +332,10 @@ export class LLMPolicyComponent implements OnInit {
     if (!provider.configured) {
       return provider.readinessStatus || 'not configured';
     }
+    const strictReason = this.strictProviderReadinessReason(provider);
+    if (strictReason) {
+      return 'probe required';
+    }
     if (provider.paid) {
       return 'paid';
     }
@@ -323,6 +352,9 @@ export class LLMPolicyComponent implements OnInit {
     if (!provider.configured) {
       return 'orange';
     }
+    if (this.strictProviderReadinessReason(provider)) {
+      return 'orange';
+    }
     if (provider.paid) {
       return 'red';
     }
@@ -337,6 +369,9 @@ export class LLMPolicyComponent implements OnInit {
       return 'disabled';
     }
     if (!provider.configured) {
+      return 'watch';
+    }
+    if (this.strictProviderReadinessReason(provider)) {
       return 'watch';
     }
     if (provider.paid) {
@@ -762,10 +797,56 @@ export class LLMPolicyComponent implements OnInit {
   }
 
   providerReadinessText(provider: ILLMProvider): string {
+    const strictReason = this.strictProviderReadinessReason(provider);
+    if (strictReason) {
+      return `Strict mode: ${strictReason}`;
+    }
     if (provider.configured) {
       return 'Endpoint ready';
     }
     return provider.readinessReason || 'Provider is not ready';
+  }
+
+  strictProbePolicyLabel(policy: ILLMPolicy): string {
+    if (!policy.requireRecentLiveProviderProbe) {
+      return 'configured allowed';
+    }
+    return `strict / ${this.probeAgeLabel(policy.providerProbeMaxAgeSeconds)}`;
+  }
+
+  strictProbePolicyTooltip(policy: ILLMPolicy): string {
+    if (!policy.requireRecentLiveProviderProbe) {
+      return 'Strict live readiness checks are disabled. A configured endpoint may be considered for routing under the remaining policy gates.';
+    }
+    return `Strict live readiness is enabled. A provider is skipped unless its latest persisted probe is live and no older than ${this.probeAgeLabel(policy.providerProbeMaxAgeSeconds)}.`;
+  }
+
+  private strictProviderReadinessReason(provider: ILLMProvider): string {
+    if (!this.policy?.requireRecentLiveProviderProbe || !provider.enabled || !provider.configured) {
+      return '';
+    }
+    const probe = this.probes.find((item) => item.providerId === provider.id);
+    if (!probe) {
+      return 'live probe has not been recorded';
+    }
+    if (!probe.live) {
+      return 'latest probe is not live';
+    }
+    const ageSeconds = (Date.now() - new Date(probe.checkedAt).getTime()) / 1000;
+    if (ageSeconds > this.policy.providerProbeMaxAgeSeconds) {
+      return 'latest live probe is stale';
+    }
+    return '';
+  }
+
+  private probeAgeLabel(seconds: number): string {
+    if (seconds < 60) {
+      return `${seconds}s`;
+    }
+    if (seconds % 60 === 0) {
+      return `${seconds / 60}m`;
+    }
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   }
 
   routeDecisionSummary(decision: ILLMRouteDecision): string {

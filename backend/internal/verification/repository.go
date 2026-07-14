@@ -15,6 +15,7 @@ type Repository interface {
 	CreateClaim(claim *models.VerificationClaim) (*models.VerificationClaim, error)
 	CreateAuditLog(log *models.VerificationAuditLog) (*models.VerificationAuditLog, error)
 	FindRuns() ([]models.VerificationRun, error)
+	FindRunsForOwner(ownerIdentity string) ([]models.VerificationRun, error)
 	FindClaims(runID uuid.UUID) ([]models.VerificationClaim, error)
 	FindEvidence(runID uuid.UUID) ([]models.VerificationEvidence, error)
 }
@@ -73,6 +74,18 @@ func (r *GormRepository) CreateAuditLog(log *models.VerificationAuditLog) (*mode
 func (r *GormRepository) FindRuns() ([]models.VerificationRun, error) {
 	var runs []models.VerificationRun
 	err := r.DB.Order("created_at desc").Find(&runs).Error
+	return runs, err
+}
+
+// FindRunsForOwner includes legacy ownerless records for local compatibility,
+// but never returns a record owned by another authenticated user.
+func (r *GormRepository) FindRunsForOwner(ownerIdentity string) ([]models.VerificationRun, error) {
+	var runs []models.VerificationRun
+	query := r.DB.Order("created_at desc")
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+	}
+	err := query.Find(&runs).Error
 	return runs, err
 }
 

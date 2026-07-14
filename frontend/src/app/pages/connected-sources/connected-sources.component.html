@@ -14,7 +14,7 @@
         <i nz-icon nzType="reload" nzTheme="outline"></i>
         Refresh
       </button>
-      <button type="button" nz-button nzType="primary" (click)="runDueScheduledSyncs()" [nzLoading]="syncing" title="Run all due scheduled source sync jobs">
+      <button type="button" nz-button nzType="primary" (click)="runDueScheduledSyncs()" [nzLoading]="syncing" title="Refresh due scheduled source sync jobs that belong to your signed-in account">
         <i nz-icon nzType="sync" nzTheme="outline"></i>
         Sync due
       </button>
@@ -473,6 +473,31 @@
           <nz-empty nzNotFoundContent="Select or connect a source."></nz-empty>
         </ng-template>
       </aside>
+    </section>
+
+    <section class="source-routing-outcomes" *ngIf="pursuitRoutingOutcomes().length">
+      <header>
+        <div>
+          <p class="eyebrow">Pursuit handoff</p>
+          <h2>HAI routed this source update</h2>
+          <span>Candidate objectives remain non-executable until an approval-capable operator accepts them.</span>
+        </div>
+      </header>
+      <button
+        type="button"
+        *ngFor="let outcome of pursuitRoutingOutcomes()"
+        class="routing-outcome"
+        [attr.data-status]="outcome.status === 'candidate_pending' ? 'watch' : outcome.status === 'routing_deferred' ? 'bad' : 'good'"
+        [title]="outcome.message"
+        (click)="openPursuitOutcome(outcome)"
+      >
+        <i nz-icon [nzType]="outcome.status === 'candidate_pending' ? 'check-square' : outcome.status === 'routing_deferred' ? 'warning' : 'compass'" nzTheme="outline"></i>
+        <span>
+          <strong>{{ pursuitRoutingLabel(outcome) }}</strong>
+          <small>{{ outcome.message }}</small>
+        </span>
+        <em>{{ outcome.pursuitId ? 'Open pursuit' : 'Open inbox' }}</em>
+      </button>
     </section>
 
     <section class="lower-grid">

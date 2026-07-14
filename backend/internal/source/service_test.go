@@ -293,6 +293,49 @@ func TestRunDueScheduledSyncsRunsDueLocalFolderSource(t *testing.T) {
 	}
 }
 
+func TestRunDueScheduledSyncsForOwnerDoesNotTouchAnotherOwnersSources(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(root+"/alice", 0o755); err != nil {
+		t.Fatalf("create Alice fixture directory: %v", err)
+	}
+	if err := os.MkdirAll(root+"/bob", 0o755); err != nil {
+		t.Fatalf("create Bob fixture directory: %v", err)
+	}
+	writeTestFile(t, root+"/alice/brief.md", "Follow up: Alice source should be refreshed only for Alice.")
+	writeTestFile(t, root+"/bob/brief.md", "Follow up: Bob source must not be refreshed by Alice's task.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{
+			ID: aliceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Alice folder", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "active", SyncFrequency: "1m", SyncTarget: "alice",
+		},
+		&models.ConnectedSource{
+			ID: bobID, OwnerIdentity: "bob", ConnectorKey: "local-folder", Name: "Bob folder", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "active", SyncFrequency: "1m", SyncTarget: "bob",
+		},
+	)
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	run, err := service.RunDueScheduledSyncsForOwner(time.Now().UTC(), "alice")
+	if err != nil {
+		t.Fatalf("RunDueScheduledSyncsForOwner: %v", err)
+	}
+	if run.Checked != 1 || run.Due != 1 || run.Completed != 1 || run.Failed != 0 {
+		t.Fatalf("owner run = %#v, want Alice-only successful sync", run)
+	}
+	alice, _ := repo.FindSource(aliceID)
+	bob, _ := repo.FindSource(bobID)
+	if alice.LastSyncedAt == nil {
+		t.Fatal("Alice source was not refreshed")
+	}
+	if bob.LastSyncedAt != nil {
+		t.Fatal("Alice task refreshed Bob's source")
+	}
+}
+
 func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	lastSync := time.Now().UTC()
 	repo := newFakeSourceRepo(
@@ -361,6 +404,7 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	source, err := service.CreateSource(CreateSourceRequest{
+		OwnerIdentity: "alice",
 		ConnectorKey:  "email",
 		Name:          "Robert email export",
 		Enabled:       true,
@@ -373,6 +417,9 @@ func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
 	}
 	if source.ConnectorKey != "email" || !source.Enabled || source.Category != "email" {
 		t.Fatalf("source = %#v, want enabled email export source", source)
+	}
+	if source.OwnerIdentity != "alice" {
+		t.Fatalf("OwnerIdentity = %q, want alice", source.OwnerIdentity)
 	}
 }
 
@@ -571,10 +618,11 @@ func TestSyncCreatesWorkflowForActionableExtraction(t *testing.T) {
 	}
 }
 
-func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
+func TestSyncDefersActionableExtractionWhenPursuitLinkerLacksLifecycleRouter(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
 		ID:                sourceID,
+		OwnerIdentity:     "alice",
 		ConnectorKey:      "email",
 		Name:              "Legal mailbox",
 		Category:          "email",
@@ -608,24 +656,173 @@ func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
 	if len(result.Extractions) != 1 {
 		t.Fatalf("extractions = %d, want 1", len(result.Extractions))
 	}
-	if len(pursuitSpy.requests) != 1 {
-		t.Fatalf("pursuit auto-link requests = %d, want 1", len(pursuitSpy.requests))
+	if len(workflowSpy.requests) != 0 || len(pursuitSpy.requests) != 0 {
+		t.Fatalf("partial pursuit integration created workflow work: workflows=%#v links=%#v", workflowSpy.requests, pursuitSpy.requests)
 	}
-	request := pursuitSpy.requests[0]
-	if request.WorkflowID == uuid.Nil || request.ProjectKey != "Vivare dispute" {
-		t.Fatalf("auto-link request workflow/project = %s/%q", request.WorkflowID, request.ProjectKey)
+	if !repo.hasAudit("pursuit.intake_deferred") || repo.hasAudit("workflow.intake_created") || repo.hasAudit("workflow.intake_failed") {
+		t.Fatalf("source intake was not retained as a clean deferred state")
 	}
-	if !request.AllowCreateCandidate {
-		t.Fatalf("source-derived workflows must be allowed to create reviewable pursuit candidates when no match exists")
+}
+
+func TestSyncRoutesActionableExtractionThroughPursuitGateway(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:            sourceID,
+		OwnerIdentity: "alice",
+		ConnectorKey:  "email",
+		Name:          "Legal mailbox",
+		Category:      "email",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	pursuitGateway := &fakeSourcePursuitGateway{}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, &fakeSourceMemoryService{}, workflowSpy, pursuitGateway)
+
+	result, err := service.Sync(sourceID, ImportRequest{
+		Mode: ModeManualImport,
+		Items: []ImportItem{{
+			ExternalID: "email-pursuit-gateway",
+			Title:      "Lawyer follow-up",
+			Content:    "Follow up: draft a formal reply for the legal case before tomorrow.",
+			SourceURI:  "mailto:lawyer@example.test",
+			ItemType:   "email",
+			ProjectKey: "Vivare dispute",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
 	}
-	if request.ExtractionID != result.Extractions[0].ID.String() || request.RawItemID != result.Extractions[0].RawItemID.String() {
-		t.Fatalf("auto-link source ids = %q/%q, want %s/%s", request.ExtractionID, request.RawItemID, result.Extractions[0].ID, result.Extractions[0].RawItemID)
+	if len(workflowSpy.requests) != 0 {
+		t.Fatalf("direct workflow intake bypassed pursuit gateway: %#v", workflowSpy.requests)
 	}
-	if request.SourceURI != "mailto:lawyer@example.test" || request.SourceLabel != "Lawyer follow-up" {
-		t.Fatalf("auto-link source reference = %q/%q", request.SourceURI, request.SourceLabel)
+	if len(pursuitGateway.routed) != 1 || pursuitGateway.routed[0].Trigger != "source.extraction" {
+		t.Fatalf("pursuit gateway requests = %#v", pursuitGateway.routed)
 	}
-	if !repo.hasAudit("pursuit.auto_linked") {
-		t.Fatalf("expected pursuit auto-link audit record")
+	if pursuitGateway.routed[0].OwnerIdentity != "alice" {
+		t.Fatalf("routed workflow owner = %q, want alice", pursuitGateway.routed[0].OwnerIdentity)
+	}
+	if len(pursuitGateway.requests) != 0 {
+		t.Fatalf("workflow was linked twice after pursuit routing: %#v", pursuitGateway.requests)
+	}
+	if len(result.PursuitOutcomes) != 1 || result.PursuitOutcomes[0].Status != "pursuit_routed" || result.PursuitOutcomes[0].WorkflowID == "" || result.PursuitOutcomes[0].PursuitID != pursuitGateway.pursuitID.String() {
+		t.Fatalf("pursuit routing outcome = %#v, want routed workflow context", result.PursuitOutcomes)
+	}
+}
+
+func TestSyncDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:            sourceID,
+		OwnerIdentity: "alice",
+		ConnectorKey:  "email",
+		Name:          "Legal mailbox",
+		Category:      "email",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	pursuitGateway := &fakeSourcePursuitGateway{err: &pursuit.CandidatePendingError{Result: &pursuit.RoutedIntakeResult{
+		Mode:             "candidate_created",
+		CreatedCandidate: true,
+		PursuitID:        uuid.New(),
+		Message:          "source candidate awaits approval",
+	}}}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, &fakeSourceMemoryService{}, workflowSpy, pursuitGateway)
+
+	result, err := service.Sync(sourceID, ImportRequest{Mode: ModeManualImport, Items: []ImportItem{{
+		ExternalID: "email-candidate-pending",
+		Title:      "Lawyer follow-up",
+		Content:    "Follow up: draft a formal reply for the legal case before tomorrow.",
+		SourceURI:  "mailto:lawyer@example.test",
+		ItemType:   "email",
+		ProjectKey: "Vivare dispute",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(workflowSpy.requests) != 0 || len(pursuitGateway.routed) != 1 {
+		t.Fatalf("candidate pending path bypassed gateway or created workflow: workflows=%#v routed=%#v", workflowSpy.requests, pursuitGateway.routed)
+	}
+	if !repo.hasAudit("pursuit.intake_deferred") || repo.hasAudit("workflow.intake_failed") {
+		t.Fatalf("candidate pending source audit was not a successful deferral")
+	}
+	if len(result.PursuitOutcomes) != 1 || result.PursuitOutcomes[0].Status != "candidate_pending" || result.PursuitOutcomes[0].PursuitID != pursuitGateway.err.(*pursuit.CandidatePendingError).Result.PursuitID.String() {
+		t.Fatalf("candidate pursuit outcome = %#v, want the reviewable candidate", result.PursuitOutcomes)
+	}
+}
+
+func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	legacyID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice mailbox", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob mailbox", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: legacyID, Name: "Legacy local source", Enabled: true, Status: "active"},
+	)
+	for _, extraction := range []models.SourceExtraction{
+		{ID: uuid.New(), SourceID: aliceID, Text: "Alice legal evidence deadline", Summary: "Alice legal evidence deadline"},
+		{ID: uuid.New(), SourceID: bobID, Text: "Bob legal evidence deadline", Summary: "Bob legal evidence deadline"},
+		{ID: uuid.New(), SourceID: legacyID, Text: "Legacy legal evidence deadline", Summary: "Legacy legal evidence deadline"},
+	} {
+		copyExtraction := extraction
+		if _, err := repo.SaveExtraction(&copyExtraction); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+
+	result, err := NewService(repo, nil).Search(SearchRequest{OwnerIdentity: "alice", Query: "legal evidence deadline", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.UsedContext) != 2 {
+		t.Fatalf("visible search results = %#v, want Alice and legacy only", result.UsedContext)
+	}
+	for _, ranked := range result.UsedContext {
+		if ranked.Extraction.SourceID == bobID {
+			t.Fatalf("search returned Bob's private source extraction")
+		}
+	}
+	if len(repo.lastExtractionSourceIDs) != 2 {
+		t.Fatalf("search loaded source ids %#v, want only Alice and legacy sources", repo.lastExtractionSourceIDs)
+	}
+	for _, sourceID := range repo.lastExtractionSourceIDs {
+		if sourceID == bobID {
+			t.Fatalf("search repository query included Bob's private source")
+		}
+	}
+}
+
+func TestOwnerScopedSourceWritesOwnerScopedMemory(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:            sourceID,
+		OwnerIdentity: "alice",
+		ConnectorKey:  "email",
+		Name:          "Alice mailbox",
+		Category:      "email",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+	})
+	memorySpy := &fakeSourceMemoryService{}
+	service := NewService(repo, memorySpy)
+	if _, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "alice-context",
+		Title:      "Alice context",
+		Content:    "Alice prefers concise evidence summaries for this project.",
+		ItemType:   "email",
+	}}}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(memorySpy.ownerCreated) != 1 || memorySpy.ownerCreated[0].ownerIdentity != "alice" {
+		t.Fatalf("owner-scoped memory writes = %#v, want one Alice memory", memorySpy.ownerCreated)
+	}
+	if len(memorySpy.created) != 0 {
+		t.Fatalf("global memory writes = %#v, want none for owner-scoped source", memorySpy.created)
 	}
 }
 
@@ -980,6 +1177,17 @@ func TestReindexUsesCachedRawContentAndPreservesMetadata(t *testing.T) {
 	if rawItems[0].Content != content || rawItems[0].Metadata != metadata {
 		t.Fatalf("raw cache mixed content and metadata: %#v", rawItems[0])
 	}
+	extraction, err := repo.FindExtractionByRawItem(rawItems[0].ID)
+	if err != nil {
+		t.Fatalf("FindExtractionByRawItem: %v", err)
+	}
+	repo.index = append(repo.index, models.SourceIndexEntry{
+		ID:           uuid.New(),
+		SourceID:     sourceID,
+		ExtractionID: extraction.ID,
+		IndexType:    "vector_ref",
+		VectorRef:    "local-vector-pending:" + extraction.ID.String(),
+	})
 
 	result, err := service.Reindex(sourceID)
 	if err != nil {
@@ -988,8 +1196,8 @@ func TestReindexUsesCachedRawContentAndPreservesMetadata(t *testing.T) {
 	if len(result.Extractions) != 1 || result.Extractions[0].Text != content {
 		t.Fatalf("reindex did not use cached content: %#v", result.Extractions)
 	}
-	if len(repo.index) != 2 {
-		t.Fatalf("reindex created duplicate index rows: %#v", repo.index)
+	if len(repo.index) != 1 || repo.index[0].IndexType != "keyword" || repo.index[0].VectorRef != "" {
+		t.Fatalf("reindex retained placeholder or duplicate index rows: %#v", repo.index)
 	}
 	rawItems, _ = repo.FindRawItems(sourceID)
 	if rawItems[0].Metadata != metadata {
@@ -1025,6 +1233,76 @@ func TestArchiveExtractionRetractsPendingWorkflowCandidate(t *testing.T) {
 	}
 	if len(workflowSpy.retractions) != 1 || workflowSpy.retractions[0].sourceID != extractionID.String() {
 		t.Fatalf("workflow retractions = %#v", workflowSpy.retractions)
+	}
+}
+
+func TestDeleteExtractionRetractsWorkflowAndRemovesDerivedIndexMetadata(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Project mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-delete",
+		Title:      "Delete",
+		Content:    "Follow up: prepare the detailed project checklist for review.",
+		SourceURI:  "local://delete",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	extractionID := result.Extractions[0].ID
+	repo.index = append(repo.index, models.SourceIndexEntry{
+		ID:           uuid.New(),
+		SourceID:     sourceID,
+		ExtractionID: extractionID,
+		IndexType:    "vector_ref",
+		VectorRef:    "configured-local-vector:" + extractionID.String(),
+	})
+	if err := service.DeleteExtraction(extractionID); err != nil {
+		t.Fatalf("DeleteExtraction: %v", err)
+	}
+	if _, err := repo.FindExtraction(extractionID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("deleted extraction lookup error = %v, want not found", err)
+	}
+	if len(repo.index) != 0 {
+		t.Fatalf("derived index metadata remained after deletion: %#v", repo.index)
+	}
+	if len(workflowSpy.retractions) != 1 || workflowSpy.retractions[0].sourceID != extractionID.String() {
+		t.Fatalf("workflow retractions = %#v", workflowSpy.retractions)
+	}
+	if !repo.hasAudit("extraction.deleted") {
+		t.Fatalf("expected deletion audit after successful deletion")
+	}
+}
+
+func TestDeleteExtractionDoesNotAuditWhenRepositoryDeleteFails(t *testing.T) {
+	sourceID := uuid.New()
+	extractionID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, ConnectorKey: "email", Name: "Project mailbox", Category: "email", Enabled: true, Status: "active"})
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: extractionID, SourceID: sourceID, Summary: "Private source context"}); err != nil {
+		t.Fatalf("SaveExtraction: %v", err)
+	}
+	repo.index = append(repo.index, models.SourceIndexEntry{ID: uuid.New(), SourceID: sourceID, ExtractionID: extractionID, IndexType: "keyword", Keywords: "private,source,context"})
+	repo.deleteExtractionErr = errors.New("storage unavailable")
+	if err := NewService(repo, nil).DeleteExtraction(extractionID); err == nil {
+		t.Fatal("expected repository delete failure")
+	}
+	if repo.hasAudit("extraction.deleted") {
+		t.Fatalf("deletion audit was recorded before storage deletion succeeded: %#v", repo.auditLogs)
+	}
+	if _, err := repo.FindExtraction(extractionID); err != nil {
+		t.Fatalf("failed deletion removed extraction: %v", err)
+	}
+	if len(repo.index) != 1 {
+		t.Fatalf("failed deletion removed derived metadata: %#v", repo.index)
 	}
 }
 
@@ -1257,13 +1535,15 @@ func writeTestFile(t *testing.T, path, content string) {
 }
 
 type fakeSourceRepo struct {
-	connectors  map[string]models.SourceConnector
-	sources     map[uuid.UUID]*models.ConnectedSource
-	jobs        []models.SourceSyncJob
-	rawItems    map[uuid.UUID]*models.SourceRawItem
-	extractions map[uuid.UUID]*models.SourceExtraction
-	index       []models.SourceIndexEntry
-	auditLogs   []models.SourceAuditLog
+	connectors              map[string]models.SourceConnector
+	sources                 map[uuid.UUID]*models.ConnectedSource
+	jobs                    []models.SourceSyncJob
+	rawItems                map[uuid.UUID]*models.SourceRawItem
+	extractions             map[uuid.UUID]*models.SourceExtraction
+	index                   []models.SourceIndexEntry
+	lastExtractionSourceIDs []uuid.UUID
+	auditLogs               []models.SourceAuditLog
+	deleteExtractionErr     error
 }
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
@@ -1435,8 +1715,27 @@ func (r *fakeSourceRepo) SaveExtraction(extraction *models.SourceExtraction) (*m
 }
 
 func (r *fakeSourceRepo) FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	return r.findExtractions(nil, projectKey, includeArchived)
+}
+
+func (r *fakeSourceRepo) FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	r.lastExtractionSourceIDs = append([]uuid.UUID{}, sourceIDs...)
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, nil
+	}
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		allowed[id] = true
+	}
+	return r.findExtractions(allowed, projectKey, includeArchived)
+}
+
+func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	result := []models.SourceExtraction{}
 	for _, extraction := range r.extractions {
+		if sourceIDs != nil && !sourceIDs[extraction.SourceID] {
+			continue
+		}
 		if projectKey != "" && extraction.ProjectKey != projectKey {
 			continue
 		}
@@ -1458,7 +1757,17 @@ func (r *fakeSourceRepo) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 }
 
 func (r *fakeSourceRepo) DeleteExtraction(id uuid.UUID) error {
+	if r.deleteExtractionErr != nil {
+		return r.deleteExtractionErr
+	}
 	delete(r.extractions, id)
+	filtered := r.index[:0]
+	for _, entry := range r.index {
+		if entry.ExtractionID != id {
+			filtered = append(filtered, entry)
+		}
+	}
+	r.index = filtered
 	return nil
 }
 
@@ -1480,6 +1789,18 @@ func (r *fakeSourceRepo) SaveIndexEntry(entry *models.SourceIndexEntry) (*models
 	entry.UpdatedAt = now
 	r.index = append(r.index, *entry)
 	return entry, nil
+}
+
+func (r *fakeSourceRepo) DeletePendingVectorIndex(extractionID uuid.UUID) error {
+	filtered := r.index[:0]
+	for _, entry := range r.index {
+		if entry.ExtractionID == extractionID && entry.IndexType == "vector_ref" && strings.HasPrefix(entry.VectorRef, "local-vector-pending:") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	r.index = filtered
+	return nil
 }
 
 func (r *fakeSourceRepo) SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error) {
@@ -1511,7 +1832,15 @@ func (r *fakeSourceRepo) hasAudit(action string) bool {
 }
 
 type fakeSourceMemoryService struct {
-	created []memory.CreateRequest
+	created      []memory.CreateRequest
+	ownerCreated []ownerMemoryCreate
+}
+
+var _ memory.OwnerScopedService = (*fakeSourceMemoryService)(nil)
+
+type ownerMemoryCreate struct {
+	ownerIdentity string
+	request       memory.CreateRequest
 }
 
 func (s *fakeSourceMemoryService) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
@@ -1530,7 +1859,28 @@ func (s *fakeSourceMemoryService) Create(request memory.CreateRequest) (*models.
 	}, nil
 }
 
+func (s *fakeSourceMemoryService) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	s.ownerCreated = append(s.ownerCreated, ownerMemoryCreate{ownerIdentity: ownerIdentity, request: request})
+	return &models.ContextMemory{
+		ID:            uuid.New(),
+		OwnerIdentity: ownerIdentity,
+		ProjectKey:    request.ProjectKey,
+		Kind:          request.Kind,
+		Content:       request.Content,
+		Summary:       request.Summary,
+		Confidence:    request.Confidence,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}, nil
+}
+
 func (s *fakeSourceMemoryService) Update(id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceMemoryService) UpdateForOwner(ownerIdentity string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
 	return nil, nil
 }
 
@@ -1538,7 +1888,15 @@ func (s *fakeSourceMemoryService) FindAll(projectKey string, includeArchived boo
 	return nil, nil
 }
 
+func (s *fakeSourceMemoryService) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceMemoryService) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *fakeSourceMemoryService) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -1546,12 +1904,24 @@ func (s *fakeSourceMemoryService) Archive(id uuid.UUID, archived bool) (*models.
 	return nil, nil
 }
 
+func (s *fakeSourceMemoryService) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceMemoryService) Delete(id uuid.UUID) error {
+	return nil
+}
+
+func (s *fakeSourceMemoryService) DeleteForOwner(ownerIdentity string, id uuid.UUID) error {
 	return nil
 }
 
 func (s *fakeSourceMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{Query: request.Query}, nil
+}
+
+func (s *fakeSourceMemoryService) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	return &memory.RetrieveResult{}, nil
 }
 
 type fakeSourceWorkflowService struct {
@@ -1589,7 +1959,15 @@ func (s *fakeSourceWorkflowService) Items(includeArchived bool) ([]models.Workfl
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) ItemsForOwner(ownerIdentity string, includeArchived bool) ([]models.WorkflowItem, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) ApprovalItems() ([]models.WorkflowItem, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) ApprovalItemsForOwner(ownerIdentity string) ([]models.WorkflowItem, error) {
 	return nil, nil
 }
 
@@ -1597,7 +1975,15 @@ func (s *fakeSourceWorkflowService) Dashboard() (*workflow.WorkflowDashboard, er
 	return &workflow.WorkflowDashboard{}, nil
 }
 
+func (s *fakeSourceWorkflowService) DashboardForOwner(ownerIdentity string) (*workflow.WorkflowDashboard, error) {
+	return &workflow.WorkflowDashboard{}, nil
+}
+
 func (s *fakeSourceWorkflowService) Get(id uuid.UUID) (*workflow.WorkflowRecord, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *fakeSourceWorkflowService) GetForOwner(ownerIdentity string, id uuid.UUID) (*workflow.WorkflowRecord, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -1632,6 +2018,29 @@ type fakeSourcePursuitLinker struct {
 	result         *pursuit.AutoLinkResult
 	memoryResult   *pursuit.AutoLinkResult
 	err            error
+}
+
+type fakeSourcePursuitGateway struct {
+	fakeSourcePursuitLinker
+	routed    []workflow.IntakeRequest
+	err       error
+	pursuitID uuid.UUID
+}
+
+func (f *fakeSourcePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	f.routed = append(f.routed, request)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.pursuitID == uuid.Nil {
+		f.pursuitID = uuid.New()
+	}
+	return &workflow.WorkflowRecord{
+		Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey},
+		Pursuits: []workflow.WorkflowPursuitContext{{
+			ID: f.pursuitID,
+		}},
+	}, nil
 }
 
 func (f *fakeSourcePursuitLinker) AutoLinkWorkflow(request pursuit.AutoLinkWorkflowRequest) (*pursuit.AutoLinkResult, error) {
@@ -1669,11 +2078,23 @@ func (s *fakeSourceWorkflowService) RecoverStaleClaims(request workflow.RunDueRe
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) RecoverStaleClaimsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) RunDue(request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
 	return nil, nil
 }
 
+func (s *fakeSourceWorkflowService) RunDueForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceWorkflowService) RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) RunDueOpenLoopsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
 	return nil, nil
 }
 

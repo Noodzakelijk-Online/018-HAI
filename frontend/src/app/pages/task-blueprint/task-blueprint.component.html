@@ -97,6 +97,15 @@
           <em>Active</em>
         </button>
 
+        <button type="button" class="context-card" [class.context-card--linked]="hasPursuitContext()" [title]="pursuitContextTooltip()" (click)="openPursuitContext()">
+          <i nz-icon nzType="compass" nzTheme="outline"></i>
+          <span>
+            <strong>Pursuit</strong>
+            <small>{{ pursuitContextLabel() }}</small>
+          </span>
+          <em>{{ hasPursuitContext() ? 'Linked' : 'Optional' }}</em>
+        </button>
+
         <button type="button" class="context-card" title="Safety mode and approval policy" (click)="inspectorMode = 'overview'">
           <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
           <span>
@@ -258,6 +267,10 @@
           <input nz-input formControlName="projectKey" title="Project key used for memory, source, and workflow matching" />
         </label>
         <label>
+          <span>Pursuit context</span>
+          <input nz-input formControlName="pursuitId" placeholder="Optional pursuit ID" title="Optional durable pursuit ledger for this task attempt. Set from a pursuit page or paste a known pursuit ID." />
+        </label>
+        <label>
           <span>Automation ID</span>
           <input nz-input formControlName="automationId" placeholder="Only needed for controlled runtime execution" title="Optional automation target for safe local execution" />
         </label>
@@ -313,6 +326,10 @@
           </dl>
           <p>{{ lastCommand?.summary || 'The next command will be routed through the assistant bridge.' }}</p>
           <p class="engine-summary">{{ commandActionSummary() }}</p>
+          <div class="engine-summary" *ngIf="lastCommand?.pursuit as pursuit">
+            <span>{{ pursuit.message || 'Pursuit context is available for this command.' }}</span>
+            <button nz-button nzType="link" *ngIf="pursuit.pursuitId" (click)="openCommandPursuit()">Open pursuit</button>
+          </div>
         </article>
 
         <article class="inspector-card" *ngIf="lastCommand?.agentCycle as cycle">
@@ -355,7 +372,10 @@
             <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
             <div>
               <strong>{{ plan?.riskAssessment?.level || 'Safe mode active' }}</strong>
-              <span>{{ plan?.riskAssessment?.approvalRequired ? 'Approval required before risky execution' : 'No high-risk action detected yet' }}</span>
+              <span>{{ plan?.riskAssessment?.approvalRequired ? 'Approval required before risky execution' : plan?.riskAssessment?.actionResolution === 'clarify' ? 'More execution detail is needed' : 'No high-risk action detected yet' }}</span>
+              <small *ngIf="plan?.riskAssessment?.missingParameters?.length">
+                Needs: {{ plan?.riskAssessment?.missingParameters?.join(', ') }}
+              </small>
             </div>
           </div>
         </article>

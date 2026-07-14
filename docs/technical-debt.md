@@ -1,22 +1,21 @@
 # Technical Debt Register
 
-Tracked debt with severity and a clear "done when". Complements the automated
-engineering-action-register and the bug-hunt log.
+Tracked debt with severity and a concrete completion condition. It complements
+the engineering action register and bug-hunt log.
 
 | ID | Severity | Debt | Done when |
 | --- | --- | --- | --- |
-| TD-1 | Medium | Partial utility adoption: `apierror` is now used in the RBAC 403 (live); file safety is live-enforced in the real upload path (`resolveImagePath`), but `pathsafety`/`upload` packages aren't the enforcer at every call site, and `apierror` isn't the envelope on every handler (existing handlers use `{"error":"..."}`, which the frontend depends on). | Handlers migrate to `respondError` in step with the frontend; file I/O routes through the shared `pathsafety`/`upload` helpers. |
-| TD-2 | Medium | List/search runs in memory; fine to tens of thousands of rows but not beyond. | Search/list backed by SQL with composite + trigram indexes (see performance-baseline). |
-| TD-3 | Low | ~~Go toolchain unpinned in CI.~~ | **Resolved** — CI pinned to `go 1.21.13`. |
-| TD-4 | Low | ~~`hai-engine-control.zip` (2.2 MB) committed as a binary.~~ | **Resolved** — removed from the repo (no code/config referenced it). |
-| TD-5 | Low | ~~`agentruntime` CLI test flaky under parallel load (5s timeout).~~ | **Resolved** — timeouts raised to 30s; passes repeatedly under load. |
-| TD-6 | Medium | Dependency scanning is **advisory**. `govulncheck` was 20 code-affecting vulns; **reduced to 17** this pass (x/net→0.17.0, pgx→5.5.5). Remaining are mostly Go-stdlib CVEs. | Blocking gate after the toolchain bump (Go 1.25.11+) + later x/net/pgx jumps in `docs/dependency-vulnerabilities.md`. |
-| TD-7 | Info | i18n catalog and feature flags are backend-only; not yet surfaced in the Angular UI. | Dashboard consumes `/flags` and i18n messages. |
-| TD-8 | Medium | Full Docker Compose multi-service boot (Postgres+Redis+Kafka+nginx together) not verified — Docker unavailable in this environment. Backend does not depend on Redis (idp does); Kafka degrades to a no-op. | `docker compose up` reaches `/readyz` ready across all services where Docker is available. |
-| TD-9 | Low | ~~RBAC not driven by per-user identity.~~ **Backend done** — `identityMiddleware` verifies an IDP HS256 JWT and maps its `role` claim to the RBAC role (runtime-proven). | Remaining: the IDP emits a `role` claim in its JWT; then broaden `requirePermission` onto more ownership-sensitive routes. |
+| TD-1 | Medium | Partial utility adoption: `apierror` is used for RBAC 403 responses and file safety is enforced in the live upload path, but not every handler uses the shared error envelope or filesystem helper. | Handlers migrate with their frontend consumers and file I/O uses the shared safety helpers. |
+| TD-2 | Medium | List and search operations are memory-backed and are not suitable for very large datasets. | SQL-backed search uses appropriate composite and trigram indexes. |
+| TD-3 | Low | Go toolchain pinning. | Resolved: CI pins Go `1.21.13`. |
+| TD-4 | Low | Historical binary artifact in the repository. | Resolved: the unused `hai-engine-control.zip` was removed. |
+| TD-5 | Low | Agent runtime CLI test flakiness under parallel load. | Resolved: timeouts were raised to 30 seconds and repeated runs pass. |
+| TD-6 | Medium | Dependency scanning remains advisory; outstanding `govulncheck` findings are documented. | A toolchain and dependency upgrade plan clears or explicitly accepts remaining findings, then a blocking gate is enabled. |
+| TD-7 | Info | i18n catalog and feature flags are backend-only. | The Angular dashboard consumes `/flags` and translated messages. |
+| TD-8 | Medium | The local Compose topology and gateway contract have been exercised, but a clean-machine Windows 11 fresh-clone run, signed-in browser journey, and Kafka event-publishing proof are still outstanding. | A fresh clone reaches `/readyz` through nginx, the intended signed-in workflow succeeds, and the required event path is observed on the target machine. |
+| TD-9 | Low | RBAC is not fully driven by per-user role issuance. The backend verifies an IDP JWT and maps a role claim, but the IDP still needs to issue role claims and sensitive routes need broader permission enforcement. | Role claims are issued by the IDP and permission checks cover the remaining ownership-sensitive routes. |
 
 ## Rules
 
-- Every new debt entry names a concrete "done when", not a vague intention.
-- Debt is paid down or explicitly re-prioritized each maintenance cycle; nothing
-  is silently dropped.
+- Every new debt entry names a concrete completion condition.
+- Debt is paid down or explicitly reprioritized during maintenance cycles.

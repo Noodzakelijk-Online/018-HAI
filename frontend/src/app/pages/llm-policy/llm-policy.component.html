@@ -98,6 +98,16 @@
         <span>providers enabled</span>
       </button>
 
+      <button
+        type="button"
+        class="status-tile"
+        (click)="scrollToSection('routing-audit')"
+        [title]="strictProbePolicyTooltip(p)"
+      >
+        <strong>{{ strictProbePolicyLabel(p) }}</strong>
+        <span>endpoint routing gate</span>
+      </button>
+
       <button type="button" class="status-tile" (click)="scrollToSection('model-catalog')" title="Open all configured models grouped by the seven routing tiers">
         <strong>{{ totalModelCount(p) }}</strong>
         <span>{{ localModelCount(p) }} local / {{ freeModelCount(p) }} free / {{ paidModelCount(p) }} gated</span>
@@ -526,14 +536,15 @@
               <p>Runtime checks against configured model endpoints.</p>
             </button>
           </div>
-          <nz-empty *ngIf="!probes.length" nzNotFoundContent="No provider probes run yet."></nz-empty>
+          <nz-empty *ngIf="!probes.length" nzNotFoundContent="No persisted provider checks yet."></nz-empty>
           <div class="event-list" *ngIf="probes.length">
             <article *ngFor="let probe of probes; trackBy: trackByProbe">
               <i nz-icon nzType="api" nzTheme="outline"></i>
               <div>
                 <strong>{{ probe.providerName }}</strong>
-                <span>{{ probe.status }} / {{ probe.modelsSeen || 0 }} models / {{ probe.durationMs }} ms</span>
+                <span>{{ probe.status }} / {{ probe.modelsSeen || 0 }} models / {{ probe.durationMs }} ms / checked {{ probe.checkedAt | date: 'short' }}</span>
                 <small>{{ probe.reason }}</small>
+                <small *ngIf="probe.lastSuccessfulAt">Last healthy check: {{ probe.lastSuccessfulAt | date: 'short' }}</small>
               </div>
               <nz-tag [nzColor]="probeColor(probe)">{{ probe.live ? 'live' : probe.status }}</nz-tag>
             </article>

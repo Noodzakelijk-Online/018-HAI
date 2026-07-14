@@ -101,8 +101,17 @@ export interface ISourceExtraction {
 export interface ISourceSyncResult {
   job: ISourceSyncJob;
   extractions: ISourceExtraction[];
+  pursuitOutcomes?: ISourcePursuitRoutingOutcome[];
   message: string;
   errors?: string[];
+}
+
+export interface ISourcePursuitRoutingOutcome {
+  extractionId?: string;
+  workflowId?: string;
+  pursuitId?: string;
+  status: string;
+  message: string;
 }
 
 export interface IScheduledSyncRun {

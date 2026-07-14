@@ -10,9 +10,11 @@ import {
   IWorkflowDecision,
   IWorkflowEvidenceClaim,
   IWorkflowEvent,
+  IWorkflowChecklistItem,
   IWorkflowItem,
   IWorkflowOpenLoop,
   IWorkflowProposal,
+  IWorkflowQualityGate,
   IWorkflowSourceLink,
   IWorkflowTransition,
 } from './workflow.model.interface';
@@ -22,6 +24,7 @@ export interface IPursuit {
   ownerIdentity?: string;
   title: string;
   description?: string;
+  whyItMatters?: string;
   projectKey?: string;
   domain?: string;
   desiredOutcome?: string;
@@ -94,6 +97,7 @@ export interface IPursuitListItem {
   currentState?: string;
   whatChanged?: string;
   nextAction?: string;
+  effectiveLastActivityAt?: string;
   stale: boolean;
   reviewDue: boolean;
   planningNeeded: boolean;
@@ -184,6 +188,7 @@ export interface IPursuitSummary {
   linkedEvidence: number;
   verificationRuns: number;
   runtimeAttempts: number;
+  qualityGatesNeedingReview: number;
   confidence: number;
   planningNeeded: boolean;
   reviewDue: boolean;
@@ -236,6 +241,38 @@ export interface IPursuitSourceItem {
   updatedAt: string;
 }
 
+export interface IPursuitConversation {
+  id: string;
+  platform: string;
+  externalId: string;
+  title?: string;
+  sourceUri?: string;
+  revision: number;
+  messageCount: number;
+  capturedAt: string;
+  lastMessageAt?: string;
+  archived: boolean;
+}
+
+export interface IPursuitAmbientOpportunity {
+  id: string;
+  needKey: string;
+  title: string;
+  rationale?: string;
+  nextAction?: string;
+  sourceType?: string;
+  sourceUri?: string;
+  priorityScore: number;
+  confidence: number;
+  risk: number;
+  requiresApproval: boolean;
+  status: string;
+  lastSeenAt: string;
+  resolutionNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface IPursuitAutomation {
   id: string;
   name: string;
@@ -259,6 +296,26 @@ export interface IPursuitTaskRun {
   lastWorkerError?: string;
   automationId?: string;
   needsReview: boolean;
+}
+
+export interface IPursuitTaskAttempt {
+  id: string;
+  pursuitId: string;
+  taskPlanId: string;
+  ownerIdentity?: string;
+  requestSummary?: string;
+  projectKey?: string;
+  mode: string;
+  status: string;
+  riskLevel?: string;
+  verificationStatus?: string;
+  automationId?: string;
+  launchEventId?: string;
+  blockedReason?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface IPursuitDecision {
@@ -303,8 +360,10 @@ export interface IPursuitDetail {
   links: IPursuitLink[];
   activity: IPursuitActivity[];
   workflows: IWorkflowItem[];
+  checklistItems: IWorkflowChecklistItem[];
   openLoops: IWorkflowOpenLoop[];
   proposals: IWorkflowProposal[];
+  qualityGates: IWorkflowQualityGate[];
   decisions: IWorkflowDecision[];
   decisionQueue: IPursuitDecision[];
   transitions: IWorkflowTransition[];
@@ -313,7 +372,10 @@ export interface IPursuitDetail {
   timeline: IPursuitTimelineItem[];
   evidence: IWorkflowEvidenceClaim[];
   memories: IContextMemory[];
+  conversations: IPursuitConversation[];
+  ambientOpportunities: IPursuitAmbientOpportunity[];
   taskRuns: IPursuitTaskRun[];
+  taskAttempts: IPursuitTaskAttempt[];
   verificationRuns: IVerificationRun[];
   verificationClaims: IVerificationClaim[];
   verificationEvidence: IVerificationEvidence[];
@@ -327,6 +389,50 @@ export interface IPursuitDetail {
   approvalItems: IWorkflowItem[];
   summary: IPursuitSummary;
   operationalDigest: IPursuitOperationalDigest;
+}
+
+export interface IPursuitDelegationChecklistItem {
+  label: string;
+  status: string;
+  required: boolean;
+}
+
+export interface IPursuitDelegationWorkItem {
+  workflowId?: string;
+  title: string;
+  instructions: string;
+  state?: string;
+  dueAt?: string;
+  checklist: IPursuitDelegationChecklistItem[];
+}
+
+export interface IPursuitDelegationSource {
+  workflowId?: string;
+  sourceType?: string;
+  sourceUri: string;
+  sourceLabel?: string;
+  relationship?: string;
+}
+
+export interface IPursuitDelegationPackage {
+  generatedAt: string;
+  ready: boolean;
+  status: string;
+  reason: string;
+  pursuitId: string;
+  title: string;
+  objective: string;
+  whyItMatters?: string;
+  currentState: string;
+  completionDefinition?: string;
+  riskLevel: string;
+  workItems: IPursuitDelegationWorkItem[];
+  sourceContext: IPursuitDelegationSource[];
+  allowedActions: string[];
+  blockedActions: string[];
+  escalationRules: string[];
+  deliveryRequirements: string[];
+  outstandingRobertActions: IPursuitAction[];
 }
 
 export interface IPursuitEvidenceResolution {
@@ -365,6 +471,7 @@ export interface IPursuitCreateRequest {
   title: string;
   ownerIdentity?: string;
   description?: string;
+  whyItMatters?: string;
   projectKey?: string;
   domain?: string;
   desiredOutcome?: string;

@@ -1,15 +1,37 @@
 package workflow
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+
+	"automation-hub-backend/internal/identity"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 type Handler struct {
-	service Service
+	service             Service
+	pursuitIntakeRouter PursuitIntakeRouter
+}
+
+// PursuitIntakeRouter keeps the legacy workflow endpoint compatible while
+// allowing the canonical application to route new work through pursuits.
+// Implementations return a workflow record only after the governed pursuit
+// intake path has an accepted operational objective. CandidatePending errors
+// are rendered as a deferred, reviewable response instead.
+type PursuitIntakeRouter interface {
+	RouteWorkflowIntake(request IntakeRequest) (*WorkflowRecord, error)
+}
+
+type candidatePendingIntakeError interface {
+	error
+	CandidatePending() bool
+	CandidatePursuitID() string
+	CandidateIntakeMessage() string
 }
 
 func DefaultHandler() *Handler {
@@ -20,23 +42,81 @@ func NewHandler(service Service) *Handler {
 	return &Handler{service: service}
 }
 
+func NewHandlerWithPursuitIntakeRouter(service Service, pursuitIntakeRouter PursuitIntakeRouter) *Handler {
+	return &Handler{service: service, pursuitIntakeRouter: pursuitIntakeRouter}
+}
+
+// RequireAuthenticatedOwner protects workflow data and controls at the HTTP
+// boundary. System schedulers call the service directly, but a browser or API
+// caller must have a verified IDP subject before it can inspect or mutate a
+// person's workflow, approvals, evidence, or follow-up state.
+func RequireAuthenticatedOwner() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if verifiedWorkflowOwner(c) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for workflow access"})
+			return
+		}
+		c.Next()
+	}
+}
+
 func (h *Handler) Intake(c *gin.Context) {
 	var request IntakeRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	record, err := h.service.Intake(request)
+	request.Actor = verifiedWorkflowActor(c, "operator")
+	request.OwnerIdentity = verifiedWorkflowOwner(c)
+	request = normalizeWorkflowAPIIntake(request)
+	var record *WorkflowRecord
+	var err error
+	if h.pursuitIntakeRouter != nil {
+		record, err = h.pursuitIntakeRouter.RouteWorkflowIntake(request)
+	} else {
+		record, err = h.service.Intake(request)
+	}
 	if err != nil {
+		if pending, ok := err.(candidatePendingIntakeError); ok && pending.CandidatePending() {
+			c.JSON(http.StatusAccepted, gin.H{
+				"status":    "pursuit_candidate_pending",
+				"pursuitId": pending.CandidatePursuitID(),
+				"message":   pending.CandidateIntakeMessage(),
+			})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, record)
 }
 
+func normalizeWorkflowAPIIntake(request IntakeRequest) IntakeRequest {
+	request.Trigger = firstNonEmpty(request.Trigger, "workflow_api_intake")
+	if strings.TrimSpace(request.SourceType) == "" {
+		request.SourceType = "workflow_api"
+	}
+	if strings.TrimSpace(request.SourceID) == "" && strings.TrimSpace(request.SourceURI) == "" {
+		request.SourceID = workflowAPIIntakeSourceID(request)
+		request.SourceURI = "workflow-api://intake/" + request.SourceID
+		request.SourceLabel = firstNonEmpty(request.SourceLabel, "Direct workflow API intake")
+	}
+	return request
+}
+
+func workflowAPIIntakeSourceID(request IntakeRequest) string {
+	value := strings.Join([]string{
+		strings.ToLower(strings.Join(strings.Fields(request.Input), " ")),
+		strings.ToLower(strings.TrimSpace(request.ProjectKey)),
+		strings.ToLower(strings.TrimSpace(request.AutomationID)),
+	}, "\n")
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("workflow-api-%x", sum[:12])
+}
+
 func (h *Handler) Items(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	items, err := h.service.Items(includeArchived)
+	items, err := h.service.ItemsForOwner(verifiedWorkflowOwner(c), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -45,7 +125,7 @@ func (h *Handler) Items(c *gin.Context) {
 }
 
 func (h *Handler) ApprovalItems(c *gin.Context) {
-	items, err := h.service.ApprovalItems()
+	items, err := h.service.ApprovalItemsForOwner(verifiedWorkflowOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -54,7 +134,7 @@ func (h *Handler) ApprovalItems(c *gin.Context) {
 }
 
 func (h *Handler) Dashboard(c *gin.Context) {
-	dashboard, err := h.service.Dashboard()
+	dashboard, err := h.service.DashboardForOwner(verifiedWorkflowOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -67,7 +147,7 @@ func (h *Handler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	record, err := h.service.Get(id)
+	record, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -80,6 +160,9 @@ func (h *Handler) Transition(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensureWorkflowMutable(c, id) {
+		return
+	}
 	var request TransitionRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -88,12 +171,13 @@ func (h *Handler) Transition(c *gin.Context) {
 	// Generic state transitions cannot establish approval provenance.
 	// Approval-required workflows must use ResolveApproval.
 	request.Approved = false
-	record, err := h.service.Transition(id, request)
+	request.Actor = verifiedWorkflowActor(c, "operator")
+	_, err := h.service.Transition(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) ResolveApproval(c *gin.Context) {
@@ -101,17 +185,21 @@ func (h *Handler) ResolveApproval(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensureWorkflowMutable(c, id) {
+		return
+	}
 	var request ApprovalResolutionRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	record, err := h.service.ResolveApproval(id, request)
+	request.Actor = verifiedWorkflowActor(c, "operator")
+	_, err := h.service.ResolveApproval(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) ResolveInterruptedExecution(c *gin.Context) {
@@ -119,23 +207,29 @@ func (h *Handler) ResolveInterruptedExecution(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensureWorkflowMutable(c, id) {
+		return
+	}
 	var request InterruptedExecutionResolutionRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	request.Actor = "operator"
-	record, err := h.service.ResolveInterruptedExecution(id, request)
+	request.Actor = verifiedWorkflowActor(c, "operator")
+	_, err := h.service.ResolveInterruptedExecution(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) ResolveProposal(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
+		return
+	}
+	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
 	proposalID, err := uuid.Parse(c.Param("proposalId"))
@@ -148,17 +242,21 @@ func (h *Handler) ResolveProposal(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	record, err := h.service.ResolveProposal(id, proposalID, request)
+	request.Actor = verifiedWorkflowActor(c, "operator")
+	_, err = h.service.ResolveProposal(id, proposalID, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
+		return
+	}
+	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
 	itemID, err := uuid.Parse(c.Param("itemId"))
@@ -171,18 +269,64 @@ func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	record, err := h.service.UpdateChecklistItem(id, itemID, request)
+	request.Actor = verifiedWorkflowActor(c, "operator")
+	_, err = h.service.UpdateChecklistItem(id, itemID, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
+}
+
+// verifiedWorkflowActor ignores any actor label supplied in request JSON.
+// The router writes the verified IDP JWT subject into the Gin context; when
+// that identity path is absent in local development, audit records retain the
+// explicit generic operator fallback instead of a forged user name.
+func verifiedWorkflowActor(c *gin.Context, fallback string) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok && strings.TrimSpace(subject) != "" {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return fallback
+}
+
+func verifiedWorkflowOwner(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
+}
+
+// ensureWorkflowMutable is stricter than read visibility. Ownerless legacy
+// workflows remain inspectable during local migration, but a signed-in caller
+// cannot adopt or change one through the HTTP API. System workers use the
+// service directly with an empty owner identity when that maintenance is
+// deliberately required.
+func (h *Handler) ensureWorkflowMutable(c *gin.Context, id uuid.UUID) bool {
+	record, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id)
+	if err != nil || strings.TrimSpace(record.Item.OwnerIdentity) != verifiedWorkflowOwner(c) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workflow not found"})
+		return false
+	}
+	return true
+}
+
+func (h *Handler) respondScopedWorkflow(c *gin.Context, id uuid.UUID, status int) {
+	record, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workflow not found"})
+		return
+	}
+	c.JSON(status, record)
 }
 
 func (h *Handler) RunDue(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
-	result, err := h.service.RunDue(request)
+	result, err := h.service.RunDueForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -193,7 +337,7 @@ func (h *Handler) RunDue(c *gin.Context) {
 func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
-	result, err := h.service.RecoverStaleClaims(request)
+	result, err := h.service.RecoverStaleClaimsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -204,7 +348,7 @@ func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
-	result, err := h.service.RunDueOpenLoops(request)
+	result, err := h.service.RunDueOpenLoopsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -1,6 +1,9 @@
 package memory
 
 import (
+	"automation-hub-backend/internal/identity"
+	"automation-hub-backend/internal/models"
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +11,50 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestHandlerIgnoresForgedOwnerAndScopesMemoryListing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(newFakeRepository()))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, c.GetHeader("X-Test-Owner"))
+	})
+	router.POST("/memory", handler.Create)
+	router.GET("/memory", handler.List)
+
+	create := func(owner string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/memory", bytes.NewBufferString(`{"ownerIdentity":"alice","kind":"project","content":"private case context"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Test-Owner", owner)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	if response := create("bob"); response.Code != http.StatusCreated {
+		t.Fatalf("Bob create status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	list := func(owner string) []models.ContextMemory {
+		req := httptest.NewRequest(http.MethodGet, "/memory", nil)
+		req.Header.Set("X-Test-Owner", owner)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s list status=%d body=%s", owner, response.Code, response.Body.String())
+		}
+		var memories []models.ContextMemory
+		if err := json.Unmarshal(response.Body.Bytes(), &memories); err != nil {
+			t.Fatalf("decode %s memories: %v", owner, err)
+		}
+		return memories
+	}
+	if got := list("alice"); len(got) != 0 {
+		t.Fatalf("alice received Bob's private memory: %#v", got)
+	}
+	if got := list("bob"); len(got) != 1 || got[0].Content != "private case context" {
+		t.Fatalf("bob memories = %#v, want the private record", got)
+	}
+}
 
 // buildQueryHandler wires the real handler over the in-memory fake repository
 // and seeds a few memories, so the HTTP layer is exercised end-to-end.

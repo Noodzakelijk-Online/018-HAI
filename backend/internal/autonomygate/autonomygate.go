@@ -26,7 +26,7 @@ type Signals struct {
 //
 //   - An explicit approval always permits Auto.
 //   - High risk that is irreversible is Blocked without approval.
-//   - High risk (reversible) or low confidence needs Review.
+//   - Medium/high risk or low confidence needs Review.
 //   - Low risk with high confidence and reversibility runs Auto.
 func Decide(s Signals) Decision {
 	if s.Approved {
@@ -37,7 +37,7 @@ func Decide(s Signals) Decision {
 	if risk == "high" && !s.Reversible {
 		return Block
 	}
-	if risk == "high" {
+	if risk == "high" || risk == "medium" {
 		return Review
 	}
 	if s.Confidence < 0.6 {

@@ -1,9 +1,11 @@
 package ambient
 
 import (
+	"automation-hub-backend/internal/identity"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -17,8 +19,27 @@ func NewHandler(service Service) *Handler {
 	return &Handler{service: service}
 }
 
+// RequireAuthenticatedOwner protects the personal ambient planning boundary.
+// Background workers call the service directly, but browser and API traffic
+// must carry a verified IDP principal before it can inspect private needs,
+// opportunities, or scan history.
+func RequireAuthenticatedOwner() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if verifiedOwner(c) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for ambient access"})
+			return
+		}
+		c.Next()
+	}
+}
+
 func (h *Handler) Overview(c *gin.Context) {
-	result, err := h.service.Overview()
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for ambient access"})
+		return
+	}
+	result, err := h.service.OverviewForOwner(ownerIdentity)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -27,7 +48,12 @@ func (h *Handler) Overview(c *gin.Context) {
 }
 
 func (h *Handler) Scan(c *gin.Context) {
-	result, err := h.service.Scan("manual")
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to run a personal ambient scan"})
+		return
+	}
+	result, err := h.service.ScanForOwner(ownerIdentity, "manual")
 	if err != nil {
 		if errors.Is(err, ErrScanInProgress) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
@@ -40,12 +66,17 @@ func (h *Handler) Scan(c *gin.Context) {
 }
 
 func (h *Handler) UpdateNeed(c *gin.Context) {
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to update ambient planning preferences"})
+		return
+	}
 	var request NeedUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.service.UpdateNeed(c.Param("key"), request)
+	result, err := h.service.UpdateNeedForOwner(ownerIdentity, c.Param("key"), request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -72,6 +103,15 @@ func (h *Handler) resolve(c *gin.Context, accept bool) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": bindErr.Error()})
 		return
 	}
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		// Accepting a proposal can create a governed workflow item. Keep the
+		// ownerless resolution path available only to in-process system workers.
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to resolve ambient proposals"})
+		return
+	}
+	request.OwnerIdentity = ownerIdentity
+	request.Actor = ownerIdentity
 	var result interface{}
 	if accept {
 		result, err = h.service.Accept(id, request)
@@ -83,4 +123,19 @@ func (h *Handler) resolve(c *gin.Context, accept bool) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func verifiedOwner(c *gin.Context) string {
+	return verifiedActor(c, "")
+}
+
+func verifiedActor(c *gin.Context, fallback string) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			if subject = strings.TrimSpace(subject); subject != "" {
+				return subject
+			}
+		}
+	}
+	return fallback
 }

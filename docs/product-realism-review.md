@@ -16,7 +16,7 @@ scaffold — and where the seams are.
 
 | Area | Reality |
 | --- | --- |
-| New utility packages | Real and tested, but several not yet wired into the live app (rbac, upload, apierror, autonomygate, actionresolver). |
+| New utility packages | Real and tested. The task engine now enforces `autonomygate` for execution approval and `actionresolver` for missing execution prerequisites; several other utilities (`rbac`, `upload`, `apierror`) still need broader live-path adoption. |
 | Full-stack boot | A scripted critical-path smoke (`scripts/smoke-critical-path.sh`) boots a real local Postgres + backend and asserts health/readiness + the critical path (**ran 7/7**). The full **Docker Compose** multi-service boot (Redis/Kafka/nginx together) is still **not run here** (Docker unavailable). |
 | Real external providers | Intentionally disabled pending OAuth/scope review — assisted, not automated. |
 | Frontend polish | Accessibility, responsive matrix, onboarding wizard not done. |

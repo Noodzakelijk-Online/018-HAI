@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -17,9 +18,11 @@ func TestAnswerHandlerIgnoresClientHumanApproval(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := &capturingVerificationService{}
 	handler := NewHandler(service)
+	pursuitID := uuid.NewString()
 	body, _ := json.Marshal(AnswerRequest{
 		Question:      "May this high-risk action proceed?",
 		Mode:          ModeAction,
+		PursuitID:     pursuitID,
 		HumanApproved: true,
 	})
 	request := httptest.NewRequest(http.MethodPost, "/verification/answer", bytes.NewReader(body))
@@ -27,6 +30,7 @@ func TestAnswerHandlerIgnoresClientHumanApproval(t *testing.T) {
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
 
 	handler.Answer(context)
 
@@ -35,6 +39,12 @@ func TestAnswerHandlerIgnoresClientHumanApproval(t *testing.T) {
 	}
 	if service.request.HumanApproved {
 		t.Fatalf("client approval reached verification service")
+	}
+	if service.request.PursuitID != pursuitID {
+		t.Fatalf("pursuit id = %q, want %q", service.request.PursuitID, pursuitID)
+	}
+	if service.request.OwnerIdentity != "alice" {
+		t.Fatalf("owner identity = %q, want alice", service.request.OwnerIdentity)
 	}
 }
 
@@ -51,6 +61,14 @@ func (s *capturingVerificationService) Runs() ([]models.VerificationRun, error) 
 	return nil, nil
 }
 
+func (s *capturingVerificationService) RunsForOwner(string) ([]models.VerificationRun, error) {
+	return nil, nil
+}
+
 func (s *capturingVerificationService) RunDetails(id uuid.UUID) (*VerificationResult, error) {
+	return nil, nil
+}
+
+func (s *capturingVerificationService) RunDetailsForOwner(string, uuid.UUID) (*VerificationResult, error) {
 	return nil, nil
 }

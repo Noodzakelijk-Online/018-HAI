@@ -1,7 +1,9 @@
 package verification
 
 import (
+	"automation-hub-backend/internal/identity"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -32,6 +34,7 @@ func (h *Handler) Answer(c *gin.Context) {
 	// Approval provenance must come from a server-side approval workflow,
 	// never from a caller asserting approval in request JSON.
 	request.HumanApproved = false
+	request.OwnerIdentity = verifiedOwner(c)
 	result, err := h.service.Answer(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -41,7 +44,7 @@ func (h *Handler) Answer(c *gin.Context) {
 }
 
 func (h *Handler) Runs(c *gin.Context) {
-	runs, err := h.service.Runs()
+	runs, err := h.service.RunsForOwner(verifiedOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -55,10 +58,22 @@ func (h *Handler) RunDetails(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	result, err := h.service.RunDetails(id)
+	result, err := h.service.RunDetailsForOwner(verifiedOwner(c), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "verification run not found"})
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func verifiedOwner(c *gin.Context) string {
+	value, ok := c.Get(identity.ContextSubjectKey)
+	if !ok {
+		return ""
+	}
+	owner, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(owner)
 }

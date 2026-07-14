@@ -1,5 +1,5 @@
 # Stage 1: Compiling the application
-FROM golang:1.21.0 AS builder
+FROM golang:1.21.13 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
@@ -12,9 +12,6 @@ WORKDIR /app/cmd
 
 # Build the Go app
 RUN CGO_ENABLED=1 GOOS=linux go build -o idp ./main.go
-
-# List the files (for debugging purposes)
-RUN ls -al
 
 # Stage 2: Build the minimal docker image
 FROM ubuntu:latest

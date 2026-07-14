@@ -44,7 +44,7 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -62,6 +62,9 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	}
 	if result.LaunchEventID == uuid.Nil || result.LaunchEventID != repo.launchEvents[0].ID {
 		t.Fatalf("launch event id was not returned with launch result: result=%s event=%s", result.LaunchEventID, repo.launchEvents[0].ID)
+	}
+	if repo.launchEvents[0].OwnerIdentity != "alice" {
+		t.Fatalf("launch event owner = %q, want alice", repo.launchEvents[0].OwnerIdentity)
 	}
 }
 

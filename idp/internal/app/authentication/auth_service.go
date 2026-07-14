@@ -69,6 +69,7 @@ func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
 	user := models.User{
 		Email:    userDTO.Email,
 		Password: hashedPassword,
+		Role:     "operator",
 	}
 
 	userCreated, err := a.userService.CreateUser(user)
@@ -166,7 +167,7 @@ func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
 		a.logger.Error("Failed to generate refresh token for user %s: %v", email, err)
 		return nil, errors.New("failed to generate refresh token")
 	}
-	td.AccessToken, td.AtExpires, err = a.generateAccessToken(user.ID, td.RefreshUUID, td.RtExpires)
+	td.AccessToken, td.AtExpires, err = a.generateAccessToken(user.ID, userRole(user.Role), td.RefreshUUID, td.RtExpires)
 	if err != nil {
 		a.logger.Error("Failed to generate access token for user %s: %v", email, err)
 		return nil, errors.New("failed to generate access token")
@@ -282,7 +283,12 @@ func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 		a.logger.Warn("Refresh expiration time not found in the token for user: %s", userID)
 		return nil, errors.New("refresh expiration time not found in the token")
 	}
-	newAccessToken, atExpires, err := a.generateAccessToken(userID, refreshUUID, refreshExp)
+	user, err := a.userService.GetUserByID(userID)
+	if err != nil || user == nil {
+		a.logger.Warn("User is unavailable while refreshing an access token: %s", userID)
+		return nil, errors.New("user is unavailable")
+	}
+	newAccessToken, atExpires, err := a.generateAccessToken(userID, userRole(user.Role), refreshUUID, refreshExp)
 	if err != nil {
 		a.logger.Error("Failed to generate new access token: %v", err)
 		return nil, err
@@ -477,11 +483,12 @@ func (a *service) GetIdFromToken(accessToken string) (uuid.UUID, error) {
 	return userID, nil
 }
 
-func (a *service) generateAccessToken(userID uuid.UUID, refreshUUID string, refreshExp int64) (string, int64, error) {
+func (a *service) generateAccessToken(userID uuid.UUID, role, refreshUUID string, refreshExp int64) (string, int64, error) {
 	expires := time.Now().Add(time.Minute * config.AuthenticationConfig.AccessTokenDurationMinutes).Unix()
 
 	claims := jwt.MapClaims{}
 	claims["user_id"] = userID.String()
+	claims["role"] = userRole(role)
 	claims["access_uuid"] = uuid.New().String()
 	claims["refresh_uuid"] = refreshUUID
 	claims["refresh_exp"] = refreshExp
@@ -490,6 +497,15 @@ func (a *service) generateAccessToken(userID uuid.UUID, refreshUUID string, refr
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	accessToken, err := token.SignedString([]byte(a.jwtSecret))
 	return accessToken, expires, err
+}
+
+func userRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "owner", "operator", "viewer":
+		return strings.ToLower(strings.TrimSpace(role))
+	default:
+		return "operator"
+	}
 }
 
 func (a *service) generateRefreshToken(userID uuid.UUID) (string, string, int64, error) {

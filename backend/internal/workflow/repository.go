@@ -16,13 +16,18 @@ type Repository interface {
 	FindItem(id uuid.UUID) (*models.WorkflowItem, error)
 	FindActiveItemBySourceIdentity(sourceType, sourceID string) (*models.WorkflowItem, error)
 	FindActiveItemBySourceURI(sourceURI string) (*models.WorkflowItem, error)
+	FindActiveItemBySourceIdentityForOwner(ownerIdentity, sourceType, sourceID string) (*models.WorkflowItem, error)
+	FindActiveItemBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.WorkflowItem, error)
 	FindItems(includeArchived bool) ([]models.WorkflowItem, error)
 	FindApprovalItems() ([]models.WorkflowItem, error)
 	FindRunnableItems(now time.Time, limit int) ([]models.WorkflowItem, error)
+	FindRunnableItemsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowItem, error)
 	ClaimRunnableItem(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error)
+	ClaimRunnableItemForOwner(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error)
 	RenewRunnableItemClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error)
 	UpdateClaimedItem(item *models.WorkflowItem, claimID string) (*models.WorkflowItem, bool, error)
 	FindExpiredWorkflowClaims(now time.Time, limit int) ([]models.WorkflowItem, error)
+	FindExpiredWorkflowClaimsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowItem, error)
 	RecoverExpiredWorkflowClaim(item models.WorkflowItem, now time.Time) (*models.WorkflowItem, bool, error)
 	CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
 	UpdateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
@@ -38,10 +43,13 @@ type Repository interface {
 	UpdateOpenLoop(loop *models.WorkflowOpenLoop) (*models.WorkflowOpenLoop, error)
 	FindOpenLoops(workflowID uuid.UUID) ([]models.WorkflowOpenLoop, error)
 	FindDashboardOpenLoops(now time.Time) ([]models.WorkflowOpenLoop, error)
+	FindDashboardOpenLoopsForOwner(ownerIdentity string, now time.Time) ([]models.WorkflowOpenLoop, error)
 	ClaimDueOpenLoop(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error)
+	ClaimDueOpenLoopForOwner(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error)
 	RenewOpenLoopClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error)
 	UpdateClaimedOpenLoop(loop *models.WorkflowOpenLoop, claimID string) (*models.WorkflowOpenLoop, bool, error)
 	FindExpiredOpenLoopClaims(now time.Time, limit int) ([]models.WorkflowOpenLoop, error)
+	FindExpiredOpenLoopClaimsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowOpenLoop, error)
 	RecoverExpiredOpenLoopClaim(loop models.WorkflowOpenLoop, now time.Time) (*models.WorkflowOpenLoop, bool, error)
 	CreateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
 	UpdateProposal(proposal *models.WorkflowProposal) (*models.WorkflowProposal, error)
@@ -128,6 +136,47 @@ func (r *GormRepository) FindActiveItemBySourceURI(sourceURI string) (*models.Wo
 	return &item, nil
 }
 
+func (r *GormRepository) FindActiveItemBySourceIdentityForOwner(ownerIdentity, sourceType, sourceID string) (*models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindActiveItemBySourceIdentity(sourceType, sourceID)
+	}
+	var item models.WorkflowItem
+	err := r.DB.Where(
+		"owner_identity = ? AND source_type = ? AND source_id = ? AND archived = ?",
+		ownerIdentity,
+		sourceType,
+		sourceID,
+		false,
+	).Order("updated_at desc").First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *GormRepository) FindActiveItemBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindActiveItemBySourceURI(sourceURI)
+	}
+	var item models.WorkflowItem
+	err := r.DB.Where(
+		"owner_identity = ? AND source_uri = ? AND archived = ?",
+		ownerIdentity,
+		sourceURI,
+		false,
+	).Order("updated_at desc").First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (r *GormRepository) FindItems(includeArchived bool) ([]models.WorkflowItem, error) {
 	var items []models.WorkflowItem
 	query := r.DB.Order("priority_score desc, updated_at desc")
@@ -162,21 +211,51 @@ func (r *GormRepository) FindRunnableItems(now time.Time, limit int) ([]models.W
 	return items, err
 }
 
+func (r *GormRepository) FindRunnableItemsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindRunnableItems(now, limit)
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	var items []models.WorkflowItem
+	err := r.DB.
+		Where("owner_identity = ?", ownerIdentity).
+		Where("archived = ? AND current_state = ? AND retry_count < CASE WHEN max_retries <= 0 THEN 2 ELSE max_retries END", false, StateReady).
+		Where("requires_approval = ? OR approval_status = ?", false, "approved").
+		Where("next_run_at IS NULL OR next_run_at <= ?", now).
+		Order("priority_score desc, updated_at asc").
+		Limit(limit).
+		Find(&items).Error
+	return items, err
+}
+
 func (r *GormRepository) ClaimRunnableItem(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error) {
-	result := r.DB.
+	return r.claimRunnableItem("", id, claimID, now, leaseUntil)
+}
+
+func (r *GormRepository) ClaimRunnableItemForOwner(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error) {
+	return r.claimRunnableItem(ownerIdentity, id, claimID, now, leaseUntil)
+}
+
+func (r *GormRepository) claimRunnableItem(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error) {
+	query := r.DB.
 		Model(&models.WorkflowItem{}).
 		Where("id = ? AND archived = ? AND current_state = ? AND retry_count < CASE WHEN max_retries <= 0 THEN 2 ELSE max_retries END", id, false, StateReady).
 		Where("requires_approval = ? OR approval_status = ?", false, "approved").
-		Where("next_run_at IS NULL OR next_run_at <= ?", now).
-		Updates(map[string]interface{}{
-			"current_state":      StateInProgress,
-			"last_run_at":        now,
-			"next_action":        "task engine is executing claimed workflow item",
-			"last_worker_error":  "",
-			"worker_claim_id":    claimID,
-			"worker_lease_until": leaseUntil,
-			"updated_at":         now,
-		})
+		Where("next_run_at IS NULL OR next_run_at <= ?", now)
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ?", ownerIdentity)
+	}
+	result := query.Updates(map[string]interface{}{
+		"current_state":      StateInProgress,
+		"last_run_at":        now,
+		"next_action":        "task engine is executing claimed workflow item",
+		"last_worker_error":  "",
+		"worker_claim_id":    claimID,
+		"worker_lease_until": leaseUntil,
+		"updated_at":         now,
+	})
 	if result.Error != nil {
 		return nil, false, result.Error
 	}
@@ -247,6 +326,25 @@ func (r *GormRepository) FindExpiredWorkflowClaims(now time.Time, limit int) ([]
 	legacyBefore := now.Add(-claimLeaseDuration())
 	var items []models.WorkflowItem
 	err := r.DB.
+		Where("archived = ? AND current_state = ?", false, StateInProgress).
+		Where("(worker_claim_id <> ? AND worker_lease_until IS NOT NULL AND worker_lease_until <= ?) OR ((worker_claim_id = ? OR worker_claim_id IS NULL) AND worker_lease_until IS NULL AND last_run_at IS NOT NULL AND last_run_at <= ?)", "", now, "", legacyBefore).
+		Order("worker_lease_until asc").
+		Limit(limit).
+		Find(&items).Error
+	return items, err
+}
+
+func (r *GormRepository) FindExpiredWorkflowClaimsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindExpiredWorkflowClaims(now, limit)
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	legacyBefore := now.Add(-claimLeaseDuration())
+	var items []models.WorkflowItem
+	err := r.DB.
+		Where("owner_identity = ?", ownerIdentity).
 		Where("archived = ? AND current_state = ?", false, StateInProgress).
 		Where("(worker_claim_id <> ? AND worker_lease_until IS NOT NULL AND worker_lease_until <= ?) OR ((worker_claim_id = ? OR worker_claim_id IS NULL) AND worker_lease_until IS NULL AND last_run_at IS NOT NULL AND last_run_at <= ?)", "", now, "", legacyBefore).
 		Order("worker_lease_until asc").
@@ -339,6 +437,7 @@ func (r *GormRepository) FindProjectMatches(workflowID uuid.UUID) ([]models.Work
 func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPursuitContext, error) {
 	var rows []struct {
 		ID                    uuid.UUID
+		OwnerIdentity         string
 		Title                 string
 		Status                string
 		RiskLevel             string
@@ -346,6 +445,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 		Confidence            float64
 		AutonomyLevel         string
 		NeedCategory          string
+		WhyItMatters          string
 		DesiredOutcome        string
 		CurrentStateSummary   string
 		NextRecommendedAction string
@@ -359,6 +459,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 	}
 	err := r.DB.Table("pursuit_links AS links").
 		Select(`pursuits.id,
+			pursuits.owner_identity,
 			pursuits.title,
 			pursuits.status,
 			pursuits.risk_level,
@@ -366,6 +467,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 			pursuits.confidence,
 			pursuits.autonomy_level,
 			pursuits.need_category,
+			pursuits.why_it_matters,
 			pursuits.desired_outcome,
 			pursuits.current_state_summary,
 			pursuits.next_recommended_action,
@@ -387,6 +489,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 	for _, row := range rows {
 		result = append(result, WorkflowPursuitContext{
 			ID:                    row.ID,
+			OwnerIdentity:         row.OwnerIdentity,
 			Title:                 row.Title,
 			Status:                row.Status,
 			RiskLevel:             row.RiskLevel,
@@ -394,6 +497,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 			Confidence:            row.Confidence,
 			AutonomyLevel:         row.AutonomyLevel,
 			NeedCategory:          row.NeedCategory,
+			WhyItMatters:          row.WhyItMatters,
 			DesiredOutcome:        row.DesiredOutcome,
 			CurrentStateSummary:   row.CurrentStateSummary,
 			NextRecommendedAction: row.NextRecommendedAction,
@@ -456,16 +560,44 @@ func (r *GormRepository) FindDashboardOpenLoops(now time.Time) ([]models.Workflo
 	return loops, err
 }
 
+func (r *GormRepository) FindDashboardOpenLoopsForOwner(ownerIdentity string, now time.Time) ([]models.WorkflowOpenLoop, error) {
+	if ownerIdentity == "" {
+		return r.FindDashboardOpenLoops(now)
+	}
+	var loops []models.WorkflowOpenLoop
+	err := r.DB.
+		Table("workflow_open_loops").
+		Joins("JOIN workflow_items ON workflow_items.id = workflow_open_loops.workflow_id").
+		Where("workflow_items.owner_identity = ?", ownerIdentity).
+		Where("workflow_open_loops.status = ?", "open").
+		Where("workflow_open_loops.follow_up_at IS NULL OR workflow_open_loops.follow_up_at <= ?", now).
+		Where("workflow_items.archived = ? AND workflow_items.current_state NOT IN ?", false, []string{StateArchived, StateCompleted}).
+		Order("workflow_open_loops.follow_up_at asc NULLS LAST, workflow_open_loops.updated_at desc").
+		Limit(50).
+		Find(&loops).Error
+	return loops, err
+}
+
 func (r *GormRepository) ClaimDueOpenLoop(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	return r.claimDueOpenLoop("", id, claimID, now, leaseUntil)
+}
+
+func (r *GormRepository) ClaimDueOpenLoopForOwner(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	return r.claimDueOpenLoop(ownerIdentity, id, claimID, now, leaseUntil)
+}
+
+func (r *GormRepository) claimDueOpenLoop(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	existsQuery := "EXISTS (SELECT 1 FROM workflow_items WHERE workflow_items.id = workflow_open_loops.workflow_id AND workflow_items.archived = ? AND workflow_items.current_state NOT IN ?)"
+	existsArgs := []interface{}{false, []string{StateArchived, StateCompleted}}
+	if ownerIdentity != "" {
+		existsQuery = "EXISTS (SELECT 1 FROM workflow_items WHERE workflow_items.id = workflow_open_loops.workflow_id AND workflow_items.owner_identity = ? AND workflow_items.archived = ? AND workflow_items.current_state NOT IN ?)"
+		existsArgs = []interface{}{ownerIdentity, false, []string{StateArchived, StateCompleted}}
+	}
 	result := r.DB.
 		Model(&models.WorkflowOpenLoop{}).
 		Where("id = ? AND status = ?", id, "open").
 		Where("follow_up_at IS NULL OR follow_up_at <= ?", now).
-		Where(
-			"EXISTS (SELECT 1 FROM workflow_items WHERE workflow_items.id = workflow_open_loops.workflow_id AND workflow_items.archived = ? AND workflow_items.current_state NOT IN ?)",
-			false,
-			[]string{StateArchived, StateCompleted},
-		).
+		Where(existsQuery, existsArgs...).
 		Updates(map[string]interface{}{
 			"status":      "processing",
 			"claim_id":    claimID,
@@ -530,6 +662,27 @@ func (r *GormRepository) FindExpiredOpenLoopClaims(now time.Time, limit int) ([]
 		Where("status = ?", "processing").
 		Where("(claim_id <> ? AND lease_until IS NOT NULL AND lease_until <= ?) OR ((claim_id = ? OR claim_id IS NULL) AND lease_until IS NULL AND updated_at <= ?)", "", now, "", legacyBefore).
 		Order("lease_until asc").
+		Limit(limit).
+		Find(&loops).Error
+	return loops, err
+}
+
+func (r *GormRepository) FindExpiredOpenLoopClaimsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowOpenLoop, error) {
+	if ownerIdentity == "" {
+		return r.FindExpiredOpenLoopClaims(now, limit)
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	legacyBefore := now.Add(-claimLeaseDuration())
+	var loops []models.WorkflowOpenLoop
+	err := r.DB.
+		Table("workflow_open_loops").
+		Joins("JOIN workflow_items ON workflow_items.id = workflow_open_loops.workflow_id").
+		Where("workflow_items.owner_identity = ?", ownerIdentity).
+		Where("workflow_open_loops.status = ?", "processing").
+		Where("(workflow_open_loops.claim_id <> ? AND workflow_open_loops.lease_until IS NOT NULL AND workflow_open_loops.lease_until <= ?) OR ((workflow_open_loops.claim_id = ? OR workflow_open_loops.claim_id IS NULL) AND workflow_open_loops.lease_until IS NULL AND workflow_open_loops.updated_at <= ?)", "", now, "", legacyBefore).
+		Order("workflow_open_loops.lease_until asc").
 		Limit(limit).
 		Find(&loops).Error
 	return loops, err

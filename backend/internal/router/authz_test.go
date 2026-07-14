@@ -13,6 +13,14 @@ import (
 func newAuthzEngine() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	// Test-only stand-in for identityMiddleware. Production roles only arrive
+	// from a verified JWT and are never read from request headers.
+	r.Use(func(c *gin.Context) {
+		if role := c.GetHeader("X-Test-Verified-Role"); role != "" {
+			c.Set(contextRoleKey, role)
+		}
+		c.Next()
+	})
 	admin := r.Group("/api/v1/admin")
 	admin.Use(requirePermission(rbac.PermAdmin))
 	admin.GET("/thing", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
@@ -27,7 +35,7 @@ func requestWithRole(engine *gin.Engine, path, role string) int {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if role != "" {
-		req.Header.Set("X-HAI-Role", role)
+		req.Header.Set("X-Test-Verified-Role", role)
 	}
 	engine.ServeHTTP(rec, req)
 	return rec.Code
@@ -59,5 +67,13 @@ func TestMissingOrUnknownRoleDefaultsToViewer(t *testing.T) {
 	// Unknown role → treated as viewer.
 	if code := requestWithRole(e, "/api/v1/admin/thing", "superhacker"); code != http.StatusForbidden {
 		t.Fatalf("unknown role must not reach admin, got %d", code)
+	}
+	// A request-supplied production role header is not authentication.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/thing", nil)
+	req.Header.Set("X-HAI-Role", "owner")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unverified role header must not reach admin, got %d", rec.Code)
 	}
 }

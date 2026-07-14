@@ -96,6 +96,11 @@ export class WorkflowEngineComponent implements OnInit {
 
   ngOnInit(): void {
     this.refresh();
+    this.intakeForm.valueChanges.subscribe(() => {
+      // A changed signal must be matched again; never link edited intake to a stale pursuit choice.
+      this.selectedPursuitMatch = undefined;
+      this.pursuitMatches = [];
+    });
     const workflowId = this.route.snapshot.queryParamMap.get('workflowId');
     if (workflowId) {
       this.workflowService.get(workflowId).subscribe({
@@ -182,16 +187,25 @@ export class WorkflowEngineComponent implements OnInit {
       });
       return;
     }
-    this.workflowService.intake(this.intakeForm.value).subscribe({
-      next: (record) => {
-        this.selected = record;
+    this.pursuitService.routeIntake(this.intakeForm.value).subscribe({
+      next: (result) => {
         this.saving = false;
-        this.notification.success('Workflow created', 'Input classified, checklist generated, and audit event recorded.');
+        this.pursuitMatches = result.matches || [];
+        if (result.detail) {
+          this.selectNewestPursuitWorkflow(result.detail);
+        }
+        if (result.mode === 'matched_existing') {
+          this.notification.success('Workflow linked to pursuit', 'HAI matched this input to an existing pursuit before creating governed work.');
+        } else if (result.createdCandidate) {
+          this.notification.info('Pursuit candidate needs review', 'HAI recorded the unmatched input as a reviewable pursuit candidate. No workflow was created until an approver accepts it.');
+        } else {
+          this.notification.success('Workflow created', result.message || 'Input classified, checklist generated, and audit event recorded.');
+        }
         this.refresh(false, true);
       },
       error: () => {
         this.saving = false;
-        this.notification.error('Error', 'Failed to intake workflow input.');
+        this.notification.error('Error', 'Failed to match and intake workflow input.');
       },
     });
   }

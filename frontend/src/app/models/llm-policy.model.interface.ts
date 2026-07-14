@@ -8,6 +8,8 @@ export interface ILLMPolicy {
   routeSimpleTasksToSmallModels: boolean;
   routeComplexTasksToBestAvailableFreeModel: boolean;
   requireApprovalBeforePaidUsage: boolean;
+  requireRecentLiveProviderProbe: boolean;
+  providerProbeMaxAgeSeconds: number;
   tierOrder: string[];
   dailyBudgetUsedEur: number;
   inputTokensUsed: number;
@@ -54,6 +56,7 @@ export interface ILLMProviderProbe {
   live: boolean;
   requiresReview: boolean;
   checkedAt: string;
+  lastSuccessfulAt?: string;
 }
 
 export interface ILLMModel {

@@ -8,7 +8,9 @@ import (
 	"time"
 	"unicode"
 
+	"automation-hub-backend/internal/actionresolver"
 	"automation-hub-backend/internal/automation"
+	"automation-hub-backend/internal/autonomygate"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
@@ -20,6 +22,11 @@ import (
 )
 
 type IntakeRequest struct {
+	OwnerIdentity string `json:"-"`
+	PursuitID     string `json:"pursuitId,omitempty"`
+	// WorkflowID is internal worker context. It prevents the workflow-owned
+	// task run from being duplicated in the direct pursuit task-attempt ledger.
+	WorkflowID      string   `json:"-"`
 	Request         string   `json:"request"`
 	ProjectKey      string   `json:"projectKey,omitempty"`
 	AutomationID    string   `json:"automationId,omitempty"`
@@ -84,11 +91,13 @@ type TaskStep struct {
 }
 
 type RiskAssessment struct {
-	Level            string   `json:"level"`
-	ApprovalRequired bool     `json:"approvalRequired"`
-	ApprovalGranted  bool     `json:"approvalGranted"`
-	Reasons          []string `json:"reasons"`
-	AllowedNow       bool     `json:"allowedNow"`
+	Level             string   `json:"level"`
+	ApprovalRequired  bool     `json:"approvalRequired"`
+	ApprovalGranted   bool     `json:"approvalGranted"`
+	ActionResolution  string   `json:"actionResolution"`
+	MissingParameters []string `json:"missingParameters,omitempty"`
+	Reasons           []string `json:"reasons"`
+	AllowedNow        bool     `json:"allowedNow"`
 }
 
 type ValidationResult struct {
@@ -147,6 +156,7 @@ type ExecutedAction struct {
 }
 
 type ToolExecutionRequest struct {
+	OwnerIdentity string `json:"-"`
 	AutomationID  string `json:"automationId"`
 	Task          string `json:"task"`
 	ProjectKey    string `json:"projectKey,omitempty"`
@@ -174,6 +184,20 @@ type ToolExecutor interface {
 	Execute(request ToolExecutionRequest) (*ToolExecutionResult, error)
 }
 
+// PursuitAttemptRecorder stores a compact audit projection for task work that
+// is explicitly scoped to a pursuit. Retrieved context and generated output
+// stay in the existing task and verification paths.
+type PursuitAttemptRecorder interface {
+	UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error
+}
+
+// PursuitTaskGuard is an optional lifecycle boundary for a pursuit-scoped
+// direct task plan or run. The task engine owns planning and execution, while
+// the pursuit service owns whether a pursuit is active and eligible for work.
+type PursuitTaskGuard interface {
+	ValidatePursuitTaskAttempt(pursuitID uuid.UUID, ownerIdentity string) error
+}
+
 type ExecutionResult struct {
 	StartedAt          time.Time                  `json:"startedAt"`
 	CompletedAt        time.Time                  `json:"completedAt"`
@@ -199,6 +223,8 @@ type MemoryUpdateProposal struct {
 
 type CompletionPlan struct {
 	ID                    string                 `json:"id"`
+	OwnerIdentity         string                 `json:"-"`
+	PursuitID             string                 `json:"pursuitId,omitempty"`
 	CreatedAt             time.Time              `json:"createdAt"`
 	Request               string                 `json:"request"`
 	ProjectKey            string                 `json:"projectKey,omitempty"`
@@ -231,12 +257,22 @@ type Service interface {
 	ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
 }
 
+// OwnerScopedService is the authenticated view over task history and approvals.
+// It is intentionally separate from Service so background workers can retain
+// their system-level access without becoming an HTTP data-leak path.
+type OwnerScopedService interface {
+	LogsForOwner(ownerIdentity string) []CompletionPlan
+	ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem
+	ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
+}
+
 type service struct {
 	memoryService       memory.Service
 	sourceService       source.Service
 	verificationService verification.Service
 	llmService          *llm.Service
 	toolExecutor        ToolExecutor
+	pursuitAttempts     PursuitAttemptRecorder
 	mu                  sync.Mutex
 	logs                []CompletionPlan
 	reviewQueue         []ReviewQueueItem
@@ -272,6 +308,19 @@ func NewServiceWithEngines(memoryService memory.Service, llmService *llm.Service
 	}
 }
 
+func NewServiceWithEnginesAndPursuitAttempts(memoryService memory.Service, llmService *llm.Service, sourceService source.Service, verificationService verification.Service, toolExecutor ToolExecutor, pursuitAttempts PursuitAttemptRecorder) Service {
+	return &service{
+		memoryService:       memoryService,
+		sourceService:       sourceService,
+		verificationService: verificationService,
+		llmService:          llmService,
+		toolExecutor:        toolExecutor,
+		pursuitAttempts:     pursuitAttempts,
+		logs:                []CompletionPlan{},
+		reviewQueue:         []ReviewQueueItem{},
+	}
+}
+
 func DefaultService() (Service, error) {
 	llmService, err := llm.NewServiceFromEnv()
 	if err != nil {
@@ -287,8 +336,14 @@ func DefaultService() (Service, error) {
 }
 
 func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
+	if err := s.validatePursuitAttemptRequest(request); err != nil {
+		return nil, err
+	}
 	plan, err := s.buildPlan(request, false)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.persistPursuitAttempt(plan, request, "plan", true); err != nil {
 		return nil, err
 	}
 	s.addLog(*plan)
@@ -296,6 +351,9 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 }
 
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
+	if err := s.validatePursuitAttemptRequest(request); err != nil {
+		return nil, err
+	}
 	if safety.EmergencyStopActive() {
 		request.ExecuteAllowed = false
 		request.HumanApproved = false
@@ -320,11 +378,17 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.CompletionStatus = "review_required"
 		plan.Events = append(plan.Events, event("governance", reason))
 		s.attachReviewItem(plan, reason, "high", request)
+		if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
+			return nil, err
+		}
 		s.addLog(*plan)
 		return plan, nil
 	}
 	plan, err := s.buildPlan(request, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.persistPursuitAttempt(plan, request, "run", false); err != nil {
 		return nil, err
 	}
 	if plan.RiskAssessment.AllowedNow {
@@ -339,7 +403,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.ValidationResult.Passed = false
 		plan.ValidationResult.Status = "blocked"
 		plan.ValidationResult.NextAction = "human review required before execution"
-		s.attachReviewItem(plan, "approval required before task execution", plan.RiskAssessment.Level, request)
+		s.attachReviewItem(plan, taskReviewReason(plan.RiskAssessment), plan.RiskAssessment.Level, request)
 	} else if plan.ExecutionResult != nil && plan.ExecutionResult.BlockedReason != "" {
 		plan.CompletionStatus = "review_required"
 		plan.ValidationResult.Passed = false
@@ -389,14 +453,136 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		s.attachReviewItem(plan, "validation failed after available attempts", "medium", request)
 	}
 
+	if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
+		return nil, err
+	}
 	s.addLog(*plan)
 	return plan, nil
+}
+
+func (s *service) validatePursuitAttemptRequest(request IntakeRequest) error {
+	pursuitID := strings.TrimSpace(request.PursuitID)
+	if pursuitID == "" {
+		return nil
+	}
+	parsedPursuitID, err := uuid.Parse(pursuitID)
+	if err != nil {
+		return fmt.Errorf("invalid pursuit id")
+	}
+	if s.pursuitAttempts == nil {
+		return fmt.Errorf("pursuit task-attempt persistence is not configured")
+	}
+	if guard, ok := s.pursuitAttempts.(PursuitTaskGuard); ok {
+		if err := guard.ValidatePursuitTaskAttempt(parsedPursuitID, request.OwnerIdentity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *service) persistPursuitAttempt(plan *CompletionPlan, request IntakeRequest, mode string, completed bool) error {
+	if plan == nil || strings.TrimSpace(request.PursuitID) == "" || strings.TrimSpace(request.WorkflowID) != "" {
+		return nil
+	}
+	pursuitID, err := uuid.Parse(strings.TrimSpace(request.PursuitID))
+	if err != nil {
+		return fmt.Errorf("invalid pursuit id")
+	}
+	if s.pursuitAttempts == nil {
+		return fmt.Errorf("pursuit task-attempt persistence is not configured")
+	}
+	startedAt := plan.CreatedAt
+	if plan.ExecutionResult != nil && !plan.ExecutionResult.StartedAt.IsZero() {
+		startedAt = plan.ExecutionResult.StartedAt
+	}
+	status := "running"
+	if mode == "plan" {
+		status = "planned"
+	}
+	if completed {
+		status = firstNonEmpty(plan.CompletionStatus, status)
+	}
+	var completedAt *time.Time
+	if completed {
+		when := time.Now().UTC()
+		if plan.ExecutionResult != nil && !plan.ExecutionResult.CompletedAt.IsZero() {
+			when = plan.ExecutionResult.CompletedAt
+		}
+		completedAt = &when
+	}
+	verificationStatus := strings.TrimSpace(plan.ValidationResult.Status)
+	blockedReason := strings.Join(compactStrings(plan.ValidationResult.Failures, 3), "; ")
+	if plan.ExecutionResult != nil {
+		verificationStatus = firstNonEmpty(plan.ExecutionResult.VerificationStatus, verificationStatus)
+		blockedReason = firstNonEmpty(plan.ExecutionResult.BlockedReason, blockedReason)
+	}
+	attempt := models.PursuitTaskAttempt{
+		PursuitID:          pursuitID,
+		TaskPlanID:         plan.ID,
+		OwnerIdentity:      strings.TrimSpace(plan.OwnerIdentity),
+		RequestSummary:     compactTaskRequest(plan.RealGoal),
+		ProjectKey:         strings.TrimSpace(plan.ProjectKey),
+		Mode:               mode,
+		Status:             status,
+		RiskLevel:          strings.TrimSpace(plan.RiskAssessment.Level),
+		VerificationStatus: verificationStatus,
+		AutomationID:       firstNonEmpty(request.AutomationID, planAutomationID(plan)),
+		LaunchEventID:      planLaunchEventID(plan),
+		BlockedReason:      compactTaskRequest(blockedReason),
+		StartedAt:          &startedAt,
+		CompletedAt:        completedAt,
+	}
+	if err := s.pursuitAttempts.UpsertTaskAttempt(attempt); err != nil {
+		return fmt.Errorf("persist pursuit task attempt: %w", err)
+	}
+	return nil
+}
+
+func compactTaskRequest(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(safety.RedactSecrets(value))), " ")
+	const limit = 500
+	if len([]rune(value)) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit]) + "..."
+}
+
+func compactStrings(values []string, limit int) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	result := make([]string, 0, limit)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
+}
+
+func planAutomationID(plan *CompletionPlan) string {
+	if plan == nil || plan.ExecutionResult == nil || plan.ExecutionResult.ToolExecution == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.AutomationID)
+}
+
+func planLaunchEventID(plan *CompletionPlan) string {
+	if plan == nil || plan.ExecutionResult == nil || plan.ExecutionResult.ToolExecution == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.LaunchEventID)
 }
 
 func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
 	intake := analyzeIntake(request)
 	sourceRefresh, sourceRefreshExplanation := s.refreshSourcesForTask(request, intake)
-	contextResult, err := s.memoryService.Retrieve(memory.RetrieveRequest{
+	contextResult, err := memory.RetrieveForOwner(s.memoryService, request.OwnerIdentity, memory.RetrieveRequest{
 		Query:      request.Request,
 		ProjectKey: request.ProjectKey,
 		Limit:      8,
@@ -417,17 +603,19 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 
 	toolDecision := routeTools(intake)
 	minimalityDecision := decideMinimality(request, intake)
-	risk := assessRisk(intake, request.ExecuteAllowed, request.HumanApproved)
+	risk := assessRisk(intake, request)
 	steps := buildTaskSteps(intake, toolDecision, risk, minimalityDecision)
 	validationPlan := buildValidationPlan(intake, minimalityDecision)
 	memoryProposals := proposeMemoryUpdates(request, intake)
 	plan := &CompletionPlan{
-		ID:         uuid.New().String(),
-		CreatedAt:  time.Now().UTC(),
-		Request:    request.Request,
-		ProjectKey: request.ProjectKey,
-		RealGoal:   inferRealGoal(request, intake),
-		Intake:     intake,
+		ID:            uuid.New().String(),
+		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
+		PursuitID:     strings.TrimSpace(request.PursuitID),
+		CreatedAt:     time.Now().UTC(),
+		Request:       request.Request,
+		ProjectKey:    request.ProjectKey,
+		RealGoal:      inferRealGoal(request, intake),
+		Intake:        intake,
 		ContextPlan: ContextPlan{
 			Strategy: []string{
 				"filter by project key when provided",
@@ -481,29 +669,58 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 }
 
 func (s *service) Logs() []CompletionPlan {
+	return s.LogsForOwner("")
+}
+
+func (s *service) LogsForOwner(ownerIdentity string) []CompletionPlan {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	copied := make([]CompletionPlan, len(s.logs))
-	copy(copied, s.logs)
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	copied := make([]CompletionPlan, 0, len(s.logs))
+	for _, plan := range s.logs {
+		if ownerIdentity != "" && plan.OwnerIdentity != ownerIdentity {
+			continue
+		}
+		copied = append(copied, plan)
+	}
 	return copied
 }
 
 func (s *service) ReviewQueue() []ReviewQueueItem {
+	return s.ReviewQueueForOwner("")
+}
+
+func (s *service) ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	copied := make([]ReviewQueueItem, len(s.reviewQueue))
-	copy(copied, s.reviewQueue)
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	copied := make([]ReviewQueueItem, 0, len(s.reviewQueue))
+	for _, item := range s.reviewQueue {
+		if ownerIdentity != "" && item.Request.OwnerIdentity != ownerIdentity {
+			continue
+		}
+		copied = append(copied, item)
+	}
 	return copied
 }
 
 func (s *service) ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	return s.resolveReviewItemForOwner("", id, decision)
+}
+
+func (s *service) ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	return s.resolveReviewItemForOwner(ownerIdentity, id, decision)
+}
+
+func (s *service) resolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	s.mu.Lock()
 	index := -1
 	var item ReviewQueueItem
 	for i := range s.reviewQueue {
-		if s.reviewQueue[i].ID == id {
+		if s.reviewQueue[i].ID == id && (ownerIdentity == "" || s.reviewQueue[i].Request.OwnerIdentity == ownerIdentity) {
 			index = i
 			item = s.reviewQueue[i]
 			break
@@ -628,7 +845,7 @@ func (s *service) storeLessons(plan *CompletionPlan) []string {
 		return stored
 	}
 	for _, lesson := range plan.LessonsLearned {
-		created, err := s.memoryService.Create(memory.CreateRequest{
+		created, err := memory.CreateForOwner(s.memoryService, plan.OwnerIdentity, memory.CreateRequest{
 			ProjectKey:  plan.ProjectKey,
 			Kind:        lesson.Kind,
 			Content:     lesson.Content,
@@ -687,6 +904,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 				return blockExecution(result, "task requires controlled runtime execution but no automationId was provided", plan, toolStarted)
 			}
 			executed, err := s.toolExecutor.Execute(ToolExecutionRequest{
+				OwnerIdentity: plan.OwnerIdentity,
 				AutomationID:  request.AutomationID,
 				Task:          plan.RealGoal,
 				ProjectKey:    plan.ProjectKey,
@@ -758,8 +976,10 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	}
 
 	verificationResult, err := s.verificationService.Answer(verification.AnswerRequest{
+		OwnerIdentity:     plan.OwnerIdentity,
 		Question:          plan.RealGoal,
 		ProjectKey:        plan.ProjectKey,
+		PursuitID:         plan.PursuitID,
 		Mode:              result.Mode,
 		DraftAnswer:       draft,
 		ExternalEvidence:  evidence,
@@ -782,6 +1002,13 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	result.Claims = verificationResult.Claims
 	result.UnsupportedClaims = len(verificationResult.UnsupportedClaims)
 	result.CompletedAt = time.Now().UTC()
+	if strings.TrimSpace(plan.PursuitID) != "" && strings.TrimSpace(verificationResult.PursuitLinkError) != "" {
+		result.VerificationStatus = verification.StatusNeedsReview
+		result.BlockedReason = "verification evidence could not be linked to the pursuit"
+		result.Actions = append(result.Actions, executedAction("pursuit.verification_link", "blocked", plan.PursuitID, result.BlockedReason, verifyStarted))
+		plan.Events = append(plan.Events, event("verification", "verification evidence could not be linked to the pursuit; task requires review"))
+		return result
+	}
 	result.Actions = append(result.Actions, executedAction("verification.answer", "completed", request.Request, verificationResult.Run.Status, verifyStarted))
 	plan.Events = append(plan.Events, event("verification", "claims were checked against retrieved evidence before completion"))
 	return result
@@ -1034,6 +1261,13 @@ func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnal
 	if !shouldRefreshSourcesForTask(request, intake) {
 		return nil, "Connected-source refresh skipped because the task does not appear to need source-backed context."
 	}
+	if strings.TrimSpace(request.OwnerIdentity) != "" {
+		result, err := s.sourceService.RunDueScheduledSyncsForOwner(time.Now().UTC(), request.OwnerIdentity)
+		if err != nil {
+			return nil, "Owner-scoped connected-source refresh failed before context retrieval: " + err.Error()
+		}
+		return result, fmt.Sprintf("Owner-scoped connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped)
+	}
 	result, err := s.sourceService.RunDueScheduledSyncs(time.Now().UTC())
 	if err != nil {
 		return nil, "Connected-source refresh failed before context retrieval: " + err.Error()
@@ -1064,9 +1298,10 @@ func (s *service) retrieveSourceContext(request IntakeRequest) ([]source.RankedE
 		return []source.RankedExtraction{}, "Connected-source retrieval is not configured."
 	}
 	result, err := s.sourceService.Search(source.SearchRequest{
-		Query:      request.Request,
-		ProjectKey: request.ProjectKey,
-		Limit:      6,
+		OwnerIdentity: request.OwnerIdentity,
+		Query:         request.Request,
+		ProjectKey:    request.ProjectKey,
+		Limit:         6,
 	})
 	if err != nil {
 		return []source.RankedExtraction{}, "Connected-source retrieval failed or has no available index."
@@ -1108,11 +1343,14 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 		reasoning = maxReasoning(reasoning, "high")
 		reasons = append(reasons, "architecture terms detected")
 	}
-	if containsAny(text, "delete", "financial", "legal", "government", "email sending", "public posting", "account change") {
-		risk = "high"
+	risk = classifyTaskRisk(text, needsTools)
+	if risk == "high" {
 		difficulty = maxInt(difficulty, 4)
 		reasoning = maxReasoning(reasoning, "high")
 		reasons = append(reasons, "approval-sensitive terms detected")
+	} else if risk == "medium" {
+		difficulty = maxInt(difficulty, 3)
+		reasons = append(reasons, "state-changing or externally consequential terms detected")
 	}
 
 	successCriteria := request.SuccessCriteria
@@ -1131,9 +1369,30 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 		NeedsDocuments:      needsDocs,
 		NeedsWebAccess:      needsWeb,
 		NeedsLocalExecution: needsLocal,
-		NeedsApproval:       risk == "high",
+		NeedsApproval:       risk != "low",
 		Reason:              strings.Join(reasons, "; "),
 	}
+}
+
+// classifyTaskRisk errs on the side of review for any task that can change
+// external state. Read-only analysis and allowlisted build/test work stay low
+// risk; sending, publication, legal/government, money, account, and deletion
+// actions remain high risk even when the request is otherwise well formed.
+func classifyTaskRisk(text string, needsTools bool) string {
+	if containsWordOrPhrase(text,
+		"delete", "financial", "payment", "pay", "spend", "bank", "legal", "lawyer",
+		"government", "municipality", "insurer", "insurance", "account", "credential",
+		"secret", "password", "publish", "public posting", "post publicly",
+	) || (containsWordOrPhrase(text, "send") && containsWordOrPhrase(text, "email", "message", "reply")) {
+		return "high"
+	}
+	if needsTools && containsWordOrPhrase(text,
+		"deploy", "install", "commit", "push", "merge", "apply", "change", "modify",
+		"move", "rename", "write", "create", "update", "call api", "invoke api",
+	) {
+		return "medium"
+	}
+	return "low"
 }
 
 func buildValidationPlan(intake IntakeAnalysis, minimality MinimalityDecision) ValidationPlan {
@@ -1224,39 +1483,91 @@ func routeTools(intake IntakeAnalysis) ToolRouteDecision {
 	}
 }
 
-func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) RiskAssessment {
+func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {
 	reasons := []string{"read-only planning is allowed"}
-	allowed := true
-	approvalGranted := false
 	needsExplicitExecution := intake.NeedsTools || intake.NeedsLocalExecution
+	approvalGranted := intake.NeedsApproval && request.ExecuteAllowed && request.HumanApproved
+	gateDecision := autonomygate.Decide(autonomygate.Signals{
+		Confidence: 0.9,
+		Risk:       intake.RiskLevel,
+		Reversible: intake.RiskLevel != "high",
+		Approved:   approvalGranted,
+	})
+	missingParameters := requiredExecutionParameters(intake, request)
+	actionResolution := actionresolver.Resolve(actionresolver.Action{
+		Description:   request.Request,
+		Confidence:    0.9,
+		Destructive:   intake.RiskLevel == "high",
+		MissingParams: missingParameters,
+	})
 	if intake.NeedsApproval {
-		reasons = append(reasons, "request contains high-risk action terms")
-		approvalGranted = executeAllowed && humanApproved
-		allowed = approvalGranted
-		if approvalGranted {
-			reasons = append(reasons, "human approval recorded for this run")
-		}
+		reasons = append(reasons, "request risk classification requires explicit human approval before execution")
+	}
+	if approvalGranted {
+		reasons = append(reasons, "human approval recorded for this run")
+	}
+	switch gateDecision {
+	case autonomygate.Review:
+		reasons = append(reasons, "autonomy gate routed the action to review")
+	case autonomygate.Block:
+		reasons = append(reasons, "autonomy gate blocked an unapproved irreversible high-risk action")
+	}
+	if actionResolution == actionresolver.Clarify {
+		reasons = append(reasons, "action resolver requires clarification before execution: "+strings.Join(missingParameters, ", "))
+	} else if actionResolution == actionresolver.Block {
+		reasons = append(reasons, "action resolver blocked an ambiguous destructive action")
 	}
 	if intake.NeedsLocalExecution {
 		reasons = append(reasons, "local execution is constrained to non-destructive steps")
 	}
-	if executeAllowed && !intake.NeedsApproval {
+	if request.ExecuteAllowed && !intake.NeedsApproval {
 		reasons = append(reasons, "caller allowed low-risk execution")
 	}
-	if !executeAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
+	if !request.ExecuteAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
 		reasons = append(reasons, "execution not requested; plan remains non-executing")
 	}
-	allowedNow := allowed
-	if needsExplicitExecution && !executeAllowed {
+	allowedNow := gateDecision == autonomygate.Auto
+	if actionResolution != actionresolver.Proceed {
+		allowedNow = false
+	}
+	if needsExplicitExecution && !request.ExecuteAllowed {
 		allowedNow = false
 	}
 	return RiskAssessment{
-		Level:            intake.RiskLevel,
-		ApprovalRequired: intake.NeedsApproval,
-		ApprovalGranted:  approvalGranted,
-		Reasons:          reasons,
-		AllowedNow:       allowedNow,
+		Level:             intake.RiskLevel,
+		ApprovalRequired:  intake.NeedsApproval,
+		ApprovalGranted:   approvalGranted,
+		ActionResolution:  string(actionResolution),
+		MissingParameters: missingParameters,
+		Reasons:           reasons,
+		AllowedNow:        allowedNow,
 	}
+}
+
+// requiredExecutionParameters checks deterministic execution prerequisites.
+// It intentionally runs only when a caller requested execution, so planning
+// can still explain a task before Robert chooses a runtime.
+func requiredExecutionParameters(intake IntakeAnalysis, request IntakeRequest) []string {
+	if !request.ExecuteAllowed || (!intake.NeedsTools && !intake.NeedsLocalExecution) {
+		return nil
+	}
+	if strings.TrimSpace(request.AutomationID) == "" {
+		return []string{"controlled automation"}
+	}
+	return nil
+}
+
+func taskReviewReason(risk RiskAssessment) string {
+	if len(risk.MissingParameters) > 0 {
+		return "missing required execution details: " + strings.Join(risk.MissingParameters, ", ")
+	}
+	if risk.ActionResolution == string(actionresolver.Block) {
+		return "action resolver blocked an ambiguous destructive action"
+	}
+	if risk.ApprovalRequired && !risk.ApprovalGranted {
+		return "approval required before task execution"
+	}
+	return "action clarification is required before task execution"
 }
 
 func buildTaskSteps(intake IntakeAnalysis, tools ToolRouteDecision, risk RiskAssessment, minimality MinimalityDecision) []TaskStep {

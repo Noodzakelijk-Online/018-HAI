@@ -52,7 +52,7 @@ func initializeSystemRoutes(apiVersion *gin.RouterGroup, diagnose func() doctor.
 	{
 		sys.GET("/info", systemInfoHandler(diagnose))
 		// The support bundle is an operator/admin diagnostic, so it requires the
-		// admin permission (X-HAI-Role: owner).
+		// admin permission carried by a verified owner JWT.
 		sys.GET("/support-bundle", requirePermission(rbac.PermAdmin), supportBundleHandler(diagnose, counts))
 	}
 }

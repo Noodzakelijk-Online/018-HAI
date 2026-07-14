@@ -291,6 +291,15 @@ func (r *Registry) RefreshOpenClawEcosystem() (Info, error) {
 
 func (r *Registry) Execute(ctx context.Context, runtimeID string, task Task) Result {
 	runtimeID = strings.ToLower(strings.TrimSpace(runtimeID))
+	if safety.EmergencyStopActive() {
+		return Result{
+			RuntimeID:   runtimeID,
+			Status:      "blocked",
+			Message:     safety.EmergencyStopReason(),
+			ExitCode:    -1,
+			AuditEvents: []string{"emergency stop blocked agent runtime execution"},
+		}
+	}
 	adapter := r.adapters[runtimeID]
 	if adapter == nil {
 		return Result{
