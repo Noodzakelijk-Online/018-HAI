@@ -144,6 +144,9 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 	if intake.ProjectKey != "vivare" || intake.SourceType != "ai_chat" || intake.Trigger != "memory_engine.import" {
 		t.Fatalf("workflow intake = %#v", intake)
 	}
+	if intake.OwnerIdentity != "alice" {
+		t.Fatalf("workflow owner = %q, want alice", intake.OwnerIdentity)
+	}
 	if !intake.RequiresReview || !strings.Contains(intake.ReviewReason, "Robert") {
 		t.Fatalf("workflow review gate = %#v", intake)
 	}
@@ -405,6 +408,35 @@ func TestImportedConversationAndInsightsAreScopedToOwner(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedImportDoesNotAdoptOwnerlessLegacyConversation(t *testing.T) {
+	repo := &memoryEngineRepoStub{conversations: []models.AIConversationArchive{{
+		ID:          uuid.New(),
+		Platform:    "chatgpt",
+		ExternalID:  "legacy-thread",
+		SourceURI:   "https://chatgpt.com/c/legacy-thread",
+		ContentHash: "legacy",
+		Revision:    1,
+	}}}
+	service := NewService(repo, &memoryEngineMemoryStub{}, nil, "test-memory-encryption-secret")
+	result, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "legacy-thread",
+		Title:         "Alice private continuation",
+		SourceURI:     "https://chatgpt.com/c/legacy-thread",
+		Messages:      []ChatMessage{{Role: "assistant", Content: "Rule: keep this private."}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Conversation.OwnerIdentity != "alice" || result.Conversation.ID == repo.conversations[0].ID {
+		t.Fatalf("authenticated import adopted legacy archive: %#v", result.Conversation)
+	}
+	if len(repo.conversations) != 2 || repo.conversations[0].OwnerIdentity != "" {
+		t.Fatalf("legacy archive was overwritten instead of retained separately: %#v", repo.conversations)
+	}
+}
+
 func TestDashboardSurfacesSourceCorrectionLessons(t *testing.T) {
 	now := time.Now().UTC()
 	service := NewService(
@@ -568,7 +600,7 @@ func (r *memoryEngineRepoStub) ArchiveInsights(conversationID uuid.UUID, revisio
 	return nil
 }
 
-func (r *memoryEngineRepoStub) DeleteMemoriesBySourceURI(sourceURI string) error {
+func (r *memoryEngineRepoStub) DeleteMemoriesBySourceURI(ownerIdentity, sourceURI string) error {
 	return nil
 }
 
@@ -591,8 +623,21 @@ func (s *memoryEngineMemoryStub) Create(request memory.CreateRequest) (*models.C
 	}, nil
 }
 
+func (s *memoryEngineMemoryStub) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	created, err := s.Create(request)
+	if created != nil {
+		created.OwnerIdentity = ownerIdentity
+		s.memories = append(s.memories, *created)
+	}
+	return created, err
+}
+
 func (s *memoryEngineMemoryStub) Update(id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
 	return &models.ContextMemory{ID: id, Content: request.Content, Kind: request.Kind}, nil
+}
+
+func (s *memoryEngineMemoryStub) UpdateForOwner(string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return s.Update(id, request)
 }
 
 func (s *memoryEngineMemoryStub) FindAll(projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
@@ -609,7 +654,22 @@ func (s *memoryEngineMemoryStub) FindAll(projectKey string, includeArchived bool
 	return result, nil
 }
 
+func (s *memoryEngineMemoryStub) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	all, _ := s.FindAll(projectKey, includeArchived)
+	visible := make([]models.ContextMemory, 0, len(all))
+	for _, item := range all {
+		if item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity {
+			visible = append(visible, item)
+		}
+	}
+	return visible, nil
+}
+
 func (s *memoryEngineMemoryStub) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *memoryEngineMemoryStub) FindByIDForOwner(string, uuid.UUID) (*models.ContextMemory, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -617,12 +677,22 @@ func (s *memoryEngineMemoryStub) Archive(id uuid.UUID, archived bool) (*models.C
 	return &models.ContextMemory{ID: id, Archived: archived}, nil
 }
 
+func (s *memoryEngineMemoryStub) ArchiveForOwner(string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return s.Archive(id, archived)
+}
+
 func (s *memoryEngineMemoryStub) Delete(id uuid.UUID) error {
 	return nil
 }
 
+func (s *memoryEngineMemoryStub) DeleteForOwner(string, uuid.UUID) error { return nil }
+
 func (s *memoryEngineMemoryStub) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{Query: request.Query, ProjectKey: request.ProjectKey}, nil
+}
+
+func (s *memoryEngineMemoryStub) RetrieveForOwner(string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	return s.Retrieve(request)
 }
 
 type memoryEngineWorkflowStub struct {

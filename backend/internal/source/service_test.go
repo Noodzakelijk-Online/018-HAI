@@ -715,7 +715,7 @@ func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
 	}
 }
 
-func TestOwnerScopedSourceDoesNotWriteToGlobalMemory(t *testing.T) {
+func TestOwnerScopedSourceWritesOwnerScopedMemory(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
 		ID:            sourceID,
@@ -737,11 +737,11 @@ func TestOwnerScopedSourceDoesNotWriteToGlobalMemory(t *testing.T) {
 	}}}); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
+	if len(memorySpy.ownerCreated) != 1 || memorySpy.ownerCreated[0].ownerIdentity != "alice" {
+		t.Fatalf("owner-scoped memory writes = %#v, want one Alice memory", memorySpy.ownerCreated)
+	}
 	if len(memorySpy.created) != 0 {
 		t.Fatalf("global memory writes = %#v, want none for owner-scoped source", memorySpy.created)
-	}
-	if !repo.hasAudit("memory.source_skipped_owner_scope") {
-		t.Fatalf("expected owner-scope memory skip audit")
 	}
 }
 
@@ -1627,7 +1627,13 @@ func (r *fakeSourceRepo) hasAudit(action string) bool {
 }
 
 type fakeSourceMemoryService struct {
-	created []memory.CreateRequest
+	created      []memory.CreateRequest
+	ownerCreated []ownerMemoryCreate
+}
+
+type ownerMemoryCreate struct {
+	ownerIdentity string
+	request       memory.CreateRequest
 }
 
 func (s *fakeSourceMemoryService) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
@@ -1646,7 +1652,28 @@ func (s *fakeSourceMemoryService) Create(request memory.CreateRequest) (*models.
 	}, nil
 }
 
+func (s *fakeSourceMemoryService) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	s.ownerCreated = append(s.ownerCreated, ownerMemoryCreate{ownerIdentity: ownerIdentity, request: request})
+	return &models.ContextMemory{
+		ID:            uuid.New(),
+		OwnerIdentity: ownerIdentity,
+		ProjectKey:    request.ProjectKey,
+		Kind:          request.Kind,
+		Content:       request.Content,
+		Summary:       request.Summary,
+		Confidence:    request.Confidence,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}, nil
+}
+
 func (s *fakeSourceMemoryService) Update(id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *fakeSourceMemoryService) UpdateForOwner(string, uuid.UUID, memory.UpdateRequest) (*models.ContextMemory, error) {
 	return nil, nil
 }
 
@@ -1654,7 +1681,15 @@ func (s *fakeSourceMemoryService) FindAll(projectKey string, includeArchived boo
 	return nil, nil
 }
 
+func (s *fakeSourceMemoryService) FindAllForOwner(string, string, bool) ([]models.ContextMemory, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceMemoryService) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *fakeSourceMemoryService) FindByIDForOwner(string, uuid.UUID) (*models.ContextMemory, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -1662,12 +1697,22 @@ func (s *fakeSourceMemoryService) Archive(id uuid.UUID, archived bool) (*models.
 	return nil, nil
 }
 
+func (s *fakeSourceMemoryService) ArchiveForOwner(string, uuid.UUID, bool) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
 func (s *fakeSourceMemoryService) Delete(id uuid.UUID) error {
 	return nil
 }
 
+func (s *fakeSourceMemoryService) DeleteForOwner(string, uuid.UUID) error { return nil }
+
 func (s *fakeSourceMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{Query: request.Query}, nil
+}
+
+func (s *fakeSourceMemoryService) RetrieveForOwner(string, memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	return &memory.RetrieveResult{}, nil
 }
 
 type fakeSourceWorkflowService struct {

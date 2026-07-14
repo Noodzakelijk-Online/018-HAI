@@ -169,6 +169,12 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
+	// A legacy ownerless archive is readable for compatibility but cannot be
+	// adopted by an authenticated import. Create a distinct owner-scoped archive
+	// so new private content never remains attached to a globally visible row.
+	if existing != nil && normalized.OwnerIdentity != "" && strings.TrimSpace(existing.OwnerIdentity) == "" {
+		existing = nil
+	}
 	if existing != nil && existing.ContentHash == contentHash {
 		insights, _ := s.repo.FindInsightsForOwner(normalized.OwnerIdentity, "", normalized.ProjectKey, nil, 100)
 		return &ImportResult{
@@ -190,7 +196,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 				}
 			}
 		}
-		if errDeleteMemory := s.repo.DeleteMemoriesBySourceURI(existing.SourceURI); errDeleteMemory != nil {
+		if errDeleteMemory := s.repo.DeleteMemoriesBySourceURI(existing.OwnerIdentity, existing.SourceURI); errDeleteMemory != nil {
 			return nil, fmt.Errorf("remove superseded searchable memory: %w", errDeleteMemory)
 		}
 	}
@@ -245,7 +251,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		}
 		insights[index] = *stored
 		if s.memoryService != nil && memoryEligible(*stored) {
-			memoryRecord, errMemory := s.memoryService.Create(memory.CreateRequest{
+			memoryRecord, errMemory := memory.CreateForOwner(s.memoryService, saved.OwnerIdentity, memory.CreateRequest{
 				ProjectKey:  stored.ProjectKey,
 				Kind:        stored.Kind,
 				Content:     stored.Text,
@@ -265,6 +271,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		}
 		if s.workflowService != nil && workflowEligibleInsight(*stored) {
 			record, errWorkflow := s.intakeWorkflow(workflow.IntakeRequest{
+				OwnerIdentity:  saved.OwnerIdentity,
 				Input:          stored.Text,
 				ProjectKey:     stored.ProjectKey,
 				SourceType:     "ai_chat",
@@ -409,7 +416,7 @@ func (s *service) DeleteConversationForOwner(ownerIdentity string, id uuid.UUID)
 			return fmt.Errorf("retract derived workflow: %w", err)
 		}
 	}
-	if err := s.repo.DeleteMemoriesBySourceURI(conversation.SourceURI); err != nil {
+	if err := s.repo.DeleteMemoriesBySourceURI(conversation.OwnerIdentity, conversation.SourceURI); err != nil {
 		return fmt.Errorf("delete derived memory: %w", err)
 	}
 	return s.repo.DeleteConversation(id)

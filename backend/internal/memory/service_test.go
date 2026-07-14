@@ -72,6 +72,45 @@ func TestRetrieveIncludesGlobalMemoryForProjectTask(t *testing.T) {
 	}
 }
 
+func TestOwnerScopedMemorySeparatesDeduplicationRetrievalAndMutation(t *testing.T) {
+	repo := newFakeRepository()
+	service := NewService(repo)
+	scoped, ok := service.(OwnerScopedService)
+	if !ok {
+		t.Fatal("native memory service does not implement OwnerScopedService")
+	}
+	request := CreateRequest{
+		ProjectKey: "legal-case",
+		Kind:       "preference",
+		Content:    "Use formal Dutch when drafting the evidence reply.",
+	}
+	alice, err := scoped.CreateForOwner("alice", request)
+	if err != nil {
+		t.Fatalf("CreateForOwner alice: %v", err)
+	}
+	bob, err := scoped.CreateForOwner("bob", request)
+	if err != nil {
+		t.Fatalf("CreateForOwner bob: %v", err)
+	}
+	if alice.ID == bob.ID || alice.OwnerIdentity != "alice" || bob.OwnerIdentity != "bob" {
+		t.Fatalf("owner-scoped creates merged or lost owner: alice=%#v bob=%#v", alice, bob)
+	}
+
+	aliceResult, err := scoped.RetrieveForOwner("alice", RetrieveRequest{ProjectKey: "legal-case", Query: "formal Dutch evidence", Limit: 10})
+	if err != nil {
+		t.Fatalf("RetrieveForOwner alice: %v", err)
+	}
+	if len(aliceResult.UsedContext) != 1 || aliceResult.UsedContext[0].Memory.ID != alice.ID {
+		t.Fatalf("alice retrieve = %#v, want only Alice memory", aliceResult.UsedContext)
+	}
+	if _, err := scoped.UpdateForOwner("alice", bob.ID, UpdateRequest{Summary: "forged change"}); err == nil {
+		t.Fatal("alice updated Bob's private memory")
+	}
+	if _, err := scoped.FindByIDForOwner("alice", bob.ID); err == nil {
+		t.Fatal("alice read Bob's private memory by ID")
+	}
+}
+
 type fakeRepository struct {
 	memories map[uuid.UUID]models.ContextMemory
 }

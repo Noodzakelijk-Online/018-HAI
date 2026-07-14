@@ -21,7 +21,7 @@ type Repository interface {
 	FindInsights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
 	FindInsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
 	ArchiveInsights(conversationID uuid.UUID, revision int) error
-	DeleteMemoriesBySourceURI(sourceURI string) error
+	DeleteMemoriesBySourceURI(ownerIdentity, sourceURI string) error
 }
 
 type GormRepository struct {
@@ -147,11 +147,13 @@ func (r *GormRepository) ArchiveInsights(conversationID uuid.UUID, revision int)
 		Update("status", "superseded").Error
 }
 
-func (r *GormRepository) DeleteMemoriesBySourceURI(sourceURI string) error {
+func (r *GormRepository) DeleteMemoriesBySourceURI(ownerIdentity, sourceURI string) error {
 	if sourceURI == "" {
 		return nil
 	}
-	return r.DB.
-		Where("source_uri = ? AND tags LIKE ?", sourceURI, "%ai-history%").
-		Delete(&models.ContextMemory{}).Error
+	query := r.DB.Where("source_uri = ? AND tags LIKE ?", sourceURI, "%ai-history%")
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ?", ownerIdentity)
+	}
+	return query.Delete(&models.ContextMemory{}).Error
 }

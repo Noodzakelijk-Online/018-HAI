@@ -1,8 +1,10 @@
 package memory
 
 import (
+	"automation-hub-backend/internal/identity"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,7 +28,7 @@ func (h *Handler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	memory, err := h.service.Create(request)
+	memory, err := h.ownerService(c).CreateForOwner(memoryOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -36,7 +38,7 @@ func (h *Handler) Create(c *gin.Context) {
 
 func (h *Handler) List(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	memories, err := h.service.FindAll(c.Query("projectKey"), includeArchived)
+	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -49,7 +51,7 @@ func (h *Handler) List(c *gin.Context) {
 // paginated envelope for clients that need to browse large memory sets.
 func (h *Handler) Query(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	memories, err := h.service.FindAll(c.Query("projectKey"), includeArchived)
+	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -73,7 +75,7 @@ func (h *Handler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	memory, err := h.service.FindByID(id)
+	memory, err := h.ownerService(c).FindByIDForOwner(memoryOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -91,7 +93,7 @@ func (h *Handler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	memory, err := h.service.Update(id, request)
+	memory, err := h.ownerService(c).UpdateForOwner(memoryOwner(c), id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -104,7 +106,7 @@ func (h *Handler) Archive(c *gin.Context) {
 	if !ok {
 		return
 	}
-	memory, err := h.service.Archive(id, true)
+	memory, err := h.ownerService(c).ArchiveForOwner(memoryOwner(c), id, true)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -117,7 +119,7 @@ func (h *Handler) Restore(c *gin.Context) {
 	if !ok {
 		return
 	}
-	memory, err := h.service.Archive(id, false)
+	memory, err := h.ownerService(c).ArchiveForOwner(memoryOwner(c), id, false)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -130,7 +132,7 @@ func (h *Handler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.Delete(id); err != nil {
+	if err := h.ownerService(c).DeleteForOwner(memoryOwner(c), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -143,7 +145,7 @@ func (h *Handler) Retrieve(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.service.Retrieve(request)
+	result, err := h.ownerService(c).RetrieveForOwner(memoryOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -152,7 +154,7 @@ func (h *Handler) Retrieve(c *gin.Context) {
 }
 
 func (h *Handler) Export(c *gin.Context) {
-	memories, err := h.service.FindAll(c.Query("projectKey"), true)
+	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -161,6 +163,23 @@ func (h *Handler) Export(c *gin.Context) {
 		"format":   "018-hai-context-memory-v1",
 		"memories": memories,
 	})
+}
+
+func (h *Handler) ownerService(c *gin.Context) OwnerScopedService {
+	scoped, ok := h.service.(OwnerScopedService)
+	if !ok {
+		panic("memory handler requires owner-scoped service")
+	}
+	return scoped
+}
+
+func memoryOwner(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
 }
 
 func parseID(c *gin.Context) (uuid.UUID, bool) {

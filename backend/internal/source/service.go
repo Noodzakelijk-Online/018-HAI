@@ -1126,14 +1126,10 @@ func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *
 	if s.memoryService == nil || source == nil || extraction == nil {
 		return
 	}
-	if strings.TrimSpace(source.OwnerIdentity) != "" {
-		s.audit(source.ID, "memory.source_skipped_owner_scope", "owner-scoped source was not copied into the global memory store")
-		return
-	}
 	if extraction.Sensitive || extraction.Uncertain || extraction.Summary == "" {
 		return
 	}
-	created, err := s.memoryService.Create(memory.CreateRequest{
+	created, err := memory.CreateForOwner(s.memoryService, source.OwnerIdentity, memory.CreateRequest{
 		ProjectKey:  extraction.ProjectKey,
 		Kind:        "source",
 		Content:     extraction.Summary,
@@ -1157,12 +1153,12 @@ func (s *service) rememberExtractionCorrection(before, after *models.SourceExtra
 		return
 	}
 	source, _ := s.repo.FindSource(after.SourceID)
-	if source != nil && strings.TrimSpace(source.OwnerIdentity) != "" {
-		s.audit(after.SourceID, "memory.correction_skipped_owner_scope", "owner-scoped source correction was not copied into the global memory store")
-		return
-	}
 	request := extractionCorrectionMemoryRequest(source, before, after)
-	created, err := s.memoryService.Create(request)
+	ownerIdentity := ""
+	if source != nil {
+		ownerIdentity = source.OwnerIdentity
+	}
+	created, err := memory.CreateForOwner(s.memoryService, ownerIdentity, request)
 	if err != nil {
 		s.audit(after.SourceID, "extraction.correction_memory_failed", compact(safety.RedactSecrets(err.Error()), 240))
 		return
