@@ -100,10 +100,9 @@ func TestEncryptedPayloadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
+func TestImportDefersActionWhenConfiguredPursuitLinkerLacksLifecycleRouter(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
-	workflowID := uuid.New()
-	workflowSpy := &memoryEngineWorkflowStub{recordID: workflowID}
+	workflowSpy := &memoryEngineWorkflowStub{recordID: uuid.New()}
 	pursuitSpy := &memoryEnginePursuitLinker{}
 	service := NewServiceWithPursuitLinker(
 		repo,
@@ -128,47 +127,15 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import returned error: %v", err)
 	}
-	if len(result.WorkflowIDs) != 1 || result.WorkflowIDs[0] != workflowID {
-		t.Fatalf("workflow ids = %#v, want %s", result.WorkflowIDs, workflowID)
+	if len(result.WorkflowIDs) != 0 || len(workflowSpy.intakeRequests) != 0 || len(pursuitSpy.requests) != 0 {
+		t.Fatalf("partial pursuit integration created workflow work: ids=%#v direct=%#v links=%#v", result.WorkflowIDs, workflowSpy.intakeRequests, pursuitSpy.requests)
 	}
-	if len(result.PursuitLinks) != 1 || !result.PursuitLinks[0].Linked || result.PursuitLinks[0].PursuitID == uuid.Nil {
-		t.Fatalf("pursuit link result = %#v, want visible linked pursuit", result.PursuitLinks)
-	}
-	if result.PursuitLinks[0].Message == "" {
-		t.Fatalf("pursuit link message missing from import result: %#v", result.PursuitLinks[0])
-	}
-	if len(workflowSpy.intakeRequests) != 1 {
-		t.Fatalf("workflow intake requests = %d, want 1", len(workflowSpy.intakeRequests))
-	}
-	intake := workflowSpy.intakeRequests[0]
-	if intake.ProjectKey != "vivare" || intake.SourceType != "ai_chat" || intake.Trigger != "memory_engine.import" {
-		t.Fatalf("workflow intake = %#v", intake)
-	}
-	if intake.OwnerIdentity != "alice" {
-		t.Fatalf("workflow owner = %q, want alice", intake.OwnerIdentity)
-	}
-	if !intake.RequiresReview || !strings.Contains(intake.ReviewReason, "Robert") {
-		t.Fatalf("workflow review gate = %#v", intake)
-	}
-	if len(pursuitSpy.requests) != 1 {
-		t.Fatalf("pursuit linker requests = %d, want 1", len(pursuitSpy.requests))
-	}
-	linkRequest := pursuitSpy.requests[0]
-	if linkRequest.WorkflowID != workflowID || linkRequest.ProjectKey != "vivare" || linkRequest.SourceType != "ai_chat" || linkRequest.ConversationID != result.Conversation.ID || linkRequest.ConversationSourceURI != result.Conversation.SourceURI || linkRequest.ConversationLabel != result.Conversation.Title {
-		t.Fatalf("pursuit link request = %#v", linkRequest)
-	}
-	if !linkRequest.AllowCreateCandidate {
-		t.Fatalf("AI-chat action workflows must be allowed to create reviewable pursuit candidates when no match exists")
-	}
-	if !strings.Contains(linkRequest.SourceID, result.Conversation.ID.String()+":") {
-		t.Fatalf("source id = %q, want conversation:insight identity", linkRequest.SourceID)
-	}
-	if linkRequest.SourceURI != "https://chatgpt.com/c/thread-vivare-action" || linkRequest.SourceLabel != "chatgpt: Vivare legal dispute" {
-		t.Fatalf("source ref = %q/%q", linkRequest.SourceURI, linkRequest.SourceLabel)
+	if !strings.Contains(strings.Join(result.Warnings, " "), "configured pursuit linker is missing the lifecycle router") {
+		t.Fatalf("deferred import warning missing: %#v", result.Warnings)
 	}
 }
 
-func TestImportHoldsLowRiskActionForReviewWithoutPursuitGateway(t *testing.T) {
+func TestImportDefersLowRiskActionWithoutPursuitGateway(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
 	workflowSpy := &memoryEngineWorkflowStub{recordID: uuid.New()}
 	pursuitSpy := &memoryEnginePursuitLinker{}
@@ -180,7 +147,7 @@ func TestImportHoldsLowRiskActionForReviewWithoutPursuitGateway(t *testing.T) {
 		pursuitSpy,
 	)
 
-	_, err := service.Import(ImportRequest{
+	result, err := service.Import(ImportRequest{
 		OwnerIdentity: "alice",
 		Platform:      "chatgpt",
 		ExternalID:    "thread-low-risk-action",
@@ -194,12 +161,11 @@ func TestImportHoldsLowRiskActionForReviewWithoutPursuitGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import returned error: %v", err)
 	}
-	if len(workflowSpy.intakeRequests) != 1 {
-		t.Fatalf("workflow intake requests = %d, want 1", len(workflowSpy.intakeRequests))
+	if len(result.WorkflowIDs) != 0 || len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("partial pursuit integration created low-risk work: ids=%#v direct=%#v", result.WorkflowIDs, workflowSpy.intakeRequests)
 	}
-	request := workflowSpy.intakeRequests[0]
-	if !request.RequiresReview || !strings.Contains(request.ReviewReason, "pursuit lifecycle router is unavailable") {
-		t.Fatalf("fallback AI-chat workflow must remain review-gated: %#v", request)
+	if !strings.Contains(strings.Join(result.Warnings, " "), "configured pursuit linker is missing the lifecycle router") {
+		t.Fatalf("deferred import warning missing: %#v", result.Warnings)
 	}
 }
 
@@ -277,7 +243,7 @@ func TestImportDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *tes
 	}
 }
 
-func TestImportRoutesContradictionsAndHighRisksToGovernedWorkflows(t *testing.T) {
+func TestImportDefersContradictionsAndHighRisksWithoutPursuitGateway(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
 	workflowSpy := &memoryEngineWorkflowStub{}
 	pursuitSpy := &memoryEnginePursuitLinker{}
@@ -309,34 +275,15 @@ func TestImportRoutesContradictionsAndHighRisksToGovernedWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("Import returned error: %v", err)
 	}
-	if len(result.WorkflowIDs) != 2 {
-		t.Fatalf("workflow ids = %#v, want two review-critical workflows", result.WorkflowIDs)
+	if len(result.WorkflowIDs) != 0 || len(workflowSpy.intakeRequests) != 0 || len(pursuitSpy.requests) != 0 {
+		t.Fatalf("partial pursuit integration created review-critical work: ids=%#v direct=%#v links=%#v", result.WorkflowIDs, workflowSpy.intakeRequests, pursuitSpy.requests)
 	}
-	if len(workflowSpy.intakeRequests) != 2 {
-		t.Fatalf("workflow intake requests = %d, want 2", len(workflowSpy.intakeRequests))
+	if len(result.Warnings) != 2 {
+		t.Fatalf("warnings = %#v, want one deferred warning per review-critical insight", result.Warnings)
 	}
-	contentTypes := map[string]workflow.IntakeRequest{}
-	for _, request := range workflowSpy.intakeRequests {
-		contentTypes[request.ContentType] = request
-	}
-	for _, contentType := range []string{"ai_chat_contradiction", "ai_chat_risk"} {
-		request, ok := contentTypes[contentType]
-		if !ok {
-			t.Fatalf("missing workflow intake content type %s in %#v", contentType, workflowSpy.intakeRequests)
-		}
-		if request.ProjectKey != "vivare" || request.SourceType != "ai_chat" || request.Trigger != "memory_engine.import" {
-			t.Fatalf("workflow intake %s = %#v", contentType, request)
-		}
-		if !request.RequiresReview || request.ReviewReason == "" {
-			t.Fatalf("workflow intake %s missing review gate: %#v", contentType, request)
-		}
-	}
-	if len(pursuitSpy.requests) != 2 {
-		t.Fatalf("pursuit workflow link requests = %d, want 2", len(pursuitSpy.requests))
-	}
-	for _, request := range pursuitSpy.requests {
-		if !request.AllowCreateCandidate || request.ProjectKey != "vivare" || request.SourceType != "ai_chat" {
-			t.Fatalf("pursuit link request = %#v, want candidate-capable ai_chat request", request)
+	for _, warning := range result.Warnings {
+		if !strings.Contains(warning, "configured pursuit linker is missing the lifecycle router") {
+			t.Fatalf("unexpected deferred warning: %q", warning)
 		}
 	}
 }

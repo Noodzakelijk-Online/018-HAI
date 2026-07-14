@@ -191,6 +191,9 @@ func (s *service) intakeWorkflow(request workflow.IntakeRequest) (*workflow.Work
 	if router, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter); ok {
 		return router.RouteWorkflowIntake(request)
 	}
+	if s.pursuitLinker != nil {
+		return nil, pursuit.ErrLifecycleRouterRequired
+	}
 	if s.workflowService == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
@@ -577,6 +580,10 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 	if err != nil {
 		if _, pending := pursuit.IsCandidatePending(err); pending {
 			s.audit(source.ID, "pursuit.intake_deferred", "source sync failure created or matched a pursuit candidate; workflow creation awaits explicit acceptance")
+			return
+		}
+		if errors.Is(err, pursuit.ErrLifecycleRouterRequired) {
+			s.audit(source.ID, "pursuit.intake_deferred", "source sync failure retained; configured pursuit linker is missing the lifecycle router")
 			return
 		}
 		s.audit(source.ID, "source.failure_workflow_failed", compact(err.Error(), 260))
@@ -1335,17 +1342,6 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 	}, "\n")
 	requiresReview := extraction.Uncertain || extraction.Sensitive
 	reviewReason := extractionReviewReason(extraction)
-	if s.pursuitLinker != nil && !s.routesWorkflowThroughPursuits() {
-		// A linker without the lifecycle router can discover a reviewable
-		// candidate only after it receives this workflow. Hold the workflow in
-		// review so fallback correlation cannot create executable work before the
-		// candidate is explicitly accepted.
-		requiresReview = true
-		if reviewReason != "" {
-			reviewReason += "; "
-		}
-		reviewReason += "pursuit lifecycle router is unavailable; hold source-derived workflow for review before execution"
-	}
 	record, err := s.intakeWorkflow(workflow.IntakeRequest{
 		OwnerIdentity:  source.OwnerIdentity,
 		Input:          input,
@@ -1368,6 +1364,10 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 				message = routed.Message
 			}
 			s.audit(source.ID, "pursuit.intake_deferred", compact(message, 260))
+			return nil
+		}
+		if errors.Is(err, pursuit.ErrLifecycleRouterRequired) {
+			s.audit(source.ID, "pursuit.intake_deferred", "actionable extraction retained; configured pursuit linker is missing the lifecycle router")
 			return nil
 		}
 		s.audit(source.ID, "workflow.intake_failed", err.Error())

@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -145,6 +146,9 @@ func (s *service) intakeWorkflow(request workflow.IntakeRequest) (*workflow.Work
 	if router, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter); ok {
 		return router.RouteWorkflowIntake(request)
 	}
+	if s.pursuitLinker != nil {
+		return nil, pursuitpkg.ErrLifecycleRouterRequired
+	}
 	if s.workflowService == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
@@ -272,16 +276,6 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		if s.workflowService != nil && workflowEligibleInsight(*stored) {
 			requiresReview := workflowInsightRequiresReview(*stored)
 			reviewReasonValue := reviewReason(*stored)
-			if s.pursuitLinker != nil && !s.routesWorkflowThroughPursuits() {
-				// Without the pursuit lifecycle router, correlation happens only
-				// after workflow creation. Keep this fallback work review-gated so
-				// an unaccepted candidate cannot gain executable work indirectly.
-				requiresReview = true
-				if reviewReasonValue != "" {
-					reviewReasonValue += "; "
-				}
-				reviewReasonValue += "pursuit lifecycle router is unavailable; hold AI-chat workflow for review before execution"
-			}
 			record, errWorkflow := s.intakeWorkflow(workflow.IntakeRequest{
 				OwnerIdentity:  saved.OwnerIdentity,
 				Input:          stored.Text,
@@ -302,6 +296,10 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 						pursuitLinks = append(pursuitLinks, *routed.AutoLink)
 					}
 					warnings = append(warnings, "workflow for "+stored.Kind+" insight awaits explicit pursuit candidate acceptance")
+					continue
+				}
+				if errors.Is(errWorkflow, pursuitpkg.ErrLifecycleRouterRequired) {
+					warnings = append(warnings, "workflow for "+stored.Kind+" insight was deferred because the configured pursuit linker is missing the lifecycle router")
 					continue
 				}
 				warnings = append(warnings, "failed to create workflow for "+stored.Kind+" insight")

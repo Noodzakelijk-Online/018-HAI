@@ -101,10 +101,10 @@ one matched only to a candidate pursuit, is recorded with its provenance and
 waits for an approval-capable operator to accept the candidate. It does not
 create an orphaned executable workflow.
 
-Standalone compatibility configurations that omit the native pursuit lifecycle
-router are intentionally more limited: derived workflows are held in review
-rather than treated as candidate-first operational intake. They are not the
-supported production wiring.
+If a pursuit linker is supplied without the native lifecycle router, derived
+workflow creation is deferred and the source or conversation import remains
+visible for repair. This fail-closed compatibility state creates no workflow;
+it is not supported production wiring.
 
 Direct \`/task/*\` planning and run sessions are useful for bounded operator
 work, but their full plan/review history is process-local. When explicitly

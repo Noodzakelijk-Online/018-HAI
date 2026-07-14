@@ -41,6 +41,10 @@ const (
 
 const defaultAutoLinkMinimumScore = 0.45
 
+// ErrLifecycleRouterRequired prevents a partially configured pursuit linker
+// from creating workflow work before pursuit matching and candidate acceptance.
+var ErrLifecycleRouterRequired = errors.New("pursuit lifecycle router is required when a pursuit linker is configured")
+
 type CreateRequest struct {
 	Actor                 string  `json:"-"`
 	OwnerIdentity         string  `json:"ownerIdentity,omitempty"`

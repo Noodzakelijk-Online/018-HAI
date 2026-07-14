@@ -618,7 +618,7 @@ func TestSyncCreatesWorkflowForActionableExtraction(t *testing.T) {
 	}
 }
 
-func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
+func TestSyncDefersActionableExtractionWhenPursuitLinkerLacksLifecycleRouter(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
 		ID:                sourceID,
@@ -656,30 +656,11 @@ func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
 	if len(result.Extractions) != 1 {
 		t.Fatalf("extractions = %d, want 1", len(result.Extractions))
 	}
-	if len(pursuitSpy.requests) != 1 {
-		t.Fatalf("pursuit auto-link requests = %d, want 1", len(pursuitSpy.requests))
+	if len(workflowSpy.requests) != 0 || len(pursuitSpy.requests) != 0 {
+		t.Fatalf("partial pursuit integration created workflow work: workflows=%#v links=%#v", workflowSpy.requests, pursuitSpy.requests)
 	}
-	request := pursuitSpy.requests[0]
-	if request.WorkflowID == uuid.Nil || request.ProjectKey != "Vivare dispute" {
-		t.Fatalf("auto-link request workflow/project = %s/%q", request.WorkflowID, request.ProjectKey)
-	}
-	if request.OwnerIdentity != "alice" {
-		t.Fatalf("auto-link owner = %q, want alice", request.OwnerIdentity)
-	}
-	if !request.AllowCreateCandidate {
-		t.Fatalf("source-derived workflows must be allowed to create reviewable pursuit candidates when no match exists")
-	}
-	if !workflowSpy.requests[0].RequiresReview || !strings.Contains(workflowSpy.requests[0].ReviewReason, "pursuit lifecycle router is unavailable") {
-		t.Fatalf("fallback source workflow must remain review-gated: %#v", workflowSpy.requests[0])
-	}
-	if request.ExtractionID != result.Extractions[0].ID.String() || request.RawItemID != result.Extractions[0].RawItemID.String() {
-		t.Fatalf("auto-link source ids = %q/%q, want %s/%s", request.ExtractionID, request.RawItemID, result.Extractions[0].ID, result.Extractions[0].RawItemID)
-	}
-	if request.SourceURI != "mailto:lawyer@example.test" || request.SourceLabel != "Lawyer follow-up" {
-		t.Fatalf("auto-link source reference = %q/%q", request.SourceURI, request.SourceLabel)
-	}
-	if !repo.hasAudit("pursuit.auto_linked") {
-		t.Fatalf("expected pursuit auto-link audit record")
+	if !repo.hasAudit("pursuit.intake_deferred") || repo.hasAudit("workflow.intake_created") || repo.hasAudit("workflow.intake_failed") {
+		t.Fatalf("source intake was not retained as a clean deferred state")
 	}
 }
 
