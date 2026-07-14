@@ -1,0 +1,39 @@
+package automation
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"automation-hub-backend/internal/identity"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TestAutomationRoutesRequireVerifiedOperator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	unauthenticated := gin.New()
+	unauthenticatedRoutes := unauthenticated.Group("/automation")
+	unauthenticatedRoutes.Use(RequireAuthenticatedOperator())
+	unauthenticatedRoutes.GET("/", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	unauthenticatedRecorder := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(unauthenticatedRecorder, httptest.NewRequest(http.MethodGet, "/automation/", nil))
+	if unauthenticatedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated automation route status = %d, want %d: %s", unauthenticatedRecorder.Code, http.StatusUnauthorized, unauthenticatedRecorder.Body.String())
+	}
+
+	authenticated := gin.New()
+	authenticated.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "robert")
+		c.Next()
+	})
+	authenticatedRoutes := authenticated.Group("/automation")
+	authenticatedRoutes.Use(RequireAuthenticatedOperator())
+	authenticatedRoutes.GET("/", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	authenticatedRecorder := httptest.NewRecorder()
+	authenticated.ServeHTTP(authenticatedRecorder, httptest.NewRequest(http.MethodGet, "/automation/", nil))
+	if authenticatedRecorder.Code != http.StatusNoContent {
+		t.Fatalf("authenticated automation route status = %d, want %d: %s", authenticatedRecorder.Code, http.StatusNoContent, authenticatedRecorder.Body.String())
+	}
+}

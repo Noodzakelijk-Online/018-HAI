@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +26,30 @@ func NewHandler(service Service) *Handler {
 
 func DefaultHandler() *Handler {
 	return NewHandler(DefaultService())
+}
+
+// RequireAuthenticatedOperator protects the shared local automation registry.
+// Automation configuration is not per-owner data, but it can expose launch
+// targets and trigger controlled runtimes. Browser/API callers must therefore
+// carry a verified IDP identity; in-process schedulers continue to use service
+// methods directly.
+func RequireAuthenticatedOperator() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if verifiedAutomationActor(c) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "an authenticated operator session is required for automation access"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func verifiedAutomationActor(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
 }
 
 func (h *Handler) ImageHandler(c *gin.Context) {

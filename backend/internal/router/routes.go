@@ -226,6 +226,7 @@ func backendAPIKeyMiddleware() gin.HandlerFunc {
 
 func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *automation.Handler) error {
 	automations := apiVersion.Group("/automation")
+	automations.Use(automation.RequireAuthenticatedOperator())
 	{
 		automations.GET("/swap/:id1/:id2", autoHandler.SwapPosition)
 		automations.GET("/", autoHandler.GetAll)

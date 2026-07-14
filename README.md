@@ -68,6 +68,9 @@ Recent hardening in the current baseline:
   HAI OS browser/API routes require a verified owner session. Their operations
   retain that identity end to end; ownerless work is limited to controlled
   in-process schedulers and workers.
+- The shared local automation registry also requires a verified operator
+  session before it exposes targets, accepts configuration changes, probes
+  health, or launches/stops a controlled runtime.
 - Task execution classifies external communication, legal/government,
   financial, account, publication, and deletion requests as high risk. State
   changes such as deployment or repository mutation are medium risk. Both are
