@@ -219,7 +219,7 @@ func (h *Handler) DeleteByID(c *gin.Context) {
 // @Failure 400 {object} map[string]string "Bad Request"
 // @Failure 404 {object} map[string]string "Not Found"
 // @Failure 500 {object} map[string]string "Internal Server Error"
-// @Router /automations/{id1}/swap/{id2} [get]
+// @Router /automations/{id1}/swap/{id2} [patch]
 func (h *Handler) SwapPosition(c *gin.Context) {
 	id1Str := c.Param("id1")
 	id2Str := c.Param("id2")

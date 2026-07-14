@@ -26,7 +26,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	}
 
 	a := r.Group("/api/v1").Group("/automation")
-	a.GET("/swap/:id1/:id2", mark("swap"))
+	a.PATCH("/swap/:id1/:id2", mark("swap"))
 	a.GET("/", mark("getAll"))
 	a.GET("/health/summary", mark("summary"))
 	a.GET("/health-summary", mark("summary"))
@@ -165,7 +165,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/automation/abc/diagnostics", "diagnostics"},
 		{"GET", "/api/v1/automation/abc", "getByID"},
 		{"GET", "/api/v1/automation/images/logo.png", "image"},
-		{"GET", "/api/v1/automation/swap/1/2", "swap"},
+		{"PATCH", "/api/v1/automation/swap/1/2", "swap"},
 		{"GET", "/api/v1/agent-runtimes/", "agentRuntimeRegistry"},
 		{"GET", "/api/v1/agent-runtimes/health", "agentRuntimeHealth"},
 		{"GET", "/api/v1/agent-runtimes/openclaw/skills", "agentRuntimeSkills"},

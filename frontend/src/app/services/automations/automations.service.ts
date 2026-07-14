@@ -70,7 +70,7 @@ export class AutomationsService implements IAutomationsService {
   }
 
   swapAutomations(automation_id1: string, automation_id2: string): Observable<void> {
-    return this.http.get<void>(`${this.apiUrl}/swap/${automation_id1}/${automation_id2}`);
+    return this.http.patch<void>(`${this.apiUrl}/swap/${automation_id1}/${automation_id2}`, {});
   }
 
   getHealthSummary(): Observable<IAutomationHealthSummary> {

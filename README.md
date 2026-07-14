@@ -103,6 +103,10 @@ the workflow remains the restart-safe execution ledger.
 - Stopping a runtime task requires an approval-capable role. Uploading,
   selecting, or refreshing the shared OpenClaw ecosystem requires an owner
   role because it changes the host-wide runtime configuration.
+- The shared automation registry follows the same boundary: reads are role
+  scoped, launch/stop actions require approval capability, health checks
+  require write capability, and create/update/delete/reorder operations require
+  an owner. Reordering uses `PATCH`, never a side-effecting `GET` request.
 - Ownerless legacy workflows, sources, extractions, and imported conversation
   archives are read-compatible only for local-development compatibility.
   Authenticated users cannot adopt, delete, or mutate them. Ownerless scheduler
