@@ -1698,6 +1698,9 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	if err != nil {
 		return nil, err
 	}
+	if err := ensurePursuitOpen(*pursuit, "add operational work to"); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(request.Input) == "" {
 		return nil, fmt.Errorf("input is required")
 	}
@@ -1848,6 +1851,9 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 	if err != nil {
 		return nil, err
 	}
+	if err := ensurePursuitOpen(*pursuit, "plan"); err != nil {
+		return nil, err
+	}
 	existing, err := s.Detail(id)
 	if err != nil {
 		return nil, err
@@ -1909,7 +1915,11 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 }
 
 func (s *service) ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error) {
-	if _, err := s.repo.FindByID(id); err != nil {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensurePursuitOpen(*pursuit, "resolve a decision for"); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(request.DecisionID) == "" {
@@ -2055,6 +2065,9 @@ func (s *service) RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, er
 	detail, err := s.Detail(id)
 	if err != nil {
 		return nil, err
+	}
+	if pursuitClosed(detail.Pursuit) {
+		return detail, nil
 	}
 	pursuit := detail.Pursuit
 	pursuit.CurrentStateSummary = detail.Summary.CurrentState
@@ -3579,6 +3592,13 @@ func pursuitClosed(pursuit models.Pursuit) bool {
 	return pursuit.Archived ||
 		strings.EqualFold(pursuit.Status, StatusCompleted) ||
 		strings.EqualFold(pursuit.CompletionState, CompletionVerified)
+}
+
+func ensurePursuitOpen(pursuit models.Pursuit, action string) error {
+	if !pursuitClosed(pursuit) {
+		return nil
+	}
+	return fmt.Errorf("cannot %s a closed pursuit; reopen it explicitly or create a new pursuit", action)
 }
 
 func isPursuitCandidate(pursuit models.Pursuit) bool {

@@ -1123,6 +1123,65 @@ func TestDashboardExcludesClosedPursuitsFromOperationalQueues(t *testing.T) {
 	}
 }
 
+func TestClosedPursuitRejectsOperationalMutationAndSummaryRefresh(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Completed legal evidence pursuit", ProjectKey: "vivare"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	stored, _ := repo.FindByID(created.ID)
+	stored.Status = StatusCompleted
+	stored.CompletionState = CompletionVerified
+	if _, err := repo.Update(stored); err != nil {
+		t.Fatalf("mark pursuit complete: %v", err)
+	}
+
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "intake",
+			run: func() error {
+				_, err := service.Intake(created.ID, IntakeRequest{Input: "Draft another lawyer response"})
+				return err
+			},
+		},
+		{
+			name: "plan",
+			run: func() error {
+				_, err := service.Plan(created.ID, PlanRequest{})
+				return err
+			},
+		},
+		{
+			name: "decision",
+			run: func() error {
+				_, err := service.ResolveDecision(created.ID, DecisionResolutionRequest{DecisionID: "workflow:late:approval", Approved: true})
+				return err
+			},
+		},
+	}
+	for _, operation := range operations {
+		if err := operation.run(); err == nil || !strings.Contains(err.Error(), "closed pursuit") {
+			t.Fatalf("%s error = %v, want closed pursuit rejection", operation.name, err)
+		}
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("closed pursuit created %d workflow(s)", workflowService.calls)
+	}
+
+	refreshed, err := service.RefreshSummary(created.ID, "system")
+	if err != nil {
+		t.Fatalf("RefreshSummary returned error: %v", err)
+	}
+	if refreshed.Pursuit.Status != StatusCompleted || refreshed.Pursuit.CompletionState != CompletionVerified {
+		t.Fatalf("closed pursuit was reactivated by refresh: %#v", refreshed.Pursuit)
+	}
+}
+
 func TestDetailSeparatesRobertVAAndSystemActionQueues(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
