@@ -65,3 +65,8 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 - **Follow-up:** adopt the `apierror` envelope uniformly across handlers (error
   shapes currently vary; frontend depends on the existing shapes — migrate both
   together).
+
+**Authorization correction (2026-07-14):** HAI engine APIs are gateway-session
+protected and use the verified token's read/write/approve/admin permission.
+Direct backend clients also require the configured backend key. Request headers
+never grant a role.

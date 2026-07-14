@@ -196,7 +196,7 @@ func localCaptureCORSMiddleware() gin.HandlerFunc {
 		if origin != "" && allowed {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, X-HAI-Backend-Key")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HAI-Backend-Key")
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		}
 		if c.Request.Method == http.MethodOptions {

@@ -309,6 +309,9 @@ func TestLocalCaptureCORSAllowsExtensionPreflight(t *testing.T) {
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "chrome-extension://example-extension" {
 		t.Fatalf("allow origin = %q", got)
 	}
+	if got := w.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, X-HAI-Backend-Key" {
+		t.Fatalf("allow headers = %q", got)
+	}
 }
 
 func TestLocalCaptureCORSRejectsUntrustedPreflight(t *testing.T) {

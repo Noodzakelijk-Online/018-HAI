@@ -161,4 +161,10 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | N/A | 1 |
 | **Total** | **112** |
 
+**Authorization correction (2026-07-14):** historical entries that describe an
+`X-HAI-Role` fallback are superseded. Current HAI accepts role authority only
+from verified IDP JWT claims; the IDP emits signed owner/operator/viewer roles,
+refreshes access tokens from the persisted user role, and unknown or missing
+roles are viewer-only.
+
 **Reading of the roll-up:** the product's critical path (dashboard → source → task → LLM routing → approval → controlled execution → verification → workflow → audit) is substantially built and builds cleanly. The gaps concentrate in cross-cutting product polish (search/pagination, templates, analytics, feature flags, onboarding, RBAC) and in formal QA/sign-off artifacts (red-team loops, accessibility, performance, backup/restore, dedicated security & privacy docs). None are `Blocked`; all `Missing` items are buildable in later runs.
