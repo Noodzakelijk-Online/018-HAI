@@ -125,6 +125,10 @@ the workflow remains the restart-safe execution ledger.
 - High-risk communication, legal/government, financial, account, public-post,
   deletion, destructive-file, and broad-host actions require explicit approval
   and do not run from a generic transition or chat request.
+- Auto-created pursuit candidates are not active operational work. Generic
+  pursuit intake and planning reject them; an approval-capable user must use
+  the separate candidate-acceptance action before HAI can create or unlock the
+  governed workflow path.
 - The runtime registry enforces emergency stop at its own boundary, including
   direct Hermes, Odysseus, and OpenClaw registry execution calls.
 - Runtime execution is constrained by enablement flags, allowlisted tools,
@@ -291,7 +295,7 @@ areas are:
 - \`/llm\`: policy, probes, routing, generation, and redacted decision history.
 - \`/memory\` and \`/memory-engine\`: compact memory, encrypted conversation import, search, and insights.
 - \`/sources\`: source registry, connectors, sync, extraction management, search, and audit records.
-- \`/pursuits\`: high-level objectives, matching, intake, links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, and planning.
+- \`/pursuits\`: high-level objectives, matching, intake, links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
 - \`/workflow\`: intake, state transitions, approvals, due work, follow-ups, quality/review state, and dashboard data.
 - \`/task\`: bounded plans/runs, logs, and review queue.
 - \`/verification\`: grounded answers and verification run history.

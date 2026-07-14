@@ -109,6 +109,10 @@ export class PursuitService {
     return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/plan`, request).pipe(map((detail) => this.normalizeDetail(detail)));
   }
 
+  acceptCandidate(id: string, request: IPursuitPlanRequest = {}): Observable<IPursuitDetail> {
+    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/candidate/accept`, request).pipe(map((detail) => this.normalizeDetail(detail)));
+  }
+
   resolveDecision(id: string, request: IPursuitDecisionResolutionRequest): Observable<IPursuitDetail> {
     return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/decisions/resolve`, request).pipe(map((detail) => this.normalizeDetail(detail)));
   }

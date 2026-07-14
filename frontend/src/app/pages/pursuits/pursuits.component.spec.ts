@@ -1,5 +1,6 @@
 import { FormBuilder } from '@angular/forms';
-import { IPursuitAction, IPursuitDetail } from '../../models/pursuit.model.interface';
+import { of } from 'rxjs';
+import { IPursuitAction, IPursuitDecision, IPursuitDetail } from '../../models/pursuit.model.interface';
 import { PursuitsComponent } from './pursuits.component';
 
 describe('PursuitsComponent action lanes', () => {
@@ -7,7 +8,7 @@ describe('PursuitsComponent action lanes', () => {
   let notification: jasmine.SpyObj<{ info: (title: string, content: string) => void }>;
 
   beforeEach(() => {
-    notification = jasmine.createSpyObj('NzNotificationService', ['info']);
+    notification = jasmine.createSpyObj('NzNotificationService', ['info', 'success', 'error']);
     component = new PursuitsComponent(
       new FormBuilder(),
       {} as any,
@@ -58,5 +59,28 @@ describe('PursuitsComponent action lanes', () => {
 
     expect(component.openAction).not.toHaveBeenCalled();
     expect(notification.info).toHaveBeenCalledWith('System-ready lane', 'There is no system-ready action to open for this pursuit.');
+  });
+
+  it('uses the explicit candidate acceptance endpoint for an approved candidate decision', () => {
+    const candidate = { id: 'candidate-1', riskLevel: 'medium' } as any;
+    const detail = { pursuit: candidate } as IPursuitDetail;
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.acceptCandidate = jasmine.createSpy('acceptCandidate').and.returnValue(of(detail));
+    component.selected = detail;
+    spyOn(component, 'load');
+    const decision: IPursuitDecision = {
+      id: 'pursuit:candidate-1:candidate-review',
+      decisionType: 'pursuit_candidate_review',
+      riskLevel: 'medium',
+      reason: 'Confirm this imported objective before planning work.',
+    } as IPursuitDecision;
+
+    (component as any).resolvePursuitCandidateReview(decision, true);
+
+    expect(pursuitService.acceptCandidate).toHaveBeenCalledWith('candidate-1', {
+      requiresReview: false,
+      reviewReason: decision.reason,
+    });
+    expect(notification.success).toHaveBeenCalledWith('Candidate accepted', 'HAI converted the candidate into governed pursuit work.');
   });
 });

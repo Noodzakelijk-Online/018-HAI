@@ -2,8 +2,10 @@ package pursuit
 
 import (
 	"automation-hub-backend/internal/identity"
+	"automation-hub-backend/internal/rbac"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -299,9 +301,53 @@ func (h *Handler) Plan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if detail, err := h.service.DetailForOwner(pursuitOwner(c), id); err != nil || detail == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
+		return
+	} else if isPursuitCandidate(detail.Pursuit) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pursuit candidate acceptance requires the explicit approval action"})
+		return
+	}
 	request.Actor = verifiedActor(c, "operator")
 	_, err := h.service.PlanForOwner(pursuitOwner(c), id, request)
 	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	h.respondScopedDetail(c, id, http.StatusCreated)
+}
+
+// AcceptCandidate is deliberately separate from generic planning. Accepting an
+// auto-created pursuit candidate is an auditable approval decision, so its
+// route requires approval capability before it may create or unlock work.
+func (h *Handler) AcceptCandidate(c *gin.Context) {
+	id, ok := parsePursuitID(c)
+	if !ok {
+		return
+	}
+	if !pursuitApprovalAllowed(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "approval permission is required to accept a pursuit candidate"})
+		return
+	}
+	if !h.ensurePursuitMutable(c, id) {
+		return
+	}
+	var request PlanRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	detail, err := h.service.DetailForOwner(pursuitOwner(c), id)
+	if err != nil || detail == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
+		return
+	}
+	if !isPursuitCandidate(detail.Pursuit) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "only an unaccepted pursuit candidate can use the candidate acceptance action"})
+		return
+	}
+	request.Actor = verifiedActor(c, "operator")
+	if _, err := h.service.PlanForOwner(pursuitOwner(c), id, request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -480,6 +526,13 @@ func (h *Handler) respondScopedDetail(c *gin.Context, id uuid.UUID, status int) 
 
 func pursuitOwner(c *gin.Context) string {
 	return verifiedActor(c, "")
+}
+
+func pursuitApprovalAllowed(c *gin.Context) bool {
+	value, _ := c.Get(identity.ContextRoleKey)
+	role, _ := value.(string)
+	role = strings.ToLower(strings.TrimSpace(role))
+	return rbac.Can(rbac.Role(role), rbac.PermApprove)
 }
 
 // verifiedActor deliberately ignores client-provided actor labels. When HAI is

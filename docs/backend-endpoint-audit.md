@@ -55,10 +55,14 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
   It compiles only already VA-ready workflow context, checklists, source links,
   delivery expectations, and escalation rules. It creates no assignment, does
   not grant external authority, and cannot execute or send anything.
-- Pursuit intake, planning, decision resolution, and summary refresh execute
+- Pursuit intake, planning, candidate acceptance, decision resolution, and summary refresh execute
   through owner-scoped service paths. Those paths filter legacy cross-owner
   links before deriving evidence, creating workflow follow-ups, or changing a
   pursuit's summary or completion state.
+- Auto-created pursuit candidates cannot use generic planning or intake. Only
+  `POST /pursuits/:id/candidate/accept` may activate one, and that route plus
+  its handler require approval capability before it can create or unlock
+  governed work.
 - Authenticated pursuit mutation routes reject ownerless legacy pursuits. They
   remain read-compatible for local migration, while empty-owner in-process
   workers retain the only supported path for controlled legacy maintenance.

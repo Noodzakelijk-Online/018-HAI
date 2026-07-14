@@ -323,6 +323,119 @@ func TestCandidateIntakeEndpointRejectsUnacceptedOperationalWork(t *testing.T) {
 	}
 }
 
+func TestCandidateAcceptanceUsesExplicitApprovalEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	workflows := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflows)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Imported candidate",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "source_pursuit_candidate",
+		Status:           StatusWaiting,
+	})
+	if err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Set(identity.ContextRoleKey, "operator")
+		c.Next()
+	})
+	handler := NewHandler(service)
+	router.POST("/pursuits/:id/plan", handler.Plan)
+	router.POST("/pursuits/:id/candidate/accept", handler.AcceptCandidate)
+
+	plan := httptest.NewRecorder()
+	planRequest := httptest.NewRequest(http.MethodPost, "/pursuits/"+candidate.ID.String()+"/plan", strings.NewReader(`{}`))
+	planRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(plan, planRequest)
+	if plan.Code != http.StatusBadRequest || !strings.Contains(plan.Body.String(), "explicit approval action") {
+		t.Fatalf("generic candidate plan = %d %s, want explicit acceptance rejection", plan.Code, plan.Body.String())
+	}
+	if workflows.calls != 0 {
+		t.Fatalf("generic candidate plan created %d workflow(s)", workflows.calls)
+	}
+
+	accept := httptest.NewRecorder()
+	acceptRequest := httptest.NewRequest(http.MethodPost, "/pursuits/"+candidate.ID.String()+"/candidate/accept", strings.NewReader(`{}`))
+	acceptRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(accept, acceptRequest)
+	if accept.Code != http.StatusCreated {
+		t.Fatalf("candidate acceptance = %d, want %d; body=%s", accept.Code, http.StatusCreated, accept.Body.String())
+	}
+	if workflows.calls != 1 {
+		t.Fatalf("candidate acceptance created %d workflow(s), want one", workflows.calls)
+	}
+}
+
+func TestCandidateAcceptanceEndpointRejectsNonApprover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	workflows := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflows)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Imported candidate",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "source_pursuit_candidate",
+		Status:           StatusWaiting,
+	})
+	if err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Set(identity.ContextRoleKey, "viewer")
+		c.Next()
+	})
+	router.POST("/pursuits/:id/candidate/accept", NewHandler(service).AcceptCandidate)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/pursuits/"+candidate.ID.String()+"/candidate/accept", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("non-approver candidate acceptance = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	if workflows.calls != 0 {
+		t.Fatalf("non-approver candidate acceptance created %d workflow(s)", workflows.calls)
+	}
+}
+
+func TestCandidateAcceptanceEndpointRejectsActivePursuit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	workflows := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflows)
+	active, err := service.Create(CreateRequest{Title: "Active pursuit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create active pursuit: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Set(identity.ContextRoleKey, "operator")
+		c.Next()
+	})
+	router.POST("/pursuits/:id/candidate/accept", NewHandler(service).AcceptCandidate)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/pursuits/"+active.ID.String()+"/candidate/accept", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("active pursuit candidate acceptance = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if workflows.calls != 0 {
+		t.Fatalf("active pursuit candidate acceptance created %d workflow(s)", workflows.calls)
+	}
+}
+
 func TestResolveDecisionEndpointRejectsHiddenCrossOwnerCompletionEvidence(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

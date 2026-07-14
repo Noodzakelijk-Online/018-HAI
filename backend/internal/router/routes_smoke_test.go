@@ -151,6 +151,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	pursuits.GET("/:id/approvals", mark("pursuitApprovals"))
 	pursuits.POST("/:id/intake", mark("pursuitIntake"))
 	pursuits.POST("/:id/plan", mark("pursuitPlan"))
+	pursuits.POST("/:id/candidate/accept", mark("pursuitCandidateAccept"))
 	pursuits.POST("/:id/links", mark("pursuitLink"))
 	pursuits.DELETE("/:id/links/:linkId", mark("pursuitDeleteLink"))
 
@@ -252,6 +253,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/pursuits/abc/approvals", "pursuitApprovals"},
 		{"POST", "/api/v1/pursuits/abc/intake", "pursuitIntake"},
 		{"POST", "/api/v1/pursuits/abc/plan", "pursuitPlan"},
+		{"POST", "/api/v1/pursuits/abc/candidate/accept", "pursuitCandidateAccept"},
 		{"POST", "/api/v1/pursuits/abc/links", "pursuitLink"},
 		{"DELETE", "/api/v1/pursuits/abc/links/def", "pursuitDeleteLink"},
 	}

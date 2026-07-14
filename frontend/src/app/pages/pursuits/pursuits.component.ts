@@ -1201,7 +1201,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     }
     this.resolvingDecisionId = decision.id;
     if (approved) {
-      this.pursuitsService.plan(this.selected.pursuit.id, {
+      this.pursuitsService.acceptCandidate(this.selected.pursuit.id, {
         requiresReview: decision.riskLevel === 'high',
         reviewReason: decision.reason,
       }).subscribe({
