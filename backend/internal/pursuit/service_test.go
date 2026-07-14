@@ -3148,6 +3148,13 @@ func (r *fakeRepo) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (b
 		}
 		owner := r.sourceOwners[item.SourceID]
 		return true, owner == "" || owner == ownerIdentity, nil
+	case LinkVerification:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.verificationRuns[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
 	default:
 		return false, true, nil
 	}

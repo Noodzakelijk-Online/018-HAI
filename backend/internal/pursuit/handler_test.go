@@ -179,6 +179,8 @@ func TestPursuitLinkRejectsAnotherOwnersPrivateRecords(t *testing.T) {
 	bobSourceID := uuid.New()
 	repo.sourceOwners[bobSourceID] = "bob"
 	repo.sourceItems[uuid.New()] = models.SourceRawItem{ID: uuid.New(), SourceID: bobSourceID, ExternalID: "bob-private-source", Title: "Bob private source"}
+	bobVerificationID := uuid.New()
+	repo.verificationRuns[bobVerificationID] = models.VerificationRun{ID: bobVerificationID, OwnerIdentity: "bob", Question: "Bob private verification"}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -194,6 +196,7 @@ func TestPursuitLinkRejectsAnotherOwnersPrivateRecords(t *testing.T) {
 		{linkType: LinkWorkflow, linkID: bobWorkflowID.String()},
 		{linkType: LinkMemory, linkID: bobMemoryID.String()},
 		{linkType: LinkSourceItem, linkID: "bob-private-source"},
+		{linkType: LinkVerification, linkID: bobVerificationID.String()},
 	} {
 		recorder := httptest.NewRecorder()
 		body := fmt.Sprintf(`{"linkType":%q,"linkId":%q,"relationship":"evidence"}`, target.linkType, target.linkID)
