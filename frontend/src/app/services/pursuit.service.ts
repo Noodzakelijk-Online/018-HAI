@@ -93,7 +93,16 @@ export class PursuitService {
   }
 
   routeIntake(request: IPursuitIntakeRequest): Observable<IPursuitRoutedIntakeResult> {
-    return this.http.post<IPursuitRoutedIntakeResult>(`${this.apiUrl}/intake`, request);
+    return this.http.post<IPursuitRoutedIntakeResult>(`${this.apiUrl}/intake`, request).pipe(
+      map((result) => {
+        const source = result || ({} as IPursuitRoutedIntakeResult);
+        return {
+          ...source,
+          matches: source.matches || [],
+          detail: source.detail ? this.normalizeDetail(source.detail) : undefined,
+        };
+      }),
+    );
   }
 
   plan(id: string, request: IPursuitPlanRequest = {}): Observable<IPursuitDetail> {
