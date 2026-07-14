@@ -9,16 +9,18 @@ Compose stack. It is not an unrestricted desktop agent: planning, execution,
 verification, and approval are separate; external effects remain blocked until a
 reviewed runtime, policy, and evidence path are configured.
 
-> **Current repository state, reviewed 2026-07-14:** the local operating layer
-> is implemented. The current local stack has healthy backend, frontend, IDP,
-> Postgres, Redis, and Kafka containers; nginx serves both `/` and Angular deep
-> links such as `/control-center`; gateway health routes respond; and protected
-> API requests are rejected without a signed session. Backend/IDP tests,
-> production frontend build and unit tests, Compose validation, and a
-> Postgres-backed critical-path smoke have been exercised. A complete fresh-
-> clone, signed-in Windows browser journey and any real third-party account,
-> paid model, browser-control, or broad-host-control journey are still release
-> gates, not claims of current operation.
+> **Current repository state, evidence reviewed 2026-07-14:** this repository
+> implements a governed local operating layer, including the Angular dashboard,
+> Go engines, IDP, Compose topology, pursuit/workflow routing, persistence, and
+> safety gates. On the development workspace used for this review, the Compose
+> services were healthy, nginx served `/` and Angular deep links such as
+> `/control-center`, gateway health routes responded, and protected APIs rejected
+> unsigned sessions. Those observations are local-environment evidence, not a
+> claim that every Windows machine or account integration is ready. Backend/IDP
+> tests, frontend production build and unit tests, Compose validation, and a
+> Postgres-backed critical-path smoke have been exercised. A clean-clone,
+> signed-in Windows browser journey and any real third-party account, paid
+> model, browser-control, or broad-host-control journey remain release gates.
 
 ## Product Boundary
 
@@ -52,6 +54,18 @@ for the canonical-stack decision.
 - **Live-proven**: a configured account, provider, or runtime completed a bounded approved end-to-end task on the target machine with audit and verification evidence.
 
 No configured provider, runtime, dashboard state, or generated answer upgrades itself to live-proven.
+
+### Status At A Glance
+
+| Status | Current position |
+| --- | --- |
+| Canonical product | This Go/Angular/Postgres/Docker Compose repository. The separate Manus React/tRPC/MySQL implementation is reference-only. |
+| Local platform | Compose configuration and the development-workspace stack have been exercised. A fresh Windows 11 clone-and-sign-in acceptance run is still required. |
+| Core operating flow | Pursuits, workflows, task attempts, approvals, verification, audit, compact memory, source extraction, and ambient proposals are implemented and persisted. |
+| Intake safety | New source, assistant, and ambient input is matched to an active pursuit or becomes a non-executable candidate. An approval-capable user must accept a candidate before its first governed workflow is created. |
+| External accounts | Local/export ingestion and read-only GitHub sync are available. Live Gmail, Drive, Calendar, Trello, WhatsApp, browser, and similar account connectors are not implemented. |
+| Models and runtimes | Local/free-first routing and guarded adapter surfaces exist. No provider or runtime is live-proven until its scoped probe, approved task, audit, and verification evidence exist. |
+| Production readiness | Not claimed. Clean-machine deployment, signed-in browser coverage, two-real-account isolation, and bounded real-provider/runtime exercises remain release gates. |
 
 ### Verification Snapshot
 
@@ -142,11 +156,10 @@ the workflow remains the restart-safe execution ledger.
   keep them out of the executable path; an approval-capable user must use the
   separate candidate-acceptance action before HAI can create or unlock the
   governed workflow path.
-- Source and AI-chat producers that are configured with candidate correlation
-  but without the native pursuit lifecycle router hold derived workflows in the
-  review queue. This fail-closed fallback prevents an unaccepted candidate from
-  gaining executable work indirectly; the full router is the supported
-  production integration path.
+- Source and AI-chat producers configured with candidate correlation but without
+  the native pursuit lifecycle router defer derived workflow creation entirely.
+  The imported signal remains visible for repair, but no workflow or executable
+  work is created. The full router is the supported production integration path.
 - The runtime registry enforces emergency stop at its own boundary, including
   direct Hermes, Odysseus, and OpenClaw registry execution calls.
 - Runtime execution is constrained by enablement flags, allowlisted tools,
