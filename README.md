@@ -97,6 +97,10 @@ Recent hardening in the current baseline:
   surface a completion decision or be closed through a generic update until
   Robert accepts and plans them; owner-scoped closure checks ignore any legacy
   link whose underlying evidence belongs to another user.
+- Pursuit detail aggregation fails closed when a linked operational record
+  cannot be read. The dashboard keeps the pursuit visible as blocked and
+  needing Robert rather than showing missing evidence, blockers, or runtime
+  state as an apparently safe empty result.
 
 For route-level ownership behavior, see the
 [backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that

@@ -2,6 +2,7 @@ package pursuit
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,6 +32,34 @@ func TestDashboardSerializesEmptyQueuesAsArrays(t *testing.T) {
 		if strings.Contains(string(payload), `"`+field+`":null`) {
 			t.Fatalf("dashboard field %q serialized as null: %s", field, payload)
 		}
+	}
+}
+
+func TestDetailLoadFailureBlocksDashboardInsteadOfInventingEmptyState(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Recover unavailable pursuit state", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	repo.linkedWorkflowErr = errors.New("database connection unavailable")
+
+	if _, err := service.DetailForOwner("alice", created.ID); err == nil || !strings.Contains(err.Error(), "load pursuit linked workflows") {
+		t.Fatalf("DetailForOwner error = %v, want linked-workflow load error", err)
+	}
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if dashboard.Counts["blocked"] != 1 || dashboard.Counts["needsRobert"] != 1 || len(dashboard.Blocked) != 1 || len(dashboard.NeedsRobert) != 1 {
+		t.Fatalf("dashboard hid detail failure: counts=%#v blocked=%#v needsRobert=%#v", dashboard.Counts, dashboard.Blocked, dashboard.NeedsRobert)
+	}
+	item := dashboard.Blocked[0]
+	if !strings.Contains(item.CurrentState, "temporarily unavailable") || !strings.Contains(item.NextAction, "Retry") {
+		t.Fatalf("dashboard failure item = %#v", item)
+	}
+	if len(dashboard.SystemReady) != 0 || len(dashboard.VAReady) != 0 || item.CompletionCandidate {
+		t.Fatalf("failed detail was treated as ready: %#v", dashboard)
 	}
 }
 
@@ -3716,6 +3745,7 @@ type fakeRepo struct {
 	sourceItems          map[uuid.UUID]models.SourceRawItem
 	extractions          map[uuid.UUID]models.SourceExtraction
 	sourceOwners         map[uuid.UUID]string
+	linkedWorkflowErr    error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -3963,6 +3993,9 @@ func (r *fakeRepo) FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.Pu
 }
 
 func (r *fakeRepo) FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error) {
+	if r.linkedWorkflowErr != nil {
+		return nil, r.linkedWorkflowErr
+	}
 	result := []models.WorkflowItem{}
 	for _, id := range ids {
 		if item, ok := r.workflows[id]; ok {

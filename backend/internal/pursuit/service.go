@@ -879,7 +879,10 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
 			dashboard.Counts["completed"]++
 			continue
 		}
-		item, detail, _ := s.listItemWithDetail(pursuit)
+		item, detail, detailErr := s.listItemWithDetail(pursuit)
+		if detailErr != nil {
+			item = detailUnavailableListItem(pursuit)
+		}
 		switch dashboardStatusBucket(pursuit, item) {
 		case StatusWaiting:
 			dashboard.Counts["waiting"]++
@@ -1101,8 +1104,14 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	if err != nil {
 		return nil, err
 	}
-	activity, _ := s.repo.FindActivities(id, 50)
-	taskAttempts, _ := s.repo.FindTaskAttempts(id, 20)
+	activity, err := s.repo.FindActivities(id, 50)
+	if err != nil {
+		return nil, pursuitDetailLoadError("activity", err)
+	}
+	taskAttempts, err := s.repo.FindTaskAttempts(id, 20)
+	if err != nil {
+		return nil, pursuitDetailLoadError("task attempts", err)
+	}
 	if taskAttempts == nil {
 		taskAttempts = []models.PursuitTaskAttempt{}
 	}
@@ -1113,26 +1122,80 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	verificationIDs := linkUUIDs(links, LinkVerification)
 	linkedAutomationIDs := linkUUIDs(links, LinkAutomation)
 	linkedRuntimeAttemptIDs := linkUUIDs(links, LinkAgentRuntime)
-	workflows, _ := s.repo.FindLinkedWorkflows(workflowIDs)
-	checklistItems, _ := s.repo.FindLinkedChecklistItems(workflowIDs)
+	workflows, err := s.repo.FindLinkedWorkflows(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked workflows", err)
+	}
+	checklistItems, err := s.repo.FindLinkedChecklistItems(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked checklist items", err)
+	}
 	automationIDs := uniqueUUIDs(append(linkedAutomationIDs, workflowAutomationIDs(workflows)...))
-	openLoops, _ := s.repo.FindLinkedOpenLoops(workflowIDs)
-	proposals, _ := s.repo.FindLinkedProposals(workflowIDs)
-	qualityGates, _ := s.repo.FindLinkedQualityGates(workflowIDs)
-	decisions, _ := s.repo.FindLinkedDecisions(workflowIDs)
-	transitions, _ := s.repo.FindLinkedTransitions(workflowIDs)
-	sourceLinks, _ := s.repo.FindLinkedSourceLinks(workflowIDs)
-	events, _ := s.repo.FindLinkedEvents(workflowIDs)
-	evidence, _ := s.repo.FindLinkedEvidence(workflowIDs)
-	memories, _ := s.repo.FindLinkedMemories(memoryIDs)
-	sourceItems, _ := s.repo.FindLinkedSourceItems(sourceItemIDs)
-	extractions, _ := s.repo.FindLinkedExtractions(extractionIDs)
-	verificationRuns, _ := s.repo.FindLinkedVerificationRuns(verificationIDs)
+	openLoops, err := s.repo.FindLinkedOpenLoops(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked open loops", err)
+	}
+	proposals, err := s.repo.FindLinkedProposals(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked proposals", err)
+	}
+	qualityGates, err := s.repo.FindLinkedQualityGates(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked quality gates", err)
+	}
+	decisions, err := s.repo.FindLinkedDecisions(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked decisions", err)
+	}
+	transitions, err := s.repo.FindLinkedTransitions(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked transitions", err)
+	}
+	sourceLinks, err := s.repo.FindLinkedSourceLinks(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked source links", err)
+	}
+	events, err := s.repo.FindLinkedEvents(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked events", err)
+	}
+	evidence, err := s.repo.FindLinkedEvidence(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked evidence", err)
+	}
+	memories, err := s.repo.FindLinkedMemories(memoryIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked memories", err)
+	}
+	sourceItems, err := s.repo.FindLinkedSourceItems(sourceItemIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked source items", err)
+	}
+	extractions, err := s.repo.FindLinkedExtractions(extractionIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked source extractions", err)
+	}
+	verificationRuns, err := s.repo.FindLinkedVerificationRuns(verificationIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked verification runs", err)
+	}
 	runIDs := verificationRunIDs(verificationRuns)
-	verificationClaims, _ := s.repo.FindLinkedVerificationClaims(runIDs)
-	verificationEvidence, _ := s.repo.FindLinkedVerificationEvidence(runIDs)
-	automations, _ := s.repo.FindLinkedAutomations(automationIDs)
-	runtimeAttempts, _ := s.repo.FindLinkedAutomationLaunches(automationIDs, linkedRuntimeAttemptIDs, 20)
+	verificationClaims, err := s.repo.FindLinkedVerificationClaims(runIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked verification claims", err)
+	}
+	verificationEvidence, err := s.repo.FindLinkedVerificationEvidence(runIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked verification evidence", err)
+	}
+	automations, err := s.repo.FindLinkedAutomations(automationIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked automations", err)
+	}
+	runtimeAttempts, err := s.repo.FindLinkedAutomationLaunches(automationIDs, linkedRuntimeAttemptIDs, 20)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked runtime attempts", err)
+	}
 	if runtimeAttempts == nil {
 		runtimeAttempts = []models.AutomationLaunchEvent{}
 	}
@@ -2797,6 +2860,25 @@ func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *
 		ReviewDue:               isReviewDue(pursuit),
 		PlanningNeeded:          detail.Summary.PlanningNeeded,
 	}, detail, nil
+}
+
+func detailUnavailableListItem(pursuit models.Pursuit) PursuitListItem {
+	return PursuitListItem{
+		Pursuit:                 pursuit,
+		NeedsRobert:             1,
+		Blocked:                 1,
+		CurrentState:            "Linked operational state is temporarily unavailable; do not advance this pursuit until it can be reviewed.",
+		WhatChanged:             "HAI could not refresh the linked operational state.",
+		NextAction:              "Retry the pursuit detail after checking HAI service health.",
+		EffectiveLastActivityAt: pursuit.LastActivityAt,
+		Stale:                   false,
+		ReviewDue:               isReviewDue(pursuit),
+		PlanningNeeded:          false,
+	}
+}
+
+func pursuitDetailLoadError(component string, err error) error {
+	return fmt.Errorf("load pursuit %s: %w", component, err)
 }
 
 // effectivePursuitActivity derives dashboard freshness from evidence that is
