@@ -583,7 +583,7 @@ func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.
 	if err != nil {
 		t.Fatalf("AutoLinkWorkflow returned error: %v", err)
 	}
-	if !result.Linked || !result.Created || result.PursuitID == uuid.Nil {
+	if result.Linked || !result.Created || result.PursuitID == uuid.Nil {
 		t.Fatalf("candidate result = %#v", result)
 	}
 
@@ -602,8 +602,10 @@ func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.
 	for _, link := range links {
 		found[link.LinkType+":"+link.Relationship] = true
 	}
+	if found[LinkWorkflow+":candidate_operational_work"] {
+		t.Fatalf("unaccepted candidate received pre-existing workflow work: %#v", links)
+	}
 	for _, expected := range []string{
-		LinkWorkflow + ":candidate_operational_work",
 		LinkSourceItem + ":candidate_source_record",
 		LinkSourceExtraction + ":candidate_source_extraction",
 	} {
@@ -615,7 +617,8 @@ func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.
 
 func TestAutoCreatedCandidateRequiresRobertDecisionAndCanBeAccepted(t *testing.T) {
 	repo := newFakeRepo()
-	service := NewService(repo, nil)
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
 	workflowID := uuid.New()
 
 	result, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
@@ -669,6 +672,9 @@ func TestAutoCreatedCandidateRequiresRobertDecisionAndCanBeAccepted(t *testing.T
 	accepted, err := service.AcceptCandidate(result.PursuitID, PlanRequest{Actor: "Robert"})
 	if err != nil {
 		t.Fatalf("AcceptCandidate returned error: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("accepted candidate created %d governed workflow(s), want 1", workflowService.calls)
 	}
 	if accepted.Pursuit.SourceOfCreation != "openclaw_pursuit_intake" {
 		t.Fatalf("source marker was not cleared after acceptance: %q", accepted.Pursuit.SourceOfCreation)

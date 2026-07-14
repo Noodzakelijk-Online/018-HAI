@@ -2577,21 +2577,12 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 	if err != nil {
 		return nil, err
 	}
+	// This compatibility path receives a workflow that was created before the
+	// pursuit layer was asked to correlate it. Preserve source provenance for
+	// review, but never attach that operational workflow to an unaccepted
+	// candidate. The supported lifecycle router creates the candidate before any
+	// workflow exists; legacy callers must not weaken that boundary.
 	links := []models.PursuitLink{}
-	workflowLink, err := s.Link(created.ID, LinkRequest{
-		OwnerIdentity: request.OwnerIdentity,
-		LinkType:      LinkWorkflow,
-		LinkID:        request.WorkflowID.String(),
-		Relationship:  "candidate_operational_work",
-		SourceURI:     request.SourceURI,
-		SourceLabel:   request.SourceLabel,
-		Confidence:    1,
-		Actor:         actor,
-	})
-	if err != nil {
-		return nil, err
-	}
-	links = append(links, *workflowLink)
 	if sourceLink, linked, err := s.linkExactSourceReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, 1, actor); err != nil {
 		return nil, err
 	} else if linked {
@@ -2615,11 +2606,11 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 	} else if linked {
 		links = append(links, *extractionLink)
 	}
-	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from source-derived workflow because no existing pursuit matched.", actor, LinkWorkflow, request.WorkflowID.String(), request.SourceURI)
+	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from unmatched source-derived workflow; no operational workflow was attached before acceptance.", actor, firstNonEmpty(request.SourceType, "workflow"), request.SourceID, request.SourceURI)
 	if _, err := s.RefreshSummary(created.ID, actor); err != nil {
-		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from source-derived workflow"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: links}, nil
+		return &AutoLinkResult{Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created before operational workflow could be linked"}, Message: "pursuit candidate created without attaching pre-existing workflow work; summary refresh failed: " + err.Error(), Links: links}, nil
 	}
-	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from source-derived workflow"}, Message: "pursuit candidate created from source-derived workflow", Links: links}, nil
+	return &AutoLinkResult{Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created before operational workflow could be linked"}, Message: "pursuit candidate created without attaching pre-existing workflow work", Links: links}, nil
 }
 
 func (s *service) createMemoryCandidate(request AutoLinkMemoryRequest) (*AutoLinkResult, error) {
