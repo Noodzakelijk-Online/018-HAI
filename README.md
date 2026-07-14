@@ -35,9 +35,10 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 The current `main` branch is suitable for a bounded local operator trial: create
 and inspect pursuits, import authorized local/exported source material, plan and
-run approved workflow work, review verification evidence, and use a configured
-local model or controlled runtime. It is deliberately not a claim that HAI has
-access to a user's mail, calendar, browser, device, or paid provider by default.
+run approved workflow work, generate a read-only VA delegation brief from
+already VA-ready work, review verification evidence, and use a configured local
+model or controlled runtime. It is deliberately not a claim that HAI has access
+to a user's mail, calendar, browser, device, or paid provider by default.
 
 Recent hardening in the current baseline:
 
@@ -59,6 +60,14 @@ Recent hardening in the current baseline:
   ecosystem path, refresh, and upload operations, require a verified owner
   before reaching a runtime adapter or filesystem operation. Runtime inventory,
   health, and skill discovery remain read-only.
+- Pursuit intake, planning, summary refresh, and decision resolution use
+  owner-scoped service paths. Before they derive evidence, workflow follow-ups,
+  or completion state, those paths filter legacy links that point to records the
+  current owner cannot see.
+- The VA delegation endpoint is read-only and owner-scoped. It compiles only
+  existing VA-ready workflow context, checklists, source references, delivery
+  requirements, and escalation rules; it cannot assign a person, execute work,
+  send messages, or grant external authority.
 - The global source and workflow schedulers remain in-process, ownerless system
   workers. They are not exposed as dashboard actions and must remain separately
   controlled until per-owner scheduling is live-validated.
@@ -85,7 +94,7 @@ No dashboard status, model configuration, source connection, or generated answer
 What is implemented in this repository:
 
 - **User experience:** onboarding, quick capture, Command Dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
-- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work. Pursuits have an explicit completion/reopen lifecycle: new evidence never silently reopens completed work. An authenticated owner now flows through pursuit intake, planning, runtime-recovery workflow handoffs, personal ambient pursuit proposals, and private ambient need profiles into the task runner, task context retrieval, and verified lesson storage.
+- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work. Pursuits have an explicit completion/reopen lifecycle: new evidence never silently reopens completed work. An authenticated owner flows through pursuit intake, planning, summary refresh, decision resolution, runtime-recovery workflow handoffs, personal ambient pursuit proposals, and private ambient need profiles into the task runner, task context retrieval, and verified lesson storage. A pursuit can also produce a bounded, read-only VA delegation brief without turning that brief into an assignment or an execution grant.
 - **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance. Authenticated memory APIs, AI-conversation imports, source-derived consolidation, workflow intake/feedback, direct task planning/runs, and explicit ambient accept/dismiss feedback are owner-scoped. Background/system work is deliberately ownerless unless it originates from an owner-bound source or workflow.
 - **Connected-source import paths:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync. New authenticated source records are owner-scoped through source search, extraction management, sync history, audits, workflow intake, and pursuit linking; ownerless legacy records remain visible in local-development compatibility mode.
 - **Governance:** the backend independently verifies browser-session or bearer JWTs before using a signed principal for audit attribution; client-supplied actor labels are ignored. Approval gates, emergency stop, request rate limits, idempotency, redacted audit records, path safety, runtime allowlists, and a paid-model policy disabled by default are implemented.
@@ -97,7 +106,7 @@ What is implemented in this repository:
 | Area | Repository status | What remains before it is trusted for real work |
 | --- | --- | --- |
 | Go API and Angular dashboard | Implemented; backend/IDP tests, Angular production build, and Compose configuration validation are part of CI. | Run the full Compose stack on the target Windows machine and exercise the intended user flows. |
-| Workflow, verification, memory, and pursuits | Implemented with persistence, audit history, approval gates, retry/review states, and safety normalization. | Use representative, non-sensitive source fixtures and review the resulting audit trail before enabling automation. |
+| Workflow, verification, memory, and pursuits | Implemented with persistence, audit history, approval gates, retry/review states, safety normalization, owner-scoped pursuit mutations, and read-only VA-ready delegation briefs. | Use representative, non-sensitive source fixtures and review the resulting audit trail before enabling automation or relying on cross-user isolation. |
 | Local/export source ingestion | Implemented for allowlisted local files and authorized exports. | OAuth/API connectors, webhooks, and a real account-specific bridge need separate scoped setup and live validation. |
 | GitHub source sync | Implemented as a read-only REST connector, token optional for public repositories. | Configure a least-privilege token where required and validate against the chosen repository. |
 | LLM routing | Local/free routing, endpoint guards, provider probes, fallback logging, and a EUR 0 paid default are implemented. | Install/configure a local model or free provider and pass a bounded live probe plus a representative validated task. |
@@ -115,7 +124,7 @@ After signing in, the Angular dashboard exposes these authenticated operator sur
 
 - `/control-center` for the primary operational overview and controlled maintenance cycle.
 - `/command-dashboard` for Robert-only decisions, open loops, memory-derived work, and source-backed context.
-- `/pursuits` for durable objectives, their workflow/evidence links, blockers, approvals, and explicit closure or reopen decisions.
+- `/pursuits` for durable objectives, their workflow/evidence links, blockers, approvals, explicit closure or reopen decisions, and bounded VA-ready delegation briefs.
 - `/workflow-engine` for the execution queue, interrupted work, quality gates, approvals, and follow-ups.
 - `/connected-sources`, `/memory`, `/llm-policy`, `/ambient-brain`, and `/task-blueprint` for source, context, provider, proactive-planning, and explicit-command operations.
 
@@ -383,7 +392,7 @@ Pursuits:
 - `GET /pursuits/:id/next-actions`
 - `GET /pursuits/:id/blockers`
 - `GET /pursuits/:id/approvals`
-- `GET /pursuits/:id/delegation`
+- `GET /pursuits/:id/delegation` (read-only, owner-scoped VA-ready delegation brief; never an assignment or execution action)
 - `POST /pursuits/:id/intake`
 - `POST /pursuits/:id/plan`
 - `POST /pursuits/:id/links`
