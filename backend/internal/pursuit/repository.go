@@ -120,6 +120,14 @@ func (r *GormRepository) LinkVisibleToOwner(ownerIdentity, linkType, linkID stri
 	visibleOwner := "owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL"
 
 	switch strings.TrimSpace(linkType) {
+	case LinkPursuit:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.Pursuit{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
 	case LinkWorkflow:
 		id, err := uuid.Parse(strings.TrimSpace(linkID))
 		if err != nil {

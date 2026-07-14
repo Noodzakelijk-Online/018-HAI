@@ -4495,6 +4495,13 @@ func (r *fakeRepo) CreateLink(link *models.PursuitLink) (*models.PursuitLink, er
 
 func (r *fakeRepo) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (bool, bool, error) {
 	switch linkType {
+	case LinkPursuit:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.pursuits[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
 	case LinkWorkflow:
 		id, err := uuid.Parse(linkID)
 		if err != nil {

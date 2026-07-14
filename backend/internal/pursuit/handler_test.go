@@ -529,6 +529,10 @@ func TestPursuitLinkRejectsAnotherOwnersPrivateRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create Alice pursuit: %v", err)
 	}
+	bobPursuit, err := service.Create(CreateRequest{Title: "Bob private pursuit", OwnerIdentity: "bob"})
+	if err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
 	bobWorkflowID := uuid.New()
 	repo.workflows[bobWorkflowID] = models.WorkflowItem{ID: bobWorkflowID, OwnerIdentity: "bob", Title: "Bob private workflow"}
 	bobMemoryID := uuid.New()
@@ -550,6 +554,7 @@ func TestPursuitLinkRejectsAnotherOwnersPrivateRecords(t *testing.T) {
 		linkType string
 		linkID   string
 	}{
+		{linkType: LinkPursuit, linkID: bobPursuit.ID.String()},
 		{linkType: LinkWorkflow, linkID: bobWorkflowID.String()},
 		{linkType: LinkMemory, linkID: bobMemoryID.String()},
 		{linkType: LinkSourceItem, linkID: "bob-private-source"},
@@ -570,5 +575,21 @@ func TestPursuitLinkRejectsAnotherOwnersPrivateRecords(t *testing.T) {
 	}
 	if len(links) != 0 {
 		t.Fatalf("cross-owner link was persisted: %#v", links)
+	}
+
+	legacyLinkID := uuid.New()
+	repo.links[legacyLinkID] = models.PursuitLink{
+		ID:           legacyLinkID,
+		PursuitID:    pursuit.ID,
+		LinkType:     LinkPursuit,
+		LinkID:       bobPursuit.ID.String(),
+		Relationship: "legacy_related",
+	}
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner: %v", err)
+	}
+	if hasPursuitLink(detail.Links, LinkPursuit, bobPursuit.ID.String()) {
+		t.Fatalf("legacy cross-owner pursuit link was visible: %#v", detail.Links)
 	}
 }
