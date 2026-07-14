@@ -135,6 +135,29 @@ func TestPursuitOverviewPrioritizesRobertQueue(t *testing.T) {
 	}
 }
 
+func TestPursuitOverviewUsesOwnerScopedDashboard(t *testing.T) {
+	spy := &ownerScopedPursuitDashboard{dashboard: &pursuit.Dashboard{Counts: map[string]int64{"active": 1}}}
+	handler := NewHandler(nil, spy)
+	overview := handler.pursuitOverview("alice")
+
+	if spy.ownerIdentity != "alice" {
+		t.Fatalf("dashboard owner = %q, want alice", spy.ownerIdentity)
+	}
+	if !overview.Enabled || overview.TotalActive != 1 {
+		t.Fatalf("overview = %#v", overview)
+	}
+}
+
+type ownerScopedPursuitDashboard struct {
+	ownerIdentity string
+	dashboard     *pursuit.Dashboard
+}
+
+func (s *ownerScopedPursuitDashboard) DashboardForOwner(ownerIdentity string) (*pursuit.Dashboard, error) {
+	s.ownerIdentity = ownerIdentity
+	return s.dashboard, nil
+}
+
 func TestPursuitOverviewEmptyStateStaysActionable(t *testing.T) {
 	overview := pursuitOverviewFromDashboard(&pursuit.Dashboard{
 		Counts: map[string]int64{"active": 0, "waiting": 0, "blocked": 0},

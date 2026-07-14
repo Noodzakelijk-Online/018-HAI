@@ -215,8 +215,8 @@ func TestCommandPlanningWithinSelectedPursuitDoesNotCreateWorkflow(t *testing.T)
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
-	if router.matchCalls != 0 || router.routeCalls != 0 || router.intakeCalls != 0 {
-		t.Fatalf("planning should not create workflow work: match=%d route=%d intake=%d", router.matchCalls, router.routeCalls, router.intakeCalls)
+	if router.matchCalls != 0 || router.routeCalls != 0 || router.intakeCalls != 0 || router.detailCalls != 1 {
+		t.Fatalf("planning should only validate the selected pursuit: match=%d route=%d intake=%d detail=%d", router.matchCalls, router.routeCalls, router.intakeCalls, router.detailCalls)
 	}
 	if result.Pursuit == nil || result.Pursuit.PursuitID != pursuitID.String() || result.Pursuit.Mode != "selected" {
 		t.Fatalf("pursuit context = %#v", result.Pursuit)
@@ -265,6 +265,29 @@ func TestCommandStoresBoundedRecentLogs(t *testing.T) {
 	}
 }
 
+func TestCommandScopesPursuitRoutingAndLogsToOwner(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	router := &fakePursuitCommandRouter{}
+	service := NewService(tasks, nil, router)
+	pursuitID := uuid.New()
+
+	if _, err := service.Command(CommandRequest{Message: "Plan the evidence review.", PursuitID: pursuitID.String(), OwnerIdentity: "alice"}); err != nil {
+		t.Fatalf("Alice command: %v", err)
+	}
+	if _, err := service.Command(CommandRequest{Message: "Plan the other evidence review.", OwnerIdentity: "bob"}); err != nil {
+		t.Fatalf("Bob command: %v", err)
+	}
+	if router.lastOwner != "alice" {
+		t.Fatalf("selected pursuit owner = %q, want alice", router.lastOwner)
+	}
+	if logs := service.LogsForOwner("alice"); len(logs) != 1 || logs[0].OwnerIdentity != "alice" {
+		t.Fatalf("alice logs = %#v", logs)
+	}
+	if logs := service.LogsForOwner("bob"); len(logs) != 1 || logs[0].OwnerIdentity != "bob" {
+		t.Fatalf("bob logs = %#v", logs)
+	}
+}
+
 type fakeTaskEngine struct {
 	planCalls int
 	runCalls  int
@@ -306,13 +329,17 @@ type fakePursuitCommandRouter struct {
 	matchCalls  int
 	routeCalls  int
 	intakeCalls int
+	detailCalls int
 	matches     []pursuit.MatchCandidate
 	routed      *pursuit.RoutedIntakeResult
 	lastRoute   pursuit.IntakeRequest
+	lastMatch   pursuit.MatchRequest
+	lastOwner   string
 }
 
 func (f *fakePursuitCommandRouter) Match(request pursuit.MatchRequest) ([]pursuit.MatchCandidate, error) {
 	f.matchCalls++
+	f.lastMatch = request
 	return f.matches, nil
 }
 
@@ -328,6 +355,12 @@ func (f *fakePursuitCommandRouter) RouteIntake(request pursuit.IntakeRequest) (*
 func (f *fakePursuitCommandRouter) Intake(id uuid.UUID, request pursuit.IntakeRequest) (*pursuit.PursuitDetail, error) {
 	f.intakeCalls++
 	return &pursuit.PursuitDetail{Pursuit: models.Pursuit{ID: id, Title: "Selected pursuit"}}, nil
+}
+
+func (f *fakePursuitCommandRouter) DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuit.PursuitDetail, error) {
+	f.detailCalls++
+	f.lastOwner = ownerIdentity
+	return &pursuit.PursuitDetail{Pursuit: models.Pursuit{ID: id, Title: "Selected pursuit", OwnerIdentity: ownerIdentity}}, nil
 }
 
 func (f *fakeAgentCycleRunner) Run(request agentcycle.RunRequest) *agentcycle.RunResult {

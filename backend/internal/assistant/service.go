@@ -30,6 +30,7 @@ type PursuitCommandRouter interface {
 	Match(request pursuit.MatchRequest) ([]pursuit.MatchCandidate, error)
 	RouteIntake(request pursuit.IntakeRequest) (*pursuit.RoutedIntakeResult, error)
 	Intake(id uuid.UUID, request pursuit.IntakeRequest) (*pursuit.PursuitDetail, error)
+	DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuit.PursuitDetail, error)
 }
 
 type CommandRequest struct {
@@ -42,6 +43,7 @@ type CommandRequest struct {
 	RunCycle        bool     `json:"runCycle,omitempty"`
 	SkipSourceSync  bool     `json:"skipSourceSync,omitempty"`
 	SkipAmbient     bool     `json:"skipAmbient,omitempty"`
+	OwnerIdentity   string   `json:"-"`
 	Actor           string   `json:"-"`
 }
 
@@ -65,6 +67,7 @@ type CommandPursuitContext struct {
 }
 
 type CommandResult struct {
+	OwnerIdentity  string                 `json:"-"`
 	ID             string                 `json:"id"`
 	CreatedAt      time.Time              `json:"createdAt"`
 	Intent         string                 `json:"intent"`
@@ -103,6 +106,7 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 
 	intent := classifyIntent(message, request)
 	result := &CommandResult{
+		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
 		ID:            uuid.NewString(),
 		CreatedAt:     time.Now().UTC(),
 		Intent:        intent,
@@ -178,6 +182,7 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 
 func (s *Service) routePursuit(message string, request CommandRequest) (*CommandPursuitContext, error) {
 	input := pursuit.IntakeRequest{
+		OwnerIdentity:  request.OwnerIdentity,
 		Input:          message,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
@@ -193,23 +198,26 @@ func (s *Service) routePursuit(message string, request CommandRequest) (*Command
 
 	if !request.ExecuteAllowed {
 		if requestedID := strings.TrimSpace(request.PursuitID); requestedID != "" {
-			if _, err := uuid.Parse(requestedID); err != nil {
+			id, err := uuid.Parse(requestedID)
+			if err != nil {
 				return nil, fmt.Errorf("invalid pursuit id")
 			}
-			return &CommandPursuitContext{
-				PursuitID: requestedID,
-				Mode:      "selected",
-				Matched:   true,
-				Message:   "Planning is scoped to the selected pursuit. No workflow was created until you run the command.",
-			}, nil
+			detail, err := s.pursuits.DetailForOwner(request.OwnerIdentity, id)
+			if err != nil {
+				return nil, err
+			}
+			context := pursuitContextFromDetail(detail, "selected", false)
+			context.Message = "Planning is scoped to the selected pursuit. No workflow was created until you run the command."
+			return context, nil
 		}
 		matches, err := s.pursuits.Match(pursuit.MatchRequest{
-			Input:      message,
-			ProjectKey: request.ProjectKey,
-			SourceType: input.SourceType,
-			SourceID:   input.SourceID,
-			SourceURI:  input.SourceURI,
-			Limit:      3,
+			OwnerIdentity: request.OwnerIdentity,
+			Input:         message,
+			ProjectKey:    request.ProjectKey,
+			SourceType:    input.SourceType,
+			SourceID:      input.SourceID,
+			SourceURI:     input.SourceURI,
+			Limit:         3,
 		})
 		if err != nil {
 			return nil, err
@@ -225,6 +233,9 @@ func (s *Service) routePursuit(message string, request CommandRequest) (*Command
 		id, err := uuid.Parse(requestedID)
 		if err != nil {
 			return nil, fmt.Errorf("invalid pursuit id")
+		}
+		if _, err := s.pursuits.DetailForOwner(request.OwnerIdentity, id); err != nil {
+			return nil, err
 		}
 		detail, err := s.pursuits.Intake(id, input)
 		if err != nil {
@@ -295,13 +306,22 @@ func assistantCommandSourceID(message string, request CommandRequest) string {
 }
 
 func (s *Service) Logs() []CommandResult {
+	return s.LogsForOwner("")
+}
+
+func (s *Service) LogsForOwner(ownerIdentity string) []CommandResult {
 	if s == nil {
 		return nil
 	}
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	copied := make([]CommandResult, len(s.logs))
-	copy(copied, s.logs)
+	copied := make([]CommandResult, 0, len(s.logs))
+	for _, result := range s.logs {
+		if ownerIdentity == "" || result.OwnerIdentity == ownerIdentity {
+			copied = append(copied, result)
+		}
+	}
 	return copied
 }
 

@@ -1,6 +1,7 @@
 package haios
 
 import (
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/models"
@@ -116,7 +117,7 @@ type HAIOSOverview struct {
 }
 
 type pursuitDashboardService interface {
-	Dashboard() (*pursuit.Dashboard, error)
+	DashboardForOwner(ownerIdentity string) (*pursuit.Dashboard, error)
 }
 
 type Handler struct {
@@ -160,7 +161,7 @@ func (h *Handler) Overview(c *gin.Context) {
 	if emergencyActive {
 		emergencyReason = safety.EmergencyStopReason()
 	}
-	pursuitOverview := h.pursuitOverview()
+	pursuitOverview := h.pursuitOverview(pursuitOwner(c))
 	h.attachAmbientPursuitState(&pursuitOverview)
 	pursuitStatus := pursuitOverview.Status
 	if pursuitStatus == "" {
@@ -218,7 +219,7 @@ func (h *Handler) Overview(c *gin.Context) {
 	})
 }
 
-func (h *Handler) pursuitOverview() PursuitOverview {
+func (h *Handler) pursuitOverview(ownerIdentity string) PursuitOverview {
 	if h.pursuitService == nil {
 		return PursuitOverview{
 			Enabled: false,
@@ -227,7 +228,7 @@ func (h *Handler) pursuitOverview() PursuitOverview {
 			Next:    "Wire the canonical pursuit service into the HAI OS handler.",
 		}
 	}
-	dashboard, err := h.pursuitService.Dashboard()
+	dashboard, err := h.pursuitService.DashboardForOwner(ownerIdentity)
 	if err != nil {
 		return PursuitOverview{
 			Enabled: false,
@@ -237,6 +238,18 @@ func (h *Handler) pursuitOverview() PursuitOverview {
 		}
 	}
 	return pursuitOverviewFromDashboard(dashboard)
+}
+
+func pursuitOwner(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
 }
 
 func (h *Handler) attachAmbientPursuitState(overview *PursuitOverview) {
