@@ -2776,6 +2776,41 @@ func TestDeleteLinkRequiresOwningPursuit(t *testing.T) {
 	t.Fatal("expected pursuit.link_removed activity")
 }
 
+func TestLinkActivityRefreshesPursuitFreshness(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Refresh pursuit activity"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	staleAt := time.Now().UTC().Add(-15 * 24 * time.Hour)
+	record := repo.pursuits[created.ID]
+	record.LastActivityAt = &staleAt
+	repo.pursuits[created.ID] = record
+
+	if _, err := service.Link(created.ID, LinkRequest{
+		LinkType:     LinkMemory,
+		LinkID:       uuid.New().String(),
+		Relationship: "context_memory",
+		SourceURI:    "memory://project-context",
+		Actor:        "operator",
+	}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+
+	updated, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if updated.LastActivityAt == nil || !updated.LastActivityAt.After(staleAt) {
+		t.Fatalf("last activity = %v, want time after %v", updated.LastActivityAt, staleAt)
+	}
+	if isStale(*updated) {
+		t.Fatalf("pursuit remained stale after a recorded link activity: %#v", updated)
+	}
+}
+
 func timelineContains(items []PursuitTimelineItem, kind, messagePart string) bool {
 	for _, item := range items {
 		if item.Kind == kind && strings.Contains(item.Message, messagePart) {

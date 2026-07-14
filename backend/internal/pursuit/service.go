@@ -2220,7 +2220,7 @@ func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *
 }
 
 func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, sourceType, sourceID, sourceURI string) (*models.PursuitActivity, error) {
-	return s.repo.CreateActivity(&models.PursuitActivity{
+	activity, err := s.repo.CreateActivity(&models.PursuitActivity{
 		PursuitID:  id,
 		EventType:  eventType,
 		Message:    strings.TrimSpace(message),
@@ -2229,6 +2229,28 @@ func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, source
 		SourceID:   strings.TrimSpace(sourceID),
 		SourceURI:  strings.TrimSpace(sourceURI),
 	})
+	if err != nil {
+		return activity, err
+	}
+	if activity == nil {
+		return nil, fmt.Errorf("pursuit activity repository returned no activity")
+	}
+
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return activity, err
+	}
+	activityAt := activity.CreatedAt
+	if activityAt.IsZero() {
+		activityAt = time.Now().UTC()
+	}
+	if pursuit.LastActivityAt == nil || pursuit.LastActivityAt.Before(activityAt) {
+		pursuit.LastActivityAt = &activityAt
+		if _, err := s.repo.Update(pursuit); err != nil {
+			return activity, err
+		}
+	}
+	return activity, nil
 }
 
 func (s *service) recordDecisionResolution(id uuid.UUID, request DecisionResolutionRequest) (*models.PursuitActivity, error) {
