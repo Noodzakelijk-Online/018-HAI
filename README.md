@@ -80,6 +80,9 @@ Recent hardening in the current baseline:
   owner-aware linked-record filter as pursuit detail. Legacy links to another
   owner's private workflow, memory, source, or verification data are excluded
   rather than affecting queues, counts, or suggested actions.
+- Pursuit activity feeds are owner-scoped by the service itself, so audit and
+  source-derived history cannot be exposed by a future handler or worker that
+  omits a separate visibility pre-check.
 - The shared local automation registry also requires a verified operator
   session before it exposes targets, accepts configuration changes, probes
   health, or launches/stops a controlled runtime.

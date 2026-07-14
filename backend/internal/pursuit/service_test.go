@@ -1013,6 +1013,33 @@ func TestDetailForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
 	}
 }
 
+func TestActivityForOwnerRejectsAnotherOwnersAuditFeed(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice private activity", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	bob, err := service.Create(CreateRequest{Title: "Bob private activity", OwnerIdentity: "bob"})
+	if err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+	if _, err := repo.CreateActivity(&models.PursuitActivity{PursuitID: bob.ID, EventType: "pursuit.private", Message: "Bob's private source activity"}); err != nil {
+		t.Fatalf("Create Bob activity: %v", err)
+	}
+
+	if _, err := service.ActivityForOwner("alice", bob.ID); err == nil {
+		t.Fatalf("ActivityForOwner exposed another owner's audit feed")
+	}
+	activities, err := service.ActivityForOwner("alice", alice.ID)
+	if err != nil {
+		t.Fatalf("ActivityForOwner returned error for owner pursuit: %v", err)
+	}
+	if len(activities) == 0 {
+		t.Fatalf("ActivityForOwner omitted owner's audit records")
+	}
+}
+
 func TestDashboardForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

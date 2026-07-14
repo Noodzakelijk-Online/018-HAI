@@ -378,12 +378,9 @@ func (h *Handler) Activity(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
-		return
-	}
-	records, err := h.service.Activity(id)
+	records, err := h.service.ActivityForOwner(pursuitOwner(c), id)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
 		return
 	}
 	c.JSON(http.StatusOK, records)

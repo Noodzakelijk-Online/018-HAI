@@ -630,6 +630,7 @@ type Service interface {
 	Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
 	ReviewForOwner(ownerIdentity string, id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
 	Activity(id uuid.UUID) ([]models.PursuitActivity, error)
+	ActivityForOwner(ownerIdentity string, id uuid.UUID) ([]models.PursuitActivity, error)
 }
 
 type ownerScopedRepository interface {
@@ -2948,7 +2949,14 @@ func (s *service) ReviewForOwner(ownerIdentity string, id uuid.UUID, request Rev
 }
 
 func (s *service) Activity(id uuid.UUID) ([]models.PursuitActivity, error) {
-	if _, err := s.repo.FindByID(id); err != nil {
+	return s.ActivityForOwner("", id)
+}
+
+// ActivityForOwner keeps the audit feed subject to the same ownership rule as
+// pursuit detail. This is intentionally enforced by the service, not just the
+// HTTP handler, because the feed contains source-derived operational history.
+func (s *service) ActivityForOwner(ownerIdentity string, id uuid.UUID) ([]models.PursuitActivity, error) {
+	if _, err := s.DetailForOwner(ownerIdentity, id); err != nil {
 		return nil, err
 	}
 	return s.repo.FindActivities(id, 100)

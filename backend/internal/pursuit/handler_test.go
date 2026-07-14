@@ -143,6 +143,7 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	handler := NewHandler(service)
 	router.GET("/pursuits", handler.List)
 	router.GET("/pursuits/:id", handler.Get)
+	router.GET("/pursuits/:id/activity", handler.Activity)
 
 	list := httptest.NewRecorder()
 	router.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/pursuits", nil))
@@ -167,6 +168,12 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	router.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, "/pursuits/"+bob.ID.String(), nil))
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf("cross-owner detail status = %d, want %d; body=%s", denied.Code, http.StatusNotFound, denied.Body.String())
+	}
+
+	denied = httptest.NewRecorder()
+	router.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, "/pursuits/"+bob.ID.String()+"/activity", nil))
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner activity status = %d, want %d; body=%s", denied.Code, http.StatusNotFound, denied.Body.String())
 	}
 }
 
