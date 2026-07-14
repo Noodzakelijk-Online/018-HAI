@@ -1223,20 +1223,21 @@ func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error
 }
 
 func (s *service) Match(request MatchRequest) ([]MatchCandidate, error) {
-	pursuits, err := s.ListForOwner(request.OwnerIdentity, false)
+	ownerIdentity := strings.TrimSpace(request.OwnerIdentity)
+	pursuits, err := s.ListForOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
 	if request.SourceType != "" && request.SourceID != "" {
-		if link, err := s.repo.FindLink(request.SourceType, request.SourceID); err == nil {
-			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, request.OwnerIdentity) {
+		if link, err := s.repo.FindLinkForOwner(ownerIdentity, request.SourceType, request.SourceID); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, ownerIdentity) {
 				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.98, Reasons: []string{"source is already linked to this pursuit"}, Confidence: "high"}}, nil
 			}
 		}
 	}
 	if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
-		if link, err := s.repo.FindLinkBySourceURI(sourceURI); err == nil {
-			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, request.OwnerIdentity) {
+		if link, err := s.repo.FindLinkBySourceURIForOwner(ownerIdentity, sourceURI); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, ownerIdentity) {
 				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.97, Reasons: []string{"source URI is already linked to this pursuit"}, Confidence: "high"}}, nil
 			}
 		}

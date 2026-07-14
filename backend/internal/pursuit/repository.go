@@ -20,6 +20,8 @@ type Repository interface {
 	FindLinks(pursuitID uuid.UUID) ([]models.PursuitLink, error)
 	FindLink(linkType, linkID string) (*models.PursuitLink, error)
 	FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error)
+	FindLinkForOwner(ownerIdentity, linkType, linkID string) (*models.PursuitLink, error)
+	FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error)
 	CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error)
 	FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error)
 	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
@@ -155,6 +157,32 @@ func (r *GormRepository) FindLink(linkType, linkID string) (*models.PursuitLink,
 func (r *GormRepository) FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error) {
 	var link models.PursuitLink
 	if err := r.DB.Where("source_uri = ?", sourceURI).Order("confidence DESC, created_at DESC").First(&link).Error; err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
+// FindLinkForOwner applies pursuit visibility before selecting an exact source
+// match. This avoids allowing another user's more recent or higher-confidence
+// link to hide an exact link that the current user is allowed to use.
+func (r *GormRepository) FindLinkForOwner(ownerIdentity, linkType, linkID string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, "pursuit_links.link_type = ? AND pursuit_links.link_id = ?", linkType, linkID)
+}
+
+func (r *GormRepository) FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, "pursuit_links.source_uri = ?", sourceURI)
+}
+
+func (r *GormRepository) findVisibleLink(ownerIdentity, condition string, args ...interface{}) (*models.PursuitLink, error) {
+	var link models.PursuitLink
+	query := r.DB.Table("pursuit_links").
+		Select("pursuit_links.*").
+		Joins("JOIN pursuits ON pursuits.id = pursuit_links.pursuit_id").
+		Where(condition, args...)
+	if ownerIdentity != "" {
+		query = query.Where("pursuits.owner_identity = ? OR pursuits.owner_identity = '' OR pursuits.owner_identity IS NULL", ownerIdentity)
+	}
+	if err := query.Order("pursuit_links.confidence DESC, pursuit_links.created_at DESC").First(&link).Error; err != nil {
 		return nil, err
 	}
 	return &link, nil

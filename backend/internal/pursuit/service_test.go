@@ -139,6 +139,55 @@ func TestMatchUsesProjectAndExistingSourceLink(t *testing.T) {
 	}
 }
 
+func TestMatchUsesVisibleExactLinkWhenAnotherOwnerHasTheSameSource(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice legal evidence", OwnerIdentity: "alice", ProjectKey: "alice-case"})
+	if err != nil {
+		t.Fatalf("create alice pursuit: %v", err)
+	}
+	bob, err := service.Create(CreateRequest{Title: "Bob legal evidence", OwnerIdentity: "bob", ProjectKey: "bob-case"})
+	if err != nil {
+		t.Fatalf("create bob pursuit: %v", err)
+	}
+	const sourceID = "shared-message-41"
+	const sourceURI = "local://mail/shared-message-41"
+	if _, err := service.Link(bob.ID, LinkRequest{
+		LinkType: LinkSourceItem, LinkID: sourceID, Relationship: "evidence", SourceURI: sourceURI, Confidence: 0.99,
+	}); err != nil {
+		t.Fatalf("link bob source: %v", err)
+	}
+	if _, err := service.Link(alice.ID, LinkRequest{
+		LinkType: LinkSourceItem, LinkID: sourceID, Relationship: "evidence", SourceURI: sourceURI, Confidence: 0.10,
+	}); err != nil {
+		t.Fatalf("link alice source: %v", err)
+	}
+
+	sourceMatches, err := service.Match(MatchRequest{OwnerIdentity: " alice ", SourceType: LinkSourceItem, SourceID: sourceID})
+	if err != nil {
+		t.Fatalf("match by source id: %v", err)
+	}
+	if len(sourceMatches) != 1 || sourceMatches[0].Pursuit.ID != alice.ID {
+		t.Fatalf("alice source matches = %#v, want alice pursuit", sourceMatches)
+	}
+
+	uriMatches, err := service.Match(MatchRequest{OwnerIdentity: "alice", SourceURI: sourceURI})
+	if err != nil {
+		t.Fatalf("match by source URI: %v", err)
+	}
+	if len(uriMatches) != 1 || uriMatches[0].Pursuit.ID != alice.ID {
+		t.Fatalf("alice URI matches = %#v, want alice pursuit", uriMatches)
+	}
+
+	outsiderMatches, err := service.Match(MatchRequest{OwnerIdentity: "charlie", SourceType: LinkSourceItem, SourceID: sourceID})
+	if err != nil {
+		t.Fatalf("match for unrelated owner: %v", err)
+	}
+	if len(outsiderMatches) != 0 {
+		t.Fatalf("unrelated owner received exact source match: %#v", outsiderMatches)
+	}
+}
+
 func TestAutoLinkWorkflowLinksOperationalWorkAndSourceProvenance(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -3058,6 +3107,36 @@ func (r *fakeRepo) FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, e
 		}
 	}
 	return nil, errNotFound("link")
+}
+
+func (r *fakeRepo) FindLinkForOwner(ownerIdentity, linkType, linkID string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, func(link models.PursuitLink) bool {
+		return link.LinkType == linkType && link.LinkID == linkID
+	})
+}
+
+func (r *fakeRepo) FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, func(link models.PursuitLink) bool {
+		return link.SourceURI == sourceURI
+	})
+}
+
+func (r *fakeRepo) findVisibleLink(ownerIdentity string, matches func(models.PursuitLink) bool) (*models.PursuitLink, error) {
+	var best *models.PursuitLink
+	for _, link := range r.links {
+		pursuit, ok := r.pursuits[link.PursuitID]
+		if !ok || !pursuitVisibleTo(pursuit, ownerIdentity) || !matches(link) {
+			continue
+		}
+		if best == nil || link.Confidence > best.Confidence || (link.Confidence == best.Confidence && link.CreatedAt.After(best.CreatedAt)) {
+			copyLink := link
+			best = &copyLink
+		}
+	}
+	if best == nil {
+		return nil, errNotFound("link")
+	}
+	return best, nil
 }
 
 func (r *fakeRepo) CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error) {
