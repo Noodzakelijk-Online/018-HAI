@@ -1,1000 +1,357 @@
 # 018-HAI
 
-018-HAI is a local-first Human Autonomous Intelligence Shell: a Personal AI Operating System for turning source material, memory, workflows, approvals, and controlled execution into inspectable operational work. It combines an Angular dashboard, Go APIs, an IDP, nginx gateway, Postgres, Redis, Kafka, and Docker Compose for a Windows 11-oriented local deployment.
+018-HAI is a local-first Human Autonomous Intelligence Shell: a governed
+Personal AI Operating System for turning authorized source material, durable
+memory, workflows, approvals, and controlled execution into inspectable work.
 
-The canonical product is this Go/Angular/Postgres stack. It is a governed operations system, not an unrestricted desktop agent: planning, execution, verification, and approval are deliberately separate, and external effects remain blocked unless a reviewed runtime and approval path are configured.
+The canonical product is this repository's Go, Angular, Postgres, and Docker
+Compose stack. It is not an unrestricted desktop agent: planning, execution,
+verification, and approval are separate; external effects remain blocked until a
+reviewed runtime, policy, and evidence path are configured.
 
-> **Repository state:** implemented local operating layer; locally validated Compose and critical-path checks; external accounts, third-party models, and host-control runtimes remain opt-in and must be proven separately. See [Current State](#current-state), [Quick Start](#quick-start), and [Deliberate Boundaries](#deliberate-boundaries).
+> **Current repository state, reviewed 2026-07-14:** the local operating layer
+> is implemented and its Compose topology, production frontend build, backend
+> tests, Postgres critical-path smoke, gateway health routes, and protected-route
+> rejection have been exercised. Live third-party accounts, paid models, browser
+> control, and broad host control are deliberately not claimed as working.
 
-## Canonical Stack Decision
+## Product Boundary
 
-The canonical product stack is this Codex-built Go backend, Angular dashboard, Postgres persistence, and Docker Compose local runtime. The Manus React/tRPC/MySQL implementation should be treated as reference material only. Useful Manus behavior should be ported into this stack deliberately, not developed as a parallel product.
+HAI is the product. A pursuit is the high-level objective or case that connects
+the systems below; it is not a second product or a replacement workflow engine.
+The earlier Manus React/tRPC/MySQL implementation is reference material only.
+Useful behavior from it should be ported deliberately into this stack rather
+than maintained in parallel.
 
-This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-canonical-stack-and-readiness.md). The dashboard HAI OS page also exposes real-world readiness gates so internal AI logic is not mistaken for proven external integration behavior.
+See [ADR 0001](docs/architecture-decision-records/0001-canonical-stack-and-readiness.md)
+for the canonical-stack decision.
 
-## Current State
+## What Is Implemented
 
-**Last reviewed: 2026-07-14 on `main`.** 018-HAI has an implemented, safety-gated operating layer. The local Compose topology has been exercised in this repository with healthy backend, frontend, gateway, Postgres, Redis, and Kafka services; `GET /` returned the Angular shell, `GET /healthz` and `GET /readyz` reached the backend, and a protected engine route returned `401` without a session. Docker Compose configuration validates from `.env.example`, and the backend critical-path smoke has passed against local Postgres.
-
-This is a **locally validated deployment path**, not a claim that a checkout is currently running or that HAI has proven live access to accounts, providers, or unrestricted device control.
-
-### Start Here
-
-| Question | Current answer |
-| --- | --- |
-| What is the product? | This Go/Angular/Postgres Compose stack is the canonical HAI product. The former Manus React/tRPC/MySQL work is reference material, not a second product. |
-| Can I run it locally? | Yes. Use the Windows/Docker Compose path in [Quick Start](#quick-start), then check `ps`, `/healthz`, and `/readyz`. A target-machine fresh-clone run is still required before calling an installation operational. |
-| What can I safely try? | Owner-scoped pursuits, workflows, source-export ingestion, memory, task planning, approval/review queues, verification evidence, local-model configuration, and disabled-by-default runtime configuration. |
-| What does not work automatically? | Live Gmail, Calendar, Drive, Trello, WhatsApp, browser, and other account access; paid LLM usage; public posting; financial/account changes; deletion; and broad host control. Each needs a separate scoped integration and evidence. |
-| How is safety enforced? | Owner scoping, approval and verification gates, runtime/workspace/host allowlists, emergency stop, redacted audit records, and a EUR 0 paid-model default. |
-
-### Readiness Vocabulary
-
-- **Implemented:** code, persistence, API contract, and focused automated coverage are present in this repository.
-- **Locally validated:** a bounded local build, Compose, Postgres, gateway, or smoke check exercised the path. It is not third-party proof.
-- **Live-proven:** a configured account, provider, or runtime completed a bounded approved end-to-end check on the target machine with audit and verification evidence.
-
-No dashboard label, configured provider, or generated answer upgrades itself to live-proven.
-
-### What You Can Use Today
-
-| Operator outcome | Current path | Guardrail |
+| Area | Implemented capability | Important operating boundary |
 | --- | --- | --- |
-| Organize a long-running objective | Create a pursuit with its goal, why it matters, desired outcome, and completion definition; link workflow/source/memory/evidence records, inspect blockers and approvals, then explicitly archive or reopen it. | Authenticated records stay owner-scoped; a closed pursuit cannot be silently reactivated by later intake. |
-| Turn authorized material into work | Import allowlisted local files or supported exports, search the extracted context, and route actionable findings through workflow intake. | Local paths are constrained to the mounted source root; account OAuth and browser capture are not automatic connectors. |
-| Plan and progress work | Use the task, workflow, command-dashboard, and ambient proposal surfaces to create plans, checklists, open loops, review items, next actions, and bounded VA handoff briefs. | A proposal or VA brief is not execution, assignment, or external authority. High-risk or unresolved work stops for review. |
-| Use a local model | Configure Ollama or another OpenAI-compatible local endpoint, probe it, and run a bounded validated task. | Paid usage is disabled by default with a EUR 0 daily budget. A configured endpoint is not treated as live-proven until it passes a live probe. |
-| Run a narrow automation or agent runtime | Configure a reviewed API, script, Docker, Hermes, Odysseus, or OpenClaw adapter and attach it to approved work. | Runtimes are disabled by default and remain limited by approval, allowlists, workspace, timeout, audit, verification, and emergency-stop controls. |
+| Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, and task planning. | A dashboard card is operational visibility, not proof that an external action occurred. |
+| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, and read-only VA delegation briefs. | Completion needs workflow, verification, source, runtime, and approval evidence where applicable. |
+| Memory and knowledge | Compact memory, retrieval, deduplication, correction, export/deletion planning, provenance, encrypted user-authorized conversation capture, and source/extraction links. | Raw imported conversations are not automatically promoted to trusted facts. |
+| Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, and read-only GitHub sync. | Gmail, Calendar, Drive, Trello, WhatsApp, and browser accounts are export/local-folder paths, not live OAuth or browser connectors. |
+| LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
+| Verification | Source-grounded answers, claim/evidence status, schema/deterministic validation, review routing, and verification-gated task completion. | Model confidence alone never authorizes a factual claim or consequential action. |
+| Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, and emergency stop. | Script/Docker control and external runtimes are disabled until explicitly configured; high-risk actions need approval. |
+| Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. |
+| Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile commands, CI, Compose validation, and local smoke coverage. | Schedulers are in-process, single-node workers, not a distributed or HA worker platform. |
 
-### What Still Needs Separate Setup or Evidence
+### Readiness Terms
 
-- Gmail, Calendar, Drive, Trello, WhatsApp, browser, and other account access need a deliberately scoped connector or authorized export plus a live validation. HAI does not use a user's accounts merely because the dashboard is running.
-- Hermes, Odysseus, and OpenClaw are adapters, not bundled dependencies. Install and configure each upstream runtime in a dedicated workspace before enabling one low-risk approved task.
-- Script and Docker execution, outbound communication, public posting, financial actions, account changes, deletion, and broad host control remain disabled or blocked by default.
-- A fresh-clone `docker compose up --build` run is still required on Robert's target Windows 11 machine before calling the deployment operational there. The Compose topology and gateway contract have been locally exercised in this repository; see [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
+- **Implemented**: code, persistence, API contract, and focused automated coverage exist in this repository.
+- **Locally validated**: a bounded build, Compose, Postgres, gateway, or smoke check exercised the path. This is not third-party proof.
+- **Live-proven**: a configured account, provider, or runtime completed a bounded approved end-to-end task on the target machine with audit and verification evidence.
 
-### Current Main Baseline
+No configured provider, runtime, dashboard state, or generated answer upgrades itself to live-proven.
 
-The current `main` branch is suitable for a bounded local operator trial: create
-and inspect pursuits, import authorized local/exported source material, plan and
-run approved workflow work, generate a read-only VA delegation brief from
-already VA-ready work, review verification evidence, and use a configured local
-model or controlled runtime. It is deliberately not a claim that HAI has access
-to a user's mail, calendar, browser, device, or paid provider by default.
+## Current Safe Operator Flows
 
-Recent hardening in the current baseline:
+After authentication, an operator can:
 
-- Pursuit, workflow, source, memory, verification, task, review, ambient, and
-  HAI OS browser/API routes require a verified owner session. Their operations
-  retain that identity end to end; ownerless work is limited to controlled
-  in-process schedulers and workers.
-- Assistant chat commands and command history use the same verified owner
-  boundary, so an HTTP caller cannot create or inspect an ownerless task plan
-  through the conversational surface.
-- Model routing and generation, memory and conversation archives, connected
-  sources, verification history, task controls, agent-cycle refreshes,
-  autonomy diagnostics, and runtime inventory now share a router-level owner
-  gate. A missing session cannot become an ownerless request or consume local
-  model/runtime capacity through those HTTP APIs.
-- Owner-scoped pursuit dashboards derive their cards through the same
-  owner-aware linked-record filter as pursuit detail. Legacy links to another
-  owner's private workflow, memory, source, or verification data are excluded
-  rather than affecting queues, counts, or suggested actions.
-- Pursuit activity feeds are owner-scoped by the service itself, so audit and
-  source-derived history cannot be exposed by a future handler or worker that
-  omits a separate visibility pre-check.
-- The agent-runtime registry enforces the emergency stop itself. Direct
-  Hermes, Odysseus, or OpenClaw registry calls are blocked even when they do
-  not pass through the automation launcher.
-- The shared local automation registry also requires a verified operator
-  session before it exposes targets, accepts configuration changes, probes
-  health, or launches/stops a controlled runtime.
-- Task execution classifies external communication, legal/government,
-  financial, account, publication, and deletion requests as high risk. State
-  changes such as deployment or repository mutation are medium risk. Both are
-  prepared for explicit review; only bounded low-risk work can execute under
-  its configured runtime policy without an approval decision.
-- A requested runtime action without its deterministic execution prerequisite
-  (for example, a configured controlled automation) becomes a clarification
-  item before any runtime launch is attempted.
-- Dashboard worker controls for **Run due**, **Recover stale**, **Run follow-ups**,
-  and Connected Sources **Sync due** operate only on sources and workflow items
-  explicitly owned by the signed-in user. They cannot invoke the global
-  scheduler or process another user's work.
-- Task planning, controlled task execution, task history, and task-review
-  decisions require the same verified owner. HTTP requests never fall back to
-  an ownerless task log or review queue; ownerless system work remains available
-  only to in-process workers.
-- Ambient proposal acceptance and dismissal also require a verified owner. An
-  HTTP caller cannot turn a shared/system proposal into workflow work without
-  a signed identity; the ownerless resolution path is reserved for in-process
-  system workers.
-- Runtime-control mutations, including runtime task stop requests and OpenClaw
-  ecosystem path, refresh, and upload operations, require a verified owner
-  before reaching a runtime adapter or filesystem operation. Runtime inventory,
-  health, and skill discovery remain read-only.
-- Pursuit intake, planning, summary refresh, and decision resolution use
-  owner-scoped service paths. Before they derive evidence, workflow follow-ups,
-  or completion state, those paths filter legacy links that point to records the
-  current owner cannot see.
-- Ownerless legacy pursuits remain visible only for local-development
-  compatibility. Authenticated API users cannot update, archive, reopen,
-  review, link, plan, intake, or otherwise adopt them; controlled in-process
-  maintenance remains the only supported write path.
-- The VA delegation endpoint is read-only and owner-scoped. It compiles only
-  existing VA-ready workflow context, checklists, source references, delivery
-  requirements, and escalation rules; it cannot assign a person, execute work,
-  send messages, or grant external authority.
-- The global source and workflow schedulers remain in-process, ownerless system
-  workers. They are not exposed as dashboard actions and must remain separately
-  controlled until per-owner scheduling is live-validated.
-- Real adapter boundaries are explicit: local/export ingestion, read-only GitHub
-  sync, Ollama/OpenAI-compatible probes, and bounded script/Docker/API runtime
-  paths exist; account OAuth, webhooks, browser automation, and unrestricted
-  host execution do not.
-- Gateway routing resolves Docker service names per request rather than pinning
-  a container IP at nginx startup. Recreating the frontend or backend therefore
-  cannot leave `http://localhost` pointed at a dead upstream. `/healthz` and
-  `/readyz` are explicit backend proxy routes; protected engine APIs remain
-  behind the IDP session boundary.
-- Direct task plans and runs scoped to a pursuit retain a compact durable
-  task-attempt record and exact runtime-launch evidence. Their verification
-  result is linked back to the same pursuit, and a failed evidence link moves
-  the task to review instead of presenting it as a verified outcome.
-- Pursuit dashboard freshness is derived from linked workflow, task,
-  verification, source, and runtime activity at read time. The **Recently
-  changed** lane is ranked by that effective activity, so a real worker update
-  is neither misclassified as stale nor hidden behind older pursuit records;
-  a passive page refresh still cannot alter the durable pursuit record.
-- Auto-created pursuit candidates remain Robert-owned review items. They cannot
-  surface a completion decision or be closed through a generic update until
-  Robert accepts and plans them; owner-scoped closure checks ignore any legacy
-  link whose underlying evidence belongs to another user.
-- Pursuit detail aggregation fails closed when a linked operational record
-  cannot be read. The dashboard keeps the pursuit visible as blocked and
-  needing Robert rather than showing missing evidence, blockers, or runtime
-  state as an apparently safe empty result.
+1. Create a pursuit with an objective, desired outcome, completion definition,
+   priority, risk, and autonomy setting.
+2. Import authorized local/exported material, inspect extractions, and route
+   actionable context into a pursuit or workflow.
+3. Create plans, checklists, follow-ups, review items, and source-linked
+   verification work through the workflow and task engines.
+4. Review Robert-only decisions, blockers, next actions, approvals, runtime
+   evidence, and completion conditions from the Command Dashboard or a pursuit.
+5. Configure and probe a local model endpoint, then run a bounded validated
+   task subject to the local/free policy.
+6. Configure one narrow approved automation or agent runtime after its
+   allowlists, workspace, timeout, and safety settings are explicitly reviewed.
 
-For route-level ownership behavior, see the
-[backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that
-distinguishes local implementation from live external validation, see the
-[external provider reality review](docs/external-provider-reality-review.md).
+The normal durable path is:
 
-### Persistence And Execution Semantics
+\`\`\`text
+assistant command or source intake
+  -> pursuit
+  -> persisted workflow
+  -> bounded task plan/run
+  -> verification and audit evidence
+  -> completion, review, retry, or follow-up
+\`\`\`
 
-The durable operational record is Postgres-backed: pursuits, workflows,
-workflow transitions, decisions and source links, connected-source metadata and
-extractions, compact memory, verification runs, provider-probe history,
-automation launch evidence, and audit records survive a backend restart.
+Direct \`/task/*\` planning and run sessions are useful for bounded operator
+work, but their full plan/review history is process-local. When explicitly
+scoped to a valid pursuit, HAI also persists a compact task-attempt projection;
+the workflow remains the restart-safe execution ledger.
 
-`POST /task/plan`, `POST /task/run`, `/task/logs`, and the task review queue are
-an interactive, process-local control surface. Their full recent plans and
-review items are retained only by the running backend process, so unscoped
-direct task work is not a restart-safe job ledger. When a plan or run is
-explicitly scoped to a valid pursuit, HAI also persists a compact task-attempt
-projection under that pursuit: plan ID, owner, request summary, risk, runtime
-selection, exact launch-event evidence, verification state, blocker, and lifecycle timestamps. The normal
-operational route is still **assistant command or source intake -> pursuit ->
-persisted workflow -> worker -> task plan -> verification/audit evidence**.
-The workflow stores the task-plan ID, run result, retry state, and completion
-decision before a pursuit presents it as execution evidence.
+## Safety and Ownership
 
-A direct task scoped to a pursuit also passes that pursuit identity into the
-verification engine. The resulting verification run is linked as pursuit
-evidence; if that link cannot be recorded, the task moves to review rather than
-being presented as a verified pursuit outcome.
+- Verified owner identity is required for the personal pursuit, workflow,
+  source, memory, verification, task, review, ambient, HAI OS, and runtime
+  mutation APIs. Client-supplied actor or approval fields are not trusted.
+- Owner-scoped pursuit detail, dashboards, activity, evidence, decisions, and
+  links filter legacy records that are not visible to the current owner.
+- High-risk communication, legal/government, financial, account, public-post,
+  deletion, destructive-file, and broad-host actions require explicit approval
+  and do not run from a generic transition or chat request.
+- The runtime registry enforces emergency stop at its own boundary, including
+  direct Hermes, Odysseus, and OpenClaw registry execution calls.
+- Runtime execution is constrained by enablement flags, allowlisted tools,
+  hosts, paths, workspaces, timeouts, output limits, redacted audit records,
+  and verification before completion.
+- Ownerless legacy data is read-compatible only for local-development
+  compatibility. Authenticated users cannot adopt or mutate it. Ownerless
+  scheduler work stays in-process and is not exposed as an operator action.
 
-Source, workflow, and ambient schedulers run in the backend process. They are
-appropriate for the single-node local Compose setup, with durable due-state and
-workflow leases protecting normal recovery, but they are not a distributed
-worker service or a high-availability scheduler. Run one controlled backend
-instance for operational use until leader election and worker-heartbeat
-infrastructure are deliberately added.
+For route-by-route ownership behavior, see
+[backend endpoint audit](docs/backend-endpoint-audit.md). For the broader
+threat model, see [threat model](docs/threat-model.md).
 
-What is implemented in this repository:
+## Deliberate Gaps
 
-- **User experience:** onboarding, quick capture, Command Dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
-- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work. Pursuits have an explicit completion/reopen lifecycle: new evidence never silently reopens completed work. An authenticated owner flows through pursuit intake, planning, summary refresh, decision resolution, runtime-recovery workflow handoffs, personal ambient pursuit proposals, and private ambient need profiles into the task runner, task context retrieval, and verified lesson storage. Accepted proactive opportunities persist their workflow reference before cross-service pursuit links: a transient link failure remains safely retryable without creating duplicate workflow work. An accepted non-pursuit proposal reuses that existing workflow to match an active pursuit or create a waiting, reviewable candidate; it remains linked as metadata-only pursuit context, so the detail view exposes its status, next action, priority, and approval requirement without leaking its raw evidence manifest. A pursuit can also produce a bounded, read-only VA delegation brief without turning that brief into an assignment or an execution grant.
-- **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance. Pursuits retain metadata-only links to related imported AI archives, so their detail view can show the platform, title, source URI, capture time, and message count without returning a conversation preview or encrypted payload. Authenticated memory APIs, AI-conversation imports, source-derived consolidation, workflow intake/feedback, direct task planning/runs, and explicit ambient accept/dismiss feedback are owner-scoped. Background/system work is deliberately ownerless unless it originates from an owner-bound source or workflow.
-- **Connected-source import paths:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync. New authenticated source records are owner-scoped through source search, extraction management, sync history, audits, workflow intake, and pursuit linking; ownerless legacy records remain visible in local-development compatibility mode.
-- **Governance:** the backend independently verifies browser-session or bearer JWTs before using a signed principal for audit attribution; client-supplied actor labels are ignored. Personal pursuit, ambient-planning, and HAI OS HTTP routes require that verified owner identity and therefore fail closed without a signed session; HAI OS ambient counters are owner-scoped, while ownerless service access is reserved for controlled in-process workers. Approval gates, emergency stop, request rate limits, idempotency, redacted audit records, path safety, runtime allowlists, and a paid-model policy disabled by default are implemented.
-- **Runtime and providers:** local/free model routing supports Ollama and OpenAI-compatible endpoints. Provider probes retain redacted historical readiness, and strict mode can require a recent successful live probe before selecting a configured provider. Hermes, Odysseus, and OpenClaw are controlled adapters with bounded inventory/probe/execute paths. Every runtime remains disabled until explicitly configured and is subject to approval, workspace, timeout, audit, and verification gates.
-- **Operations:** gateway-proxied `/healthz` and `/readyz`, `backend doctor`, `backend reconcile`, support-bundle and build-information endpoints, feature flags, CI checks, Docker Compose configuration validation, a real-Postgres critical-path smoke test, and a locally exercised Compose gateway contract. Backend and IDP container builds use the same pinned Go `1.21.13` toolchain as CI and omit debug-only build layers.
+These capabilities are not bundled or live-proven by this repository:
 
-### Readiness At A Glance
+- Gmail, Google Calendar, Google Drive, Trello, WhatsApp, browser, and other
+  account OAuth/API integrations. Use authorized exports or a scoped bridge
+  until a connector has its own live validation.
+- Provider webhooks, local file watchers, a dedicated vector database, generic
+  MCP, QwenPaw, browser automation, and desktop-agent execution.
+- Hermes, Odysseus, and OpenClaw upstream installations. HAI provides guarded
+  adapters, not the upstream software or unrestricted credentials.
+- Paid LLM use, public posting, financial commitments, account changes,
+  deletion, and unrestricted device control.
+- A production migration framework, distributed workers, leader election,
+  worker heartbeats, or high availability.
+- Verified multi-user isolation on two real accounts. Owner scoping is covered
+  in code and focused tests, but a real two-account exercise remains required
+  before shared operation is trusted.
+- A clean-machine, signed-in Windows 11 deployment journey. The local Compose
+  and gateway path has been exercised; target-machine acceptance remains a
+  required release gate.
 
-| Area | Repository status | What remains before it is trusted for real work |
-| --- | --- | --- |
-| Go API and Angular dashboard | Implemented; backend/IDP tests, Angular production build, Compose configuration validation, and a local gateway smoke are complete. Docker DNS is resolved at request time so recreated services do not leave the gateway on a stale IP. | Run a fresh-clone Compose build on the target Windows machine and exercise the intended signed-in user flows. |
-| Workflow, verification, memory, and pursuits | Implemented with persistence, audit history, approval gates, retry/review states, safety normalization, owner-scoped pursuit mutations, and read-only VA-ready delegation briefs. | Use representative, non-sensitive source fixtures and review the resulting audit trail before enabling automation or relying on cross-user isolation. |
-| Local/export source ingestion | Implemented for allowlisted local files and authorized exports. | OAuth/API connectors, webhooks, and a real account-specific bridge need separate scoped setup and live validation. |
-| GitHub source sync | Implemented as a read-only REST connector, token optional for public repositories. | Configure a least-privilege token where required and validate against the chosen repository. |
-| LLM routing | Local/free routing, endpoint guards, persisted redacted provider probes, strict recent-probe gating, fallback logging, and a EUR 0 paid default are implemented. | Install/configure a local model or free provider and pass a bounded live probe plus a representative validated task. |
-| Controlled execution | API/script/Docker adapters and task evidence gates are implemented; script and Docker control are disabled by default. | Enable one narrowly scoped adapter, then prove an approved end-to-end workflow without expanding device permissions. |
-| Hermes, Odysseus, and OpenClaw | Controlled adapter code and configuration surfaces are present; upstream software is not bundled. | Install/configure each upstream runtime separately, use dedicated workspaces/credentials, and validate one low-risk approved task at a time. |
-| Authentication and RBAC | Signed identity is revalidated by the backend; explicit RBAC routes default to viewer when a JWT has no role. | Add IDP role issuance and broaden permission checks before relying on multi-role operation. |
-| Owner-scoped operating work | Authenticated sources, memory, pursuits, verification, workflows, task history, reviews, and direct source preflight preserve the caller identity. | Exercise two real local accounts before relying on isolation for shared or multi-user operation. |
-| Dashboard worker controls | Manual due-work, stale-claim recovery, due-follow-up, and source-sync controls are implemented and limited to the verified owner's explicitly owned records. | Exercise two real local accounts plus a controlled system-worker run to verify the operator/system boundary. |
-| Ambient planning | Dashboard-triggered scans, proposals, scan history, and need-profile overrides are owner-scoped and suggestion-only. Ownerless system work retains a separate shared baseline. | Exercise two real local accounts and one ownerless system-worker path before relying on the boundary for shared or multi-user operation. |
-| Scheduled source refresh | A system worker processes globally due sources; an authenticated task preflights only that caller's explicitly owned due sources before source search. | Add per-owner scheduler dispatch only after account and source-credential boundaries are live-validated. |
+The [external provider reality review](docs/external-provider-reality-review.md)
+records the current integration truthfulness boundary.
 
-### Operator Entry Points
+## Architecture
 
-After signing in, the Angular dashboard exposes these authenticated operator surfaces:
+\`\`\`text
+Angular dashboard
+        |
+nginx gateway + IDP session boundary
+        |
+Go API and operating engines
+  |-- pursuits and workflow engine
+  |-- task, approval, verification, and audit engines
+  |-- memory and connected-source ingestion
+  |-- local-first LLM router and provider probes
+  |-- ambient planning and controlled runtime registry
+        |
+Postgres + Redis + Kafka
+\`\`\`
 
-- `/control-center` for the primary operational overview and controlled maintenance cycle.
-- `/command-dashboard` for Robert-only decisions, open loops, memory-derived work, and source-backed context.
-- `/pursuits` for durable objectives, their workflow/evidence links, blockers, approvals, explicit closure or reopen decisions, and bounded VA-ready delegation briefs.
-- `/workflow-engine` for the execution queue, interrupted work, quality gates, approvals, and follow-ups.
-- `/connected-sources`, `/memory`, `/llm-policy`, `/ambient-brain`, and `/task-blueprint` for source, context, provider, proactive-planning, and explicit-command operations.
-
-These screens surface operational state; they do not prove that an external action occurred. The linked audit, approval, runtime, and verification records remain the source of truth.
-
-Verified evidence is maintained in [the completion matrix](docs/codex-goal/completion-matrix.md), [final verification report](docs/codex-goal/final-verification-report.md), and [fresh-clone dry run](docs/fresh-clone-dryrun.md). The critical-path smoke has passed against a real local Postgres instance, and the local Compose gateway contract has been exercised. This evidence proves the exercised local path, not live LLM, email, calendar, Drive, browser, or third-party-runtime correctness.
-
-### Deliberate Boundaries
-
-- HAI does not send messages, spend money, post publicly, delete data, change accounts, or take broad device control by default.
-- OAuth account authorization/refresh, provider webhooks, file-system watchers, dedicated vector infrastructure, and additional Claw-compatible adapters remain follow-up work.
-- A configured provider or runtime is not considered proven until its live probe and approved workflow are exercised on the target machine.
-- The local Compose topology, gateway health, dashboard shell, backend health/readiness routes, and protected-route rejection have been exercised. A clean-machine, fresh-clone Windows 11 run and signed-in browser journey remain outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
-- Direct `/task/*` plan/run history and its approval queue are intentionally process-local. A task explicitly scoped to a valid pursuit also writes a compact restart-safe attempt projection to that pursuit, but the persisted workflow route remains the authoritative ledger for queued execution, retries, approvals, and completion.
-- The source, workflow, and ambient schedulers are in-process single-node workers. They are not a distributed queue, leader-elected scheduler, or production high-availability service.
-- The bundled IDP currently issues a stable `user_id` for authenticated-session attribution. It does not yet issue role claims, so endpoints with explicit RBAC checks default to viewer until role issuance is implemented.
-- Owner boundaries protect owner-scoped sources, memories, conversation imports, pursuits, verification runs/evidence links, authenticated workflow/task execution, task-history and review-queue views, review resolution, and ambient proposal/scan/profile records. Task HTTP routes require a verified owner for planning, controlled execution, history, review visibility, and review resolution; they do not fall back to ownerless/global records. Ambient scan, need-profile, proposal acceptance, and dismissal actions require the same boundary, so an HTTP caller cannot convert an ownerless system proposal into workflow work. Runtime stop and OpenClaw ecosystem mutation routes also require a verified owner before calling a runtime adapter or touching an ecosystem archive. Authenticated workflow lists, dashboards, details, mutation routes, manual worker runs, stale-claim recovery, and due follow-up processing enforce the same boundary. The Connected Sources `Sync due` action requires a verified owner and refreshes only that owner's explicit sources. Source identity/URI deduplication is scoped to the same verified owner so one account cannot reuse or supersede another account's work. A dashboard-triggered ambient scan or need-profile update requires an authenticated owner, reads only that owner's pursuit dashboard and planning profile, creates only owner-tagged proposals and scan history, and never starts workflow execution. Private need profiles overlay the shared baseline without modifying it; ownerless system workers continue to use that baseline. Verification uses only the caller's visible source context, persists the caller on the verification run, owner-scopes history/detail views, owner-scopes verified memory writes, and validates a requested pursuit before attaching evidence. Authenticated pursuit links validate workflow, memory, and source targets against the same owner before they are persisted. Owner-scoped pursuit detail, evidence, and approval responses also filter old/imported workflow, memory, source, and verification links when their target is no longer visible to that owner. Legacy ownerless records are read-compatible for local development but are never adopted or modified by an authenticated owner. The in-process scheduler retains a separate ownerless system-worker view and must not be exposed through authenticated operator endpoints.
-- An authenticated task searches only sources visible to that owner and can preflight only sources explicitly owned by that caller. It never invokes the global due-source scheduler or modifies ownerless legacy sources; the global worker remains a separate controlled system operation.
-- An authenticated agent-cycle request is an owner-scoped operating refresh: it reads only that owner's memory and pursuit state and does not start global source sync, workflow execution, ambient scans, or shared operational learning. The HTTP routes reject unauthenticated cycle runs; system-worker phases are invoked in-process by controlled schedulers until per-owner scheduling is implemented.
-- The dashboard is an operator surface, not evidence that an external action ran. Completion and audit records remain authoritative only when they contain the required runtime, source, verification, and approval evidence.
-
-## Repository Layout
-
-```text
-.
-|-- backend/                 Go backend API and HAI engine modules
-|-- frontend/                Angular dashboard
-|-- idp/                     Go identity provider service
-|-- nginx-config/            Gateway nginx config
-|-- nginx-config-manager/    Go service for nginx route config updates
-|-- automation-scripts/      Allowlisted scripts mounted read-only into backend
-|-- connected-sources/       Allowlisted local files mounted read-only for ingestion
-|-- browser-extension/       Explicit, user-authorized browser conversation capture
-|-- scripts/                 Smoke and operational verification scripts
-|-- generic-auto/            Legacy generic automation service; not the canonical HAI engine
-|-- gate/                    Legacy gateway/config files; local Compose uses nginx-config/
-|-- kafka/                   Kafka-related config area
-|-- docs/                    Architecture and feature blueprints
-|-- .github/workflows/       CI pipeline
-|-- docker-compose.local.yml Local-first Windows/Docker Compose setup
-|-- docker-compose.yml       Legacy/default compose setup
-|-- .env.example             Local environment template
-|-- init.sql                 Postgres extension/bootstrap SQL
-```
-
-Important note: a legacy tracked `.env` exists for historical compatibility, but the documented local workflow uses `.env.example` copied to the untracked `.env.local`. Do not add runtime database files, image uploads, local secrets, or generated output to Git.
+The local deployment targets Windows 11 with Docker Desktop. The backend uses
+Go 1.21, Gin, Gorm, Postgres, and Sarama/Kafka; the frontend uses Angular 16
+and ng-zorro-antd. The current data model relies on Gorm \`AutoMigrate\` and
+\`init.sql\`; a production migration system remains future work.
 
 ## Quick Start
 
-Prerequisites:
+### Prerequisites
 
-- Windows 11 with Docker Desktop, or another Docker Compose capable environment.
+- Windows 11 with Docker Desktop, or another Docker Compose-capable environment.
 - Git.
 - Node.js 20 for frontend development outside Docker.
-- Go 1.21 for backend development outside Docker.
+- Go 1.21 for backend development outside Docker. The Docker/CI toolchain is pinned to Go 1.21.13.
 
-Local Docker start:
+### Start the local stack
 
-```powershell
+\`\`\`powershell
 Copy-Item .env.example .env.local
-# Set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY in .env.local.
+# Edit .env.local: set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY.
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
-```
+\`\`\`
 
-Open the dashboard:
+Open [http://localhost](http://localhost).
 
-```text
-http://localhost
-```
+The \`.env.example\` development defaults are:
 
-Default first-run local admin from `.env.example`:
-
-```text
+\`\`\`text
 Email: noodzakelijkonline@gmail.com
 Password: ChangeMe123!
-```
+\`\`\`
 
-The credentials above are development defaults only. Change `FIRST_RUN_ADMIN_PASSWORD` in `.env.local` before first start for a real local install. If the Postgres data folders already exist, changing first-run values will not rewrite the existing account.
+Change \`FIRST_RUN_ADMIN_PASSWORD\` and \`BACKEND_API_SHARED_KEY\` before first use.
+If the Postgres data volume already exists, changing first-run values does not
+rewrite the existing account. Do not commit \`.env.local\`, Docker state,
+database directories, uploaded material, frontend build output, or secrets.
 
-Change `BACKEND_API_SHARED_KEY` before a real local install. Docker Compose injects the same `.env.local` value into nginx at startup; the backend requires `X-HAI-Backend-Key` only when the value is non-empty, and the gateway still requires IDP authentication before proxying backend routes.
+### Verify the local gateway
 
-Local service ports:
-
-- Gateway/dashboard: `http://localhost`
-- IDP Postgres: `localhost:5433`
-- Automation Postgres: `localhost:5434`
-- Redis: `localhost:6379`
-
-Useful local checks:
-
-```powershell
+\`\`\`powershell
 docker compose --env-file .env.local -f docker-compose.local.yml ps
 docker compose --env-file .env.local -f docker-compose.local.yml logs backend
-docker compose --env-file .env.local -f docker-compose.local.yml logs idp
-docker compose --env-file .env.local -f docker-compose.local.yml logs kafka
-docker compose --env-file .env.local -f docker-compose.local.yml config
+curl.exe -i http://localhost/
 curl.exe -i http://localhost/healthz
 curl.exe -i http://localhost/readyz
-```
+curl.exe -i http://localhost/api/v1/llm/policy
+\`\`\`
 
-Expected result: the gateway serves the dashboard at `/`; `/healthz` reports
-liveness; `/readyz` reports backend configuration readiness. A protected API
-route without a session must return `401`, not anonymous application data. For
-the full target-machine proof sequence and its remaining gaps, use
-[fresh-clone dry run](docs/fresh-clone-dryrun.md).
+Expected behavior:
 
-If port 80 is already in use, change the nginx port mapping in `docker-compose.local.yml` from `"80:80"` to another host port, for example `"8088:80"`, then open `http://localhost:8088`.
+- \`/\` serves the Angular shell.
+- \`/healthz\` and \`/readyz\` reach the backend through nginx.
+- Protected engine routes such as \`/api/v1/llm/policy\` return \`401\` without a
+  signed session, not anonymous application data.
 
-Local folder ingestion:
+If port 80 is already in use, change the nginx port mapping in
+\`docker-compose.local.yml\` from \`\"80:80\"\` to, for example, \`\"8088:80\"\`, then
+open \`http://localhost:8088\`.
 
-1. Place text-like files under `connected-sources/`.
-2. In the dashboard, open Connected Sources.
-3. Connect a `Selected local folders` source if one does not exist.
-4. Use Local Folder Sync with a folder path relative to `connected-sources/`, for example `.`.
+For the target-machine acceptance sequence, use
+[fresh-clone dry run](docs/fresh-clone-dryrun.md). For diagnosis, use
+[troubleshooting](docs/troubleshooting.md) and the in-product support bundle.
 
-The backend mounts this folder read-only at `CONNECTED_SOURCE_LOCAL_ROOT`. Folder paths that escape that root are rejected. General local ingestion supports `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, and `.log`; the export connectors also accept `.mbox`, `.eml`, and `.ics` within the same allowlisted root.
+### Import local or exported material
 
-For recurring source ingestion, set the source `Sync` field to a duration such as `15m`, `1h`, `hourly`, `daily`, or `weekly`. The low-power system scheduler checks due sources every `SOURCE_SCHEDULER_INTERVAL_SECONDS` seconds when `SOURCE_SCHEDULER_ENABLED=true`; the documented local default is 600 seconds. Manual sync remains available from the dashboard when immediate work is needed. Authenticated task requests use owner-scoped source search and, when fresh source context is needed, preflight only their explicitly owned due sources. They never start the global scheduler or modify ownerless legacy sources. The scheduler supports local folders, email/calendar/project-board exports, synced document folders, GitHub REST sources, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots.
+1. Place authorized files under \`connected-sources/\`.
+2. Open **Connected Sources** in the dashboard.
+3. Create or select an export/local-folder source and keep **Local only** enabled.
+4. Use a path relative to \`connected-sources/\`, for example \`.\`.
+
+The backend mounts this root read-only. Paths escaping it are rejected. The
+general importer accepts \`.txt\`, \`.md\`, \`.markdown\`, \`.csv\`, \`.tsv\`, \`.json\`,
+\`.yaml\`, \`.yml\`, and \`.log\`; export connectors also support \`.mbox\`, \`.eml\`,
+and \`.ics\` within the same allowlisted root.
+
+## Dashboard Entry Points
+
+| Route | Purpose |
+| --- | --- |
+| \`/control-center\` | Primary operational overview and bounded maintenance actions. |
+| \`/command-dashboard\` | Robert-only decisions, open loops, source-backed context, and memory-derived work. |
+| \`/pursuits\` | Long-running objectives with workflow, source, memory, verification, blocker, approval, and activity links. |
+| \`/workflow-engine\` | Work queue, approvals, quality gates, interruptions, retries, and follow-ups. |
+| \`/connected-sources\` | Source configuration, sync history, extraction inspection, reindexing, pause/resume, and revocation. |
+| \`/memory\` | Compact memory search, correction, archive, retrieval, and export controls. |
+| \`/llm-policy\` | Provider/model configuration, budget/policy visibility, probes, routing, and fallback history. |
+| \`/ambient-brain\` | Proactive opportunities, scan history, need-profile preferences, and decision handoffs. |
+| \`/task-blueprint\` | Explicit bounded task planning, execution, validation, and review. |
+
+These screens are authenticated operator surfaces. Technical logs and deep
+diagnostics remain behind their relevant detail or audit views.
+
+## API Overview
+
+Backend engine APIs are served under \`/api/v1\` through the gateway. Principal
+areas are:
+
+- \`/automation\`: registered automations, launch/stop, health checks, and diagnostics.
+- \`/agent-runtimes\`: runtime inventory, health, skill discovery, controlled stop, and OpenClaw ecosystem inspection.
+- \`/llm\`: policy, probes, routing, generation, and redacted decision history.
+- \`/memory\` and \`/memory-engine\`: compact memory, encrypted conversation import, search, and insights.
+- \`/sources\`: source registry, connectors, sync, extraction management, search, and audit records.
+- \`/pursuits\`: high-level objectives, matching, intake, links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, and planning.
+- \`/workflow\`: intake, state transitions, approvals, due work, follow-ups, quality/review state, and dashboard data.
+- \`/task\`: bounded plans/runs, logs, and review queue.
+- \`/verification\`: grounded answers and verification run history.
+- \`/ambient\`, \`/agent-cycle\`, \`/assistant\`, and \`/os\`: proactive planning, controlled refreshes, command bridge, and operating-system summary.
+
+Use [Swagger](docs/swagger.yaml) and the route tests in
+\`backend/internal/router/\` for exact request/response contracts.
+
+## Controlled Models and Runtimes
+
+### Models
+
+The router chooses the cheapest suitable model, not mechanically the cheapest
+model. Its policy prioritizes local/free availability, task difficulty,
+validation, fallback history, quotas, and the daily budget. Paid calls are
+disabled by default with a EUR 0 budget; request JSON cannot self-approve paid
+or approval-required use.
+
+Supported configuration families include Ollama, llama.cpp/LM Studio or other
+OpenAI-compatible local servers, and configured free/freemium providers. Model
+catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
+other configured provider models. Provider status must be read as configuration
+and probe history, not as a live-service guarantee.
+
+### Agent runtimes
+
+Hermes, Odysseus, and OpenClaw are optional controlled adapters. HAI can inspect
+their configured capabilities and run a bounded approved task only after the
+operator installs the upstream runtime, configures scoped credentials/workspace
+state, enables the adapter, and validates it. HAI does not bundle these tools,
+send messages through them, control browsers, create cron jobs, or bypass their
+or HAI's security boundaries.
+
+API, script, and Docker adapters have the same default posture: disabled until
+explicitly allowlisted and configured. The emergency stop blocks runtime
+registry execution even when an adapter is invoked directly.
 
 ## Developer Checks
 
-Backend:
-
-```bash
-cd backend
-go vet ./...
-go test ./...
-go build ./...
-```
-
-Frontend:
-
-```bash
-cd frontend
-npm ci
-npm run build
-npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
-```
-
-Compose:
-
-```bash
-docker compose --env-file .env.example -f docker-compose.local.yml config
-```
-
-On a Bash-capable developer shell with the smoke prerequisites available:
-
-```bash
-scripts/smoke-critical-path.sh
-```
-
-When Go is not installed locally, the backend can be checked through Docker:
-
-```powershell
-docker run --rm -v "${PWD}\backend:/app" -w /app golang:1.21.13 go test ./...
-docker compose --env-file .env.example -f docker-compose.local.yml build backend
-```
-
-## Main API Areas
-
-All backend routes are served under `/api/v1` through the gateway. The local nginx config only proxies the exact backend namespaces, or paths below them, to the backend; unknown `/api/v1/...` paths fall through to the IDP route instead of being broadly forwarded.
-
-Platform and operator routes include `GET /healthz`, `GET /readyz`, `GET /api/v1/flags`, `GET /api/v1/system/info`, and the admin-protected `GET /api/v1/system/support-bundle`.
-
-Automation:
-
-- `GET /automation/`
-- `POST /automation/`
-- `PATCH /automation/`
-- `DELETE /automation/:id`
-- `POST /automation/:id/launch`
-- `POST /automation/:id/health-check`
-- `GET /automation/health/summary`
-- `GET /automation/health-summary`
-- `GET /automation/:id/diagnostics`
-
-LLM routing:
-
-- `GET /llm/policy`
-- `GET /llm/probes`
-- `POST /llm/route`
-- `POST /llm/generate`
-- `GET /llm/logs`
-
-Memory:
-
-- `GET /memory/`
-- `POST /memory/`
-- `POST /memory/retrieve`
-- `GET /memory/export`
-- `GET /memory/:id`
-- `PATCH /memory/:id`
-- `POST /memory/:id/archive`
-- `POST /memory/:id/restore`
-- `DELETE /memory/:id`
-
-Task engine:
-
-- `POST /task/plan`
-- `POST /task/run`
-- `POST /task/success`
-- `GET /task/logs`
-- `GET /task/review-queue`
-- `POST /task/review-queue/:id/resolve`
-
-The task routes are useful for explicit, bounded operator sessions. For durable
-work that must remain visible across restarts, use a pursuit/workflow or an
-assistant command that creates one; see [Persistence And Execution
-Semantics](#persistence-and-execution-semantics).
-
-Assistant command bridge:
-
-- `POST /assistant/command`
-- `GET /assistant/logs`
-
-Workflow engine:
-
-- `GET /workflow/overview`
-- `GET /workflow/approvals`
-- `GET /workflow/dashboard`
-- `GET /workflow/`
-- `POST /workflow/intake`
-- `POST /workflow/recover-stale`
-- `POST /workflow/run-due`
-- `POST /workflow/open-loops/run-due`
-- `GET /workflow/:id`
-- `POST /workflow/:id/transition`
-- `POST /workflow/:id/approval`
-- `POST /workflow/:id/interruption/resolve`
-- `POST /workflow/:id/proposals/:proposalId/resolve`
-- `PATCH /workflow/:id/checklist/:itemId`
-
-Connected sources:
-
-- `GET /sources/connectors`
-- `GET /sources/`
-- `POST /sources/`
-- `PATCH /sources/:id`
-- `POST /sources/:id/sync`
-- `POST /sources/sync-due`
-- `POST /sources/:id/reindex`
-- `POST /sources/:id/pause`
-- `POST /sources/:id/resume`
-- `POST /sources/:id/revoke`
-- `POST /sources/search`
-- `GET /sources/sync-jobs`
-- `GET /sources/extractions`
-- `PATCH /sources/extractions/:id`
-- `POST /sources/extractions/:id/archive`
-- `DELETE /sources/extractions/:id`
-- `GET /sources/audit-logs`
-
-Verification:
-
-- `POST /verification/answer`
-- `GET /verification/runs`
-- `GET /verification/runs/:id`
-
-HAI OS:
-
-- `GET /os/overview`
-
-Pursuits:
-
-- `GET /pursuits/`
-- `POST /pursuits/`
-- `GET /pursuits/dashboard`
-- `GET /pursuits/brief`
-- `GET /pursuits/decisions`
-- `POST /pursuits/match`
-- `POST /pursuits/intake`
-- `GET /pursuits/:id/evidence`
-- `GET /pursuits/:id`
-- `PATCH /pursuits/:id`
-- `POST /pursuits/:id/archive`
-- `POST /pursuits/:id/reopen`
-- `POST /pursuits/:id/summary`
-- `POST /pursuits/:id/review`
-- `POST /pursuits/:id/decisions/resolve`
-- `GET /pursuits/:id/activity`
-- `GET /pursuits/:id/next-actions`
-- `GET /pursuits/:id/blockers`
-- `GET /pursuits/:id/approvals`
-- `GET /pursuits/:id/delegation` (read-only, owner-scoped VA-ready delegation brief; never an assignment or execution action)
-- `POST /pursuits/:id/intake`
-- `POST /pursuits/:id/plan`
-- `POST /pursuits/:id/links`
-- `DELETE /pursuits/:id/links/:linkId`
-
-Ambient, agent-cycle, and controlled runtime support:
-
-- `GET /ambient/overview`
-- `POST /ambient/scan`
-- `PATCH /ambient/needs/:key`
-- `POST /ambient/opportunities/:id/accept`
-- `POST /ambient/opportunities/:id/dismiss`
-- `POST /agent-cycle/run`
-- `GET /agent-runtimes/`
-- `GET /agent-runtimes/health`
-- `GET /agent-runtimes/:id/skills`
-- `POST /agent-runtimes/:id/tasks/:taskId/stop`
-
-Conversation memory archive APIs are available under `/memory-engine` for explicit import, dashboard/search, conversation inspection/deletion, and extracted insights. They are intentionally separate from compact context-memory APIs under `/memory`.
-
-## Engine Behavior
-
-The task success engine follows a completion-first loop:
-
-1. Classify the request.
-2. Infer the real goal.
-3. Define success criteria.
-4. For system work, refresh due connected sources when the request likely depends on project, file, document, or local context. For authenticated work, search only the caller's visible sources and do not start the global scheduler.
-5. Retrieve relevant memory and connected-source context.
-6. Route a suitable model by capability and cost policy.
-7. Route tools and mark unsafe tools as blocked.
-8. Apply risk and approval gates.
-9. Execute only currently allowed internal steps or an explicitly selected controlled automation.
-10. Capture deterministic runtime output as execution evidence.
-11. Produce and verify a grounded execution result.
-12. Retry or escalate when validation fails.
-13. Queue unresolved or risky work for review.
-14. Store useful lessons only after verified completion.
-
-Tasks that require tools or local execution can no longer complete from generated text alone. Action-oriented execution requests must provide an `automationId` that identifies a registered automation; analysis-only requests that merely discuss an API, test strategy, or architecture do not trigger runtime execution. The task engine calls the shared controlled automation service, captures its bounded API/script/Docker launch result, adds that deterministic result to verification evidence, and requires a `completed` runtime status before completion. Missing, blocked, failed, or unconfigured runtime execution goes to review without blind retries. If answer verification needs a stronger model after a successful launch, the retry reuses the captured runtime evidence instead of executing the external action again.
-
-The automation launch adapters can call bounded API targets, run a single allowlisted container-local script, or start a Docker container when Docker control is deliberately enabled. The system still does not send emails, change accounts, post publicly, delete files, or broadly control the local machine unless a separately reviewed adapter and approval policy is implemented.
-
-High-risk task requests are added to the review queue. A review item can be approved or rejected from the dashboard or API. Approval re-runs the stored request with an explicit human-approval flag; rejection leaves the task blocked. An approved review item is marked completed only when the rerun is actually validated; unresolved runtime or verification blockers reuse the original queue item as actionable `needs_review` work instead of creating duplicate reviews. Approval does not grant unrestricted device power, it only lets the controlled task engine proceed through its configured automation, context, model, verification, and memory workflow.
-
-The task engine treats connected sources as an active preflight dependency. System/background requests that mention project/source/file/folder/document/repo context, or require local/document context, run due scheduled source syncs before source search. Authenticated requests run the same preflight only for their explicitly owned due sources, then use owner-scoped search. They do not fan out into another user's scheduled sources or modify ownerless legacy sources.
-
-## Workflow Engine
-
-The workflow engine now implements the first real operational slice of the personal operations engine. It is not a fully autonomous agent, but it does more than display workflow screens:
-
-1. Normalizes intake from manual input and connected-source events.
-2. Classifies task type, risk, priority, confidence, and autonomy level.
-3. Matches likely project/case context and stores match evidence.
-4. Creates persistent workflow items with a state machine.
-5. Generates task-type checklists and deadline reminder steps.
-6. Stores separate transition, decision, source-link, intake, evidence-claim, open-loop, proposal, quality-gate, and rulebook records.
-7. Creates approval gates for legal, government, insurance, lawyer, financial, public-posting, destructive, and account-changing work.
-8. Creates open loops for waiting/blocked/approval items with follow-up dates.
-9. Creates proposal options so Robert can approve, reject, change tone, request evidence, or block a workflow.
-10. Creates software quality gates for developer/GitHub work such as commits, tests, README/setup, and Windows 11 run path.
-11. Runs low-risk or approved ready workflows through the task engine worker.
-12. Uses durable retry counters, backoff, and blocked-after-limit behavior.
-13. Runs due open loops into follow-up proposals, checklist steps, and approval gates.
-14. Resolves proposal decisions into workflow state changes.
-15. Evaluates quality gates before verified completion.
-16. Surfaces operational monitoring for approvals, blocked work, ready work, high-risk items, due open loops, missing next actions, and safety rules.
-
-Manual input can be sent to `POST /workflow/intake`. In the canonical application this compatibility endpoint now normalizes direct calls with stable `workflow_api` provenance and routes them through pursuit matching before returning the same workflow-record response contract. This prevents API-created work from becoming an orphaned parallel path: the resulting workflow is linked to an existing or reviewable candidate pursuit and remains subject to the same approval, worker, verification, and audit controls. Connected-source sync also sends actionable extractions with tasks or follow-ups into the workflow engine. Source-derived intake deduplicates first by stable source type plus extraction identity, then falls back to source URI for older/manual callers. Each source workflow stores a deterministic revision hash over its executable content, provenance, project, and review requirements. An unchanged revision reuses the active workflow; a changed revision archives the prior workflow and builds a fresh checklist, evidence set, quality gates, and approval state. This prevents corrected source data from inheriting stale instructions or a human approval granted to an earlier version. In-progress workflows cannot be superseded until their execution outcome is reviewed. Separate records may therefore share a mailbox, sender, document, or board URI without collapsing into one workflow. Uncertain or sensitive extractions are forced into `needs_approval` rather than entering the autonomous ready queue.
-
-Raw connected-source content and connector metadata are stored separately. Reindexing uses the cached content while preserving metadata, and keyword/vector index entries are updated idempotently instead of duplicated. Correcting an extraction reindexes it and reconciles its workflow candidate. Archiving, deleting, or removing all actionable tasks from an extraction retracts the pending source-derived workflow into a blocked review state; an in-progress workflow must first use interrupted-execution review so source deletion cannot hide a possibly executed action.
-
-Source sync completion is all-or-retry at the cursor boundary. Item persistence, extraction, index, or required workflow-intake failures are recorded in `itemsFailed` with bounded error details. A partially successful job is stored as `partial_failure`, scheduled sync reports it as failed, and `LastSyncedAt` plus the cursor remain unchanged so the next incremental run retries the missing work. Concurrent sync requests for the same source are rejected within the local process instead of racing and duplicating autonomous workflow candidates.
-
-## HAI Memory Engine and Command Dashboard
-
-The canonical Go/Angular application now includes a private AI-conversation memory path:
-
-- `POST /api/v1/memory-engine/import` accepts a user-authorized capture from ChatGPT, Gemini, Copilot, or DeepSeek.
-- Raw conversation payloads are encrypted with AES-GCM before PostgreSQL storage. Set `HAI_MEMORY_ENCRYPTION_KEY`; local Compose falls back to the backend shared key only when the dedicated key is empty.
-- Imports are deduplicated by platform, thread identity, and content hash. Changed threads create a new archive revision.
-- Indexed operational facts are secret-redacted and separated into decisions, actions, risks, rules, and contradictions.
-- Stable, verified facts feed the existing context-memory retrieval layer.
-- Extracted actions feed the existing workflow engine and retain source links. Risky, uncertain, or Robert-owned actions require review.
-- `/command-dashboard` shows Needs Robert, VA-ready work, open loops, contradictions, project status, recent decisions, search results, and encrypted archive metadata.
-- The raw archive can be inspected or deleted through authenticated API routes. Deleting an archive also deletes its extracted operational facts.
-
-The private Chrome/Edge extension lives in `browser-extension/`. Load it as an unpacked extension, keep the default local endpoint `http://127.0.0.1:17070/api/v1/memory-engine/import`, enter `BACKEND_API_SHARED_KEY`, open one of Robert's own AI conversation pages, and click **Capture current conversation**. The extension reads only the currently open thread after that explicit click. It does not read cookies, passwords, local storage, hidden account data, or unrelated pages, and it sends requests with `credentials: omit`.
-
-### Normalized JSON source feeds
-
-The operational `json-feed` connector is the bridge between HAI and account-specific adapters. A local service can use the official Gmail, Calendar, GitHub, Trello, Drive, or other permitted API, retain its own credentials, and expose normalized read-only records to HAI:
-
-```json
-{
-  "nextCursor": "provider-cursor-2",
-  "items": [
-    {
-      "externalId": "stable-provider-item-id",
-      "title": "Item title",
-      "content": "Extractable source text",
-      "sourceUri": "provider://account/item-id",
-      "itemType": "email",
-      "projectKey": "018-HAI"
-    }
-  ]
-}
-```
-
-HAI sends the previous cursor as the `cursor` query parameter, persists the returned `nextCursor`, deduplicates records, extracts tasks and decisions, creates workflow candidates, updates useful memory, and records sync/audit history. The endpoint must use HTTP(S), its hostname must be explicitly listed in `CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS`, redirects are rejected, and response size and timeout are bounded. Keep provider credentials in the bridge or provider secret store, never in `syncTarget`.
-
-DNS results are checked again when the socket is opened, so an allowlisted hostname cannot redirect HAI into link-local or metadata address space through DNS rebinding. Proxy environment variables are not used for feed retrieval. Scheduled failures are persisted as sync jobs and routed into the workflow review queue, making unavailable or misconfigured sources visible operational work instead of log-only failures.
-
-Browser DOM selectors can change when providers redesign their chat pages. A failed capture is reported rather than silently treated as complete. Account-wide historical backfill should use official exports where available; automatic sidebar traversal is intentionally not enabled because it is brittle and can trigger platform limits.
-
-The workflow layer now stores operational history in separate tables:
-
-- `WorkflowTransition` records every state change.
-- `WorkflowSourceLink` records source provenance separately from the workflow item.
-- `WorkflowDecision` records classification, priority, approval, deadline, retry, and completion decisions.
-- `WorkflowChecklistItem` supports detected due dates and check reminders.
-- `WorkflowIntakeRecord` stores normalized source/input metadata.
-- `WorkflowProjectMatch` stores likely project/card/folder links.
-- `WorkflowEvidenceClaim` stores source-linked factual claims and review flags.
-- `WorkflowOpenLoop` stores waiting states and follow-up actions.
-- `WorkflowProposal` stores recommended actions and approval options.
-- `WorkflowQualityGate` stores acceptance checks for developer, legal, publishing, and verification workflows.
-- `WorkflowRule` stores the default editable safety/workflow rulebook.
-
-Approved or low-risk ready items can be consumed by `POST /workflow/run-due`. Each worker must first atomically claim an item by moving it from `ready` to `in_progress` with a unique claim ID and renewable lease; concurrent scheduler or API workers therefore cannot execute the same item from the same queue state or persist results owned by another worker. Workflows can store an `automationId`, which is passed through the workflow worker into the task engine for controlled execution. The worker completes the item only when the runtime action, task verification, and mandatory quality gates pass. Transient engine failures use durable retry counters and backoff, while explicit `review_required` results block immediately rather than repeating a potentially non-idempotent action. High-risk items remain in `needs_approval` until approved from `/workflow/approvals`, a resolved proposal, or the dashboard approval queue.
-
-Due open loops can be processed with `POST /workflow/open-loops/run-due`. Due follow-ups are also atomically leased before creating checklist or proposal records, preventing duplicate follow-up artifacts when multiple workers poll together. Follow-up checklist and proposal creation is idempotent, so a partial failure can release or recover the lease and retry without duplicating records. High-risk or Robert-owned follow-ups are moved into approval review; low-risk unblocked follow-ups can be made worker-ready. Already blocked workflows stay blocked and keep their blocker while receiving a follow-up proposal. Proposal decisions can be resolved through `POST /workflow/:id/proposals/:proposalId/resolve`, which records the decision and can approve, reject/block, or send the workflow back for changes. Completed or archived workflows reject further proposal changes.
-
-The scheduler runs stale-claim recovery before each execution pass. Expired workflow execution leases are moved to `blocked` review with a durable `recoveryStatus=needs_review` because external side effects may already have occurred and blind retrying could duplicate them. Expired open-loop leases are safely reopened because that path is idempotent. Pre-lease `in_progress`/`processing` rows are migrated through the same policy after one lease window. Operators can also run this explicitly with `POST /workflow/recover-stale` or the **Recover Stale** dashboard action.
-
-Interrupted executions must be resolved through `POST /workflow/:id/interruption/resolve`. The operator can confirm that no side effects occurred and grant one additional controlled retry, keep the item blocked with a review note, or confirm completion with linked evidence. High-risk retries return to fresh approval review. Evidence-backed completion records a source link, evidence claim, decision, transition, audit event, and passed verification gate. Generic transitions, proposal decisions, and approval actions cannot bypass an unresolved interruption, and generic state changes cannot mark work complete outside the verification engine.
-
-Workflow states:
-
-```text
-new_input -> classified -> linked -> checklist_generated -> ready -> in_progress -> completed -> archived
-```
-
-Sensitive or unclear work branches into:
-
-```text
-needs_approval
-waiting_external_input
-blocked
-```
-
-The dashboard page at `/workflow-engine` shows the workflow inbox, operational monitor, expired claim and interrupted-review counts, due open loops, approval queue with approve/reject buttons, worker, follow-up, and stale-claim recovery controls, structured interrupted-execution resolution, retry status, verification status, generated checklist, intake records, project matches, evidence claims, proposal decision buttons, quality gate status, source links, decisions, validated transitions, safety rules, default rulebook, and audit trail.
-
-## Pursuits Layer
-
-Pursuits are the durable objective containers above individual workflows. A pursuit groups related workflow items, source material, memories, verification evidence, runtime attempts, decisions, blockers, next actions, and approvals into one operator-facing objective. The `/pursuits` dashboard and detail view distinguish work that needs Robert's decision, is ready for delegation, can be processed by a bounded system workflow, or is waiting on an external party. The **Prepare VA brief** action compiles only VA-ready governed work, checklist steps, source references, delivery requirements, and escalation rules; it never assigns a person, sends a message, or grants authority to act externally. Linked workflow quality gates are shown in pursuit detail; a failed or `needs_review` gate becomes a named pursuit blocker, is placed in Robert's action queue, and prevents a completion recommendation until reviewed.
-
-Pursuit intake and matching reuse the existing source, workflow, memory, verification, and ambient-planning services rather than introducing a parallel agent implementation. Source sync, AI-memory extraction, ambient opportunities, HAI chat runs, and the legacy workflow-intake API all use the shared pursuit route when the pursuit service is configured. That route centralizes matching, candidate creation, approval requirements, and closed-pursuit protection before a workflow is created; producer-specific fallback mode remains available for isolated deployments and tests. Matching first resolves an existing source type/ID, then a stable source URI, before using project and text evidence; this avoids duplicate pursuit candidates when older or manual callers have a reliable URI but no provider item ID. Creation, planning, intake, review, decision resolution, archive operations, and link changes record the authenticated session principal when present; a client payload cannot claim another person as the actor. Local development without an IDP session records the fallback operator/system identity honestly. This supports traceable operation but does not itself authorize a sensitive action: the workflow approval queue, execution policy, and verification gates remain authoritative.
-
-Operational pursuit activity, including evidence/workflow links and link removals, advances the durable `LastActivityAt` value. Passive summary refreshes remain in the audit feed but do not reset freshness, so the stale-pursuit view measures real movement rather than background observation or direct field edits.
-
-Dashboard freshness also derives from linked workflow, task, verification, source, and runtime timestamps without mutating the pursuit during a read. A real worker or verification update therefore keeps a pursuit out of the stale queue; opening or refreshing a page does not.
-
-Closed pursuits are removed from active operational queues. During an ambient scan, any open or accepted pursuit-derived opportunity whose linked pursuit is completed or archived is completed with a closure note; dismissed opportunities remain untouched as operator feedback. This prevents the proactive layer from resurfacing work that Robert has already closed.
-
-Closed pursuits also reject direct intake, planning, and decision-resolution requests before the workflow engine is invoked. When global intake finds that its best match is closed, it preserves that historical pursuit and creates a separate reviewable candidate rather than treating a valid new source signal as a sync failure or silently reactivating old work. A summary refresh is read-only for a closed pursuit, so an old client request or late refresh cannot silently reactivate completed work.
-
-Reopening is a separate audited transition at `POST /pursuits/:id/reopen`. It clears the closed state but does not execute work; new work must still enter through the governed workflow, approval, and verification paths. Archiving uses `POST /pursuits/:id/archive` with `{"archived": true}`; the public archive endpoint rejects restore-shaped, missing, or malformed bodies. An approval to create a runtime-recovery workflow is written to the decision audit only after the required governed workflow is persisted, so an intake failure leaves the original decision pending and visible. Generic updates cannot reactivate a closed pursuit. This prevents a late source sync, old browser request, or stale client from treating historical work as active again.
-
-The HAI chat at `/task-blueprint` can be opened from a pursuit detail page. A planning-only command shows matching pursuit context without creating operational work. An explicit **Run** command receives a deterministic `assistant_command` source identity, is routed into the selected or matched pursuit, and creates or reuses a governed workflow. The command identity is retained as a pursuit `command_origin` link, so a repeated command resolves to its existing pursuit before heuristic matching. The command bridge then creates a task plan and queues that workflow for the existing worker scheduler; it does not directly execute the task as a second parallel path or run unrelated ready workflows. An authenticated operating-refresh command returns only the caller's context and pursuit state; global source/workflow/ambient maintenance stays with the controlled system worker. This prevents duplicate execution and cross-owner worker activity. High-risk work still enters approval review, and completion remains dependent on the worker's runtime, verification, and quality-gate evidence.
-
-## LLM Routing Policy
-
-The router optimizes for verified completion before cost minimization. The default tier order is:
-
-```text
-free -> cheap -> acceptable -> high -> expensive
-```
-
-Default policy:
-
-- Paid usage disabled.
-- Daily paid budget: `0`.
-- Local models allowed.
-- Free cloud quota allowed.
-- Paid or expensive usage requires manual approval.
-- Local/free providers are preferred only when suitable for the task.
-- Weak models are skipped when the estimated task difficulty is too high.
-- Fallback routing is logged when validation fails.
-
-Configuration:
-
-- `LLM_POLICY_JSON` can replace the policy.
-- `LLM_PROVIDERS_JSON` can replace the provider/model list.
-
-The default provider list includes Ollama, LM Studio/OpenAI-compatible local servers, Odysseus workspace probing, free-cloud placeholders, and paid placeholders. Provider invocation is implemented for:
-
-- Ollama: set `OLLAMA_BASE_URL`, for example `http://host.docker.internal:11434` when Docker needs to reach Ollama on the Windows host.
-- LM Studio or llama.cpp OpenAI-compatible servers: set `LM_STUDIO_BASE_URL`, for example `http://host.docker.internal:1234`.
-- Odysseus as an LLM provider remains probe-only. Approved tool-capable execution uses the separate controlled agent-runtime adapter described below, rather than bypassing the task engine through `/llm/generate`.
-- Free OpenAI-compatible quota providers: set `FREE_CLOUD_OPENAI_BASE_URL` and `FREE_CLOUD_API_KEY`, then enable/configure that provider through `LLM_PROVIDERS_JSON`.
-
-Task execution can use a configured model endpoint to produce a draft, but the draft is still passed through source-grounded verification before the task can be marked complete. If no endpoint is configured or reachable, the engine falls back to evidence-based synthesis and review behavior.
-
-Provider readiness is explicit. A provider must be enabled, have an absolute `http` or `https` endpoint, pass the link-local/metadata endpoint guard, and provide any required API key environment variable before it can be selected. Provider calls and provider probes do not follow redirects. `GET /api/v1/llm/probes` performs a live, bounded readiness check against configured local/free providers (`/api/tags` for Ollama, `/v1/models` for OpenAI-compatible endpoints, and health/UI paths for Odysseus), then persists only redacted readiness evidence. `GET /api/v1/llm/probes/history` exposes recent check status, timing, model count, and last successful check without storing provider credentials or raw response bodies. Set `LLM_REQUIRE_RECENT_LIVE_PROBE=true` to make routing fail closed: a configured provider is skipped until its latest persisted probe is live and no older than `LLM_PROVIDER_PROBE_MAX_AGE_SECONDS` (900 by default). Client requests to `/llm/generate` cannot approve paid or approval-required model use by setting request JSON; paid approval must be implemented as a server-side approval workflow before paid generation is allowed. The dashboard shows configured, disabled, blocked, missing-key, auth-required, and persisted probe states so placeholder providers are not mistaken for live integrations. The HAI OS readiness gate counts only configured providers with at least one enabled no-approval executable model that is allowed by local/free quota policy; Odysseus and other approval-gated/runtime-only connectors are reported separately.
-
-Odysseus upstream reference: [pewdiepie-archdaemon/odysseus](https://github.com/pewdiepie-archdaemon/odysseus). The supplied Odysseus package exposes a self-hosted AI workspace with a scoped Codex integration API, local model workspace, agent loop, prompt/tool security layers, memory, todos/reminders, email, calendar, contacts, documents, research/search, MCP, Cookbook model serving, companion/webhook surfaces, and Codex/Claude bridge assets. HAI integrates it as a controlled runtime architecture, not as an unrestricted local-admin bridge. Runtime execution still goes through HAI approval, audit, verification, host allowlisting, token scoping, bounded timeouts, and secret-redacted output capture.
-
-Hermes upstream reference: [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent). HAI treats Hermes as an optional agentic substrate, not as uncontrolled core logic. The runtime registry exposes Hermes' broader ecosystem as controlled capabilities: model/provider routing, skills and skill learning, memory and session search, MCP servers, gateway channels, cron jobs, subagent delegation, mixture-of-agents orchestration, terminal backends, context compression, OpenClaw migration, and ACP integration. Actual execution still uses Hermes' documented noninteractive `hermes chat -q ... -Q` path.
-
-The Hermes adapter never adds `--yolo`, enables filesystem checkpoints, passes arguments without shell interpolation, runs in a dedicated configured workspace, inherits only allowlisted environment variables plus explicit HAI task metadata, and stops the process when the configured timeout expires. HAI remains the policy, approval, audit, and verification control plane.
-
-OpenClaw upstream package reference: local `openclaw-main.zip` / OpenClaw distribution. HAI treats OpenClaw as a local-first Gateway and agent runtime ecosystem, not as a bundled dependency. When `OPENCLAW_ECOSYSTEM_PATH` points at the supplied zip or an extracted OpenClaw package, the runtime registry inventories the actual skills, skill scripts, root scripts, extensions, provider paths, channel adapters, companion apps, core packages, source modules, documentation corpus, QA assets, test suites, config profiles, security assets, deployment descriptors, Codex prompt maps, GitHub workflows, reusable GitHub Actions, issue templates, security/CodeQL maps, repository instructions, repository docs/config, and control UI/controller surfaces for dashboard visibility and future planning. Actual execution through HAI uses only the documented noninteractive `openclaw agent --message ... --thinking ...` CLI path.
-
-Before execution, HAI wraps the approved user task in an OpenClaw task envelope. That envelope maps the task to relevant indexed OpenClaw skills, lists visible provider/tool surfaces, carries relevant security/CI/issue/instruction maps, carries the original request, and repeats the blocked surfaces and validation checklist. The selected route trace is persisted into automation launch history, task evidence, workflow evidence, and dashboard summaries. The OpenClaw adapter does not call `openclaw message send`, approve pairings, invoke nodes, control browsers, create cron jobs, execute public posting, or bypass OpenClaw's Gateway auth/scopes/sandboxing. Those surfaces are visible as configured capabilities only. HAI remains the approval, audit, workspace, timeout, secret-redaction, and verification control plane.
-
-OpenClaw task profiling now also routes HAI-native personal operating work: pursuits, open loops, deadlines, source-grounded evidence, memory/context, Odoo/HERP operations, and local-model/provider setup are mapped to indexed OpenClaw skills and reference maps while outbound communication, public posting, destructive file changes, and legal/financial/government commitments stay blocked until separate HAI approval and verification exist.
-
-### Controlled Hermes, Odysseus, and OpenClaw runtimes
-
-1. Install and configure Hermes, Odysseus, or OpenClaw separately. HAI does not download or auto-update third-party agent software.
-2. Create an HAI automation with `launchType=agent_runtime` and `runtimeType=hermes`, `runtimeType=odysseus`, or `runtimeType=openclaw`.
-3. Supply that automation ID to a task/workflow request. Direct automation launch calls cannot forge approval and therefore cannot execute agent tasks.
-4. Approve the resulting review item. The server then replays the stored task with a server-side approval record.
-5. HAI captures the runtime output as evidence and still requires verification before the task can be marked complete.
-
-Hermes configuration:
-
-- `HERMES_AGENT_ENABLED=true`
-- `HERMES_EXECUTABLE=hermes` or an explicit installed executable path
-- optional `HERMES_HOME` and `HERMES_PROFILE` to isolate Hermes state/profile for HAI
-- optional `HERMES_IGNORE_USER_CONFIG=true` for tighter noninteractive isolation
-- `AGENT_RUNTIME_WORKSPACE_ROOT=<parent folder dedicated to agent workspaces>`
-- `HERMES_WORKSPACE=<dedicated allowlisted workspace>`
-- optional `HERMES_TOOLSETS`, `HERMES_SKILLS`, `HERMES_ENV_ALLOWLIST`, `HERMES_MAX_TURNS`, and `HERMES_TIMEOUT_SECONDS`
-- optional ecosystem visibility flags: `HERMES_GATEWAY_ENABLED`, `HERMES_CRON_ENABLED`, `HERMES_MCP_ENABLED`, `HERMES_MOA_ENABLED`, `HERMES_SUBAGENTS_ENABLED`, `HERMES_MEMORY_SYNC_ENABLED`, `HERMES_ACP_ENABLED`, and `HERMES_TERMINAL_BACKENDS`
-
-Recommended first Hermes posture for HAI is restrictive:
-
-- use a dedicated `HERMES_HOME` and `HERMES_WORKSPACE`
-- start with `HERMES_TOOLSETS=safe,skills,todo` or another reviewed small set
-- preload only reviewed skills through `HERMES_SKILLS`
-- enable gateway, cron, MCP, MoA, subagents, and ACP one surface at a time after HAI approval/audit flows are verified
-
-Odysseus configuration:
-
-- `ODYSSEUS_AGENT_ENABLED=true`
-- `ODYSSEUS_BASE_URL=http://host.docker.internal:7000` for a default Windows-host installation
-- `ODYSSEUS_API_TOKEN=<scoped token>`
-- `ODYSSEUS_AGENT_SESSION_ID=<existing configured session>`
-- optional `ODYSSEUS_AGENT_WORKSPACE` and `ODYSSEUS_AGENT_TIMEOUT_SECONDS`
-- optional ecosystem visibility flags: `ODYSSEUS_TODOS_ENABLED`, `ODYSSEUS_NOTES_ENABLED`, `ODYSSEUS_TASKS_ENABLED`, `ODYSSEUS_EMAIL_ENABLED`, `ODYSSEUS_CALENDAR_ENABLED`, `ODYSSEUS_CONTACTS_ENABLED`, `ODYSSEUS_DOCUMENTS_ENABLED`, `ODYSSEUS_MEMORY_SYNC_ENABLED`, `ODYSSEUS_RESEARCH_ENABLED`, `ODYSSEUS_SEARCH_ENABLED`, `ODYSSEUS_MCP_ENABLED`, `ODYSSEUS_COOKBOOK_ENABLED`, `ODYSSEUS_LOCAL_MODEL_DISCOVERY_ENABLED`, `ODYSSEUS_BROWSER_ENABLED`, `ODYSSEUS_VAULT_ENABLED`, `ODYSSEUS_GALLERY_ENABLED`, `ODYSSEUS_TTS_ENABLED`, `ODYSSEUS_STT_ENABLED`, `ODYSSEUS_COMPANION_ENABLED`, `ODYSSEUS_WEBHOOKS_ENABLED`, `ODYSSEUS_CODEX_BRIDGE_ENABLED`, `ODYSSEUS_CLAUDE_BRIDGE_ENABLED`, `ODYSSEUS_AGENT_MIGRATION_ENABLED`, and `ODYSSEUS_CONTEXT_BUDGET_ENABLED`
-- high-risk runtime toggles: `ODYSSEUS_SHELL_ENABLED`, `ODYSSEUS_AGENT_ALLOW_BASH`, `ODYSSEUS_AGENT_ALLOW_WEB_SEARCH`, and `ODYSSEUS_AGENT_ALLOW_RESEARCH`
-
-Use a narrowly scoped Odysseus token created for the Codex Agent integration surface. HAI checks `/api/codex/capabilities` and treats `403` as an intentional restriction, not as something to work around. The adapter does not SSH into the Odysseus host, query its database, import Python internals, use Docker directly, or bypass `/api/codex/*` and `/api/chat_stream`.
-
-Recommended first Odysseus posture for HAI is restrictive:
-
-- use read-only token scopes first
-- keep `ODYSSEUS_SHELL_ENABLED=false`, `ODYSSEUS_AGENT_ALLOW_BASH=false`, `ODYSSEUS_AGENT_ALLOW_WEB_SEARCH=false`, and `ODYSSEUS_AGENT_ALLOW_RESEARCH=false`
-- enable todos/memory/documents before email/calendar/cookbook/host-control surfaces
-- only enable email send, calendar writes, document deletion, Cookbook serve/stop, browser control, shell, or public posting after the matching HAI approval workflow has been tested end to end
-- keep the Odysseus instance on localhost, `host.docker.internal`, or another host explicitly listed in `AGENT_RUNTIME_ALLOWED_HOSTS`
-
-OpenClaw configuration:
-
-- `OPENCLAW_AGENT_ENABLED=true`
-- `OPENCLAW_EXECUTABLE=openclaw` or an explicit installed executable path
-- optional `OPENCLAW_GATEWAY_URL=ws://host.docker.internal:18789` for a Windows-host Gateway
-- `OPENCLAW_GATEWAY_TOKEN=<gateway token>` when `OPENCLAW_GATEWAY_ENABLED=true`
-- optional `OPENCLAW_STATE_DIR` and `OPENCLAW_CONFIG_PATH` to isolate OpenClaw state/config for HAI
-- optional `OPENCLAW_ECOSYSTEM_PATH=<extracted OpenClaw repo/package or openclaw-main.zip>` for read-only ecosystem inventory. HAI scans names and metadata paths for skills, skill scripts, root scripts, extensions, providers, channels, apps, packages, source modules, docs, QA/test assets, config profiles, security assets, deployment descriptors, Codex prompt maps, GitHub workflows, reusable GitHub Actions, issue templates, security/CodeQL maps, repository instructions, repository docs/config, and control UI/controller modules; it does not execute scripts, import OpenClaw code, or dispatch upstream automations from this path.
-- OpenClaw ecosystem uploads use the command dashboard upload route `/api/v1/agent-runtimes/openclaw/ecosystem/upload`. The local nginx gateway gives only that route a bounded `800m` body limit and disables request buffering so `openclaw-main.zip` style archives can reach the backend. The backend still validates `.zip`, rejects unsafe archive paths, and caps accepted archives at 750 MB.
-- `AGENT_RUNTIME_WORKSPACE_ROOT=<parent folder dedicated to agent workspaces>`
-- `OPENCLAW_WORKSPACE=<dedicated allowlisted workspace>`
-- optional `OPENCLAW_THINKING`, `OPENCLAW_TIMEOUT_SECONDS`, and `OPENCLAW_ENV_ALLOWLIST`
-- optional ecosystem visibility flags: `OPENCLAW_GATEWAY_ENABLED`, `OPENCLAW_MESSAGES_ENABLED`, `OPENCLAW_SKILLS_ENABLED`, `OPENCLAW_PLUGINS_ENABLED`, `OPENCLAW_MCP_ENABLED`, `OPENCLAW_MEMORY_ENABLED`, `OPENCLAW_CRON_ENABLED`, `OPENCLAW_BROWSER_ENABLED`, `OPENCLAW_CANVAS_ENABLED`, `OPENCLAW_NODES_ENABLED`, `OPENCLAW_VOICE_ENABLED`, `OPENCLAW_TALK_ENABLED`, `OPENCLAW_WEBCHAT_ENABLED`, `OPENCLAW_PAIRING_ENABLED`, `OPENCLAW_MULTI_AGENT_ENABLED`, `OPENCLAW_APP_SDK_ENABLED`, `OPENCLAW_PLUGIN_SDK_ENABLED`, `OPENCLAW_LOCAL_MODELS_ENABLED`, `OPENCLAW_CHANNELS_ENABLED`, `OPENCLAW_PROVIDERS_ENABLED`, and `OPENCLAW_COMPANION_APPS`
-- high-risk runtime toggles: `OPENCLAW_EXEC_APPROVALS_ENABLED`, `OPENCLAW_HOST_TOOLS_ENABLED`, `OPENCLAW_PUBLIC_POSTING_ENABLED`, `OPENCLAW_WEB_SEARCH_ENABLED`, `OPENCLAW_SANDBOX_REQUIRED`, `OPENCLAW_SANDBOX_MODE`, `OPENCLAW_SANDBOX_DOCKER_ENABLED`, `OPENCLAW_SANDBOX_SSH_ENABLED`, and `OPENCLAW_SANDBOX_OPENSHELL_ENABLED`
-- `OPENCLAW_ALLOW_HIGH_RISK_EXECUTION=false` by default. If any high-risk OpenClaw surfaces are enabled, HAI blocks generic OpenClaw runtime execution until those surfaces are disabled again or this flag is deliberately set to `true`; per-task HAI approval and OpenClaw's own downstream policies still apply.
-
-Recommended first OpenClaw posture for HAI is restrictive:
-
-- use a dedicated OpenClaw state/config and a dedicated `OPENCLAW_WORKSPACE`
-- keep `OPENCLAW_AGENT_CLI_ENABLED=true` and all outbound/device/control surfaces disabled
-- keep `OPENCLAW_ALLOW_HIGH_RISK_EXECUTION=false` unless a reviewed high-risk runtime policy exists
-- keep `OPENCLAW_SANDBOX_REQUIRED=true` with `OPENCLAW_SANDBOX_MODE=all`
-- enable skills, memory, local models, and Gateway readiness before messaging, browser, cron, nodes, host tools, or public posting
-- only enable channel sends, pairing approval, browser control, node commands, cron writes, host tools, public posting, or web search after the matching HAI approval and audit workflow is tested end to end
-- keep the Gateway on localhost, `host.docker.internal`, or another host explicitly listed in `AGENT_RUNTIME_ALLOWED_HOSTS`
-
-Controlled runtime outputs and LLM provider error bodies are redacted for common secrets before they are stored or returned in operational logs. Script execution still remains disabled by default and runs with a minimal environment when enabled.
-
-Emergency stop:
-
-- Set `HAI_EMERGENCY_STOP=true` to block LLM generation, automation launches, task execution, workflow workers, and follow-up workers.
-- Optional: set `HAI_EMERGENCY_STOP_REASON` to show a redacted operator reason in the HAI OS overview.
-- Planning, policy inspection, dashboards, and review queues remain visible so blocked work can still be inspected.
-
-## Memory System
-
-The memory layer is local by default and is intended to stay compact:
-
-- Store stable preferences, project context, decisions, source notes, and lessons.
-- Deduplicate repeated content by hash.
-- Merge highly similar memories.
-- Retrieve only relevant context for a task.
-- Rank by relevance, confidence, recency, and project match.
-- Keep source labels/URIs where available.
-- Allow view, edit, archive, restore, export, and delete from the dashboard.
-
-Avoid storing raw chat logs, entire documents, secrets, or noisy transient state as memory. Store compact facts with provenance.
-
-## Connected Sources
-
-The source layer treats connected accounts and imports as structured context sources. It currently supports:
-
-- Connector registry.
-- Source registry.
-- Manual import/sync.
-- Read-only local-folder, email-export, calendar-export, synced-document, Trello-export, GitHub REST, JSON-feed, WhatsApp-export, and Odoo/HERP source adapters.
-- Scheduled due-sync for enabled sources with non-manual sync frequencies.
-- Raw item metadata.
-- Text extraction and summaries.
-- Entity/date/task/decision/follow-up fields.
-- Searchable extracted records.
-- Source provenance links.
-- Audit logs.
-- Pause, resume, revoke, reindex, correct, archive, and delete actions.
-
-Local folder sync is bounded by:
-
-- `CONNECTED_SOURCE_LOCAL_ROOT`, default `/root/connected-sources`.
-- `CONNECTED_SOURCE_FILE_LIMIT`, default `100`, hard-capped at `500`.
-- `CONNECTED_SOURCE_MAX_BYTES`, default `1048576`, hard-capped at `10485760`.
-- `CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS`, exact hostname allowlist for normalized JSON feeds.
-- `CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL`, default `false`; keep disabled unless a reviewed local adapter specifically needs link-local access.
-- `CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS`, default `20`, bounded to `1-120`.
-- `CONNECTED_SOURCE_HTTP_MAX_BYTES`, default `2097152`, bounded to `1 KiB-20 MiB`.
-- `SOURCE_SCHEDULER_ENABLED`, default `true`.
-- `SOURCE_SCHEDULER_INTERVAL_SECONDS`, default `600`, minimum `15`.
-- `SOURCE_SCHEDULER_RUN_ON_STARTUP`, default `false`; set to `true` only when startup should immediately scan due sources.
-- Incremental sync based on `LastSyncedAt`, unless mode is `historical_backfill`.
-
-HAI now ships the following read-only connector paths: local MBOX/EML email exports, ICS calendar exports, selected synced cloud-document folders, Trello JSON exports, GitHub REST repositories/issues/pull requests/commits/workflow runs, local folders, normalized JSON feeds, WhatsApp exports, and Odoo/HERP snapshots. The first four export/sync-folder adapters remain local-first: place the authorized export or folder under `connected-sources/`, select its connector in Connected Sources, and keep the source `Local only` switch enabled. For GitHub, use `owner/repository` as the source target and set `GITHUB_SOURCE_TOKEN` only when private-repository access or higher API rate limits are required. OAuth adapters and provider webhook subscriptions remain separate, future work rather than implied capabilities.
-
-## Verification and Grounded Answers
-
-The verification layer treats LLM-style output as a draft until checked. It:
-
-- Builds answers from retrieved/provided evidence.
-- Splits important output into atomic claims.
-- Links claims to source references.
-- Scores source quality and relevance.
-- Marks claims as `verified`, `source_supported`, `test_passed`, `human_approved`, `unsupported`, `uncertain`, `conflicting`, or `needs_review`.
-- Blocks high-risk action output without approval.
-- Prevents unsupported claims from becoming accepted memory unless explicitly verified or confirmed.
-
-For code tasks, tests or build output should be added as evidence before marking a task complete.
-
-## Automation Control Center
-
-The automation control layer provides:
-
-- Automation CRUD.
-- Runtime/launch metadata fields.
-- Launch button and `POST /automation/:id/launch`.
-- Guarded launch execution for host-allowlisted API targets, explicitly enabled allowlisted scripts, and optionally Docker API starts for allowlisted containers.
-- Persisted launch events shown in diagnostics.
-- HTTP/TCP/manual/disabled health check modes.
-- Persisted health events.
-- Health summary.
-- Diagnostics panel.
-- Last launch/check/success/failure data.
-- Average latency and failure reason fields.
-
-Runtime behavior:
-
-- `browser_url`: prepares a target for client-side opening; no server-side device action is performed.
-- `api`: sends a bounded GET or POST request to an absolute `http` or `https` target. Prefix the target with `GET ` or `POST ` to select the method; default is POST. The host must be present in `AUTOMATION_API_ALLOWED_HOSTS`. Link-local, metadata, and unspecified IP targets are blocked by default. Redirects are not followed, so an allowlisted target cannot bounce the backend into an unreviewed destination.
-- `script`: blocked by default. It executes a single script file without shell expansion only when `AUTOMATION_SCRIPT_EXECUTION_ENABLED=true`. The target must resolve inside `AUTOMATION_SCRIPT_DIR`, including after symlink resolution. Scripts run from their own folder with a minimal environment; add specific variables to `AUTOMATION_SCRIPT_ENV_ALLOWLIST` only when a reviewed script needs them.
-- `docker_service`: blocked by default. It can send a Docker Engine API start request only when `AUTOMATION_DOCKER_CONTROL_ENABLED=true`, the Docker socket is deliberately mounted/configured, and the target container is listed in `AUTOMATION_DOCKER_ALLOWED_CONTAINERS`.
-
-Automation health checks are also treated as server-side network actions. HTTP and TCP health-check targets must use hosts allowed by `AUTOMATION_HEALTH_ALLOWED_HOSTS`, link-local/metadata targets are blocked unless `AUTOMATION_HEALTH_ALLOW_LINK_LOCAL=true`, and HTTP redirects are not followed.
-
-Workflow autonomy:
-
-- `WORKFLOW_SCHEDULER_ENABLED`, default `true`, runs the workflow scheduler in the backend.
-- `WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED`, default `true`, lets the scheduler trigger due follow-up proposals before running ready workflow items.
-- `WORKFLOW_SCHEDULER_INTERVAL_SECONDS`, default `600`, minimum `15`.
-- `WORKFLOW_SCHEDULER_RUN_LIMIT`, default `2`, capped at `50`.
-- `WORKFLOW_SCHEDULER_RUN_ON_STARTUP`, default `false`; set to `true` only when backend startup should immediately process due work.
-- `WORKFLOW_CLAIM_LEASE_SECONDS`, default `900`, minimum `60`, capped at `86400`. Active task workers renew the lease every third of this duration.
-- The scheduler uses the same workflow, task, verification, and controlled automation services as the API, so approval-required work remains in the approval queue, emergency stop still blocks execution, owned leases prevent duplicate concurrent execution and stale result writes, task-runner panics enter normal retry handling, review-required runtime outcomes do not auto-retry, and completion requires runtime plus verification success.
-
-Ambient proactive planning:
-
-- `/ambient-brain` reviews active workflows, approval gates, blockers, due open loops, source-linked contradictions, and delegation candidates without waiting for a prompt.
-- Each opportunity has a deterministic fingerprint, compact evidence manifest, explained score, need category, next action, source link, risk score, and approval requirement.
-- The five default need dimensions are health/capacity, safety/stability, relationships/belonging, reputation/capability, and growth/self-direction. They are a shared baseline for ownerless system work. Authenticated profile updates create private per-owner overrides, so one user's priorities and notes cannot alter another user's scan. They are planning preferences, not diagnoses or judgments about a person's worth or status.
-- `AMBIENT_SCHEDULER_ENABLED=true` enables periodic scans.
-- `AMBIENT_EXECUTION_ENABLED=false` keeps the default suggestion-only. Enabling it only permits bounded calls into the existing workflow and open-loop workers; it cannot bypass approvals, verification, emergency stop, leases, or audit controls.
-- `AMBIENT_RUN_ON_STARTUP=false` prevents startup scans from competing with local boot and Docker initialization.
-- `AMBIENT_SCAN_INTERVAL_SECONDS`, default `3600`, plus `AMBIENT_MINIMUM_SCORE`, `AMBIENT_MINIMUM_CONFIDENCE`, `AMBIENT_OPPORTUNITY_LIMIT`, `AMBIENT_EXECUTION_LIMIT`, `AMBIENT_DISMISS_COOLDOWN_HOURS`, and `AMBIENT_SCAN_RETENTION`, default `100`, bound background activity and storage growth.
-- `AUTONOMY_WORLD_STATE_TTL_SECONDS` defines when an execution observation becomes stale and must be refreshed. `AUTONOMY_TELEMETRY_LIMIT` bounds recent action/state records returned to the dashboard.
-
-The Proactive Brain also records execution-based autonomy telemetry for workflow worker attempts: compact world-state snapshots, typed action traces, verification status, latency, retries, human intervention, recovery, raw completion, and completion under policy. Its deterministic stress suite checks approval, stale-state, action-interface, and prompt-injection guards. These checks validate HAI's local policy boundaries; they do not substitute for provider-specific or real-world benchmark evidence.
-
-### YAGNI decision discipline
-
-Coding and architecture tasks pass through a deterministic minimality ladder before execution:
-
-1. Confirm the requested implementation needs to exist.
-2. Prefer the language standard library.
-3. Prefer native browser, operating-system, database, or platform capabilities.
-4. Reuse existing project dependencies and abstractions.
-5. Prefer a one-line or small patch.
-6. Permit narrowly scoped custom code only when earlier rungs are insufficient.
-
-The selected rung is included in task plans, model instructions, validation steps, and engine events. New dependencies and speculative abstractions are blocked by default. Public Ponytail cost/code-reduction figures are treated as unverified claims until reproduced against HAI's own tasks and telemetry.
-- Accepting a proposal links it to the controlled workflow engine. Dismissal applies a cooldown so the same source revision does not repeatedly interrupt the operator.
-- Incremental scans reuse stable source fingerprints and store source identity, redacted URI, and revision time rather than duplicating raw source content into each scan. Scan history is pruned to the configured retention limit.
-
-DualPath KV-cache boundary:
-
-- [DualPath](https://arxiv.org/abs/2602.21548) addresses KV-cache storage bandwidth in disaggregated LLM serving. It requires separate prefill/decode engines, shared KV-cache storage, a compatible compute transfer network such as RDMA, and a global scheduler.
-- It is not a general memory compression technique and does not automatically apply to a normal Ollama or LM Studio process.
-- `LLM_KV_CACHE_LOAD_STRATEGY=disabled` and `LLM_DUALPATH_INFRASTRUCTURE_VERIFIED=false` are the safe defaults. A non-disabled strategy is only a provider capability hint until the required infrastructure is implemented and verified.
-- HAI's compact evidence manifests and incremental scans reduce application-level storage traffic independently of DualPath.
-
-The nginx config-manager no longer receives `/var/run/docker.sock` in `docker-compose.local.yml` by default. It can write generated route config files, but nginx reload via Docker API is skipped unless `NGINX_RELOAD_ENABLED=true` and the operator deliberately restores a reviewed Docker socket mount.
-
-Current limitation: QwenPaw, generic MCP, browser, and desktop-agent execution still need dedicated adapters. Hermes, Odysseus, and OpenClaw are implemented as controlled runtime adapters, but a live end-to-end run still requires the operator to install/configure those upstream runtimes, create scoped credentials/session state where needed, and enable the matching HAI environment flags. They are not bundled into the HAI backend image.
-
-## Safety Rules for Developers
-
-This project is intended to gain local execution power, so safety should be designed before autonomy:
-
-- Keep read-only behavior as the default.
-- Require approval for email sending, legal/government actions, financial actions, account changes, public posting, deletion, destructive file changes, and broad local execution.
-- Never treat client-supplied `humanApproved` or generic-transition `approved` fields as approval provenance. Public task/verification handlers clear those fields, and approval-required workflows must use the dedicated approval queue endpoint.
-- Treat pursuit risk and autonomy labels as conservative policy inputs: HAI derives a risk floor from the pursuit goal, description, and desired outcome, records any normalization in the pursuit audit trail, and never lets a supplied label downgrade detected high-risk work into system-autonomous work.
-- Use allowlists for tools, folders, runtime adapters, and network targets.
-- Redact secrets in logs, prompts, memory, and verification evidence.
-- Preserve source provenance for extracted facts.
-- Never store unsupported claims as facts.
-- Treat model confidence as insufficient for action.
-- Log model/tool choices, action attempts, validation status, fallback paths, and review decisions.
-- Prefer local storage and local models for private Robert/project context.
-- Do not silently introduce paid model calls. Paid usage must remain disabled unless deliberately configured and approved.
-- Keep runtime adapters behind explicit capability interfaces instead of coupling the platform to one agent project.
-
-## Development Notes
-
-- Backend uses Go 1.21, Gin, Gorm, Postgres, and Sarama/Kafka.
-- Frontend uses Angular 16 and ng-zorro-antd.
-- IDP and nginx-config-manager are separate Go services.
-- Database schema changes currently rely on Gorm `AutoMigrate` plus `init.sql`; a production migration system is still needed.
-- Docker Compose local mode uses PostgreSQL 17 with Docker-managed named volumes, one Kafka broker, and Zookeeper. PostgreSQL data directories must never be committed or copied as ordinary Git files because required empty runtime directories are not preserved. Export and restore with `pg_dump`/`pg_restore` when migrating existing data or changing major versions.
-- The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed only under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/memory-engine`, `/api/v1/pursuits`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, `/api/v1/workflow`, `/api/v1/agent-runtimes`, and `/api/v1/ambient`.
-- `GET /healthz` and `GET /readyz` are explicit unauthenticated gateway routes to the backend. The gateway resolves internal Docker services dynamically so a recreated backend or frontend does not require an nginx restart to avoid stale upstream addresses.
-- Do not rely on committed `.env` files for new work. Use `.env.example` -> `.env.local`.
-- Do not commit generated database directories, uploaded images, frontend `dist`, `node_modules`, local caches, or Docker state.
-- Keep UI changes consistent with the existing Angular/ng-zorro dashboard style.
-- Keep APIs backward-compatible where dashboard pages already consume them.
-- Add focused tests when changing shared behavior such as routing, memory retrieval, verification, task validation, or automation health.
-
-## Documentation
-
-Architecture and feature blueprints live in `docs/`:
-
-- `docs/automation-control-center-blueprint.md`
-- `docs/completion-first-context-routing-blueprint.md`
-- `docs/universal-task-success-engine.md`
-- `docs/connected-source-ingestion-extraction.md`
-- `docs/anti-hallucination-verification.md`
-- `docs/source-grounded-answer-engine.md`
-- `docs/hai-personal-ai-operating-system.md`
-- `docs/operator-runbook.md`
-- `docs/acceptance-test-matrix.md`
-- `docs/technical-debt.md`
-- `docs/codex-goal/final-verification-report.md`
-
-These documents cover the target direction, evidence, operator procedures, and known debt. The README is the concise current-state entrypoint; do not update it by claiming an external provider or runtime is live without an executed readiness/approval/verification record.
+\`\`\`powershell
+# Backend (use Docker when Go is not installed locally)
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "\${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go test ./...
+
+# Frontend
+Set-Location frontend
+npm.cmd ci
+npm.cmd run build
+
+# Compose contract
+Set-Location ..
+docker compose --env-file .env.example -f docker-compose.local.yml config --quiet
+\`\`\`
+
+With local Go installed, the backend checks are \`go vet ./...\`, \`go test ./...\`,
+and \`go build ./...\` from \`backend/\`. The critical-path smoke is
+\`scripts/smoke-critical-path.sh\` from a Bash-capable shell with its prerequisites.
+
+The repository's verification evidence is in:
+
+- [completion matrix](docs/codex-goal/completion-matrix.md)
+- [final verification report](docs/codex-goal/final-verification-report.md)
+- [fresh-clone dry run](docs/fresh-clone-dryrun.md)
+- [external provider reality review](docs/external-provider-reality-review.md)
+- [technical debt](docs/technical-debt.md)
+
+These reports distinguish exercised local behavior from unproven real-world
+integrations. Treat target-machine and provider-specific checks as release
+gates, not paperwork.
+
+## Repository Layout
+
+\`\`\`text
+backend/                 Go API and HAI engines
+frontend/                Angular dashboard
+idp/                     Identity provider service
+nginx-config/            Gateway configuration used by local Compose
+nginx-config-manager/    Generated route-config manager; Docker socket disabled by default
+automation-scripts/      Read-only allowlisted script mount
+connected-sources/       Read-only local/export ingestion root
+browser-extension/       Explicit user-authorized conversation capture
+scripts/                 Smoke and operational verification scripts
+docs/                    Architecture, runbooks, evidence, audits, and roadmap
+.github/workflows/       CI pipeline
+docker-compose.local.yml Windows/local-first Compose topology
+.env.example             Environment template; copy to untracked .env.local
+generic-auto/            Legacy service, not the canonical HAI engine
+gate/                    Legacy gateway/config area; local Compose uses nginx-config/
+\`\`\`
+
+## Further Documentation
+
+- [Operator runbook](docs/operator-runbook.md)
+- [User guide](docs/user-guide.md)
+- [HAI Personal AI Operating System blueprint](docs/hai-personal-ai-operating-system.md)
+- [Universal task success engine](docs/universal-task-success-engine.md)
+- [Connected-source ingestion](docs/connected-source-ingestion-extraction.md)
+- [Verification and anti-hallucination policy](docs/anti-hallucination-verification.md)
+- [Source-grounded answer engine](docs/source-grounded-answer-engine.md)
+- [Automation Control Center](docs/automation-control-center-blueprint.md)
+- [Release process](docs/release-process.md)
+- [Privacy impact assessment](docs/privacy-impact-assessment.md)
 
 ## License
 
-See `LICENSE`.
+See [LICENSE](LICENSE).
