@@ -359,7 +359,10 @@
             <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
             <div>
               <strong>{{ plan?.riskAssessment?.level || 'Safe mode active' }}</strong>
-              <span>{{ plan?.riskAssessment?.approvalRequired ? 'Approval required before risky execution' : 'No high-risk action detected yet' }}</span>
+              <span>{{ plan?.riskAssessment?.approvalRequired ? 'Approval required before risky execution' : plan?.riskAssessment?.actionResolution === 'clarify' ? 'More execution detail is needed' : 'No high-risk action detected yet' }}</span>
+              <small *ngIf="plan?.riskAssessment?.missingParameters?.length">
+                Needs: {{ plan?.riskAssessment?.missingParameters?.join(', ') }}
+              </small>
             </div>
           </div>
         </article>

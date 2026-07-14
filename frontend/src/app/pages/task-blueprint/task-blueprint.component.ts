@@ -616,6 +616,7 @@ export class TaskBlueprintComponent implements OnInit {
     safe.intake.successCriteria = safe.intake.successCriteria || [];
     safe.steps = safe.steps || [];
     safe.riskAssessment.reasons = safe.riskAssessment.reasons || [];
+    safe.riskAssessment.missingParameters = safe.riskAssessment.missingParameters || [];
     safe.validationPlan.steps = safe.validationPlan.steps || [];
     safe.validationResult.checked = safe.validationResult.checked || [];
     safe.validationResult.failures = safe.validationResult.failures || [];

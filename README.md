@@ -73,6 +73,9 @@ Recent hardening in the current baseline:
   changes such as deployment or repository mutation are medium risk. Both are
   prepared for explicit review; only bounded low-risk work can execute under
   its configured runtime policy without an approval decision.
+- A requested runtime action without its deterministic execution prerequisite
+  (for example, a configured controlled automation) becomes a clarification
+  item before any runtime launch is attempted.
 - Dashboard worker controls for **Run due**, **Recover stale**, **Run follow-ups**,
   and Connected Sources **Sync due** operate only on sources and workflow items
   explicitly owned by the signed-in user. They cannot invoke the global

@@ -132,6 +132,8 @@ export interface IRiskAssessment {
   level: string;
   approvalRequired: boolean;
   approvalGranted: boolean;
+  actionResolution?: 'proceed' | 'clarify' | 'block';
+  missingParameters?: string[];
   reasons: string[];
   allowedNow: boolean;
 }

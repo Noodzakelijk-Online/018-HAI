@@ -380,6 +380,31 @@ func TestRunWithoutExecutionPermissionQueuesReviewForToolWork(t *testing.T) {
 	}
 }
 
+func TestRunQueuesMissingAutomationBeforeRuntimeExecution(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.RiskAssessment.ActionResolution != "clarify" {
+		t.Fatalf("missing runtime configuration was not converted into clarification: %#v", plan.RiskAssessment)
+	}
+	if len(plan.RiskAssessment.MissingParameters) != 1 || plan.RiskAssessment.MissingParameters[0] != "controlled automation" {
+		t.Fatalf("missing execution details = %#v", plan.RiskAssessment.MissingParameters)
+	}
+	if plan.ReviewQueueItem == nil || plan.ReviewQueueItem.Reason != "missing required execution details: controlled automation" || executor.calls != 0 {
+		t.Fatalf("runtime preflight bypassed review: item=%#v calls=%d", plan.ReviewQueueItem, executor.calls)
+	}
+}
+
 func TestResolveReviewItemApprovesAndRunsTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)

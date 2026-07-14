@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"automation-hub-backend/internal/actionresolver"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomygate"
 	"automation-hub-backend/internal/llm"
@@ -87,11 +88,13 @@ type TaskStep struct {
 }
 
 type RiskAssessment struct {
-	Level            string   `json:"level"`
-	ApprovalRequired bool     `json:"approvalRequired"`
-	ApprovalGranted  bool     `json:"approvalGranted"`
-	Reasons          []string `json:"reasons"`
-	AllowedNow       bool     `json:"allowedNow"`
+	Level             string   `json:"level"`
+	ApprovalRequired  bool     `json:"approvalRequired"`
+	ApprovalGranted   bool     `json:"approvalGranted"`
+	ActionResolution  string   `json:"actionResolution"`
+	MissingParameters []string `json:"missingParameters,omitempty"`
+	Reasons           []string `json:"reasons"`
+	AllowedNow        bool     `json:"allowedNow"`
 }
 
 type ValidationResult struct {
@@ -389,7 +392,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.ValidationResult.Passed = false
 		plan.ValidationResult.Status = "blocked"
 		plan.ValidationResult.NextAction = "human review required before execution"
-		s.attachReviewItem(plan, "approval required before task execution", plan.RiskAssessment.Level, request)
+		s.attachReviewItem(plan, taskReviewReason(plan.RiskAssessment), plan.RiskAssessment.Level, request)
 	} else if plan.ExecutionResult != nil && plan.ExecutionResult.BlockedReason != "" {
 		plan.CompletionStatus = "review_required"
 		plan.ValidationResult.Passed = false
@@ -583,7 +586,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 
 	toolDecision := routeTools(intake)
 	minimalityDecision := decideMinimality(request, intake)
-	risk := assessRisk(intake, request.ExecuteAllowed, request.HumanApproved)
+	risk := assessRisk(intake, request)
 	steps := buildTaskSteps(intake, toolDecision, risk, minimalityDecision)
 	validationPlan := buildValidationPlan(intake, minimalityDecision)
 	memoryProposals := proposeMemoryUpdates(request, intake)
@@ -1462,15 +1465,22 @@ func routeTools(intake IntakeAnalysis) ToolRouteDecision {
 	}
 }
 
-func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) RiskAssessment {
+func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {
 	reasons := []string{"read-only planning is allowed"}
 	needsExplicitExecution := intake.NeedsTools || intake.NeedsLocalExecution
-	approvalGranted := intake.NeedsApproval && executeAllowed && humanApproved
+	approvalGranted := intake.NeedsApproval && request.ExecuteAllowed && request.HumanApproved
 	gateDecision := autonomygate.Decide(autonomygate.Signals{
 		Confidence: 0.9,
 		Risk:       intake.RiskLevel,
 		Reversible: intake.RiskLevel != "high",
 		Approved:   approvalGranted,
+	})
+	missingParameters := requiredExecutionParameters(intake, request)
+	actionResolution := actionresolver.Resolve(actionresolver.Action{
+		Description:   request.Request,
+		Confidence:    0.9,
+		Destructive:   intake.RiskLevel == "high",
+		MissingParams: missingParameters,
 	})
 	if intake.NeedsApproval {
 		reasons = append(reasons, "request risk classification requires explicit human approval before execution")
@@ -1484,26 +1494,62 @@ func assessRisk(intake IntakeAnalysis, executeAllowed bool, humanApproved bool) 
 	case autonomygate.Block:
 		reasons = append(reasons, "autonomy gate blocked an unapproved irreversible high-risk action")
 	}
+	if actionResolution == actionresolver.Clarify {
+		reasons = append(reasons, "action resolver requires clarification before execution: "+strings.Join(missingParameters, ", "))
+	} else if actionResolution == actionresolver.Block {
+		reasons = append(reasons, "action resolver blocked an ambiguous destructive action")
+	}
 	if intake.NeedsLocalExecution {
 		reasons = append(reasons, "local execution is constrained to non-destructive steps")
 	}
-	if executeAllowed && !intake.NeedsApproval {
+	if request.ExecuteAllowed && !intake.NeedsApproval {
 		reasons = append(reasons, "caller allowed low-risk execution")
 	}
-	if !executeAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
+	if !request.ExecuteAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
 		reasons = append(reasons, "execution not requested; plan remains non-executing")
 	}
 	allowedNow := gateDecision == autonomygate.Auto
-	if needsExplicitExecution && !executeAllowed {
+	if actionResolution != actionresolver.Proceed {
+		allowedNow = false
+	}
+	if needsExplicitExecution && !request.ExecuteAllowed {
 		allowedNow = false
 	}
 	return RiskAssessment{
-		Level:            intake.RiskLevel,
-		ApprovalRequired: intake.NeedsApproval,
-		ApprovalGranted:  approvalGranted,
-		Reasons:          reasons,
-		AllowedNow:       allowedNow,
+		Level:             intake.RiskLevel,
+		ApprovalRequired:  intake.NeedsApproval,
+		ApprovalGranted:   approvalGranted,
+		ActionResolution:  string(actionResolution),
+		MissingParameters: missingParameters,
+		Reasons:           reasons,
+		AllowedNow:        allowedNow,
 	}
+}
+
+// requiredExecutionParameters checks deterministic execution prerequisites.
+// It intentionally runs only when a caller requested execution, so planning
+// can still explain a task before Robert chooses a runtime.
+func requiredExecutionParameters(intake IntakeAnalysis, request IntakeRequest) []string {
+	if !request.ExecuteAllowed || (!intake.NeedsTools && !intake.NeedsLocalExecution) {
+		return nil
+	}
+	if strings.TrimSpace(request.AutomationID) == "" {
+		return []string{"controlled automation"}
+	}
+	return nil
+}
+
+func taskReviewReason(risk RiskAssessment) string {
+	if len(risk.MissingParameters) > 0 {
+		return "missing required execution details: " + strings.Join(risk.MissingParameters, ", ")
+	}
+	if risk.ActionResolution == string(actionresolver.Block) {
+		return "action resolver blocked an ambiguous destructive action"
+	}
+	if risk.ApprovalRequired && !risk.ApprovalGranted {
+		return "approval required before task execution"
+	}
+	return "action clarification is required before task execution"
 }
 
 func buildTaskSteps(intake IntakeAnalysis, tools ToolRouteDecision, risk RiskAssessment, minimality MinimalityDecision) []TaskStep {
