@@ -43,6 +43,7 @@ type CreateRequest struct {
 	OwnerIdentity         string  `json:"ownerIdentity,omitempty"`
 	Title                 string  `json:"title"`
 	Description           string  `json:"description,omitempty"`
+	WhyItMatters          string  `json:"whyItMatters,omitempty"`
 	ProjectKey            string  `json:"projectKey,omitempty"`
 	Domain                string  `json:"domain,omitempty"`
 	DesiredOutcome        string  `json:"desiredOutcome,omitempty"`
@@ -62,6 +63,7 @@ type CreateRequest struct {
 type UpdateRequest struct {
 	Title                 string   `json:"title,omitempty"`
 	Description           *string  `json:"description,omitempty"`
+	WhyItMatters          *string  `json:"whyItMatters,omitempty"`
 	ProjectKey            *string  `json:"projectKey,omitempty"`
 	Domain                *string  `json:"domain,omitempty"`
 	DesiredOutcome        *string  `json:"desiredOutcome,omitempty"`
@@ -314,6 +316,7 @@ type PursuitDelegationPackage struct {
 	PursuitID                string                      `json:"pursuitId"`
 	Title                    string                      `json:"title"`
 	Objective                string                      `json:"objective"`
+	WhyItMatters             string                      `json:"whyItMatters,omitempty"`
 	CurrentState             string                      `json:"currentState"`
 	CompletionDefinition     string                      `json:"completionDefinition,omitempty"`
 	RiskLevel                string                      `json:"riskLevel"`
@@ -610,7 +613,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 	if title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
-	contextText := title + " " + request.Description + " " + request.DesiredOutcome
+	contextText := title + " " + request.Description + " " + request.WhyItMatters + " " + request.DesiredOutcome
 	riskLevel := conservativeRisk(request.RiskLevel, classifyRisk(contextText))
 	autonomyLevel := conservativeAutonomy(request.AutonomyLevel, riskLevel)
 	now := time.Now().UTC()
@@ -619,6 +622,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		OwnerIdentity:         strings.TrimSpace(request.OwnerIdentity),
 		Title:                 title,
 		Description:           strings.TrimSpace(request.Description),
+		WhyItMatters:          strings.TrimSpace(request.WhyItMatters),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
 		Domain:                firstNonEmpty(request.Domain, classifyDomain(title+" "+request.Description)),
 		DesiredOutcome:        strings.TrimSpace(request.DesiredOutcome),
@@ -681,6 +685,7 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 		pursuit.Title = strings.TrimSpace(request.Title)
 	}
 	assignString(request.Description, &pursuit.Description)
+	assignString(request.WhyItMatters, &pursuit.WhyItMatters)
 	assignString(request.ProjectKey, &pursuit.ProjectKey)
 	assignString(request.Domain, &pursuit.Domain)
 	assignString(request.DesiredOutcome, &pursuit.DesiredOutcome)
@@ -691,7 +696,7 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 	if request.Status != "" {
 		pursuit.Status = strings.TrimSpace(request.Status)
 	}
-	contextText := pursuit.Title + " " + pursuit.Description + " " + pursuit.DesiredOutcome
+	contextText := pursuit.Title + " " + pursuit.Description + " " + pursuit.WhyItMatters + " " + pursuit.DesiredOutcome
 	pursuit.RiskLevel = conservativeRisk(firstNonEmpty(request.RiskLevel, pursuit.RiskLevel), classifyRisk(contextText))
 	pursuit.AutonomyLevel = conservativeAutonomy(firstNonEmpty(request.AutonomyLevel, pursuit.AutonomyLevel), pursuit.RiskLevel)
 	if request.CompletionState != "" {
@@ -1264,6 +1269,7 @@ func delegationPackage(detail PursuitDetail) *PursuitDelegationPackage {
 		PursuitID:            pursuit.ID.String(),
 		Title:                pursuit.Title,
 		Objective:            firstNonEmpty(pursuit.DesiredOutcome, pursuit.Description, pursuit.Title),
+		WhyItMatters:         pursuit.WhyItMatters,
 		CurrentState:         firstNonEmpty(detail.Summary.CurrentState, pursuit.CurrentStateSummary, "No current state has been recorded yet."),
 		CompletionDefinition: pursuit.CompletionDefinition,
 		RiskLevel:            firstNonEmpty(pursuit.RiskLevel, "medium"),
@@ -1521,7 +1527,7 @@ func (s *service) Match(request MatchRequest) ([]MatchCandidate, error) {
 			score += 0.45
 			reasons = append(reasons, "project key matches")
 		}
-		words := normalizeWords(pursuit.Title + " " + pursuit.Description + " " + pursuit.DesiredOutcome + " " + pursuit.ProjectKey)
+		words := normalizeWords(pursuit.Title + " " + pursuit.Description + " " + pursuit.WhyItMatters + " " + pursuit.DesiredOutcome + " " + pursuit.ProjectKey)
 		overlap := wordOverlap(query, words)
 		if overlap > 0 {
 			score += math.Min(0.45, overlap)
@@ -4724,6 +4730,9 @@ func pursuitPlanInput(pursuit models.Pursuit) string {
 	}
 	if strings.TrimSpace(pursuit.DesiredOutcome) != "" {
 		parts = append(parts, "Desired outcome: "+strings.TrimSpace(pursuit.DesiredOutcome))
+	}
+	if strings.TrimSpace(pursuit.WhyItMatters) != "" {
+		parts = append(parts, "Why it matters: "+strings.TrimSpace(pursuit.WhyItMatters))
 	}
 	if strings.TrimSpace(pursuit.Description) != "" {
 		parts = append(parts, "Context: "+strings.TrimSpace(pursuit.Description))

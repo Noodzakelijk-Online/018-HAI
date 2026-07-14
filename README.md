@@ -18,7 +18,7 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 | Operator outcome | Current path | Guardrail |
 | --- | --- | --- |
-| Organize a long-running objective | Create a pursuit, link workflow/source/memory/evidence records, inspect blockers and approvals, then explicitly archive or reopen it. | Authenticated records stay owner-scoped; a closed pursuit cannot be silently reactivated by later intake. |
+| Organize a long-running objective | Create a pursuit with its goal, why it matters, desired outcome, and completion definition; link workflow/source/memory/evidence records, inspect blockers and approvals, then explicitly archive or reopen it. | Authenticated records stay owner-scoped; a closed pursuit cannot be silently reactivated by later intake. |
 | Turn authorized material into work | Import allowlisted local files or supported exports, search the extracted context, and route actionable findings through workflow intake. | Local paths are constrained to the mounted source root; account OAuth and browser capture are not automatic connectors. |
 | Plan and progress work | Use the task, workflow, command-dashboard, and ambient proposal surfaces to create plans, checklists, open loops, review items, next actions, and bounded VA handoff briefs. | A proposal or VA brief is not execution, assignment, or external authority. High-risk or unresolved work stops for review. |
 | Use a local model | Configure Ollama or another OpenAI-compatible local endpoint, probe it, and run a bounded validated task. | Paid usage is disabled by default with a EUR 0 daily budget. A configured endpoint is not treated as live-proven until it passes a live probe. |

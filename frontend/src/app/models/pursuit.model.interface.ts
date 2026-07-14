@@ -23,6 +23,7 @@ export interface IPursuit {
   ownerIdentity?: string;
   title: string;
   description?: string;
+  whyItMatters?: string;
   projectKey?: string;
   domain?: string;
   desiredOutcome?: string;
@@ -363,6 +364,7 @@ export interface IPursuitDelegationPackage {
   pursuitId: string;
   title: string;
   objective: string;
+  whyItMatters?: string;
   currentState: string;
   completionDefinition?: string;
   riskLevel: string;
@@ -411,6 +413,7 @@ export interface IPursuitCreateRequest {
   title: string;
   ownerIdentity?: string;
   description?: string;
+  whyItMatters?: string;
   projectKey?: string;
   domain?: string;
   desiredOutcome?: string;

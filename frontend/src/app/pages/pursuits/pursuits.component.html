@@ -145,6 +145,7 @@
           <nz-select formControlName="domain" nzPlaceHolder="Domain">
             <nz-option *ngFor="let domain of domains" [nzValue]="domain" [nzLabel]="domain"></nz-option>
           </nz-select>
+          <textarea nz-input formControlName="whyItMatters" rows="2" placeholder="Why this matters"></textarea>
           <textarea nz-input formControlName="desiredOutcome" rows="2" placeholder="Desired outcome"></textarea>
           <textarea nz-input formControlName="completionDefinition" rows="2" placeholder="Completion definition"></textarea>
           <div class="form-actions">
@@ -194,6 +195,7 @@
               <span class="page-kicker">{{ detail.pursuit.needCategory || 'goal' }}</span>
               <h2>{{ detail.pursuit.title }}</h2>
               <p>{{ detail.pursuit.desiredOutcome || detail.pursuit.description || 'Outcome not defined yet.' }}</p>
+              <p *ngIf="detail.pursuit.whyItMatters"><strong>Why it matters:</strong> {{ detail.pursuit.whyItMatters }}</p>
             </div>
             <div class="detail-actions">
               <nz-tag [nzColor]="riskColor(detail.pursuit.riskLevel)">{{ detail.pursuit.riskLevel }} risk</nz-tag>
@@ -466,6 +468,7 @@
                 <nz-tag [nzColor]="package.ready ? 'success' : 'warning'">{{ package.status }}</nz-tag>
               </header>
               <p><strong>Objective:</strong> {{ package.objective }}</p>
+              <p *ngIf="package.whyItMatters"><strong>Why it matters:</strong> {{ package.whyItMatters }}</p>
               <div class="detail-grid">
                 <nz-card nzTitle="Work">
                   <div *ngFor="let item of package.workItems" class="delegation-work-item">

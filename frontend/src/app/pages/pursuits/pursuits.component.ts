@@ -80,6 +80,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     title: ['', [Validators.required]],
     projectKey: [''],
     domain: ['operations'],
+    whyItMatters: [''],
     desiredOutcome: [''],
     currentStateSummary: [''],
     completionDefinition: [''],

@@ -11,6 +11,7 @@ type Pursuit struct {
 	OwnerIdentity         string     `gorm:"type:varchar(255);index" json:"ownerIdentity,omitempty"`
 	Title                 string     `gorm:"type:varchar(512);index;not null" json:"title"`
 	Description           string     `gorm:"type:text" json:"description,omitempty"`
+	WhyItMatters          string     `gorm:"type:text" json:"whyItMatters,omitempty"`
 	ProjectKey            string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`
 	Domain                string     `gorm:"type:varchar(120);index" json:"domain,omitempty"`
 	DesiredOutcome        string     `gorm:"type:text" json:"desiredOutcome,omitempty"`

@@ -96,6 +96,56 @@ func TestUpdateCannotDowngradeRiskWhenGoalBecomesHighRisk(t *testing.T) {
 	}
 }
 
+func TestPursuitRationaleFlowsIntoOperationalContext(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	rationale := "Legal evidence must be ready before the municipality deadline."
+	created, err := service.Create(CreateRequest{
+		Title:          "Prepare case materials",
+		WhyItMatters:   rationale,
+		DesiredOutcome: "A source-linked evidence package is ready for review.",
+		RiskLevel:      "low",
+		AutonomyLevel:  "autonomous_safe",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if created.WhyItMatters != rationale {
+		t.Fatalf("why it matters = %q, want %q", created.WhyItMatters, rationale)
+	}
+	if created.RiskLevel != "high" || created.AutonomyLevel != "approve_before_execute" {
+		t.Fatalf("rationale did not raise the safety floor: %q/%q", created.RiskLevel, created.AutonomyLevel)
+	}
+
+	matches, err := service.Match(MatchRequest{Input: "municipality legal evidence"})
+	if err != nil {
+		t.Fatalf("Match returned error: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Pursuit.ID != created.ID {
+		t.Fatalf("rationale was not included in matching: %#v", matches)
+	}
+	if !strings.Contains(pursuitPlanInput(*created), "Why it matters: "+rationale) {
+		t.Fatalf("planner input did not include rationale: %q", pursuitPlanInput(*created))
+	}
+
+	updatedRationale := "A complete evidence trail protects the case and prevents an unsupported response."
+	updated, err := service.Update(created.ID, UpdateRequest{WhyItMatters: &updatedRationale, Actor: "test-operator"})
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if updated.WhyItMatters != updatedRationale {
+		t.Fatalf("updated rationale = %q, want %q", updated.WhyItMatters, updatedRationale)
+	}
+
+	brief, err := service.DelegationPackage(created.ID)
+	if err != nil {
+		t.Fatalf("DelegationPackage returned error: %v", err)
+	}
+	if brief.WhyItMatters != updatedRationale {
+		t.Fatalf("delegation rationale = %q, want %q", brief.WhyItMatters, updatedRationale)
+	}
+}
+
 func TestMatchUsesProjectAndExistingSourceLink(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
