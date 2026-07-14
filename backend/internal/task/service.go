@@ -957,6 +957,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		OwnerIdentity:     plan.OwnerIdentity,
 		Question:          plan.RealGoal,
 		ProjectKey:        plan.ProjectKey,
+		PursuitID:         plan.PursuitID,
 		Mode:              result.Mode,
 		DraftAnswer:       draft,
 		ExternalEvidence:  evidence,
@@ -979,6 +980,13 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	result.Claims = verificationResult.Claims
 	result.UnsupportedClaims = len(verificationResult.UnsupportedClaims)
 	result.CompletedAt = time.Now().UTC()
+	if strings.TrimSpace(plan.PursuitID) != "" && strings.TrimSpace(verificationResult.PursuitLinkError) != "" {
+		result.VerificationStatus = verification.StatusNeedsReview
+		result.BlockedReason = "verification evidence could not be linked to the pursuit"
+		result.Actions = append(result.Actions, executedAction("pursuit.verification_link", "blocked", plan.PursuitID, result.BlockedReason, verifyStarted))
+		plan.Events = append(plan.Events, event("verification", "verification evidence could not be linked to the pursuit; task requires review"))
+		return result
+	}
 	result.Actions = append(result.Actions, executedAction("verification.answer", "completed", request.Request, verificationResult.Run.Status, verifyStarted))
 	plan.Events = append(plan.Events, event("verification", "claims were checked against retrieved evidence before completion"))
 	return result

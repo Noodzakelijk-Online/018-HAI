@@ -119,6 +119,11 @@ persisted workflow -> worker -> task plan -> verification/audit evidence**.
 The workflow stores the task-plan ID, run result, retry state, and completion
 decision before a pursuit presents it as execution evidence.
 
+A direct task scoped to a pursuit also passes that pursuit identity into the
+verification engine. The resulting verification run is linked as pursuit
+evidence; if that link cannot be recorded, the task moves to review rather than
+being presented as a verified pursuit outcome.
+
 Source, workflow, and ambient schedulers run in the backend process. They are
 appropriate for the single-node local Compose setup, with durable due-state and
 workflow leases protecting normal recovery, but they are not a distributed

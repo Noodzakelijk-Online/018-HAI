@@ -213,17 +213,19 @@ func TestPursuitScopedTaskPlanRejectsMalformedPursuitID(t *testing.T) {
 func TestPursuitScopedTaskRunPersistsExactRuntimeLaunchEvidence(t *testing.T) {
 	recorder := &fakePursuitAttemptRecorder{}
 	executor := &fakeToolExecutor{result: completedToolResult()}
+	verifier := &sequencedVerificationService{}
 	service := NewServiceWithEnginesAndPursuitAttempts(
 		&fakeMemoryService{},
 		newTaskTestLLMService(t),
 		nil,
-		nil,
+		verifier,
 		executor,
 		recorder,
 	)
+	pursuitID := uuid.NewString()
 	if _, err := service.Run(IntakeRequest{
 		OwnerIdentity:  "alice",
-		PursuitID:      uuid.NewString(),
+		PursuitID:      pursuitID,
 		Request:        "Run local script tests for the project",
 		ProjectKey:     "018-HAI",
 		AutomationID:   executor.result.AutomationID,
@@ -236,6 +238,36 @@ func TestPursuitScopedTaskRunPersistsExactRuntimeLaunchEvidence(t *testing.T) {
 	}
 	if got := recorder.attempts[1].LaunchEventID; got != executor.result.LaunchEventID {
 		t.Fatalf("launch evidence = %q, want %q", got, executor.result.LaunchEventID)
+	}
+	if len(verifier.requests) != 1 || verifier.requests[0].PursuitID != pursuitID {
+		t.Fatalf("verification request pursuit id = %#v, want %q", verifier.requests, pursuitID)
+	}
+}
+
+func TestPursuitScopedTaskRunRequiresReviewWhenVerificationCannotLinkEvidence(t *testing.T) {
+	verifier := &sequencedVerificationService{pursuitLinkError: "pursuit is not visible to the authenticated owner"}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		verifier,
+		nil,
+		&fakePursuitAttemptRecorder{},
+	)
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity: "alice",
+		PursuitID:     uuid.NewString(),
+		Request:       "Summarize project context for the dashboard",
+		ProjectKey:    "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.ExecutionResult == nil {
+		t.Fatalf("verification link failure was treated as complete: %#v", plan)
+	}
+	if plan.ExecutionResult.BlockedReason != "verification evidence could not be linked to the pursuit" {
+		t.Fatalf("blocked reason = %q", plan.ExecutionResult.BlockedReason)
 	}
 }
 
@@ -606,9 +638,10 @@ func completedToolResult() *ToolExecutionResult {
 }
 
 type sequencedVerificationService struct {
-	statuses []string
-	calls    int
-	requests []verification.AnswerRequest
+	statuses         []string
+	pursuitLinkError string
+	calls            int
+	requests         []verification.AnswerRequest
 }
 
 func (s *sequencedVerificationService) Answer(request verification.AnswerRequest) (*verification.VerificationResult, error) {
@@ -631,7 +664,7 @@ func (s *sequencedVerificationService) Answer(request verification.AnswerRequest
 		Confidence:  0.9,
 		NeedsReview: status == verification.StatusNeedsReview,
 	}}
-	result := &verification.VerificationResult{Run: run, Claims: claims}
+	result := &verification.VerificationResult{Run: run, Claims: claims, PursuitLinkError: s.pursuitLinkError}
 	if status == verification.StatusNeedsReview {
 		result.UnsupportedClaims = claims
 	}
