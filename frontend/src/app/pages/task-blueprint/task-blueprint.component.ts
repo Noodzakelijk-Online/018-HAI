@@ -134,11 +134,15 @@ export class TaskBlueprintComponent implements OnInit {
   ngOnInit(): void {
     this.themeMode = this.themeService.mode();
     this.route.queryParamMap.subscribe((params) => {
+      const pursuitId = params.get('pursuitId') || '';
       this.planForm.patchValue({
-        pursuitId: params.get('pursuitId') || '',
+        pursuitId,
         projectKey: params.get('projectKey') || this.planForm.value.projectKey,
         request: params.get('request') || this.planForm.value.request,
       });
+      if (pursuitId) {
+        this.contextExpanded = true;
+      }
     });
     this.loadLogs();
     this.loadReviewQueue();
@@ -519,6 +523,30 @@ export class TaskBlueprintComponent implements OnInit {
     if (id) {
       this.router.navigate(['/pursuits'], { queryParams: { selected: id } });
     }
+  }
+
+  hasPursuitContext(): boolean {
+    return Boolean(String(this.planForm.value.pursuitId || '').trim());
+  }
+
+  pursuitContextLabel(): string {
+    return this.hasPursuitContext() ? 'Selected pursuit' : 'No pursuit selected';
+  }
+
+  pursuitContextTooltip(): string {
+    const pursuitId = String(this.planForm.value.pursuitId || '').trim();
+    return pursuitId
+      ? `Open the selected pursuit (${pursuitId}) and inspect its evidence, workflow, and decisions.`
+      : 'Set an optional pursuit context to keep this task attempt on its durable pursuit ledger.';
+  }
+
+  openPursuitContext(): void {
+    const pursuitId = String(this.planForm.value.pursuitId || '').trim();
+    if (pursuitId) {
+      this.router.navigate(['/pursuits'], { queryParams: { selected: pursuitId } });
+      return;
+    }
+    this.contextExpanded = true;
   }
 
   private messageFromCommand(command: IAssistantCommandResult, intent: ChatIntent): ChatMessage {

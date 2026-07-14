@@ -97,6 +97,15 @@
           <em>Active</em>
         </button>
 
+        <button type="button" class="context-card" [class.context-card--linked]="hasPursuitContext()" [title]="pursuitContextTooltip()" (click)="openPursuitContext()">
+          <i nz-icon nzType="compass" nzTheme="outline"></i>
+          <span>
+            <strong>Pursuit</strong>
+            <small>{{ pursuitContextLabel() }}</small>
+          </span>
+          <em>{{ hasPursuitContext() ? 'Linked' : 'Optional' }}</em>
+        </button>
+
         <button type="button" class="context-card" title="Safety mode and approval policy" (click)="inspectorMode = 'overview'">
           <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
           <span>
@@ -256,6 +265,10 @@
         <label>
           <span>Project</span>
           <input nz-input formControlName="projectKey" title="Project key used for memory, source, and workflow matching" />
+        </label>
+        <label>
+          <span>Pursuit context</span>
+          <input nz-input formControlName="pursuitId" placeholder="Optional pursuit ID" title="Optional durable pursuit ledger for this task attempt. Set from a pursuit page or paste a known pursuit ID." />
         </label>
         <label>
           <span>Automation ID</span>
