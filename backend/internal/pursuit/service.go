@@ -2120,8 +2120,6 @@ func (s *service) RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, er
 	} else if pursuit.Status == StatusBlocked || pursuit.Status == StatusWaiting {
 		pursuit.Status = StatusActive
 	}
-	now := time.Now().UTC()
-	pursuit.LastActivityAt = &now
 	updated, err := s.repo.Update(&pursuit)
 	if err != nil {
 		return nil, err
@@ -2244,13 +2242,17 @@ func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, source
 	if activityAt.IsZero() {
 		activityAt = time.Now().UTC()
 	}
-	if pursuit.LastActivityAt == nil || pursuit.LastActivityAt.Before(activityAt) {
+	if activityUpdatesFreshness(eventType) && (pursuit.LastActivityAt == nil || pursuit.LastActivityAt.Before(activityAt)) {
 		pursuit.LastActivityAt = &activityAt
 		if _, err := s.repo.Update(pursuit); err != nil {
 			return activity, err
 		}
 	}
 	return activity, nil
+}
+
+func activityUpdatesFreshness(eventType string) bool {
+	return !strings.EqualFold(strings.TrimSpace(eventType), "pursuit.summary_refreshed")
 }
 
 func (s *service) recordDecisionResolution(id uuid.UUID, request DecisionResolutionRequest) (*models.PursuitActivity, error) {

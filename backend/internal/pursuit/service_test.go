@@ -2871,6 +2871,41 @@ func TestLinkActivityRefreshesPursuitFreshness(t *testing.T) {
 	}
 }
 
+func TestSummaryRefreshDoesNotMaskStalePursuit(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Keep stale pursuit visible"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	staleAt := time.Now().UTC().Add(-15 * 24 * time.Hour)
+	record := repo.pursuits[created.ID]
+	record.LastActivityAt = &staleAt
+	repo.pursuits[created.ID] = record
+
+	if _, err := service.RefreshSummary(created.ID, "system"); err != nil {
+		t.Fatalf("RefreshSummary returned error: %v", err)
+	}
+	updated, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if updated.LastActivityAt == nil || !updated.LastActivityAt.Equal(staleAt) {
+		t.Fatalf("summary refresh changed last activity to %v, want %v", updated.LastActivityAt, staleAt)
+	}
+	if !isStale(*updated) {
+		t.Fatalf("summary refresh hid a stale pursuit: %#v", updated)
+	}
+	activity, err := repo.FindActivities(created.ID, 20)
+	if err != nil {
+		t.Fatalf("FindActivities returned error: %v", err)
+	}
+	if !activityContains(activity, "pursuit.summary_refreshed") {
+		t.Fatalf("summary refresh was not retained in the audit feed: %#v", activity)
+	}
+}
+
 func timelineContains(items []PursuitTimelineItem, kind, messagePart string) bool {
 	for _, item := range items {
 		if item.Kind == kind && strings.Contains(item.Message, messagePart) {
