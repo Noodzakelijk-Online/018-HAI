@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,7 +14,16 @@ import (
 )
 
 type Handler struct {
-	service Service
+	service             Service
+	pursuitIntakeRouter PursuitIntakeRouter
+}
+
+// PursuitIntakeRouter keeps the legacy workflow endpoint compatible while
+// allowing the canonical application to route new work through pursuits.
+// Implementations must return the workflow record created or reused by the
+// governed pursuit intake path.
+type PursuitIntakeRouter interface {
+	RouteWorkflowIntake(request IntakeRequest) (*WorkflowRecord, error)
 }
 
 func DefaultHandler() *Handler {
@@ -23,6 +34,10 @@ func NewHandler(service Service) *Handler {
 	return &Handler{service: service}
 }
 
+func NewHandlerWithPursuitIntakeRouter(service Service, pursuitIntakeRouter PursuitIntakeRouter) *Handler {
+	return &Handler{service: service, pursuitIntakeRouter: pursuitIntakeRouter}
+}
+
 func (h *Handler) Intake(c *gin.Context) {
 	var request IntakeRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -30,12 +45,42 @@ func (h *Handler) Intake(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedWorkflowActor(c, "operator")
-	record, err := h.service.Intake(request)
+	request = normalizeWorkflowAPIIntake(request)
+	var record *WorkflowRecord
+	var err error
+	if h.pursuitIntakeRouter != nil {
+		record, err = h.pursuitIntakeRouter.RouteWorkflowIntake(request)
+	} else {
+		record, err = h.service.Intake(request)
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, record)
+}
+
+func normalizeWorkflowAPIIntake(request IntakeRequest) IntakeRequest {
+	request.Trigger = firstNonEmpty(request.Trigger, "workflow_api_intake")
+	if strings.TrimSpace(request.SourceType) == "" {
+		request.SourceType = "workflow_api"
+	}
+	if strings.TrimSpace(request.SourceID) == "" && strings.TrimSpace(request.SourceURI) == "" {
+		request.SourceID = workflowAPIIntakeSourceID(request)
+		request.SourceURI = "workflow-api://intake/" + request.SourceID
+		request.SourceLabel = firstNonEmpty(request.SourceLabel, "Direct workflow API intake")
+	}
+	return request
+}
+
+func workflowAPIIntakeSourceID(request IntakeRequest) string {
+	value := strings.Join([]string{
+		strings.ToLower(strings.Join(strings.Fields(request.Input), " ")),
+		strings.ToLower(strings.TrimSpace(request.ProjectKey)),
+		strings.ToLower(strings.TrimSpace(request.AutomationID)),
+	}, "\n")
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("workflow-api-%x", sum[:12])
 }
 
 func (h *Handler) Items(c *gin.Context) {

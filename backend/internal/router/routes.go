@@ -82,7 +82,7 @@ func initializeRoutes(router *gin.Engine) error {
 		source.StartScheduler(context.Background(), sourceService)
 		workflow.StartScheduler(context.Background(), workflowService)
 		initializeSourceRoutes(v1, source.NewHandler(sourceService))
-		initializeWorkflowRoutes(v1, workflow.NewHandler(workflowService))
+		initializeWorkflowRoutes(v1, workflow.NewHandlerWithPursuitIntakeRouter(workflowService, pursuitService))
 		initializePursuitRoutes(v1, pursuit.NewHandler(pursuitService))
 		memoryEngineSecret := config.AppConfig.MemoryEngineKey
 		if strings.TrimSpace(memoryEngineSecret) == "" {

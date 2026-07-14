@@ -636,6 +636,40 @@ func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T)
 	}
 }
 
+func TestRouteWorkflowIntakeReturnsPursuitLinkedWorkflowRecord(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	request := workflow.IntakeRequest{
+		Input:       "Prepare the evidence bundle for the government hearing.",
+		ProjectKey:  "vivare",
+		SourceType:  "workflow_api",
+		SourceID:    "workflow-api-vivare-01",
+		SourceURI:   "workflow-api://intake/workflow-api-vivare-01",
+		SourceLabel: "Direct workflow API intake",
+		Trigger:     "workflow_api_intake",
+		Actor:       "verified-operator",
+	}
+
+	record, err := service.RouteWorkflowIntake(request)
+	if err != nil {
+		t.Fatalf("RouteWorkflowIntake returned error: %v", err)
+	}
+	if record.Item.ID == uuid.Nil || record.Item.SourceID != request.SourceID || record.Item.SourceURI != request.SourceURI {
+		t.Fatalf("returned workflow record did not preserve routed provenance: %#v", record.Item)
+	}
+	if workflowService.calls != 1 || workflowService.received.Trigger != request.Trigger || !workflowService.received.RequiresReview {
+		t.Fatalf("workflow intake was not governed by the pursuit route: %#v", workflowService)
+	}
+	matches, err := service.Match(MatchRequest{SourceType: request.SourceType, SourceID: request.SourceID})
+	if err != nil {
+		t.Fatalf("Match returned error: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Pursuit.ID == uuid.Nil {
+		t.Fatalf("routed workflow did not create a traceable pursuit match: %#v", matches)
+	}
+}
+
 func TestRouteIntakeReusesPursuitLinkedByAssistantCommandIdentity(t *testing.T) {
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{}
@@ -2818,17 +2852,22 @@ func (r *fakeRepo) FindLinkedAutomationLaunches(automationIDs []uuid.UUID, launc
 type fakeWorkflowIntake struct {
 	received workflow.IntakeRequest
 	calls    int
+	records  map[uuid.UUID]*workflow.WorkflowRecord
+	repo     *fakeRepo
 }
 
 func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	f.calls++
 	f.received = request
 	id := uuid.New()
-	return &workflow.WorkflowRecord{
+	record := &workflow.WorkflowRecord{
 		Item: models.WorkflowItem{
 			ID:               id,
 			Title:            request.Input,
 			ProjectKey:       request.ProjectKey,
+			SourceType:       request.SourceType,
+			SourceID:         request.SourceID,
+			SourceURI:        request.SourceURI,
 			CurrentState:     workflow.StateNeedsApproval,
 			RiskLevel:        "high",
 			RequiresApproval: true,
@@ -2836,7 +2875,23 @@ func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.W
 			ApprovalReason:   "high-risk pursuit intake",
 			NextAction:       "Robert should approve the prepared response.",
 		},
-	}, nil
+	}
+	if f.records == nil {
+		f.records = make(map[uuid.UUID]*workflow.WorkflowRecord)
+	}
+	f.records[id] = record
+	if f.repo != nil {
+		f.repo.workflows[id] = record.Item
+	}
+	return record, nil
+}
+
+func (f *fakeWorkflowIntake) Get(id uuid.UUID) (*workflow.WorkflowRecord, error) {
+	record, ok := f.records[id]
+	if !ok {
+		return nil, errNotFound("workflow")
+	}
+	return record, nil
 }
 
 type errNotFound string

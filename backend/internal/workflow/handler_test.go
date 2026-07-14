@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"automation-hub-backend/internal/identity"
+	"automation-hub-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func TestResolveApprovalHandlerUsesVerifiedActor(t *testing.T) {
@@ -91,4 +93,43 @@ func TestTransitionHandlerCannotApproveWorkflow(t *testing.T) {
 	if updated.Item.ApprovalStatus == "approved" || updated.Item.CurrentState == StateReady {
 		t.Fatalf("generic transition established approval: %#v", updated.Item)
 	}
+}
+
+func TestIntakeHandlerRoutesLegacyRequestThroughPursuitGateway(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	router := &capturingPursuitIntakeRouter{record: &WorkflowRecord{Item: models.WorkflowItem{ID: uuid.New(), Title: "Governed intake"}}}
+	handler := NewHandlerWithPursuitIntakeRouter(service, router)
+	body, _ := json.Marshal(IntakeRequest{Input: "Prepare the evidence bundle", ProjectKey: "vivare"})
+	request := httptest.NewRequest(http.MethodPost, "/workflow/intake", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "verified-operator")
+
+	handler.Intake(context)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
+	}
+	if router.calls != 1 || router.request.Actor != "verified-operator" {
+		t.Fatalf("pursuit intake request = %#v", router.request)
+	}
+	if router.request.SourceType != "workflow_api" || router.request.SourceID == "" || router.request.SourceURI == "" {
+		t.Fatalf("legacy request was not normalized with deterministic provenance: %#v", router.request)
+	}
+}
+
+type capturingPursuitIntakeRouter struct {
+	calls   int
+	request IntakeRequest
+	record  *WorkflowRecord
+}
+
+func (r *capturingPursuitIntakeRouter) RouteWorkflowIntake(request IntakeRequest) (*WorkflowRecord, error) {
+	r.calls++
+	r.request = request
+	return r.record, nil
 }

@@ -494,6 +494,7 @@ type Service interface {
 	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
 	AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult, error)
 	RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error)
+	RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
 	Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
 	Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
 	ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
@@ -504,6 +505,10 @@ type Service interface {
 
 type workflowIntakeService interface {
 	Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
+}
+
+type workflowRecordReader interface {
+	Get(id uuid.UUID) (*workflow.WorkflowRecord, error)
 }
 
 type service struct {
@@ -1202,6 +1207,11 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 		return nil, err
 	}
 	links = append(links, *workflowLink)
+	if sourceLink, linked, err := s.linkExactSourceReference(match.Pursuit.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceLink)
+	}
 	if err := s.linkAssistantCommandReference(match.Pursuit.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
 		return nil, err
 	}
@@ -1395,6 +1405,57 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	return result, nil
 }
 
+// RouteWorkflowIntake adapts the legacy workflow endpoint to the native
+// pursuit intake path without changing its WorkflowRecord response contract.
+func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	routed, err := s.RouteIntake(IntakeRequest{
+		Input:          request.Input,
+		ProjectKey:     request.ProjectKey,
+		AutomationID:   request.AutomationID,
+		SourceType:     request.SourceType,
+		SourceID:       request.SourceID,
+		SourceURI:      request.SourceURI,
+		SourceLabel:    request.SourceLabel,
+		ContentType:    request.ContentType,
+		Sender:         request.Sender,
+		ReceivedAt:     request.ReceivedAt,
+		Trigger:        request.Trigger,
+		Actor:          request.Actor,
+		RequiresReview: request.RequiresReview,
+		ReviewReason:   request.ReviewReason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := s.workflowService.(workflowRecordReader)
+	if !ok {
+		return nil, fmt.Errorf("workflow service does not support record retrieval")
+	}
+	workflowID := routedWorkflowID(routed, request)
+	if workflowID == uuid.Nil {
+		return nil, fmt.Errorf("pursuit intake did not identify the created workflow record")
+	}
+	return reader.Get(workflowID)
+}
+
+func routedWorkflowID(routed *RoutedIntakeResult, request workflow.IntakeRequest) uuid.UUID {
+	if routed == nil || routed.Detail == nil {
+		return uuid.Nil
+	}
+	for _, item := range routed.Detail.Workflows {
+		if strings.TrimSpace(request.SourceType) != "" && strings.TrimSpace(request.SourceID) != "" &&
+			strings.EqualFold(item.SourceType, request.SourceType) && item.SourceID == request.SourceID {
+			return item.ID
+		}
+	}
+	for _, item := range routed.Detail.Workflows {
+		if strings.TrimSpace(request.SourceURI) != "" && item.SourceURI == request.SourceURI {
+			return item.ID
+		}
+	}
+	return uuid.Nil
+}
+
 func routedIntakeReviewReason(reviewRequired bool, request IntakeRequest) string {
 	if !reviewRequired {
 		return ""
@@ -1446,6 +1507,11 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 		return nil, err
 	}
 	links = append(links, *workflowLink)
+	if sourceLink, linked, err := s.linkExactSourceReference(created.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceLink)
+	}
 	if err := s.linkAssistantCommandReference(created.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
 		return nil, err
 	}
@@ -1733,6 +1799,30 @@ func (s *service) linkAssistantCommandReference(id uuid.UUID, sourceType, source
 		Actor:        firstNonEmpty(actor, "assistant"),
 	})
 	return err
+}
+
+// linkExactSourceReference preserves source identity for deterministic
+// re-matching. This is distinct from the workflow link, which identifies the
+// generated operational work rather than the input that produced it.
+func (s *service) linkExactSourceReference(id uuid.UUID, sourceType, sourceID, sourceURI, sourceLabel string, confidence float64, actor string) (*models.PursuitLink, bool, error) {
+	sourceType = strings.TrimSpace(sourceType)
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceType == "" || sourceID == "" || strings.EqualFold(sourceType, LinkAssistantCommand) {
+		return nil, false, nil
+	}
+	link, err := s.Link(id, LinkRequest{
+		LinkType:     sourceType,
+		LinkID:       sourceID,
+		Relationship: "intake_origin",
+		SourceURI:    strings.TrimSpace(sourceURI),
+		SourceLabel:  strings.TrimSpace(sourceLabel),
+		Confidence:   confidence,
+		Actor:        firstNonEmpty(actor, "system"),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return link, true, nil
 }
 
 func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
