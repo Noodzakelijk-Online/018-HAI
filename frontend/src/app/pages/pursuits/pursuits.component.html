@@ -705,6 +705,7 @@
                 <div><dt>Verification</dt><dd>{{ detail.verificationRuns.length }}</dd></div>
                 <div><dt>Memory</dt><dd>{{ detail.memories.length }}</dd></div>
                 <div><dt>Conversations</dt><dd>{{ detail.conversations.length }}</dd></div>
+                <div><dt>Proactive</dt><dd>{{ detail.ambientOpportunities.length }}</dd></div>
                 <div><dt>Sources</dt><dd>{{ detail.sourceItems.length + detail.sourceExtractions.length }}</dd></div>
                 <div><dt>Runtime</dt><dd>{{ detail.runtimeAttempts.length }}</dd></div>
               </dl>
@@ -1046,6 +1047,22 @@
                   <button nz-button nzType="link" (click)="openSource(source.sourceUri)">Open source</button>
                 </article>
               </div>
+            </details>
+
+            <details>
+              <summary>Proactive opportunities</summary>
+              <div class="source-grid">
+                <article *ngFor="let opportunity of detail.ambientOpportunities">
+                  <span>{{ opportunity.needKey || 'general' }} · priority {{ opportunity.priorityScore }} · {{ opportunity.status }}</span>
+                  <strong>{{ opportunity.title }}</strong>
+                  <small>{{ opportunity.nextAction || opportunity.rationale || 'No next action recorded.' }}</small>
+                  <nz-tag [nzColor]="opportunity.requiresApproval ? 'warning' : 'success'">
+                    {{ opportunity.requiresApproval ? 'approval required' : 'proposal only' }}
+                  </nz-tag>
+                  <button nz-button nzType="link" *ngIf="opportunity.sourceUri" (click)="openSource(opportunity.sourceUri)">Open source</button>
+                </article>
+              </div>
+              <nz-empty *ngIf="!detail.ambientOpportunities.length" nzNotFoundContent="No proactive opportunities linked yet."></nz-empty>
             </details>
 
             <details>

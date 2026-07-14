@@ -254,6 +254,25 @@ export interface IPursuitConversation {
   archived: boolean;
 }
 
+export interface IPursuitAmbientOpportunity {
+  id: string;
+  needKey: string;
+  title: string;
+  rationale?: string;
+  nextAction?: string;
+  sourceType?: string;
+  sourceUri?: string;
+  priorityScore: number;
+  confidence: number;
+  risk: number;
+  requiresApproval: boolean;
+  status: string;
+  lastSeenAt: string;
+  resolutionNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface IPursuitAutomation {
   id: string;
   name: string;
@@ -354,6 +373,7 @@ export interface IPursuitDetail {
   evidence: IWorkflowEvidenceClaim[];
   memories: IContextMemory[];
   conversations: IPursuitConversation[];
+  ambientOpportunities: IPursuitAmbientOpportunity[];
   taskRuns: IPursuitTaskRun[];
   taskAttempts: IPursuitTaskAttempt[];
   verificationRuns: IVerificationRun[];

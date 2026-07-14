@@ -299,6 +299,7 @@ type PursuitDetail struct {
 	Evidence             []models.WorkflowEvidenceClaim `json:"evidence"`
 	Memories             []models.ContextMemory         `json:"memories"`
 	Conversations        []PursuitConversation          `json:"conversations"`
+	AmbientOpportunities []PursuitAmbientOpportunity    `json:"ambientOpportunities"`
 	TaskRuns             []PursuitTaskRun               `json:"taskRuns"`
 	TaskAttempts         []models.PursuitTaskAttempt    `json:"taskAttempts"`
 	VerificationRuns     []models.VerificationRun       `json:"verificationRuns"`
@@ -330,6 +331,28 @@ type PursuitConversation struct {
 	CapturedAt    time.Time  `json:"capturedAt"`
 	LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
 	Archived      bool       `json:"archived"`
+}
+
+// PursuitAmbientOpportunity is the bounded proactive-planning projection for
+// a pursuit. It deliberately omits owner identity and the raw evidence
+// manifest; source evidence remains behind the existing source/evidence views.
+type PursuitAmbientOpportunity struct {
+	ID               uuid.UUID `json:"id"`
+	NeedKey          string    `json:"needKey"`
+	Title            string    `json:"title"`
+	Rationale        string    `json:"rationale,omitempty"`
+	NextAction       string    `json:"nextAction,omitempty"`
+	SourceType       string    `json:"sourceType,omitempty"`
+	SourceURI        string    `json:"sourceUri,omitempty"`
+	PriorityScore    int       `json:"priorityScore"`
+	Confidence       int       `json:"confidence"`
+	Risk             int       `json:"risk"`
+	RequiresApproval bool      `json:"requiresApproval"`
+	Status           string    `json:"status"`
+	LastSeenAt       time.Time `json:"lastSeenAt"`
+	ResolutionNote   string    `json:"resolutionNote,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // PursuitDelegationPackage is a read-only handoff brief. It turns the
@@ -1142,6 +1165,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	workflowIDs := linkUUIDs(links, LinkWorkflow)
 	memoryIDs := linkUUIDs(links, LinkMemory)
 	conversationIDs := linkUUIDs(links, LinkAIConversation)
+	ambientOpportunityIDs := linkUUIDs(links, LinkAmbientOpportunity)
 	sourceItemIDs := linkUUIDs(links, LinkSourceItem)
 	extractionIDs := linkUUIDs(links, LinkSourceExtraction)
 	verificationIDs := linkUUIDs(links, LinkVerification)
@@ -1199,6 +1223,13 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	if conversations == nil {
 		conversations = []models.AIConversationArchive{}
 	}
+	ambientOpportunities, err := s.repo.FindLinkedAmbientOpportunities(ambientOpportunityIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked ambient opportunities", err)
+	}
+	if ambientOpportunities == nil {
+		ambientOpportunities = []models.AmbientOpportunity{}
+	}
 	sourceItems, err := s.repo.FindLinkedSourceItems(sourceItemIDs)
 	if err != nil {
 		return nil, pursuitDetailLoadError("linked source items", err)
@@ -1251,6 +1282,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 		Evidence:             evidence,
 		Memories:             memories,
 		Conversations:        compactConversations(conversations),
+		AmbientOpportunities: compactAmbientOpportunities(ambientOpportunities),
 		TaskRuns:             taskRunsFromWorkflows(workflows),
 		TaskAttempts:         taskAttempts,
 		VerificationRuns:     verificationRuns,
@@ -4412,6 +4444,31 @@ func compactConversations(items []models.AIConversationArchive) []PursuitConvers
 			CapturedAt:    item.CapturedAt,
 			LastMessageAt: item.LastMessageAt,
 			Archived:      item.Archived,
+		})
+	}
+	return result
+}
+
+func compactAmbientOpportunities(items []models.AmbientOpportunity) []PursuitAmbientOpportunity {
+	result := make([]PursuitAmbientOpportunity, 0, len(items))
+	for _, item := range items {
+		result = append(result, PursuitAmbientOpportunity{
+			ID:               item.ID,
+			NeedKey:          item.NeedKey,
+			Title:            item.Title,
+			Rationale:        item.Rationale,
+			NextAction:       item.NextAction,
+			SourceType:       item.SourceType,
+			SourceURI:        item.SourceURI,
+			PriorityScore:    item.PriorityScore,
+			Confidence:       item.Confidence,
+			Risk:             item.Risk,
+			RequiresApproval: item.RequiresApproval,
+			Status:           item.Status,
+			LastSeenAt:       item.LastSeenAt,
+			ResolutionNote:   item.ResolutionNote,
+			CreatedAt:        item.CreatedAt,
+			UpdatedAt:        item.UpdatedAt,
 		})
 	}
 	return result

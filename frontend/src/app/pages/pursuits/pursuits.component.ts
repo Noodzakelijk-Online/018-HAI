@@ -71,6 +71,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     'workflow',
     'memory',
     'ai_conversation',
+    'ambient_opportunity',
     'source_item',
     'source_extraction',
     'verification',

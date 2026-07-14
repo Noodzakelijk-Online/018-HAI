@@ -2673,6 +2673,55 @@ func TestAmbientOpportunityLinkCountsAsPursuitEvidence(t *testing.T) {
 	}
 }
 
+func TestAmbientOpportunityLinksAreOwnerScopedAndProjected(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Advance housing case", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	opportunityID := uuid.New()
+	repo.ambientOpportunities[opportunityID] = models.AmbientOpportunity{
+		ID:               opportunityID,
+		OwnerIdentity:    "alice",
+		NeedKey:          "safety",
+		Title:            "Review missing evidence",
+		Rationale:        "The pursuit has not moved because a source is missing.",
+		NextAction:       "Prepare a request for the missing document.",
+		PriorityScore:    78,
+		Confidence:       82,
+		Risk:             65,
+		RequiresApproval: true,
+		Status:           "accepted",
+		EvidenceManifest: "raw manifest must not be returned in pursuit detail",
+		LastSeenAt:       time.Now().UTC(),
+	}
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAmbientOpportunity, LinkID: opportunityID.String(), Relationship: "ambient_proposal_accepted", SourceURI: "ambient://opportunities/" + opportunityID.String()}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if len(detail.AmbientOpportunities) != 1 || detail.AmbientOpportunities[0].ID != opportunityID || detail.AmbientOpportunities[0].NextAction == "" {
+		t.Fatalf("ambient opportunity projection = %#v", detail.AmbientOpportunities)
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	if strings.Contains(string(payload), "raw manifest must not be returned") || strings.Contains(string(payload), "evidenceManifest") {
+		t.Fatalf("pursuit detail exposed private ambient fields: %s", payload)
+	}
+
+	bobOpportunityID := uuid.New()
+	repo.ambientOpportunities[bobOpportunityID] = models.AmbientOpportunity{ID: bobOpportunityID, OwnerIdentity: "bob", Title: "Bob private proposal"}
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAmbientOpportunity, LinkID: bobOpportunityID.String(), Relationship: "ambient_proposal_accepted"}); err == nil {
+		t.Fatal("owner could link another user's ambient opportunity")
+	}
+}
+
 func TestResolveEvidenceReturnsLinkedRuntimeAttempt(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -3846,6 +3895,7 @@ type fakeRepo struct {
 	evidence             []models.WorkflowEvidenceClaim
 	memories             map[uuid.UUID]models.ContextMemory
 	conversations        map[uuid.UUID]models.AIConversationArchive
+	ambientOpportunities map[uuid.UUID]models.AmbientOpportunity
 	automations          map[uuid.UUID]models.Automation
 	launchEvents         []models.AutomationLaunchEvent
 	verificationRuns     map[uuid.UUID]models.VerificationRun
@@ -3866,6 +3916,7 @@ func newFakeRepo() *fakeRepo {
 		workflows:            map[uuid.UUID]models.WorkflowItem{},
 		memories:             map[uuid.UUID]models.ContextMemory{},
 		conversations:        map[uuid.UUID]models.AIConversationArchive{},
+		ambientOpportunities: map[uuid.UUID]models.AmbientOpportunity{},
 		automations:          map[uuid.UUID]models.Automation{},
 		verificationRuns:     map[uuid.UUID]models.VerificationRun{},
 		verificationClaims:   map[uuid.UUID]models.VerificationClaim{},
@@ -3957,6 +4008,13 @@ func (r *fakeRepo) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (b
 		}
 		item, ok := r.conversations[id]
 		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkAmbientOpportunity:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.ambientOpportunities[id]
+		return true, ok && item.OwnerIdentity == ownerIdentity, nil
 	case LinkSourceItem:
 		for id, item := range r.sourceItems {
 			if linkID != id.String() && linkID != item.ExternalID {
@@ -4252,6 +4310,16 @@ func (r *fakeRepo) FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversa
 	result := []models.AIConversationArchive{}
 	for _, id := range ids {
 		if item, ok := r.conversations[id]; ok {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedAmbientOpportunities(ids []uuid.UUID) ([]models.AmbientOpportunity, error) {
+	result := []models.AmbientOpportunity{}
+	for _, id := range ids {
+		if item, ok := r.ambientOpportunities[id]; ok {
 			result = append(result, item)
 		}
 	}

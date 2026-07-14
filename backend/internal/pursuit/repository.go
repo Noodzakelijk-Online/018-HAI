@@ -39,6 +39,7 @@ type Repository interface {
 	FindLinkedEvidence(workflowIDs []uuid.UUID) ([]models.WorkflowEvidenceClaim, error)
 	FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, error)
 	FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversationArchive, error)
+	FindLinkedAmbientOpportunities(ids []uuid.UUID) ([]models.AmbientOpportunity, error)
 	FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error)
 	FindLinkedExtractions(ids []uuid.UUID) ([]models.SourceExtraction, error)
 	FindLinkedVerificationRuns(ids []uuid.UUID) ([]models.VerificationRun, error)
@@ -142,6 +143,14 @@ func (r *GormRepository) LinkVisibleToOwner(ownerIdentity, linkType, linkID stri
 		}
 		var count int64
 		err = r.DB.Model(&models.AIConversationArchive{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkAmbientOpportunity:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.AmbientOpportunity{}).Where("id = ? AND owner_identity = ?", id, ownerIdentity).Count(&count).Error
 		return true, count > 0, err
 	case LinkSourceItem:
 		return r.sourceItemVisibleToOwner(ownerIdentity, linkID)
@@ -463,6 +472,20 @@ func (r *GormRepository) FindLinkedConversations(ids []uuid.UUID) ([]models.AICo
 		return nil, err
 	}
 	return conversations, nil
+}
+
+func (r *GormRepository) FindLinkedAmbientOpportunities(ids []uuid.UUID) ([]models.AmbientOpportunity, error) {
+	var opportunities []models.AmbientOpportunity
+	if len(ids) == 0 {
+		return opportunities, nil
+	}
+	if err := r.DB.Select("id", "need_key", "title", "rationale", "next_action", "source_type", "source_uri", "priority_score", "confidence", "risk", "requires_approval", "status", "last_seen_at", "resolution_note", "created_at", "updated_at").
+		Where("id IN ?", ids).
+		Order("last_seen_at DESC, updated_at DESC").
+		Find(&opportunities).Error; err != nil {
+		return nil, err
+	}
+	return opportunities, nil
 }
 
 func (r *GormRepository) FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error) {
