@@ -263,9 +263,7 @@ func TestAcceptPursuitOpportunityRetriesLinkWithoutDuplicatingWorkflow(t *testin
 	}
 }
 
-func TestAcceptNonPursuitOpportunityRoutesExistingWorkflowIntoPursuit(t *testing.T) {
-	pursuitID := uuid.New()
-	workflowID := uuid.New()
+func TestAcceptNonPursuitOpportunityFailsClosedWithoutNativePursuitRouter(t *testing.T) {
 	opportunity := &models.AmbientOpportunity{
 		ID:               uuid.New(),
 		OwnerIdentity:    "alice",
@@ -280,33 +278,46 @@ func TestAcceptNonPursuitOpportunityRoutesExistingWorkflowIntoPursuit(t *testing
 		RequiresApproval: true,
 	}
 	repo := &ambientRepositoryStub{opportunity: opportunity}
-	workflowSpy := &ambientWorkflowSpy{recordID: workflowID}
-	pursuitSpy := &ambientPursuitSpy{autoLinkResult: &pursuitpkg.AutoLinkResult{Linked: true, Created: true, PursuitID: pursuitID}}
+	workflowSpy := &ambientWorkflowSpy{recordID: uuid.New()}
+	pursuitSpy := &ambientPursuitSpy{}
 	engine := NewServiceWithPursuits(repo, workflowSpy, nil, pursuitSpy)
 
-	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "verified-operator"})
-	if err != nil {
-		t.Fatalf("Accept returned error: %v", err)
+	_, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "verified-operator"})
+	if !errors.Is(err, pursuitpkg.ErrLifecycleRouterRequired) {
+		t.Fatalf("Accept error = %v, want lifecycle router requirement", err)
 	}
-	if accepted.Status != StatusAccepted || accepted.WorkflowID == nil || *accepted.WorkflowID != workflowID {
-		t.Fatalf("accepted opportunity = %#v", accepted)
+	if len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("incomplete pursuit integration created workflow work: %#v", workflowSpy.intakeRequests)
 	}
-	if len(workflowSpy.intakeRequests) != 1 {
-		t.Fatalf("workflow intake calls = %d, want 1", len(workflowSpy.intakeRequests))
+	if repo.opportunity.Status != StatusProposed || repo.opportunity.WorkflowID != nil {
+		t.Fatalf("failed-closed acceptance mutated opportunity: %#v", repo.opportunity)
 	}
-	if len(pursuitSpy.autoLinkRequests) != 1 {
-		t.Fatalf("auto-link requests = %#v, want one", pursuitSpy.autoLinkRequests)
+}
+
+func TestAcceptNonPursuitOpportunityWithExistingWorkflowFailsClosedWithoutNativePursuitRouter(t *testing.T) {
+	workflowID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		Status:        StatusProposed,
+		NeedKey:       "safety",
+		Title:         "Repair an older ambient proposal",
+		Rationale:     "A prior integration attempt retained a workflow reference.",
+		NextAction:    "Review the source before taking another action.",
+		SourceType:    "memory_insight",
+		SourceID:      uuid.NewString(),
+		WorkflowID:    &workflowID,
 	}
-	routed := pursuitSpy.autoLinkRequests[0]
-	if routed.WorkflowID != workflowID || routed.SourceType != pursuitpkg.LinkAmbientOpportunity || routed.SourceID != opportunity.ID.String() || !routed.AllowCreateCandidate {
-		t.Fatalf("ambient pursuit route = %#v", routed)
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, &ambientPursuitSpy{})
+
+	_, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "verified-operator"})
+	if !errors.Is(err, pursuitpkg.ErrLifecycleRouterRequired) {
+		t.Fatalf("Accept error = %v, want lifecycle router requirement", err)
 	}
-	if len(pursuitSpy.links) != 1 || pursuitSpy.linkedPursuitIDs[0] != pursuitID {
-		t.Fatalf("accepted proposal metadata link = ids=%#v links=%#v", pursuitSpy.linkedPursuitIDs, pursuitSpy.links)
-	}
-	link := pursuitSpy.links[0]
-	if link.LinkType != pursuitpkg.LinkAmbientOpportunity || link.LinkID != opportunity.ID.String() || link.Relationship != "ambient_proposal_accepted" {
-		t.Fatalf("accepted proposal link = %#v", link)
+	if len(workflowSpy.intakeRequests) != 0 || repo.opportunity.Status != StatusProposed || repo.opportunity.WorkflowID == nil || *repo.opportunity.WorkflowID != workflowID {
+		t.Fatalf("failed-closed retry mutated legacy opportunity: intake=%#v opportunity=%#v", workflowSpy.intakeRequests, repo.opportunity)
 	}
 }
 

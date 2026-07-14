@@ -536,8 +536,18 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	}
 	actor := firstNonEmpty(strings.TrimSpace(request.Actor), "operator")
 	routedThroughPursuit := false
-	if item.WorkflowID == nil && !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
-		if router, ok := s.pursuits.(pursuitAmbientOpportunityRouter); ok {
+	nonPursuitOpportunity := !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit")
+	if nonPursuitOpportunity && s.pursuits != nil {
+		router, ok := s.pursuits.(pursuitAmbientOpportunityRouter)
+		if !ok {
+			// A configured pursuit layer is an explicit promise that ambient work
+			// will be correlated before it becomes executable. Do not silently
+			// fall back to direct workflow intake when that lifecycle router is
+			// missing, including for an opportunity that retained an older workflow
+			// reference from a prior failed attempt.
+			return nil, pursuitpkg.ErrLifecycleRouterRequired
+		}
+		if item.WorkflowID == nil {
 			route, routeErr := router.RouteAmbientOpportunity(pursuitpkg.AmbientOpportunityRouteRequest{
 				OwnerIdentity:  request.OwnerIdentity,
 				OpportunityID:  item.ID,
