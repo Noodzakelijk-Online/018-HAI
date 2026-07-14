@@ -4157,6 +4157,32 @@ func TestDeleteLinkRequiresOwningPursuit(t *testing.T) {
 	t.Fatal("expected pursuit.link_removed activity")
 }
 
+func TestPursuitLinkRejectsSelfReference(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Keep relationship graph meaningful", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = service.Link(created.ID, LinkRequest{
+		OwnerIdentity: "alice",
+		LinkType:      LinkPursuit,
+		LinkID:        created.ID.String(),
+		Relationship:  "related_case",
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be linked to itself") {
+		t.Fatalf("self pursuit link error = %v, want self-link rejection", err)
+	}
+	links, findErr := repo.FindLinks(created.ID)
+	if findErr != nil {
+		t.Fatalf("FindLinks returned error: %v", findErr)
+	}
+	if len(links) != 0 {
+		t.Fatalf("self pursuit link was persisted: %#v", links)
+	}
+}
+
 func TestLinkActivityRefreshesPursuitFreshness(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

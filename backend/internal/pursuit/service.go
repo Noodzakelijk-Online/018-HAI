@@ -1821,6 +1821,12 @@ func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, 
 	if linkType == "" || linkID == "" {
 		return nil, fmt.Errorf("linkType and linkId are required")
 	}
+	if linkType == LinkPursuit {
+		linkedPursuitID, parseErr := uuid.Parse(linkID)
+		if parseErr == nil && linkedPursuitID == id {
+			return nil, fmt.Errorf("a pursuit cannot be linked to itself")
+		}
+	}
 	if err := s.validateLinkOwnership(*pursuit, request.OwnerIdentity, linkType, linkID); err != nil {
 		return nil, err
 	}
