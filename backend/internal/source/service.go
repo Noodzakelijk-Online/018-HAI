@@ -575,6 +575,10 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 		ReviewReason:   "background source ingestion failed and requires operator review",
 	})
 	if err != nil {
+		if _, pending := pursuit.IsCandidatePending(err); pending {
+			s.audit(source.ID, "pursuit.intake_deferred", "source sync failure created or matched a pursuit candidate; workflow creation awaits explicit acceptance")
+			return
+		}
 		s.audit(source.ID, "source.failure_workflow_failed", compact(err.Error(), 260))
 		return
 	}
@@ -1348,6 +1352,8 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		ProjectKey:     extraction.ProjectKey,
 		SourceType:     source.Category,
 		SourceID:       extraction.ID.String(),
+		RawItemID:      sourceRawItemID(extraction),
+		ExtractionID:   extraction.ID.String(),
 		SourceURI:      firstNonEmpty(extraction.SourceURI, "source-extraction://"+extraction.ID.String()),
 		SourceLabel:    extraction.SourceLabel,
 		Trigger:        "source.extraction",
@@ -1356,6 +1362,14 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		ReviewReason:   reviewReason,
 	})
 	if err != nil {
+		if routed, pending := pursuit.IsCandidatePending(err); pending {
+			message := "actionable extraction created or matched a pursuit candidate; workflow creation awaits explicit acceptance"
+			if routed != nil && strings.TrimSpace(routed.Message) != "" {
+				message = routed.Message
+			}
+			s.audit(source.ID, "pursuit.intake_deferred", compact(message, 260))
+			return nil
+		}
 		s.audit(source.ID, "workflow.intake_failed", err.Error())
 		return err
 	}
@@ -1364,6 +1378,13 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 	}
 	s.audit(source.ID, "workflow.intake_created", "actionable extraction sent to workflow engine")
 	return nil
+}
+
+func sourceRawItemID(extraction *models.SourceExtraction) string {
+	if extraction == nil || extraction.RawItemID == uuid.Nil {
+		return ""
+	}
+	return extraction.RawItemID.String()
 }
 
 func (s *service) autoLinkPursuitWorkflow(source *models.ConnectedSource, extraction *models.SourceExtraction, record *workflow.WorkflowRecord, input string) {

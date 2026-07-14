@@ -727,6 +727,46 @@ func TestSyncRoutesActionableExtractionThroughPursuitGateway(t *testing.T) {
 	}
 }
 
+func TestSyncDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:            sourceID,
+		OwnerIdentity: "alice",
+		ConnectorKey:  "email",
+		Name:          "Legal mailbox",
+		Category:      "email",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	pursuitGateway := &fakeSourcePursuitGateway{err: &pursuit.CandidatePendingError{Result: &pursuit.RoutedIntakeResult{
+		Mode:             "candidate_created",
+		CreatedCandidate: true,
+		PursuitID:        uuid.New(),
+		Message:          "source candidate awaits approval",
+	}}}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, &fakeSourceMemoryService{}, workflowSpy, pursuitGateway)
+
+	_, err := service.Sync(sourceID, ImportRequest{Mode: ModeManualImport, Items: []ImportItem{{
+		ExternalID: "email-candidate-pending",
+		Title:      "Lawyer follow-up",
+		Content:    "Follow up: draft a formal reply for the legal case before tomorrow.",
+		SourceURI:  "mailto:lawyer@example.test",
+		ItemType:   "email",
+		ProjectKey: "Vivare dispute",
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(workflowSpy.requests) != 0 || len(pursuitGateway.routed) != 1 {
+		t.Fatalf("candidate pending path bypassed gateway or created workflow: workflows=%#v routed=%#v", workflowSpy.requests, pursuitGateway.routed)
+	}
+	if !repo.hasAudit("pursuit.intake_deferred") || repo.hasAudit("workflow.intake_failed") {
+		t.Fatalf("candidate pending source audit was not a successful deferral")
+	}
+}
+
 func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
 	aliceID := uuid.New()
 	bobID := uuid.New()
@@ -1864,10 +1904,14 @@ type fakeSourcePursuitLinker struct {
 type fakeSourcePursuitGateway struct {
 	fakeSourcePursuitLinker
 	routed []workflow.IntakeRequest
+	err    error
 }
 
 func (f *fakeSourcePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	f.routed = append(f.routed, request)
+	if f.err != nil {
+		return nil, f.err
+	}
 	return &workflow.WorkflowRecord{Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey}}, nil
 }
 

@@ -243,6 +243,40 @@ func TestImportRoutesActionWorkflowThroughPursuitGateway(t *testing.T) {
 	}
 }
 
+func TestImportDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	workflowSpy := &memoryEngineWorkflowStub{}
+	pursuitGateway := &memoryEnginePursuitGateway{err: &pursuitpkg.CandidatePendingError{Result: &pursuitpkg.RoutedIntakeResult{
+		Mode:             "candidate_created",
+		CreatedCandidate: true,
+		PursuitID:        uuid.New(),
+		Message:          "conversation candidate awaits approval",
+		AutoLink:         &pursuitpkg.AutoLinkResult{Linked: true, Created: true, PursuitID: uuid.New()},
+	}}}
+	service := NewServiceWithPursuitLinker(repo, &memoryEngineMemoryStub{}, workflowSpy, "test-memory-encryption-secret", pursuitGateway)
+
+	result, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-candidate-pending",
+		Title:         "Imported objective",
+		SourceURI:     "https://chatgpt.com/c/thread-candidate-pending",
+		Messages: []ChatMessage{{
+			Role:    "assistant",
+			Content: "Action: collect the evidence and prepare the formal response.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(workflowSpy.intakeRequests) != 0 || len(pursuitGateway.routed) != 1 || len(result.WorkflowIDs) != 0 {
+		t.Fatalf("candidate pending import created workflow work: direct=%#v routed=%#v ids=%#v", workflowSpy.intakeRequests, pursuitGateway.routed, result.WorkflowIDs)
+	}
+	if len(result.PursuitLinks) != 1 || !result.PursuitLinks[0].Created || !strings.Contains(strings.Join(result.Warnings, " "), "awaits explicit pursuit candidate acceptance") {
+		t.Fatalf("candidate pending import result = %#v", result)
+	}
+}
+
 func TestImportRoutesContradictionsAndHighRisksToGovernedWorkflows(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
 	workflowSpy := &memoryEngineWorkflowStub{}
@@ -863,10 +897,14 @@ type memoryEnginePursuitLinker struct {
 type memoryEnginePursuitGateway struct {
 	memoryEnginePursuitLinker
 	routed []workflow.IntakeRequest
+	err    error
 }
 
 func (s *memoryEnginePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	s.routed = append(s.routed, request)
+	if s.err != nil {
+		return nil, s.err
+	}
 	return &workflow.WorkflowRecord{Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey}}, nil
 }
 

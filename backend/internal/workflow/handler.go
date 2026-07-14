@@ -20,10 +20,18 @@ type Handler struct {
 
 // PursuitIntakeRouter keeps the legacy workflow endpoint compatible while
 // allowing the canonical application to route new work through pursuits.
-// Implementations must return the workflow record created or reused by the
-// governed pursuit intake path.
+// Implementations return a workflow record only after the governed pursuit
+// intake path has an accepted operational objective. CandidatePending errors
+// are rendered as a deferred, reviewable response instead.
 type PursuitIntakeRouter interface {
 	RouteWorkflowIntake(request IntakeRequest) (*WorkflowRecord, error)
+}
+
+type candidatePendingIntakeError interface {
+	error
+	CandidatePending() bool
+	CandidatePursuitID() string
+	CandidateIntakeMessage() string
 }
 
 func DefaultHandler() *Handler {
@@ -69,6 +77,14 @@ func (h *Handler) Intake(c *gin.Context) {
 		record, err = h.service.Intake(request)
 	}
 	if err != nil {
+		if pending, ok := err.(candidatePendingIntakeError); ok && pending.CandidatePending() {
+			c.JSON(http.StatusAccepted, gin.H{
+				"status":    "pursuit_candidate_pending",
+				"pursuitId": pending.CandidatePursuitID(),
+				"message":   pending.CandidateIntakeMessage(),
+			})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

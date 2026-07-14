@@ -41,6 +41,8 @@ type IntakeRequest struct {
 	AutomationID   string `json:"automationId,omitempty"`
 	SourceType     string `json:"sourceType,omitempty"`
 	SourceID       string `json:"sourceId,omitempty"`
+	RawItemID      string `json:"rawItemId,omitempty"`
+	ExtractionID   string `json:"extractionId,omitempty"`
 	SourceURI      string `json:"sourceUri,omitempty"`
 	SourceLabel    string `json:"sourceLabel,omitempty"`
 	ContentType    string `json:"contentType,omitempty"`

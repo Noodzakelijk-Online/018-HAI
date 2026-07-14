@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"automation-hub-backend/internal/identity"
@@ -266,14 +267,48 @@ func TestIntakeHandlerRoutesLegacyRequestThroughPursuitGateway(t *testing.T) {
 	}
 }
 
+func TestIntakeHandlerReportsPursuitCandidatePending(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandlerWithPursuitIntakeRouter(NewService(newFakeWorkflowRepo()), &capturingPursuitIntakeRouter{
+		err: candidatePendingHandlerError{pursuitID: "candidate-123", message: "review before workflow creation"},
+	})
+	body, _ := json.Marshal(IntakeRequest{Input: "Review this imported objective"})
+	request := httptest.NewRequest(http.MethodPost, "/workflow/intake", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "verified-operator")
+
+	handler.Intake(context)
+
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), "pursuit_candidate_pending") || !strings.Contains(response.Body.String(), "candidate-123") {
+		t.Fatalf("candidate response = %d %s", response.Code, response.Body.String())
+	}
+}
+
 type capturingPursuitIntakeRouter struct {
 	calls   int
 	request IntakeRequest
 	record  *WorkflowRecord
+	err     error
 }
 
 func (r *capturingPursuitIntakeRouter) RouteWorkflowIntake(request IntakeRequest) (*WorkflowRecord, error) {
 	r.calls++
 	r.request = request
+	if r.err != nil {
+		return nil, r.err
+	}
 	return r.record, nil
 }
+
+type candidatePendingHandlerError struct {
+	pursuitID string
+	message   string
+}
+
+func (e candidatePendingHandlerError) Error() string                  { return e.message }
+func (e candidatePendingHandlerError) CandidatePending() bool         { return true }
+func (e candidatePendingHandlerError) CandidatePursuitID() string     { return e.pursuitID }
+func (e candidatePendingHandlerError) CandidateIntakeMessage() string { return e.message }

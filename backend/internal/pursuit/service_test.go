@@ -544,8 +544,8 @@ func TestRouteIntakeCreatesCandidateInsteadOfReopeningClosedPursuit(t *testing.T
 	if !result.CreatedCandidate || result.PursuitID == uuid.Nil || result.PursuitID == closed.ID {
 		t.Fatalf("closed pursuit should produce a new candidate: %#v", result)
 	}
-	if workflowService.calls != 1 {
-		t.Fatalf("workflow intake calls = %d, want one governed candidate workflow", workflowService.calls)
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("closed-pursuit follow-up created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
 	}
 	persistedClosed, err := repo.FindByID(closed.ID)
 	if err != nil {
@@ -1241,21 +1241,50 @@ func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T)
 	if len(result.Detail.DecisionQueue) == 0 || result.Detail.Summary.NeedsRobert == 0 {
 		t.Fatalf("candidate did not surface Robert review: decisions=%#v summary=%#v", result.Detail.DecisionQueue, result.Detail.Summary)
 	}
-	if workflowService.received.Trigger != "pursuit_global_intake" {
-		t.Fatalf("workflow trigger = %q", workflowService.received.Trigger)
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("unmatched candidate created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
 	}
-	if workflowService.received.OwnerIdentity != "alice" {
-		t.Fatalf("candidate workflow owner = %q, want alice", workflowService.received.OwnerIdentity)
+	links, err := repo.FindLinks(result.PursuitID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
 	}
-	if !workflowService.received.RequiresReview {
-		t.Fatalf("unmatched candidate workflow must be held for approval: %#v", workflowService.received)
-	}
-	if !strings.Contains(workflowService.received.ReviewReason, "pursuit candidate") {
-		t.Fatalf("candidate workflow review reason = %q", workflowService.received.ReviewReason)
+	if !pursuitLinkExists(links, "ai_chat", "chat-99:action-1", "intake_origin") {
+		t.Fatalf("candidate did not retain source provenance: %#v", links)
 	}
 }
 
-func TestRouteWorkflowIntakeReturnsPursuitLinkedWorkflowRecord(t *testing.T) {
+func TestCandidateFirstIntakeCreatesWorkflowOnlyAfterExplicitAcceptance(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+
+	routed, err := service.RouteIntake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Collect the evidence and prepare the formal response for the new legal matter.",
+		ProjectKey:    "legal",
+		SourceType:    "email",
+		SourceID:      "new-legal-matter",
+		SourceURI:     "email://legal/new-matter",
+		SourceLabel:   "New legal matter",
+		Actor:         "source-worker",
+	})
+	if err != nil {
+		t.Fatalf("RouteIntake: %v", err)
+	}
+	if !routed.CreatedCandidate || workflowService.calls != 0 {
+		t.Fatalf("candidate-first intake = %#v calls=%d", routed, workflowService.calls)
+	}
+
+	detail, err := service.AcceptCandidateForOwner("alice", routed.PursuitID, PlanRequest{Actor: "Robert"})
+	if err != nil {
+		t.Fatalf("AcceptCandidateForOwner: %v", err)
+	}
+	if workflowService.calls != 1 || len(detail.Workflows) != 1 || isPursuitCandidate(detail.Pursuit) {
+		t.Fatalf("accepted candidate did not create exactly one governed workflow: calls=%d detail=%#v", workflowService.calls, detail)
+	}
+}
+
+func TestRouteWorkflowIntakeDefersUnmatchedCandidateBeforeWorkflowCreation(t *testing.T) {
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
@@ -1272,17 +1301,15 @@ func TestRouteWorkflowIntakeReturnsPursuitLinkedWorkflowRecord(t *testing.T) {
 	}
 
 	record, err := service.RouteWorkflowIntake(request)
-	if err != nil {
-		t.Fatalf("RouteWorkflowIntake returned error: %v", err)
+	routed, pending := IsCandidatePending(err)
+	if !pending {
+		t.Fatalf("RouteWorkflowIntake error = %v, want candidate pending", err)
 	}
-	if record.Item.ID == uuid.Nil || record.Item.SourceID != request.SourceID || record.Item.SourceURI != request.SourceURI {
-		t.Fatalf("returned workflow record did not preserve routed provenance: %#v", record.Item)
+	if record != nil || routed == nil || !routed.CreatedCandidate || routed.PursuitID == uuid.Nil {
+		t.Fatalf("candidate pending result = record:%#v routed:%#v", record, routed)
 	}
-	if workflowService.calls != 1 || workflowService.received.Trigger != request.Trigger || !workflowService.received.RequiresReview {
-		t.Fatalf("workflow intake was not governed by the pursuit route: %#v", workflowService)
-	}
-	if workflowService.lastGetOwner != "alice" {
-		t.Fatalf("routed workflow record was reloaded for %q, want alice", workflowService.lastGetOwner)
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("unmatched workflow endpoint intake created work: %#v", workflowService)
 	}
 	matches, err := service.Match(MatchRequest{SourceType: request.SourceType, SourceID: request.SourceID})
 	if err != nil {
@@ -1322,8 +1349,8 @@ func TestRouteIntakeReusesPursuitLinkedByAssistantCommandIdentity(t *testing.T) 
 	if !second.Matched || second.CreatedCandidate || second.PursuitID != first.PursuitID {
 		t.Fatalf("second route result = %#v, want exact existing pursuit match", second)
 	}
-	if second.Mode != "matched_candidate" || workflowService.calls != 1 {
-		t.Fatalf("repeated candidate intake mode/workflows = %s/%d, want matched_candidate/1", second.Mode, workflowService.calls)
+	if second.Mode != "matched_candidate" || workflowService.calls != 0 {
+		t.Fatalf("repeated candidate intake mode/workflows = %s/%d, want matched_candidate/0", second.Mode, workflowService.calls)
 	}
 	links, err := repo.FindLinks(first.PursuitID)
 	if err != nil {

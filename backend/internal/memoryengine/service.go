@@ -297,6 +297,13 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 				ReviewReason:   reviewReasonValue,
 			})
 			if errWorkflow != nil {
+				if routed, pending := pursuitpkg.IsCandidatePending(errWorkflow); pending {
+					if routed != nil && routed.AutoLink != nil {
+						pursuitLinks = append(pursuitLinks, *routed.AutoLink)
+					}
+					warnings = append(warnings, "workflow for "+stored.Kind+" insight awaits explicit pursuit candidate acceptance")
+					continue
+				}
 				warnings = append(warnings, "failed to create workflow for "+stored.Kind+" insight")
 			} else if record == nil || record.Item.ID == uuid.Nil {
 				warnings = append(warnings, "workflow intake for "+stored.Kind+" insight did not return a workflow record")

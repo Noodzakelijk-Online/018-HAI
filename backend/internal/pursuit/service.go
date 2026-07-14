@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -189,6 +190,8 @@ type IntakeRequest struct {
 	AutomationID   string `json:"automationId,omitempty"`
 	SourceType     string `json:"sourceType,omitempty"`
 	SourceID       string `json:"sourceId,omitempty"`
+	RawItemID      string `json:"rawItemId,omitempty"`
+	ExtractionID   string `json:"extractionId,omitempty"`
 	SourceURI      string `json:"sourceUri,omitempty"`
 	SourceLabel    string `json:"sourceLabel,omitempty"`
 	ContentType    string `json:"contentType,omitempty"`
@@ -211,6 +214,47 @@ type RoutedIntakeResult struct {
 	Matches          []MatchCandidate `json:"matches,omitempty"`
 	Detail           *PursuitDetail   `json:"detail,omitempty"`
 	AutoLink         *AutoLinkResult  `json:"autoLink,omitempty"`
+}
+
+// CandidatePendingError reports a normal deferred intake outcome. It lets
+// source and conversation importers preserve their candidate provenance
+// without treating the absence of operational work as a failed import.
+type CandidatePendingError struct {
+	Result *RoutedIntakeResult
+}
+
+func (e *CandidatePendingError) Error() string {
+	if e == nil || e.Result == nil {
+		return "pursuit candidate is awaiting explicit acceptance"
+	}
+	return firstNonEmpty(e.Result.Message, "pursuit candidate is awaiting explicit acceptance")
+}
+
+// CandidatePending is intentionally package-neutral so the workflow package
+// can return a truthful HTTP response without importing pursuit and creating
+// an import cycle.
+func (e *CandidatePendingError) CandidatePending() bool { return true }
+
+func (e *CandidatePendingError) CandidatePursuitID() string {
+	if e == nil || e.Result == nil || e.Result.PursuitID == uuid.Nil {
+		return ""
+	}
+	return e.Result.PursuitID.String()
+}
+
+func (e *CandidatePendingError) CandidateIntakeMessage() string {
+	if e == nil || e.Result == nil {
+		return "pursuit candidate is awaiting explicit acceptance"
+	}
+	return firstNonEmpty(e.Result.Message, "pursuit candidate is awaiting explicit acceptance")
+}
+
+func IsCandidatePending(err error) (*RoutedIntakeResult, bool) {
+	var pending *CandidatePendingError
+	if !errors.As(err, &pending) {
+		return nil, false
+	}
+	return pending.Result, true
 }
 
 // AmbientOpportunityRouteRequest describes an operator-accepted ambient
@@ -2111,17 +2155,16 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		}, nil
 	}
 
-	// An unmatched intake can only become a new pursuit candidate after a
-	// workflow record exists to preserve its audit trail. Hold that workflow
-	// until an approval-capable operator has reviewed the candidate; otherwise a
-	// low-risk worker could start before Robert decides that the new objective is
-	// relevant at all.
+	// Candidate-worthy unmatched input becomes a pursuit before workflow work
+	// exists. This keeps sources, imported conversations, and direct API intake
+	// from leaving behind a review-held but separately addressable workflow that
+	// Robert never accepted as a real objective.
 	candidateEligible := candidateHasEnoughSignal(request.Input, request.ProjectKey, request.SourceLabel, request.SourceURI)
+	if candidateEligible {
+		return s.createIntakeCandidate(request, matches)
+	}
 	reviewRequired := request.RequiresReview || candidateEligible || strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high")
 	reviewReason := firstNonEmpty(request.ReviewReason, routedIntakeReviewReason(reviewRequired, request))
-	if candidateEligible && strings.TrimSpace(request.ReviewReason) == "" && !strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high") {
-		reviewReason = "unmatched intake created a pursuit candidate; accept the candidate and explicitly approve the linked workflow before execution"
-	}
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
 		OwnerIdentity:  request.OwnerIdentity,
 		Input:          request.Input,
@@ -2200,6 +2243,87 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 			result.Mode = "matched_after_workflow"
 		}
 	}
+	return result, nil
+}
+
+func (s *service) createIntakeCandidate(request IntakeRequest, matches []MatchCandidate) (*RoutedIntakeResult, error) {
+	actor := firstNonEmpty(request.Actor, "system")
+	sourceType := firstNonEmpty(strings.TrimSpace(request.SourceType), "intake")
+	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, sourceType+" intake")
+	created, err := s.Create(CreateRequest{
+		OwnerIdentity:         request.OwnerIdentity,
+		Title:                 candidateTitle(sourceLabel, request.Input),
+		Description:           candidateDescription("intake", request.Input, request.SourceURI, sourceLabel),
+		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		DesiredOutcome:        "Turn this intake into a verified, governed outcome.",
+		CurrentStateSummary:   "Created as a reviewable pursuit candidate before operational workflow work because no active pursuit matched the intake.",
+		Status:                StatusWaiting,
+		RiskLevel:             classifyRisk(request.Input + " " + sourceLabel + " " + sourceType),
+		AutonomyLevel:         "suggest",
+		SourceOfCreation:      sourceType + "_pursuit_candidate",
+		NextRecommendedAction: "Review this pursuit candidate and accept it to create the first governed workflow plan.",
+		CompletionDefinition:  "Robert accepts the candidate, the governed workflow path is completed, and completion evidence is verified.",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	links := []models.PursuitLink{}
+	if sourceLink, linked, err := s.linkExactSourceReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceLink)
+	}
+	if conversationLink, linked, err := s.linkConversationReference(created.ID, request.OwnerIdentity, conversationIDFromAIChatSource(request.SourceType, request.SourceID), request.SourceURI, request.SourceLabel, "conversation_context", 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
+	if err := s.linkAssistantCommandReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
+		return nil, err
+	}
+	linkRequest := AutoLinkWorkflowRequest{
+		OwnerIdentity: request.OwnerIdentity,
+		RawItemID:     request.RawItemID,
+		ExtractionID:  request.ExtractionID,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+	}
+	if sourceItemLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceItem, request.RawItemID, "candidate_source_record", linkRequest, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceItemLink)
+	}
+	if extractionLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceExtraction, request.ExtractionID, "candidate_source_extraction", linkRequest, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *extractionLink)
+	}
+	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from unmatched intake before workflow creation.", actor, sourceType, request.SourceID, request.SourceURI)
+
+	result := &RoutedIntakeResult{
+		Mode:             "candidate_created",
+		CreatedCandidate: true,
+		PursuitID:        created.ID,
+		Score:            1,
+		Reasons:          []string{"no active pursuit matched", "candidate created before workflow work"},
+		Message:          "intake created a reviewable pursuit candidate; explicit acceptance is required before a workflow is created",
+		Matches:          matches,
+		AutoLink: &AutoLinkResult{
+			Linked:    true,
+			Created:   true,
+			PursuitID: created.ID,
+			Score:     1,
+			Reasons:   []string{"no active pursuit matched", "candidate created before workflow work"},
+			Message:   "pursuit candidate created before workflow work",
+			Links:     links,
+		},
+	}
+	detail, err := s.RefreshSummaryForOwner(request.OwnerIdentity, created.ID, actor)
+	if err != nil {
+		return nil, err
+	}
+	result.Detail = detail
 	return result, nil
 }
 
@@ -2336,7 +2460,8 @@ func workflowIDForSource(detail *PursuitDetail, sourceType, sourceID, sourceURI 
 }
 
 // RouteWorkflowIntake adapts the legacy workflow endpoint to the native
-// pursuit intake path without changing its WorkflowRecord response contract.
+// pursuit intake path. It returns CandidatePendingError when the input needs
+// explicit pursuit acceptance before any workflow record may exist.
 func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	routed, err := s.RouteIntake(IntakeRequest{
 		OwnerIdentity:  request.OwnerIdentity,
@@ -2345,6 +2470,8 @@ func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow
 		AutomationID:   request.AutomationID,
 		SourceType:     request.SourceType,
 		SourceID:       request.SourceID,
+		RawItemID:      request.RawItemID,
+		ExtractionID:   request.ExtractionID,
 		SourceURI:      request.SourceURI,
 		SourceLabel:    request.SourceLabel,
 		ContentType:    request.ContentType,
@@ -2357,6 +2484,9 @@ func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow
 	})
 	if err != nil {
 		return nil, err
+	}
+	if routed != nil && (routed.CreatedCandidate || routed.Mode == "matched_candidate") {
+		return nil, &CandidatePendingError{Result: routed}
 	}
 	reader, ok := s.workflowService.(workflowOwnerScopedRecordReader)
 	if !ok {
