@@ -1320,6 +1320,34 @@ func TestDetailSurfacesLinkedVerificationRunEvidence(t *testing.T) {
 	}
 }
 
+func TestLinkVerificationCreatesAuditableEvidenceLink(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Verify legal evidence", ProjectKey: "vivare"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	verificationID := uuid.New()
+
+	if err := service.LinkVerification(created.ID, verificationID); err != nil {
+		t.Fatalf("LinkVerification returned error: %v", err)
+	}
+
+	links, err := repo.FindLinks(created.ID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
+	}
+	found := false
+	for _, link := range links {
+		if link.LinkType == LinkVerification && link.LinkID == verificationID.String() && link.Relationship == "verification_evidence" && link.SourceURI == "verification://"+verificationID.String() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("verification evidence link missing: %#v", links)
+	}
+}
+
 func TestDetailSurfacesTaskRunEvidenceFromLinkedWorkflows(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

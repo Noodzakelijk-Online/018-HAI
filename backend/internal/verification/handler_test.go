@@ -17,9 +17,11 @@ func TestAnswerHandlerIgnoresClientHumanApproval(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := &capturingVerificationService{}
 	handler := NewHandler(service)
+	pursuitID := uuid.NewString()
 	body, _ := json.Marshal(AnswerRequest{
 		Question:      "May this high-risk action proceed?",
 		Mode:          ModeAction,
+		PursuitID:     pursuitID,
 		HumanApproved: true,
 	})
 	request := httptest.NewRequest(http.MethodPost, "/verification/answer", bytes.NewReader(body))
@@ -35,6 +37,9 @@ func TestAnswerHandlerIgnoresClientHumanApproval(t *testing.T) {
 	}
 	if service.request.HumanApproved {
 		t.Fatalf("client approval reached verification service")
+	}
+	if service.request.PursuitID != pursuitID {
+		t.Fatalf("pursuit id = %q, want %q", service.request.PursuitID, pursuitID)
 	}
 }
 

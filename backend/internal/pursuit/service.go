@@ -487,6 +487,7 @@ type Service interface {
 	ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
 	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
 	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
+	LinkVerification(pursuitID, verificationID uuid.UUID) error
 	DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error
 	Match(request MatchRequest) ([]MatchCandidate, error)
 	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
@@ -1072,6 +1073,25 @@ func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, 
 	}
 	_, _ = s.recordActivity(id, "pursuit.linked", fmt.Sprintf("Linked %s %s", linkType, linkID), firstNonEmpty(request.Actor, "system"), linkType, linkID, request.SourceURI)
 	return created, nil
+}
+
+func (s *service) LinkVerification(pursuitID, verificationID uuid.UUID) error {
+	if pursuitID == uuid.Nil || verificationID == uuid.Nil {
+		return fmt.Errorf("pursuit and verification ids are required")
+	}
+	if _, err := s.Link(pursuitID, LinkRequest{
+		LinkType:     LinkVerification,
+		LinkID:       verificationID.String(),
+		Relationship: "verification_evidence",
+		SourceURI:    "verification://" + verificationID.String(),
+		SourceLabel:  "Source-grounded verification run",
+		Confidence:   1,
+		Actor:        "verification-engine",
+	}); err != nil {
+		return err
+	}
+	_, err := s.RefreshSummary(pursuitID, "verification-engine")
+	return err
 }
 
 func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error {

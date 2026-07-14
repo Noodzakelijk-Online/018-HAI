@@ -1,6 +1,6 @@
 import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import {
   IVerificationResult,
@@ -22,9 +22,9 @@ export class GroundedAnswersComponent implements OnInit {
   answerForm: FormGroup = this.fb.group({
     question: ['What did connected sources say about source-grounded task context?', [Validators.required]],
     projectKey: ['018-HAI'],
+    pursuitId: [''],
     mode: ['grounded'],
     includeSensitive: [false],
-    humanApproved: [false],
     allowMemoryUpdate: [false],
     evidenceLabel: ['Manual evidence'],
     evidenceUri: ['local://manual-evidence'],
@@ -38,10 +38,17 @@ export class GroundedAnswersComponent implements OnInit {
     @Inject(VERIFICATION_SERVICE_TOKEN)
     private verificationService: IVerificationService,
     private notification: NzNotificationService,
+    private route: ActivatedRoute,
     private router: Router
   ) {}
 
   ngOnInit(): void {
+    const params = this.route.snapshot.queryParamMap;
+    this.answerForm.patchValue({
+      pursuitId: params.get('pursuitId') || '',
+      projectKey: params.get('projectKey') || this.answerForm.value.projectKey,
+      question: params.get('question') || this.answerForm.value.question,
+    });
     this.loadRuns();
   }
 
@@ -55,9 +62,9 @@ export class GroundedAnswersComponent implements OnInit {
       .answer({
         question: this.answerForm.value.question,
         projectKey: this.answerForm.value.projectKey,
+        pursuitId: this.answerForm.value.pursuitId,
         mode: this.answerForm.value.mode,
         includeSensitive: this.answerForm.value.includeSensitive,
-        humanApproved: this.answerForm.value.humanApproved,
         allowMemoryUpdate: this.answerForm.value.allowMemoryUpdate,
         externalEvidence: snippet
           ? [
@@ -78,6 +85,11 @@ export class GroundedAnswersComponent implements OnInit {
         next: (result) => {
           this.result = result;
           this.loading = false;
+          if (result.pursuitLinkError) {
+            this.notification.warning('Verification saved, pursuit link failed', result.pursuitLinkError);
+          } else if (result.pursuitLinked) {
+            this.notification.success('Verification linked', 'The verification run is now visible in the selected pursuit evidence timeline.');
+          }
           this.loadRuns();
         },
         error: () => {
@@ -106,5 +118,16 @@ export class GroundedAnswersComponent implements OnInit {
 
   goHome(): void {
     this.router.navigate(['/home']);
+  }
+
+  clearPursuitLink(): void {
+    this.answerForm.patchValue({ pursuitId: '' });
+  }
+
+  openPursuit(id?: string): void {
+    const pursuitId = id || this.answerForm.value.pursuitId;
+    if (pursuitId) {
+      this.router.navigate(['/pursuits'], { queryParams: { selected: pursuitId } });
+    }
   }
 }

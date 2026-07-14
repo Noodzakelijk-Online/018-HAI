@@ -486,6 +486,20 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.router.navigate(['/workflow-engine'], { queryParams: workflowId ? { workflowId } : undefined });
   }
 
+  verifySelectedEvidence(): void {
+    if (!this.selected) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.router.navigate(['/grounded-answers'], {
+      queryParams: {
+        pursuitId: pursuit.id,
+        projectKey: pursuit.projectKey || undefined,
+        question: pursuit.nextRecommendedAction || pursuit.desiredOutcome || pursuit.title,
+      },
+    });
+  }
+
   openAction(action: IPursuitAction): void {
     if (action.workflowId) {
       this.openWorkflow(action.workflowId);
