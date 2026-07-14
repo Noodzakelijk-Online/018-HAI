@@ -502,9 +502,9 @@ export class ControlCenterComponent implements OnInit {
   pursuitAttentionCount(): number {
     if (!this.pursuitDashboard) return 0
     return (
-      this.pursuitDashboard.needsRobert.length +
-      this.pursuitDashboard.blocked.length +
-      this.pursuitDashboard.stale.length
+      (this.pursuitDashboard.needsRobert || []).length +
+      (this.pursuitDashboard.blocked || []).length +
+      (this.pursuitDashboard.stale || []).length
     )
   }
 

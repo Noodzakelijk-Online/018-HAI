@@ -855,6 +855,17 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
 		Counts: map[string]int64{
 			"active": 0, "waiting": 0, "blocked": 0, "completed": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,
 		},
+		DecisionQueue:        []PursuitDashboardDecision{},
+		NeedsRobert:          []PursuitListItem{},
+		VAReady:              []PursuitListItem{},
+		SystemReady:          []PursuitListItem{},
+		Blocked:              []PursuitListItem{},
+		Stale:                []PursuitListItem{},
+		ReviewDue:            []PursuitListItem{},
+		PlanningNeeded:       []PursuitListItem{},
+		RecentlyChanged:      []PursuitListItem{},
+		HighRisk:             []PursuitListItem{},
+		CompletionCandidates: []PursuitListItem{},
 	}
 	for _, pursuit := range pursuits {
 		if pursuitClosed(pursuit) {

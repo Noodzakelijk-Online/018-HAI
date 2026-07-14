@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { map, Observable } from 'rxjs';
 import {
   IPursuit,
   IPursuitActivity,
@@ -41,7 +41,9 @@ export class PursuitService {
   }
 
   dashboard(): Observable<IPursuitDashboard> {
-    return this.http.get<IPursuitDashboard>(`${this.apiUrl}/dashboard`);
+    return this.http.get<IPursuitDashboard>(`${this.apiUrl}/dashboard`).pipe(
+      map((dashboard) => this.normalizeDashboard(dashboard)),
+    );
   }
 
   brief(): Observable<IPursuitBrief> {
@@ -132,5 +134,24 @@ export class PursuitService {
 
   delegationPackage(id: string): Observable<IPursuitDelegationPackage> {
     return this.http.get<IPursuitDelegationPackage>(`${this.apiUrl}/${id}/delegation`);
+  }
+
+  private normalizeDashboard(dashboard: IPursuitDashboard | null | undefined): IPursuitDashboard {
+    const source = dashboard || ({} as IPursuitDashboard);
+    return {
+      ...source,
+      counts: source.counts || {},
+      decisionQueue: source.decisionQueue || [],
+      needsRobert: source.needsRobert || [],
+      vaReady: source.vaReady || [],
+      systemReady: source.systemReady || [],
+      blocked: source.blocked || [],
+      stale: source.stale || [],
+      reviewDue: source.reviewDue || [],
+      planningNeeded: source.planningNeeded || [],
+      recentlyChanged: source.recentlyChanged || [],
+      highRisk: source.highRisk || [],
+      completionCandidates: source.completionCandidates || [],
+    };
   }
 }

@@ -12,7 +12,7 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 ## Current State
 
-**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. Docker Compose configuration validates from `.env.example`; the backend critical-path smoke has passed against local Postgres. It is a local deployment candidate, **not** a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
+**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. The local Compose topology is running in this repository with healthy backend, frontend, gateway, Postgres, Redis, and Kafka services; `GET /` returns the Angular shell, `GET /healthz` and `GET /readyz` reach the backend, and a protected engine route returns `401` without a session. Docker Compose configuration validates from `.env.example`, and the backend critical-path smoke has passed against local Postgres. This is a locally validated deployment path, **not** a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
 
 ### What You Can Use Today
 
@@ -29,7 +29,7 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 - Gmail, Calendar, Drive, Trello, WhatsApp, browser, and other account access need a deliberately scoped connector or authorized export plus a live validation. HAI does not use a user's accounts merely because the dashboard is running.
 - Hermes, Odysseus, and OpenClaw are adapters, not bundled dependencies. Install and configure each upstream runtime in a dedicated workspace before enabling one low-risk approved task.
 - Script and Docker execution, outbound communication, public posting, financial actions, account changes, deletion, and broad host control remain disabled or blocked by default.
-- The multi-service `docker compose up --build` boot needs to be exercised on the target Windows 11 machine before calling the deployment operational. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
+- A fresh-clone `docker compose up --build` run is still required on Robert's target Windows 11 machine before calling the deployment operational there. The Compose topology and gateway contract have been locally exercised in this repository; see [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
 
 ### Current Main Baseline
 
@@ -79,6 +79,11 @@ Recent hardening in the current baseline:
   sync, Ollama/OpenAI-compatible probes, and bounded script/Docker/API runtime
   paths exist; account OAuth, webhooks, browser automation, and unrestricted
   host execution do not.
+- Gateway routing resolves Docker service names per request rather than pinning
+  a container IP at nginx startup. Recreating the frontend or backend therefore
+  cannot leave `http://localhost` pointed at a dead upstream. `/healthz` and
+  `/readyz` are explicit backend proxy routes; protected engine APIs remain
+  behind the IDP session boundary.
 
 For route-level ownership behavior, see the
 [backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that
@@ -90,7 +95,7 @@ distinguishes local implementation from live external validation, see the
 The repository uses three deliberately different readiness terms:
 
 - **Implemented** means the Go/Angular/Postgres path, persistence, API contract, and focused automated coverage exist in this repository.
-- **Locally validated** means a bounded local check has exercised the relevant code path, build, Compose configuration, or real local Postgres smoke path. It does not establish third-party correctness.
+- **Locally validated** means a bounded local check has exercised the relevant code path, build, Compose configuration, real local Postgres smoke path, or local Compose gateway contract. It does not establish third-party correctness.
 - **Live-proven** requires an explicitly configured account, provider, or runtime to pass a bounded, approved end-to-end check on the target machine with inspectable audit and verification evidence.
 
 No dashboard status, model configuration, source connection, or generated answer upgrades itself to live-proven. Until that evidence exists, HAI keeps consequential work behind its existing review, approval, verification, runtime, and emergency-stop controls.
@@ -102,18 +107,18 @@ What is implemented in this repository:
 - **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance. Authenticated memory APIs, AI-conversation imports, source-derived consolidation, workflow intake/feedback, direct task planning/runs, and explicit ambient accept/dismiss feedback are owner-scoped. Background/system work is deliberately ownerless unless it originates from an owner-bound source or workflow.
 - **Connected-source import paths:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync. New authenticated source records are owner-scoped through source search, extraction management, sync history, audits, workflow intake, and pursuit linking; ownerless legacy records remain visible in local-development compatibility mode.
 - **Governance:** the backend independently verifies browser-session or bearer JWTs before using a signed principal for audit attribution; client-supplied actor labels are ignored. Approval gates, emergency stop, request rate limits, idempotency, redacted audit records, path safety, runtime allowlists, and a paid-model policy disabled by default are implemented.
-- **Runtime and providers:** local/free model routing supports Ollama and OpenAI-compatible endpoints. Hermes, Odysseus, and OpenClaw are controlled adapters with bounded inventory/probe/execute paths. Every runtime remains disabled until explicitly configured and is subject to approval, workspace, timeout, audit, and verification gates.
-- **Operations:** `/healthz`, `/readyz`, `backend doctor`, `backend reconcile`, support-bundle and build-information endpoints, feature flags, CI checks, Docker Compose configuration validation, and a real-Postgres critical-path smoke test.
+- **Runtime and providers:** local/free model routing supports Ollama and OpenAI-compatible endpoints. Provider probes retain redacted historical readiness, and strict mode can require a recent successful live probe before selecting a configured provider. Hermes, Odysseus, and OpenClaw are controlled adapters with bounded inventory/probe/execute paths. Every runtime remains disabled until explicitly configured and is subject to approval, workspace, timeout, audit, and verification gates.
+- **Operations:** gateway-proxied `/healthz` and `/readyz`, `backend doctor`, `backend reconcile`, support-bundle and build-information endpoints, feature flags, CI checks, Docker Compose configuration validation, a real-Postgres critical-path smoke test, and a locally exercised Compose gateway contract.
 
 ### Readiness At A Glance
 
 | Area | Repository status | What remains before it is trusted for real work |
 | --- | --- | --- |
-| Go API and Angular dashboard | Implemented; backend/IDP tests, Angular production build, and Compose configuration validation are part of CI. | Run the full Compose stack on the target Windows machine and exercise the intended user flows. |
+| Go API and Angular dashboard | Implemented; backend/IDP tests, Angular production build, Compose configuration validation, and a local gateway smoke are complete. Docker DNS is resolved at request time so recreated services do not leave the gateway on a stale IP. | Run a fresh-clone Compose build on the target Windows machine and exercise the intended signed-in user flows. |
 | Workflow, verification, memory, and pursuits | Implemented with persistence, audit history, approval gates, retry/review states, safety normalization, owner-scoped pursuit mutations, and read-only VA-ready delegation briefs. | Use representative, non-sensitive source fixtures and review the resulting audit trail before enabling automation or relying on cross-user isolation. |
 | Local/export source ingestion | Implemented for allowlisted local files and authorized exports. | OAuth/API connectors, webhooks, and a real account-specific bridge need separate scoped setup and live validation. |
 | GitHub source sync | Implemented as a read-only REST connector, token optional for public repositories. | Configure a least-privilege token where required and validate against the chosen repository. |
-| LLM routing | Local/free routing, endpoint guards, provider probes, fallback logging, and a EUR 0 paid default are implemented. | Install/configure a local model or free provider and pass a bounded live probe plus a representative validated task. |
+| LLM routing | Local/free routing, endpoint guards, persisted redacted provider probes, strict recent-probe gating, fallback logging, and a EUR 0 paid default are implemented. | Install/configure a local model or free provider and pass a bounded live probe plus a representative validated task. |
 | Controlled execution | API/script/Docker adapters and task evidence gates are implemented; script and Docker control are disabled by default. | Enable one narrowly scoped adapter, then prove an approved end-to-end workflow without expanding device permissions. |
 | Hermes, Odysseus, and OpenClaw | Controlled adapter code and configuration surfaces are present; upstream software is not bundled. | Install/configure each upstream runtime separately, use dedicated workspaces/credentials, and validate one low-risk approved task at a time. |
 | Authentication and RBAC | Signed identity is revalidated by the backend; explicit RBAC routes default to viewer when a JWT has no role. | Add IDP role issuance and broaden permission checks before relying on multi-role operation. |
@@ -134,14 +139,14 @@ After signing in, the Angular dashboard exposes these authenticated operator sur
 
 These screens surface operational state; they do not prove that an external action occurred. The linked audit, approval, runtime, and verification records remain the source of truth.
 
-Verified evidence is maintained in [the completion matrix](docs/codex-goal/completion-matrix.md), [final verification report](docs/codex-goal/final-verification-report.md), and [fresh-clone dry run](docs/fresh-clone-dryrun.md). The critical-path smoke has passed against a real local Postgres instance. That evidence proves the exercised local path, not live LLM, email, calendar, Drive, browser, or third-party-runtime correctness.
+Verified evidence is maintained in [the completion matrix](docs/codex-goal/completion-matrix.md), [final verification report](docs/codex-goal/final-verification-report.md), and [fresh-clone dry run](docs/fresh-clone-dryrun.md). The critical-path smoke has passed against a real local Postgres instance, and the local Compose gateway contract has been exercised. This evidence proves the exercised local path, not live LLM, email, calendar, Drive, browser, or third-party-runtime correctness.
 
 ### Deliberate Boundaries
 
 - HAI does not send messages, spend money, post publicly, delete data, change accounts, or take broad device control by default.
 - OAuth account authorization/refresh, provider webhooks, file-system watchers, dedicated vector infrastructure, and additional Claw-compatible adapters remain follow-up work.
 - A configured provider or runtime is not considered proven until its live probe and approved workflow are exercised on the target machine.
-- The full Docker Compose topology has configuration and health checks, but its end-to-end multi-service boot remains the main outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
+- The local Compose topology, gateway health, dashboard shell, backend health/readiness routes, and protected-route rejection have been exercised. A clean-machine, fresh-clone Windows 11 run and signed-in browser journey remain outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
 - The bundled IDP currently issues a stable `user_id` for authenticated-session attribution. It does not yet issue role claims, so endpoints with explicit RBAC checks default to viewer until role issuance is implemented.
 - Owner boundaries protect owner-scoped sources, memories, conversation imports, pursuits, verification runs/evidence links, authenticated workflow/task execution, task-history and review-queue views, review resolution, and ambient proposal/scan/profile records. Task HTTP routes require a verified owner for planning, controlled execution, history, review visibility, and review resolution; they do not fall back to ownerless/global records. Ambient scan, need-profile, proposal acceptance, and dismissal actions require the same boundary, so an HTTP caller cannot convert an ownerless system proposal into workflow work. Runtime stop and OpenClaw ecosystem mutation routes also require a verified owner before calling a runtime adapter or touching an ecosystem archive. Authenticated workflow lists, dashboards, details, mutation routes, manual worker runs, stale-claim recovery, and due follow-up processing enforce the same boundary. The Connected Sources `Sync due` action requires a verified owner and refreshes only that owner's explicit sources. Source identity/URI deduplication is scoped to the same verified owner so one account cannot reuse or supersede another account's work. A dashboard-triggered ambient scan or need-profile update requires an authenticated owner, reads only that owner's pursuit dashboard and planning profile, creates only owner-tagged proposals and scan history, and never starts workflow execution. Private need profiles overlay the shared baseline without modifying it; ownerless system workers continue to use that baseline. Verification uses only the caller's visible source context, persists the caller on the verification run, owner-scopes history/detail views, owner-scopes verified memory writes, and validates a requested pursuit before attaching evidence. Authenticated pursuit links validate workflow, memory, and source targets against the same owner before they are persisted. Owner-scoped pursuit detail, evidence, and approval responses also filter old/imported workflow, memory, source, and verification links when their target is no longer visible to that owner. Legacy ownerless records are read-compatible for local development but are never adopted or modified by an authenticated owner. The in-process scheduler retains a separate ownerless system-worker view and must not be exposed through authenticated operator endpoints.
 - An authenticated task searches only sources visible to that owner and can preflight only sources explicitly owned by that caller. It never invokes the global due-source scheduler or modifies ownerless legacy sources; the global worker remains a separate controlled system operation.
@@ -854,6 +859,7 @@ This project is intended to gain local execution power, so safety should be desi
 - Database schema changes currently rely on Gorm `AutoMigrate` plus `init.sql`; a production migration system is still needed.
 - Docker Compose local mode uses PostgreSQL 17 with Docker-managed named volumes, one Kafka broker, and Zookeeper. PostgreSQL data directories must never be committed or copied as ordinary Git files because required empty runtime directories are not preserved. Export and restore with `pg_dump`/`pg_restore` when migrating existing data or changing major versions.
 - The local gateway expects backend and IDP routes under `/api`. Backend engine APIs are routed only under `/api/v1/automation`, `/api/v1/llm`, `/api/v1/memory`, `/api/v1/memory-engine`, `/api/v1/pursuits`, `/api/v1/task`, `/api/v1/sources`, `/api/v1/verification`, `/api/v1/os`, `/api/v1/workflow`, `/api/v1/agent-runtimes`, and `/api/v1/ambient`.
+- `GET /healthz` and `GET /readyz` are explicit unauthenticated gateway routes to the backend. The gateway resolves internal Docker services dynamically so a recreated backend or frontend does not require an nginx restart to avoid stale upstream addresses.
 - Do not rely on committed `.env` files for new work. Use `.env.example` -> `.env.local`.
 - Do not commit generated database directories, uploaded images, frontend `dist`, `node_modules`, local caches, or Docker state.
 - Keep UI changes consistent with the existing Angular/ng-zorro dashboard style.

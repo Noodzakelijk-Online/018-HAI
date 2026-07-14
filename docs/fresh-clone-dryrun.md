@@ -1,45 +1,68 @@
 # Fresh-Clone Dry Run
 
-Proves the project builds and boots from a clean checkout — no hidden local
-state. Run this before claiming the stack is deployable.
+Run this from a clean checkout before calling the deployment operational on a
+target Windows 11 machine. It distinguishes repeatable build checks from
+environment-specific live proof.
 
-## Backend (verified in the goal run)
+## Backend
 
-```bash
-git clone <repo> && cd 018-HAI/backend
-go build ./...      # expect: success
-go vet ./...        # expect: clean
-go test ./...       # expect: all packages ok
-go run ./cmd doctor # expect: readiness report, exit 0 on sane config
+```powershell
+git clone https://github.com/Noodzakelijk-Online/018-HAI.git
+cd 018-HAI/backend
+go build ./...
+go vet ./...
+go test ./...
+go run ./cmd doctor
 ```
 
-Status: **passing** — backend builds, vets, and tests green from a clean clone;
-`doctor` runs. (See the final verification report for captured output.)
+Expected result: build, vet, tests, and `doctor` succeed on a sane local
+configuration. The repository's critical-path smoke also exercises the backend
+against a real local Postgres instance.
 
-## Full stack (pending automated evidence)
+## Full Local Stack
 
-```bash
+```powershell
 cd 018-HAI
-cp .env.example .env   # then set real keys for a real deployment
-docker compose -f docker-compose.local.yml config   # validate compose (CI does this)
-docker compose -f docker-compose.local.yml up -d     # boot Postgres/Redis/Kafka/backend/frontend/gateway
-curl localhost/healthz     # expect {"status":"ok"}
-curl localhost/readyz      # expect 200 ready
+Copy-Item .env.example .env.local
+docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
+docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
+docker compose --env-file .env.local -f docker-compose.local.yml ps
+curl.exe -i http://localhost/
+curl.exe -i http://localhost/healthz
+curl.exe -i http://localhost/readyz
+curl.exe -i http://localhost/api/v1/llm/policy
 ```
 
-Status: a scripted, asserted end-to-end boot now exists —
-`scripts/smoke-critical-path.sh` boots a **real local Postgres** + the backend
-and asserts health/readiness + the critical path **and the workflow lifecycle**
-(intake → approval gate → resolve → audit trail, grounded verification, per-user JWT RBAC) (**ran 19/19 passing**), no Docker
-required. What remains **pending** is the full **Docker Compose** multi-service
-boot (Postgres + Redis + Kafka + nginx together), which was not run here because
-the Docker daemon was unavailable; in that smoke, Kafka is degraded to a no-op
-and Redis is not exercised (feeds phases 031/035 for compose-topology coverage).
+Expected result:
 
-## Definition of pass
+- Backend, frontend, gateway, Postgres, Redis, Kafka, and their required
+  dependencies are running; services that define health checks report healthy.
+- `GET /` returns the Angular dashboard shell.
+- `GET /healthz` returns the backend health JSON, and `GET /readyz` returns a
+  ready response through the nginx gateway.
+- An unauthenticated protected engine route, such as `/api/v1/llm/policy`, is
+  rejected with `401` rather than being proxied as an anonymous backend call.
 
-Backend: build + vet + test + doctor succeed from a clean clone (**met**).
-Critical path + workflow lifecycle: `scripts/smoke-critical-path.sh` reaches
-`/readyz` ready and asserts the path + lifecycle against real Postgres (**met — 19/19**).
-Full Docker Compose stack: `docker compose up` reaches `/readyz` ready with all
-services (**pending — needs Docker**).
+The nginx gateway resolves Docker service names per request. Recreating the
+frontend or backend must not leave nginx pinned to a prior container IP.
+
+## Status Of This Evidence
+
+The Compose configuration, local topology, dashboard shell, gateway health and
+readiness routes, and protected-route rejection were exercised in the current
+repository on 2026-07-14. This does not prove a fresh clone on Robert's target
+Windows 11 machine, a signed-in browser journey, event publishing, or any
+third-party provider or account connector. Those checks remain required before
+the system is trusted for real operational work.
+
+## Definition Of Pass
+
+1. The backend commands complete successfully from the clean clone.
+2. `docker compose ... config --quiet` succeeds and required services become
+   healthy after `up --build -d`.
+3. The gateway serves the dashboard and proxies `/healthz` and `/readyz` to the
+   backend.
+4. A user can sign in, create a bounded low-risk workflow, approve it where
+   required, and inspect its audit and verification records.
+5. No third-party account, paid provider, or runtime is enabled until its own
+   scoped readiness and approval evidence has been recorded.

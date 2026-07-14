@@ -3,12 +3,33 @@ package pursuit
 import (
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/workflow"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+func TestDashboardSerializesEmptyQueuesAsArrays(t *testing.T) {
+	service := NewService(newFakeRepo(), nil)
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard returned error: %v", err)
+	}
+	payload, err := json.Marshal(dashboard)
+	if err != nil {
+		t.Fatalf("marshal dashboard: %v", err)
+	}
+	for _, field := range []string{
+		"decisionQueue", "needsRobert", "vaReady", "systemReady", "blocked", "stale",
+		"reviewDue", "planningNeeded", "recentlyChanged", "highRisk", "completionCandidates",
+	} {
+		if strings.Contains(string(payload), `"`+field+`":null`) {
+			t.Fatalf("dashboard field %q serialized as null: %s", field, payload)
+		}
+	}
+}
 
 func TestCreateClassifiesAndAuditsPursuit(t *testing.T) {
 	repo := newFakeRepo()
