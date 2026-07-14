@@ -2619,6 +2619,23 @@ func TestDirectPursuitTaskAttemptRejectsAnotherOwner(t *testing.T) {
 	}); err == nil {
 		t.Fatal("Bob could persist a task attempt under Alice's pursuit")
 	}
+	// Simulate an invalid pre-owner-scoping row that may already exist in a
+	// local database. Detail must not disclose it to Alice.
+	repo.taskAttempts["legacy-bob-direct-plan"] = models.PursuitTaskAttempt{
+		PursuitID:      created.ID,
+		TaskPlanID:     "legacy-bob-direct-plan",
+		OwnerIdentity:  "bob",
+		RequestSummary: "Bob private task request",
+		Mode:           "run",
+		Status:         "review_required",
+	}
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner: %v", err)
+	}
+	if len(detail.TaskAttempts) != 0 {
+		t.Fatalf("cross-owner task attempt leaked into pursuit detail: %#v", detail.TaskAttempts)
+	}
 }
 
 func TestDirectPursuitTaskAttemptRejectsUnacceptedCandidate(t *testing.T) {

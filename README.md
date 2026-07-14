@@ -159,6 +159,9 @@ work from the command dashboard.
   Owner-scoped pursuits reject unknown or other-owner runtime evidence, and
   shared automation history cannot make one operator's runtime output visible
   in another operator's pursuit.
+- Direct task-attempt projections are similarly re-checked during pursuit
+  aggregation, so malformed or legacy cross-owner task records cannot expose
+  task summaries, review state, or blocked reasons.
 - High-risk communication, legal/government, financial, account, public-post,
   deletion, destructive-file, and broad-host actions require explicit approval
   and do not run from a generic transition or chat request.

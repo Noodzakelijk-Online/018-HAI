@@ -1258,6 +1258,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	if err != nil {
 		return nil, pursuitDetailLoadError("task attempts", err)
 	}
+	taskAttempts = taskAttemptsVisibleToOwner(ownerIdentity, taskAttempts)
 	if taskAttempts == nil {
 		taskAttempts = []models.PursuitTaskAttempt{}
 	}
@@ -1785,6 +1786,20 @@ func runtimeAttemptsVisibleToOwner(ownerIdentity string, attempts []models.Autom
 		return attempts
 	}
 	visible := make([]models.AutomationLaunchEvent, 0, len(attempts))
+	for _, attempt := range attempts {
+		if strings.TrimSpace(attempt.OwnerIdentity) == ownerIdentity {
+			visible = append(visible, attempt)
+		}
+	}
+	return visible
+}
+
+func taskAttemptsVisibleToOwner(ownerIdentity string, attempts []models.PursuitTaskAttempt) []models.PursuitTaskAttempt {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return attempts
+	}
+	visible := make([]models.PursuitTaskAttempt, 0, len(attempts))
 	for _, attempt := range attempts {
 		if strings.TrimSpace(attempt.OwnerIdentity) == ownerIdentity {
 			visible = append(visible, attempt)
