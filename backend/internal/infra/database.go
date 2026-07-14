@@ -79,6 +79,7 @@ func RunMigrations(db *gorm.DB) error {
 		&models.Pursuit{},
 		&models.PursuitLink{},
 		&models.PursuitActivity{},
+		&models.PursuitTaskAttempt{},
 		&models.AmbientNeed{},
 		&models.AmbientNeedOverride{},
 		&models.AmbientOpportunity{},

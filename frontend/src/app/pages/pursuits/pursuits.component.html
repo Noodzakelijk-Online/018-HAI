@@ -700,7 +700,7 @@
                 <div><dt>Quality gates</dt><dd>{{ detail.qualityGates.length }}</dd></div>
                 <div><dt>Decisions</dt><dd>{{ detail.decisionQueue.length }}</dd></div>
                 <div><dt>Timeline</dt><dd>{{ detail.timeline.length }}</dd></div>
-                <div><dt>Task runs</dt><dd>{{ detail.taskRuns.length }}</dd></div>
+                <div><dt>Task attempts</dt><dd>{{ detail.taskRuns.length + detail.taskAttempts.length }}</dd></div>
                 <div><dt>Evidence</dt><dd>{{ detail.evidence.length }}</dd></div>
                 <div><dt>Verification</dt><dd>{{ detail.verificationRuns.length }}</dd></div>
                 <div><dt>Memory</dt><dd>{{ detail.memories.length }}</dd></div>
@@ -870,8 +870,19 @@
                   <small *ngIf="run.lastWorkerError">{{ run.lastWorkerError }}</small>
                   <button nz-button nzType="link" (click)="openWorkflow(run.workflowId)">Open workflow</button>
                 </article>
+                <article *ngFor="let attempt of detail.taskAttempts">
+                  <span>Direct task - {{ attempt.status }}</span>
+                  <strong>{{ attempt.requestSummary || 'Pursuit-scoped task attempt' }}</strong>
+                  <small>
+                    {{ attempt.taskPlanId }} /
+                    {{ attempt.verificationStatus || 'not verified' }} /
+                    {{ attempt.riskLevel || 'unknown' }} risk
+                  </small>
+                  <small *ngIf="attempt.blockedReason">{{ attempt.blockedReason }}</small>
+                  <small *ngIf="attempt.completedAt">{{ attempt.completedAt | date: 'short' }}</small>
+                </article>
               </div>
-              <nz-empty *ngIf="!detail.taskRuns.length" nzNotFoundContent="No task execution evidence linked yet."></nz-empty>
+              <nz-empty *ngIf="!detail.taskRuns.length && !detail.taskAttempts.length" nzNotFoundContent="No task execution evidence linked yet."></nz-empty>
             </details>
 
             <details>

@@ -108,12 +108,15 @@ extractions, compact memory, verification runs, provider-probe history,
 automation launch evidence, and audit records survive a backend restart.
 
 `POST /task/plan`, `POST /task/run`, `/task/logs`, and the task review queue are
-currently an interactive, process-local control surface. Their recent plans and
-review items are retained only by the running backend process, so they are not
-the durable system of record and are lost on a backend restart. The normal
-operational route is instead **assistant command or source intake -> pursuit ->
-persisted workflow -> worker -> task plan -> verification/audit evidence**. The
-workflow stores the task-plan ID, run result, retry state, and completion
+an interactive, process-local control surface. Their full recent plans and
+review items are retained only by the running backend process, so unscoped
+direct task work is not a restart-safe job ledger. When a plan or run is
+explicitly scoped to a valid pursuit, HAI also persists a compact task-attempt
+projection under that pursuit: plan ID, owner, request summary, risk, runtime
+selection, verification state, blocker, and lifecycle timestamps. The normal
+operational route is still **assistant command or source intake -> pursuit ->
+persisted workflow -> worker -> task plan -> verification/audit evidence**.
+The workflow stores the task-plan ID, run result, retry state, and completion
 decision before a pursuit presents it as execution evidence.
 
 Source, workflow, and ambient schedulers run in the backend process. They are
@@ -170,7 +173,7 @@ Verified evidence is maintained in [the completion matrix](docs/codex-goal/compl
 - OAuth account authorization/refresh, provider webhooks, file-system watchers, dedicated vector infrastructure, and additional Claw-compatible adapters remain follow-up work.
 - A configured provider or runtime is not considered proven until its live probe and approved workflow are exercised on the target machine.
 - The local Compose topology, gateway health, dashboard shell, backend health/readiness routes, and protected-route rejection have been exercised. A clean-machine, fresh-clone Windows 11 run and signed-in browser journey remain outstanding deployment verification. See [fresh-clone dry run](docs/fresh-clone-dryrun.md) and [technical debt](docs/technical-debt.md).
-- Direct `/task/*` plan/run history and its approval queue are intentionally process-local at present. They are a bounded interactive control surface, not a restart-safe job ledger; use the persisted workflow route for work that must survive restart or form part of a pursuit audit trail.
+- Direct `/task/*` plan/run history and its approval queue are intentionally process-local. A task explicitly scoped to a valid pursuit also writes a compact restart-safe attempt projection to that pursuit, but the persisted workflow route remains the authoritative ledger for queued execution, retries, approvals, and completion.
 - The source, workflow, and ambient schedulers are in-process single-node workers. They are not a distributed queue, leader-elected scheduler, or production high-availability service.
 - The bundled IDP currently issues a stable `user_id` for authenticated-session attribution. It does not yet issue role claims, so endpoints with explicit RBAC checks default to viewer until role issuance is implemented.
 - Owner boundaries protect owner-scoped sources, memories, conversation imports, pursuits, verification runs/evidence links, authenticated workflow/task execution, task-history and review-queue views, review resolution, and ambient proposal/scan/profile records. Task HTTP routes require a verified owner for planning, controlled execution, history, review visibility, and review resolution; they do not fall back to ownerless/global records. Ambient scan, need-profile, proposal acceptance, and dismissal actions require the same boundary, so an HTTP caller cannot convert an ownerless system proposal into workflow work. Runtime stop and OpenClaw ecosystem mutation routes also require a verified owner before calling a runtime adapter or touching an ecosystem archive. Authenticated workflow lists, dashboards, details, mutation routes, manual worker runs, stale-claim recovery, and due follow-up processing enforce the same boundary. The Connected Sources `Sync due` action requires a verified owner and refreshes only that owner's explicit sources. Source identity/URI deduplication is scoped to the same verified owner so one account cannot reuse or supersede another account's work. A dashboard-triggered ambient scan or need-profile update requires an authenticated owner, reads only that owner's pursuit dashboard and planning profile, creates only owner-tagged proposals and scan history, and never starts workflow execution. Private need profiles overlay the shared baseline without modifying it; ownerless system workers continue to use that baseline. Verification uses only the caller's visible source context, persists the caller on the verification run, owner-scopes history/detail views, owner-scopes verified memory writes, and validates a requested pursuit before attaching evidence. Authenticated pursuit links validate workflow, memory, and source targets against the same owner before they are persisted. Owner-scoped pursuit detail, evidence, and approval responses also filter old/imported workflow, memory, source, and verification links when their target is no longer visible to that owner. Legacy ownerless records are read-compatible for local development but are never adopted or modified by an authenticated owner. The in-process scheduler retains a separate ownerless system-worker view and must not be exposed through authenticated operator endpoints.

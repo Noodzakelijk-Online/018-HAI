@@ -134,6 +134,9 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 			return result, err
 		}
 		result.Pursuit = pursuitContext
+		if pursuitContext != nil {
+			taskRequest.PursuitID = pursuitContext.PursuitID
+		}
 		if request.ExecuteAllowed && pursuitContext != nil && pursuitContext.ExecutionQueued {
 			// The durable workflow worker owns execution. Do not run the same command
 			// directly here, or a retry/scheduler could execute it twice.

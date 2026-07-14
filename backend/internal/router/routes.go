@@ -75,12 +75,13 @@ func initializeRoutes(router *gin.Engine) error {
 		sourceService := source.NewServiceWithWorkflowAndPursuitLinker(source.DefaultRepository(), memoryService, workflowService, pursuitService)
 		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService, pursuitService)
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
-		taskService := task.NewServiceWithEngines(
+		taskService := task.NewServiceWithEnginesAndPursuitAttempts(
 			memoryService,
 			llmService,
 			sourceService,
 			verificationService,
 			task.NewAutomationToolExecutor(automationService),
+			pursuitService,
 		)
 		workflowRunner.Set(workflowtask.NewRunner(taskService))
 		source.StartScheduler(context.Background(), sourceService)

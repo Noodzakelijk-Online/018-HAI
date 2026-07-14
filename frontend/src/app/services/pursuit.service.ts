@@ -59,7 +59,7 @@ export class PursuitService {
   }
 
   get(id: string): Observable<IPursuitDetail> {
-    return this.http.get<IPursuitDetail>(`${this.apiUrl}/${id}`);
+    return this.http.get<IPursuitDetail>(`${this.apiUrl}/${id}`).pipe(map((detail) => this.normalizeDetail(detail)));
   }
 
   resolveEvidence(id: string, uri: string): Observable<IPursuitEvidenceResolution> {
@@ -81,15 +81,15 @@ export class PursuitService {
   }
 
   refreshSummary(id: string, actor: string = 'hai'): Observable<IPursuitDetail> {
-    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/summary`, { actor });
+    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/summary`, { actor }).pipe(map((detail) => this.normalizeDetail(detail)));
   }
 
   review(id: string, request: IPursuitReviewRequest): Observable<IPursuitDetail> {
-    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/review`, request);
+    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/review`, request).pipe(map((detail) => this.normalizeDetail(detail)));
   }
 
   intake(id: string, request: IPursuitIntakeRequest): Observable<IPursuitDetail> {
-    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/intake`, request);
+    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/intake`, request).pipe(map((detail) => this.normalizeDetail(detail)));
   }
 
   routeIntake(request: IPursuitIntakeRequest): Observable<IPursuitRoutedIntakeResult> {
@@ -97,11 +97,11 @@ export class PursuitService {
   }
 
   plan(id: string, request: IPursuitPlanRequest = {}): Observable<IPursuitDetail> {
-    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/plan`, request);
+    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/plan`, request).pipe(map((detail) => this.normalizeDetail(detail)));
   }
 
   resolveDecision(id: string, request: IPursuitDecisionResolutionRequest): Observable<IPursuitDetail> {
-    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/decisions/resolve`, request);
+    return this.http.post<IPursuitDetail>(`${this.apiUrl}/${id}/decisions/resolve`, request).pipe(map((detail) => this.normalizeDetail(detail)));
   }
 
   link(id: string, request: IPursuitLinkRequest): Observable<IPursuitLink> {
@@ -152,6 +152,41 @@ export class PursuitService {
       recentlyChanged: source.recentlyChanged || [],
       highRisk: source.highRisk || [],
       completionCandidates: source.completionCandidates || [],
+    };
+  }
+
+  private normalizeDetail(detail: IPursuitDetail | null | undefined): IPursuitDetail {
+    const source = detail || ({} as IPursuitDetail);
+    return {
+      ...source,
+      links: source.links || [],
+      activity: source.activity || [],
+      workflows: source.workflows || [],
+      checklistItems: source.checklistItems || [],
+      openLoops: source.openLoops || [],
+      proposals: source.proposals || [],
+      qualityGates: source.qualityGates || [],
+      decisions: source.decisions || [],
+      decisionQueue: source.decisionQueue || [],
+      transitions: source.transitions || [],
+      sourceLinks: source.sourceLinks || [],
+      events: source.events || [],
+      timeline: source.timeline || [],
+      evidence: source.evidence || [],
+      memories: source.memories || [],
+      taskRuns: source.taskRuns || [],
+      taskAttempts: source.taskAttempts || [],
+      verificationRuns: source.verificationRuns || [],
+      verificationClaims: source.verificationClaims || [],
+      verificationEvidence: source.verificationEvidence || [],
+      automations: source.automations || [],
+      runtimeAttempts: source.runtimeAttempts || [],
+      sourceItems: source.sourceItems || [],
+      sourceExtractions: source.sourceExtractions || [],
+      nextActions: source.nextActions || [],
+      blockers: source.blockers || [],
+      approvalItems: source.approvalItems || [],
+      actionQueues: source.actionQueues || { needsRobert: [], vaReady: [], systemReady: [], waiting: [] },
     };
   }
 }

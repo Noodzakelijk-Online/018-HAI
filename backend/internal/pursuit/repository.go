@@ -25,6 +25,8 @@ type Repository interface {
 	FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error)
 	CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error)
 	FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error)
+	UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error)
+	FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error)
 	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
 	FindLinkedChecklistItems(workflowIDs []uuid.UUID) ([]models.WorkflowChecklistItem, error)
 	FindLinkedOpenLoops(workflowIDs []uuid.UUID) ([]models.WorkflowOpenLoop, error)
@@ -280,6 +282,40 @@ func (r *GormRepository) FindActivities(pursuitID uuid.UUID, limit int) ([]model
 		return nil, err
 	}
 	return activity, nil
+}
+
+func (r *GormRepository) UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error) {
+	var existing models.PursuitTaskAttempt
+	err := r.DB.Where("task_plan_id = ?", attempt.TaskPlanID).First(&existing).Error
+	if err == nil {
+		if existing.PursuitID != attempt.PursuitID {
+			return nil, fmt.Errorf("task attempt is already linked to another pursuit")
+		}
+		attempt.ID = existing.ID
+		attempt.CreatedAt = existing.CreatedAt
+		if err := r.DB.Save(attempt).Error; err != nil {
+			return nil, err
+		}
+		return attempt, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	if err := r.DB.Create(attempt).Error; err != nil {
+		return nil, err
+	}
+	return attempt, nil
+}
+
+func (r *GormRepository) FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	var attempts []models.PursuitTaskAttempt
+	if err := r.DB.Where("pursuit_id = ?", pursuitID).Order("updated_at DESC").Limit(limit).Find(&attempts).Error; err != nil {
+		return nil, err
+	}
+	return attempts, nil
 }
 
 func (r *GormRepository) FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error) {

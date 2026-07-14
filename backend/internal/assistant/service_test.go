@@ -221,6 +221,9 @@ func TestCommandPlanningWithinSelectedPursuitDoesNotCreateWorkflow(t *testing.T)
 	if result.Pursuit == nil || result.Pursuit.PursuitID != pursuitID.String() || result.Pursuit.Mode != "selected" {
 		t.Fatalf("pursuit context = %#v", result.Pursuit)
 	}
+	if tasks.lastRequest.PursuitID != pursuitID.String() {
+		t.Fatalf("task pursuit id = %q, want %q", tasks.lastRequest.PursuitID, pursuitID)
+	}
 }
 
 func TestCommandCanRunCycleOnlyFromExplicitFlag(t *testing.T) {

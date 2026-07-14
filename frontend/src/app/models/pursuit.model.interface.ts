@@ -10,6 +10,7 @@ import {
   IWorkflowDecision,
   IWorkflowEvidenceClaim,
   IWorkflowEvent,
+  IWorkflowChecklistItem,
   IWorkflowItem,
   IWorkflowOpenLoop,
   IWorkflowProposal,
@@ -264,6 +265,25 @@ export interface IPursuitTaskRun {
   needsReview: boolean;
 }
 
+export interface IPursuitTaskAttempt {
+  id: string;
+  pursuitId: string;
+  taskPlanId: string;
+  ownerIdentity?: string;
+  requestSummary?: string;
+  projectKey?: string;
+  mode: string;
+  status: string;
+  riskLevel?: string;
+  verificationStatus?: string;
+  automationId?: string;
+  blockedReason?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface IPursuitDecision {
   id: string;
   workflowId?: string;
@@ -306,6 +326,7 @@ export interface IPursuitDetail {
   links: IPursuitLink[];
   activity: IPursuitActivity[];
   workflows: IWorkflowItem[];
+  checklistItems: IWorkflowChecklistItem[];
   openLoops: IWorkflowOpenLoop[];
   proposals: IWorkflowProposal[];
   qualityGates: IWorkflowQualityGate[];
@@ -318,6 +339,7 @@ export interface IPursuitDetail {
   evidence: IWorkflowEvidenceClaim[];
   memories: IContextMemory[];
   taskRuns: IPursuitTaskRun[];
+  taskAttempts: IPursuitTaskAttempt[];
   verificationRuns: IVerificationRun[];
   verificationClaims: IVerificationClaim[];
   verificationEvidence: IVerificationEvidence[];

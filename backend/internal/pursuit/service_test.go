@@ -1,12 +1,15 @@
 package pursuit
 
 import (
-	"automation-hub-backend/internal/models"
-	"automation-hub-backend/internal/workflow"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/workflow"
 
 	"github.com/google/uuid"
 )
@@ -2003,6 +2006,108 @@ func TestDetailSurfacesTaskRunEvidenceFromLinkedWorkflows(t *testing.T) {
 	}
 }
 
+func TestDetailSurfacesDirectPursuitTaskAttempts(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Plan direct evidence review", OwnerIdentity: "alice", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	now := time.Now().UTC()
+	completed := now.Add(time.Minute)
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:          created.ID,
+		TaskPlanID:         "direct-plan-123",
+		OwnerIdentity:      "alice",
+		RequestSummary:     "Review the evidence before approving the response.",
+		ProjectKey:         "018-HAI",
+		Mode:               "run",
+		Status:             "review_required",
+		RiskLevel:          "high",
+		VerificationStatus: "needs_review",
+		BlockedReason:      "approval required before external action",
+		StartedAt:          &now,
+		CompletedAt:        &completed,
+	}); err != nil {
+		t.Fatalf("UpsertTaskAttempt returned error: %v", err)
+	}
+
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.TaskAttempts) != 1 {
+		t.Fatalf("task attempts = %#v, want one direct task attempt", detail.TaskAttempts)
+	}
+	attempt := detail.TaskAttempts[0]
+	if attempt.TaskPlanID != "direct-plan-123" || attempt.Status != "review_required" || attempt.BlockedReason == "" {
+		t.Fatalf("task attempt = %#v", attempt)
+	}
+	if detail.Summary.TaskRuns != 1 {
+		t.Fatalf("summary task runs = %d, want direct attempt included", detail.Summary.TaskRuns)
+	}
+	foundTimeline := false
+	for _, item := range detail.Timeline {
+		if item.Kind == "task_attempt" && item.ID == "task-attempt:direct-plan-123" {
+			foundTimeline = true
+		}
+	}
+	if !foundTimeline {
+		t.Fatalf("direct task attempt missing from timeline: %#v", detail.Timeline)
+	}
+}
+
+func TestDirectPursuitTaskAttemptRejectsAnotherOwner(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Alice private pursuit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     created.ID,
+		TaskPlanID:    "bob-direct-plan",
+		OwnerIdentity: "bob",
+		Mode:          "plan",
+		Status:        "planned",
+	}); err == nil {
+		t.Fatal("Bob could persist a task attempt under Alice's pursuit")
+	}
+}
+
+func TestDirectPursuitTaskAttemptRedactsPersistedText(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Protect direct task audit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:      created.ID,
+		TaskPlanID:     "redacted-direct-plan",
+		OwnerIdentity:  "alice",
+		RequestSummary: "Run source check with api_key=plain-text-secret",
+		BlockedReason:  "provider token=another-plain-secret requires review",
+		Mode:           "run",
+		Status:         "review_required",
+	}); err != nil {
+		t.Fatalf("UpsertTaskAttempt returned error: %v", err)
+	}
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.TaskAttempts) != 1 {
+		t.Fatalf("task attempts = %#v", detail.TaskAttempts)
+	}
+	attempt := detail.TaskAttempts[0]
+	for _, value := range []string{attempt.RequestSummary, attempt.BlockedReason} {
+		if strings.Contains(value, "plain-text-secret") || strings.Contains(value, "another-plain-secret") {
+			t.Fatalf("task attempt leaked secret: %#v", attempt)
+		}
+	}
+}
+
 func TestDetailSurfacesRobertDecisionQueueFromLinkedWorkflows(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -3344,6 +3449,7 @@ type fakeRepo struct {
 	pursuits             map[uuid.UUID]models.Pursuit
 	links                map[uuid.UUID]models.PursuitLink
 	activity             map[uuid.UUID][]models.PursuitActivity
+	taskAttempts         map[string]models.PursuitTaskAttempt
 	workflows            map[uuid.UUID]models.WorkflowItem
 	checklistItems       []models.WorkflowChecklistItem
 	openLoops            []models.WorkflowOpenLoop
@@ -3370,6 +3476,7 @@ func newFakeRepo() *fakeRepo {
 		pursuits:             map[uuid.UUID]models.Pursuit{},
 		links:                map[uuid.UUID]models.PursuitLink{},
 		activity:             map[uuid.UUID][]models.PursuitActivity{},
+		taskAttempts:         map[string]models.PursuitTaskAttempt{},
 		workflows:            map[uuid.UUID]models.WorkflowItem{},
 		memories:             map[uuid.UUID]models.ContextMemory{},
 		automations:          map[uuid.UUID]models.Automation{},
@@ -3570,6 +3677,38 @@ func (r *fakeRepo) CreateActivity(activity *models.PursuitActivity) (*models.Pur
 
 func (r *fakeRepo) FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error) {
 	result := append([]models.PursuitActivity{}, r.activity[pursuitID]...)
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error) {
+	if existing, ok := r.taskAttempts[attempt.TaskPlanID]; ok {
+		if existing.PursuitID != attempt.PursuitID {
+			return nil, fmt.Errorf("task attempt is already linked to another pursuit")
+		}
+		attempt.ID = existing.ID
+		attempt.CreatedAt = existing.CreatedAt
+	} else if attempt.ID == uuid.Nil {
+		attempt.ID = uuid.New()
+	}
+	if attempt.CreatedAt.IsZero() {
+		attempt.CreatedAt = time.Now().UTC()
+	}
+	attempt.UpdatedAt = time.Now().UTC()
+	r.taskAttempts[attempt.TaskPlanID] = *attempt
+	return attempt, nil
+}
+
+func (r *fakeRepo) FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error) {
+	result := []models.PursuitTaskAttempt{}
+	for _, attempt := range r.taskAttempts {
+		if attempt.PursuitID == pursuitID {
+			result = append(result, attempt)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt.After(result[j].UpdatedAt) })
 	if limit > 0 && len(result) > limit {
 		result = result[:limit]
 	}

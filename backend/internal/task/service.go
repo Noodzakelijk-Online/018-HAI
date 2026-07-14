@@ -21,6 +21,7 @@ import (
 
 type IntakeRequest struct {
 	OwnerIdentity   string   `json:"-"`
+	PursuitID       string   `json:"pursuitId,omitempty"`
 	Request         string   `json:"request"`
 	ProjectKey      string   `json:"projectKey,omitempty"`
 	AutomationID    string   `json:"automationId,omitempty"`
@@ -175,6 +176,13 @@ type ToolExecutor interface {
 	Execute(request ToolExecutionRequest) (*ToolExecutionResult, error)
 }
 
+// PursuitAttemptRecorder stores a compact audit projection for task work that
+// is explicitly scoped to a pursuit. Retrieved context and generated output
+// stay in the existing task and verification paths.
+type PursuitAttemptRecorder interface {
+	UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error
+}
+
 type ExecutionResult struct {
 	StartedAt          time.Time                  `json:"startedAt"`
 	CompletedAt        time.Time                  `json:"completedAt"`
@@ -201,6 +209,7 @@ type MemoryUpdateProposal struct {
 type CompletionPlan struct {
 	ID                    string                 `json:"id"`
 	OwnerIdentity         string                 `json:"-"`
+	PursuitID             string                 `json:"pursuitId,omitempty"`
 	CreatedAt             time.Time              `json:"createdAt"`
 	Request               string                 `json:"request"`
 	ProjectKey            string                 `json:"projectKey,omitempty"`
@@ -248,6 +257,7 @@ type service struct {
 	verificationService verification.Service
 	llmService          *llm.Service
 	toolExecutor        ToolExecutor
+	pursuitAttempts     PursuitAttemptRecorder
 	mu                  sync.Mutex
 	logs                []CompletionPlan
 	reviewQueue         []ReviewQueueItem
@@ -283,6 +293,19 @@ func NewServiceWithEngines(memoryService memory.Service, llmService *llm.Service
 	}
 }
 
+func NewServiceWithEnginesAndPursuitAttempts(memoryService memory.Service, llmService *llm.Service, sourceService source.Service, verificationService verification.Service, toolExecutor ToolExecutor, pursuitAttempts PursuitAttemptRecorder) Service {
+	return &service{
+		memoryService:       memoryService,
+		sourceService:       sourceService,
+		verificationService: verificationService,
+		llmService:          llmService,
+		toolExecutor:        toolExecutor,
+		pursuitAttempts:     pursuitAttempts,
+		logs:                []CompletionPlan{},
+		reviewQueue:         []ReviewQueueItem{},
+	}
+}
+
 func DefaultService() (Service, error) {
 	llmService, err := llm.NewServiceFromEnv()
 	if err != nil {
@@ -298,8 +321,14 @@ func DefaultService() (Service, error) {
 }
 
 func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
+	if err := s.validatePursuitAttemptRequest(request); err != nil {
+		return nil, err
+	}
 	plan, err := s.buildPlan(request, false)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.persistPursuitAttempt(plan, request, "plan", true); err != nil {
 		return nil, err
 	}
 	s.addLog(*plan)
@@ -307,6 +336,9 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 }
 
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
+	if err := s.validatePursuitAttemptRequest(request); err != nil {
+		return nil, err
+	}
 	if safety.EmergencyStopActive() {
 		request.ExecuteAllowed = false
 		request.HumanApproved = false
@@ -331,11 +363,17 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.CompletionStatus = "review_required"
 		plan.Events = append(plan.Events, event("governance", reason))
 		s.attachReviewItem(plan, reason, "high", request)
+		if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
+			return nil, err
+		}
 		s.addLog(*plan)
 		return plan, nil
 	}
 	plan, err := s.buildPlan(request, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.persistPursuitAttempt(plan, request, "run", false); err != nil {
 		return nil, err
 	}
 	if plan.RiskAssessment.AllowedNow {
@@ -400,8 +438,116 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		s.attachReviewItem(plan, "validation failed after available attempts", "medium", request)
 	}
 
+	if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
+		return nil, err
+	}
 	s.addLog(*plan)
 	return plan, nil
+}
+
+func (s *service) validatePursuitAttemptRequest(request IntakeRequest) error {
+	pursuitID := strings.TrimSpace(request.PursuitID)
+	if pursuitID == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(pursuitID); err != nil {
+		return fmt.Errorf("invalid pursuit id")
+	}
+	if s.pursuitAttempts == nil {
+		return fmt.Errorf("pursuit task-attempt persistence is not configured")
+	}
+	return nil
+}
+
+func (s *service) persistPursuitAttempt(plan *CompletionPlan, request IntakeRequest, mode string, completed bool) error {
+	if plan == nil || strings.TrimSpace(request.PursuitID) == "" {
+		return nil
+	}
+	pursuitID, err := uuid.Parse(strings.TrimSpace(request.PursuitID))
+	if err != nil {
+		return fmt.Errorf("invalid pursuit id")
+	}
+	if s.pursuitAttempts == nil {
+		return fmt.Errorf("pursuit task-attempt persistence is not configured")
+	}
+	startedAt := plan.CreatedAt
+	if plan.ExecutionResult != nil && !plan.ExecutionResult.StartedAt.IsZero() {
+		startedAt = plan.ExecutionResult.StartedAt
+	}
+	status := "running"
+	if mode == "plan" {
+		status = "planned"
+	}
+	if completed {
+		status = firstNonEmpty(plan.CompletionStatus, status)
+	}
+	var completedAt *time.Time
+	if completed {
+		when := time.Now().UTC()
+		if plan.ExecutionResult != nil && !plan.ExecutionResult.CompletedAt.IsZero() {
+			when = plan.ExecutionResult.CompletedAt
+		}
+		completedAt = &when
+	}
+	verificationStatus := strings.TrimSpace(plan.ValidationResult.Status)
+	blockedReason := strings.Join(compactStrings(plan.ValidationResult.Failures, 3), "; ")
+	if plan.ExecutionResult != nil {
+		verificationStatus = firstNonEmpty(plan.ExecutionResult.VerificationStatus, verificationStatus)
+		blockedReason = firstNonEmpty(plan.ExecutionResult.BlockedReason, blockedReason)
+	}
+	attempt := models.PursuitTaskAttempt{
+		PursuitID:          pursuitID,
+		TaskPlanID:         plan.ID,
+		OwnerIdentity:      strings.TrimSpace(plan.OwnerIdentity),
+		RequestSummary:     compactTaskRequest(plan.RealGoal),
+		ProjectKey:         strings.TrimSpace(plan.ProjectKey),
+		Mode:               mode,
+		Status:             status,
+		RiskLevel:          strings.TrimSpace(plan.RiskAssessment.Level),
+		VerificationStatus: verificationStatus,
+		AutomationID:       firstNonEmpty(request.AutomationID, planAutomationID(plan)),
+		BlockedReason:      compactTaskRequest(blockedReason),
+		StartedAt:          &startedAt,
+		CompletedAt:        completedAt,
+	}
+	if err := s.pursuitAttempts.UpsertTaskAttempt(attempt); err != nil {
+		return fmt.Errorf("persist pursuit task attempt: %w", err)
+	}
+	return nil
+}
+
+func compactTaskRequest(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(safety.RedactSecrets(value))), " ")
+	const limit = 500
+	if len([]rune(value)) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit]) + "..."
+}
+
+func compactStrings(values []string, limit int) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	result := make([]string, 0, limit)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
+}
+
+func planAutomationID(plan *CompletionPlan) string {
+	if plan == nil || plan.ExecutionResult == nil || plan.ExecutionResult.ToolExecution == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.AutomationID)
 }
 
 func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
@@ -435,6 +581,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	plan := &CompletionPlan{
 		ID:            uuid.New().String(),
 		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
+		PursuitID:     strings.TrimSpace(request.PursuitID),
 		CreatedAt:     time.Now().UTC(),
 		Request:       request.Request,
 		ProjectKey:    request.ProjectKey,

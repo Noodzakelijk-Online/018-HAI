@@ -160,6 +160,56 @@ func TestOwnerScopedTaskHistoryAndReviewQueueDoNotLeakAcrossOwners(t *testing.T)
 	}
 }
 
+func TestPursuitScopedTaskRunPersistsStartAndFinalOutcome(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		recorder,
+	)
+	pursuitID := uuid.New()
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		PursuitID:      pursuitID.String(),
+		Request:        "Delete account data after legal review with api_key=plain-text-secret",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(recorder.attempts) != 2 {
+		t.Fatalf("persist calls = %d, want start and final outcome", len(recorder.attempts))
+	}
+	final := recorder.attempts[1]
+	if final.PursuitID != pursuitID || final.TaskPlanID != plan.ID || final.Status != "review_required" {
+		t.Fatalf("final pursuit attempt = %#v", final)
+	}
+	if final.CompletedAt == nil || final.BlockedReason == "" {
+		t.Fatalf("final attempt lacks completion audit: %#v", final)
+	}
+	if strings.Contains(final.RequestSummary, "plain-text-secret") {
+		t.Fatalf("task attempt leaked request secret: %#v", final)
+	}
+}
+
+func TestPursuitScopedTaskPlanRejectsMalformedPursuitID(t *testing.T) {
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		&fakePursuitAttemptRecorder{},
+	)
+	if _, err := service.Plan(IntakeRequest{Request: "Plan a bounded review", PursuitID: "not-a-uuid"}); err == nil {
+		t.Fatal("expected malformed pursuit id to be rejected")
+	}
+}
+
 func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)
@@ -604,6 +654,15 @@ func (f *fakeMemoryService) CreateForOwner(ownerIdentity string, request memory.
 		created.OwnerIdentity = ownerIdentity
 	}
 	return created, err
+}
+
+type fakePursuitAttemptRecorder struct {
+	attempts []models.PursuitTaskAttempt
+}
+
+func (f *fakePursuitAttemptRecorder) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
+	f.attempts = append(f.attempts, attempt)
+	return nil
 }
 
 type fakeTaskSourceService struct {

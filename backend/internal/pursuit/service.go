@@ -2,6 +2,7 @@ package pursuit
 
 import (
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
 	"fmt"
 	"math"
@@ -290,6 +291,7 @@ type PursuitDetail struct {
 	Evidence             []models.WorkflowEvidenceClaim `json:"evidence"`
 	Memories             []models.ContextMemory         `json:"memories"`
 	TaskRuns             []PursuitTaskRun               `json:"taskRuns"`
+	TaskAttempts         []models.PursuitTaskAttempt    `json:"taskAttempts"`
 	VerificationRuns     []models.VerificationRun       `json:"verificationRuns"`
 	VerificationClaims   []models.VerificationClaim     `json:"verificationClaims"`
 	VerificationEvidence []models.VerificationEvidence  `json:"verificationEvidence"`
@@ -544,6 +546,7 @@ type Service interface {
 	ReopenForOwner(ownerIdentity string, id uuid.UUID, actor, note string) (*models.Pursuit, error)
 	List(includeArchived bool) ([]models.Pursuit, error)
 	ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
+	UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error
 	Dashboard() (*Dashboard, error)
 	DashboardForOwner(ownerIdentity string) (*Dashboard, error)
 	Decisions() ([]PursuitDashboardDecision, error)
@@ -985,6 +988,59 @@ func (s *service) BriefForOwner(ownerIdentity string) (*Brief, error) {
 	return brief, nil
 }
 
+// UpsertTaskAttempt records the durable, compact task-engine projection for a
+// pursuit-scoped direct plan or run. It deliberately does not create a
+// workflow: workflow-owned execution already persists on WorkflowItem and is
+// aggregated separately in pursuit detail.
+func (s *service) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
+	if attempt.PursuitID == uuid.Nil || strings.TrimSpace(attempt.TaskPlanID) == "" {
+		return fmt.Errorf("pursuit id and task plan id are required")
+	}
+	pursuit, err := s.repo.FindByID(attempt.PursuitID)
+	if err != nil {
+		return err
+	}
+	if !pursuitMutableBy(*pursuit, attempt.OwnerIdentity) {
+		return fmt.Errorf("pursuit not found")
+	}
+	attempt.OwnerIdentity = firstNonEmpty(strings.TrimSpace(attempt.OwnerIdentity), pursuit.OwnerIdentity)
+	attempt.RequestSummary = compactPursuitTaskSummary(attempt.RequestSummary)
+	attempt.Mode = firstNonEmpty(strings.TrimSpace(attempt.Mode), "plan")
+	attempt.Status = firstNonEmpty(strings.TrimSpace(attempt.Status), "planned")
+	attempt.RiskLevel = firstNonEmpty(strings.TrimSpace(attempt.RiskLevel), pursuit.RiskLevel, "low")
+	attempt.BlockedReason = compactPursuitTaskSummary(attempt.BlockedReason)
+	stored, err := s.repo.UpsertTaskAttempt(&attempt)
+	if err != nil {
+		return err
+	}
+	eventType, message := pursuitTaskAttemptActivity(*stored)
+	_, err = s.recordActivity(stored.PursuitID, eventType, message, firstNonEmpty(stored.OwnerIdentity, "task-engine"), "task_attempt", stored.TaskPlanID, "task://"+stored.TaskPlanID)
+	return err
+}
+
+func compactPursuitTaskSummary(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(safety.RedactSecrets(value))), " ")
+	const limit = 500
+	if len([]rune(value)) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit]) + "..."
+}
+
+func pursuitTaskAttemptActivity(attempt models.PursuitTaskAttempt) (string, string) {
+	mode := firstNonEmpty(attempt.Mode, "task")
+	if attempt.CompletedAt == nil {
+		return "pursuit.task_attempt_started", "Direct " + mode + " task attempt started."
+	}
+	if attempt.Status == "validated" {
+		return "pursuit.task_attempt_validated", "Direct " + mode + " task attempt completed with verified output."
+	}
+	if strings.Contains(attempt.Status, "review") || strings.TrimSpace(attempt.BlockedReason) != "" {
+		return "pursuit.task_attempt_review_required", "Direct " + mode + " task attempt requires review: " + firstNonEmpty(attempt.BlockedReason, attempt.Status)
+	}
+	return "pursuit.task_attempt_recorded", "Direct " + mode + " task attempt recorded with status " + attempt.Status + "."
+}
+
 func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
 	return s.DetailForOwner("", id)
 }
@@ -1006,6 +1062,10 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 		return nil, err
 	}
 	activity, _ := s.repo.FindActivities(id, 50)
+	taskAttempts, _ := s.repo.FindTaskAttempts(id, 20)
+	if taskAttempts == nil {
+		taskAttempts = []models.PursuitTaskAttempt{}
+	}
 	workflowIDs := linkUUIDs(links, LinkWorkflow)
 	memoryIDs := linkUUIDs(links, LinkMemory)
 	sourceItemIDs := linkUUIDs(links, LinkSourceItem)
@@ -1056,6 +1116,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 		Evidence:             evidence,
 		Memories:             memories,
 		TaskRuns:             taskRunsFromWorkflows(workflows),
+		TaskAttempts:         taskAttempts,
 		VerificationRuns:     verificationRuns,
 		VerificationClaims:   verificationClaims,
 		VerificationEvidence: verificationEvidence,
@@ -1066,13 +1127,13 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	}
 	detail.ApprovalItems = approvalWorkflows(workflows)
 	detail.DecisionQueue = decisionQueue(*pursuit, workflows, proposals, decisions, runtimeAttempts, resolvedDecisions)
-	detail.Timeline = pursuitTimeline(*pursuit, activity, workflows, transitions, sourceLinks, decisions, events, detail.TaskRuns, verificationRuns, runtimeAttempts)
+	detail.Timeline = pursuitTimeline(*pursuit, activity, workflows, transitions, sourceLinks, decisions, events, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts)
 	detail.Blockers = append(blockers(workflows, openLoops), runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedDecisions)...)
 	detail.Blockers = append(detail.Blockers, sourceBlockers...)
 	detail.Blockers = append(detail.Blockers, qualityGateBlockers...)
 	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions, len(qualityGateBlockers) > 0)
 	detail.ActionQueues = actionQueues(*pursuit, detail.NextActions, detail.Blockers)
-	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, verificationRuns, runtimeAttempts, activity, sourceBlockers, qualityGateBlockers)
+	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts, activity, sourceBlockers, qualityGateBlockers)
 	detail.Summary.QualityGatesNeedingReview = len(qualityGateBlockers)
 	if len(detail.Timeline) > 0 {
 		detail.Summary.WhatChanged = timelineChangeSummary(detail.Timeline[0])
@@ -3410,6 +3471,7 @@ func pursuitTimeline(
 	decisions []models.WorkflowDecision,
 	events []models.WorkflowEvent,
 	taskRuns []PursuitTaskRun,
+	taskAttempts []models.PursuitTaskAttempt,
 	verificationRuns []models.VerificationRun,
 	runtimeAttempts []models.AutomationLaunchEvent,
 ) []PursuitTimelineItem {
@@ -3515,6 +3577,24 @@ func pursuitTimeline(
 			RiskLevel:     workflowRisks[workflowID],
 			NeedsReview:   run.NeedsReview,
 			CreatedAt:     when,
+		})
+	}
+	for _, attempt := range taskAttempts {
+		when := timeFromPointer(attempt.CompletedAt)
+		if when.IsZero() {
+			when = timeFromPointer(attempt.StartedAt)
+		}
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:          "task-attempt:" + attempt.TaskPlanID,
+			Kind:        "task_attempt",
+			Title:       "Direct task " + firstNonEmpty(attempt.Mode, "attempt") + ": " + firstNonEmpty(attempt.Status, "recorded"),
+			Message:     firstNonEmpty(attempt.BlockedReason, attempt.RequestSummary, attempt.VerificationStatus),
+			Status:      attempt.Status,
+			RiskLevel:   firstNonEmpty(attempt.RiskLevel, pursuit.RiskLevel),
+			SourceURI:   "task://" + attempt.TaskPlanID,
+			SourceLabel: "direct task attempt",
+			NeedsReview: strings.Contains(attempt.Status, "review") || strings.TrimSpace(attempt.BlockedReason) != "",
+			CreatedAt:   when,
 		})
 	}
 	for _, run := range verificationRuns {
@@ -3630,7 +3710,7 @@ func firstTime(values ...time.Time) time.Time {
 	return time.Time{}
 }
 
-func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker, qualityGateBlockers []PursuitBlocker) PursuitSummary {
+func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, taskAttempts []models.PursuitTaskAttempt, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker, qualityGateBlockers []PursuitBlocker) PursuitSummary {
 	approvals := len(approvalWorkflows(workflows))
 	needsRobert := approvals
 	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers) + len(qualityGateBlockers)
@@ -3676,7 +3756,7 @@ func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []m
 		NeedsRobert:         needsRobert,
 		Blocked:             blocked,
 		OpenLoops:           len(loops),
-		TaskRuns:            len(taskRuns),
+		TaskRuns:            len(taskRuns) + len(taskAttempts),
 		LinkedEvidence:      linkedEvidence,
 		VerificationRuns:    len(verificationRuns),
 		RuntimeAttempts:     len(runtimeAttempts),

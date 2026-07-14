@@ -56,3 +56,26 @@ type PursuitActivity struct {
 	SourceURI  string    `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
+
+// PursuitTaskAttempt is a compact, durable projection of a direct task-engine
+// plan or run. It intentionally excludes retrieved source context and model
+// output; those remain in their existing protected stores. Workflow-owned task
+// runs stay on WorkflowItem and are aggregated separately by the pursuit view.
+type PursuitTaskAttempt struct {
+	ID                 uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	PursuitID          uuid.UUID  `gorm:"type:uuid;index;not null" json:"pursuitId"`
+	TaskPlanID         string     `gorm:"type:varchar(120);uniqueIndex;not null" json:"taskPlanId"`
+	OwnerIdentity      string     `gorm:"type:varchar(255);index" json:"ownerIdentity,omitempty"`
+	RequestSummary     string     `gorm:"type:text" json:"requestSummary,omitempty"`
+	ProjectKey         string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`
+	Mode               string     `gorm:"type:varchar(40);index;not null" json:"mode"`
+	Status             string     `gorm:"type:varchar(80);index;not null" json:"status"`
+	RiskLevel          string     `gorm:"type:varchar(80);index" json:"riskLevel,omitempty"`
+	VerificationStatus string     `gorm:"type:varchar(80);index" json:"verificationStatus,omitempty"`
+	AutomationID       string     `gorm:"type:varchar(120);index" json:"automationId,omitempty"`
+	BlockedReason      string     `gorm:"type:text" json:"blockedReason,omitempty"`
+	StartedAt          *time.Time `gorm:"index" json:"startedAt,omitempty"`
+	CompletedAt        *time.Time `gorm:"index" json:"completedAt,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+}
