@@ -25,7 +25,7 @@
 
     <nz-form-item>
       <nz-form-control
-        nzErrorTip="Please input your email!"
+        [nzErrorTip]="emailErrorTip()"
         nzHasFeedback
         [nzValidateStatus]="validateForm.controls['userName']"
       >
@@ -42,7 +42,7 @@
 
     <nz-form-item>
       <nz-form-control
-        nzErrorTip="Please input your password!"
+        [nzErrorTip]="passwordErrorTip()"
         nzHasFeedback
         [nzValidateStatus]="validateForm.controls['password']"
       >
@@ -67,7 +67,11 @@
     </nz-form-item>
 
     <nz-form-item *ngIf="registrationMode">
-      <nz-form-control [nzValidateStatus]="validateForm.controls['confirmPassword']">
+      <nz-form-control
+        [nzErrorTip]="confirmationErrorTip()"
+        nzHasFeedback
+        [nzValidateStatus]="validateForm.controls['confirmPassword']"
+      >
         <nz-input-group nzPrefixIcon="lock">
           <input
             type="password"
@@ -79,6 +83,10 @@
         </nz-input-group>
       </nz-form-control>
     </nz-form-item>
+
+    <p class="login-form-hint" *ngIf="registrationMode">
+      Use a password with at least {{ minimumRegistrationPasswordLength }} characters, then enter it again exactly.
+    </p>
 
     <nz-form-control>
       <div class="login-options">

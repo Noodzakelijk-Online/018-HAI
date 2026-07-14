@@ -2,6 +2,7 @@ package users
 
 import (
 	"automation-hub-idp/internal/app/models"
+	"automation-hub-idp/internal/app/repositories/irepository"
 	"automation-hub-idp/internal/app/utils"
 	"errors"
 	"github.com/google/uuid"
@@ -33,6 +34,38 @@ func TestCreateUser_Success(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, user.Password, result.Password)
 	assert.Equal(t, user.Email, result.Email)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestCreateUser_RejectsDuplicateEmail(t *testing.T) {
+	mockRepo := new(MockUserRepository)
+	mockLogger := new(MockLogger)
+	user := models.User{Email: "existing@example.com", Password: "hashed"}
+	existingUser := user
+	mockRepo.On("FindByEmail", user.Email).Return(&existingUser, nil)
+	mockLogger.On("Error", "User already exists with email: %s", mock.Anything).Return()
+
+	service := NewUserService(mockRepo, mockLogger, nil)
+	result, err := service.CreateUser(user)
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrUserAlreadyExists)
+	mockRepo.AssertNotCalled(t, "Create", mock.Anything)
+	mockRepo.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
+}
+
+func TestCreateUser_MapsDuplicateRepositoryError(t *testing.T) {
+	mockRepo := new(MockUserRepository)
+	user := models.User{Email: "existing@example.com", Password: "hashed"}
+	mockRepo.On("FindByEmail", user.Email).Return(nil, errors.New("user not found"))
+	mockRepo.On("Create", mock.AnythingOfType("*models.User")).Return((*models.User)(nil), irepository.ErrDuplicateUser)
+
+	service := NewUserService(mockRepo, nil, nil)
+	result, err := service.CreateUser(user)
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrUserAlreadyExists)
 	mockRepo.AssertExpectations(t)
 }
 

@@ -32,7 +32,7 @@ describe('LoginComponent registration', () => {
     expect(notification.success).toHaveBeenCalledWith('Account created', 'Your local operator account is ready. Sign in to continue.');
   });
 
-  it('rejects a mismatched confirmation before calling the IDP', () => {
+  it('flags the confirmation field when it does not match before calling the IDP', () => {
     const { component, auth, notification } = createComponent();
     component.toggleRegistration();
     component.validateForm.patchValue({
@@ -44,6 +44,39 @@ describe('LoginComponent registration', () => {
     component.submitForm();
 
     expect(auth.register).not.toHaveBeenCalled();
-    expect(notification.error).toHaveBeenCalledWith('Check your sign-up details', jasmine.any(String));
+    expect(component.validateForm.controls['confirmPassword'].hasError('mismatch')).toBeTrue();
+    expect(notification.error).toHaveBeenCalledWith('Check your sign-up details', 'The confirmation password does not match.');
+  });
+
+  it('explains the password length requirement before calling the IDP', () => {
+    const { component, auth, notification } = createComponent();
+    component.toggleRegistration();
+    component.validateForm.patchValue({
+      userName: 'operator@example.com',
+      password: 'short-pass',
+      confirmPassword: 'short-pass',
+    });
+
+    component.submitForm();
+
+    expect(auth.register).not.toHaveBeenCalled();
+    expect(component.validateForm.controls['password'].hasError('minLength')).toBeTrue();
+    expect(notification.error).toHaveBeenCalledWith('Check your sign-up details', 'Your password must contain at least 12 characters.');
+  });
+
+  it('marks an email as already registered when the IDP returns conflict', () => {
+    const { component, auth, notification } = createComponent();
+    auth.register.and.returnValue({ subscribe: (observer: any) => observer.error({ status: 409 }) });
+    component.toggleRegistration();
+    component.validateForm.patchValue({
+      userName: 'operator@example.com',
+      password: 'local-passphrase-2026',
+      confirmPassword: 'local-passphrase-2026',
+    });
+
+    component.submitForm();
+
+    expect(component.validateForm.controls['userName'].hasError('accountExists')).toBeTrue();
+    expect(notification.error).toHaveBeenCalledWith('Account already exists', 'This email is already registered. Log in instead or use password recovery.');
   });
 });

@@ -120,6 +120,13 @@
   margin-bottom: 16px;
 }
 
+.login-form-hint {
+  margin: -4px 0 16px;
+  color: var(--hai-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .login-options {
   display: flex;
   gap: 12px;

@@ -13,8 +13,15 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
 	"math"
+	"net/mail"
 	"strings"
 	"time"
+)
+
+var (
+	ErrRegistrationEmailInvalid = errors.New("enter a valid email address")
+	ErrRegistrationPasswordWeak = errors.New("password must contain at least 12 characters")
+	ErrRegistrationEmailInUse   = errors.New("an account with this email already exists")
 )
 
 type service struct {
@@ -60,6 +67,15 @@ func GetDefaultAuthService() (IService, error) {
 }
 
 func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
+	email := strings.TrimSpace(strings.ToLower(userDTO.Email))
+	parsedEmail, err := mail.ParseAddress(email)
+	if err != nil || parsedEmail.Address != email {
+		return nil, ErrRegistrationEmailInvalid
+	}
+	if len(userDTO.Password) < 12 {
+		return nil, ErrRegistrationPasswordWeak
+	}
+
 	hashedPassword, err := a.hasher.Hash(userDTO.Password)
 	if err != nil {
 		a.logger.Error("Error generating hashed password for user with email: %s, %v", userDTO.Email, err)
@@ -67,7 +83,7 @@ func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
 	}
 
 	user := models.User{
-		Email:    userDTO.Email,
+		Email:    email,
 		Password: hashedPassword,
 		Role:     "operator",
 	}
@@ -75,6 +91,9 @@ func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
 	userCreated, err := a.userService.CreateUser(user)
 	if err != nil {
 		a.logger.Error("Error creating user: %v", err)
+		if errors.Is(err, users.ErrUserAlreadyExists) {
+			return nil, ErrRegistrationEmailInUse
+		}
 		return nil, errors.New("failed to create user")
 	}
 
