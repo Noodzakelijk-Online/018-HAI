@@ -5,7 +5,11 @@ import { PursuitsComponent } from './pursuits.component';
 
 describe('PursuitsComponent action lanes', () => {
   let component: PursuitsComponent;
-  let notification: jasmine.SpyObj<{ info: (title: string, content: string) => void }>;
+  let notification: jasmine.SpyObj<{
+    info: (title: string, content: string) => void;
+    success: (title: string, content: string) => void;
+    error: (title: string, content: string) => void;
+  }>;
 
   beforeEach(() => {
     notification = jasmine.createSpyObj('NzNotificationService', ['info', 'success', 'error']);

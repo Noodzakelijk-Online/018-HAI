@@ -666,9 +666,9 @@ func TestAutoCreatedCandidateRequiresRobertDecisionAndCanBeAccepted(t *testing.T
 		t.Fatalf("candidate review decision missing: %#v", detail.DecisionQueue)
 	}
 
-	accepted, err := service.Plan(result.PursuitID, PlanRequest{Actor: "Robert"})
+	accepted, err := service.AcceptCandidate(result.PursuitID, PlanRequest{Actor: "Robert"})
 	if err != nil {
-		t.Fatalf("Plan accepted candidate returned error: %v", err)
+		t.Fatalf("AcceptCandidate returned error: %v", err)
 	}
 	if accepted.Pursuit.SourceOfCreation != "openclaw_pursuit_intake" {
 		t.Fatalf("source marker was not cleared after acceptance: %q", accepted.Pursuit.SourceOfCreation)
@@ -790,8 +790,14 @@ func TestCandidateIntakeRequiresExplicitAcceptanceBeforeCreatingWorkflow(t *test
 		t.Fatalf("candidate intake created %d workflow(s), want none", workflowService.calls)
 	}
 
-	if _, err := service.PlanForOwner("alice", candidate.ID, PlanRequest{Actor: "alice"}); err != nil {
-		t.Fatalf("PlanForOwner accepts candidate: %v", err)
+	if _, err := service.PlanForOwner("alice", candidate.ID, PlanRequest{Actor: "alice"}); err == nil || !strings.Contains(err.Error(), "explicit approval action") {
+		t.Fatalf("PlanForOwner error = %v, want explicit approval action guard", err)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("generic candidate plan created %d workflow(s), want none", workflowService.calls)
+	}
+	if _, err := service.AcceptCandidateForOwner("alice", candidate.ID, PlanRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("AcceptCandidateForOwner returned error: %v", err)
 	}
 	if workflowService.calls != 1 {
 		t.Fatalf("accepted candidate created %d workflow(s), want one", workflowService.calls)
@@ -1261,6 +1267,9 @@ func TestRouteIntakeReusesPursuitLinkedByAssistantCommandIdentity(t *testing.T) 
 	}
 	if !second.Matched || second.CreatedCandidate || second.PursuitID != first.PursuitID {
 		t.Fatalf("second route result = %#v, want exact existing pursuit match", second)
+	}
+	if second.Mode != "matched_candidate" || workflowService.calls != 1 {
+		t.Fatalf("repeated candidate intake mode/workflows = %s/%d, want matched_candidate/1", second.Mode, workflowService.calls)
 	}
 	links, err := repo.FindLinks(first.PursuitID)
 	if err != nil {

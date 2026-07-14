@@ -623,6 +623,8 @@ type Service interface {
 	IntakeForOwner(ownerIdentity string, id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
 	Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
 	PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
+	AcceptCandidate(id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
+	AcceptCandidateForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
 	ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
 	ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
 	RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error)
@@ -2012,6 +2014,27 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 	minimumScore := defaultAutoLinkMinimumScore
 	if len(matches) > 0 && matches[0].Score >= minimumScore && !pursuitClosed(matches[0].Pursuit) {
+		if isPursuitCandidate(matches[0].Pursuit) {
+			detail, err := s.DetailForOwner(request.OwnerIdentity, matches[0].Pursuit.ID)
+			if err != nil {
+				return nil, err
+			}
+			// A repeated source event may prove the candidate is relevant, but it
+			// must not create new operational work until Robert explicitly accepts
+			// the objective. Preserve the original candidate workflow and keep the
+			// decision visible instead of silently promoting the candidate.
+			_, _ = s.recordActivity(matches[0].Pursuit.ID, "pursuit.candidate_intake_reseen", fmt.Sprintf("Global intake matched an unaccepted pursuit candidate with %.2f confidence; no new work was created.", matches[0].Score), actor, firstNonEmpty(request.SourceType, "intake"), request.SourceID, request.SourceURI)
+			return &RoutedIntakeResult{
+				Mode:      "matched_candidate",
+				Matched:   true,
+				PursuitID: matches[0].Pursuit.ID,
+				Score:     matches[0].Score,
+				Reasons:   matches[0].Reasons,
+				Message:   "intake matched an existing pursuit candidate awaiting explicit acceptance; no new operational work was created",
+				Matches:   matches,
+				Detail:    detail,
+			}, nil
+		}
 		if _, err := s.IntakeForOwner(request.OwnerIdentity, matches[0].Pursuit.ID, request); err != nil {
 			return nil, err
 		}
@@ -2625,6 +2648,22 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 }
 
 func (s *service) PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.planForOwner(ownerIdentity, id, request, false)
+}
+
+// AcceptCandidate is intentionally separate from generic planning. Callers
+// must use an approval-gated boundary before invoking it; keeping this
+// distinction in the service prevents future internal callers from silently
+// turning a reviewable candidate into active operational work.
+func (s *service) AcceptCandidate(id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.AcceptCandidateForOwner("", id, request)
+}
+
+func (s *service) AcceptCandidateForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.planForOwner(ownerIdentity, id, request, true)
+}
+
+func (s *service) planForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest, acceptingCandidate bool) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -2634,6 +2673,12 @@ func (s *service) PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanR
 	}
 	if err := ensurePursuitOpen(*pursuit, "plan"); err != nil {
 		return nil, err
+	}
+	if isPursuitCandidate(*pursuit) && !acceptingCandidate {
+		return nil, fmt.Errorf("pursuit candidate acceptance requires the explicit approval action")
+	}
+	if acceptingCandidate && !isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("only an unaccepted pursuit candidate can use the candidate acceptance action")
 	}
 	existing, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {

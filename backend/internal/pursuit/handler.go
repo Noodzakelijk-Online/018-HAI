@@ -347,7 +347,7 @@ func (h *Handler) AcceptCandidate(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	if _, err := h.service.PlanForOwner(pursuitOwner(c), id, request); err != nil {
+	if _, err := h.service.AcceptCandidateForOwner(pursuitOwner(c), id, request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
