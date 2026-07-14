@@ -12,6 +12,8 @@ import { Router } from "@angular/router";
 })
 export class LoginComponent implements OnInit {
   hidePassword: boolean = true;
+  registrationMode = false;
+  registering = false;
   validateForm: FormGroup = this.fb.group({});
 
   constructor(
@@ -34,11 +36,16 @@ export class LoginComponent implements OnInit {
         },
       ],
       password: ["", { updateOn: "submit", validators: [Validators.required] }],
+      confirmPassword: [""],
       remember: [true],
     });
   }
 
   submitForm(): void {
+    if (this.registrationMode) {
+      this.registerAccount();
+      return;
+    }
     if (!this.validateForm.valid) {
       for (const i in this.validateForm.controls) {
         this.validateForm.controls[i].markAsDirty();
@@ -69,6 +76,43 @@ export class LoginComponent implements OnInit {
           }
         },
       });
+  }
+
+  toggleRegistration(): void {
+    this.registrationMode = !this.registrationMode;
+    this.registering = false;
+    this.validateForm.controls['password'].reset();
+    this.validateForm.controls['confirmPassword'].reset();
+    this.validateForm.controls['password'].markAsPristine();
+    this.validateForm.controls['confirmPassword'].markAsPristine();
+  }
+
+  private registerAccount(): void {
+    const email = String(this.validateForm.value.userName || '').trim();
+    const password = String(this.validateForm.value.password || '');
+    const confirmation = String(this.validateForm.value.confirmPassword || '');
+    const emailControl = this.validateForm.controls['userName'];
+    emailControl.updateValueAndValidity();
+    if (!email || emailControl.invalid || password.length < 12 || password !== confirmation) {
+      this.validateForm.controls['userName'].markAsDirty();
+      this.validateForm.controls['password'].markAsDirty();
+      this.validateForm.controls['confirmPassword'].markAsDirty();
+      this.notification.error('Check your sign-up details', 'Use a valid email, a password with at least 12 characters, and a matching confirmation.');
+      return;
+    }
+    this.registering = true;
+    this.authService.register(email, password).subscribe({
+      next: () => {
+        this.registering = false;
+        this.registrationMode = false;
+        this.validateForm.patchValue({ userName: email, password: '', confirmPassword: '' });
+        this.notification.success('Account created', 'Your local operator account is ready. Sign in to continue.');
+      },
+      error: (error) => {
+        this.registering = false;
+        this.notification.error('Sign-up failed', error?.error?.message || 'HAI could not create this account. Use a different email or try again later.');
+      },
+    });
   }
 
   showPasswordHelp(): void {

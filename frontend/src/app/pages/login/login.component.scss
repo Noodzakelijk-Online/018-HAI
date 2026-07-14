@@ -149,6 +149,26 @@
   outline: 0;
 }
 
+.login-register-link {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 0;
+  color: var(--hai-blue);
+  font: inherit;
+  font-weight: 650;
+  text-align: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.login-register-link:hover,
+.login-register-link:focus-visible {
+  text-decoration: underline;
+  outline: 0;
+}
+
 :host ::ng-deep .ant-input,
 :host ::ng-deep .ant-input-affix-wrapper {
   color: var(--hai-text);

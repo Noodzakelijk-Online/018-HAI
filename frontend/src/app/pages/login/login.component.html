@@ -19,8 +19,8 @@
     class="login-box"
   >
     <div class="login-box__header">
-      <h2>Log in</h2>
-      <span>Use the local admin account from your environment file.</span>
+      <h2>{{ registrationMode ? 'Create local account' : 'Log in' }}</h2>
+      <span>{{ registrationMode ? 'New accounts are operator accounts. Owner access stays with the first-run admin.' : 'Use the local admin account from your environment file.' }}</span>
     </div>
 
     <nz-form-item>
@@ -66,9 +66,23 @@
       </nz-form-control>
     </nz-form-item>
 
+    <nz-form-item *ngIf="registrationMode">
+      <nz-form-control [nzValidateStatus]="validateForm.controls['confirmPassword']">
+        <nz-input-group nzPrefixIcon="lock">
+          <input
+            type="password"
+            nz-input
+            formControlName="confirmPassword"
+            placeholder="Confirm password"
+            [type]="hidePassword ? 'password' : 'text'"
+          />
+        </nz-input-group>
+      </nz-form-control>
+    </nz-form-item>
+
     <nz-form-control>
       <div class="login-options">
-      <label nz-checkbox formControlName="remember">
+      <label nz-checkbox formControlName="remember" *ngIf="!registrationMode">
         <span>Remember me</span>
       </label>
       <button
@@ -76,8 +90,12 @@
         class="login-form-forgot"
         data-testid="login-password-help"
         (click)="showPasswordHelp()"
+        *ngIf="!registrationMode"
       >
         Forgot password?
+      </button>
+      <button type="button" class="login-form-forgot" (click)="toggleRegistration()" *ngIf="registrationMode">
+        Back to log in
       </button>
       </div>
       <button
@@ -86,8 +104,12 @@
         class="login-form-button"
         [nzType]="'primary'"
         data-testid="login-submit"
+        [nzLoading]="registering"
       >
-        Log in
+        {{ registrationMode ? 'Create account' : 'Log in' }}
+      </button>
+      <button type="button" class="login-register-link" (click)="toggleRegistration()" *ngIf="!registrationMode">
+        Create a local operator account
       </button>
     </nz-form-control>
   </form>
