@@ -9,6 +9,7 @@ import {
 export interface ILLMPolicyService {
   getPolicy(): Observable<ILLMPolicy>;
   probeProviders(): Observable<ILLMProviderProbe[]>;
+  getProbeHistory(limit?: number): Observable<ILLMProviderProbe[]>;
   routeTask(request: ILLMRouteRequest): Observable<ILLMRouteDecision>;
   getLogs(): Observable<ILLMRouteDecision[]>;
 }

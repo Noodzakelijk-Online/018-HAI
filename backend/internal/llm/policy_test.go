@@ -1,11 +1,13 @@
 package llm
 
 import (
+	"automation-hub-backend/internal/models"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRouteSkipsWeakFreeModelForCodingTask(t *testing.T) {
@@ -320,6 +322,61 @@ func TestProbeProvidersDoesNotFollowRedirects(t *testing.T) {
 	}
 	if results[0].Status != "failed" || !results[0].RequiresReview {
 		t.Fatalf("probe status/review = %q/%v, want failed/review", results[0].Status, results[0].RequiresReview)
+	}
+}
+
+func TestProbeAndRecordProvidersPersistsRedactedLastSuccess(t *testing.T) {
+	healthy := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if healthy {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"models": []map[string]string{{"name": "phi3:mini"}},
+			})
+			return
+		}
+		http.Error(w, "token=super-secret-provider-token", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	repository := &fakeProbeHistoryRepository{}
+	service := &Service{
+		policy:       Policy{Providers: []Provider{{ID: "ollama", Name: "Ollama", Enabled: true, Local: true, EndpointURL: server.URL}}},
+		probeHistory: repository,
+	}
+
+	first, err := service.ProbeAndRecordProviders()
+	if err != nil {
+		t.Fatalf("ProbeAndRecordProviders first run: %v", err)
+	}
+	if len(first) != 1 || !first[0].Live || first[0].LastSuccessfulAt == nil {
+		t.Fatalf("first probe = %#v, want live persisted result with last success", first)
+	}
+	firstSuccess := *first[0].LastSuccessfulAt
+
+	healthy = false
+	second, err := service.ProbeAndRecordProviders()
+	if err != nil {
+		t.Fatalf("ProbeAndRecordProviders failed run: %v", err)
+	}
+	if len(second) != 1 || second[0].Live || second[0].LastSuccessfulAt == nil {
+		t.Fatalf("second probe = %#v, want failed result retaining last success", second)
+	}
+	if !second[0].LastSuccessfulAt.Equal(firstSuccess) {
+		t.Fatalf("last success = %s, want %s", second[0].LastSuccessfulAt, firstSuccess)
+	}
+	if strings.Contains(second[0].Reason, "super-secret-provider-token") {
+		t.Fatalf("probe result leaked secret: %s", second[0].Reason)
+	}
+	if strings.Contains(repository.probes[1].Reason, "super-secret-provider-token") {
+		t.Fatalf("persisted probe leaked secret: %#v", repository.probes[1])
+	}
+
+	history, err := service.ProviderProbeHistory(10)
+	if err != nil {
+		t.Fatalf("ProviderProbeHistory: %v", err)
+	}
+	if len(history) != 2 || history[0].Status != "failed" || history[1].Status != "live" {
+		t.Fatalf("probe history = %#v, want newest failed then live", history)
 	}
 }
 
@@ -753,4 +810,41 @@ func findModel(models []Model, id string) (Model, bool) {
 		}
 	}
 	return Model{}, false
+}
+
+type fakeProbeHistoryRepository struct {
+	probes []models.LLMProviderProbe
+}
+
+func (r *fakeProbeHistoryRepository) RecordProviderProbe(probe *models.LLMProviderProbe) (*models.LLMProviderProbe, error) {
+	copy := *probe
+	if copy.Live {
+		lastSuccess := copy.CheckedAt
+		copy.LastSuccessfulAt = &lastSuccess
+	} else {
+		for index := len(r.probes) - 1; index >= 0; index-- {
+			previous := r.probes[index]
+			if previous.ProviderID == copy.ProviderID && previous.LastSuccessfulAt != nil {
+				lastSuccess := *previous.LastSuccessfulAt
+				copy.LastSuccessfulAt = &lastSuccess
+				break
+			}
+		}
+	}
+	if copy.CheckedAt.IsZero() {
+		copy.CheckedAt = time.Now().UTC()
+	}
+	r.probes = append(r.probes, copy)
+	return &copy, nil
+}
+
+func (r *fakeProbeHistoryRepository) FindRecentProviderProbes(limit int) ([]models.LLMProviderProbe, error) {
+	if limit <= 0 || limit > len(r.probes) {
+		limit = len(r.probes)
+	}
+	result := make([]models.LLMProviderProbe, 0, limit)
+	for index := len(r.probes) - 1; index >= 0 && len(result) < limit; index-- {
+		result = append(result, r.probes[index])
+	}
+	return result, nil
 }

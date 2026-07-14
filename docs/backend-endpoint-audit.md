@@ -18,7 +18,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | --- | --- |
 | `/automation` | GET `/`, GET `/:id`, POST `/`, PATCH `/`, DELETE `/:id`, POST `/:id/launch`, health/diagnostics, `/images/:imageName` |
 | `/agent-runtimes` | read-only registry/health/skills; owner-gated runtime stop and OpenClaw ecosystem set/refresh/upload |
-| `/llm` | GET `/policy`, `/probes`, `/logs`; POST `/route`, `/generate` |
+| `/llm` | GET `/policy`, `/probes`, `/probes/history`, `/logs`; POST `/route`, `/generate` |
 | `/memory` | GET `/`, **GET `/query`**, GET `/:id`, `/export`; POST `/`, `/retrieve`, `/:id/archive|restore`; PATCH/DELETE `/:id` |
 | `/memory-engine` | import, dashboard, search, conversations, insights |
 | `/sources` | connectors, list/create, search, owner-scoped sync-due, sync-jobs, extractions, audit-logs, per-source sync/pause/resume/revoke |

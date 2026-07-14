@@ -526,14 +526,15 @@
               <p>Runtime checks against configured model endpoints.</p>
             </button>
           </div>
-          <nz-empty *ngIf="!probes.length" nzNotFoundContent="No provider probes run yet."></nz-empty>
+          <nz-empty *ngIf="!probes.length" nzNotFoundContent="No persisted provider checks yet."></nz-empty>
           <div class="event-list" *ngIf="probes.length">
             <article *ngFor="let probe of probes; trackBy: trackByProbe">
               <i nz-icon nzType="api" nzTheme="outline"></i>
               <div>
                 <strong>{{ probe.providerName }}</strong>
-                <span>{{ probe.status }} / {{ probe.modelsSeen || 0 }} models / {{ probe.durationMs }} ms</span>
+                <span>{{ probe.status }} / {{ probe.modelsSeen || 0 }} models / {{ probe.durationMs }} ms / checked {{ probe.checkedAt | date: 'short' }}</span>
                 <small>{{ probe.reason }}</small>
+                <small *ngIf="probe.lastSuccessfulAt">Last healthy check: {{ probe.lastSuccessfulAt | date: 'short' }}</small>
               </div>
               <nz-tag [nzColor]="probeColor(probe)">{{ probe.live ? 'live' : probe.status }}</nz-tag>
             </article>

@@ -54,6 +54,7 @@ export interface ILLMProviderProbe {
   live: boolean;
   requiresReview: boolean;
   checkedAt: string;
+  lastSuccessfulAt?: string;
 }
 
 export interface ILLMModel {

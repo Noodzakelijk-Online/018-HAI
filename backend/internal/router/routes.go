@@ -57,7 +57,11 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
-		llmService, err := llm.NewServiceFromEnv()
+		probeHistory, err := llm.DefaultProbeHistoryRepository()
+		if err != nil {
+			return err
+		}
+		llmService, err := llm.NewServiceFromEnvWithProbeHistory(probeHistory)
 		if err != nil {
 			return err
 		}
@@ -244,6 +248,7 @@ func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {
 	{
 		llmRoutes.GET("/policy", llmHandler.Policy)
 		llmRoutes.GET("/probes", llmHandler.ProviderProbes)
+		llmRoutes.GET("/probes/history", llmHandler.ProviderProbeHistory)
 		llmRoutes.POST("/route", llmHandler.Route)
 		llmRoutes.POST("/generate", llmHandler.Generate)
 		llmRoutes.GET("/logs", llmHandler.Logs)

@@ -96,6 +96,7 @@ export class LLMPolicyComponent implements OnInit {
       },
     });
     this.loadLogs();
+    this.loadProbeHistory();
   }
 
   toggleTheme(): void {
@@ -124,6 +125,30 @@ export class LLMPolicyComponent implements OnInit {
         this.notification.error('Error', 'Failed to probe configured LLM providers.');
       },
     });
+  }
+
+  private loadProbeHistory(): void {
+    this.llmPolicyService.getProbeHistory().subscribe({
+      next: (probes) => {
+        this.probes = this.latestProbeByProvider(probes || []);
+        this.rebuildActionCards();
+      },
+      error: () => {
+        // A missing history table must not hide routing policy or live probes.
+        this.rebuildActionCards();
+      },
+    });
+  }
+
+  private latestProbeByProvider(probes: ILLMProviderProbe[]): ILLMProviderProbe[] {
+    const latest = new Map<string, ILLMProviderProbe>();
+    probes.forEach((probe) => {
+      const current = latest.get(probe.providerId);
+      if (!current || new Date(probe.checkedAt).getTime() > new Date(current.checkedAt).getTime()) {
+        latest.set(probe.providerId, probe);
+      }
+    });
+    return Array.from(latest.values()).sort((left, right) => left.providerName.localeCompare(right.providerName));
   }
 
   routeTask(): void {
