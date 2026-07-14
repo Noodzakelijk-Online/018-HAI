@@ -79,6 +79,7 @@ type WorkflowService interface {
 
 type PursuitService interface {
 	Dashboard() (*pursuitpkg.Dashboard, error)
+	List(includeArchived bool) ([]models.Pursuit, error)
 	Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error)
 }
 
@@ -193,8 +194,13 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 		return fail(err)
 	}
 	var pursuitDashboard *pursuitpkg.Dashboard
+	var pursuits []models.Pursuit
 	if s.pursuits != nil {
 		pursuitDashboard, err = s.pursuits.Dashboard()
+		if err != nil {
+			return fail(err)
+		}
+		pursuits, err = s.pursuits.List(true)
 		if err != nil {
 			return fail(err)
 		}
@@ -262,6 +268,12 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 		item.Status = StatusCompleted
 		item.ResolutionNote = appendNote(item.ResolutionNote, "Linked workflow reached "+state+".")
 		if _, saveErr := s.repo.SaveOpportunity(item); saveErr != nil {
+			return fail(saveErr)
+		}
+		scan.Updated++
+	}
+	for _, item := range closedPursuitOpportunityUpdates(storedOpportunities, pursuits, now) {
+		if _, saveErr := s.repo.SaveOpportunity(&item); saveErr != nil {
 			return fail(saveErr)
 		}
 		scan.Updated++
@@ -686,6 +698,40 @@ func pursuitSignalCount(dashboard *pursuitpkg.Dashboard) int {
 		return 0
 	}
 	return len(dashboard.NeedsRobert) + len(dashboard.ReviewDue) + len(dashboard.PlanningNeeded) + len(dashboard.Blocked) + len(dashboard.Stale) + len(dashboard.VAReady) + len(dashboard.SystemReady) + len(dashboard.CompletionCandidates) + len(dashboard.HighRisk)
+}
+
+// closedPursuitOpportunityUpdates prevents the ambient queue from resurfacing
+// a proposal after its parent pursuit has been completed or archived. It only
+// changes open/accepted pursuit-derived opportunities and preserves dismissed
+// records as operator feedback.
+func closedPursuitOpportunityUpdates(opportunities []models.AmbientOpportunity, pursuits []models.Pursuit, now time.Time) []models.AmbientOpportunity {
+	byID := make(map[string]models.Pursuit, len(pursuits))
+	for _, item := range pursuits {
+		if item.ID != uuid.Nil {
+			byID[item.ID.String()] = item
+		}
+	}
+
+	updates := []models.AmbientOpportunity{}
+	for _, opportunity := range opportunities {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(opportunity.SourceType)), "pursuit") ||
+			opportunity.Status == StatusCompleted || opportunity.Status == StatusDismissed {
+			continue
+		}
+		pursuit, found := byID[strings.TrimSpace(opportunity.SourceID)]
+		if !found || (!pursuit.Archived && !strings.EqualFold(pursuit.Status, pursuitpkg.StatusCompleted)) {
+			continue
+		}
+		opportunity.Status = StatusCompleted
+		opportunity.LastSeenAt = now
+		state := firstNonEmpty(strings.TrimSpace(pursuit.Status), "archived")
+		if pursuit.Archived {
+			state = "archived"
+		}
+		opportunity.ResolutionNote = appendNote(opportunity.ResolutionNote, "Linked pursuit closed ("+state+").")
+		updates = append(updates, opportunity)
+	}
+	return updates
 }
 
 func opportunityScore(item models.AmbientOpportunity, need models.AmbientNeed) int {

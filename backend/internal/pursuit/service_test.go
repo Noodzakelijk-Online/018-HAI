@@ -1075,6 +1075,54 @@ func TestDashboardStatusCountsUseComputedBlockers(t *testing.T) {
 	}
 }
 
+func TestDashboardExcludesClosedPursuitsFromOperationalQueues(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	closed, err := service.Create(CreateRequest{Title: "Completed insurance evidence pursuit", ProjectKey: "asr"})
+	if err != nil {
+		t.Fatalf("Create closed pursuit returned error: %v", err)
+	}
+	active, err := service.Create(CreateRequest{Title: "Active automation pursuit", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create active pursuit returned error: %v", err)
+	}
+	stored, _ := repo.FindByID(closed.ID)
+	stored.Status = StatusCompleted
+	stored.CompletionState = CompletionVerified
+	if _, err := repo.Update(stored); err != nil {
+		t.Fatalf("mark pursuit complete: %v", err)
+	}
+
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard returned error: %v", err)
+	}
+	if dashboard.Counts["completed"] != 1 || dashboard.Counts["active"] != 1 {
+		t.Fatalf("dashboard counts = %#v, want completed=1 active=1", dashboard.Counts)
+	}
+	for _, queue := range [][]PursuitListItem{
+		dashboard.NeedsRobert,
+		dashboard.VAReady,
+		dashboard.SystemReady,
+		dashboard.Blocked,
+		dashboard.Stale,
+		dashboard.ReviewDue,
+		dashboard.PlanningNeeded,
+		dashboard.HighRisk,
+		dashboard.CompletionCandidates,
+		dashboard.RecentlyChanged,
+	} {
+		for _, item := range queue {
+			if item.Pursuit.ID == closed.ID {
+				t.Fatalf("closed pursuit leaked into operational queue: %#v", item)
+			}
+		}
+	}
+	if active.ID == uuid.Nil {
+		t.Fatalf("active pursuit was not created")
+	}
+}
+
 func TestDetailSeparatesRobertVAAndSystemActionQueues(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

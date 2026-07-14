@@ -663,10 +663,14 @@ func (s *service) Dashboard() (*Dashboard, error) {
 	}
 	dashboard := &Dashboard{
 		Counts: map[string]int64{
-			"active": 0, "waiting": 0, "blocked": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,
+			"active": 0, "waiting": 0, "blocked": 0, "completed": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,
 		},
 	}
 	for _, pursuit := range pursuits {
+		if pursuitClosed(pursuit) {
+			dashboard.Counts["completed"]++
+			continue
+		}
 		item, detail, _ := s.listItemWithDetail(pursuit)
 		switch dashboardStatusBucket(pursuit, item) {
 		case StatusWaiting:

@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/models"
 	pursuitpkg "automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/workflow"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,6 +264,10 @@ func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {
 	return &pursuitpkg.Dashboard{}, nil
 }
 
+func (s *ambientPursuitSpy) List(bool) ([]models.Pursuit, error) {
+	return nil, nil
+}
+
 func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error) {
 	s.linkedPursuitIDs = append(s.linkedPursuitIDs, id)
 	s.links = append(s.links, request)
@@ -276,4 +281,33 @@ func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (
 		SourceLabel:  request.SourceLabel,
 		Confidence:   request.Confidence,
 	}, nil
+}
+
+func TestClosedPursuitOpportunityUpdatesCompleteOnlyOpenPursuitWork(t *testing.T) {
+	completedID := uuid.New()
+	archivedID := uuid.New()
+	activeID := uuid.New()
+	updatedAt := time.Now().UTC()
+	updates := closedPursuitOpportunityUpdates(
+		[]models.AmbientOpportunity{
+			{ID: uuid.New(), SourceType: "pursuit_decision", SourceID: completedID.String(), Status: StatusProposed},
+			{ID: uuid.New(), SourceType: "pursuit_blocker", SourceID: archivedID.String(), Status: StatusAccepted},
+			{ID: uuid.New(), SourceType: "pursuit_high_risk", SourceID: activeID.String(), Status: StatusProposed},
+			{ID: uuid.New(), SourceType: "pursuit_review_due", SourceID: completedID.String(), Status: StatusDismissed},
+		},
+		[]models.Pursuit{
+			{ID: completedID, Status: pursuitpkg.StatusCompleted},
+			{ID: archivedID, Status: pursuitpkg.StatusArchived, Archived: true},
+			{ID: activeID, Status: pursuitpkg.StatusActive},
+		},
+		updatedAt,
+	)
+	if len(updates) != 2 {
+		t.Fatalf("updates = %#v, want completed and archived pursuit opportunities only", updates)
+	}
+	for _, item := range updates {
+		if item.Status != StatusCompleted || item.LastSeenAt != updatedAt || !strings.Contains(item.ResolutionNote, "Linked pursuit closed") {
+			t.Fatalf("closed pursuit update = %#v", item)
+		}
+	}
 }
