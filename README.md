@@ -99,7 +99,7 @@ After authentication, an operator can:
 
 The normal durable path is:
 
-\`\`\`text
+```text
 assistant command, source intake, or ambient opportunity
   -> pursuit match
   -> active pursuit + persisted workflow
@@ -107,7 +107,7 @@ assistant command, source intake, or ambient opportunity
   -> bounded task plan/run
   -> verification and audit evidence
   -> completion, review, retry, or follow-up
-\`\`\`
+```
 
 Ambient opportunities use the same path. An opportunity matched to an active
 pursuit may create or reuse a governed workflow. An unmatched opportunity, or
@@ -120,7 +120,7 @@ workflow creation is deferred and the source or conversation import remains
 visible for repair. This fail-closed compatibility state creates no workflow;
 it is not supported production wiring.
 
-Direct \`/task/*\` planning and run sessions are useful for bounded operator
+Direct `/task/*` planning and run sessions are useful for bounded operator
 work, but their full plan/review history is process-local. When explicitly
 scoped to a valid pursuit, HAI also persists a compact task-attempt projection;
 the workflow remains the restart-safe execution ledger.
@@ -209,7 +209,7 @@ records the current integration truthfulness boundary.
 
 ## Architecture
 
-\`\`\`text
+```text
 Angular dashboard
         |
 nginx gateway + IDP session boundary
@@ -222,12 +222,12 @@ Go API and operating engines
   |-- ambient planning and controlled runtime registry
         |
 Postgres + Redis + Kafka
-\`\`\`
+```
 
 The local deployment targets Windows 11 with Docker Desktop. The backend uses
 Go 1.21, Gin, Gorm, Postgres, and Sarama/Kafka; the frontend uses Angular 16
-and ng-zorro-antd. The current data model relies on Gorm \`AutoMigrate\` and
-\`init.sql\`; a production migration system remains future work.
+and ng-zorro-antd. The current data model relies on Gorm `AutoMigrate` and
+`init.sql`; a production migration system remains future work.
 
 ## Quick Start
 
@@ -240,49 +240,49 @@ and ng-zorro-antd. The current data model relies on Gorm \`AutoMigrate\` and
 
 ### Start the local stack
 
-\`\`\`powershell
+```powershell
 Copy-Item .env.example .env.local
 # Edit .env.local: set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY.
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
-\`\`\`
+```
 
 Open [http://localhost](http://localhost).
 
-The \`.env.example\` development defaults are:
+The `.env.example` development defaults are:
 
-\`\`\`text
+```text
 Email: noodzakelijkonline@gmail.com
 Password: ChangeMe123!
-\`\`\`
+```
 
-Change \`FIRST_RUN_ADMIN_PASSWORD\` and \`BACKEND_API_SHARED_KEY\` before first use.
+Change `FIRST_RUN_ADMIN_PASSWORD` and `BACKEND_API_SHARED_KEY` before first use.
 If the Postgres data volume already exists, changing first-run values does not
-rewrite the existing account. Do not commit \`.env.local\`, Docker state,
+rewrite the existing account. Do not commit `.env.local`, Docker state,
 database directories, uploaded material, frontend build output, or secrets.
 
 ### Verify the local gateway
 
-\`\`\`powershell
+```powershell
 docker compose --env-file .env.local -f docker-compose.local.yml ps
 docker compose --env-file .env.local -f docker-compose.local.yml logs backend
 curl.exe -i http://localhost/
 curl.exe -i http://localhost/healthz
 curl.exe -i http://localhost/readyz
 curl.exe -i http://localhost/api/v1/llm/policy
-\`\`\`
+```
 
 Expected behavior:
 
-- \`/\` serves the Angular shell.
-- \`/healthz\` and \`/readyz\` reach the backend through nginx.
-- Protected engine routes such as \`/api/v1/llm/policy\` return \`401\` without a
+- `/` serves the Angular shell.
+- `/healthz` and `/readyz` reach the backend through nginx.
+- Protected engine routes such as `/api/v1/llm/policy` return `401` without a
   signed session, not anonymous application data.
 
 If port 80 is already in use, change the nginx port mapping in
-\`docker-compose.local.yml\` from \`\"80:80\"\` to, for example, \`\"8088:80\"\`, then
-open \`http://localhost:8088\`.
+`docker-compose.local.yml` from `\"80:80\"` to, for example, `\"8088:80\"`, then
+open `http://localhost:8088`.
 
 For the target-machine acceptance sequence, use
 [fresh-clone dry run](docs/fresh-clone-dryrun.md). For diagnosis, use
@@ -290,51 +290,51 @@ For the target-machine acceptance sequence, use
 
 ### Import local or exported material
 
-1. Place authorized files under \`connected-sources/\`.
+1. Place authorized files under `connected-sources/`.
 2. Open **Connected Sources** in the dashboard.
 3. Create or select an export/local-folder source and keep **Local only** enabled.
-4. Use a path relative to \`connected-sources/\`, for example \`.\`.
+4. Use a path relative to `connected-sources/`, for example `.`.
 
 The backend mounts this root read-only. Paths escaping it are rejected. The
-general importer accepts \`.txt\`, \`.md\`, \`.markdown\`, \`.csv\`, \`.tsv\`, \`.json\`,
-\`.yaml\`, \`.yml\`, and \`.log\`; export connectors also support \`.mbox\`, \`.eml\`,
-and \`.ics\` within the same allowlisted root.
+general importer accepts `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`,
+`.yaml`, `.yml`, and `.log`; export connectors also support `.mbox`, `.eml`,
+and `.ics` within the same allowlisted root.
 
 ## Dashboard Entry Points
 
 | Route | Purpose |
 | --- | --- |
-| \`/control-center\` | Primary operational overview and bounded maintenance actions. |
-| \`/command-dashboard\` | Robert-only decisions, open loops, source-backed context, and memory-derived work. |
-| \`/pursuits\` | Long-running objectives with workflow, source, memory, verification, blocker, approval, and activity links. |
-| \`/workflow-engine\` | Work queue, approvals, quality gates, interruptions, retries, and follow-ups. |
-| \`/connected-sources\` | Source configuration, sync history, extraction inspection, reindexing, pause/resume, and revocation. |
-| \`/memory\` | Compact memory search, correction, archive, retrieval, and export controls. |
-| \`/llm-policy\` | Provider/model configuration, budget/policy visibility, probes, routing, and fallback history. |
-| \`/ambient-brain\` | Proactive opportunities, scan history, need-profile preferences, and decision handoffs. |
-| \`/task-blueprint\` | Explicit bounded task planning, execution, validation, and review. |
+| `/control-center` | Primary operational overview and bounded maintenance actions. |
+| `/command-dashboard` | Robert-only decisions, open loops, source-backed context, and memory-derived work. |
+| `/pursuits` | Long-running objectives with workflow, source, memory, verification, blocker, approval, and activity links. |
+| `/workflow-engine` | Work queue, approvals, quality gates, interruptions, retries, and follow-ups. |
+| `/connected-sources` | Source configuration, sync history, extraction inspection, reindexing, pause/resume, and revocation. |
+| `/memory` | Compact memory search, correction, archive, retrieval, and export controls. |
+| `/llm-policy` | Provider/model configuration, budget/policy visibility, probes, routing, and fallback history. |
+| `/ambient-brain` | Proactive opportunities, scan history, need-profile preferences, and decision handoffs. |
+| `/task-blueprint` | Explicit bounded task planning, execution, validation, and review. |
 
 These screens are authenticated operator surfaces. Technical logs and deep
 diagnostics remain behind their relevant detail or audit views.
 
 ## API Overview
 
-Backend engine APIs are served under \`/api/v1\` through the gateway. Principal
+Backend engine APIs are served under `/api/v1` through the gateway. Principal
 areas are:
 
-- \`/automation\`: registered automations, launch/stop, health checks, and diagnostics.
-- \`/agent-runtimes\`: runtime inventory, health, skill discovery, controlled stop, and OpenClaw ecosystem inspection.
-- \`/llm\`: policy, probes, routing, generation, and redacted decision history.
-- \`/memory\` and \`/memory-engine\`: compact memory, encrypted conversation import, search, and insights.
-- \`/sources\`: source registry, connectors, sync, extraction management, search, and audit records.
-- \`/pursuits\`: high-level objectives, matching, intake, links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
-- \`/workflow\`: intake, state transitions, approvals, due work, follow-ups, quality/review state, and dashboard data.
-- \`/task\`: bounded plans/runs, logs, and review queue.
-- \`/verification\`: grounded answers and verification run history.
-- \`/ambient\`, \`/agent-cycle\`, \`/assistant\`, and \`/os\`: proactive planning, controlled refreshes, command bridge, and operating-system summary.
+- `/automation`: registered automations, launch/stop, health checks, and diagnostics.
+- `/agent-runtimes`: runtime inventory, health, skill discovery, controlled stop, and OpenClaw ecosystem inspection.
+- `/llm`: policy, probes, routing, generation, and redacted decision history.
+- `/memory` and `/memory-engine`: compact memory, encrypted conversation import, search, and insights.
+- `/sources`: source registry, connectors, sync, extraction management, search, and audit records.
+- `/pursuits`: high-level objectives, matching, intake, links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
+- `/workflow`: intake, state transitions, approvals, due work, follow-ups, quality/review state, and dashboard data.
+- `/task`: bounded plans/runs, logs, and review queue.
+- `/verification`: grounded answers and verification run history.
+- `/ambient`, `/agent-cycle`, `/assistant`, and `/os`: proactive planning, controlled refreshes, command bridge, and operating-system summary.
 
 Use [Swagger](docs/swagger.yaml) and the route tests in
-\`backend/internal/router/\` for exact request/response contracts.
+`backend/internal/router/` for exact request/response contracts.
 
 ## Controlled Models and Runtimes
 
@@ -367,23 +367,35 @@ registry execution even when an adapter is invoked directly.
 
 ## Developer Checks
 
-\`\`\`powershell
+```powershell
 # Backend (use Docker when Go is not installed locally)
-docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "\${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go test ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go test ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go vet ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go build ./...
+
+# Identity and nginx configuration services
+Set-Location idp
+go test ./...
+go build ./...
+Set-Location ..\nginx-config-manager
+go test ./...
+go build ./...
 
 # Frontend
-Set-Location frontend
+Set-Location ..\frontend
 npm.cmd ci
 npm.cmd run build
+npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
 
 # Compose contract
 Set-Location ..
 docker compose --env-file .env.example -f docker-compose.local.yml config --quiet
-\`\`\`
+```
 
-With local Go installed, the backend checks are \`go vet ./...\`, \`go test ./...\`,
-and \`go build ./...\` from \`backend/\`. The critical-path smoke is
-\`scripts/smoke-critical-path.sh\` from a Bash-capable shell with its prerequisites.
+With local Go installed, run the backend commands from `backend/`, and the IDP
+and nginx-config-manager commands from their respective directories. These are
+the same build-and-test surfaces required by CI. The critical-path smoke is
+`scripts/smoke-critical-path.sh` from a Bash-capable shell with its prerequisites.
 
 The repository's verification evidence is in:
 
@@ -399,7 +411,7 @@ gates, not paperwork.
 
 ## Repository Layout
 
-\`\`\`text
+```text
 backend/                 Go API and HAI engines
 frontend/                Angular dashboard
 idp/                     Identity provider service
@@ -415,7 +427,7 @@ docker-compose.local.yml Windows/local-first Compose topology
 .env.example             Environment template; copy to untracked .env.local
 generic-auto/            Legacy service, not the canonical HAI engine
 gate/                    Legacy gateway/config area; local Compose uses nginx-config/
-\`\`\`
+```
 
 ## Further Documentation
 
