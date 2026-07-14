@@ -23,6 +23,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/rbac"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
@@ -173,11 +174,11 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 		routes.GET("/", handler.Registry)
 		routes.GET("/health", handler.Health)
 		routes.GET("/:id/skills", handler.Skills)
-		routes.POST("/:id/tasks/:taskId/stop", handler.StopTask)
+		routes.POST("/:id/tasks/:taskId/stop", requirePermission(rbac.PermApprove), handler.StopTask)
 		routes.GET("/openclaw/ecosystem", handler.OpenClawEcosystem)
-		routes.PATCH("/openclaw/ecosystem", handler.SetOpenClawEcosystem)
-		routes.POST("/openclaw/ecosystem/refresh", handler.RefreshOpenClawEcosystem)
-		routes.POST("/openclaw/ecosystem/upload", handler.UploadOpenClawEcosystem)
+		routes.PATCH("/openclaw/ecosystem", requirePermission(rbac.PermAdmin), handler.SetOpenClawEcosystem)
+		routes.POST("/openclaw/ecosystem/refresh", requirePermission(rbac.PermAdmin), handler.RefreshOpenClawEcosystem)
+		routes.POST("/openclaw/ecosystem/upload", requirePermission(rbac.PermAdmin), handler.UploadOpenClawEcosystem)
 	}
 }
 

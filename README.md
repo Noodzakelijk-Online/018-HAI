@@ -86,6 +86,10 @@ the workflow remains the restart-safe execution ledger.
 - Verified owner identity is required for the personal pursuit, workflow,
   source, memory, verification, task, review, ambient, HAI OS, and runtime
   mutation APIs. Client-supplied actor or approval fields are not trusted.
+- The bundled IDP persists `owner`, `operator`, and `viewer` roles and signs
+  that role into access tokens. Request headers never grant a role; the seeded
+  `FIRST_RUN_ADMIN_EMAIL` account is promoted to `owner`, while registrations
+  default to `operator`.
 - Owner-scoped pursuit detail, dashboards, activity, evidence, decisions, and
   links filter legacy records that are not visible to the current owner.
 - High-risk communication, legal/government, financial, account, public-post,
@@ -96,6 +100,9 @@ the workflow remains the restart-safe execution ledger.
 - Runtime execution is constrained by enablement flags, allowlisted tools,
   hosts, paths, workspaces, timeouts, output limits, redacted audit records,
   and verification before completion.
+- Stopping a runtime task requires an approval-capable role. Uploading,
+  selecting, or refreshing the shared OpenClaw ecosystem requires an owner
+  role because it changes the host-wide runtime configuration.
 - Ownerless legacy workflows, sources, extractions, and imported conversation
   archives are read-compatible only for local-development compatibility.
   Authenticated users cannot adopt, delete, or mutate them. Ownerless scheduler

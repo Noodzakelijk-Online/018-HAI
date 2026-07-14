@@ -9,22 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const roleHeader = "X-HAI-Role"
-
-// requirePermission enforces that the caller's role (from the X-HAI-Role header)
-// grants the required permission. Absent/unknown roles default to viewer
-// (least privilege), so a missing role can only ever read. This wires the RBAC
-// model into real request handling.
+// requirePermission enforces the role established by identityMiddleware from a
+// verified IDP JWT. Absent or unknown roles default to viewer (least privilege).
+// Request headers must never grant authority: callers can always forge them.
 func requirePermission(perm rbac.Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Prefer a role established by a verified IDP JWT (identityMiddleware);
-		// fall back to the X-HAI-Role header (gateway-propagated), then to the
-		// least-privilege viewer default.
+		// identityMiddleware writes this only after verifying the JWT signature.
 		roleStr, _ := c.Get(contextRoleKey)
 		role := rbac.Role(toRoleString(roleStr))
-		if !rbac.IsRole(role) {
-			role = rbac.Role(strings.ToLower(strings.TrimSpace(c.GetHeader(roleHeader))))
-		}
 		if !rbac.IsRole(role) {
 			role = rbac.RoleViewer
 		}

@@ -18,6 +18,7 @@ func TestRefreshTokenUsesRefreshTokenExpiration(t *testing.T) {
 
 	userID := uuid.New()
 	svc := &service{
+		userService:      &fakeUserService{userByID: &models.User{ID: userID, Role: "owner"}},
 		blockListService: fakeBlockListService{},
 		logger:           noopLogger{},
 		jwtSecret:        "test-secret",
@@ -32,6 +33,19 @@ func TestRefreshTokenUsesRefreshTokenExpiration(t *testing.T) {
 	require.Equal(t, refreshToken, tokenDetails.RefreshToken)
 	require.Equal(t, refreshUUID, tokenDetails.RefreshUUID)
 	require.Equal(t, refreshExp, tokenDetails.RtExpires)
+	_, claims, err := svc.parseAndValidateToken(tokenDetails.AccessToken)
+	require.NoError(t, err)
+	require.Equal(t, "owner", claims["role"])
+}
+
+func TestGenerateAccessTokenNormalizesUnknownRole(t *testing.T) {
+	setupAuthConfig(t)
+	svc := &service{logger: noopLogger{}, jwtSecret: "test-secret"}
+	token, _, err := svc.generateAccessToken(uuid.New(), "unexpected", uuid.New().String(), time.Now().Add(time.Hour).Unix())
+	require.NoError(t, err)
+	_, claims, err := svc.parseAndValidateToken(token)
+	require.NoError(t, err)
+	require.Equal(t, "operator", claims["role"])
 }
 
 func TestLogoutRejectsTokenWithoutUserID(t *testing.T) {
