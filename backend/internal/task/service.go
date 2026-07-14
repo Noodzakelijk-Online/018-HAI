@@ -506,6 +506,7 @@ func (s *service) persistPursuitAttempt(plan *CompletionPlan, request IntakeRequ
 		RiskLevel:          strings.TrimSpace(plan.RiskAssessment.Level),
 		VerificationStatus: verificationStatus,
 		AutomationID:       firstNonEmpty(request.AutomationID, planAutomationID(plan)),
+		LaunchEventID:      planLaunchEventID(plan),
 		BlockedReason:      compactTaskRequest(blockedReason),
 		StartedAt:          &startedAt,
 		CompletedAt:        completedAt,
@@ -548,6 +549,13 @@ func planAutomationID(plan *CompletionPlan) string {
 		return ""
 	}
 	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.AutomationID)
+}
+
+func planLaunchEventID(plan *CompletionPlan) string {
+	if plan == nil || plan.ExecutionResult == nil || plan.ExecutionResult.ToolExecution == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.LaunchEventID)
 }
 
 func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {

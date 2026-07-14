@@ -210,6 +210,35 @@ func TestPursuitScopedTaskPlanRejectsMalformedPursuitID(t *testing.T) {
 	}
 }
 
+func TestPursuitScopedTaskRunPersistsExactRuntimeLaunchEvidence(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{}
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		executor,
+		recorder,
+	)
+	if _, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		PursuitID:      uuid.NewString(),
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(recorder.attempts) != 2 {
+		t.Fatalf("persist calls = %d, want start and final outcome", len(recorder.attempts))
+	}
+	if got := recorder.attempts[1].LaunchEventID; got != executor.result.LaunchEventID {
+		t.Fatalf("launch evidence = %q, want %q", got, executor.result.LaunchEventID)
+	}
+}
+
 func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)

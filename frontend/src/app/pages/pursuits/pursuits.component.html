@@ -879,6 +879,7 @@
                     {{ attempt.riskLevel || 'unknown' }} risk
                   </small>
                   <small *ngIf="attempt.blockedReason">{{ attempt.blockedReason }}</small>
+                  <small *ngIf="attempt.launchEventId">Runtime evidence: {{ attempt.launchEventId }}</small>
                   <small *ngIf="attempt.completedAt">{{ attempt.completedAt | date: 'short' }}</small>
                 </article>
               </div>

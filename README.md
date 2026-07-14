@@ -113,7 +113,7 @@ review items are retained only by the running backend process, so unscoped
 direct task work is not a restart-safe job ledger. When a plan or run is
 explicitly scoped to a valid pursuit, HAI also persists a compact task-attempt
 projection under that pursuit: plan ID, owner, request summary, risk, runtime
-selection, verification state, blocker, and lifecycle timestamps. The normal
+selection, exact launch-event evidence, verification state, blocker, and lifecycle timestamps. The normal
 operational route is still **assistant command or source intake -> pursuit ->
 persisted workflow -> worker -> task plan -> verification/audit evidence**.
 The workflow stores the task-plan ID, run result, retry state, and completion

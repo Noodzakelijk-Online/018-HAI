@@ -1013,8 +1013,43 @@ func (s *service) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
 	if err != nil {
 		return err
 	}
+	if err := s.linkTaskAttemptRuntimeEvidence(*stored); err != nil {
+		return err
+	}
 	eventType, message := pursuitTaskAttemptActivity(*stored)
 	_, err = s.recordActivity(stored.PursuitID, eventType, message, firstNonEmpty(stored.OwnerIdentity, "task-engine"), "task_attempt", stored.TaskPlanID, "task://"+stored.TaskPlanID)
+	return err
+}
+
+// linkTaskAttemptRuntimeEvidence adds only the exact persisted launch event to
+// the pursuit. Linking the automation itself would make historical and future
+// launches of that shared capability look like evidence for this task.
+func (s *service) linkTaskAttemptRuntimeEvidence(attempt models.PursuitTaskAttempt) error {
+	launchID, err := uuid.Parse(strings.TrimSpace(attempt.LaunchEventID))
+	if err != nil {
+		return nil
+	}
+	launches, err := s.repo.FindLinkedAutomationLaunches(nil, []uuid.UUID{launchID}, 1)
+	if err != nil {
+		return err
+	}
+	if len(launches) != 1 || launches[0].ID != launchID {
+		return fmt.Errorf("runtime launch evidence is not available")
+	}
+	launch := launches[0]
+	if automationID, err := uuid.Parse(strings.TrimSpace(attempt.AutomationID)); err == nil && launch.AutomationID != uuid.Nil && launch.AutomationID != automationID {
+		return fmt.Errorf("runtime launch evidence does not match the task automation")
+	}
+	_, err = s.Link(attempt.PursuitID, LinkRequest{
+		OwnerIdentity: attempt.OwnerIdentity,
+		LinkType:      LinkAgentRuntime,
+		LinkID:        launchID.String(),
+		Relationship:  "execution_attempt",
+		SourceURI:     "automation-launch://" + launchID.String(),
+		SourceLabel:   firstNonEmpty(strings.TrimSpace(launch.RuntimeType), "controlled runtime") + " task evidence",
+		Confidence:    1,
+		Actor:         "task-engine",
+	})
 	return err
 }
 

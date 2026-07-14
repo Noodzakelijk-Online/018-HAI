@@ -73,6 +73,7 @@ type PursuitTaskAttempt struct {
 	RiskLevel          string     `gorm:"type:varchar(80);index" json:"riskLevel,omitempty"`
 	VerificationStatus string     `gorm:"type:varchar(80);index" json:"verificationStatus,omitempty"`
 	AutomationID       string     `gorm:"type:varchar(120);index" json:"automationId,omitempty"`
+	LaunchEventID      string     `gorm:"type:varchar(120);index" json:"launchEventId,omitempty"`
 	BlockedReason      string     `gorm:"type:text" json:"blockedReason,omitempty"`
 	StartedAt          *time.Time `gorm:"index" json:"startedAt,omitempty"`
 	CompletedAt        *time.Time `gorm:"index" json:"completedAt,omitempty"`

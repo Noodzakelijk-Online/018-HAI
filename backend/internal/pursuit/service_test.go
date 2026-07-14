@@ -2108,6 +2108,51 @@ func TestDirectPursuitTaskAttemptRedactsPersistedText(t *testing.T) {
 	}
 }
 
+func TestDirectPursuitTaskAttemptLinksOnlyItsExactRuntimeLaunchEvidence(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Retain exact runtime evidence", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	automationID := uuid.New()
+	selectedLaunchID := uuid.New()
+	repo.launchEvents = append(repo.launchEvents,
+		models.AutomationLaunchEvent{ID: selectedLaunchID, AutomationID: automationID, RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
+		models.AutomationLaunchEvent{ID: uuid.New(), AutomationID: automationID, RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
+	)
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     created.ID,
+		TaskPlanID:    "runtime-evidence-direct-plan",
+		OwnerIdentity: "alice",
+		Mode:          "run",
+		Status:        "validated",
+		AutomationID:  automationID.String(),
+		LaunchEventID: selectedLaunchID.String(),
+	}); err != nil {
+		t.Fatalf("UpsertTaskAttempt returned error: %v", err)
+	}
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.RuntimeAttempts) != 1 || detail.RuntimeAttempts[0].ID != selectedLaunchID {
+		t.Fatalf("runtime attempts = %#v, want only the selected launch", detail.RuntimeAttempts)
+	}
+	if len(detail.Automations) != 0 {
+		t.Fatalf("direct task attempt must not link a shared automation: %#v", detail.Automations)
+	}
+	foundLaunchLink := false
+	for _, link := range detail.Links {
+		if link.LinkType == LinkAgentRuntime && link.LinkID == selectedLaunchID.String() && link.Relationship == "execution_attempt" {
+			foundLaunchLink = true
+		}
+	}
+	if !foundLaunchLink {
+		t.Fatalf("exact runtime evidence link missing: %#v", detail.Links)
+	}
+}
+
 func TestDetailSurfacesRobertDecisionQueueFromLinkedWorkflows(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

@@ -277,6 +277,7 @@ export interface IPursuitTaskAttempt {
   riskLevel?: string;
   verificationStatus?: string;
   automationId?: string;
+  launchEventId?: string;
   blockedReason?: string;
   startedAt?: string;
   completedAt?: string;
