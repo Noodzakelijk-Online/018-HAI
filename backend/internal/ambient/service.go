@@ -81,7 +81,9 @@ type WorkflowService interface {
 
 type PursuitService interface {
 	Dashboard() (*pursuitpkg.Dashboard, error)
+	DashboardForOwner(ownerIdentity string) (*pursuitpkg.Dashboard, error)
 	List(includeArchived bool) ([]models.Pursuit, error)
+	ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
 	Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error)
 	DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuitpkg.PursuitDetail, error)
 }
@@ -90,6 +92,7 @@ type Service interface {
 	Overview() (*Overview, error)
 	OverviewForOwner(ownerIdentity string) (*Overview, error)
 	Scan(trigger string) (*models.AmbientScan, error)
+	ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error)
 	UpdateNeed(key string, request NeedUpdateRequest) (*models.AmbientNeed, error)
 	Accept(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error)
 	Dismiss(id uuid.UUID, request ResolutionRequest) (*models.AmbientOpportunity, error)
@@ -124,12 +127,12 @@ func (s *service) OverviewForOwner(ownerIdentity string) (*Overview, error) {
 	if err != nil {
 		return nil, err
 	}
-	opportunities, err := s.repo.Opportunities("", 75)
+	opportunities, err := s.repo.OpportunitiesForOwner(strings.TrimSpace(ownerIdentity), "", 75)
 	if err != nil {
 		return nil, err
 	}
 	opportunities = s.visibleOpportunities(ownerIdentity, opportunities)
-	scans, err := s.repo.Scans(12)
+	scans, err := s.repo.ScansForOwner(strings.TrimSpace(ownerIdentity), 12)
 	if err != nil {
 		return nil, err
 	}
@@ -314,6 +317,138 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 	return updated, nil
 }
 
+// ScanForOwner is the authenticated ambient path. It deliberately works from
+// the caller's pursuit dashboard only: it does not read global workflow,
+// source, or memory queues and never starts execution. The result is a set of
+// private, reviewable proposals rather than background authority.
+func (s *service) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, fmt.Errorf("an authenticated owner is required for a personal ambient scan")
+	}
+	if s.pursuits == nil {
+		return nil, fmt.Errorf("pursuit service is not configured")
+	}
+	if !s.scanning.CompareAndSwap(false, true) {
+		return nil, ErrScanInProgress
+	}
+	defer s.scanning.Store(false)
+	if err := s.ensureNeeds(); err != nil {
+		return nil, err
+	}
+	started := time.Now().UTC()
+	scan, err := s.repo.CreateScan(&models.AmbientScan{
+		OwnerIdentity: ownerIdentity,
+		Trigger:       firstNonEmpty(strings.TrimSpace(trigger), "manual"),
+		Status:        "running",
+		StartedAt:     started,
+	})
+	if err != nil {
+		return nil, err
+	}
+	fail := func(scanErr error) (*models.AmbientScan, error) {
+		completed := time.Now().UTC()
+		scan.Status = "failed"
+		scan.CompletedAt = &completed
+		scan.ErrorMessage = scanErr.Error()
+		_, _ = s.repo.UpdateScan(scan)
+		return scan, scanErr
+	}
+	needs, err := s.repo.Needs()
+	if err != nil {
+		return fail(err)
+	}
+	needMap := make(map[string]models.AmbientNeed, len(needs))
+	for _, need := range needs {
+		needMap[need.Key] = need
+	}
+	dashboard, err := s.pursuits.DashboardForOwner(ownerIdentity)
+	if err != nil {
+		return fail(err)
+	}
+	pursuits, err := s.pursuits.ListForOwner(ownerIdentity, true)
+	if err != nil {
+		return fail(err)
+	}
+	candidates := buildPursuitCandidatesForOwner(ownerIdentity, dashboard, needMap)
+	scan.ItemsExamined = pursuitSignalCount(dashboard)
+	scan.OpportunitiesFound = len(candidates)
+	policy := policyFromEnv()
+	now := time.Now().UTC()
+	if err := s.storeCandidates(scan, candidates, policy, now); err != nil {
+		return fail(err)
+	}
+	stored, err := s.repo.OpportunitiesForOwner(ownerIdentity, "", 200)
+	if err != nil {
+		return fail(err)
+	}
+	for _, item := range closedPursuitOpportunityUpdates(stored, pursuits, now) {
+		if _, saveErr := s.repo.SaveOpportunity(&item); saveErr != nil {
+			return fail(saveErr)
+		}
+		scan.Updated++
+	}
+	completed := time.Now().UTC()
+	scan.Status = "completed"
+	scan.CompletedAt = &completed
+	updated, err := s.repo.UpdateScan(scan)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.PruneScans(policy.ScanRetention); err != nil {
+		log.Printf("ambient scan retention cleanup failed: %v", err)
+	}
+	return updated, nil
+}
+
+func (s *service) storeCandidates(scan *models.AmbientScan, candidates []models.AmbientOpportunity, policy Policy, now time.Time) error {
+	for _, candidate := range candidates {
+		if candidate.PriorityScore < policy.MinimumScore || candidate.Confidence < policy.MinimumConfidence {
+			scan.Filtered++
+			continue
+		}
+		existing, err := s.repo.FindOpportunityByFingerprint(candidate.Fingerprint)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			if strings.TrimSpace(existing.OwnerIdentity) != strings.TrimSpace(candidate.OwnerIdentity) {
+				return fmt.Errorf("ambient opportunity fingerprint owner mismatch")
+			}
+			existing.Title = candidate.Title
+			existing.Rationale = candidate.Rationale
+			existing.NextAction = candidate.NextAction
+			existing.PriorityScore = candidate.PriorityScore
+			existing.Urgency = candidate.Urgency
+			existing.Impact = candidate.Impact
+			existing.Effort = candidate.Effort
+			existing.Confidence = candidate.Confidence
+			existing.Risk = candidate.Risk
+			existing.RequiresApproval = candidate.RequiresApproval
+			existing.EvidenceManifest = candidate.EvidenceManifest
+			existing.LastSeenAt = now
+			if existing.Status == StatusDismissed && (existing.CooldownUntil == nil || existing.CooldownUntil.Before(now)) {
+				existing.Status = StatusProposed
+			}
+			if _, err := s.repo.SaveOpportunity(existing); err != nil {
+				return err
+			}
+			scan.Updated++
+			scan.Deduplicated++
+			scan.DeduplicatedBytes += int64(len(candidate.Rationale) + len(candidate.NextAction) + len(candidate.EvidenceManifest))
+		} else {
+			candidate.LastSeenAt = now
+			candidate.Status = StatusProposed
+			if _, err := s.repo.SaveOpportunity(&candidate); err != nil {
+				return err
+			}
+			scan.Created++
+		}
+		scan.ManifestBytes += int64(len(candidate.EvidenceManifest))
+	}
+	return nil
+}
+
 func (s *service) UpdateNeed(key string, request NeedUpdateRequest) (*models.AmbientNeed, error) {
 	if err := s.ensureNeeds(); err != nil {
 		return nil, err
@@ -351,7 +486,7 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensurePursuitOpportunityVisible(*item, request.OwnerIdentity); err != nil {
+	if err := s.ensureOpportunityVisible(*item, request.OwnerIdentity); err != nil {
 		return nil, err
 	}
 	if item.Status == StatusCompleted {
@@ -411,26 +546,28 @@ func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity
 		return nil
 	}
 	_, err = s.pursuits.Link(pursuitID, pursuitpkg.LinkRequest{
-		LinkType:     pursuitpkg.LinkWorkflow,
-		LinkID:       record.Item.ID.String(),
-		Relationship: "ambient_follow_up",
-		SourceURI:    item.SourceURI,
-		SourceLabel:  item.Title,
-		Confidence:   float64(clamp(item.Confidence, 0, 100)) / 100,
-		Actor:        actor,
+		OwnerIdentity: item.OwnerIdentity,
+		LinkType:      pursuitpkg.LinkWorkflow,
+		LinkID:        record.Item.ID.String(),
+		Relationship:  "ambient_follow_up",
+		SourceURI:     item.SourceURI,
+		SourceLabel:   item.Title,
+		Confidence:    float64(clamp(item.Confidence, 0, 100)) / 100,
+		Actor:         actor,
 	})
 	if err != nil {
 		return fmt.Errorf("link accepted ambient workflow to pursuit: %w", err)
 	}
 	sourceURI := firstNonEmpty(item.SourceURI, "ambient://opportunities/"+item.ID.String())
 	_, err = s.pursuits.Link(pursuitID, pursuitpkg.LinkRequest{
-		LinkType:     pursuitpkg.LinkAmbientOpportunity,
-		LinkID:       item.ID.String(),
-		Relationship: "ambient_proposal_accepted",
-		SourceURI:    sourceURI,
-		SourceLabel:  item.Title,
-		Confidence:   float64(clamp(item.Confidence, 0, 100)) / 100,
-		Actor:        actor,
+		OwnerIdentity: item.OwnerIdentity,
+		LinkType:      pursuitpkg.LinkAmbientOpportunity,
+		LinkID:        item.ID.String(),
+		Relationship:  "ambient_proposal_accepted",
+		SourceURI:     sourceURI,
+		SourceLabel:   item.Title,
+		Confidence:    float64(clamp(item.Confidence, 0, 100)) / 100,
+		Actor:         actor,
 	})
 	if err != nil {
 		return fmt.Errorf("link accepted ambient proposal to pursuit: %w", err)
@@ -443,7 +580,7 @@ func (s *service) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.Ambi
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensurePursuitOpportunityVisible(*item, request.OwnerIdentity); err != nil {
+	if err := s.ensureOpportunityVisible(*item, request.OwnerIdentity); err != nil {
 		return nil, err
 	}
 	if item.Status == StatusDismissed {
@@ -465,16 +602,28 @@ func (s *service) Dismiss(id uuid.UUID, request ResolutionRequest) (*models.Ambi
 }
 
 func (s *service) visibleOpportunities(ownerIdentity string, opportunities []models.AmbientOpportunity) []models.AmbientOpportunity {
-	if strings.TrimSpace(ownerIdentity) == "" || s.pursuits == nil {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
 		return opportunities
 	}
 	visible := make([]models.AmbientOpportunity, 0, len(opportunities))
 	for _, item := range opportunities {
-		if s.ensurePursuitOpportunityVisible(item, ownerIdentity) == nil {
+		if s.ensureOpportunityVisible(item, ownerIdentity) == nil {
 			visible = append(visible, item)
 		}
 	}
 	return visible
+}
+
+func (s *service) ensureOpportunityVisible(item models.AmbientOpportunity, ownerIdentity string) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil
+	}
+	if strings.TrimSpace(item.OwnerIdentity) != ownerIdentity {
+		return fmt.Errorf("ambient opportunity not found")
+	}
+	return s.ensurePursuitOpportunityVisible(item, ownerIdentity)
 }
 
 func (s *service) ensurePursuitOpportunityVisible(item models.AmbientOpportunity, ownerIdentity string) error {
@@ -493,6 +642,10 @@ func (s *service) ensurePursuitOpportunityVisible(item models.AmbientOpportunity
 
 func (s *service) rememberOpportunityFeedback(item *models.AmbientOpportunity, ownerIdentity, signal, note string) {
 	if s.memory == nil || item == nil || !ambientFeedbackUseful(signal, note, *item) {
+		return
+	}
+	ownerIdentity = firstNonEmpty(strings.TrimSpace(item.OwnerIdentity), strings.TrimSpace(ownerIdentity))
+	if ownerIdentity == "" {
 		return
 	}
 	sourceURI := firstNonEmpty(item.SourceURI, "ambient://opportunities/"+item.ID.String())
@@ -664,6 +817,32 @@ func buildCandidates(
 	return candidates
 }
 
+func buildPursuitCandidatesForOwner(ownerIdentity string, dashboard *pursuitpkg.Dashboard, needs map[string]models.AmbientNeed) []models.AmbientOpportunity {
+	candidates := []models.AmbientOpportunity{}
+	seen := map[string]bool{}
+	add := func(candidate models.AmbientOpportunity) {
+		if need, ok := needs[candidate.NeedKey]; !ok || !need.Enabled {
+			return
+		}
+		candidate.OwnerIdentity = ownerIdentity
+		candidate.PriorityScore = opportunityScore(candidate, needs[candidate.NeedKey])
+		candidate.Fingerprint = fingerprint(ownerIdentity, candidate.SourceType, candidate.SourceID, candidate.NeedKey)
+		if seen[candidate.Fingerprint] {
+			return
+		}
+		seen[candidate.Fingerprint] = true
+		candidates = append(candidates, candidate)
+	}
+	addPursuitCandidates(dashboard, add)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].PriorityScore > candidates[j].PriorityScore
+	})
+	if limit := policyFromEnv().OpportunityLimit; len(candidates) > limit {
+		return candidates[:limit]
+	}
+	return candidates
+}
+
 func addPursuitCandidates(dashboard *pursuitpkg.Dashboard, add func(models.AmbientOpportunity)) {
 	if dashboard == nil {
 		return
@@ -720,6 +899,7 @@ func pursuitOpportunity(item pursuitpkg.PursuitListItem, sourceType, title, rati
 	}
 	impact = max(impact, clamp(pursuit.PriorityScore, 0, 100))
 	return models.AmbientOpportunity{
+		OwnerIdentity:    pursuit.OwnerIdentity,
 		NeedKey:          needForPursuit(pursuit),
 		Title:            title,
 		Rationale:        rationale + " " + scoreExplanation(urgency, impact, risk, confidence),

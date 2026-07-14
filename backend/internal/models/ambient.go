@@ -22,6 +22,7 @@ type AmbientNeed struct {
 
 type AmbientOpportunity struct {
 	ID               uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	OwnerIdentity    string     `gorm:"type:varchar(255);index" json:"ownerIdentity,omitempty"`
 	Fingerprint      string     `gorm:"type:varchar(64);uniqueIndex;not null" json:"fingerprint"`
 	WorkflowID       *uuid.UUID `gorm:"type:uuid;index" json:"workflowId,omitempty"`
 	NeedKey          string     `gorm:"type:varchar(80);index;not null" json:"needKey"`
@@ -49,6 +50,7 @@ type AmbientOpportunity struct {
 
 type AmbientScan struct {
 	ID                 uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	OwnerIdentity      string     `gorm:"type:varchar(255);index" json:"ownerIdentity,omitempty"`
 	Trigger            string     `gorm:"type:varchar(80);index;not null" json:"trigger"`
 	Status             string     `gorm:"type:varchar(50);index;not null" json:"status"`
 	StartedAt          time.Time  `gorm:"index" json:"startedAt"`

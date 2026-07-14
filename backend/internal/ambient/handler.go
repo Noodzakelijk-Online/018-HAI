@@ -29,7 +29,12 @@ func (h *Handler) Overview(c *gin.Context) {
 }
 
 func (h *Handler) Scan(c *gin.Context) {
-	result, err := h.service.Scan("manual")
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required to run a personal ambient scan"})
+		return
+	}
+	result, err := h.service.ScanForOwner(ownerIdentity, "manual")
 	if err != nil {
 		if errors.Is(err, ErrScanInProgress) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})

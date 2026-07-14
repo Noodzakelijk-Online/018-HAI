@@ -18,9 +18,11 @@ type Repository interface {
 	FindOpportunityByFingerprint(fingerprint string) (*models.AmbientOpportunity, error)
 	SaveOpportunity(opportunity *models.AmbientOpportunity) (*models.AmbientOpportunity, error)
 	Opportunities(status string, limit int) ([]models.AmbientOpportunity, error)
+	OpportunitiesForOwner(ownerIdentity, status string, limit int) ([]models.AmbientOpportunity, error)
 	CreateScan(scan *models.AmbientScan) (*models.AmbientScan, error)
 	UpdateScan(scan *models.AmbientScan) (*models.AmbientScan, error)
 	Scans(limit int) ([]models.AmbientScan, error)
+	ScansForOwner(ownerIdentity string, limit int) ([]models.AmbientScan, error)
 	PruneScans(keep int) error
 }
 
@@ -99,11 +101,22 @@ func (r *GormRepository) SaveOpportunity(item *models.AmbientOpportunity) (*mode
 }
 
 func (r *GormRepository) Opportunities(status string, limit int) ([]models.AmbientOpportunity, error) {
+	return r.opportunities("", status, limit)
+}
+
+func (r *GormRepository) OpportunitiesForOwner(ownerIdentity, status string, limit int) ([]models.AmbientOpportunity, error) {
+	return r.opportunities(ownerIdentity, status, limit)
+}
+
+func (r *GormRepository) opportunities(ownerIdentity, status string, limit int) ([]models.AmbientOpportunity, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	var items []models.AmbientOpportunity
 	query := r.db.Order("priority_score desc, last_seen_at desc").Limit(limit)
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ?", ownerIdentity)
+	}
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
@@ -126,11 +139,23 @@ func (r *GormRepository) UpdateScan(scan *models.AmbientScan) (*models.AmbientSc
 }
 
 func (r *GormRepository) Scans(limit int) ([]models.AmbientScan, error) {
+	return r.scans("", limit)
+}
+
+func (r *GormRepository) ScansForOwner(ownerIdentity string, limit int) ([]models.AmbientScan, error) {
+	return r.scans(ownerIdentity, limit)
+}
+
+func (r *GormRepository) scans(ownerIdentity string, limit int) ([]models.AmbientScan, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
 	var scans []models.AmbientScan
-	err := r.db.Order("started_at desc").Limit(limit).Find(&scans).Error
+	query := r.db.Order("started_at desc").Limit(limit)
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ?", ownerIdentity)
+	}
+	err := query.Find(&scans).Error
 	return scans, err
 }
 

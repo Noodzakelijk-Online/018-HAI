@@ -250,12 +250,41 @@ func TestPursuitOpportunitiesAreFilteredForAuthenticatedOwner(t *testing.T) {
 	bobID := uuid.New()
 	engine := NewServiceWithPursuits(nil, nil, nil, &ambientPursuitSpy{owners: map[uuid.UUID]string{aliceID: "alice", bobID: "bob"}}).(*service)
 	visible := engine.visibleOpportunities("alice", []models.AmbientOpportunity{
-		{ID: uuid.New(), SourceType: "pursuit_stale", SourceID: aliceID.String()},
-		{ID: uuid.New(), SourceType: "pursuit_stale", SourceID: bobID.String()},
+		{ID: uuid.New(), OwnerIdentity: "alice", SourceType: "pursuit_stale", SourceID: aliceID.String()},
+		{ID: uuid.New(), OwnerIdentity: "bob", SourceType: "pursuit_stale", SourceID: bobID.String()},
 		{ID: uuid.New(), SourceType: "workflow", SourceID: "shared-workflow"},
 	})
-	if len(visible) != 2 || visible[0].SourceID != aliceID.String() || visible[1].SourceType != "workflow" {
+	if len(visible) != 1 || visible[0].SourceID != aliceID.String() {
 		t.Fatalf("owner-visible opportunities = %#v", visible)
+	}
+}
+
+func TestScanForOwnerBuildsPrivatePursuitProposalsOnly(t *testing.T) {
+	pursuitID := uuid.New()
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	pursuits := &ambientPursuitSpy{
+		dashboard: &pursuitpkg.Dashboard{
+			ReviewDue: []pursuitpkg.PursuitListItem{{
+				Pursuit:    models.Pursuit{ID: pursuitID, OwnerIdentity: "alice", Title: "Prepare evidence bundle", RiskLevel: "medium", Confidence: 0.82, PriorityScore: 80},
+				NextAction: "Review the evidence bundle and choose the next safe action.",
+			}},
+		},
+		pursuits: []models.Pursuit{{ID: pursuitID, OwnerIdentity: "alice", Title: "Prepare evidence bundle", Status: pursuitpkg.StatusActive}},
+	}
+	engine := NewServiceWithPursuits(repo, nil, nil, pursuits)
+
+	scan, err := engine.ScanForOwner("alice", "manual")
+	if err != nil {
+		t.Fatalf("ScanForOwner: %v", err)
+	}
+	if scan.OwnerIdentity != "alice" || scan.Created != 1 || scan.Advanced != 0 {
+		t.Fatalf("owner scan = %#v, want one private suggestion-only proposal", scan)
+	}
+	if repo.opportunity == nil || repo.opportunity.OwnerIdentity != "alice" || repo.opportunity.SourceID != pursuitID.String() {
+		t.Fatalf("stored opportunity = %#v, want Alice pursuit proposal", repo.opportunity)
+	}
+	if repo.opportunity.WorkflowID != nil {
+		t.Fatalf("personal scan unexpectedly created executable workflow state: %#v", repo.opportunity)
 	}
 }
 
@@ -298,6 +327,7 @@ func (s *ambientWorkflowSpy) RunDueOpenLoops(workflow.RunDueRequest) (*workflow.
 
 type ambientPursuitSpy struct {
 	dashboard        *pursuitpkg.Dashboard
+	pursuits         []models.Pursuit
 	links            []pursuitpkg.LinkRequest
 	linkedPursuitIDs []uuid.UUID
 	owners           map[uuid.UUID]string
@@ -310,8 +340,22 @@ func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {
 	return &pursuitpkg.Dashboard{}, nil
 }
 
+func (s *ambientPursuitSpy) DashboardForOwner(_ string) (*pursuitpkg.Dashboard, error) {
+	return s.Dashboard()
+}
+
 func (s *ambientPursuitSpy) List(bool) ([]models.Pursuit, error) {
-	return nil, nil
+	return s.pursuits, nil
+}
+
+func (s *ambientPursuitSpy) ListForOwner(ownerIdentity string, _ bool) ([]models.Pursuit, error) {
+	result := []models.Pursuit{}
+	for _, item := range s.pursuits {
+		if item.OwnerIdentity == ownerIdentity {
+			result = append(result, item)
+		}
+	}
+	return result, nil
 }
 
 func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error) {
