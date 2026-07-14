@@ -624,7 +624,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		Description:           strings.TrimSpace(request.Description),
 		WhyItMatters:          strings.TrimSpace(request.WhyItMatters),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
-		Domain:                firstNonEmpty(request.Domain, classifyDomain(title+" "+request.Description)),
+		Domain:                firstNonEmpty(request.Domain, classifyDomain(contextText)),
 		DesiredOutcome:        strings.TrimSpace(request.DesiredOutcome),
 		CurrentStateSummary:   strings.TrimSpace(request.CurrentStateSummary),
 		Status:                firstNonEmpty(request.Status, StatusActive),
@@ -4823,7 +4823,7 @@ func defaultAutonomy(risk string) string {
 }
 
 // conservativeRisk prevents a manually supplied label from downgrading risk
-// detected from the pursuit's own goal, description, and desired outcome.
+// detected from the pursuit's own goal, background, rationale, and desired outcome.
 // A caller can always make a pursuit more conservative, never less so.
 func conservativeRisk(requested, detected string) string {
 	requested = normalizeRisk(requested)

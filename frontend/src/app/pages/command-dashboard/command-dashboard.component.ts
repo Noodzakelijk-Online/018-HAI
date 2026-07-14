@@ -665,7 +665,7 @@ export class CommandDashboardComponent implements OnInit {
   }
 
   pursuitContext(item: IPursuitListItem): string {
-    return item.whatChanged || item.currentState || 'No linked operational movement recorded yet.';
+    return item.whatChanged || item.currentState || item.pursuit.whyItMatters || 'No linked operational movement recorded yet.';
   }
 
   pursuitEvidenceLine(item: IPursuitListItem): string {

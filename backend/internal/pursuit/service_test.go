@@ -116,6 +116,9 @@ func TestPursuitRationaleFlowsIntoOperationalContext(t *testing.T) {
 	if created.RiskLevel != "high" || created.AutonomyLevel != "approve_before_execute" {
 		t.Fatalf("rationale did not raise the safety floor: %q/%q", created.RiskLevel, created.AutonomyLevel)
 	}
+	if created.Domain != "stability" {
+		t.Fatalf("rationale did not classify the pursuit domain: %q", created.Domain)
+	}
 
 	matches, err := service.Match(MatchRequest{Input: "municipality legal evidence"})
 	if err != nil {
