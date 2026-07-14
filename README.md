@@ -17,7 +17,7 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 What is implemented in this repository:
 
 - **User experience:** onboarding, quick capture, Command Dashboard, Control Center, HAI OS, pursuits, workflow exceptions, automations, LLM routing, memory, connected sources, grounded answers, and task planning.
-- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work.
+- **Core engine:** task intake and success criteria, context retrieval, policy-aware model/tool routing, controlled execution, retry/backoff, review queues, verification-gated completion, source-linked audit history, and a chat-command bridge that turns explicit run requests into pursuit-linked workflow work. Pursuits have an explicit completion/reopen lifecycle: new evidence never silently reopens completed work.
 - **Knowledge and memory:** encrypted user-authorized conversation capture, compact context memory, retrieval/search/filter/pagination, deduplication, corrections, export/deletion planning, and source provenance.
 - **Connected-source import paths:** local folders, MBOX/EML email exports, ICS calendar exports, synced document folders, Trello JSON exports, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, and read-only GitHub repository/issue/pull-request/commit/workflow-run sync.
 - **Governance:** the backend independently verifies browser-session or bearer JWTs before using a signed principal for audit attribution; client-supplied actor labels are ignored. Approval gates, emergency stop, request rate limits, idempotency, redacted audit records, path safety, runtime allowlists, and a paid-model policy disabled by default are implemented.
@@ -36,6 +36,18 @@ What is implemented in this repository:
 | Controlled execution | API/script/Docker adapters and task evidence gates are implemented; script and Docker control are disabled by default. | Enable one narrowly scoped adapter, then prove an approved end-to-end workflow without expanding device permissions. |
 | Hermes, Odysseus, and OpenClaw | Controlled adapter code and configuration surfaces are present; upstream software is not bundled. | Install/configure each upstream runtime separately, use dedicated workspaces/credentials, and validate one low-risk approved task at a time. |
 | Authentication and RBAC | Signed identity is revalidated by the backend; explicit RBAC routes default to viewer when a JWT has no role. | Add IDP role issuance and broaden permission checks before relying on multi-role operation. |
+
+### Operator Entry Points
+
+After signing in, the Angular dashboard exposes these authenticated operator surfaces:
+
+- `/control-center` for the primary operational overview and controlled maintenance cycle.
+- `/command-dashboard` for Robert-only decisions, open loops, memory-derived work, and source-backed context.
+- `/pursuits` for durable objectives, their workflow/evidence links, blockers, approvals, and explicit closure or reopen decisions.
+- `/workflow-engine` for the execution queue, interrupted work, quality gates, approvals, and follow-ups.
+- `/connected-sources`, `/memory`, `/llm-policy`, `/ambient-brain`, and `/task-blueprint` for source, context, provider, proactive-planning, and explicit-command operations.
+
+These screens surface operational state; they do not prove that an external action occurred. The linked audit, approval, runtime, and verification records remain the source of truth.
 
 Verified evidence is maintained in [the completion matrix](docs/codex-goal/completion-matrix.md), [final verification report](docs/codex-goal/final-verification-report.md), and [fresh-clone dry run](docs/fresh-clone-dryrun.md). The critical-path smoke has passed against a real local Postgres instance. That evidence proves the exercised local path, not live LLM, email, calendar, Drive, browser, or third-party-runtime correctness.
 
@@ -235,11 +247,13 @@ Workflow engine:
 - `GET /workflow/dashboard`
 - `GET /workflow/`
 - `POST /workflow/intake`
+- `POST /workflow/recover-stale`
 - `POST /workflow/run-due`
 - `POST /workflow/open-loops/run-due`
 - `GET /workflow/:id`
 - `POST /workflow/:id/transition`
 - `POST /workflow/:id/approval`
+- `POST /workflow/:id/interruption/resolve`
 - `POST /workflow/:id/proposals/:proposalId/resolve`
 - `PATCH /workflow/:id/checklist/:itemId`
 
@@ -256,6 +270,7 @@ Connected sources:
 - `POST /sources/:id/resume`
 - `POST /sources/:id/revoke`
 - `POST /sources/search`
+- `GET /sources/sync-jobs`
 - `GET /sources/extractions`
 - `PATCH /sources/extractions/:id`
 - `POST /sources/extractions/:id/archive`
@@ -281,8 +296,12 @@ Pursuits:
 - `GET /pursuits/decisions`
 - `POST /pursuits/match`
 - `POST /pursuits/intake`
+- `GET /pursuits/:id/evidence`
 - `GET /pursuits/:id`
 - `PATCH /pursuits/:id`
+- `POST /pursuits/:id/archive`
+- `POST /pursuits/:id/reopen`
+- `POST /pursuits/:id/summary`
 - `POST /pursuits/:id/review`
 - `POST /pursuits/:id/decisions/resolve`
 - `GET /pursuits/:id/activity`
@@ -293,6 +312,20 @@ Pursuits:
 - `POST /pursuits/:id/plan`
 - `POST /pursuits/:id/links`
 - `DELETE /pursuits/:id/links/:linkId`
+
+Ambient, agent-cycle, and controlled runtime support:
+
+- `GET /ambient/overview`
+- `POST /ambient/scan`
+- `POST /ambient/opportunities/:id/accept`
+- `POST /ambient/opportunities/:id/dismiss`
+- `POST /agent-cycle/run`
+- `GET /agent-runtimes/`
+- `GET /agent-runtimes/health`
+- `GET /agent-runtimes/:id/skills`
+- `POST /agent-runtimes/:id/tasks/:taskId/stop`
+
+Conversation memory archive APIs are available under `/memory-engine` for explicit import, dashboard/search, conversation inspection/deletion, and extracted insights. They are intentionally separate from compact context-memory APIs under `/memory`.
 
 ## Engine Behavior
 
@@ -437,7 +470,7 @@ Closed pursuits are removed from active operational queues. During an ambient sc
 
 Closed pursuits also reject direct intake, planning, and decision-resolution requests before the workflow engine is invoked. When global intake finds that its best match is closed, it preserves that historical pursuit and creates a separate reviewable candidate rather than treating a valid new source signal as a sync failure or silently reactivating old work. A summary refresh is read-only for a closed pursuit, so an old client request or late refresh cannot silently reactivate completed work.
 
-Reopening is a separate audited transition at `POST /pursuits/:id/reopen` (the existing archive restore operation delegates to it for compatibility). It clears the closed state but does not execute work; new work must still enter through the governed workflow, approval, and verification paths.
+Reopening is a separate audited transition at `POST /pursuits/:id/reopen` (the existing archive restore operation delegates to it for compatibility). It clears the closed state but does not execute work; new work must still enter through the governed workflow, approval, and verification paths. Archiving uses `POST /pursuits/:id/archive`; generic updates cannot reactivate a closed pursuit. This prevents a late source sync, old browser request, or stale client from treating historical work as active again.
 
 The HAI chat at `/task-blueprint` can be opened from a pursuit detail page. A planning-only command shows matching pursuit context without creating operational work. An explicit **Run** command receives a deterministic `assistant_command` source identity, is routed into the selected or matched pursuit, and creates or reuses a governed workflow. The command identity is retained as a pursuit `command_origin` link, so a repeated command resolves to its existing pursuit before heuristic matching. The command bridge then creates a task plan and queues that workflow for the existing worker scheduler; it does not directly execute the task as a second parallel path or run unrelated ready workflows. An explicit maintenance-cycle command processes due work through the existing global cycle. This prevents duplicate execution when the scheduler retries or processes the same workflow. High-risk work still enters approval review, and completion remains dependent on the worker's runtime, verification, and quality-gate evidence.
 
