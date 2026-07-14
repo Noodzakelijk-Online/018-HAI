@@ -465,6 +465,7 @@ func TestResolveDecisionEndpointRejectsHiddenCrossOwnerCompletionEvidence(t *tes
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(identity.ContextSubjectKey, "alice")
+		c.Set(identity.ContextRoleKey, "operator")
 		c.Next()
 	})
 	router.POST("/pursuits/:id/decisions/resolve", NewHandler(service).ResolveDecision)
@@ -483,6 +484,41 @@ func TestResolveDecisionEndpointRejectsHiddenCrossOwnerCompletionEvidence(t *tes
 	}
 	if stored.Status == StatusCompleted || stored.CompletionState == CompletionVerified {
 		t.Fatalf("hidden cross-owner evidence completed Alice pursuit: %#v", stored)
+	}
+}
+
+func TestResolveDecisionEndpointRejectsNonApproverBeforeCreatingWorkflow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	workflows := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflows)
+	pursuit, err := service.Create(CreateRequest{Title: "Approval-gated pursuit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Set(identity.ContextRoleKey, "viewer")
+		c.Next()
+	})
+	router.POST("/pursuits/:id/decisions/resolve", NewHandler(service).ResolveDecision)
+
+	recorder := httptest.NewRecorder()
+	body := fmt.Sprintf(`{"decisionId":%q,"decisionType":"pursuit_next_action","approved":true}`, nextActionDecisionID(pursuit.ID))
+	request := httptest.NewRequest(http.MethodPost, "/pursuits/"+pursuit.ID.String()+"/decisions/resolve", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("non-approver decision resolution = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	if workflows.calls != 0 {
+		t.Fatalf("non-approver resolution created %d workflow(s)", workflows.calls)
+	}
+	if activity, activityErr := repo.FindActivities(pursuit.ID, 20); activityErr != nil || len(activity) != 1 {
+		t.Fatalf("non-approver resolution changed audit state: activity=%#v err=%v", activity, activityErr)
 	}
 }
 

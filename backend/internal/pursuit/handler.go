@@ -362,6 +362,13 @@ func (h *Handler) ResolveDecision(c *gin.Context) {
 	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
+	// Decision resolution can approve a next action, mark verified completion,
+	// or create a governed recovery workflow. Keep the approval boundary here
+	// as well as in route registration so alternate Gin wiring cannot weaken it.
+	if !pursuitApprovalAllowed(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "approval permission is required to resolve a pursuit decision"})
+		return
+	}
 	var request DecisionResolutionRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
