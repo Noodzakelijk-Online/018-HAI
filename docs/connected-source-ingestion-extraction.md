@@ -27,7 +27,8 @@ same source registry and sync-job table.
 3. Sync imported items incrementally with a cursor.
 4. Store raw item metadata and content hash.
 5. Extract text, summary, entities, dates, tasks, decisions, and follow-ups.
-6. Store keyword index entries and local vector-reference placeholders.
+6. Store compact lexical keyword index entries. Embeddings are not written or
+   claimed until a real local embedding adapter is configured.
 7. Mark sensitive or uncertain records for review.
 8. Store provenance through source URI, label, source id, and raw item id.
 9. Search extracted records by keyword relevance, project match, recency, and

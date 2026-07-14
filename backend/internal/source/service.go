@@ -146,6 +146,7 @@ type Service interface {
 	Revoke(sourceID uuid.UUID) (*models.ConnectedSource, error)
 	Search(request SearchRequest) (*SearchResult, error)
 	Extractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
+	ExtractionsForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error)
 	ArchiveExtraction(id uuid.UUID, archived bool) (*models.SourceExtraction, error)
 	DeleteExtraction(id uuid.UUID) error
@@ -679,11 +680,11 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 8
 	}
-	extractions, err := s.repo.FindExtractions(strings.TrimSpace(request.ProjectKey), false)
+	visibleSourceIDs, err := s.visibleSourceIDs(request.OwnerIdentity)
 	if err != nil {
 		return nil, err
 	}
-	visibleSourceIDs, err := s.visibleSourceIDs(request.OwnerIdentity)
+	extractions, err := s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), strings.TrimSpace(request.ProjectKey), false)
 	if err != nil {
 		return nil, err
 	}
@@ -715,7 +716,7 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 		Query:       request.Query,
 		ProjectKey:  request.ProjectKey,
 		UsedContext: ranked,
-		Explanation: fmt.Sprintf("Retrieved %d relevant connected-source records from %d visible cached extractions; unrelated, other-user, and sensitive records were not loaded.", len(ranked), visibleExtractionCount(extractions, visibleSourceIDs)),
+		Explanation: fmt.Sprintf("Retrieved %d relevant connected-source records from %d visible cached extractions; unrelated, other-user, and sensitive records were not loaded.", len(ranked), len(extractions)),
 	}, nil
 }
 
@@ -734,18 +735,24 @@ func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, er
 	return visible, nil
 }
 
-func visibleExtractionCount(extractions []models.SourceExtraction, sourceIDs map[uuid.UUID]bool) int {
-	count := 0
-	for _, extraction := range extractions {
-		if sourceIDs[extraction.SourceID] {
-			count++
-		}
+func sourceIDsFromSet(sourceIDs map[uuid.UUID]bool) []uuid.UUID {
+	result := make([]uuid.UUID, 0, len(sourceIDs))
+	for id := range sourceIDs {
+		result = append(result, id)
 	}
-	return count
+	return result
 }
 
 func (s *service) Extractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	return s.repo.FindExtractions(projectKey, includeArchived)
+}
+
+func (s *service) ExtractionsForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
 }
 
 func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {
@@ -1545,13 +1552,7 @@ func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	}); err != nil {
 		return err
 	}
-	if _, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
-		SourceID:     extraction.SourceID,
-		ExtractionID: extraction.ID,
-		ProjectKey:   extraction.ProjectKey,
-		IndexType:    "vector_ref",
-		VectorRef:    "local-vector-pending:" + extraction.ID.String(),
-	}); err != nil {
+	if err := s.repo.DeletePendingVectorIndex(extraction.ID); err != nil {
 		return err
 	}
 	return nil

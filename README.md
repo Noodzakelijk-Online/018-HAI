@@ -177,6 +177,9 @@ work from the command dashboard.
   and proposed ambient opportunities remain visible for repair, but no workflow
   or executable work is created. The full router is the supported production
   integration path.
+- Connected-source searches and extraction lists apply source ownership in the
+  repository query. They use the implemented lexical index and do not claim a
+  vector or embedding capability before a real local adapter is configured.
 - The runtime registry enforces emergency stop at its own boundary, including
   direct Hermes, Odysseus, and OpenClaw registry execution calls.
 - Runtime execution is constrained by enablement flags, allowlisted tools,

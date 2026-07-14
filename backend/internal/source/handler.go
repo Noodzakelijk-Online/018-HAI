@@ -236,17 +236,12 @@ func (h *Handler) Search(c *gin.Context) {
 
 func (h *Handler) Extractions(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	extractions, err := h.service.Extractions(c.Query("projectKey"), includeArchived)
+	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	visibleSourceIDs, err := h.visibleSourceIDs(c)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, filterVisibleExtractions(extractions, visibleSourceIDs))
+	c.JSON(http.StatusOK, extractions)
 }
 
 func (h *Handler) UpdateExtraction(c *gin.Context) {
@@ -416,7 +411,7 @@ func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
 }
 
 func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
-	extractions, err := h.service.Extractions("", true)
+	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), "", true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return false
@@ -440,16 +435,6 @@ func filterVisibleSyncJobs(jobs []models.SourceSyncJob, sourceIDs map[uuid.UUID]
 	for _, job := range jobs {
 		if sourceIDs[job.SourceID] {
 			visible = append(visible, job)
-		}
-	}
-	return visible
-}
-
-func filterVisibleExtractions(extractions []models.SourceExtraction, sourceIDs map[uuid.UUID]bool) []models.SourceExtraction {
-	visible := make([]models.SourceExtraction, 0, len(extractions))
-	for _, extraction := range extractions {
-		if sourceIDs[extraction.SourceID] {
-			visible = append(visible, extraction)
 		}
 	}
 	return visible

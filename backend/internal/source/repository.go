@@ -25,9 +25,11 @@ type Repository interface {
 	FindExtractionByRawItem(rawItemID uuid.UUID) (*models.SourceExtraction, error)
 	SaveExtraction(extraction *models.SourceExtraction) (*models.SourceExtraction, error)
 	FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
+	FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtraction(id uuid.UUID) (*models.SourceExtraction, error)
 	DeleteExtraction(id uuid.UUID) error
 	SaveIndexEntry(entry *models.SourceIndexEntry) (*models.SourceIndexEntry, error)
+	DeletePendingVectorIndex(extractionID uuid.UUID) error
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
 	FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
 }
@@ -184,8 +186,22 @@ func (r *GormRepository) SaveExtraction(extraction *models.SourceExtraction) (*m
 }
 
 func (r *GormRepository) FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	return r.findExtractions(nil, projectKey, includeArchived)
+}
+
+func (r *GormRepository) FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, nil
+	}
+	return r.findExtractions(sourceIDs, projectKey, includeArchived)
+}
+
+func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	var extractions []models.SourceExtraction
 	query := r.DB.Order("updated_at desc")
+	if sourceIDs != nil {
+		query = query.Where("source_id IN ?", sourceIDs)
+	}
 	if projectKey != "" {
 		query = query.Where("project_key = ?", projectKey)
 	}
@@ -227,6 +243,15 @@ func (r *GormRepository) SaveIndexEntry(entry *models.SourceIndexEntry) (*models
 		return nil, err
 	}
 	return entry, nil
+}
+
+// DeletePendingVectorIndex removes the legacy placeholder produced before a
+// real local embedding adapter is configured. It deliberately leaves any
+// future non-placeholder vector records intact.
+func (r *GormRepository) DeletePendingVectorIndex(extractionID uuid.UUID) error {
+	return r.DB.
+		Where("extraction_id = ? AND index_type = ? AND vector_ref LIKE ?", extractionID, "vector_ref", "local-vector-pending:%").
+		Delete(&models.SourceIndexEntry{}).Error
 }
 
 func (r *GormRepository) SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error) {

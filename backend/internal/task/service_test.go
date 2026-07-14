@@ -930,6 +930,10 @@ func (s *fakeTaskSourceService) Extractions(projectKey string, includeArchived b
 	return nil, nil
 }
 
+func (s *fakeTaskSourceService) ExtractionsForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	return nil, nil
+}
+
 func (s *fakeTaskSourceService) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {
 	return nil, nil
 }

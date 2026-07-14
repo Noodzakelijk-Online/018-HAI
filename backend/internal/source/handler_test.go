@@ -75,6 +75,46 @@ func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: aliceID, Summary: "Alice private context"}); err != nil {
+		t.Fatalf("SaveExtraction Alice: %v", err)
+	}
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: bobID, Summary: "Bob private context"}); err != nil {
+		t.Fatalf("SaveExtraction Bob: %v", err)
+	}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("extractions status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var extractions []models.SourceExtraction
+	if err := json.Unmarshal(response.Body.Bytes(), &extractions); err != nil {
+		t.Fatalf("decode extractions: %v", err)
+	}
+	if len(extractions) != 1 || extractions[0].SourceID != aliceID {
+		t.Fatalf("visible extractions = %#v, want only Alice extraction", extractions)
+	}
+	for _, sourceID := range repo.lastExtractionSourceIDs {
+		if sourceID == bobID {
+			t.Fatalf("handler repository query included Bob's private source")
+		}
+	}
+}
+
 func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sourceID := uuid.New()

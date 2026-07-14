@@ -786,6 +786,14 @@ func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
 			t.Fatalf("search returned Bob's private source extraction")
 		}
 	}
+	if len(repo.lastExtractionSourceIDs) != 2 {
+		t.Fatalf("search loaded source ids %#v, want only Alice and legacy sources", repo.lastExtractionSourceIDs)
+	}
+	for _, sourceID := range repo.lastExtractionSourceIDs {
+		if sourceID == bobID {
+			t.Fatalf("search repository query included Bob's private source")
+		}
+	}
 }
 
 func TestOwnerScopedSourceWritesOwnerScopedMemory(t *testing.T) {
@@ -1169,6 +1177,17 @@ func TestReindexUsesCachedRawContentAndPreservesMetadata(t *testing.T) {
 	if rawItems[0].Content != content || rawItems[0].Metadata != metadata {
 		t.Fatalf("raw cache mixed content and metadata: %#v", rawItems[0])
 	}
+	extraction, err := repo.FindExtractionByRawItem(rawItems[0].ID)
+	if err != nil {
+		t.Fatalf("FindExtractionByRawItem: %v", err)
+	}
+	repo.index = append(repo.index, models.SourceIndexEntry{
+		ID:           uuid.New(),
+		SourceID:     sourceID,
+		ExtractionID: extraction.ID,
+		IndexType:    "vector_ref",
+		VectorRef:    "local-vector-pending:" + extraction.ID.String(),
+	})
 
 	result, err := service.Reindex(sourceID)
 	if err != nil {
@@ -1177,8 +1196,8 @@ func TestReindexUsesCachedRawContentAndPreservesMetadata(t *testing.T) {
 	if len(result.Extractions) != 1 || result.Extractions[0].Text != content {
 		t.Fatalf("reindex did not use cached content: %#v", result.Extractions)
 	}
-	if len(repo.index) != 2 {
-		t.Fatalf("reindex created duplicate index rows: %#v", repo.index)
+	if len(repo.index) != 1 || repo.index[0].IndexType != "keyword" || repo.index[0].VectorRef != "" {
+		t.Fatalf("reindex retained placeholder or duplicate index rows: %#v", repo.index)
 	}
 	rawItems, _ = repo.FindRawItems(sourceID)
 	if rawItems[0].Metadata != metadata {
@@ -1446,13 +1465,14 @@ func writeTestFile(t *testing.T, path, content string) {
 }
 
 type fakeSourceRepo struct {
-	connectors  map[string]models.SourceConnector
-	sources     map[uuid.UUID]*models.ConnectedSource
-	jobs        []models.SourceSyncJob
-	rawItems    map[uuid.UUID]*models.SourceRawItem
-	extractions map[uuid.UUID]*models.SourceExtraction
-	index       []models.SourceIndexEntry
-	auditLogs   []models.SourceAuditLog
+	connectors              map[string]models.SourceConnector
+	sources                 map[uuid.UUID]*models.ConnectedSource
+	jobs                    []models.SourceSyncJob
+	rawItems                map[uuid.UUID]*models.SourceRawItem
+	extractions             map[uuid.UUID]*models.SourceExtraction
+	index                   []models.SourceIndexEntry
+	lastExtractionSourceIDs []uuid.UUID
+	auditLogs               []models.SourceAuditLog
 }
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
@@ -1624,8 +1644,27 @@ func (r *fakeSourceRepo) SaveExtraction(extraction *models.SourceExtraction) (*m
 }
 
 func (r *fakeSourceRepo) FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	return r.findExtractions(nil, projectKey, includeArchived)
+}
+
+func (r *fakeSourceRepo) FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	r.lastExtractionSourceIDs = append([]uuid.UUID{}, sourceIDs...)
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, nil
+	}
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		allowed[id] = true
+	}
+	return r.findExtractions(allowed, projectKey, includeArchived)
+}
+
+func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	result := []models.SourceExtraction{}
 	for _, extraction := range r.extractions {
+		if sourceIDs != nil && !sourceIDs[extraction.SourceID] {
+			continue
+		}
 		if projectKey != "" && extraction.ProjectKey != projectKey {
 			continue
 		}
@@ -1669,6 +1708,18 @@ func (r *fakeSourceRepo) SaveIndexEntry(entry *models.SourceIndexEntry) (*models
 	entry.UpdatedAt = now
 	r.index = append(r.index, *entry)
 	return entry, nil
+}
+
+func (r *fakeSourceRepo) DeletePendingVectorIndex(extractionID uuid.UUID) error {
+	filtered := r.index[:0]
+	for _, entry := range r.index {
+		if entry.ExtractionID == extractionID && entry.IndexType == "vector_ref" && strings.HasPrefix(entry.VectorRef, "local-vector-pending:") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	r.index = filtered
+	return nil
 }
 
 func (r *fakeSourceRepo) SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error) {
