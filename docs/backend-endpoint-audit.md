@@ -17,7 +17,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | Group | Representative routes |
 | --- | --- |
 | `/automation` | GET `/`, GET `/:id`, POST `/`, PATCH `/`, DELETE `/:id`, POST `/:id/launch`, health/diagnostics, `/images/:imageName` |
-| `/agent-runtimes` | GET `/`, `/health`, `/:id/skills`, openclaw ecosystem get/set/refresh/upload |
+| `/agent-runtimes` | read-only registry/health/skills; owner-gated runtime stop and OpenClaw ecosystem set/refresh/upload |
 | `/llm` | GET `/policy`, `/probes`, `/logs`; POST `/route`, `/generate` |
 | `/memory` | GET `/`, **GET `/query`**, GET `/:id`, `/export`; POST `/`, `/retrieve`, `/:id/archive|restore`; PATCH/DELETE `/:id` |
 | `/memory-engine` | import, dashboard, search, conversations, insights |
@@ -45,6 +45,10 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 - Ambient proposal acceptance and dismissal require a verified owner before the
   service may create workflow work. Ownerless ambient resolution remains an
   in-process system-worker API only.
+- Runtime task-stop and OpenClaw ecosystem mutation endpoints require a verified
+  owner before reaching a runtime adapter or filesystem operation. Read-only
+  runtime inventory, health, and skill discovery remain available to the
+  authenticated gateway surface.
 - **Follow-up:** adopt the `apierror` envelope uniformly across handlers (error
   shapes currently vary; frontend depends on the existing shapes — migrate both
   together).

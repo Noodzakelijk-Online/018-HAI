@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"automation-hub-backend/internal/identity"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,6 +42,10 @@ func TestOpenClawEcosystemHandlers(t *testing.T) {
 	handler := NewHandler(registry)
 
 	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
 	r.GET("/agent-runtimes/openclaw/ecosystem", handler.OpenClawEcosystem)
 	r.PATCH("/agent-runtimes/openclaw/ecosystem", handler.SetOpenClawEcosystem)
 	r.POST("/agent-runtimes/openclaw/ecosystem/refresh", handler.RefreshOpenClawEcosystem)
@@ -185,6 +191,10 @@ func TestAgentRuntimeSkillsAndStopHandlers(t *testing.T) {
 	handler := NewHandler(NewRegistry(adapter))
 
 	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
 	r.GET("/agent-runtimes/:id/skills", handler.Skills)
 	r.POST("/agent-runtimes/:id/tasks/:taskId/stop", handler.StopTask)
 
@@ -221,6 +231,26 @@ func TestAgentRuntimeSkillsAndStopHandlers(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("missing runtime skills should return 404, got %d", w.Code)
+	}
+}
+
+func TestRuntimeMutationHandlersRequireVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapter := &fakeAdapter{info: Info{ID: "openclaw", Enabled: true, Configured: true, ExecutionEnabled: true}}
+	handler := NewHandler(NewRegistry(adapter))
+	r := gin.New()
+	r.POST("/agent-runtimes/:id/tasks/:taskId/stop", handler.StopTask)
+	r.POST("/agent-runtimes/openclaw/ecosystem/refresh", handler.RefreshOpenClawEcosystem)
+
+	for _, path := range []string{
+		"/agent-runtimes/openclaw/tasks/task-123/stop",
+		"/agent-runtimes/openclaw/ecosystem/refresh",
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, nil))
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s status = %d, want %d: %s", path, w.Code, http.StatusUnauthorized, w.Body.String())
+		}
 	}
 }
 
