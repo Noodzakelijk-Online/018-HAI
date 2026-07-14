@@ -804,6 +804,60 @@ func TestCandidateIntakeRequiresExplicitAcceptanceBeforeCreatingWorkflow(t *test
 	}
 }
 
+func TestAutoLinkWorkflowDoesNotAttachOperationalWorkToUnacceptedCandidate(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Imported runtime recovery",
+		OwnerIdentity:    "alice",
+		ProjectKey:       "018-HAI",
+		SourceOfCreation: "ai_chat_pursuit_candidate",
+		Status:           StatusWaiting,
+	})
+	if err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+	workflowID := uuid.New()
+
+	result, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
+		OwnerIdentity: "alice",
+		WorkflowID:    workflowID,
+		Input:         "Prepare the local runtime recovery workflow safely.",
+		ProjectKey:    "018-HAI",
+		SourceType:    "ai_chat",
+		SourceID:      "conversation:insight",
+		SourceURI:     "chatgpt://conversation/runtime-recovery",
+		Actor:         "memory-engine",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkWorkflow returned error: %v", err)
+	}
+	if result.Linked || result.PursuitID != candidate.ID || !strings.Contains(result.Message, "awaits explicit acceptance") {
+		t.Fatalf("candidate auto-link result = %#v", result)
+	}
+	links, err := repo.FindLinks(candidate.ID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
+	}
+	if pursuitLinkExists(links, LinkWorkflow, workflowID.String(), "operational_work") {
+		t.Fatalf("unaccepted candidate received an operational workflow link: %#v", links)
+	}
+	activities, err := repo.FindActivities(candidate.ID, 20)
+	if err != nil {
+		t.Fatalf("FindActivities returned error: %v", err)
+	}
+	foundDeferredAudit := false
+	for _, activity := range activities {
+		if activity.EventType == "pursuit.candidate_workflow_link_deferred" && activity.SourceID == workflowID.String() {
+			foundDeferredAudit = true
+			break
+		}
+	}
+	if !foundDeferredAudit {
+		t.Fatalf("candidate workflow deferral was not audited: %#v", activities)
+	}
+}
+
 func TestIntakeLinksSourceReferenceIntoPursuitEvidence(t *testing.T) {
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{repo: repo}

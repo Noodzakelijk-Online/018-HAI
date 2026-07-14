@@ -1880,6 +1880,15 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 		result.Message = "matched pursuit is closed; reopen it explicitly or create a new pursuit before linking operational work"
 		return result, nil
 	}
+	if isPursuitCandidate(match.Pursuit) {
+		// A source or memory producer may already have created this workflow
+		// before it asks the pursuit layer to correlate it. Matching a reviewable
+		// candidate must not turn that workflow into candidate-owned operational
+		// work: Robert has not accepted the objective yet.
+		result.Message = "matched pursuit candidate awaits explicit acceptance; workflow was not linked"
+		_, _ = s.recordActivity(match.Pursuit.ID, "pursuit.candidate_workflow_link_deferred", "A source-derived workflow matched this reviewable candidate, but no operational link was created before explicit acceptance.", firstNonEmpty(request.Actor, "system"), LinkWorkflow, request.WorkflowID.String(), request.SourceURI)
+		return result, nil
+	}
 
 	actor := firstNonEmpty(request.Actor, "system")
 	links := []models.PursuitLink{}
