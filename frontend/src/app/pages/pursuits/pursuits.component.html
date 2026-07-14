@@ -322,22 +322,22 @@
               </nz-tag>
             </header>
             <div class="operational-digest__grid">
-              <button type="button" title="Robert-only decision, approval, or unblock work.">
+              <button type="button" title="Open the first Robert-only decision, approval, or unblock action." (click)="openDigestLane('robert')">
                 <span>Robert</span>
                 <strong>{{ digest.needsRobert }}</strong>
                 <small>{{ digest.robertLine }}</small>
               </button>
-              <button type="button" title="Work that can be packaged for a VA or assistant.">
+              <button type="button" title="Open the first VA-ready preparation action." (click)="openDigestLane('va')">
                 <span>VA-ready</span>
                 <strong>{{ digest.vaReady }}</strong>
                 <small>{{ digest.delegationLine }}</small>
               </button>
-              <button type="button" title="Low-risk work HAI can prepare through guarded execution.">
+              <button type="button" title="Open the first system-ready low-risk action." (click)="openDigestLane('system')">
                 <span>System-ready</span>
                 <strong>{{ digest.systemReady }}</strong>
                 <small>{{ digest.systemLine }}</small>
               </button>
-              <button type="button" title="Blocked, waiting, or follow-up work.">
+              <button type="button" title="Open the first blocked, waiting, or follow-up action." (click)="openDigestLane('waiting')">
                 <span>Waiting</span>
                 <strong>{{ digest.waiting }}</strong>
                 <small>{{ digest.waitingLine }}</small>

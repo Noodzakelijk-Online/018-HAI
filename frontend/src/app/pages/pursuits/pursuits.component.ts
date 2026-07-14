@@ -622,6 +622,23 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.inspectedAction = action;
   }
 
+  openDigestLane(lane: 'robert' | 'va' | 'system' | 'waiting'): void {
+    const queues = this.selected?.actionQueues;
+    const actions = lane === 'robert'
+      ? queues?.needsRobert
+      : lane === 'va'
+        ? queues?.vaReady
+        : lane === 'system'
+          ? queues?.systemReady
+          : queues?.waiting;
+    if (!actions?.length) {
+      const label = lane === 'robert' ? 'Robert-only' : lane === 'va' ? 'VA-ready' : lane === 'system' ? 'System-ready' : 'Waiting';
+      this.notification.info(`${label} lane`, `There is no ${label.toLowerCase()} action to open for this pursuit.`);
+      return;
+    }
+    this.openAction(actions[0]);
+  }
+
   closeAction(): void {
     this.inspectedAction = undefined;
   }
