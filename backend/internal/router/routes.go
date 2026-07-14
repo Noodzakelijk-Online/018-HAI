@@ -153,6 +153,7 @@ func initializeAutonomyRoutes(apiVersion *gin.RouterGroup, handler *autonomy.Han
 
 func initializeAmbientRoutes(apiVersion *gin.RouterGroup, handler *ambient.Handler) {
 	routes := apiVersion.Group("/ambient")
+	routes.Use(ambient.RequireAuthenticatedOwner())
 	{
 		routes.GET("/overview", handler.Overview)
 		routes.POST("/scan", handler.Scan)

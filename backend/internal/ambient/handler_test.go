@@ -14,6 +14,50 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestOverviewHandlerRequiresVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &ambientResolutionService{}
+	handler := NewHandler(service)
+
+	unauthenticated := gin.New()
+	unauthenticated.GET("/ambient/overview", handler.Overview)
+	recorder := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ambient/overview", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated overview status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+	if service.overviewCalls != 0 {
+		t.Fatalf("overview service was called without an authenticated owner: %d", service.overviewCalls)
+	}
+
+	gated := gin.New()
+	gatedRoutes := gated.Group("/ambient")
+	gatedRoutes.Use(RequireAuthenticatedOwner())
+	gatedRoutes.GET("/overview", handler.Overview)
+	recorder = httptest.NewRecorder()
+	gated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ambient/overview", nil))
+	if recorder.Code != http.StatusUnauthorized || service.overviewCalls != 0 {
+		t.Fatalf("route owner gate status/calls = %d/%d, want %d/0; body=%s", recorder.Code, service.overviewCalls, http.StatusUnauthorized, recorder.Body.String())
+	}
+
+	authenticated := gin.New()
+	authenticated.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	authenticatedRoutes := authenticated.Group("/ambient")
+	authenticatedRoutes.Use(RequireAuthenticatedOwner())
+	authenticatedRoutes.GET("/overview", handler.Overview)
+	recorder = httptest.NewRecorder()
+	authenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ambient/overview", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("authenticated overview status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if service.overviewCalls != 1 || service.overviewOwner != "alice" {
+		t.Fatalf("overview owner = %q calls=%d, want alice/1", service.overviewOwner, service.overviewCalls)
+	}
+}
+
 func TestAcceptHandlerRejectsAnotherOwnersPursuitOpportunity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pursuitID := uuid.New()
@@ -230,13 +274,17 @@ type ambientResolutionService struct {
 	dismissCalls   int
 	acceptRequest  ResolutionRequest
 	dismissRequest ResolutionRequest
+	overviewCalls  int
+	overviewOwner  string
 }
 
 func (s *ambientResolutionService) Overview() (*Overview, error) {
 	return &Overview{}, nil
 }
 
-func (s *ambientResolutionService) OverviewForOwner(string) (*Overview, error) {
+func (s *ambientResolutionService) OverviewForOwner(ownerIdentity string) (*Overview, error) {
+	s.overviewCalls++
+	s.overviewOwner = ownerIdentity
 	return &Overview{}, nil
 }
 

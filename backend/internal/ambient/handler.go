@@ -19,8 +19,27 @@ func NewHandler(service Service) *Handler {
 	return &Handler{service: service}
 }
 
+// RequireAuthenticatedOwner protects the personal ambient planning boundary.
+// Background workers call the service directly, but browser and API traffic
+// must carry a verified IDP principal before it can inspect private needs,
+// opportunities, or scan history.
+func RequireAuthenticatedOwner() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if verifiedOwner(c) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for ambient access"})
+			return
+		}
+		c.Next()
+	}
+}
+
 func (h *Handler) Overview(c *gin.Context) {
-	result, err := h.service.OverviewForOwner(verifiedOwner(c))
+	ownerIdentity := verifiedOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for ambient access"})
+		return
+	}
+	result, err := h.service.OverviewForOwner(ownerIdentity)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
