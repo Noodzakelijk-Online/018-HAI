@@ -10,10 +10,15 @@ verification, and approval are separate; external effects remain blocked until a
 reviewed runtime, policy, and evidence path are configured.
 
 > **Current repository state, reviewed 2026-07-14:** the local operating layer
-> is implemented and its Compose topology, production frontend build, backend
-> tests, Postgres critical-path smoke, gateway health routes, and protected-route
-> rejection have been exercised. Live third-party accounts, paid models, browser
-> control, and broad host control are deliberately not claimed as working.
+> is implemented. The current local stack has healthy backend, frontend, IDP,
+> Postgres, Redis, and Kafka containers; nginx serves both `/` and Angular deep
+> links such as `/control-center`; gateway health routes respond; and protected
+> API requests are rejected without a signed session. Backend/IDP tests,
+> production frontend build and unit tests, Compose validation, and a
+> Postgres-backed critical-path smoke have been exercised. A complete fresh-
+> clone, signed-in Windows browser journey and any real third-party account,
+> paid model, browser-control, or broad-host-control journey are still release
+> gates, not claims of current operation.
 
 ## Product Boundary
 
@@ -47,6 +52,19 @@ for the canonical-stack decision.
 - **Live-proven**: a configured account, provider, or runtime completed a bounded approved end-to-end task on the target machine with audit and verification evidence.
 
 No configured provider, runtime, dashboard state, or generated answer upgrades itself to live-proven.
+
+### Verification Snapshot
+
+This is the current evidence boundary, not a feature checklist. Re-run the
+target-machine checks before relying on a path for real work.
+
+| Surface | Current evidence | Still required before operational trust |
+| --- | --- | --- |
+| Local Compose and gateway | The local services are running; `/`, `/control-center`, `/healthz`, and `/readyz` are served through nginx. Angular deep links return the application shell. | Fresh-clone Windows 11 run with a newly created `.env.local`. |
+| Browser session | The unauthenticated session check returns `401`; Angular routes a browser without a refreshable session to `/login`. | Sign in as the first-run owner, open each primary screen, create and review one bounded low-risk workflow, and confirm session refresh in a real browser. |
+| Go and Angular code | Backend and IDP unit tests, backend vet/build, frontend production build and headless unit tests, plus Compose config validation have been run. | End-to-end browser coverage and a two-real-account authorization exercise. |
+| Sources and LLMs | Local/export ingestion and provider probes are implemented; GitHub read-only sync is available when configured. | A scoped live source import and a bounded local-model task with retained audit and verification evidence. |
+| Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task. |
 
 ## Current Safe Operator Flows
 
