@@ -95,6 +95,51 @@ func TestTransitionHandlerCannotApproveWorkflow(t *testing.T) {
 	}
 }
 
+func TestWorkflowHandlerRejectsCrossOwnerReadAndApproval(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "bob",
+		Input:         "Draft and send a legal reply to Bob's lawyer.",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	handler := NewHandler(service)
+
+	getRequest := httptest.NewRequest(http.MethodGet, "/workflow/"+record.Item.ID.String(), nil)
+	getResponse := httptest.NewRecorder()
+	getContext, _ := gin.CreateTestContext(getResponse)
+	getContext.Params = gin.Params{{Key: "id", Value: record.Item.ID.String()}}
+	getContext.Request = getRequest
+	getContext.Set(identity.ContextSubjectKey, "alice")
+	handler.Get(getContext)
+	if getResponse.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner get status = %d, want 404: %s", getResponse.Code, getResponse.Body.String())
+	}
+
+	body, _ := json.Marshal(ApprovalResolutionRequest{Approved: true})
+	approvalRequest := httptest.NewRequest(http.MethodPost, "/workflow/"+record.Item.ID.String()+"/approval", bytes.NewReader(body))
+	approvalRequest.Header.Set("Content-Type", "application/json")
+	approvalResponse := httptest.NewRecorder()
+	approvalContext, _ := gin.CreateTestContext(approvalResponse)
+	approvalContext.Params = gin.Params{{Key: "id", Value: record.Item.ID.String()}}
+	approvalContext.Request = approvalRequest
+	approvalContext.Set(identity.ContextSubjectKey, "alice")
+	handler.ResolveApproval(approvalContext)
+	if approvalResponse.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner approval status = %d, want 404: %s", approvalResponse.Code, approvalResponse.Body.String())
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.ApprovalStatus == "approved" {
+		t.Fatalf("cross-owner approval mutated workflow: %#v", updated.Item)
+	}
+}
+
 func TestIntakeHandlerRoutesLegacyRequestThroughPursuitGateway(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeWorkflowRepo()

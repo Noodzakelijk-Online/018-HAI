@@ -16,6 +16,8 @@ type Repository interface {
 	FindItem(id uuid.UUID) (*models.WorkflowItem, error)
 	FindActiveItemBySourceIdentity(sourceType, sourceID string) (*models.WorkflowItem, error)
 	FindActiveItemBySourceURI(sourceURI string) (*models.WorkflowItem, error)
+	FindActiveItemBySourceIdentityForOwner(ownerIdentity, sourceType, sourceID string) (*models.WorkflowItem, error)
+	FindActiveItemBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.WorkflowItem, error)
 	FindItems(includeArchived bool) ([]models.WorkflowItem, error)
 	FindApprovalItems() ([]models.WorkflowItem, error)
 	FindRunnableItems(now time.Time, limit int) ([]models.WorkflowItem, error)
@@ -119,6 +121,47 @@ func (r *GormRepository) FindActiveItemBySourceIdentity(sourceType, sourceID str
 func (r *GormRepository) FindActiveItemBySourceURI(sourceURI string) (*models.WorkflowItem, error) {
 	var item models.WorkflowItem
 	err := r.DB.Where("source_uri = ? AND archived = ?", sourceURI, false).Order("updated_at desc").First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *GormRepository) FindActiveItemBySourceIdentityForOwner(ownerIdentity, sourceType, sourceID string) (*models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindActiveItemBySourceIdentity(sourceType, sourceID)
+	}
+	var item models.WorkflowItem
+	err := r.DB.Where(
+		"owner_identity = ? AND source_type = ? AND source_id = ? AND archived = ?",
+		ownerIdentity,
+		sourceType,
+		sourceID,
+		false,
+	).Order("updated_at desc").First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *GormRepository) FindActiveItemBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindActiveItemBySourceURI(sourceURI)
+	}
+	var item models.WorkflowItem
+	err := r.DB.Where(
+		"owner_identity = ? AND source_uri = ? AND archived = ?",
+		ownerIdentity,
+		sourceURI,
+		false,
+	).Order("updated_at desc").First(&item).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -339,6 +382,7 @@ func (r *GormRepository) FindProjectMatches(workflowID uuid.UUID) ([]models.Work
 func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPursuitContext, error) {
 	var rows []struct {
 		ID                    uuid.UUID
+		OwnerIdentity         string
 		Title                 string
 		Status                string
 		RiskLevel             string
@@ -359,6 +403,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 	}
 	err := r.DB.Table("pursuit_links AS links").
 		Select(`pursuits.id,
+			pursuits.owner_identity,
 			pursuits.title,
 			pursuits.status,
 			pursuits.risk_level,
@@ -387,6 +432,7 @@ func (r *GormRepository) FindLinkedPursuits(workflowID uuid.UUID) ([]WorkflowPur
 	for _, row := range rows {
 		result = append(result, WorkflowPursuitContext{
 			ID:                    row.ID,
+			OwnerIdentity:         row.OwnerIdentity,
 			Title:                 row.Title,
 			Status:                row.Status,
 			RiskLevel:             row.RiskLevel,

@@ -188,6 +188,7 @@ type WorkflowRecord struct {
 
 type WorkflowPursuitContext struct {
 	ID                    uuid.UUID `json:"id"`
+	OwnerIdentity         string    `json:"-"`
 	Title                 string    `json:"title"`
 	Status                string    `json:"status"`
 	RiskLevel             string    `json:"riskLevel"`
@@ -236,9 +237,13 @@ type WorkflowDashboard struct {
 type Service interface {
 	Intake(request IntakeRequest) (*WorkflowRecord, error)
 	Items(includeArchived bool) ([]models.WorkflowItem, error)
+	ItemsForOwner(ownerIdentity string, includeArchived bool) ([]models.WorkflowItem, error)
 	ApprovalItems() ([]models.WorkflowItem, error)
+	ApprovalItemsForOwner(ownerIdentity string) ([]models.WorkflowItem, error)
 	Dashboard() (*WorkflowDashboard, error)
+	DashboardForOwner(ownerIdentity string) (*WorkflowDashboard, error)
 	Get(id uuid.UUID) (*WorkflowRecord, error)
+	GetForOwner(ownerIdentity string, id uuid.UUID) (*WorkflowRecord, error)
 	Transition(id uuid.UUID, request TransitionRequest) (*WorkflowRecord, error)
 	ResolveApproval(id uuid.UUID, request ApprovalResolutionRequest) (*WorkflowRecord, error)
 	ResolveInterruptedExecution(id uuid.UUID, request InterruptedExecutionResolutionRequest) (*WorkflowRecord, error)
@@ -295,13 +300,13 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	var dedupeRule string
 	var err error
 	if sourceType != "" && sourceID != "" {
-		existing, err = s.repo.FindActiveItemBySourceIdentity(sourceType, sourceID)
+		existing, err = s.repo.FindActiveItemBySourceIdentityForOwner(strings.TrimSpace(request.OwnerIdentity), sourceType, sourceID)
 		if err != nil {
 			return nil, err
 		}
 		dedupeRule = "source identity deduplication"
 	} else if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
-		existing, err = s.repo.FindActiveItemBySourceURI(sourceURI)
+		existing, err = s.repo.FindActiveItemBySourceURIForOwner(strings.TrimSpace(request.OwnerIdentity), sourceURI)
 		if err != nil {
 			return nil, err
 		}
@@ -533,11 +538,27 @@ func (s *service) supersedeSourceWorkflow(item *models.WorkflowItem, request Int
 }
 
 func (s *service) Items(includeArchived bool) ([]models.WorkflowItem, error) {
-	return s.repo.FindItems(includeArchived)
+	return s.ItemsForOwner("", includeArchived)
+}
+
+func (s *service) ItemsForOwner(ownerIdentity string, includeArchived bool) ([]models.WorkflowItem, error) {
+	items, err := s.repo.FindItems(includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	return visibleWorkflowItems(ownerIdentity, items), nil
 }
 
 func (s *service) ApprovalItems() ([]models.WorkflowItem, error) {
-	return s.repo.FindApprovalItems()
+	return s.ApprovalItemsForOwner("")
+}
+
+func (s *service) ApprovalItemsForOwner(ownerIdentity string) ([]models.WorkflowItem, error) {
+	items, err := s.repo.FindApprovalItems()
+	if err != nil {
+		return nil, err
+	}
+	return visibleWorkflowItems(ownerIdentity, items), nil
 }
 
 func (s *service) RetractSource(sourceType, sourceID, reason string) error {
@@ -576,28 +597,36 @@ func (s *service) RetractSource(sourceType, sourceID, reason string) error {
 }
 
 func (s *service) Dashboard() (*WorkflowDashboard, error) {
+	return s.DashboardForOwner("")
+}
+
+func (s *service) DashboardForOwner(ownerIdentity string) (*WorkflowDashboard, error) {
 	_ = s.ensureDefaultRules()
-	items, err := s.repo.FindItems(false)
+	items, err := s.ItemsForOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
-	approvalItems, err := s.repo.FindApprovalItems()
+	approvalItems, err := s.ApprovalItemsForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
+	workflowIDs := workflowIDSet(items)
 	now := time.Now().UTC()
 	openLoops, err := s.repo.FindDashboardOpenLoops(now)
 	if err != nil {
 		return nil, err
 	}
+	openLoops = visibleWorkflowOpenLoops(workflowIDs, openLoops)
 	expiredWorkflowClaims, err := s.repo.FindExpiredWorkflowClaims(now, 50)
 	if err != nil {
 		return nil, err
 	}
+	expiredWorkflowClaims = visibleWorkflowItemsByID(workflowIDs, expiredWorkflowClaims)
 	expiredOpenLoopClaims, err := s.repo.FindExpiredOpenLoopClaims(now, 50)
 	if err != nil {
 		return nil, err
 	}
+	expiredOpenLoopClaims = visibleWorkflowOpenLoops(workflowIDs, expiredOpenLoopClaims)
 	rules, err := s.repo.FindRules()
 	if err != nil {
 		return nil, err
@@ -658,6 +687,22 @@ func (s *service) Dashboard() (*WorkflowDashboard, error) {
 }
 
 func (s *service) Get(id uuid.UUID) (*WorkflowRecord, error) {
+	return s.GetForOwner("", id)
+}
+
+func (s *service) GetForOwner(ownerIdentity string, id uuid.UUID) (*WorkflowRecord, error) {
+	record, err := s.get(id)
+	if err != nil {
+		return nil, err
+	}
+	if !workflowVisibleTo(record.Item, ownerIdentity) {
+		return nil, fmt.Errorf("workflow not found")
+	}
+	record.Pursuits = visibleWorkflowPursuits(ownerIdentity, record.Pursuits)
+	return record, nil
+}
+
+func (s *service) get(id uuid.UUID) (*WorkflowRecord, error) {
 	item, err := s.repo.FindItem(id)
 	if err != nil {
 		return nil, err
@@ -711,6 +756,70 @@ func (s *service) Get(id uuid.UUID) (*WorkflowRecord, error) {
 		return nil, err
 	}
 	return &WorkflowRecord{Item: *item, Checklist: checklist, Intake: intake, Matches: matches, Pursuits: pursuits, Evidence: evidence, OpenLoops: openLoops, Proposals: proposals, QualityGates: qualityGates, Transitions: transitions, SourceLinks: sourceLinks, Decisions: decisions, Events: events}, nil
+}
+
+func workflowVisibleTo(item models.WorkflowItem, ownerIdentity string) bool {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return true
+	}
+	owner := strings.TrimSpace(item.OwnerIdentity)
+	return owner == "" || owner == ownerIdentity
+}
+
+func visibleWorkflowItems(ownerIdentity string, items []models.WorkflowItem) []models.WorkflowItem {
+	visible := make([]models.WorkflowItem, 0, len(items))
+	for _, item := range items {
+		if workflowVisibleTo(item, ownerIdentity) {
+			visible = append(visible, item)
+		}
+	}
+	return visible
+}
+
+func workflowIDSet(items []models.WorkflowItem) map[uuid.UUID]struct{} {
+	ids := make(map[uuid.UUID]struct{}, len(items))
+	for _, item := range items {
+		if item.ID != uuid.Nil {
+			ids[item.ID] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func visibleWorkflowItemsByID(ids map[uuid.UUID]struct{}, items []models.WorkflowItem) []models.WorkflowItem {
+	visible := make([]models.WorkflowItem, 0, len(items))
+	for _, item := range items {
+		if _, ok := ids[item.ID]; ok {
+			visible = append(visible, item)
+		}
+	}
+	return visible
+}
+
+func visibleWorkflowOpenLoops(ids map[uuid.UUID]struct{}, loops []models.WorkflowOpenLoop) []models.WorkflowOpenLoop {
+	visible := make([]models.WorkflowOpenLoop, 0, len(loops))
+	for _, loop := range loops {
+		if _, ok := ids[loop.WorkflowID]; ok {
+			visible = append(visible, loop)
+		}
+	}
+	return visible
+}
+
+func visibleWorkflowPursuits(ownerIdentity string, pursuits []WorkflowPursuitContext) []WorkflowPursuitContext {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return pursuits
+	}
+	visible := make([]WorkflowPursuitContext, 0, len(pursuits))
+	for _, pursuit := range pursuits {
+		owner := strings.TrimSpace(pursuit.OwnerIdentity)
+		if owner == "" || owner == ownerIdentity {
+			visible = append(visible, pursuit)
+		}
+	}
+	return visible
 }
 
 func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*WorkflowRecord, error) {

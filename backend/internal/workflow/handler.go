@@ -86,7 +86,7 @@ func workflowAPIIntakeSourceID(request IntakeRequest) string {
 
 func (h *Handler) Items(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	items, err := h.service.Items(includeArchived)
+	items, err := h.service.ItemsForOwner(verifiedWorkflowOwner(c), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -95,7 +95,7 @@ func (h *Handler) Items(c *gin.Context) {
 }
 
 func (h *Handler) ApprovalItems(c *gin.Context) {
-	items, err := h.service.ApprovalItems()
+	items, err := h.service.ApprovalItemsForOwner(verifiedWorkflowOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -104,7 +104,7 @@ func (h *Handler) ApprovalItems(c *gin.Context) {
 }
 
 func (h *Handler) Dashboard(c *gin.Context) {
-	dashboard, err := h.service.Dashboard()
+	dashboard, err := h.service.DashboardForOwner(verifiedWorkflowOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -117,7 +117,7 @@ func (h *Handler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	record, err := h.service.Get(id)
+	record, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -130,6 +130,9 @@ func (h *Handler) Transition(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensureWorkflowVisible(c, id) {
+		return
+	}
 	var request TransitionRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -139,17 +142,20 @@ func (h *Handler) Transition(c *gin.Context) {
 	// Approval-required workflows must use ResolveApproval.
 	request.Approved = false
 	request.Actor = verifiedWorkflowActor(c, "operator")
-	record, err := h.service.Transition(id, request)
+	_, err := h.service.Transition(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) ResolveApproval(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
+		return
+	}
+	if !h.ensureWorkflowVisible(c, id) {
 		return
 	}
 	var request ApprovalResolutionRequest
@@ -158,17 +164,20 @@ func (h *Handler) ResolveApproval(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedWorkflowActor(c, "operator")
-	record, err := h.service.ResolveApproval(id, request)
+	_, err := h.service.ResolveApproval(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) ResolveInterruptedExecution(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
+		return
+	}
+	if !h.ensureWorkflowVisible(c, id) {
 		return
 	}
 	var request InterruptedExecutionResolutionRequest
@@ -177,17 +186,20 @@ func (h *Handler) ResolveInterruptedExecution(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedWorkflowActor(c, "operator")
-	record, err := h.service.ResolveInterruptedExecution(id, request)
+	_, err := h.service.ResolveInterruptedExecution(id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) ResolveProposal(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
+		return
+	}
+	if !h.ensureWorkflowVisible(c, id) {
 		return
 	}
 	proposalID, err := uuid.Parse(c.Param("proposalId"))
@@ -201,17 +213,20 @@ func (h *Handler) ResolveProposal(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedWorkflowActor(c, "operator")
-	record, err := h.service.ResolveProposal(id, proposalID, request)
+	_, err = h.service.ResolveProposal(id, proposalID, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 	id, ok := parseWorkflowID(c)
 	if !ok {
+		return
+	}
+	if !h.ensureWorkflowVisible(c, id) {
 		return
 	}
 	itemID, err := uuid.Parse(c.Param("itemId"))
@@ -225,12 +240,12 @@ func (h *Handler) UpdateChecklistItem(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedWorkflowActor(c, "operator")
-	record, err := h.service.UpdateChecklistItem(id, itemID, request)
+	_, err = h.service.UpdateChecklistItem(id, itemID, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, record)
+	h.respondScopedWorkflow(c, id, http.StatusOK)
 }
 
 // verifiedWorkflowActor ignores any actor label supplied in request JSON.
@@ -253,6 +268,23 @@ func verifiedWorkflowOwner(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+func (h *Handler) ensureWorkflowVisible(c *gin.Context, id uuid.UUID) bool {
+	if _, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workflow not found"})
+		return false
+	}
+	return true
+}
+
+func (h *Handler) respondScopedWorkflow(c *gin.Context, id uuid.UUID, status int) {
+	record, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workflow not found"})
+		return
+	}
+	c.JSON(status, record)
 }
 
 func (h *Handler) RunDue(c *gin.Context) {

@@ -89,6 +89,86 @@ func TestIntakePersistsVerifiedOwnerIdentity(t *testing.T) {
 	}
 }
 
+func TestOwnerScopedIntakeDoesNotReuseForeignOrLegacySourceWorkflows(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+
+	bob, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "bob",
+		Input:         "Review Bob's connector message.",
+		SourceType:    "connected_source",
+		SourceID:      "shared-message-id",
+		SourceURI:     "source://mail/shared-message-id",
+	})
+	if err != nil {
+		t.Fatalf("bob Intake: %v", err)
+	}
+	alice, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Review Alice's connector message.",
+		SourceType:    "connected_source",
+		SourceID:      "shared-message-id",
+		SourceURI:     "source://mail/shared-message-id",
+	})
+	if err != nil {
+		t.Fatalf("alice Intake: %v", err)
+	}
+	if alice.Item.ID == bob.Item.ID || alice.Item.OwnerIdentity != "alice" {
+		t.Fatalf("Alice intake reused Bob's source workflow: alice=%#v bob=%#v", alice.Item, bob.Item)
+	}
+
+	legacy, err := service.Intake(IntakeRequest{
+		Input:      "Review the ownerless imported source.",
+		SourceType: "connected_source",
+		SourceID:   "legacy-message-id",
+		SourceURI:  "source://mail/legacy-message-id",
+	})
+	if err != nil {
+		t.Fatalf("legacy Intake: %v", err)
+	}
+	owned, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Review Alice's version of the imported source.",
+		SourceType:    "connected_source",
+		SourceID:      "legacy-message-id",
+		SourceURI:     "source://mail/legacy-message-id",
+	})
+	if err != nil {
+		t.Fatalf("owned Intake: %v", err)
+	}
+	if owned.Item.ID == legacy.Item.ID || owned.Item.OwnerIdentity != "alice" {
+		t.Fatalf("authenticated intake adopted ownerless workflow: owned=%#v legacy=%#v", owned.Item, legacy.Item)
+	}
+
+	storedBob, err := repo.FindItem(bob.Item.ID)
+	if err != nil || storedBob.OwnerIdentity != "bob" || storedBob.Archived {
+		t.Fatalf("foreign workflow changed by Alice intake: item=%#v err=%v", storedBob, err)
+	}
+}
+
+func TestOwnerScopedIntakeDoesNotReuseForeignSourceURI(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	bob, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "bob",
+		Input:         "Review Bob's URI-only source.",
+		SourceURI:     "source://calendar/shared-event",
+	})
+	if err != nil {
+		t.Fatalf("bob Intake: %v", err)
+	}
+	alice, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Review Alice's URI-only source.",
+		SourceURI:     "source://calendar/shared-event",
+	})
+	if err != nil {
+		t.Fatalf("alice Intake: %v", err)
+	}
+	if alice.Item.ID == bob.Item.ID || alice.Item.OwnerIdentity != "alice" {
+		t.Fatalf("Alice URI intake reused Bob's workflow: alice=%#v bob=%#v", alice.Item, bob.Item)
+	}
+}
+
 func TestGetIncludesLinkedPursuitContext(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	service := NewService(repo)
@@ -134,6 +214,54 @@ func TestGetIncludesLinkedPursuitContext(t *testing.T) {
 	}
 	if got.NextRecommendedAction == "" || got.Relationship != "operational_work" {
 		t.Fatalf("pursuit context lost next action/relationship: %#v", got)
+	}
+}
+
+func TestOwnerScopedWorkflowViewsHideForeignWorkAndLegacyPursuits(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	alice, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Draft and send a legal reply about Alice's case.",
+	})
+	if err != nil {
+		t.Fatalf("alice Intake: %v", err)
+	}
+	bob, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "bob",
+		Input:         "Draft and send a legal reply about Bob's case.",
+	})
+	if err != nil {
+		t.Fatalf("bob Intake: %v", err)
+	}
+	repo.pursuits[alice.Item.ID] = []WorkflowPursuitContext{
+		{ID: uuid.New(), OwnerIdentity: "alice", Title: "Alice legal pursuit", Relationship: "operational_work"},
+		{ID: uuid.New(), OwnerIdentity: "bob", Title: "Bob legacy pursuit", Relationship: "legacy_import"},
+	}
+
+	items, err := service.ItemsForOwner("alice", false)
+	if err != nil {
+		t.Fatalf("ItemsForOwner: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != alice.Item.ID {
+		t.Fatalf("alice items = %#v, want only Alice workflow", items)
+	}
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner: %v", err)
+	}
+	if dashboard.Counts["total"] != 1 || dashboard.Counts["approvals"] != 1 {
+		t.Fatalf("alice dashboard counts = %#v, want only Alice workflow", dashboard.Counts)
+	}
+	detail, err := service.GetForOwner("alice", alice.Item.ID)
+	if err != nil {
+		t.Fatalf("GetForOwner alice: %v", err)
+	}
+	if len(detail.Pursuits) != 1 || detail.Pursuits[0].Title != "Alice legal pursuit" {
+		t.Fatalf("owner detail exposed foreign pursuit context: %#v", detail.Pursuits)
+	}
+	if _, err := service.GetForOwner("alice", bob.Item.ID); err == nil {
+		t.Fatalf("GetForOwner exposed Bob workflow to Alice")
 	}
 }
 
@@ -2037,6 +2165,32 @@ func (r *fakeWorkflowRepo) FindActiveItemBySourceIdentity(sourceType, sourceID s
 func (r *fakeWorkflowRepo) FindActiveItemBySourceURI(sourceURI string) (*models.WorkflowItem, error) {
 	for _, item := range r.items {
 		if item.SourceURI == sourceURI && !item.Archived {
+			copied := *item
+			return &copied, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *fakeWorkflowRepo) FindActiveItemBySourceIdentityForOwner(ownerIdentity, sourceType, sourceID string) (*models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindActiveItemBySourceIdentity(sourceType, sourceID)
+	}
+	for _, item := range r.items {
+		if item.OwnerIdentity == ownerIdentity && item.SourceType == sourceType && item.SourceID == sourceID && !item.Archived {
+			copied := *item
+			return &copied, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *fakeWorkflowRepo) FindActiveItemBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindActiveItemBySourceURI(sourceURI)
+	}
+	for _, item := range r.items {
+		if item.OwnerIdentity == ownerIdentity && item.SourceURI == sourceURI && !item.Archived {
 			copied := *item
 			return &copied, nil
 		}
