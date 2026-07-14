@@ -31,6 +31,7 @@ const (
 	LinkAutomation         = "automation"
 	LinkAgentRuntime       = "agent_runtime"
 	LinkAmbientOpportunity = "ambient_opportunity"
+	LinkAssistantCommand   = "assistant_command"
 	LinkPursuit            = "pursuit"
 )
 
@@ -1201,6 +1202,9 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 		return nil, err
 	}
 	links = append(links, *workflowLink)
+	if err := s.linkAssistantCommandReference(match.Pursuit.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
+		return nil, err
+	}
 	if sourceItemLink, linked, err := s.linkOptionalUUID(match.Pursuit.ID, LinkSourceItem, request.RawItemID, "source_record", request, match.Score, actor); err != nil {
 		return nil, err
 	} else if linked {
@@ -1442,6 +1446,9 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 		return nil, err
 	}
 	links = append(links, *workflowLink)
+	if err := s.linkAssistantCommandReference(created.ID, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
+		return nil, err
+	}
 	if sourceItemLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceItem, request.RawItemID, "candidate_source_record", request, 1, actor); err != nil {
 		return nil, err
 	} else if linked {
@@ -1649,6 +1656,9 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	if err := s.linkIntakeSourceReference(id, request); err != nil {
 		return nil, err
 	}
+	if err := s.linkAssistantCommandReference(id, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, firstNonEmpty(request.Actor, "system")); err != nil {
+		return nil, err
+	}
 	if launchID, ok := runtimeLaunchIDFromEvidenceURI(request.SourceURI); ok {
 		if _, err := s.Link(id, LinkRequest{
 			LinkType:     LinkAgentRuntime,
@@ -1705,6 +1715,22 @@ func (s *service) linkIntakeSourceReference(id uuid.UUID, request IntakeRequest)
 		SourceLabel:  request.SourceLabel,
 		Confidence:   0.9,
 		Actor:        "system",
+	})
+	return err
+}
+
+func (s *service) linkAssistantCommandReference(id uuid.UUID, sourceType, sourceID, sourceURI, sourceLabel, actor string) error {
+	if !strings.EqualFold(strings.TrimSpace(sourceType), LinkAssistantCommand) || strings.TrimSpace(sourceID) == "" {
+		return nil
+	}
+	_, err := s.Link(id, LinkRequest{
+		LinkType:     LinkAssistantCommand,
+		LinkID:       strings.TrimSpace(sourceID),
+		Relationship: "command_origin",
+		SourceURI:    strings.TrimSpace(sourceURI),
+		SourceLabel:  firstNonEmpty(strings.TrimSpace(sourceLabel), "HAI chat command"),
+		Confidence:   1,
+		Actor:        firstNonEmpty(actor, "assistant"),
 	})
 	return err
 }

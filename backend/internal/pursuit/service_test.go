@@ -636,6 +636,53 @@ func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T)
 	}
 }
 
+func TestRouteIntakeReusesPursuitLinkedByAssistantCommandIdentity(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{}
+	service := NewService(repo, workflowService)
+	request := IntakeRequest{
+		Input:       "Prepare a local runtime recovery workflow safely.",
+		ProjectKey:  "018-HAI",
+		SourceType:  LinkAssistantCommand,
+		SourceID:    "assistant-7bc9d40f",
+		SourceURI:   "assistant://command/assistant-7bc9d40f",
+		SourceLabel: "HAI chat command",
+		Actor:       "operator",
+	}
+
+	first, err := service.RouteIntake(request)
+	if err != nil {
+		t.Fatalf("first RouteIntake returned error: %v", err)
+	}
+	if !first.CreatedCandidate || first.PursuitID == uuid.Nil {
+		t.Fatalf("first route result = %#v, want candidate", first)
+	}
+
+	second, err := service.RouteIntake(request)
+	if err != nil {
+		t.Fatalf("second RouteIntake returned error: %v", err)
+	}
+	if !second.Matched || second.CreatedCandidate || second.PursuitID != first.PursuitID {
+		t.Fatalf("second route result = %#v, want exact existing pursuit match", second)
+	}
+	links, err := repo.FindLinks(first.PursuitID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
+	}
+	if !pursuitLinkExists(links, LinkAssistantCommand, request.SourceID, "command_origin") {
+		t.Fatalf("assistant command source identity was not persisted: %#v", links)
+	}
+}
+
+func pursuitLinkExists(links []models.PursuitLink, linkType, linkID, relationship string) bool {
+	for _, link := range links {
+		if link.LinkType == linkType && link.LinkID == linkID && link.Relationship == relationship {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{}
