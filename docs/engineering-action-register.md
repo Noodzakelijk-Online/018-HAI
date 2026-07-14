@@ -52,7 +52,7 @@ Additional completed autonomous-control actions:
 
 33. [x] Add a durable provider probe history table.
 34. [x] Record last successful provider probe per provider.
-35. Prevent routing to configured-but-never-probed providers when strict mode is enabled.
+35. [x] Prevent routing to configured-but-never-probed providers when strict mode is enabled.
 36. [x] Add dashboard indicators for last probe time and last probe failure.
 37. Add an integration fixture for a local Ollama-compatible mock service in Docker Compose.
 38. Add an integration fixture for an OpenAI-compatible mock service in Docker Compose.

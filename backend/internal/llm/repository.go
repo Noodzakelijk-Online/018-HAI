@@ -16,6 +16,7 @@ import (
 type ProbeHistoryRepository interface {
 	RecordProviderProbe(probe *models.LLMProviderProbe) (*models.LLMProviderProbe, error)
 	FindRecentProviderProbes(limit int) ([]models.LLMProviderProbe, error)
+	FindLatestProviderProbe(providerID string) (*models.LLMProviderProbe, error)
 }
 
 type GormProbeHistoryRepository struct {
@@ -73,4 +74,23 @@ func (r *GormProbeHistoryRepository) FindRecentProviderProbes(limit int) ([]mode
 		return nil, err
 	}
 	return probes, nil
+}
+
+// FindLatestProviderProbe supplies the one readiness record that strict
+// routing needs. A missing record is a normal, fail-closed state rather than
+// an error: the caller must not route the provider until it has been probed.
+func (r *GormProbeHistoryRepository) FindLatestProviderProbe(providerID string) (*models.LLMProviderProbe, error) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return nil, fmt.Errorf("provider id is required")
+	}
+	var probe models.LLMProviderProbe
+	result := r.DB.Where("provider_id = ?", providerID).Order("checked_at DESC").Limit(1).Find(&probe)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &probe, nil
 }

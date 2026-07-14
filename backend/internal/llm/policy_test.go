@@ -240,6 +240,40 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 	}
 }
 
+func TestGenerateStrictLiveProbePolicyBlocksExplicitRouteDecision(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_ = json.NewEncoder(w).Encode(map[string]string{"response": "must not be called"})
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	policy.RequireRecentLiveProviderProbe = true
+	policy.ProviderProbeMaxAgeSeconds = 300
+	service := &Service{policy: policy, probeHistory: &fakeProbeHistoryRepository{}}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Summarize this short note",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "ollama",
+			SelectedModelID:    "phi3:mini",
+			SelectedModelName:  "Phi small local",
+			Tier:               TierLocal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if called {
+		t.Fatalf("explicit route decision bypassed strict live-probe policy")
+	}
+	if result.Status != "skipped" || !strings.Contains(result.Reason, "persisted live") {
+		t.Fatalf("result = %#v, want strict readiness skip", result)
+	}
+}
+
 func TestGenerateDoesNotFollowProviderRedirect(t *testing.T) {
 	redirectCalled := false
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -378,6 +412,63 @@ func TestProbeAndRecordProvidersPersistsRedactedLastSuccess(t *testing.T) {
 	if len(history) != 2 || history[0].Status != "failed" || history[1].Status != "live" {
 		t.Fatalf("probe history = %#v, want newest failed then live", history)
 	}
+}
+
+func TestRouteStrictLiveProbePolicyRequiresRecentLiveEvidence(t *testing.T) {
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = "http://localhost:11434"
+	policy.RequireRecentLiveProviderProbe = true
+	policy.ProviderProbeMaxAgeSeconds = 300
+	repository := &fakeProbeHistoryRepository{}
+	service := &Service{policy: policy, probeHistory: repository}
+
+	decision, err := service.Route(RouteRequest{Task: "Summarize this short note"})
+	if err != nil {
+		t.Fatalf("Route without probe: %v", err)
+	}
+	if decision.SelectedModelID != "" {
+		t.Fatalf("selected %q without a persisted live probe", decision.SelectedModelID)
+	}
+	if !skippedReasonContains(decision.Skipped, "ollama", "has not passed a persisted live") {
+		t.Fatalf("missing strict no-probe skip reason: %#v", decision.Skipped)
+	}
+
+	now := time.Now().UTC()
+	repository.probes = append(repository.probes, models.LLMProviderProbe{ProviderID: "ollama", Live: true, CheckedAt: now})
+	decision, err = service.Route(RouteRequest{Task: "Summarize this short note"})
+	if err != nil {
+		t.Fatalf("Route with live probe: %v", err)
+	}
+	if decision.SelectedModelID == "" {
+		t.Fatalf("expected a route after a recent live probe: %#v", decision.Skipped)
+	}
+
+	repository.probes = append(repository.probes, models.LLMProviderProbe{ProviderID: "ollama", Live: false, CheckedAt: now.Add(time.Second)})
+	decision, err = service.Route(RouteRequest{Task: "Summarize this short note"})
+	if err != nil {
+		t.Fatalf("Route after failed probe: %v", err)
+	}
+	if decision.SelectedModelID != "" || !skippedReasonContains(decision.Skipped, "ollama", "latest readiness check is not live") {
+		t.Fatalf("failed latest probe must block route: %#v", decision)
+	}
+
+	repository.probes = []models.LLMProviderProbe{{ProviderID: "ollama", Live: true, CheckedAt: now.Add(-6 * time.Minute)}}
+	decision, err = service.Route(RouteRequest{Task: "Summarize this short note"})
+	if err != nil {
+		t.Fatalf("Route after stale probe: %v", err)
+	}
+	if decision.SelectedModelID != "" || !skippedReasonContains(decision.Skipped, "ollama", "readiness check is stale") {
+		t.Fatalf("stale live probe must block route: %#v", decision)
+	}
+}
+
+func skippedReasonContains(skipped []SkippedModel, providerID, text string) bool {
+	for _, item := range skipped {
+		if item.ProviderID == providerID && strings.Contains(item.Reason, text) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGenerateRedactsProviderErrorBody(t *testing.T) {
@@ -847,4 +938,15 @@ func (r *fakeProbeHistoryRepository) FindRecentProviderProbes(limit int) ([]mode
 		result = append(result, r.probes[index])
 	}
 	return result, nil
+}
+
+func (r *fakeProbeHistoryRepository) FindLatestProviderProbe(providerID string) (*models.LLMProviderProbe, error) {
+	var latest *models.LLMProviderProbe
+	for index := range r.probes {
+		probe := r.probes[index]
+		if probe.ProviderID == providerID && (latest == nil || probe.CheckedAt.After(latest.CheckedAt)) {
+			latest = &probe
+		}
+	}
+	return latest, nil
 }

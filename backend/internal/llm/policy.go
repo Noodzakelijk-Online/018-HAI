@@ -55,6 +55,8 @@ type Policy struct {
 	RouteSimpleTasksToSmallModels    bool                    `json:"routeSimpleTasksToSmallModels"`
 	RouteComplexTasksToBestFreeModel bool                    `json:"routeComplexTasksToBestAvailableFreeModel"`
 	RequireApprovalBeforePaidUsage   bool                    `json:"requireApprovalBeforePaidUsage"`
+	RequireRecentLiveProviderProbe   bool                    `json:"requireRecentLiveProviderProbe"`
+	ProviderProbeMaxAgeSeconds       int                     `json:"providerProbeMaxAgeSeconds"`
 	TierOrder                        []string                `json:"tierOrder"`
 	DailyBudgetUsedEUR               float64                 `json:"dailyBudgetUsedEur"`
 	InputTokensUsed                  int                     `json:"inputTokensUsed"`
@@ -240,12 +242,12 @@ func newServiceFromEnv(probeHistory ProbeHistoryRepository) (*Service, error) {
 		}
 	}
 
-	policy = annotateInfrastructure(annotatePolicyReadiness(policy))
+	policy = annotateInfrastructure(annotatePolicyReadiness(normalizeProbePolicy(policy)))
 	return &Service{policy: policy, logs: []RouteDecision{}, usage: map[string]UsageCounter{}, probeHistory: probeHistory}, nil
 }
 
 func (s *Service) Policy() Policy {
-	return s.annotateUsage(annotateInfrastructure(annotatePolicyReadiness(s.policy)))
+	return s.annotateUsage(annotateInfrastructure(annotatePolicyReadiness(normalizeProbePolicy(s.policy))))
 }
 
 func annotateInfrastructure(policy Policy) Policy {
@@ -465,6 +467,20 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			Tier:             model.Tier,
 			Status:           generationStatusForReadiness(readiness.status),
 			Reason:           readiness.reason,
+			EstimatedCostEUR: model.EstimatedCostEUR,
+			DurationMs:       time.Since(started).Milliseconds(),
+			FallbackPath:     fallbackLabels(decision.FallbackPath),
+			LoggedAt:         time.Now().UTC(),
+		}, nil
+	}
+	if strictReason := s.strictProbeReason(provider, normalizeProbePolicy(s.policy), time.Now().UTC()); strictReason != "" {
+		return &GenerationResult{
+			ProviderID:       provider.ID,
+			ModelID:          model.ID,
+			ModelName:        model.Name,
+			Tier:             model.Tier,
+			Status:           "skipped",
+			Reason:           strictReason,
 			EstimatedCostEUR: model.EstimatedCostEUR,
 			DurationMs:       time.Since(started).Milliseconds(),
 			FallbackPath:     fallbackLabels(decision.FallbackPath),
@@ -916,27 +932,28 @@ type candidate struct {
 func (s *Service) candidates(classification TaskClassification, request RouteRequest) ([]candidate, []SkippedModel) {
 	candidates := []candidate{}
 	skipped := []SkippedModel{}
+	policy := normalizeProbePolicy(s.policy)
 
-	for _, provider := range s.policy.Providers {
+	for _, provider := range policy.Providers {
 		if !provider.Enabled {
 			for _, model := range provider.Models {
 				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: "provider disabled"})
 			}
 			continue
 		}
-		if provider.Local && !s.policy.LocalModelsAllowed {
+		if provider.Local && !policy.LocalModelsAllowed {
 			for _, model := range provider.Models {
 				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: "local models disabled by policy"})
 			}
 			continue
 		}
-		if provider.Paid && (!s.policy.PaidCallsAllowed || s.policy.DailyPaidBudgetEUR <= 0) {
+		if provider.Paid && (!policy.PaidCallsAllowed || policy.DailyPaidBudgetEUR <= 0) {
 			for _, model := range provider.Models {
 				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: "paid usage disabled by policy"})
 			}
 			continue
 		}
-		if !provider.Local && !provider.Paid && provider.QuotaRemaining <= 0 && !s.policy.FreeCloudQuotaAllowed {
+		if !provider.Local && !provider.Paid && provider.QuotaRemaining <= 0 && !policy.FreeCloudQuotaAllowed {
 			for _, model := range provider.Models {
 				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: "free cloud quota unavailable"})
 			}
@@ -955,8 +972,14 @@ func (s *Service) candidates(classification TaskClassification, request RouteReq
 			}
 			continue
 		}
+		if strictReason := s.strictProbeReason(provider, policy, time.Now().UTC()); strictReason != "" {
+			for _, model := range provider.Models {
+				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: strictReason})
+			}
+			continue
+		}
 		for _, model := range provider.Models {
-			reason := unsuitableReason(provider, model, classification, s.policy, request)
+			reason := unsuitableReason(provider, model, classification, policy, request)
 			if reason != "" {
 				skipped = append(skipped, SkippedModel{ProviderID: provider.ID, ModelID: model.ID, Reason: reason})
 				continue
@@ -968,7 +991,7 @@ func (s *Service) candidates(classification TaskClassification, request RouteReq
 	sort.SliceStable(candidates, func(i, j int) bool {
 		left := candidates[i]
 		right := candidates[j]
-		if s.policy.LocalFirst && left.provider.Local != right.provider.Local {
+		if policy.LocalFirst && left.provider.Local != right.provider.Local {
 			return left.provider.Local
 		}
 		if tierRank[left.model.Tier] != tierRank[right.model.Tier] {
@@ -981,6 +1004,32 @@ func (s *Service) candidates(classification TaskClassification, request RouteReq
 	})
 
 	return candidates, skipped
+}
+
+// strictProbeReason keeps optional strict routing fail-closed. It deliberately
+// checks the latest result, not merely a historical success, because a later
+// failed probe is fresh evidence that the endpoint is unavailable.
+func (s *Service) strictProbeReason(provider Provider, policy Policy, now time.Time) string {
+	if !policy.RequireRecentLiveProviderProbe {
+		return ""
+	}
+	if s.probeHistory == nil {
+		return "strict live-probe policy cannot verify provider readiness"
+	}
+	probe, err := s.probeHistory.FindLatestProviderProbe(provider.ID)
+	if err != nil {
+		return "strict live-probe policy could not read provider readiness history"
+	}
+	if probe == nil {
+		return "provider has not passed a persisted live readiness check"
+	}
+	if !probe.Live {
+		return "provider latest readiness check is not live"
+	}
+	if now.Sub(probe.CheckedAt.UTC()) > time.Duration(policy.ProviderProbeMaxAgeSeconds)*time.Second {
+		return "provider live readiness check is stale"
+	}
+	return ""
 }
 
 func unsuitableReason(provider Provider, model Model, classification TaskClassification, policy Policy, request RouteRequest) string {
@@ -1211,6 +1260,13 @@ func intEnv(name string, fallback int) int {
 	return parsed
 }
 
+func normalizeProbePolicy(policy Policy) Policy {
+	if policy.ProviderProbeMaxAgeSeconds <= 0 {
+		policy.ProviderProbeMaxAgeSeconds = 900
+	}
+	return policy
+}
+
 func defaultPolicy() Policy {
 	ollamaEndpoint := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
 	lmStudioEndpoint := strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
@@ -1245,6 +1301,8 @@ func defaultPolicy() Policy {
 		RouteSimpleTasksToSmallModels:    true,
 		RouteComplexTasksToBestFreeModel: true,
 		RequireApprovalBeforePaidUsage:   true,
+		RequireRecentLiveProviderProbe:   envEnabled("LLM_REQUIRE_RECENT_LIVE_PROBE"),
+		ProviderProbeMaxAgeSeconds:       intEnv("LLM_PROVIDER_PROBE_MAX_AGE_SECONDS", 900),
 		TierOrder:                        []string{TierLocal, TierFree, TierCheap, TierAcceptable, TierHigh, TierPremium, TierExpensive},
 		Providers: []Provider{
 			{
