@@ -130,6 +130,7 @@ func initializeRoutes(router *gin.Engine) error {
 
 func initializeAssistantRoutes(apiVersion *gin.RouterGroup, handler *assistant.Handler) {
 	routes := apiVersion.Group("/assistant")
+	routes.Use(assistant.RequireAuthenticatedOwner())
 	{
 		routes.POST("/command", handler.Command)
 		routes.GET("/logs", handler.Logs)

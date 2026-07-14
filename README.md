@@ -68,6 +68,9 @@ Recent hardening in the current baseline:
   HAI OS browser/API routes require a verified owner session. Their operations
   retain that identity end to end; ownerless work is limited to controlled
   in-process schedulers and workers.
+- Assistant chat commands and command history use the same verified owner
+  boundary, so an HTTP caller cannot create or inspect an ownerless task plan
+  through the conversational surface.
 - The shared local automation registry also requires a verified operator
   session before it exposes targets, accepts configuration changes, probes
   health, or launches/stops a controlled runtime.

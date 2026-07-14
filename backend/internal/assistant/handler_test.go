@@ -55,6 +55,48 @@ func TestCommandHandlerRejectsUnauthenticatedCycle(t *testing.T) {
 	}
 }
 
+func TestAssistantRoutesRequireVerifiedOwnerForEveryCommand(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(&fakeTaskEngine{}, nil))
+
+	unauthenticated := gin.New()
+	unauthenticatedRoutes := unauthenticated.Group("/assistant")
+	unauthenticatedRoutes.Use(RequireAuthenticatedOwner())
+	unauthenticatedRoutes.POST("/command", handler.Command)
+	unauthenticatedRecorder := httptest.NewRecorder()
+	unauthenticatedRequest := httptest.NewRequest(http.MethodPost, "/assistant/command", strings.NewReader(`{"message":"Plan a safe next action"}`))
+	unauthenticatedRequest.Header.Set("Content-Type", "application/json")
+	unauthenticated.ServeHTTP(unauthenticatedRecorder, unauthenticatedRequest)
+	if unauthenticatedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated command status = %d, want %d: %s", unauthenticatedRecorder.Code, http.StatusUnauthorized, unauthenticatedRecorder.Body.String())
+	}
+
+	directRecorder := httptest.NewRecorder()
+	directContext, _ := gin.CreateTestContext(directRecorder)
+	directContext.Request = httptest.NewRequest(http.MethodPost, "/assistant/command", strings.NewReader(`{"message":"Plan a safe next action"}`))
+	directContext.Request.Header.Set("Content-Type", "application/json")
+	handler.Command(directContext)
+	if directRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("direct unauthenticated command status = %d, want %d: %s", directRecorder.Code, http.StatusUnauthorized, directRecorder.Body.String())
+	}
+
+	authenticated := gin.New()
+	authenticated.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	authenticatedRoutes := authenticated.Group("/assistant")
+	authenticatedRoutes.Use(RequireAuthenticatedOwner())
+	authenticatedRoutes.POST("/command", handler.Command)
+	authenticatedRecorder := httptest.NewRecorder()
+	authenticatedRequest := httptest.NewRequest(http.MethodPost, "/assistant/command", strings.NewReader(`{"message":"Plan a safe next action"}`))
+	authenticatedRequest.Header.Set("Content-Type", "application/json")
+	authenticated.ServeHTTP(authenticatedRecorder, authenticatedRequest)
+	if authenticatedRecorder.Code != http.StatusOK {
+		t.Fatalf("authenticated command status = %d, want %d: %s", authenticatedRecorder.Code, http.StatusOK, authenticatedRecorder.Body.String())
+	}
+}
+
 func TestCommandHandlerAllowsAuthenticatedPersonalCycleForOperator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cycle := &fakeAgentCycleRunner{}

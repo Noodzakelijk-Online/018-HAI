@@ -26,7 +26,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals, read-only VA delegation package |
 | `/verification` | POST `/answer`, GET `/runs`, `/runs/:id` |
 | `/task` | owner-scoped plan, run, success, logs, review-queue, review resolution |
-| `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | command/logs, run, overview/stress, owner-scoped scan/needs/proposal resolution, overview |
+| `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | owner-gated command/logs, owner-gated run, overview/stress, owner-scoped scan/needs/proposal resolution, overview |
 | **`/flags`** | GET — feature flags (added this goal run) |
 | **`/system`** | **GET `/info`**, **GET `/support-bundle`** (added this goal run) |
 
