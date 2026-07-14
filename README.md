@@ -90,6 +90,10 @@ the workflow remains the restart-safe execution ledger.
   that role into access tokens. Request headers never grant a role; the seeded
   `FIRST_RUN_ADMIN_EMAIL` account is promoted to `owner`, while registrations
   default to `operator`.
+- Interactive APIs use the same signed-role boundary: viewers can inspect
+  owner-scoped state, operators can plan and edit it, and execution or approval
+  resolution requires approval capability. System-wide source sync and due-work
+  runners remain owner-only controls.
 - Owner-scoped pursuit detail, dashboards, activity, evidence, decisions, and
   links filter legacy records that are not visible to the current owner.
 - High-risk communication, legal/government, financial, account, public-post,

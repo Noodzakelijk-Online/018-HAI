@@ -133,8 +133,10 @@ func initializeAssistantRoutes(apiVersion *gin.RouterGroup, handler *assistant.H
 	routes := apiVersion.Group("/assistant")
 	routes.Use(assistant.RequireAuthenticatedOwner())
 	{
-		routes.POST("/command", handler.Command)
-		routes.GET("/logs", handler.Logs)
+		// A chat command may request execution, so it needs the same approval
+		// capability as the direct task-run endpoint.
+		routes.POST("/command", requirePermission(rbac.PermApprove), handler.Command)
+		routes.GET("/logs", requirePermission(rbac.PermRead), handler.Logs)
 	}
 }
 
@@ -142,7 +144,9 @@ func initializeAgentCycleRoutes(apiVersion *gin.RouterGroup, handler *agentcycle
 	routes := apiVersion.Group("/agent-cycle")
 	routes.Use(requireAuthenticatedOwner())
 	{
-		routes.POST("/run", handler.Run)
+		// HTTP calls run the owner-scoped read/brief path only; system work stays
+		// with the background worker.
+		routes.POST("/run", requirePermission(rbac.PermRead), handler.Run)
 	}
 }
 
@@ -150,8 +154,8 @@ func initializeAutonomyRoutes(apiVersion *gin.RouterGroup, handler *autonomy.Han
 	routes := apiVersion.Group("/autonomy")
 	routes.Use(requireAuthenticatedOwner())
 	{
-		routes.GET("/overview", handler.Overview)
-		routes.POST("/stress", handler.Stress)
+		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		routes.POST("/stress", requirePermission(rbac.PermWrite), handler.Stress)
 	}
 }
 
@@ -159,11 +163,11 @@ func initializeAmbientRoutes(apiVersion *gin.RouterGroup, handler *ambient.Handl
 	routes := apiVersion.Group("/ambient")
 	routes.Use(ambient.RequireAuthenticatedOwner())
 	{
-		routes.GET("/overview", handler.Overview)
-		routes.POST("/scan", handler.Scan)
-		routes.PATCH("/needs/:key", handler.UpdateNeed)
-		routes.POST("/opportunities/:id/accept", handler.Accept)
-		routes.POST("/opportunities/:id/dismiss", handler.Dismiss)
+		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		routes.POST("/scan", requirePermission(rbac.PermWrite), handler.Scan)
+		routes.PATCH("/needs/:key", requirePermission(rbac.PermWrite), handler.UpdateNeed)
+		routes.POST("/opportunities/:id/accept", requirePermission(rbac.PermWrite), handler.Accept)
+		routes.POST("/opportunities/:id/dismiss", requirePermission(rbac.PermWrite), handler.Dismiss)
 	}
 }
 
@@ -171,11 +175,11 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 	routes := apiVersion.Group("/agent-runtimes")
 	routes.Use(requireAuthenticatedOwner())
 	{
-		routes.GET("/", handler.Registry)
-		routes.GET("/health", handler.Health)
-		routes.GET("/:id/skills", handler.Skills)
+		routes.GET("/", requirePermission(rbac.PermRead), handler.Registry)
+		routes.GET("/health", requirePermission(rbac.PermRead), handler.Health)
+		routes.GET("/:id/skills", requirePermission(rbac.PermRead), handler.Skills)
 		routes.POST("/:id/tasks/:taskId/stop", requirePermission(rbac.PermApprove), handler.StopTask)
-		routes.GET("/openclaw/ecosystem", handler.OpenClawEcosystem)
+		routes.GET("/openclaw/ecosystem", requirePermission(rbac.PermRead), handler.OpenClawEcosystem)
 		routes.PATCH("/openclaw/ecosystem", requirePermission(rbac.PermAdmin), handler.SetOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/refresh", requirePermission(rbac.PermAdmin), handler.RefreshOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/upload", requirePermission(rbac.PermAdmin), handler.UploadOpenClawEcosystem)
@@ -255,12 +259,12 @@ func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {
 	llmRoutes := apiVersion.Group("/llm")
 	llmRoutes.Use(requireAuthenticatedOwner())
 	{
-		llmRoutes.GET("/policy", llmHandler.Policy)
-		llmRoutes.GET("/probes", llmHandler.ProviderProbes)
-		llmRoutes.GET("/probes/history", llmHandler.ProviderProbeHistory)
-		llmRoutes.POST("/route", llmHandler.Route)
-		llmRoutes.POST("/generate", llmHandler.Generate)
-		llmRoutes.GET("/logs", llmHandler.Logs)
+		llmRoutes.GET("/policy", requirePermission(rbac.PermRead), llmHandler.Policy)
+		llmRoutes.GET("/probes", requirePermission(rbac.PermRead), llmHandler.ProviderProbes)
+		llmRoutes.GET("/probes/history", requirePermission(rbac.PermRead), llmHandler.ProviderProbeHistory)
+		llmRoutes.POST("/route", requirePermission(rbac.PermWrite), llmHandler.Route)
+		llmRoutes.POST("/generate", requirePermission(rbac.PermApprove), llmHandler.Generate)
+		llmRoutes.GET("/logs", requirePermission(rbac.PermRead), llmHandler.Logs)
 	}
 }
 
@@ -268,16 +272,16 @@ func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.H
 	memoryRoutes := apiVersion.Group("/memory")
 	memoryRoutes.Use(requireAuthenticatedOwner())
 	{
-		memoryRoutes.GET("/", memoryHandler.List)
-		memoryRoutes.GET("/query", memoryHandler.Query)
-		memoryRoutes.POST("/", memoryHandler.Create)
-		memoryRoutes.POST("/retrieve", memoryHandler.Retrieve)
-		memoryRoutes.GET("/export", memoryHandler.Export)
-		memoryRoutes.GET("/:id", memoryHandler.Get)
-		memoryRoutes.PATCH("/:id", memoryHandler.Update)
-		memoryRoutes.POST("/:id/archive", memoryHandler.Archive)
-		memoryRoutes.POST("/:id/restore", memoryHandler.Restore)
-		memoryRoutes.DELETE("/:id", memoryHandler.Delete)
+		memoryRoutes.GET("/", requirePermission(rbac.PermRead), memoryHandler.List)
+		memoryRoutes.GET("/query", requirePermission(rbac.PermRead), memoryHandler.Query)
+		memoryRoutes.POST("/", requirePermission(rbac.PermWrite), memoryHandler.Create)
+		memoryRoutes.POST("/retrieve", requirePermission(rbac.PermRead), memoryHandler.Retrieve)
+		memoryRoutes.GET("/export", requirePermission(rbac.PermRead), memoryHandler.Export)
+		memoryRoutes.GET("/:id", requirePermission(rbac.PermRead), memoryHandler.Get)
+		memoryRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), memoryHandler.Update)
+		memoryRoutes.POST("/:id/archive", requirePermission(rbac.PermWrite), memoryHandler.Archive)
+		memoryRoutes.POST("/:id/restore", requirePermission(rbac.PermWrite), memoryHandler.Restore)
+		memoryRoutes.DELETE("/:id", requirePermission(rbac.PermWrite), memoryHandler.Delete)
 	}
 }
 
@@ -285,13 +289,13 @@ func initializeMemoryEngineRoutes(apiVersion *gin.RouterGroup, handler *memoryen
 	routes := apiVersion.Group("/memory-engine")
 	routes.Use(requireAuthenticatedOwner())
 	{
-		routes.POST("/import", handler.Import)
-		routes.GET("/dashboard", handler.Dashboard)
-		routes.POST("/search", handler.Search)
-		routes.GET("/conversations", handler.Conversations)
-		routes.GET("/conversations/:id", handler.Conversation)
-		routes.DELETE("/conversations/:id", handler.DeleteConversation)
-		routes.GET("/insights", handler.Insights)
+		routes.POST("/import", requirePermission(rbac.PermWrite), handler.Import)
+		routes.GET("/dashboard", requirePermission(rbac.PermRead), handler.Dashboard)
+		routes.POST("/search", requirePermission(rbac.PermRead), handler.Search)
+		routes.GET("/conversations", requirePermission(rbac.PermRead), handler.Conversations)
+		routes.GET("/conversations/:id", requirePermission(rbac.PermRead), handler.Conversation)
+		routes.DELETE("/conversations/:id", requirePermission(rbac.PermWrite), handler.DeleteConversation)
+		routes.GET("/insights", requirePermission(rbac.PermRead), handler.Insights)
 	}
 }
 
@@ -299,23 +303,23 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 	sourceRoutes := apiVersion.Group("/sources")
 	sourceRoutes.Use(requireAuthenticatedOwner())
 	{
-		sourceRoutes.GET("/connectors", sourceHandler.Connectors)
-		sourceRoutes.GET("/", sourceHandler.Sources)
-		sourceRoutes.POST("/", sourceHandler.CreateSource)
-		sourceRoutes.POST("/search", sourceHandler.Search)
-		sourceRoutes.POST("/sync-due", sourceHandler.RunDueScheduledSyncs)
-		sourceRoutes.GET("/sync-jobs", sourceHandler.SyncJobs)
-		sourceRoutes.GET("/extractions", sourceHandler.Extractions)
-		sourceRoutes.GET("/audit-logs", sourceHandler.AuditLogs)
-		sourceRoutes.PATCH("/extractions/:id", sourceHandler.UpdateExtraction)
-		sourceRoutes.POST("/extractions/:id/archive", sourceHandler.ArchiveExtraction)
-		sourceRoutes.DELETE("/extractions/:id", sourceHandler.DeleteExtraction)
-		sourceRoutes.PATCH("/:id", sourceHandler.UpdateSource)
-		sourceRoutes.POST("/:id/sync", sourceHandler.Sync)
-		sourceRoutes.POST("/:id/reindex", sourceHandler.Reindex)
-		sourceRoutes.POST("/:id/pause", sourceHandler.Pause)
-		sourceRoutes.POST("/:id/resume", sourceHandler.Resume)
-		sourceRoutes.POST("/:id/revoke", sourceHandler.Revoke)
+		sourceRoutes.GET("/connectors", requirePermission(rbac.PermRead), sourceHandler.Connectors)
+		sourceRoutes.GET("/", requirePermission(rbac.PermRead), sourceHandler.Sources)
+		sourceRoutes.POST("/", requirePermission(rbac.PermWrite), sourceHandler.CreateSource)
+		sourceRoutes.POST("/search", requirePermission(rbac.PermRead), sourceHandler.Search)
+		sourceRoutes.POST("/sync-due", requirePermission(rbac.PermAdmin), sourceHandler.RunDueScheduledSyncs)
+		sourceRoutes.GET("/sync-jobs", requirePermission(rbac.PermRead), sourceHandler.SyncJobs)
+		sourceRoutes.GET("/extractions", requirePermission(rbac.PermRead), sourceHandler.Extractions)
+		sourceRoutes.GET("/audit-logs", requirePermission(rbac.PermRead), sourceHandler.AuditLogs)
+		sourceRoutes.PATCH("/extractions/:id", requirePermission(rbac.PermWrite), sourceHandler.UpdateExtraction)
+		sourceRoutes.POST("/extractions/:id/archive", requirePermission(rbac.PermWrite), sourceHandler.ArchiveExtraction)
+		sourceRoutes.DELETE("/extractions/:id", requirePermission(rbac.PermWrite), sourceHandler.DeleteExtraction)
+		sourceRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), sourceHandler.UpdateSource)
+		sourceRoutes.POST("/:id/sync", requirePermission(rbac.PermWrite), sourceHandler.Sync)
+		sourceRoutes.POST("/:id/reindex", requirePermission(rbac.PermWrite), sourceHandler.Reindex)
+		sourceRoutes.POST("/:id/pause", requirePermission(rbac.PermWrite), sourceHandler.Pause)
+		sourceRoutes.POST("/:id/resume", requirePermission(rbac.PermWrite), sourceHandler.Resume)
+		sourceRoutes.POST("/:id/revoke", requirePermission(rbac.PermWrite), sourceHandler.Revoke)
 	}
 }
 
@@ -323,12 +327,12 @@ func initializeTaskRoutes(apiVersion *gin.RouterGroup, taskHandler *task.Handler
 	taskRoutes := apiVersion.Group("/task")
 	taskRoutes.Use(requireAuthenticatedOwner())
 	{
-		taskRoutes.POST("/plan", taskHandler.Plan)
-		taskRoutes.POST("/run", taskHandler.Run)
-		taskRoutes.POST("/success", taskHandler.Run)
-		taskRoutes.GET("/logs", taskHandler.Logs)
-		taskRoutes.GET("/review-queue", taskHandler.ReviewQueue)
-		taskRoutes.POST("/review-queue/:id/resolve", taskHandler.ResolveReviewItem)
+		taskRoutes.POST("/plan", requirePermission(rbac.PermWrite), taskHandler.Plan)
+		taskRoutes.POST("/run", requirePermission(rbac.PermApprove), taskHandler.Run)
+		taskRoutes.POST("/success", requirePermission(rbac.PermApprove), taskHandler.Run)
+		taskRoutes.GET("/logs", requirePermission(rbac.PermRead), taskHandler.Logs)
+		taskRoutes.GET("/review-queue", requirePermission(rbac.PermRead), taskHandler.ReviewQueue)
+		taskRoutes.POST("/review-queue/:id/resolve", requirePermission(rbac.PermApprove), taskHandler.ResolveReviewItem)
 	}
 }
 
@@ -336,9 +340,9 @@ func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandl
 	verificationRoutes := apiVersion.Group("/verification")
 	verificationRoutes.Use(requireAuthenticatedOwner())
 	{
-		verificationRoutes.POST("/answer", verificationHandler.Answer)
-		verificationRoutes.GET("/runs", verificationHandler.Runs)
-		verificationRoutes.GET("/runs/:id", verificationHandler.RunDetails)
+		verificationRoutes.POST("/answer", requirePermission(rbac.PermWrite), verificationHandler.Answer)
+		verificationRoutes.GET("/runs", requirePermission(rbac.PermRead), verificationHandler.Runs)
+		verificationRoutes.GET("/runs/:id", requirePermission(rbac.PermRead), verificationHandler.RunDetails)
 	}
 }
 
@@ -359,7 +363,7 @@ func initializeHAIOSRoutes(apiVersion *gin.RouterGroup, osHandler *haios.Handler
 	osRoutes := apiVersion.Group("/os")
 	osRoutes.Use(haios.RequireAuthenticatedOwner())
 	{
-		osRoutes.GET("/overview", osHandler.Overview)
+		osRoutes.GET("/overview", requirePermission(rbac.PermRead), osHandler.Overview)
 	}
 }
 
@@ -367,20 +371,20 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 	workflowRoutes := apiVersion.Group("/workflow")
 	workflowRoutes.Use(workflow.RequireAuthenticatedOwner())
 	{
-		workflowRoutes.GET("/overview", workflowHandler.Overview)
-		workflowRoutes.GET("/approvals", workflowHandler.ApprovalItems)
-		workflowRoutes.GET("/dashboard", workflowHandler.Dashboard)
-		workflowRoutes.GET("/", workflowHandler.Items)
-		workflowRoutes.POST("/intake", workflowHandler.Intake)
-		workflowRoutes.POST("/recover-stale", workflowHandler.RecoverStaleClaims)
-		workflowRoutes.POST("/run-due", workflowHandler.RunDue)
-		workflowRoutes.POST("/open-loops/run-due", workflowHandler.RunDueOpenLoops)
-		workflowRoutes.GET("/:id", workflowHandler.Get)
-		workflowRoutes.POST("/:id/transition", workflowHandler.Transition)
-		workflowRoutes.POST("/:id/approval", workflowHandler.ResolveApproval)
-		workflowRoutes.POST("/:id/interruption/resolve", workflowHandler.ResolveInterruptedExecution)
-		workflowRoutes.POST("/:id/proposals/:proposalId/resolve", workflowHandler.ResolveProposal)
-		workflowRoutes.PATCH("/:id/checklist/:itemId", workflowHandler.UpdateChecklistItem)
+		workflowRoutes.GET("/overview", requirePermission(rbac.PermRead), workflowHandler.Overview)
+		workflowRoutes.GET("/approvals", requirePermission(rbac.PermRead), workflowHandler.ApprovalItems)
+		workflowRoutes.GET("/dashboard", requirePermission(rbac.PermRead), workflowHandler.Dashboard)
+		workflowRoutes.GET("/", requirePermission(rbac.PermRead), workflowHandler.Items)
+		workflowRoutes.POST("/intake", requirePermission(rbac.PermWrite), workflowHandler.Intake)
+		workflowRoutes.POST("/recover-stale", requirePermission(rbac.PermAdmin), workflowHandler.RecoverStaleClaims)
+		workflowRoutes.POST("/run-due", requirePermission(rbac.PermAdmin), workflowHandler.RunDue)
+		workflowRoutes.POST("/open-loops/run-due", requirePermission(rbac.PermAdmin), workflowHandler.RunDueOpenLoops)
+		workflowRoutes.GET("/:id", requirePermission(rbac.PermRead), workflowHandler.Get)
+		workflowRoutes.POST("/:id/transition", requirePermission(rbac.PermWrite), workflowHandler.Transition)
+		workflowRoutes.POST("/:id/approval", requirePermission(rbac.PermApprove), workflowHandler.ResolveApproval)
+		workflowRoutes.POST("/:id/interruption/resolve", requirePermission(rbac.PermApprove), workflowHandler.ResolveInterruptedExecution)
+		workflowRoutes.POST("/:id/proposals/:proposalId/resolve", requirePermission(rbac.PermApprove), workflowHandler.ResolveProposal)
+		workflowRoutes.PATCH("/:id/checklist/:itemId", requirePermission(rbac.PermWrite), workflowHandler.UpdateChecklistItem)
 	}
 }
 
@@ -388,29 +392,29 @@ func initializePursuitRoutes(apiVersion *gin.RouterGroup, pursuitHandler *pursui
 	pursuitRoutes := apiVersion.Group("/pursuits")
 	pursuitRoutes.Use(pursuit.RequireAuthenticatedOwner())
 	{
-		pursuitRoutes.GET("/", pursuitHandler.List)
-		pursuitRoutes.POST("/", pursuitHandler.Create)
-		pursuitRoutes.GET("/dashboard", pursuitHandler.Dashboard)
-		pursuitRoutes.GET("/brief", pursuitHandler.Brief)
-		pursuitRoutes.GET("/decisions", pursuitHandler.Decisions)
-		pursuitRoutes.POST("/match", pursuitHandler.Match)
-		pursuitRoutes.POST("/intake", pursuitHandler.RouteIntake)
-		pursuitRoutes.GET("/:id/evidence", pursuitHandler.ResolveEvidence)
-		pursuitRoutes.GET("/:id", pursuitHandler.Get)
-		pursuitRoutes.PATCH("/:id", pursuitHandler.Update)
-		pursuitRoutes.POST("/:id/archive", pursuitHandler.Archive)
-		pursuitRoutes.POST("/:id/reopen", pursuitHandler.Reopen)
-		pursuitRoutes.POST("/:id/summary", pursuitHandler.RefreshSummary)
-		pursuitRoutes.POST("/:id/review", pursuitHandler.Review)
-		pursuitRoutes.POST("/:id/decisions/resolve", pursuitHandler.ResolveDecision)
-		pursuitRoutes.GET("/:id/activity", pursuitHandler.Activity)
-		pursuitRoutes.GET("/:id/next-actions", pursuitHandler.NextActions)
-		pursuitRoutes.GET("/:id/blockers", pursuitHandler.Blockers)
-		pursuitRoutes.GET("/:id/approvals", pursuitHandler.Approvals)
-		pursuitRoutes.GET("/:id/delegation", pursuitHandler.DelegationPackage)
-		pursuitRoutes.POST("/:id/intake", pursuitHandler.Intake)
-		pursuitRoutes.POST("/:id/plan", pursuitHandler.Plan)
-		pursuitRoutes.POST("/:id/links", pursuitHandler.Link)
-		pursuitRoutes.DELETE("/:id/links/:linkId", pursuitHandler.DeleteLink)
+		pursuitRoutes.GET("/", requirePermission(rbac.PermRead), pursuitHandler.List)
+		pursuitRoutes.POST("/", requirePermission(rbac.PermWrite), pursuitHandler.Create)
+		pursuitRoutes.GET("/dashboard", requirePermission(rbac.PermRead), pursuitHandler.Dashboard)
+		pursuitRoutes.GET("/brief", requirePermission(rbac.PermRead), pursuitHandler.Brief)
+		pursuitRoutes.GET("/decisions", requirePermission(rbac.PermRead), pursuitHandler.Decisions)
+		pursuitRoutes.POST("/match", requirePermission(rbac.PermRead), pursuitHandler.Match)
+		pursuitRoutes.POST("/intake", requirePermission(rbac.PermWrite), pursuitHandler.RouteIntake)
+		pursuitRoutes.GET("/:id/evidence", requirePermission(rbac.PermRead), pursuitHandler.ResolveEvidence)
+		pursuitRoutes.GET("/:id", requirePermission(rbac.PermRead), pursuitHandler.Get)
+		pursuitRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), pursuitHandler.Update)
+		pursuitRoutes.POST("/:id/archive", requirePermission(rbac.PermWrite), pursuitHandler.Archive)
+		pursuitRoutes.POST("/:id/reopen", requirePermission(rbac.PermWrite), pursuitHandler.Reopen)
+		pursuitRoutes.POST("/:id/summary", requirePermission(rbac.PermWrite), pursuitHandler.RefreshSummary)
+		pursuitRoutes.POST("/:id/review", requirePermission(rbac.PermWrite), pursuitHandler.Review)
+		pursuitRoutes.POST("/:id/decisions/resolve", requirePermission(rbac.PermApprove), pursuitHandler.ResolveDecision)
+		pursuitRoutes.GET("/:id/activity", requirePermission(rbac.PermRead), pursuitHandler.Activity)
+		pursuitRoutes.GET("/:id/next-actions", requirePermission(rbac.PermRead), pursuitHandler.NextActions)
+		pursuitRoutes.GET("/:id/blockers", requirePermission(rbac.PermRead), pursuitHandler.Blockers)
+		pursuitRoutes.GET("/:id/approvals", requirePermission(rbac.PermRead), pursuitHandler.Approvals)
+		pursuitRoutes.GET("/:id/delegation", requirePermission(rbac.PermRead), pursuitHandler.DelegationPackage)
+		pursuitRoutes.POST("/:id/intake", requirePermission(rbac.PermWrite), pursuitHandler.Intake)
+		pursuitRoutes.POST("/:id/plan", requirePermission(rbac.PermWrite), pursuitHandler.Plan)
+		pursuitRoutes.POST("/:id/links", requirePermission(rbac.PermWrite), pursuitHandler.Link)
+		pursuitRoutes.DELETE("/:id/links/:linkId", requirePermission(rbac.PermWrite), pursuitHandler.DeleteLink)
 	}
 }
