@@ -93,7 +93,7 @@ func (h *Handler) UpdateSource(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireSourceAccess(c, id) {
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	var request UpdateSourceRequest
@@ -114,7 +114,7 @@ func (h *Handler) Sync(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireSourceAccess(c, id) {
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	var request ImportRequest
@@ -139,7 +139,7 @@ func (h *Handler) Reindex(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireSourceAccess(c, id) {
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	result, err := h.service.Reindex(id)
@@ -176,7 +176,7 @@ func (h *Handler) Pause(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireSourceAccess(c, id) {
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	source, err := h.service.Pause(id, true)
@@ -192,7 +192,7 @@ func (h *Handler) Resume(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireSourceAccess(c, id) {
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	source, err := h.service.Pause(id, false)
@@ -208,7 +208,7 @@ func (h *Handler) Revoke(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireSourceAccess(c, id) {
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	source, err := h.service.Revoke(id)
@@ -254,7 +254,7 @@ func (h *Handler) UpdateExtraction(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireExtractionAccess(c, id) {
+	if !h.requireMutableExtraction(c, id) {
 		return
 	}
 	var request models.SourceExtraction
@@ -275,7 +275,7 @@ func (h *Handler) ArchiveExtraction(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireExtractionAccess(c, id) {
+	if !h.requireMutableExtraction(c, id) {
 		return
 	}
 	extraction, err := h.service.ArchiveExtraction(id, true)
@@ -291,7 +291,7 @@ func (h *Handler) DeleteExtraction(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireExtractionAccess(c, id) {
+	if !h.requireMutableExtraction(c, id) {
 		return
 	}
 	if err := h.service.DeleteExtraction(id); err != nil {
@@ -344,6 +344,14 @@ func sourceVisible(source models.ConnectedSource, owner string) bool {
 	return owner == "" || source.OwnerIdentity == "" || source.OwnerIdentity == owner
 }
 
+// sourceMutable is stricter than sourceVisible. Ownerless legacy records may
+// remain readable during local migration, but a signed-in operator cannot
+// adopt, sync, alter, revoke, or delete their source-derived records.
+func sourceMutable(source models.ConnectedSource, owner string) bool {
+	owner = strings.TrimSpace(owner)
+	return owner != "" && strings.TrimSpace(source.OwnerIdentity) == owner
+}
+
 func filterVisibleSources(sources []models.ConnectedSource, owner string) []models.ConnectedSource {
 	visible := make([]models.ConnectedSource, 0, len(sources))
 	for _, source := range sources {
@@ -379,19 +387,47 @@ func (h *Handler) requireSourceAccess(c *gin.Context, id uuid.UUID) bool {
 	return false
 }
 
-func (h *Handler) requireExtractionAccess(c *gin.Context, id uuid.UUID) bool {
+func (h *Handler) mutableSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
+	sources, err := h.service.Sources(true)
+	if err != nil {
+		return nil, err
+	}
+	owner := sourceOwner(c)
+	mutable := make(map[uuid.UUID]bool, len(sources))
+	for _, source := range sources {
+		if sourceMutable(source, owner) {
+			mutable[source.ID] = true
+		}
+	}
+	return mutable, nil
+}
+
+func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
+	mutableSourceIDs, err := h.mutableSourceIDs(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	if mutableSourceIDs[id] {
+		return true
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+	return false
+}
+
+func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
 	extractions, err := h.service.Extractions("", true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return false
 	}
-	visibleSourceIDs, err := h.visibleSourceIDs(c)
+	mutableSourceIDs, err := h.mutableSourceIDs(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return false
 	}
 	for _, extraction := range extractions {
-		if extraction.ID == id && visibleSourceIDs[extraction.SourceID] {
+		if extraction.ID == id && mutableSourceIDs[extraction.SourceID] {
 			return true
 		}
 	}

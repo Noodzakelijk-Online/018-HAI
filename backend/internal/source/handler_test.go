@@ -74,3 +74,52 @@ func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
 		t.Fatalf("authenticated status = %d, want 200: %s", authenticatedResponse.Code, authenticatedResponse.Body.String())
 	}
 }
+
+func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	extractionID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:      sourceID,
+		Name:    "Legacy local source",
+		Enabled: true,
+		Status:  "active",
+	})
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: extractionID, SourceID: sourceID, Summary: "Legacy context"}); err != nil {
+		t.Fatalf("SaveExtraction: %v", err)
+	}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	router.POST("/sources/:id/pause", handler.Pause)
+	router.POST("/sources/extractions/:id/archive", handler.ArchiveExtraction)
+
+	pauseResponse := httptest.NewRecorder()
+	router.ServeHTTP(pauseResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/pause", nil))
+	if pauseResponse.Code != http.StatusNotFound {
+		t.Fatalf("ownerless source pause status = %d, want 404: %s", pauseResponse.Code, pauseResponse.Body.String())
+	}
+
+	archiveResponse := httptest.NewRecorder()
+	router.ServeHTTP(archiveResponse, httptest.NewRequest(http.MethodPost, "/sources/extractions/"+extractionID.String()+"/archive", nil))
+	if archiveResponse.Code != http.StatusNotFound {
+		t.Fatalf("ownerless extraction archive status = %d, want 404: %s", archiveResponse.Code, archiveResponse.Body.String())
+	}
+
+	storedSource, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if !storedSource.Enabled || storedSource.Status != "active" {
+		t.Fatalf("ownerless source was mutated: %#v", storedSource)
+	}
+	storedExtraction, err := repo.FindExtraction(extractionID)
+	if err != nil {
+		t.Fatalf("FindExtraction: %v", err)
+	}
+	if storedExtraction.Archived {
+		t.Fatalf("ownerless extraction was archived: %#v", storedExtraction)
+	}
+}
