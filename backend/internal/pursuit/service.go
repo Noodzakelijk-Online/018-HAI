@@ -1364,7 +1364,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		return nil, err
 	}
 	minimumScore := defaultAutoLinkMinimumScore
-	if len(matches) > 0 && matches[0].Score >= minimumScore {
+	if len(matches) > 0 && matches[0].Score >= minimumScore && !pursuitClosed(matches[0].Pursuit) {
 		detail, err := s.Intake(matches[0].Pursuit.ID, request)
 		if err != nil {
 			return nil, err

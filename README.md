@@ -435,7 +435,7 @@ Pursuit intake and matching reuse the existing source, workflow, memory, verific
 
 Closed pursuits are removed from active operational queues. During an ambient scan, any open or accepted pursuit-derived opportunity whose linked pursuit is completed or archived is completed with a closure note; dismissed opportunities remain untouched as operator feedback. This prevents the proactive layer from resurfacing work that Robert has already closed.
 
-Closed pursuits also reject direct intake, planning, and decision-resolution requests before the workflow engine is invoked. A summary refresh is read-only for a closed pursuit, so an old client request or late refresh cannot silently reactivate completed work.
+Closed pursuits also reject direct intake, planning, and decision-resolution requests before the workflow engine is invoked. When global intake finds that its best match is closed, it preserves that historical pursuit and creates a separate reviewable candidate rather than treating a valid new source signal as a sync failure or silently reactivating old work. A summary refresh is read-only for a closed pursuit, so an old client request or late refresh cannot silently reactivate completed work.
 
 Reopening is a separate audited transition at `POST /pursuits/:id/reopen` (the existing archive restore operation delegates to it for compatibility). It clears the closed state but does not execute work; new work must still enter through the governed workflow, approval, and verification paths.
 

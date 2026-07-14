@@ -254,6 +254,49 @@ func TestAutoLinkWorkflowDoesNotAttachOperationalWorkToClosedPursuit(t *testing.
 	}
 }
 
+func TestRouteIntakeCreatesCandidateInsteadOfReopeningClosedPursuit(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{}
+	service := NewService(repo, workflowService)
+	closed, err := service.Create(CreateRequest{Title: "Completed ASR insurance claim", ProjectKey: "asr"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	closedRecord := repo.pursuits[closed.ID]
+	closedRecord.Status = StatusCompleted
+	closedRecord.CompletionState = CompletionVerified
+	repo.pursuits[closed.ID] = closedRecord
+
+	result, err := service.RouteIntake(IntakeRequest{
+		Input:       "A new ASR claim follow-up arrived after the earlier claim was completed.",
+		ProjectKey:  "asr",
+		SourceType:  "email",
+		SourceID:    "new-asr-follow-up",
+		SourceURI:   "email://asr/new-follow-up",
+		SourceLabel: "New ASR follow-up",
+	})
+	if err != nil {
+		t.Fatalf("RouteIntake returned error: %v", err)
+	}
+	if !result.CreatedCandidate || result.PursuitID == uuid.Nil || result.PursuitID == closed.ID {
+		t.Fatalf("closed pursuit should produce a new candidate: %#v", result)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("workflow intake calls = %d, want one governed candidate workflow", workflowService.calls)
+	}
+	persistedClosed, err := repo.FindByID(closed.ID)
+	if err != nil {
+		t.Fatalf("FindByID(closed): %v", err)
+	}
+	if persistedClosed.Status != StatusCompleted || persistedClosed.CompletionState != CompletionVerified {
+		t.Fatalf("closed pursuit was reactivated: %#v", persistedClosed)
+	}
+	links, _ := repo.FindLinks(closed.ID)
+	if len(links) != 0 {
+		t.Fatalf("closed pursuit received new operational links: %#v", links)
+	}
+}
+
 func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
