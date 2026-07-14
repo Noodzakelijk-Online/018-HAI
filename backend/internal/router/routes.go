@@ -307,7 +307,9 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.GET("/", requirePermission(rbac.PermRead), sourceHandler.Sources)
 		sourceRoutes.POST("/", requirePermission(rbac.PermWrite), sourceHandler.CreateSource)
 		sourceRoutes.POST("/search", requirePermission(rbac.PermRead), sourceHandler.Search)
-		sourceRoutes.POST("/sync-due", requirePermission(rbac.PermAdmin), sourceHandler.RunDueScheduledSyncs)
+		// The HTTP handler scopes this batch to the authenticated owner. The
+		// separate in-process scheduler is the only global source worker.
+		sourceRoutes.POST("/sync-due", requirePermission(rbac.PermWrite), sourceHandler.RunDueScheduledSyncs)
 		sourceRoutes.GET("/sync-jobs", requirePermission(rbac.PermRead), sourceHandler.SyncJobs)
 		sourceRoutes.GET("/extractions", requirePermission(rbac.PermRead), sourceHandler.Extractions)
 		sourceRoutes.GET("/audit-logs", requirePermission(rbac.PermRead), sourceHandler.AuditLogs)
@@ -376,9 +378,11 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.GET("/dashboard", requirePermission(rbac.PermRead), workflowHandler.Dashboard)
 		workflowRoutes.GET("/", requirePermission(rbac.PermRead), workflowHandler.Items)
 		workflowRoutes.POST("/intake", requirePermission(rbac.PermWrite), workflowHandler.Intake)
-		workflowRoutes.POST("/recover-stale", requirePermission(rbac.PermAdmin), workflowHandler.RecoverStaleClaims)
-		workflowRoutes.POST("/run-due", requirePermission(rbac.PermAdmin), workflowHandler.RunDue)
-		workflowRoutes.POST("/open-loops/run-due", requirePermission(rbac.PermAdmin), workflowHandler.RunDueOpenLoops)
+		// These HTTP worker controls are owner-scoped. They can advance work, so
+		// operators need approval capability; global scheduler work stays internal.
+		workflowRoutes.POST("/recover-stale", requirePermission(rbac.PermApprove), workflowHandler.RecoverStaleClaims)
+		workflowRoutes.POST("/run-due", requirePermission(rbac.PermApprove), workflowHandler.RunDue)
+		workflowRoutes.POST("/open-loops/run-due", requirePermission(rbac.PermApprove), workflowHandler.RunDueOpenLoops)
 		workflowRoutes.GET("/:id", requirePermission(rbac.PermRead), workflowHandler.Get)
 		workflowRoutes.POST("/:id/transition", requirePermission(rbac.PermWrite), workflowHandler.Transition)
 		workflowRoutes.POST("/:id/approval", requirePermission(rbac.PermApprove), workflowHandler.ResolveApproval)

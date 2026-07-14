@@ -92,8 +92,9 @@ the workflow remains the restart-safe execution ledger.
   default to `operator`.
 - Interactive APIs use the same signed-role boundary: viewers can inspect
   owner-scoped state, operators can plan and edit it, and execution or approval
-  resolution requires approval capability. System-wide source sync and due-work
-  runners remain owner-only controls.
+  resolution requires approval capability. HTTP sync and due-work controls are
+  scoped to the authenticated owner; only in-process schedulers operate across
+  owners.
 - The IDP refreshes a valid refresh-token session before resolving the user on
   protected routes, and nginx relays that refreshed cookie to the browser, so
   access-token expiry does not strand an active local session on the login
