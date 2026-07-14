@@ -140,6 +140,39 @@ func TestWorkflowHandlerRejectsCrossOwnerReadAndApproval(t *testing.T) {
 	}
 }
 
+func TestRunDueHandlerRunsOnlyVerifiedOwnerWorkflow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{PlanID: "handler-owner-plan", CompletionStatus: "validated", VerificationStatus: "verified", Passed: true}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	if _, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create Alice's low-risk admin checklist."}); err != nil {
+		t.Fatalf("alice Intake: %v", err)
+	}
+	bob, err := service.Intake(IntakeRequest{OwnerIdentity: "bob", Input: "Create Bob's low-risk admin checklist."})
+	if err != nil {
+		t.Fatalf("bob Intake: %v", err)
+	}
+	handler := NewHandler(service)
+	request := httptest.NewRequest(http.MethodPost, "/workflow/run-due", bytes.NewBufferString(`{"limit":5}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
+
+	handler.RunDue(context)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if len(runner.requests) != 1 || runner.requests[0].OwnerIdentity != "alice" {
+		t.Fatalf("handler executed wrong workflows: %#v", runner.requests)
+	}
+	if repo.items[bob.Item.ID].CurrentState != StateReady {
+		t.Fatalf("handler executed Bob workflow for Alice: %#v", repo.items[bob.Item.ID])
+	}
+}
+
 func TestIntakeHandlerRoutesLegacyRequestThroughPursuitGateway(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeWorkflowRepo()

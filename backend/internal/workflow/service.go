@@ -251,8 +251,11 @@ type Service interface {
 	UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request ChecklistUpdateRequest) (*WorkflowRecord, error)
 	RetractSource(sourceType, sourceID, reason string) error
 	RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error)
+	RecoverStaleClaimsForOwner(ownerIdentity string, request RunDueRequest) (*ClaimRecoverySummary, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
+	RunDueForOwner(ownerIdentity string, request RunDueRequest) (*WorkflowRunSummary, error)
 	RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error)
+	RunDueOpenLoopsForOwner(ownerIdentity string, request RunDueRequest) (*OpenLoopRunSummary, error)
 	Overview() Overview
 }
 
@@ -1166,13 +1169,18 @@ func (s *service) UpdateChecklistItem(id uuid.UUID, itemID uuid.UUID, request Ch
 }
 
 func (s *service) RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error) {
+	return s.RecoverStaleClaimsForOwner("", request)
+}
+
+func (s *service) RecoverStaleClaimsForOwner(ownerIdentity string, request RunDueRequest) (*ClaimRecoverySummary, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	now := time.Now().UTC()
 	limit := normalizeRunLimit(request.Limit)
-	items, err := s.repo.FindExpiredWorkflowClaims(now, limit)
+	items, err := s.repo.FindExpiredWorkflowClaimsForOwner(ownerIdentity, now, limit)
 	if err != nil {
 		return nil, err
 	}
-	loops, err := s.repo.FindExpiredOpenLoopClaims(now, limit)
+	loops, err := s.repo.FindExpiredOpenLoopClaimsForOwner(ownerIdentity, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1254,7 +1262,12 @@ func (s *service) RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySumma
 }
 
 func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
-	items, err := s.repo.FindRunnableItems(time.Now().UTC(), normalizeRunLimit(request.Limit))
+	return s.RunDueForOwner("", request)
+}
+
+func (s *service) RunDueForOwner(ownerIdentity string, request RunDueRequest) (*WorkflowRunSummary, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	items, err := s.repo.FindRunnableItemsForOwner(ownerIdentity, time.Now().UTC(), normalizeRunLimit(request.Limit))
 	if err != nil {
 		return nil, err
 	}
@@ -1275,7 +1288,7 @@ func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 	for _, item := range items {
 		claimedAt := time.Now().UTC()
 		claimID := uuid.NewString()
-		claimed, acquired, claimErr := s.repo.ClaimRunnableItem(item.ID, claimID, claimedAt, claimedAt.Add(claimLeaseDuration()))
+		claimed, acquired, claimErr := s.repo.ClaimRunnableItemForOwner(ownerIdentity, item.ID, claimID, claimedAt, claimedAt.Add(claimLeaseDuration()))
 		if claimErr != nil {
 			summary.Blocked++
 			summary.Results = append(summary.Results, WorkflowRunResult{
@@ -1317,7 +1330,12 @@ func (s *service) RunDue(request RunDueRequest) (*WorkflowRunSummary, error) {
 }
 
 func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error) {
-	loops, err := s.repo.FindDashboardOpenLoops(time.Now().UTC())
+	return s.RunDueOpenLoopsForOwner("", request)
+}
+
+func (s *service) RunDueOpenLoopsForOwner(ownerIdentity string, request RunDueRequest) (*OpenLoopRunSummary, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	loops, err := s.repo.FindDashboardOpenLoopsForOwner(ownerIdentity, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -1342,7 +1360,7 @@ func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, e
 	for _, loop := range loops {
 		claimedAt := time.Now().UTC()
 		claimID := uuid.NewString()
-		claimed, acquired, claimErr := s.repo.ClaimDueOpenLoop(loop.ID, claimID, claimedAt, claimedAt.Add(claimLeaseDuration()))
+		claimed, acquired, claimErr := s.repo.ClaimDueOpenLoopForOwner(ownerIdentity, loop.ID, claimID, claimedAt, claimedAt.Add(claimLeaseDuration()))
 		if claimErr != nil {
 			summary.Skipped++
 			summary.Results = append(summary.Results, OpenLoopRunResult{

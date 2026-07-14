@@ -783,6 +783,44 @@ func TestRunDueOpenLoopsCreatesFollowUpProposal(t *testing.T) {
 	}
 }
 
+func TestOwnerScopedOpenLoopRunLeavesForeignFollowUpsUntouched(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	alice, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Email from lawyer about Alice's hearing tomorrow. Draft reply only.",
+	})
+	if err != nil {
+		t.Fatalf("alice Intake: %v", err)
+	}
+	bob, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "bob",
+		Input:         "Email from lawyer about Bob's hearing tomorrow. Draft reply only.",
+	})
+	if err != nil {
+		t.Fatalf("bob Intake: %v", err)
+	}
+	for _, record := range []WorkflowRecord{*alice, *bob} {
+		loops := repo.openLoops[record.Item.ID]
+		if len(loops) == 0 {
+			t.Fatalf("workflow %s has no open loop", record.Item.ID)
+		}
+		loops[0].FollowUpAt = timePtr(time.Now().UTC().Add(-time.Hour))
+		repo.openLoops[record.Item.ID] = loops
+	}
+
+	summary, err := service.RunDueOpenLoopsForOwner("alice", RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDueOpenLoopsForOwner: %v", err)
+	}
+	if summary.Checked != 1 || summary.Triggered != 1 {
+		t.Fatalf("summary = %#v, want Alice follow-up only", summary)
+	}
+	if repo.openLoops[bob.Item.ID][0].Status != "open" {
+		t.Fatalf("Bob follow-up was changed by Alice worker run: %#v", repo.openLoops[bob.Item.ID][0])
+	}
+}
+
 func TestRunDueOpenLoopsSkipsWhenEmergencyStopActive(t *testing.T) {
 	t.Setenv("HAI_EMERGENCY_STOP", "true")
 	repo := newFakeWorkflowRepo()
@@ -1312,6 +1350,41 @@ func TestRecoverStaleClaimsLeavesActiveWorkflowLeaseOwned(t *testing.T) {
 	}
 }
 
+func TestOwnerScopedClaimRecoveryLeavesForeignWorkflowUntouched(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	alice, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create Alice's low-risk admin checklist."})
+	if err != nil {
+		t.Fatalf("alice Intake: %v", err)
+	}
+	bob, err := service.Intake(IntakeRequest{OwnerIdentity: "bob", Input: "Create Bob's low-risk admin checklist."})
+	if err != nil {
+		t.Fatalf("bob Intake: %v", err)
+	}
+	expiredAt := time.Now().UTC().Add(-time.Minute)
+	for _, id := range []uuid.UUID{alice.Item.ID, bob.Item.ID} {
+		item := repo.items[id]
+		item.CurrentState = StateInProgress
+		item.WorkerClaimID = "expired-" + id.String()
+		item.WorkerLeaseUntil = timePtr(expiredAt)
+		item.LastRunAt = timePtr(expiredAt)
+	}
+
+	summary, err := service.RecoverStaleClaimsForOwner("alice", RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RecoverStaleClaimsForOwner: %v", err)
+	}
+	if summary.Checked != 1 || summary.WorkflowsBlocked != 1 {
+		t.Fatalf("summary = %#v, want Alice claim only", summary)
+	}
+	if repo.items[alice.Item.ID].CurrentState != StateBlocked {
+		t.Fatalf("Alice stale claim was not recovered: %#v", repo.items[alice.Item.ID])
+	}
+	if repo.items[bob.Item.ID].CurrentState != StateInProgress || repo.items[bob.Item.ID].WorkerClaimID == "" {
+		t.Fatalf("Bob stale claim was changed by Alice recovery: %#v", repo.items[bob.Item.ID])
+	}
+}
+
 func TestRecoverStaleOpenLoopClaimReopensIdempotentFollowUp(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	service := NewService(repo)
@@ -1441,6 +1514,42 @@ func TestRunDuePassesWorkflowOwnerToTaskRunner(t *testing.T) {
 	}
 	if runner.requests[0].OwnerIdentity != "alice" {
 		t.Fatalf("task run owner = %q, want alice for workflow %s", runner.requests[0].OwnerIdentity, record.Item.ID)
+	}
+}
+
+func TestOwnerScopedRunDueExecutesOnlyOwnedWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "owner-scoped-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	alice, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create Alice's low-risk admin checklist."})
+	if err != nil {
+		t.Fatalf("alice Intake: %v", err)
+	}
+	bob, err := service.Intake(IntakeRequest{OwnerIdentity: "bob", Input: "Create Bob's low-risk admin checklist."})
+	if err != nil {
+		t.Fatalf("bob Intake: %v", err)
+	}
+
+	summary, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if summary.Checked != 1 || summary.Completed != 1 || len(runner.requests) != 1 {
+		t.Fatalf("summary=%#v requests=%#v, want Alice workflow only", summary, runner.requests)
+	}
+	if runner.requests[0].OwnerIdentity != "alice" {
+		t.Fatalf("runner owner = %q, want alice", runner.requests[0].OwnerIdentity)
+	}
+	if repo.items[alice.Item.ID].CurrentState != StateCompleted {
+		t.Fatalf("Alice workflow was not completed by Alice worker run: %#v", repo.items[alice.Item.ID])
+	}
+	if repo.items[bob.Item.ID].CurrentState != StateReady {
+		t.Fatalf("Bob workflow was executed by Alice worker run: %#v", repo.items[bob.Item.ID])
 	}
 }
 
@@ -2238,6 +2347,26 @@ func (r *fakeWorkflowRepo) FindRunnableItems(now time.Time, limit int) ([]models
 	return result, nil
 }
 
+func (r *fakeWorkflowRepo) FindRunnableItemsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindRunnableItems(now, limit)
+	}
+	items, err := r.FindRunnableItems(now, 0)
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]models.WorkflowItem, 0, len(items))
+	for _, item := range items {
+		if item.OwnerIdentity == ownerIdentity {
+			owned = append(owned, item)
+		}
+	}
+	if limit > 0 && len(owned) > limit {
+		return owned[:limit], nil
+	}
+	return owned, nil
+}
+
 func (r *fakeWorkflowRepo) ClaimRunnableItem(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error) {
 	if r.rejectWorkflowClaims {
 		return nil, false, nil
@@ -2261,6 +2390,16 @@ func (r *fakeWorkflowRepo) ClaimRunnableItem(id uuid.UUID, claimID string, now t
 	item.UpdatedAt = now
 	copied := *item
 	return &copied, true, nil
+}
+
+func (r *fakeWorkflowRepo) ClaimRunnableItemForOwner(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error) {
+	if ownerIdentity != "" {
+		item, ok := r.items[id]
+		if !ok || item.OwnerIdentity != ownerIdentity {
+			return nil, false, nil
+		}
+	}
+	return r.ClaimRunnableItem(id, claimID, now, leaseUntil)
 }
 
 func (r *fakeWorkflowRepo) RenewRunnableItemClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error) {
@@ -2304,6 +2443,26 @@ func (r *fakeWorkflowRepo) FindExpiredWorkflowClaims(now time.Time, limit int) (
 		return result[:limit], nil
 	}
 	return result, nil
+}
+
+func (r *fakeWorkflowRepo) FindExpiredWorkflowClaimsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowItem, error) {
+	if ownerIdentity == "" {
+		return r.FindExpiredWorkflowClaims(now, limit)
+	}
+	items, err := r.FindExpiredWorkflowClaims(now, 0)
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]models.WorkflowItem, 0, len(items))
+	for _, item := range items {
+		if item.OwnerIdentity == ownerIdentity {
+			owned = append(owned, item)
+		}
+	}
+	if limit > 0 && len(owned) > limit {
+		return owned[:limit], nil
+	}
+	return owned, nil
 }
 
 func (r *fakeWorkflowRepo) RecoverExpiredWorkflowClaim(item models.WorkflowItem, now time.Time) (*models.WorkflowItem, bool, error) {
@@ -2449,6 +2608,23 @@ func (r *fakeWorkflowRepo) FindDashboardOpenLoops(now time.Time) ([]models.Workf
 	return result, nil
 }
 
+func (r *fakeWorkflowRepo) FindDashboardOpenLoopsForOwner(ownerIdentity string, now time.Time) ([]models.WorkflowOpenLoop, error) {
+	if ownerIdentity == "" {
+		return r.FindDashboardOpenLoops(now)
+	}
+	loops, err := r.FindDashboardOpenLoops(now)
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]models.WorkflowOpenLoop, 0, len(loops))
+	for _, loop := range loops {
+		if item := r.items[loop.WorkflowID]; item != nil && item.OwnerIdentity == ownerIdentity {
+			owned = append(owned, loop)
+		}
+	}
+	return owned, nil
+}
+
 func (r *fakeWorkflowRepo) ClaimDueOpenLoop(id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error) {
 	if r.rejectOpenLoopClaims {
 		return nil, false, nil
@@ -2475,6 +2651,22 @@ func (r *fakeWorkflowRepo) ClaimDueOpenLoop(id uuid.UUID, claimID string, now ti
 		}
 	}
 	return nil, false, nil
+}
+
+func (r *fakeWorkflowRepo) ClaimDueOpenLoopForOwner(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowOpenLoop, bool, error) {
+	if ownerIdentity != "" {
+		for workflowID, loops := range r.openLoops {
+			for _, loop := range loops {
+				if loop.ID == id {
+					item := r.items[workflowID]
+					if item == nil || item.OwnerIdentity != ownerIdentity {
+						return nil, false, nil
+					}
+				}
+			}
+		}
+	}
+	return r.ClaimDueOpenLoop(id, claimID, now, leaseUntil)
 }
 
 func (r *fakeWorkflowRepo) RenewOpenLoopClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error) {
@@ -2530,6 +2722,26 @@ func (r *fakeWorkflowRepo) FindExpiredOpenLoopClaims(now time.Time, limit int) (
 		return result[:limit], nil
 	}
 	return result, nil
+}
+
+func (r *fakeWorkflowRepo) FindExpiredOpenLoopClaimsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowOpenLoop, error) {
+	if ownerIdentity == "" {
+		return r.FindExpiredOpenLoopClaims(now, limit)
+	}
+	loops, err := r.FindExpiredOpenLoopClaims(now, 0)
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]models.WorkflowOpenLoop, 0, len(loops))
+	for _, loop := range loops {
+		if item := r.items[loop.WorkflowID]; item != nil && item.OwnerIdentity == ownerIdentity {
+			owned = append(owned, loop)
+		}
+	}
+	if limit > 0 && len(owned) > limit {
+		return owned[:limit], nil
+	}
+	return owned, nil
 }
 
 func (r *fakeWorkflowRepo) RecoverExpiredOpenLoopClaim(loop models.WorkflowOpenLoop, now time.Time) (*models.WorkflowOpenLoop, bool, error) {

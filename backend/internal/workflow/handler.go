@@ -290,7 +290,7 @@ func (h *Handler) respondScopedWorkflow(c *gin.Context, id uuid.UUID, status int
 func (h *Handler) RunDue(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
-	result, err := h.service.RunDue(request)
+	result, err := h.service.RunDueForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -301,7 +301,7 @@ func (h *Handler) RunDue(c *gin.Context) {
 func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
-	result, err := h.service.RecoverStaleClaims(request)
+	result, err := h.service.RecoverStaleClaimsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -312,7 +312,7 @@ func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
-	result, err := h.service.RunDueOpenLoops(request)
+	result, err := h.service.RunDueOpenLoopsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
