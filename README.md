@@ -12,7 +12,7 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 ## Current State
 
-**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. The local Compose topology is running in this repository with healthy backend, frontend, gateway, Postgres, Redis, and Kafka services; `GET /` returns the Angular shell, `GET /healthz` and `GET /readyz` reach the backend, and a protected engine route returns `401` without a session. Docker Compose configuration validates from `.env.example`, and the backend critical-path smoke has passed against local Postgres. This is a locally validated deployment path, **not** a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
+**Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. The local Compose topology has been exercised in this repository with healthy backend, frontend, gateway, Postgres, Redis, and Kafka services; `GET /` returned the Angular shell, `GET /healthz` and `GET /readyz` reached the backend, and a protected engine route returned `401` without a session. Docker Compose configuration validates from `.env.example`, and the backend critical-path smoke has passed against local Postgres. This is a locally validated deployment path, **not** a claim that this checkout is currently running or a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
 
 ### What You Can Use Today
 
@@ -84,6 +84,14 @@ Recent hardening in the current baseline:
   cannot leave `http://localhost` pointed at a dead upstream. `/healthz` and
   `/readyz` are explicit backend proxy routes; protected engine APIs remain
   behind the IDP session boundary.
+- Direct task plans and runs scoped to a pursuit retain a compact durable
+  task-attempt record and exact runtime-launch evidence. Their verification
+  result is linked back to the same pursuit, and a failed evidence link moves
+  the task to review instead of presenting it as a verified outcome.
+- Pursuit dashboard freshness is derived from linked workflow, task,
+  verification, source, and runtime activity at read time. This prevents a
+  worker update from being misclassified as stale without letting a passive
+  page refresh alter the durable pursuit record.
 
 For route-level ownership behavior, see the
 [backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that
@@ -600,6 +608,8 @@ Pursuits are the durable objective containers above individual workflows. A purs
 Pursuit intake and matching reuse the existing source, workflow, memory, verification, and ambient-planning services rather than introducing a parallel agent implementation. Source sync, AI-memory extraction, ambient opportunities, HAI chat runs, and the legacy workflow-intake API all use the shared pursuit route when the pursuit service is configured. That route centralizes matching, candidate creation, approval requirements, and closed-pursuit protection before a workflow is created; producer-specific fallback mode remains available for isolated deployments and tests. Matching first resolves an existing source type/ID, then a stable source URI, before using project and text evidence; this avoids duplicate pursuit candidates when older or manual callers have a reliable URI but no provider item ID. Creation, planning, intake, review, decision resolution, archive operations, and link changes record the authenticated session principal when present; a client payload cannot claim another person as the actor. Local development without an IDP session records the fallback operator/system identity honestly. This supports traceable operation but does not itself authorize a sensitive action: the workflow approval queue, execution policy, and verification gates remain authoritative.
 
 Operational pursuit activity, including evidence/workflow links and link removals, advances the durable `LastActivityAt` value. Passive summary refreshes remain in the audit feed but do not reset freshness, so the stale-pursuit view measures real movement rather than background observation or direct field edits.
+
+Dashboard freshness also derives from linked workflow, task, verification, source, and runtime timestamps without mutating the pursuit during a read. A real worker or verification update therefore keeps a pursuit out of the stale queue; opening or refreshing a page does not.
 
 Closed pursuits are removed from active operational queues. During an ambient scan, any open or accepted pursuit-derived opportunity whose linked pursuit is completed or archived is completed with a closure note; dismissed opportunities remain untouched as operator feedback. This prevents the proactive layer from resurfacing work that Robert has already closed.
 

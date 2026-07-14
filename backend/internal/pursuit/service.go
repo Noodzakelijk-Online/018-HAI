@@ -248,20 +248,21 @@ type BriefCard struct {
 }
 
 type PursuitListItem struct {
-	Pursuit             models.Pursuit `json:"pursuit"`
-	NeedsRobert         int            `json:"needsRobert"`
-	Blocked             int            `json:"blocked"`
-	OpenLoops           int            `json:"openLoops"`
-	DecisionCards       int            `json:"decisionCards"`
-	LinkedEvidence      int            `json:"linkedEvidence"`
-	TimelineItems       int            `json:"timelineItems"`
-	CompletionCandidate bool           `json:"completionCandidate"`
-	CurrentState        string         `json:"currentState,omitempty"`
-	WhatChanged         string         `json:"whatChanged,omitempty"`
-	NextAction          string         `json:"nextAction,omitempty"`
-	Stale               bool           `json:"stale"`
-	ReviewDue           bool           `json:"reviewDue"`
-	PlanningNeeded      bool           `json:"planningNeeded"`
+	Pursuit                 models.Pursuit `json:"pursuit"`
+	NeedsRobert             int            `json:"needsRobert"`
+	Blocked                 int            `json:"blocked"`
+	OpenLoops               int            `json:"openLoops"`
+	DecisionCards           int            `json:"decisionCards"`
+	LinkedEvidence          int            `json:"linkedEvidence"`
+	TimelineItems           int            `json:"timelineItems"`
+	CompletionCandidate     bool           `json:"completionCandidate"`
+	CurrentState            string         `json:"currentState,omitempty"`
+	WhatChanged             string         `json:"whatChanged,omitempty"`
+	NextAction              string         `json:"nextAction,omitempty"`
+	EffectiveLastActivityAt *time.Time     `json:"effectiveLastActivityAt,omitempty"`
+	Stale                   bool           `json:"stale"`
+	ReviewDue               bool           `json:"reviewDue"`
+	PlanningNeeded          bool           `json:"planningNeeded"`
 }
 
 type PursuitDashboardDecision struct {
@@ -2762,8 +2763,9 @@ func (s *service) listItem(pursuit models.Pursuit) (PursuitListItem, error) {
 func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *PursuitDetail, error) {
 	detail, err := s.Detail(pursuit.ID)
 	if err != nil {
-		return PursuitListItem{Pursuit: pursuit, NextAction: pursuit.NextRecommendedAction, Stale: isStale(pursuit), ReviewDue: isReviewDue(pursuit), PlanningNeeded: pursuitNeedsPlanning(pursuit, 0)}, nil, err
+		return PursuitListItem{Pursuit: pursuit, NextAction: pursuit.NextRecommendedAction, EffectiveLastActivityAt: pursuit.LastActivityAt, Stale: isStale(pursuit), ReviewDue: isReviewDue(pursuit), PlanningNeeded: pursuitNeedsPlanning(pursuit, 0)}, nil, err
 	}
+	effectiveActivityAt := effectivePursuitActivity(pursuit, detail)
 	needsRobert := len(detail.ApprovalItems)
 	if pursuitNeedsRobert(pursuit, detail.NextActions) {
 		needsRobert++
@@ -2772,21 +2774,76 @@ func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *
 		needsRobert = detail.Summary.NeedsRobert
 	}
 	return PursuitListItem{
-		Pursuit:             pursuit,
-		NeedsRobert:         needsRobert,
-		Blocked:             len(detail.Blockers),
-		OpenLoops:           len(detail.OpenLoops),
-		DecisionCards:       detail.Summary.DecisionCards,
-		LinkedEvidence:      detail.Summary.LinkedEvidence,
-		TimelineItems:       detail.Summary.TimelineItems,
-		CompletionCandidate: detail.Summary.CompletionCandidate,
-		CurrentState:        detail.Summary.CurrentState,
-		WhatChanged:         detail.Summary.WhatChanged,
-		NextAction:          firstNonEmpty(pursuit.NextRecommendedAction, firstActionLabel(detail.NextActions)),
-		Stale:               isStale(pursuit),
-		ReviewDue:           isReviewDue(pursuit),
-		PlanningNeeded:      detail.Summary.PlanningNeeded,
+		Pursuit:                 pursuit,
+		NeedsRobert:             needsRobert,
+		Blocked:                 len(detail.Blockers),
+		OpenLoops:               len(detail.OpenLoops),
+		DecisionCards:           detail.Summary.DecisionCards,
+		LinkedEvidence:          detail.Summary.LinkedEvidence,
+		TimelineItems:           detail.Summary.TimelineItems,
+		CompletionCandidate:     detail.Summary.CompletionCandidate,
+		CurrentState:            detail.Summary.CurrentState,
+		WhatChanged:             detail.Summary.WhatChanged,
+		NextAction:              firstNonEmpty(pursuit.NextRecommendedAction, firstActionLabel(detail.NextActions)),
+		EffectiveLastActivityAt: optionalTime(effectiveActivityAt),
+		Stale:                   isStaleAt(effectiveActivityAt),
+		ReviewDue:               isReviewDue(pursuit),
+		PlanningNeeded:          detail.Summary.PlanningNeeded,
 	}, detail, nil
+}
+
+// effectivePursuitActivity derives dashboard freshness from evidence that is
+// already linked to a pursuit. It intentionally does not write the derived
+// value back during a read: summary refreshes must not make stale work appear
+// active, while real workflow, task, verification, source, and runtime work
+// must keep a pursuit out of the stale queue.
+func effectivePursuitActivity(pursuit models.Pursuit, detail *PursuitDetail) time.Time {
+	latest := firstTime(timeFromPointer(pursuit.LastActivityAt), pursuit.UpdatedAt)
+	if detail == nil {
+		return latest
+	}
+	for _, item := range detail.Workflows {
+		latest = latestTime(latest, item.UpdatedAt, timeFromPointer(item.LastRunAt), timeFromPointer(item.CompletedAt))
+	}
+	for _, item := range detail.OpenLoops {
+		latest = latestTime(latest, item.UpdatedAt)
+	}
+	for _, item := range detail.TaskAttempts {
+		latest = latestTime(latest, item.UpdatedAt, timeFromPointer(item.CompletedAt), timeFromPointer(item.StartedAt))
+	}
+	for _, item := range detail.VerificationRuns {
+		latest = latestTime(latest, item.UpdatedAt, item.CreatedAt)
+	}
+	for _, item := range detail.RuntimeAttempts {
+		latest = latestTime(latest, item.CompletedAt, item.StartedAt)
+	}
+	for _, item := range detail.SourceItems {
+		latest = latestTime(latest, item.UpdatedAt, item.FetchedAt, item.CreatedAt)
+	}
+	for _, item := range detail.SourceExtractions {
+		latest = latestTime(latest, item.UpdatedAt, item.CreatedAt)
+	}
+	for _, item := range detail.Activity {
+		latest = latestTime(latest, item.CreatedAt)
+	}
+	return latest
+}
+
+func latestTime(current time.Time, values ...time.Time) time.Time {
+	for _, value := range values {
+		if value.After(current) {
+			current = value
+		}
+	}
+	return current
+}
+
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	copy := value
+	return &copy
 }
 
 func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, sourceType, sourceID, sourceURI string) (*models.PursuitActivity, error) {
@@ -4888,10 +4945,14 @@ func limitListItems(items *[]PursuitListItem, limit int) {
 }
 
 func isStale(pursuit models.Pursuit) bool {
-	if pursuit.LastActivityAt == nil {
-		return time.Since(pursuit.UpdatedAt) > 14*24*time.Hour
+	return isStaleAt(firstTime(timeFromPointer(pursuit.LastActivityAt), pursuit.UpdatedAt))
+}
+
+func isStaleAt(activityAt time.Time) bool {
+	if activityAt.IsZero() {
+		return true
 	}
-	return time.Since(*pursuit.LastActivityAt) > 14*24*time.Hour
+	return time.Since(activityAt) > 14*24*time.Hour
 }
 
 func isReviewDue(pursuit models.Pursuit) bool {

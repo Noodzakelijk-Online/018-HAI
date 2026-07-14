@@ -3402,6 +3402,52 @@ func TestSummaryRefreshDoesNotMaskStalePursuit(t *testing.T) {
 	}
 }
 
+func TestDashboardUsesLinkedOperationalActivityForFreshness(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Track workflow progress", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	now := time.Now().UTC()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:            workflowID,
+		OwnerIdentity: "alice",
+		Title:         "Run governed evidence check",
+		CurrentState:  workflow.StateInProgress,
+		UpdatedAt:     now,
+	}
+	if _, err := service.Link(created.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "operational_work"}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+	staleAt := now.Add(-15 * 24 * time.Hour)
+	record := repo.pursuits[created.ID]
+	record.LastActivityAt = &staleAt
+	repo.pursuits[created.ID] = record
+
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if len(dashboard.Stale) != 0 {
+		t.Fatalf("linked workflow activity was ignored for freshness: %#v", dashboard.Stale)
+	}
+	if len(dashboard.RecentlyChanged) != 1 || dashboard.RecentlyChanged[0].EffectiveLastActivityAt == nil {
+		t.Fatalf("recently changed pursuit lacks derived activity: %#v", dashboard.RecentlyChanged)
+	}
+	if dashboard.RecentlyChanged[0].EffectiveLastActivityAt.Before(now) {
+		t.Fatalf("effective activity = %v, want workflow update at or after %v", dashboard.RecentlyChanged[0].EffectiveLastActivityAt, now)
+	}
+	updated, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if updated.LastActivityAt == nil || !updated.LastActivityAt.Equal(staleAt) {
+		t.Fatalf("dashboard read mutated persisted freshness: %#v", updated)
+	}
+}
+
 func timelineContains(items []PursuitTimelineItem, kind, messagePart string) bool {
 	for _, item := range items {
 		if item.Kind == kind && strings.Contains(item.Message, messagePart) {
