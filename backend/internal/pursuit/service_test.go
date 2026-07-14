@@ -2489,6 +2489,59 @@ func TestDirectPursuitTaskAttemptRejectsAnotherOwner(t *testing.T) {
 	}
 }
 
+func TestDirectPursuitTaskAttemptRejectsUnacceptedCandidate(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Review imported legal correspondence",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "source_pursuit_candidate",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	err = service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     candidate.ID,
+		TaskPlanID:    "candidate-direct-plan",
+		OwnerIdentity: "alice",
+		Mode:          "plan",
+		Status:        "planned",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("unaccepted candidate accepted direct task attempt: %v", err)
+	}
+	if attempts, findErr := repo.FindTaskAttempts(candidate.ID, 10); findErr != nil || len(attempts) != 0 {
+		t.Fatalf("candidate task attempt persisted: attempts=%#v err=%v", attempts, findErr)
+	}
+}
+
+func TestDirectPursuitTaskAttemptRejectsClosedPursuit(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Closed evidence review", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := service.ArchiveForOwner("alice", created.ID, true, "alice"); err != nil {
+		t.Fatalf("ArchiveForOwner returned error: %v", err)
+	}
+
+	err = service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     created.ID,
+		TaskPlanID:    "closed-direct-plan",
+		OwnerIdentity: "alice",
+		Mode:          "plan",
+		Status:        "planned",
+	})
+	if err == nil || !strings.Contains(err.Error(), "closed pursuit") {
+		t.Fatalf("closed pursuit accepted direct task attempt: %v", err)
+	}
+	if attempts, findErr := repo.FindTaskAttempts(created.ID, 10); findErr != nil || len(attempts) != 0 {
+		t.Fatalf("closed pursuit task attempt persisted: attempts=%#v err=%v", attempts, findErr)
+	}
+}
+
 func TestDirectPursuitTaskAttemptRedactsPersistedText(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

@@ -1,6 +1,7 @@
 package task
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,30 @@ func TestPursuitScopedTaskPlanRejectsMalformedPursuitID(t *testing.T) {
 	)
 	if _, err := service.Plan(IntakeRequest{Request: "Plan a bounded review", PursuitID: "not-a-uuid"}); err == nil {
 		t.Fatal("expected malformed pursuit id to be rejected")
+	}
+}
+
+func TestPursuitScopedTaskPlanChecksLifecycleGuardBeforePlanning(t *testing.T) {
+	guard := &fakePursuitTaskGuard{err: fmt.Errorf("pursuit candidate must be accepted before direct task planning or execution")}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		nil,
+		nil,
+		nil,
+		nil,
+		guard,
+	)
+
+	_, err := service.Plan(IntakeRequest{
+		OwnerIdentity: "alice",
+		PursuitID:     uuid.NewString(),
+		Request:       "Prepare a task plan for this candidate.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("Plan returned %v, want lifecycle guard error", err)
+	}
+	if guard.calls != 1 || len(guard.attempts) != 0 {
+		t.Fatalf("guard calls=%d attempts=%#v, want one pre-plan check and no persisted attempts", guard.calls, guard.attempts)
 	}
 }
 
@@ -785,6 +810,17 @@ type fakePursuitAttemptRecorder struct {
 func (f *fakePursuitAttemptRecorder) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
 	f.attempts = append(f.attempts, attempt)
 	return nil
+}
+
+type fakePursuitTaskGuard struct {
+	fakePursuitAttemptRecorder
+	err   error
+	calls int
+}
+
+func (f *fakePursuitTaskGuard) ValidatePursuitTaskAttempt(uuid.UUID, string) error {
+	f.calls++
+	return f.err
 }
 
 type fakeTaskSourceService struct {

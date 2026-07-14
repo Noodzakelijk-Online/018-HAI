@@ -1054,12 +1054,9 @@ func (s *service) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
 	if attempt.PursuitID == uuid.Nil || strings.TrimSpace(attempt.TaskPlanID) == "" {
 		return fmt.Errorf("pursuit id and task plan id are required")
 	}
-	pursuit, err := s.repo.FindByID(attempt.PursuitID)
+	pursuit, err := s.taskAttemptPursuit(attempt.PursuitID, attempt.OwnerIdentity)
 	if err != nil {
 		return err
-	}
-	if !pursuitMutableBy(*pursuit, attempt.OwnerIdentity) {
-		return fmt.Errorf("pursuit not found")
 	}
 	attempt.OwnerIdentity = firstNonEmpty(strings.TrimSpace(attempt.OwnerIdentity), pursuit.OwnerIdentity)
 	attempt.RequestSummary = compactPursuitTaskSummary(attempt.RequestSummary)
@@ -1077,6 +1074,31 @@ func (s *service) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
 	eventType, message := pursuitTaskAttemptActivity(*stored)
 	_, err = s.recordActivity(stored.PursuitID, eventType, message, firstNonEmpty(stored.OwnerIdentity, "task-engine"), "task_attempt", stored.TaskPlanID, "task://"+stored.TaskPlanID)
 	return err
+}
+
+// ValidatePursuitTaskAttempt is used by the direct task engine before it
+// builds a pursuit-scoped plan. It prevents an unaccepted candidate or closed
+// pursuit from receiving task work through APIs that do not create workflows.
+func (s *service) ValidatePursuitTaskAttempt(pursuitID uuid.UUID, ownerIdentity string) error {
+	_, err := s.taskAttemptPursuit(pursuitID, ownerIdentity)
+	return err
+}
+
+func (s *service) taskAttemptPursuit(pursuitID uuid.UUID, ownerIdentity string) (*models.Pursuit, error) {
+	pursuit, err := s.repo.FindByID(pursuitID)
+	if err != nil {
+		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("pursuit candidate must be accepted before direct task planning or execution")
+	}
+	if err := ensurePursuitOpen(*pursuit, "plan or execute direct task work for"); err != nil {
+		return nil, err
+	}
+	return pursuit, nil
 }
 
 // linkTaskAttemptRuntimeEvidence adds only the exact persisted launch event to

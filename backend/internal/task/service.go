@@ -187,6 +187,13 @@ type PursuitAttemptRecorder interface {
 	UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error
 }
 
+// PursuitTaskGuard is an optional lifecycle boundary for a pursuit-scoped
+// direct task plan or run. The task engine owns planning and execution, while
+// the pursuit service owns whether a pursuit is active and eligible for work.
+type PursuitTaskGuard interface {
+	ValidatePursuitTaskAttempt(pursuitID uuid.UUID, ownerIdentity string) error
+}
+
 type ExecutionResult struct {
 	StartedAt          time.Time                  `json:"startedAt"`
 	CompletedAt        time.Time                  `json:"completedAt"`
@@ -454,11 +461,17 @@ func (s *service) validatePursuitAttemptRequest(request IntakeRequest) error {
 	if pursuitID == "" {
 		return nil
 	}
-	if _, err := uuid.Parse(pursuitID); err != nil {
+	parsedPursuitID, err := uuid.Parse(pursuitID)
+	if err != nil {
 		return fmt.Errorf("invalid pursuit id")
 	}
 	if s.pursuitAttempts == nil {
 		return fmt.Errorf("pursuit task-attempt persistence is not configured")
+	}
+	if guard, ok := s.pursuitAttempts.(PursuitTaskGuard); ok {
+		if err := guard.ValidatePursuitTaskAttempt(parsedPursuitID, request.OwnerIdentity); err != nil {
+			return err
+		}
 	}
 	return nil
 }
