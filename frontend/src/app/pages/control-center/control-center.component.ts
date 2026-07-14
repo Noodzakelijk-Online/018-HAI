@@ -501,11 +501,15 @@ export class ControlCenterComponent implements OnInit {
   }
 
   pursuitAttentionCount(): number {
-    if (!this.pursuitDashboard) return 0
+    const dashboard = this.pursuitDashboard
+    if (!dashboard) return 0
+    // The backend serialises empty lists as null (Go nil slices), so a brand-new
+    // account with no pursuits sends null here — guard each list rather than
+    // assuming an array.
     return (
-      this.pursuitDashboard.needsRobert.length +
-      this.pursuitDashboard.blocked.length +
-      this.pursuitDashboard.stale.length
+      (dashboard.needsRobert?.length ?? 0) +
+      (dashboard.blocked?.length ?? 0) +
+      (dashboard.stale?.length ?? 0)
     )
   }
 
