@@ -141,7 +141,25 @@ func NewHandler(db *gorm.DB, pursuitService pursuitDashboardService) *Handler {
 	return &Handler{db: db, pursuitService: pursuitService}
 }
 
+// RequireAuthenticatedOwner protects the personal operating view. The HAI OS
+// page aggregates pursuit and ambient planning state, so HTTP clients must
+// provide a verified IDP principal before it is rendered.
+func RequireAuthenticatedOwner() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if pursuitOwner(c) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for HAI OS access"})
+			return
+		}
+		c.Next()
+	}
+}
+
 func (h *Handler) Overview(c *gin.Context) {
+	ownerIdentity := pursuitOwner(c)
+	if ownerIdentity == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for HAI OS access"})
+		return
+	}
 	policy, err := llm.NewServiceFromEnv()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -161,8 +179,8 @@ func (h *Handler) Overview(c *gin.Context) {
 	if emergencyActive {
 		emergencyReason = safety.EmergencyStopReason()
 	}
-	pursuitOverview := h.pursuitOverview(pursuitOwner(c))
-	h.attachAmbientPursuitState(&pursuitOverview)
+	pursuitOverview := h.pursuitOverview(ownerIdentity)
+	h.attachAmbientPursuitState(ownerIdentity, &pursuitOverview)
 	pursuitStatus := pursuitOverview.Status
 	if pursuitStatus == "" {
 		pursuitStatus = "unavailable"
@@ -252,21 +270,22 @@ func pursuitOwner(c *gin.Context) string {
 	return ""
 }
 
-func (h *Handler) attachAmbientPursuitState(overview *PursuitOverview) {
-	if h == nil || h.db == nil || overview == nil {
+func (h *Handler) attachAmbientPursuitState(ownerIdentity string, overview *PursuitOverview) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if h == nil || h.db == nil || overview == nil || ownerIdentity == "" {
 		return
 	}
 	var proposals int64
 	var approvals int64
 	_ = h.db.Model(&models.AmbientOpportunity{}).
-		Where("source_type LIKE ? AND status = ?", "pursuit_%", "proposed").
+		Where("owner_identity = ? AND source_type LIKE ? AND status = ?", ownerIdentity, "pursuit_%", "proposed").
 		Count(&proposals).Error
 	_ = h.db.Model(&models.AmbientOpportunity{}).
-		Where("source_type LIKE ? AND status = ? AND requires_approval = ?", "pursuit_%", "proposed", true).
+		Where("owner_identity = ? AND source_type LIKE ? AND status = ? AND requires_approval = ?", ownerIdentity, "pursuit_%", "proposed", true).
 		Count(&approvals).Error
 	var scan models.AmbientScan
 	scanStatus := ""
-	if err := h.db.Order("started_at DESC").First(&scan).Error; err == nil {
+	if err := h.db.Where("owner_identity = ?", ownerIdentity).Order("started_at DESC").First(&scan).Error; err == nil {
 		scanStatus = scan.Status
 	}
 	overview.AmbientProposals = int(proposals)

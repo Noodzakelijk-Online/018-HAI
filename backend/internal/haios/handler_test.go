@@ -1,15 +1,48 @@
 package haios
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+func TestHAIOSRouteRequiresVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(nil, nil)
+
+	unauthenticated := gin.New()
+	unauthenticated.GET("/os/overview", handler.Overview)
+	recorder := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/os/overview", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("direct overview status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+
+	gated := gin.New()
+	gatedRoutes := gated.Group("/os")
+	gatedRoutes.Use(RequireAuthenticatedOwner())
+	gatedRoutes.GET("/overview", handler.Overview)
+	recorder = httptest.NewRecorder()
+	gated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/os/overview", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("route owner gate status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set(identity.ContextSubjectKey, "alice")
+	if owner := pursuitOwner(context); owner != "alice" {
+		t.Fatalf("pursuit owner = %q, want alice", owner)
+	}
+}
 
 func TestLiveProviderConfiguredIgnoresApprovalGatedRuntimeOnlyProvider(t *testing.T) {
 	policy := llm.Policy{

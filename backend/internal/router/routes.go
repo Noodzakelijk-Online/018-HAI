@@ -345,6 +345,7 @@ func initializeFeatureFlagRoutes(apiVersion *gin.RouterGroup, store *featureflag
 
 func initializeHAIOSRoutes(apiVersion *gin.RouterGroup, osHandler *haios.Handler) {
 	osRoutes := apiVersion.Group("/os")
+	osRoutes.Use(haios.RequireAuthenticatedOwner())
 	{
 		osRoutes.GET("/overview", osHandler.Overview)
 	}
