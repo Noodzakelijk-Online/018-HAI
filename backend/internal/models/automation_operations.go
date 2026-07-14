@@ -22,6 +22,7 @@ type AutomationHealthEvent struct {
 type AutomationLaunchEvent struct {
 	ID                   uuid.UUID                    `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
 	AutomationID         uuid.UUID                    `gorm:"type:uuid;index" json:"automationId"`
+	OwnerIdentity        string                       `gorm:"type:varchar(255);index" json:"-"`
 	RuntimeType          string                       `gorm:"type:varchar(50);index" json:"runtimeType,omitempty"`
 	LaunchType           string                       `gorm:"type:varchar(50);index" json:"launchType"`
 	RuntimeTaskID        string                       `gorm:"type:varchar(120);index" json:"runtimeTaskId,omitempty"`

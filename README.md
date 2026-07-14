@@ -155,6 +155,10 @@ work from the command dashboard.
   browser to `/login` when a session is no longer refreshable.
 - Owner-scoped pursuit detail, dashboards, activity, evidence, decisions, and
   links filter legacy records that are not visible to the current owner.
+- Runtime launch and stop records retain the authenticated initiating owner.
+  Owner-scoped pursuits reject unknown or other-owner runtime evidence, and
+  shared automation history cannot make one operator's runtime output visible
+  in another operator's pursuit.
 - High-risk communication, legal/government, financial, account, public-post,
   deletion, destructive-file, and broad-host actions require explicit approval
   and do not run from a generic transition or chat request.

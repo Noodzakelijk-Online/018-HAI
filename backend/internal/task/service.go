@@ -156,6 +156,7 @@ type ExecutedAction struct {
 }
 
 type ToolExecutionRequest struct {
+	OwnerIdentity string `json:"-"`
 	AutomationID  string `json:"automationId"`
 	Task          string `json:"task"`
 	ProjectKey    string `json:"projectKey,omitempty"`
@@ -903,6 +904,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 				return blockExecution(result, "task requires controlled runtime execution but no automationId was provided", plan, toolStarted)
 			}
 			executed, err := s.toolExecutor.Execute(ToolExecutionRequest{
+				OwnerIdentity: plan.OwnerIdentity,
 				AutomationID:  request.AutomationID,
 				Task:          plan.RealGoal,
 				ProjectKey:    plan.ProjectKey,

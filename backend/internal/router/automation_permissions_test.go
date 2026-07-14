@@ -57,7 +57,51 @@ func TestAutomationRoutesApplySignedRolePermissions(t *testing.T) {
 	}
 }
 
+func TestAutomationRuntimeRoutesForwardVerifiedOwnerToLedger(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	id := uuid.New()
+	service := &ownerCapturingAutomationService{}
+	engine := gin.New()
+	v1 := engine.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "robert")
+		c.Set(identity.ContextRoleKey, "owner")
+		c.Next()
+	})
+	if err := initializeAutomationsRoutes(v1, automation.NewHandler(service)); err != nil {
+		t.Fatalf("initialize automation routes: %v", err)
+	}
+
+	launch := httptest.NewRecorder()
+	engine.ServeHTTP(launch, httptest.NewRequest(http.MethodPost, "/api/v1/automation/"+id.String()+"/launch", nil))
+	if launch.Code != http.StatusOK || service.launchRequest.OwnerIdentity != "robert" {
+		t.Fatalf("launch owner propagation = status %d request %#v", launch.Code, service.launchRequest)
+	}
+
+	stop := httptest.NewRecorder()
+	engine.ServeHTTP(stop, httptest.NewRequest(http.MethodPost, "/api/v1/automation/"+id.String()+"/stop-runtime", nil))
+	if stop.Code != http.StatusOK || service.stopOwnerIdentity != "robert" {
+		t.Fatalf("stop owner propagation = status %d owner %q", stop.Code, service.stopOwnerIdentity)
+	}
+}
+
 type automationRouteServiceStub struct{}
+
+type ownerCapturingAutomationService struct {
+	automationRouteServiceStub
+	launchRequest     automation.TaskLaunchRequest
+	stopOwnerIdentity string
+}
+
+func (s *ownerCapturingAutomationService) LaunchTask(id uuid.UUID, request automation.TaskLaunchRequest) (*automation.LaunchResult, error) {
+	s.launchRequest = request
+	return &automation.LaunchResult{AutomationID: id, Status: "completed"}, nil
+}
+
+func (s *ownerCapturingAutomationService) StopRuntimeTaskForOwner(id uuid.UUID, ownerIdentity string) (*agentruntime.StopResult, error) {
+	s.stopOwnerIdentity = ownerIdentity
+	return &agentruntime.StopResult{TaskID: id.String(), Status: "stopped"}, nil
+}
 
 func (automationRouteServiceStub) FindByID(uuid.UUID) (*models.Automation, error) {
 	return &models.Automation{}, nil
@@ -86,6 +130,9 @@ func (automationRouteServiceStub) LaunchTask(id uuid.UUID, _ automation.TaskLaun
 	return &automation.LaunchResult{AutomationID: id, Status: "completed"}, nil
 }
 func (automationRouteServiceStub) StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error) {
+	return &agentruntime.StopResult{TaskID: id.String(), Status: "stopped"}, nil
+}
+func (automationRouteServiceStub) StopRuntimeTaskForOwner(id uuid.UUID, _ string) (*agentruntime.StopResult, error) {
 	return &agentruntime.StopResult{TaskID: id.String(), Status: "stopped"}, nil
 }
 func (automationRouteServiceStub) Diagnostics(id uuid.UUID) (*automation.DiagnosticResult, error) {

@@ -101,6 +101,7 @@ type launchExecution struct {
 }
 
 type TaskLaunchRequest struct {
+	OwnerIdentity string `json:"-"`
 	Task          string
 	ProjectKey    string
 	HumanApproved bool
@@ -118,6 +119,7 @@ type Service interface {
 	Launch(id uuid.UUID) (*LaunchResult, error)
 	LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error)
 	StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error)
+	StopRuntimeTaskForOwner(id uuid.UUID, ownerIdentity string) (*agentruntime.StopResult, error)
 	Diagnostics(id uuid.UUID) (*DiagnosticResult, error)
 }
 
@@ -472,6 +474,14 @@ func (s *service) LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchRe
 }
 
 func (s *service) StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error) {
+	return s.stopRuntimeTask(id, "")
+}
+
+func (s *service) StopRuntimeTaskForOwner(id uuid.UUID, ownerIdentity string) (*agentruntime.StopResult, error) {
+	return s.stopRuntimeTask(id, ownerIdentity)
+}
+
+func (s *service) stopRuntimeTask(id uuid.UUID, ownerIdentity string) (*agentruntime.StopResult, error) {
 	automation, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -491,7 +501,7 @@ func (s *service) StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error
 				"launch type is not agent_runtime or runtime type is unsupported",
 			},
 		}
-		s.persistRuntimeStopEvent(automation, result, started)
+		s.persistRuntimeStopEvent(automation, result, started, ownerIdentity)
 		return result, nil
 	}
 	if s.runtimeRegistry == nil {
@@ -502,15 +512,15 @@ func (s *service) StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error
 			Message:     "agent runtime registry is not configured",
 			AuditEvents: []string{"agent runtime registry unavailable"},
 		}
-		s.persistRuntimeStopEvent(automation, result, started)
+		s.persistRuntimeStopEvent(automation, result, started, ownerIdentity)
 		return result, nil
 	}
 	result := s.runtimeRegistry.StopTask(context.Background(), runtimeID, taskID)
-	s.persistRuntimeStopEvent(automation, &result, started)
+	s.persistRuntimeStopEvent(automation, &result, started, ownerIdentity)
 	return &result, nil
 }
 
-func (s *service) persistRuntimeStopEvent(automation *models.Automation, result *agentruntime.StopResult, started time.Time) {
+func (s *service) persistRuntimeStopEvent(automation *models.Automation, result *agentruntime.StopResult, started time.Time, ownerIdentity string) {
 	if automation == nil || result == nil {
 		return
 	}
@@ -526,6 +536,7 @@ func (s *service) persistRuntimeStopEvent(automation *models.Automation, result 
 	event := &models.AutomationLaunchEvent{
 		ID:            uuid.New(),
 		AutomationID:  automation.ID,
+		OwnerIdentity: strings.TrimSpace(ownerIdentity),
 		RuntimeType:   automation.RuntimeType,
 		LaunchType:    "agent_runtime_stop",
 		RuntimeTaskID: result.TaskID,
@@ -563,6 +574,7 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 	event := &models.AutomationLaunchEvent{
 		ID:            uuid.New(),
 		AutomationID:  automation.ID,
+		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
 		RuntimeType:   automation.RuntimeType,
 		LaunchType:    automation.LaunchType,
 		RuntimeTaskID: execution.RuntimeTaskID,

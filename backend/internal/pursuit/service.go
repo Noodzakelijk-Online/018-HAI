@@ -1186,6 +1186,7 @@ func (s *service) linkTaskAttemptRuntimeEvidence(attempt models.PursuitTaskAttem
 	if err != nil {
 		return err
 	}
+	launches = runtimeAttemptsVisibleToOwner(attempt.OwnerIdentity, launches)
 	if len(launches) != 1 || launches[0].ID != launchID {
 		return fmt.Errorf("runtime launch evidence is not available")
 	}
@@ -1357,6 +1358,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	if err != nil {
 		return nil, pursuitDetailLoadError("linked runtime attempts", err)
 	}
+	runtimeAttempts = runtimeAttemptsVisibleToOwner(ownerIdentity, runtimeAttempts)
 	if runtimeAttempts == nil {
 		runtimeAttempts = []models.AutomationLaunchEvent{}
 	}
@@ -1775,6 +1777,20 @@ func (s *service) visibleLinksForOwner(ownerIdentity string, links []models.Purs
 		}
 	}
 	return visible, nil
+}
+
+func runtimeAttemptsVisibleToOwner(ownerIdentity string, attempts []models.AutomationLaunchEvent) []models.AutomationLaunchEvent {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return attempts
+	}
+	visible := make([]models.AutomationLaunchEvent, 0, len(attempts))
+	for _, attempt := range attempts {
+		if strings.TrimSpace(attempt.OwnerIdentity) == ownerIdentity {
+			visible = append(visible, attempt)
+		}
+	}
+	return visible
 }
 
 func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error) {

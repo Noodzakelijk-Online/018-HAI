@@ -173,6 +173,14 @@ func (r *GormRepository) LinkVisibleToOwner(ownerIdentity, linkType, linkID stri
 		var count int64
 		err = r.DB.Model(&models.VerificationRun{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
 		return true, count > 0, err
+	case LinkAgentRuntime:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.AutomationLaunchEvent{}).Where("id = ? AND owner_identity = ?", id, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
 	default:
 		return false, true, nil
 	}

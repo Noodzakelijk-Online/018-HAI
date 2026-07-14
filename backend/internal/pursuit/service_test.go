@@ -2717,8 +2717,8 @@ func TestDirectPursuitTaskAttemptLinksOnlyItsExactRuntimeLaunchEvidence(t *testi
 	automationID := uuid.New()
 	selectedLaunchID := uuid.New()
 	repo.launchEvents = append(repo.launchEvents,
-		models.AutomationLaunchEvent{ID: selectedLaunchID, AutomationID: automationID, RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
-		models.AutomationLaunchEvent{ID: uuid.New(), AutomationID: automationID, RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
+		models.AutomationLaunchEvent{ID: selectedLaunchID, AutomationID: automationID, OwnerIdentity: "alice", RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
+		models.AutomationLaunchEvent{ID: uuid.New(), AutomationID: automationID, OwnerIdentity: "alice", RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
 	)
 	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
 		PursuitID:     created.ID,
@@ -2749,6 +2749,39 @@ func TestDirectPursuitTaskAttemptLinksOnlyItsExactRuntimeLaunchEvidence(t *testi
 	}
 	if !foundLaunchLink {
 		t.Fatalf("exact runtime evidence link missing: %#v", detail.Links)
+	}
+}
+
+func TestOwnerScopedPursuitRejectsAndHidesAnotherOwnersRuntimeEvidence(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Alice private runtime review", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+	bobLaunchID := uuid.New()
+	repo.launchEvents = append(repo.launchEvents, models.AutomationLaunchEvent{
+		ID:            bobLaunchID,
+		OwnerIdentity: "bob",
+		RuntimeType:   "openclaw",
+		LaunchType:    "agent_runtime",
+		Status:        "completed",
+		Output:        "Bob private runtime output",
+		StartedAt:     time.Now().UTC(),
+		CompletedAt:   time.Now().UTC(),
+	})
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAgentRuntime, LinkID: bobLaunchID.String(), Relationship: "execution_attempt"}); err == nil {
+		t.Fatal("owner could link another user's runtime evidence")
+	}
+
+	legacyLinkID := uuid.New()
+	repo.links[legacyLinkID] = models.PursuitLink{ID: legacyLinkID, PursuitID: pursuit.ID, LinkType: LinkAgentRuntime, LinkID: bobLaunchID.String(), Relationship: "legacy_evidence"}
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner: %v", err)
+	}
+	if len(detail.RuntimeAttempts) != 0 || hasPursuitLink(detail.Links, LinkAgentRuntime, bobLaunchID.String()) {
+		t.Fatalf("private runtime evidence leaked into owner detail: %#v", detail)
 	}
 }
 
@@ -4500,6 +4533,17 @@ func (r *fakeRepo) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (b
 		}
 		item, ok := r.verificationRuns[id]
 		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkAgentRuntime:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		for _, item := range r.launchEvents {
+			if item.ID == id {
+				return true, item.OwnerIdentity == ownerIdentity, nil
+			}
+		}
+		return true, false, nil
 	default:
 		return false, true, nil
 	}
