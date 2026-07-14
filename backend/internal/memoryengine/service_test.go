@@ -168,6 +168,41 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 	}
 }
 
+func TestImportHoldsLowRiskActionForReviewWithoutPursuitGateway(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	workflowSpy := &memoryEngineWorkflowStub{recordID: uuid.New()}
+	pursuitSpy := &memoryEnginePursuitLinker{}
+	service := NewServiceWithPursuitLinker(
+		repo,
+		&memoryEngineMemoryStub{},
+		workflowSpy,
+		"test-memory-encryption-secret",
+		pursuitSpy,
+	)
+
+	_, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-low-risk-action",
+		Title:         "Local preparation",
+		SourceURI:     "https://chatgpt.com/c/thread-low-risk-action",
+		Messages: []ChatMessage{{
+			Role:    "assistant",
+			Content: "Action: create a local preparation checklist.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+	if len(workflowSpy.intakeRequests) != 1 {
+		t.Fatalf("workflow intake requests = %d, want 1", len(workflowSpy.intakeRequests))
+	}
+	request := workflowSpy.intakeRequests[0]
+	if !request.RequiresReview || !strings.Contains(request.ReviewReason, "pursuit lifecycle router is unavailable") {
+		t.Fatalf("fallback AI-chat workflow must remain review-gated: %#v", request)
+	}
+}
+
 func TestImportRoutesActionWorkflowThroughPursuitGateway(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
 	workflowSpy := &memoryEngineWorkflowStub{}

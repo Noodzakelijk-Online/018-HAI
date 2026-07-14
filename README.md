@@ -129,6 +129,11 @@ the workflow remains the restart-safe execution ledger.
   pursuit intake and planning reject them; an approval-capable user must use
   the separate candidate-acceptance action before HAI can create or unlock the
   governed workflow path.
+- Source and AI-chat producers that are configured with candidate correlation
+  but without the native pursuit lifecycle router hold derived workflows in the
+  review queue. This fail-closed fallback prevents an unaccepted candidate from
+  gaining executable work indirectly; the full router is the supported
+  production integration path.
 - The runtime registry enforces emergency stop at its own boundary, including
   direct Hermes, Odysseus, and OpenClaw registry execution calls.
 - Runtime execution is constrained by enablement flags, allowlisted tools,

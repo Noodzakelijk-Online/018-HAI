@@ -1329,6 +1329,19 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		"Follow-ups: " + extraction.FollowUps,
 		"Dates: " + extraction.Dates,
 	}, "\n")
+	requiresReview := extraction.Uncertain || extraction.Sensitive
+	reviewReason := extractionReviewReason(extraction)
+	if s.pursuitLinker != nil && !s.routesWorkflowThroughPursuits() {
+		// A linker without the lifecycle router can discover a reviewable
+		// candidate only after it receives this workflow. Hold the workflow in
+		// review so fallback correlation cannot create executable work before the
+		// candidate is explicitly accepted.
+		requiresReview = true
+		if reviewReason != "" {
+			reviewReason += "; "
+		}
+		reviewReason += "pursuit lifecycle router is unavailable; hold source-derived workflow for review before execution"
+	}
 	record, err := s.intakeWorkflow(workflow.IntakeRequest{
 		OwnerIdentity:  source.OwnerIdentity,
 		Input:          input,
@@ -1339,8 +1352,8 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		SourceLabel:    extraction.SourceLabel,
 		Trigger:        "source.extraction",
 		Actor:          "source-worker",
-		RequiresReview: extraction.Uncertain || extraction.Sensitive,
-		ReviewReason:   extractionReviewReason(extraction),
+		RequiresReview: requiresReview,
+		ReviewReason:   reviewReason,
 	})
 	if err != nil {
 		s.audit(source.ID, "workflow.intake_failed", err.Error())

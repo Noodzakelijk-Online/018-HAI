@@ -669,6 +669,9 @@ func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
 	if !request.AllowCreateCandidate {
 		t.Fatalf("source-derived workflows must be allowed to create reviewable pursuit candidates when no match exists")
 	}
+	if !workflowSpy.requests[0].RequiresReview || !strings.Contains(workflowSpy.requests[0].ReviewReason, "pursuit lifecycle router is unavailable") {
+		t.Fatalf("fallback source workflow must remain review-gated: %#v", workflowSpy.requests[0])
+	}
 	if request.ExtractionID != result.Extractions[0].ID.String() || request.RawItemID != result.Extractions[0].RawItemID.String() {
 		t.Fatalf("auto-link source ids = %q/%q, want %s/%s", request.ExtractionID, request.RawItemID, result.Extractions[0].ID, result.Extractions[0].RawItemID)
 	}

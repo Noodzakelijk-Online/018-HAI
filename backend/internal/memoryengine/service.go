@@ -270,6 +270,18 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 			}
 		}
 		if s.workflowService != nil && workflowEligibleInsight(*stored) {
+			requiresReview := workflowInsightRequiresReview(*stored)
+			reviewReasonValue := reviewReason(*stored)
+			if s.pursuitLinker != nil && !s.routesWorkflowThroughPursuits() {
+				// Without the pursuit lifecycle router, correlation happens only
+				// after workflow creation. Keep this fallback work review-gated so
+				// an unaccepted candidate cannot gain executable work indirectly.
+				requiresReview = true
+				if reviewReasonValue != "" {
+					reviewReasonValue += "; "
+				}
+				reviewReasonValue += "pursuit lifecycle router is unavailable; hold AI-chat workflow for review before execution"
+			}
 			record, errWorkflow := s.intakeWorkflow(workflow.IntakeRequest{
 				OwnerIdentity:  saved.OwnerIdentity,
 				Input:          stored.Text,
@@ -281,8 +293,8 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 				ContentType:    "ai_chat_" + stored.Kind,
 				Trigger:        "memory_engine.import",
 				Actor:          "memory-engine",
-				RequiresReview: workflowInsightRequiresReview(*stored),
-				ReviewReason:   reviewReason(*stored),
+				RequiresReview: requiresReview,
+				ReviewReason:   reviewReasonValue,
 			})
 			if errWorkflow != nil {
 				warnings = append(warnings, "failed to create workflow for "+stored.Kind+" insight")
