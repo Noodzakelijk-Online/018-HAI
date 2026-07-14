@@ -79,6 +79,11 @@ services:
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
       REDIS_ADDR: ${REDIS_ADDR}
+      # Per-client-IP request cap per minute; 0 disables it. Enforced through
+      # Redis (REDIS_ADDR) so the count survives restarts and is shared across
+      # instances. Was previously not passed through, so the limiter could never
+      # be enabled regardless of .env.
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE}
       # Shared with the IDP so identityMiddleware can verify IDP-issued JWTs.
       # Without it the backend cannot validate per-user tokens and silently
       # falls back to the shared-key single-operator model.

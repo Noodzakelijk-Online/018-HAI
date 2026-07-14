@@ -219,11 +219,59 @@ only in the local Postgres volume.
 
 ---
 
+## 11. Redis-backed rate limiting (quota across restarts)
+
+The per-IP rate limiter kept its counters in a per-process map, so the limit
+reset on every restart and could not hold across multiple backend instances.
+Counters now live in Redis when `REDIS_ADDR` is set, with an in-process
+fallback when it is not.
+
+Fixing this surfaced another plumbing gap first: `RATE_LIMIT_PER_MINUTE` was
+defined in `.env` but never passed to the backend container, so the limiter
+could not be enabled at all regardless of configuration. Now passed through.
+
+Verified with `RATE_LIMIT_PER_MINUTE=5`:
+
+```
+# backend log on startup:
+ratelimit: using shared Redis store at redis:6379
+
+# six requests in one window:
+req 1..5 -> 200
+req 6    -> 429   (Retry-After set)
+
+# the counter is visibly in Redis:
+redis-cli --scan --pattern 'ratelimit:*'
+  ratelimit:172.23.0.1:29733334
+```
+
+Durability across a backend restart (the actual ask):
+
+```
+# before restart
+ratelimit:172.23.0.1:29733334 = 100
+docker restart 018-hai-backend
+# after restart — same key, same value, untouched by the restart
+ratelimit:172.23.0.1:29733334 = 100
+```
+
+And that enforcement reads the shared state rather than process memory: seeding
+the counter in Redis to 99 caused the next request to be rejected immediately,
+without the backend having counted it locally.
+
+Default is unchanged (`RATE_LIMIT_PER_MINUTE=0`, disabled): 12 rapid requests
+all return 200, so normal use is unaffected. Unit tests cover the limit
+boundary, per-key isolation, and fail-open/fail-closed behaviour when Redis is
+unavailable, using a deterministic fake so they need no running Redis.
+
 ## What is NOT claimed here
 
 - No OAuth connector was implemented; connector adapter statuses were not changed
   in this change set (tracked separately).
-- Redis is reachable but not yet used for quota/rate-limit persistence.
+- Redis now backs rate-limit counters, but the LLM usage/budget accounting in
+  `internal/llm` is still an in-process map. Persisting that is the natural next
+  step; it was left out here because it cannot be exercised end to end until an
+  LLM provider is configured, and this change set only ships what was verified.
 - RBAC/JWT enforcement is not yet wired onto individual routes.
 
 These are called out honestly rather than presented as done.

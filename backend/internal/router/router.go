@@ -1,7 +1,10 @@
 package router
 
 import (
+	"context"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"automation-hub-backend/internal/config"
@@ -27,7 +30,7 @@ func Initialize() error {
 		return err
 	}
 	router.Use(securityHeadersMiddleware())
-	router.Use(rateLimitMiddleware(ratelimit.New(config.AppConfig.RateLimitPerMinute, time.Minute)))
+	router.Use(rateLimitMiddleware(newRateLimitEnforcer()))
 	router.Use(idempotencyMiddleware(idempotency.New(10 * time.Minute)))
 	router.Use(localCaptureCORSMiddleware())
 
@@ -45,4 +48,30 @@ func Initialize() error {
 	}
 
 	return nil
+}
+
+// newRateLimitEnforcer selects where rate-limit counters live. When REDIS_ADDR
+// is set and reachable, counters are shared through Redis so the limit survives
+// restarts and holds across multiple backend instances. Otherwise it falls back
+// to the in-process limiter — correct for a single instance, but per-process and
+// reset on restart. The fallback is deliberate: a misconfigured or briefly
+// unreachable Redis at startup degrades the limiter rather than failing the boot.
+func newRateLimitEnforcer() ratelimit.Enforcer {
+	limit := config.AppConfig.RateLimitPerMinute
+	window := time.Minute
+
+	addr := strings.TrimSpace(config.AppConfig.RedisAddr)
+	if addr == "" {
+		return ratelimit.Memory(limit, window)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	redisLimiter, err := ratelimit.NewRedisLimiter(ctx, addr, limit, window)
+	if err != nil {
+		log.Printf("ratelimit: falling back to in-process limiter: %v", err)
+		return ratelimit.Memory(limit, window)
+	}
+	log.Printf("ratelimit: using shared Redis store at %s", addr)
+	return redisLimiter
 }

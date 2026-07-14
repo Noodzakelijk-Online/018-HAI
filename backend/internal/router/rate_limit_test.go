@@ -11,17 +11,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func newRateLimitedEngine(limiter *ratelimit.Limiter) *gin.Engine {
+func newRateLimitedEngine(limit int, window time.Duration) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(rateLimitMiddleware(limiter))
+	r.Use(rateLimitMiddleware(ratelimit.Memory(limit, window)))
 	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
 	return r
 }
 
 func TestRateLimitMiddlewareBlocksOverLimit(t *testing.T) {
 	// 2 requests/minute; the third within the window must be rejected.
-	engine := newRateLimitedEngine(ratelimit.New(2, time.Minute))
+	engine := newRateLimitedEngine(2, time.Minute)
 	codes := []int{}
 	for i := 0; i < 3; i++ {
 		rec := httptest.NewRecorder()
@@ -44,7 +44,7 @@ func TestRateLimitMiddlewareBlocksOverLimit(t *testing.T) {
 }
 
 func TestRateLimitMiddlewareDisabledIsPassthrough(t *testing.T) {
-	engine := newRateLimitedEngine(ratelimit.New(0, time.Minute))
+	engine := newRateLimitedEngine(0, time.Minute)
 	for i := 0; i < 50; i++ {
 		rec := httptest.NewRecorder()
 		engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
