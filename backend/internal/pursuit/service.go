@@ -1536,6 +1536,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 // pursuit intake path without changing its WorkflowRecord response contract.
 func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	routed, err := s.RouteIntake(IntakeRequest{
+		OwnerIdentity:  request.OwnerIdentity,
 		Input:          request.Input,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,

@@ -40,6 +40,7 @@ const (
 )
 
 type CreateSourceRequest struct {
+	OwnerIdentity     string   `json:"-"`
 	ConnectorKey      string   `json:"connectorKey"`
 	Name              string   `json:"name"`
 	Category          string   `json:"category,omitempty"`
@@ -91,6 +92,7 @@ type SyncResult struct {
 }
 
 type SearchRequest struct {
+	OwnerIdentity    string `json:"-"`
 	Query            string `json:"query"`
 	ProjectKey       string `json:"projectKey,omitempty"`
 	Limit            int    `json:"limit,omitempty"`
@@ -230,6 +232,7 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		return nil, fmt.Errorf("category is required")
 	}
 	source := &models.ConnectedSource{
+		OwnerIdentity:     strings.TrimSpace(request.OwnerIdentity),
 		ConnectorKey:      connectorKey,
 		Name:              name,
 		Category:          category,
@@ -527,6 +530,7 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 		return
 	}
 	record, err := s.intakeWorkflow(workflow.IntakeRequest{
+		OwnerIdentity: source.OwnerIdentity,
 		Input: strings.Join([]string{
 			"Connected source sync failed for " + source.Name + ".",
 			"Connector: " + source.ConnectorKey + ".",
@@ -625,8 +629,15 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	visibleSourceIDs, err := s.visibleSourceIDs(request.OwnerIdentity)
+	if err != nil {
+		return nil, err
+	}
 	ranked := []RankedExtraction{}
 	for _, extraction := range extractions {
+		if !visibleSourceIDs[extraction.SourceID] {
+			continue
+		}
 		if extraction.Sensitive && !request.IncludeSensitive {
 			continue
 		}
@@ -650,8 +661,33 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 		Query:       request.Query,
 		ProjectKey:  request.ProjectKey,
 		UsedContext: ranked,
-		Explanation: fmt.Sprintf("Retrieved %d relevant connected-source records from %d cached extractions; unrelated and sensitive records were not loaded.", len(ranked), len(extractions)),
+		Explanation: fmt.Sprintf("Retrieved %d relevant connected-source records from %d visible cached extractions; unrelated, other-user, and sensitive records were not loaded.", len(ranked), visibleExtractionCount(extractions, visibleSourceIDs)),
 	}, nil
+}
+
+func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, error) {
+	sources, err := s.repo.FindSources(true)
+	if err != nil {
+		return nil, err
+	}
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	visible := make(map[uuid.UUID]bool, len(sources))
+	for _, source := range sources {
+		if ownerIdentity == "" || source.OwnerIdentity == "" || source.OwnerIdentity == ownerIdentity {
+			visible[source.ID] = true
+		}
+	}
+	return visible, nil
+}
+
+func visibleExtractionCount(extractions []models.SourceExtraction, sourceIDs map[uuid.UUID]bool) int {
+	count := 0
+	for _, extraction := range extractions {
+		if sourceIDs[extraction.SourceID] {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *service) Extractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
@@ -1090,6 +1126,10 @@ func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *
 	if s.memoryService == nil || source == nil || extraction == nil {
 		return
 	}
+	if strings.TrimSpace(source.OwnerIdentity) != "" {
+		s.audit(source.ID, "memory.source_skipped_owner_scope", "owner-scoped source was not copied into the global memory store")
+		return
+	}
 	if extraction.Sensitive || extraction.Uncertain || extraction.Summary == "" {
 		return
 	}
@@ -1117,6 +1157,10 @@ func (s *service) rememberExtractionCorrection(before, after *models.SourceExtra
 		return
 	}
 	source, _ := s.repo.FindSource(after.SourceID)
+	if source != nil && strings.TrimSpace(source.OwnerIdentity) != "" {
+		s.audit(after.SourceID, "memory.correction_skipped_owner_scope", "owner-scoped source correction was not copied into the global memory store")
+		return
+	}
 	request := extractionCorrectionMemoryRequest(source, before, after)
 	created, err := s.memoryService.Create(request)
 	if err != nil {
@@ -1264,6 +1308,7 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		"Dates: " + extraction.Dates,
 	}, "\n")
 	record, err := s.intakeWorkflow(workflow.IntakeRequest{
+		OwnerIdentity:  source.OwnerIdentity,
 		Input:          input,
 		ProjectKey:     extraction.ProjectKey,
 		SourceType:     source.Category,
@@ -1291,6 +1336,7 @@ func (s *service) autoLinkPursuitWorkflow(source *models.ConnectedSource, extrac
 		return
 	}
 	request := pursuit.AutoLinkWorkflowRequest{
+		OwnerIdentity:        source.OwnerIdentity,
 		WorkflowID:           record.Item.ID,
 		Input:                input,
 		ProjectKey:           source.DefaultProjectKey,
@@ -1331,6 +1377,7 @@ func (s *service) autoLinkPursuitMemory(source *models.ConnectedSource, extracti
 		return
 	}
 	request := pursuit.AutoLinkMemoryRequest{
+		OwnerIdentity:        source.OwnerIdentity,
 		MemoryID:             memoryRecord.ID,
 		Input:                firstNonEmpty(extraction.Summary, memoryRecord.Summary, memoryRecord.Content),
 		ProjectKey:           firstNonEmpty(extraction.ProjectKey, source.DefaultProjectKey, memoryRecord.ProjectKey),

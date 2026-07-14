@@ -35,6 +35,7 @@ const (
 )
 
 type IntakeRequest struct {
+	OwnerIdentity  string `json:"-"`
 	Input          string `json:"input"`
 	ProjectKey     string `json:"projectKey,omitempty"`
 	AutomationID   string `json:"automationId,omitempty"`

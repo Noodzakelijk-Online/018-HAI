@@ -45,6 +45,7 @@ func (h *Handler) Intake(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedWorkflowActor(c, "operator")
+	request.OwnerIdentity = verifiedWorkflowOwner(c)
 	request = normalizeWorkflowAPIIntake(request)
 	var record *WorkflowRecord
 	var err error
@@ -243,6 +244,15 @@ func verifiedWorkflowActor(c *gin.Context, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func verifiedWorkflowOwner(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
 }
 
 func (h *Handler) RunDue(c *gin.Context) {

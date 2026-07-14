@@ -361,6 +361,7 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	source, err := service.CreateSource(CreateSourceRequest{
+		OwnerIdentity: "alice",
 		ConnectorKey:  "email",
 		Name:          "Robert email export",
 		Enabled:       true,
@@ -373,6 +374,9 @@ func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
 	}
 	if source.ConnectorKey != "email" || !source.Enabled || source.Category != "email" {
 		t.Fatalf("source = %#v, want enabled email export source", source)
+	}
+	if source.OwnerIdentity != "alice" {
+		t.Fatalf("OwnerIdentity = %q, want alice", source.OwnerIdentity)
 	}
 }
 
@@ -575,6 +579,7 @@ func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
 		ID:                sourceID,
+		OwnerIdentity:     "alice",
 		ConnectorKey:      "email",
 		Name:              "Legal mailbox",
 		Category:          "email",
@@ -615,6 +620,9 @@ func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
 	if request.WorkflowID == uuid.Nil || request.ProjectKey != "Vivare dispute" {
 		t.Fatalf("auto-link request workflow/project = %s/%q", request.WorkflowID, request.ProjectKey)
 	}
+	if request.OwnerIdentity != "alice" {
+		t.Fatalf("auto-link owner = %q, want alice", request.OwnerIdentity)
+	}
 	if !request.AllowCreateCandidate {
 		t.Fatalf("source-derived workflows must be allowed to create reviewable pursuit candidates when no match exists")
 	}
@@ -632,13 +640,14 @@ func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
 func TestSyncRoutesActionableExtractionThroughPursuitGateway(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
-		ID:           sourceID,
-		ConnectorKey: "email",
-		Name:         "Legal mailbox",
-		Category:     "email",
-		Enabled:      true,
-		LocalOnly:    true,
-		Status:       "active",
+		ID:            sourceID,
+		OwnerIdentity: "alice",
+		ConnectorKey:  "email",
+		Name:          "Legal mailbox",
+		Category:      "email",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
 	})
 	workflowSpy := &fakeSourceWorkflowService{}
 	pursuitGateway := &fakeSourcePursuitGateway{}
@@ -664,8 +673,75 @@ func TestSyncRoutesActionableExtractionThroughPursuitGateway(t *testing.T) {
 	if len(pursuitGateway.routed) != 1 || pursuitGateway.routed[0].Trigger != "source.extraction" {
 		t.Fatalf("pursuit gateway requests = %#v", pursuitGateway.routed)
 	}
+	if pursuitGateway.routed[0].OwnerIdentity != "alice" {
+		t.Fatalf("routed workflow owner = %q, want alice", pursuitGateway.routed[0].OwnerIdentity)
+	}
 	if len(pursuitGateway.requests) != 0 {
 		t.Fatalf("workflow was linked twice after pursuit routing: %#v", pursuitGateway.requests)
+	}
+}
+
+func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	legacyID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice mailbox", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob mailbox", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: legacyID, Name: "Legacy local source", Enabled: true, Status: "active"},
+	)
+	for _, extraction := range []models.SourceExtraction{
+		{ID: uuid.New(), SourceID: aliceID, Text: "Alice legal evidence deadline", Summary: "Alice legal evidence deadline"},
+		{ID: uuid.New(), SourceID: bobID, Text: "Bob legal evidence deadline", Summary: "Bob legal evidence deadline"},
+		{ID: uuid.New(), SourceID: legacyID, Text: "Legacy legal evidence deadline", Summary: "Legacy legal evidence deadline"},
+	} {
+		copyExtraction := extraction
+		if _, err := repo.SaveExtraction(&copyExtraction); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+
+	result, err := NewService(repo, nil).Search(SearchRequest{OwnerIdentity: "alice", Query: "legal evidence deadline", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.UsedContext) != 2 {
+		t.Fatalf("visible search results = %#v, want Alice and legacy only", result.UsedContext)
+	}
+	for _, ranked := range result.UsedContext {
+		if ranked.Extraction.SourceID == bobID {
+			t.Fatalf("search returned Bob's private source extraction")
+		}
+	}
+}
+
+func TestOwnerScopedSourceDoesNotWriteToGlobalMemory(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:            sourceID,
+		OwnerIdentity: "alice",
+		ConnectorKey:  "email",
+		Name:          "Alice mailbox",
+		Category:      "email",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+	})
+	memorySpy := &fakeSourceMemoryService{}
+	service := NewService(repo, memorySpy)
+	if _, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "alice-context",
+		Title:      "Alice context",
+		Content:    "Alice prefers concise evidence summaries for this project.",
+		ItemType:   "email",
+	}}}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(memorySpy.created) != 0 {
+		t.Fatalf("global memory writes = %#v, want none for owner-scoped source", memorySpy.created)
+	}
+	if !repo.hasAudit("memory.source_skipped_owner_scope") {
+		t.Fatalf("expected owner-scope memory skip audit")
 	}
 }
 
