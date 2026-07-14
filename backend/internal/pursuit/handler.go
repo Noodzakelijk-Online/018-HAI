@@ -39,7 +39,7 @@ func (h *Handler) Create(c *gin.Context) {
 
 func (h *Handler) List(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	records, err := h.service.List(includeArchived)
+	records, err := h.service.ListForOwner(pursuitOwner(c), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -48,7 +48,7 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) Dashboard(c *gin.Context) {
-	record, err := h.service.Dashboard()
+	record, err := h.service.DashboardForOwner(pursuitOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -57,7 +57,7 @@ func (h *Handler) Dashboard(c *gin.Context) {
 }
 
 func (h *Handler) Brief(c *gin.Context) {
-	record, err := h.service.Brief()
+	record, err := h.service.BriefForOwner(pursuitOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -66,7 +66,7 @@ func (h *Handler) Brief(c *gin.Context) {
 }
 
 func (h *Handler) Decisions(c *gin.Context) {
-	decisions, err := h.service.Decisions()
+	decisions, err := h.service.DecisionsForOwner(pursuitOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -79,7 +79,7 @@ func (h *Handler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	record, err := h.service.Detail(id)
+	record, err := h.service.DetailForOwner(pursuitOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -90,6 +90,9 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) ResolveEvidence(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
+		return
+	}
+	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
 	uri := c.Query("uri")
@@ -104,6 +107,9 @@ func (h *Handler) ResolveEvidence(c *gin.Context) {
 func (h *Handler) Update(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
+		return
+	}
+	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
 	var request UpdateRequest
@@ -123,6 +129,9 @@ func (h *Handler) Update(c *gin.Context) {
 func (h *Handler) Archive(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
+		return
+	}
+	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
 	var request struct {
@@ -151,6 +160,9 @@ func (h *Handler) Reopen(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensurePursuitVisible(c, id) {
+		return
+	}
 	var request struct {
 		Note string `json:"note,omitempty"`
 	}
@@ -166,6 +178,9 @@ func (h *Handler) Reopen(c *gin.Context) {
 func (h *Handler) Link(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
+		return
+	}
+	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
 	var request LinkRequest
@@ -187,6 +202,9 @@ func (h *Handler) DeleteLink(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensurePursuitVisible(c, id) {
+		return
+	}
 	linkID, err := uuid.Parse(c.Param("linkId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid link id"})
@@ -205,6 +223,7 @@ func (h *Handler) Match(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = pursuitOwner(c)
 	result, err := h.service.Match(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -219,6 +238,7 @@ func (h *Handler) RouteIntake(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = pursuitOwner(c)
 	request.Actor = verifiedActor(c, "operator")
 	result, err := h.service.RouteIntake(request)
 	if err != nil {
@@ -233,11 +253,15 @@ func (h *Handler) Intake(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensurePursuitVisible(c, id) {
+		return
+	}
 	var request IntakeRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = pursuitOwner(c)
 	request.Actor = verifiedActor(c, "operator")
 	record, err := h.service.Intake(id, request)
 	if err != nil {
@@ -250,6 +274,9 @@ func (h *Handler) Intake(c *gin.Context) {
 func (h *Handler) Plan(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
+		return
+	}
+	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
 	var request PlanRequest
@@ -271,6 +298,9 @@ func (h *Handler) ResolveDecision(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensurePursuitVisible(c, id) {
+		return
+	}
 	var request DecisionResolutionRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -290,6 +320,9 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensurePursuitVisible(c, id) {
+		return
+	}
 	var request struct {
 		Actor string `json:"actor,omitempty"`
 	}
@@ -306,6 +339,9 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 func (h *Handler) Review(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
+		return
+	}
+	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
 	var request ReviewRequest
@@ -327,6 +363,9 @@ func (h *Handler) Activity(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.ensurePursuitVisible(c, id) {
+		return
+	}
 	records, err := h.service.Activity(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -340,7 +379,7 @@ func (h *Handler) NextActions(c *gin.Context) {
 	if !ok {
 		return
 	}
-	record, err := h.service.Detail(id)
+	record, err := h.service.DetailForOwner(pursuitOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -353,7 +392,7 @@ func (h *Handler) Blockers(c *gin.Context) {
 	if !ok {
 		return
 	}
-	record, err := h.service.Detail(id)
+	record, err := h.service.DetailForOwner(pursuitOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -364,6 +403,9 @@ func (h *Handler) Blockers(c *gin.Context) {
 func (h *Handler) Approvals(c *gin.Context) {
 	id, ok := parsePursuitID(c)
 	if !ok {
+		return
+	}
+	if !h.ensurePursuitVisible(c, id) {
 		return
 	}
 	record, err := h.service.Approvals(id)
@@ -381,6 +423,20 @@ func parsePursuitID(c *gin.Context) (uuid.UUID, bool) {
 		return uuid.UUID{}, false
 	}
 	return id, true
+}
+
+func (h *Handler) ensurePursuitVisible(c *gin.Context, id uuid.UUID) bool {
+	if _, err := h.service.DetailForOwner(pursuitOwner(c), id); err != nil {
+		// Keep an inaccessible record indistinguishable from one that does not
+		// exist so UUID probing does not disclose another user's work.
+		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
+		return false
+	}
+	return true
+}
+
+func pursuitOwner(c *gin.Context) string {
+	return verifiedActor(c, "")
 }
 
 // verifiedActor deliberately ignores client-provided actor labels. When HAI is

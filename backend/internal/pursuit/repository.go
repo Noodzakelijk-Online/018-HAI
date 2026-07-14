@@ -76,10 +76,24 @@ func (r *GormRepository) FindByID(id uuid.UUID) (*models.Pursuit, error) {
 }
 
 func (r *GormRepository) FindAll(includeArchived bool) ([]models.Pursuit, error) {
+	return r.findAllForOwner("", includeArchived)
+}
+
+// FindAllForOwner enforces the ownership predicate in Postgres. Ownerless
+// records remain visible to support local single-user data created before
+// identity-aware ownership was introduced.
+func (r *GormRepository) FindAllForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error) {
+	return r.findAllForOwner(ownerIdentity, includeArchived)
+}
+
+func (r *GormRepository) findAllForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error) {
 	var pursuits []models.Pursuit
 	query := r.DB.Order("priority_score DESC, updated_at DESC")
 	if !includeArchived {
 		query = query.Where("archived = ?", false)
+	}
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
 	}
 	if err := query.Find(&pursuits).Error; err != nil {
 		return nil, err

@@ -116,12 +116,13 @@ type LinkRequest struct {
 }
 
 type MatchRequest struct {
-	Input      string `json:"input,omitempty"`
-	ProjectKey string `json:"projectKey,omitempty"`
-	SourceType string `json:"sourceType,omitempty"`
-	SourceID   string `json:"sourceId,omitempty"`
-	SourceURI  string `json:"sourceUri,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
+	OwnerIdentity string `json:"-"`
+	Input         string `json:"input,omitempty"`
+	ProjectKey    string `json:"projectKey,omitempty"`
+	SourceType    string `json:"sourceType,omitempty"`
+	SourceID      string `json:"sourceId,omitempty"`
+	SourceURI     string `json:"sourceUri,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
 }
 
 type MatchCandidate struct {
@@ -132,6 +133,7 @@ type MatchCandidate struct {
 }
 
 type AutoLinkWorkflowRequest struct {
+	OwnerIdentity        string    `json:"-"`
 	WorkflowID           uuid.UUID `json:"workflowId"`
 	Input                string    `json:"input,omitempty"`
 	ProjectKey           string    `json:"projectKey,omitempty"`
@@ -147,6 +149,7 @@ type AutoLinkWorkflowRequest struct {
 }
 
 type AutoLinkMemoryRequest struct {
+	OwnerIdentity        string    `json:"-"`
 	MemoryID             uuid.UUID `json:"memoryId"`
 	Input                string    `json:"input,omitempty"`
 	ProjectKey           string    `json:"projectKey,omitempty"`
@@ -168,6 +171,7 @@ type AutoLinkResult struct {
 }
 
 type IntakeRequest struct {
+	OwnerIdentity  string `json:"-"`
 	Input          string `json:"input"`
 	ProjectKey     string `json:"projectKey,omitempty"`
 	AutomationID   string `json:"automationId,omitempty"`
@@ -484,10 +488,15 @@ type Service interface {
 	Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error)
 	Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, error)
 	List(includeArchived bool) ([]models.Pursuit, error)
+	ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
 	Dashboard() (*Dashboard, error)
+	DashboardForOwner(ownerIdentity string) (*Dashboard, error)
 	Decisions() ([]PursuitDashboardDecision, error)
+	DecisionsForOwner(ownerIdentity string) ([]PursuitDashboardDecision, error)
 	Brief() (*Brief, error)
+	BriefForOwner(ownerIdentity string) (*Brief, error)
 	Detail(id uuid.UUID) (*PursuitDetail, error)
+	DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDetail, error)
 	ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
 	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
 	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
@@ -504,6 +513,10 @@ type Service interface {
 	RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error)
 	Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
 	Activity(id uuid.UUID) ([]models.PursuitActivity, error)
+}
+
+type ownerScopedRepository interface {
+	FindAllForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
 }
 
 type workflowIntakeService interface {
@@ -686,11 +699,50 @@ func (s *service) Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, err
 }
 
 func (s *service) List(includeArchived bool) ([]models.Pursuit, error) {
-	return s.repo.FindAll(includeArchived)
+	return s.ListForOwner("", includeArchived)
 }
 
 func (s *service) Dashboard() (*Dashboard, error) {
-	pursuits, err := s.repo.FindAll(false)
+	return s.DashboardForOwner("")
+}
+
+// ListForOwner scopes authenticated users to records they own while keeping
+// ownerless records available for local single-user deployments created before
+// identity-aware pursuit ownership existed.
+func (s *service) ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	var (
+		pursuits []models.Pursuit
+		err      error
+	)
+	if scopedRepo, ok := s.repo.(ownerScopedRepository); ok && ownerIdentity != "" {
+		pursuits, err = scopedRepo.FindAllForOwner(ownerIdentity, includeArchived)
+	} else {
+		pursuits, err = s.repo.FindAll(includeArchived)
+	}
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]models.Pursuit, 0, len(pursuits))
+	for _, pursuit := range pursuits {
+		if pursuitVisibleTo(pursuit, ownerIdentity) {
+			visible = append(visible, pursuit)
+		}
+	}
+	return visible, nil
+}
+
+func pursuitVisibleTo(pursuit models.Pursuit, ownerIdentity string) bool {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return true
+	}
+	recordOwner := strings.TrimSpace(pursuit.OwnerIdentity)
+	return recordOwner == "" || recordOwner == ownerIdentity
+}
+
+func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
+	pursuits, err := s.ListForOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
@@ -768,7 +820,11 @@ func (s *service) Dashboard() (*Dashboard, error) {
 }
 
 func (s *service) Decisions() ([]PursuitDashboardDecision, error) {
-	dashboard, err := s.Dashboard()
+	return s.DecisionsForOwner("")
+}
+
+func (s *service) DecisionsForOwner(ownerIdentity string) ([]PursuitDashboardDecision, error) {
+	dashboard, err := s.DashboardForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -788,7 +844,11 @@ func dashboardStatusBucket(pursuit models.Pursuit, item PursuitListItem) string 
 }
 
 func (s *service) Brief() (*Brief, error) {
-	dashboard, err := s.Dashboard()
+	return s.BriefForOwner("")
+}
+
+func (s *service) BriefForOwner(ownerIdentity string) (*Brief, error) {
+	dashboard, err := s.DashboardForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -810,9 +870,16 @@ func (s *service) Brief() (*Brief, error) {
 }
 
 func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
+	return s.DetailForOwner("", id)
+}
+
+func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	links, err := s.repo.FindLinks(id)
 	if err != nil {
@@ -1156,20 +1223,20 @@ func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error
 }
 
 func (s *service) Match(request MatchRequest) ([]MatchCandidate, error) {
-	pursuits, err := s.repo.FindAll(false)
+	pursuits, err := s.ListForOwner(request.OwnerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
 	if request.SourceType != "" && request.SourceID != "" {
 		if link, err := s.repo.FindLink(request.SourceType, request.SourceID); err == nil {
-			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, request.OwnerIdentity) {
 				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.98, Reasons: []string{"source is already linked to this pursuit"}, Confidence: "high"}}, nil
 			}
 		}
 	}
 	if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
 		if link, err := s.repo.FindLinkBySourceURI(sourceURI); err == nil {
-			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, request.OwnerIdentity) {
 				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.97, Reasons: []string{"source URI is already linked to this pursuit"}, Confidence: "high"}}, nil
 			}
 		}
@@ -1216,12 +1283,13 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 		matchSourceID = extractionID
 	}
 	matches, err := s.Match(MatchRequest{
-		Input:      request.Input,
-		ProjectKey: request.ProjectKey,
-		SourceType: matchSourceType,
-		SourceID:   matchSourceID,
-		SourceURI:  request.SourceURI,
-		Limit:      1,
+		OwnerIdentity: request.OwnerIdentity,
+		Input:         request.Input,
+		ProjectKey:    request.ProjectKey,
+		SourceType:    matchSourceType,
+		SourceID:      matchSourceID,
+		SourceURI:     request.SourceURI,
+		Limit:         1,
 	})
 	if err != nil {
 		return nil, err
@@ -1296,10 +1364,11 @@ func (s *service) AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult
 	}
 	minimumScore := autoLinkMinimum(request.MinimumScore)
 	matches, err := s.Match(MatchRequest{
-		Input:      request.Input,
-		ProjectKey: request.ProjectKey,
-		SourceURI:  request.SourceURI,
-		Limit:      1,
+		OwnerIdentity: request.OwnerIdentity,
+		Input:         request.Input,
+		ProjectKey:    request.ProjectKey,
+		SourceURI:     request.SourceURI,
+		Limit:         1,
 	})
 	if err != nil {
 		return nil, err
@@ -1353,12 +1422,13 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 	actor := firstNonEmpty(request.Actor, "operator")
 	matches, err := s.Match(MatchRequest{
-		Input:      request.Input,
-		ProjectKey: request.ProjectKey,
-		SourceType: request.SourceType,
-		SourceID:   request.SourceID,
-		SourceURI:  request.SourceURI,
-		Limit:      3,
+		OwnerIdentity: request.OwnerIdentity,
+		Input:         request.Input,
+		ProjectKey:    request.ProjectKey,
+		SourceType:    request.SourceType,
+		SourceID:      request.SourceID,
+		SourceURI:     request.SourceURI,
+		Limit:         3,
 	})
 	if err != nil {
 		return nil, err
@@ -1412,6 +1482,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 
 	autoLinkRequest := AutoLinkWorkflowRequest{
+		OwnerIdentity:        request.OwnerIdentity,
 		WorkflowID:           record.Item.ID,
 		Input:                request.Input,
 		ProjectKey:           request.ProjectKey,
@@ -1533,6 +1604,7 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 	actor := firstNonEmpty(request.Actor, "system")
 	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, request.SourceType, "source-derived work")
 	created, err := s.Create(CreateRequest{
+		OwnerIdentity:         request.OwnerIdentity,
 		Title:                 candidateTitle(sourceLabel, request.Input),
 		Description:           candidateDescription("workflow", request.Input, request.SourceURI, sourceLabel),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
@@ -1591,6 +1663,7 @@ func (s *service) createMemoryCandidate(request AutoLinkMemoryRequest) (*AutoLin
 	actor := firstNonEmpty(request.Actor, "system")
 	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, "memory insight")
 	created, err := s.Create(CreateRequest{
+		OwnerIdentity:         request.OwnerIdentity,
 		Title:                 candidateTitle(sourceLabel, request.Input),
 		Description:           candidateDescription("memory", request.Input, request.SourceURI, sourceLabel),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
