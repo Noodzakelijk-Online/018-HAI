@@ -9,8 +9,8 @@ placeholders presented as working.
 | --- | --- | --- |
 | Local LLM (Ollama) | Probeable | `/api/tags` probe; free/local, preferred by fallback |
 | OpenAI-compatible | Probeable, paid-gated | `/v1/models` probe; blocked until paid approval |
-| Gmail / Drive / Calendar / Trello | Disabled | Sandbox adapters first; enabled only after scope review |
-| GitHub (read issues) | Disabled | Token-gated; disabled by default |
+| Gmail / Drive / Calendar / Trello | Export/local-folder ingestion only | Authorized MBOX/EML, ICS, document-folder, and Trello JSON exports can be imported from the allowlisted local root. Live OAuth/API connectors are not implemented. |
+| GitHub (read-only repositories and work) | Implemented, unconfigured by default | Bounded REST sync covers repositories, issues, pull requests, commits, and workflow runs. Public repositories can be read without a token; private/rate-limited use needs a least-privilege `GITHUB_SOURCE_TOKEN`. |
 | Kafka event bus | Operational | Configured brokers/topic |
 
 ## Reality checks (honest)
@@ -20,6 +20,9 @@ placeholders presented as working.
   faked as connected.
 - **Provider selection is real:** `internal/providerfallback` prefers available
   free/local providers and never selects a paid one unless explicitly allowed.
+- **Source access is bounded:** export imports are read-only under the local
+  folder allowlist, and GitHub sync is read-only. Neither path grants HAI live
+  access to Gmail, Drive, Calendar, Trello, or GitHub write operations.
 - **Failure is modelled, not ignored:** `internal/fakeprovider` simulates failures
   so handling is tested without a real provider; `backoff`/`worker` cover retries.
 - **Assisted, not pretended:** where a provider can't be safely automated, the
@@ -30,7 +33,9 @@ placeholders presented as working.
 
 1. Provider probe *history* persistence and last-success-per-provider are
    enhancements (register #33–36) not yet built.
-2. Live end-to-end provider tests require real credentials + the running stack.
+2. Live end-to-end provider and source tests require real credentials + the
+   running stack; GitHub needs a chosen repository and, where necessary, a
+   least-privilege token.
 
 ## Verdict
 

@@ -14,6 +14,35 @@ This decision is captured in [ADR 0001](docs/architecture-decision-records/0001-
 
 **Status snapshot: 2026-07-14, `main`.** 018-HAI has an implemented, safety-gated operating layer. It is a local deployment candidate with code-level and local-service verification; it is **not** yet a proven real-world autonomous system for live accounts, providers, or unrestricted device control.
 
+### Current Main Baseline
+
+The current `main` branch is suitable for a bounded local operator trial: create
+and inspect pursuits, import authorized local/exported source material, plan and
+run approved workflow work, review verification evidence, and use a configured
+local model or controlled runtime. It is deliberately not a claim that HAI has
+access to a user's mail, calendar, browser, device, or paid provider by default.
+
+Recent hardening in the current baseline:
+
+- Authenticated pursuit, workflow, source, memory, verification, task, review,
+  and ambient operations retain the verified owner identity end to end.
+- Dashboard worker controls for **Run due**, **Recover stale**, **Run follow-ups**,
+  and Connected Sources **Sync due** operate only on sources and workflow items
+  explicitly owned by the signed-in user. They cannot invoke the global
+  scheduler or process another user's work.
+- The global source and workflow schedulers remain in-process, ownerless system
+  workers. They are not exposed as dashboard actions and must remain separately
+  controlled until per-owner scheduling is live-validated.
+- Real adapter boundaries are explicit: local/export ingestion, read-only GitHub
+  sync, Ollama/OpenAI-compatible probes, and bounded script/Docker/API runtime
+  paths exist; account OAuth, webhooks, browser automation, and unrestricted
+  host execution do not.
+
+For route-level ownership behavior, see the
+[backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that
+distinguishes local implementation from live external validation, see the
+[external provider reality review](docs/external-provider-reality-review.md).
+
 ### How To Read This Status
 
 The repository uses three deliberately different readiness terms:
@@ -47,6 +76,7 @@ What is implemented in this repository:
 | Hermes, Odysseus, and OpenClaw | Controlled adapter code and configuration surfaces are present; upstream software is not bundled. | Install/configure each upstream runtime separately, use dedicated workspaces/credentials, and validate one low-risk approved task at a time. |
 | Authentication and RBAC | Signed identity is revalidated by the backend; explicit RBAC routes default to viewer when a JWT has no role. | Add IDP role issuance and broaden permission checks before relying on multi-role operation. |
 | Owner-scoped operating work | Authenticated sources, memory, pursuits, verification, workflows, task history, reviews, and direct source preflight preserve the caller identity. | Exercise two real local accounts before relying on isolation for shared or multi-user operation. |
+| Dashboard worker controls | Manual due-work, stale-claim recovery, due-follow-up, and source-sync controls are implemented and limited to the verified owner's explicitly owned records. | Exercise two real local accounts plus a controlled system-worker run to verify the operator/system boundary. |
 | Ambient planning | Dashboard-triggered scans, proposals, scan history, and need-profile overrides are owner-scoped and suggestion-only. Ownerless system work retains a separate shared baseline. | Exercise two real local accounts and one ownerless system-worker path before relying on the boundary for shared or multi-user operation. |
 | Scheduled source refresh | A system worker processes globally due sources; an authenticated task preflights only that caller's explicitly owned due sources before source search. | Add per-owner scheduler dispatch only after account and source-credential boundaries are live-validated. |
 
