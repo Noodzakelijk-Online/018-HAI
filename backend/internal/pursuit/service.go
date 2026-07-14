@@ -924,6 +924,7 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
 		dashboard.RecentlyChanged = append(dashboard.RecentlyChanged, item)
 	}
 	sortDashboardDecisions(dashboard.DecisionQueue)
+	sortListItemsByEffectiveActivity(dashboard.RecentlyChanged)
 	dashboard.Counts["decisionQueue"] = int64(len(dashboard.DecisionQueue))
 	limitDashboardDecisions(&dashboard.DecisionQueue, 12)
 	limitListItems(&dashboard.NeedsRobert, 8)
@@ -4942,6 +4943,31 @@ func limitListItems(items *[]PursuitListItem, limit int) {
 	if len(*items) > limit {
 		*items = (*items)[:limit]
 	}
+}
+
+// sortListItemsByEffectiveActivity keeps the observational dashboard lane in
+// the same order as the derived operational timestamp. Other queues retain
+// their own policy ordering (risk, approvals, or work readiness).
+func sortListItemsByEffectiveActivity(items []PursuitListItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left := effectiveListItemActivity(items[i])
+		right := effectiveListItemActivity(items[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		if items[i].Pursuit.PriorityScore != items[j].Pursuit.PriorityScore {
+			return items[i].Pursuit.PriorityScore > items[j].Pursuit.PriorityScore
+		}
+		return items[i].Pursuit.Title < items[j].Pursuit.Title
+	})
+}
+
+func effectiveListItemActivity(item PursuitListItem) time.Time {
+	return firstTime(
+		timeFromPointer(item.EffectiveLastActivityAt),
+		timeFromPointer(item.Pursuit.LastActivityAt),
+		item.Pursuit.UpdatedAt,
+	)
 }
 
 func isStale(pursuit models.Pursuit) bool {

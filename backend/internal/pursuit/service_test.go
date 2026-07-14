@@ -3448,6 +3448,62 @@ func TestDashboardUsesLinkedOperationalActivityForFreshness(t *testing.T) {
 	}
 }
 
+func TestDashboardRecentlyChangedRanksLinkedOperationalActivity(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	older, err := service.Create(CreateRequest{Title: "Earlier workflow update", OwnerIdentity: "alice", PriorityScore: 80})
+	if err != nil {
+		t.Fatalf("Create older pursuit returned error: %v", err)
+	}
+	newer, err := service.Create(CreateRequest{Title: "Latest workflow update", OwnerIdentity: "alice", PriorityScore: 10})
+	if err != nil {
+		t.Fatalf("Create newer pursuit returned error: %v", err)
+	}
+	now := time.Now().UTC()
+	olderWorkflowID := uuid.New()
+	newerWorkflowID := uuid.New()
+	repo.workflows[olderWorkflowID] = models.WorkflowItem{
+		ID:            olderWorkflowID,
+		OwnerIdentity: "alice",
+		Title:         "Older linked work",
+		CurrentState:  workflow.StateInProgress,
+		UpdatedAt:     now.Add(-3 * time.Minute),
+	}
+	repo.workflows[newerWorkflowID] = models.WorkflowItem{
+		ID:            newerWorkflowID,
+		OwnerIdentity: "alice",
+		Title:         "Newer linked work",
+		CurrentState:  workflow.StateInProgress,
+		UpdatedAt:     now.Add(-1 * time.Minute),
+	}
+	for _, link := range []struct {
+		pursuitID  uuid.UUID
+		workflowID uuid.UUID
+	}{
+		{pursuitID: older.ID, workflowID: olderWorkflowID},
+		{pursuitID: newer.ID, workflowID: newerWorkflowID},
+	} {
+		if _, err := service.Link(link.pursuitID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkWorkflow, LinkID: link.workflowID.String(), Relationship: "operational_work"}); err != nil {
+			t.Fatalf("Link returned error: %v", err)
+		}
+		staleAt := now.Add(-15 * 24 * time.Hour)
+		record := repo.pursuits[link.pursuitID]
+		record.LastActivityAt = &staleAt
+		repo.pursuits[link.pursuitID] = record
+	}
+
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if len(dashboard.RecentlyChanged) != 2 {
+		t.Fatalf("recently changed = %#v, want both pursuits", dashboard.RecentlyChanged)
+	}
+	if dashboard.RecentlyChanged[0].Pursuit.ID != newer.ID || dashboard.RecentlyChanged[1].Pursuit.ID != older.ID {
+		t.Fatalf("recently changed order = %#v, want newest linked activity first", dashboard.RecentlyChanged)
+	}
+}
+
 func timelineContains(items []PursuitTimelineItem, kind, messagePart string) bool {
 	for _, item := range items {
 		if item.Kind == kind && strings.Contains(item.Message, messagePart) {

@@ -89,9 +89,10 @@ Recent hardening in the current baseline:
   result is linked back to the same pursuit, and a failed evidence link moves
   the task to review instead of presenting it as a verified outcome.
 - Pursuit dashboard freshness is derived from linked workflow, task,
-  verification, source, and runtime activity at read time. This prevents a
-  worker update from being misclassified as stale without letting a passive
-  page refresh alter the durable pursuit record.
+  verification, source, and runtime activity at read time. The **Recently
+  changed** lane is ranked by that effective activity, so a real worker update
+  is neither misclassified as stale nor hidden behind older pursuit records;
+  a passive page refresh still cannot alter the durable pursuit record.
 
 For route-level ownership behavior, see the
 [backend endpoint audit](docs/backend-endpoint-audit.md). For the evidence that

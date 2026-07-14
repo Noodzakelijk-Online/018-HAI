@@ -97,6 +97,7 @@ export interface IPursuitListItem {
   currentState?: string;
   whatChanged?: string;
   nextAction?: string;
+  effectiveLastActivityAt?: string;
   stale: boolean;
   reviewDue: boolean;
   planningNeeded: boolean;
