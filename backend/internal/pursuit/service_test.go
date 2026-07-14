@@ -765,6 +765,39 @@ func TestIntakeCreatesWorkflowAndLinksOperationalWork(t *testing.T) {
 	}
 }
 
+func TestCandidateIntakeRequiresExplicitAcceptanceBeforeCreatingWorkflow(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Imported legal follow-up",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "ai_chat_pursuit_candidate",
+		Status:           StatusWaiting,
+	})
+	if err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+
+	_, err = service.IntakeForOwner("alice", candidate.ID, IntakeRequest{
+		Input:      "Draft the requested response.",
+		SourceType: "ai_chat",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("candidate intake error = %v, want explicit acceptance guard", err)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("candidate intake created %d workflow(s), want none", workflowService.calls)
+	}
+
+	if _, err := service.PlanForOwner("alice", candidate.ID, PlanRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("PlanForOwner accepts candidate: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("accepted candidate created %d workflow(s), want one", workflowService.calls)
+	}
+}
+
 func TestIntakeLinksSourceReferenceIntoPursuitEvidence(t *testing.T) {
 	repo := newFakeRepo()
 	workflowService := &fakeWorkflowIntake{repo: repo}

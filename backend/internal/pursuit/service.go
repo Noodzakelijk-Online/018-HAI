@@ -2465,6 +2465,9 @@ func (s *service) IntakeForOwner(ownerIdentity string, id uuid.UUID, request Int
 	if err := ensurePursuitOpen(*pursuit, "add operational work to"); err != nil {
 		return nil, err
 	}
+	if isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("pursuit candidate must be accepted through the explicit plan action before adding operational work")
+	}
 	if strings.TrimSpace(request.Input) == "" {
 		return nil, fmt.Errorf("input is required")
 	}

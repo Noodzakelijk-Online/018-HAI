@@ -285,6 +285,44 @@ func TestDelegationPackageEndpointDoesNotExposeAnotherOwnersWork(t *testing.T) {
 	}
 }
 
+func TestCandidateIntakeEndpointRejectsUnacceptedOperationalWork(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Imported candidate",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "source_pursuit_candidate",
+		Status:           StatusWaiting,
+	})
+	if err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.POST("/pursuits/:id/intake", NewHandler(service).Intake)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/pursuits/"+candidate.ID.String()+"/intake",
+		strings.NewReader(`{"input":"Prepare a response from the imported source."}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("candidate intake status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "candidate must be accepted") {
+		t.Fatalf("candidate intake response did not explain lifecycle guard: %s", recorder.Body.String())
+	}
+}
+
 func TestResolveDecisionEndpointRejectsHiddenCrossOwnerCompletionEvidence(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()
