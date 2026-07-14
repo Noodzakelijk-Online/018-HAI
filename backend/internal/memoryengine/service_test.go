@@ -164,6 +164,46 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 	}
 }
 
+func TestImportRoutesActionWorkflowThroughPursuitGateway(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	workflowSpy := &memoryEngineWorkflowStub{}
+	pursuitGateway := &memoryEnginePursuitGateway{}
+	service := NewServiceWithPursuitLinker(
+		repo,
+		&memoryEngineMemoryStub{},
+		workflowSpy,
+		"test-memory-encryption-secret",
+		pursuitGateway,
+	)
+
+	result, err := service.Import(ImportRequest{
+		Platform:   "chatgpt",
+		ExternalID: "thread-pursuit-gateway",
+		Title:      "Vivare legal dispute",
+		SourceURI:  "https://chatgpt.com/c/thread-pursuit-gateway",
+		ProjectKey: "vivare",
+		Messages: []ChatMessage{{
+			Role:    "assistant",
+			Content: "Action: draft the legal reply for Vivare and attach evidence.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+	if len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("direct workflow intake bypassed pursuit gateway: %#v", workflowSpy.intakeRequests)
+	}
+	if len(pursuitGateway.routed) != 1 || pursuitGateway.routed[0].Trigger != "memory_engine.import" {
+		t.Fatalf("pursuit gateway requests = %#v", pursuitGateway.routed)
+	}
+	if len(result.WorkflowIDs) != 1 || result.WorkflowIDs[0] == uuid.Nil {
+		t.Fatalf("workflow ids = %#v, want routed workflow", result.WorkflowIDs)
+	}
+	if len(pursuitGateway.requests) != 0 {
+		t.Fatalf("workflow was linked twice after pursuit routing: %#v", pursuitGateway.requests)
+	}
+}
+
 func TestImportRoutesContradictionsAndHighRisksToGovernedWorkflows(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
 	workflowSpy := &memoryEngineWorkflowStub{}
@@ -550,6 +590,16 @@ func (s *memoryEngineWorkflowStub) Overview() workflow.Overview {
 type memoryEnginePursuitLinker struct {
 	requests       []pursuitpkg.AutoLinkWorkflowRequest
 	memoryRequests []pursuitpkg.AutoLinkMemoryRequest
+}
+
+type memoryEnginePursuitGateway struct {
+	memoryEnginePursuitLinker
+	routed []workflow.IntakeRequest
+}
+
+func (s *memoryEnginePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	s.routed = append(s.routed, request)
+	return &workflow.WorkflowRecord{Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey}}, nil
 }
 
 func (s *memoryEnginePursuitLinker) AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error) {

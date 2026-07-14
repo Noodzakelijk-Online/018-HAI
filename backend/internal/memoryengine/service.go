@@ -109,6 +109,12 @@ type pursuitAutoLinker interface {
 	AutoLinkMemory(request pursuitpkg.AutoLinkMemoryRequest) (*pursuitpkg.AutoLinkResult, error)
 }
 
+// pursuitWorkflowIntakeRouter ensures imported chat insights cannot create
+// workflow work under a closed pursuit by bypassing the pursuit lifecycle gate.
+type pursuitWorkflowIntakeRouter interface {
+	RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
+}
+
 func NewService(repo Repository, memoryService memory.Service, workflowService workflow.Service, encryptionSecret string) Service {
 	return NewServiceWithPursuitLinker(repo, memoryService, workflowService, encryptionSecret, nil)
 }
@@ -126,6 +132,21 @@ func NewServiceWithPursuitLinker(repo Repository, memoryService memory.Service, 
 		pursuitLinker:   pursuitLinker,
 		encryptionKey:   key,
 	}
+}
+
+func (s *service) intakeWorkflow(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	if router, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter); ok {
+		return router.RouteWorkflowIntake(request)
+	}
+	if s.workflowService == nil {
+		return nil, fmt.Errorf("workflow service is not configured")
+	}
+	return s.workflowService.Intake(request)
+}
+
+func (s *service) routesWorkflowThroughPursuits() bool {
+	_, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter)
+	return ok
 }
 
 func (s *service) Import(request ImportRequest) (*ImportResult, error) {
@@ -234,7 +255,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 			}
 		}
 		if s.workflowService != nil && workflowEligibleInsight(*stored) {
-			record, errWorkflow := s.workflowService.Intake(workflow.IntakeRequest{
+			record, errWorkflow := s.intakeWorkflow(workflow.IntakeRequest{
 				Input:          stored.Text,
 				ProjectKey:     stored.ProjectKey,
 				SourceType:     "ai_chat",
@@ -253,10 +274,12 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 				warnings = append(warnings, "workflow intake for "+stored.Kind+" insight did not return a workflow record")
 			} else {
 				workflowIDs = append(workflowIDs, record.Item.ID)
-				if linkResult, errLink := s.autoLinkPursuitWorkflow(*saved, *stored, record); errLink != nil {
-					warnings = append(warnings, "failed to link "+stored.Kind+" insight workflow to pursuit")
-				} else if linkResult != nil {
-					pursuitLinks = append(pursuitLinks, *linkResult)
+				if !s.routesWorkflowThroughPursuits() {
+					if linkResult, errLink := s.autoLinkPursuitWorkflow(*saved, *stored, record); errLink != nil {
+						warnings = append(warnings, "failed to link "+stored.Kind+" insight workflow to pursuit")
+					} else if linkResult != nil {
+						pursuitLinks = append(pursuitLinks, *linkResult)
+					}
 				}
 			}
 		}

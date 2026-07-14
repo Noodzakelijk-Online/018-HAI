@@ -1242,6 +1242,10 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 		result.Message = fmt.Sprintf("best pursuit match %.2f is below auto-link threshold %.2f", match.Score, minimumScore)
 		return result, nil
 	}
+	if pursuitClosed(match.Pursuit) {
+		result.Message = "matched pursuit is closed; reopen it explicitly or create a new pursuit before linking operational work"
+		return result, nil
+	}
 
 	actor := firstNonEmpty(request.Actor, "system")
 	links := []models.PursuitLink{}

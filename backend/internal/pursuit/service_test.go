@@ -225,6 +225,35 @@ func TestAutoLinkWorkflowSkipsWeakPursuitMatch(t *testing.T) {
 	}
 }
 
+func TestAutoLinkWorkflowDoesNotAttachOperationalWorkToClosedPursuit(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Completed ASR insurance claim", ProjectKey: "asr"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	closed := repo.pursuits[created.ID]
+	closed.Status = StatusCompleted
+	closed.CompletionState = CompletionVerified
+	repo.pursuits[created.ID] = closed
+
+	result, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
+		WorkflowID: uuid.New(),
+		Input:      "New ASR claim follow-up arrived after completion.",
+		ProjectKey: "asr",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkWorkflow returned error: %v", err)
+	}
+	if result.Linked || !strings.Contains(result.Message, "closed") {
+		t.Fatalf("closed pursuit must reject operational auto-linking: %#v", result)
+	}
+	links, _ := repo.FindLinks(created.ID)
+	if len(links) != 0 {
+		t.Fatalf("closed pursuit links = %#v, want none", links)
+	}
+}
+
 func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)

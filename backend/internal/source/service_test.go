@@ -629,6 +629,46 @@ func TestSyncAutoLinksActionableExtractionToPursuit(t *testing.T) {
 	}
 }
 
+func TestSyncRoutesActionableExtractionThroughPursuitGateway(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "email",
+		Name:         "Legal mailbox",
+		Category:     "email",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	pursuitGateway := &fakeSourcePursuitGateway{}
+	service := NewServiceWithWorkflowAndPursuitLinker(repo, &fakeSourceMemoryService{}, workflowSpy, pursuitGateway)
+
+	_, err := service.Sync(sourceID, ImportRequest{
+		Mode: ModeManualImport,
+		Items: []ImportItem{{
+			ExternalID: "email-pursuit-gateway",
+			Title:      "Lawyer follow-up",
+			Content:    "Follow up: draft a formal reply for the legal case before tomorrow.",
+			SourceURI:  "mailto:lawyer@example.test",
+			ItemType:   "email",
+			ProjectKey: "Vivare dispute",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(workflowSpy.requests) != 0 {
+		t.Fatalf("direct workflow intake bypassed pursuit gateway: %#v", workflowSpy.requests)
+	}
+	if len(pursuitGateway.routed) != 1 || pursuitGateway.routed[0].Trigger != "source.extraction" {
+		t.Fatalf("pursuit gateway requests = %#v", pursuitGateway.routed)
+	}
+	if len(pursuitGateway.requests) != 0 {
+		t.Fatalf("workflow was linked twice after pursuit routing: %#v", pursuitGateway.requests)
+	}
+}
+
 func TestSyncAutoLinksStableSourceMemoryToPursuit(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
@@ -1632,6 +1672,16 @@ type fakeSourcePursuitLinker struct {
 	result         *pursuit.AutoLinkResult
 	memoryResult   *pursuit.AutoLinkResult
 	err            error
+}
+
+type fakeSourcePursuitGateway struct {
+	fakeSourcePursuitLinker
+	routed []workflow.IntakeRequest
+}
+
+func (f *fakeSourcePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	f.routed = append(f.routed, request)
+	return &workflow.WorkflowRecord{Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey}}, nil
 }
 
 func (f *fakeSourcePursuitLinker) AutoLinkWorkflow(request pursuit.AutoLinkWorkflowRequest) (*pursuit.AutoLinkResult, error) {

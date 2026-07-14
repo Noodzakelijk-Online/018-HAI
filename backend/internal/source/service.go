@@ -152,6 +152,13 @@ type pursuitAutoLinker interface {
 	AutoLinkMemory(request pursuit.AutoLinkMemoryRequest) (*pursuit.AutoLinkResult, error)
 }
 
+// pursuitWorkflowIntakeRouter routes producer-created work through the pursuit
+// lifecycle gate before a workflow exists. It is intentionally optional so the
+// source service remains usable without the pursuit module in focused tests.
+type pursuitWorkflowIntakeRouter interface {
+	RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
+}
+
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var ErrSyncInProgress = errors.New("source sync is already in progress")
 
@@ -175,6 +182,21 @@ func NewServiceWithWorkflowAndPursuitLinker(repo Repository, memoryService memor
 
 func DefaultService() Service {
 	return NewServiceWithWorkflow(DefaultRepository(), memory.DefaultService(), workflow.DefaultService())
+}
+
+func (s *service) intakeWorkflow(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	if router, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter); ok {
+		return router.RouteWorkflowIntake(request)
+	}
+	if s.workflowService == nil {
+		return nil, fmt.Errorf("workflow service is not configured")
+	}
+	return s.workflowService.Intake(request)
+}
+
+func (s *service) routesWorkflowThroughPursuits() bool {
+	_, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter)
+	return ok
 }
 
 func (s *service) Connectors() ([]models.SourceConnector, error) {
@@ -504,7 +526,7 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 	if s.workflowService == nil {
 		return
 	}
-	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+	record, err := s.intakeWorkflow(workflow.IntakeRequest{
 		Input: strings.Join([]string{
 			"Connected source sync failed for " + source.Name + ".",
 			"Connector: " + source.ConnectorKey + ".",
@@ -526,7 +548,7 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 		s.audit(source.ID, "source.failure_workflow_failed", compact(err.Error(), 260))
 		return
 	}
-	if record != nil {
+	if record != nil && !s.routesWorkflowThroughPursuits() {
 		s.autoLinkPursuitWorkflow(&source, nil, record, "Connected source sync failed for "+source.Name+". "+reason)
 	}
 	s.audit(source.ID, "source.failure_workflow_created", "scheduled sync failure routed to workflow review")
@@ -1241,7 +1263,7 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		"Follow-ups: " + extraction.FollowUps,
 		"Dates: " + extraction.Dates,
 	}, "\n")
-	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+	record, err := s.intakeWorkflow(workflow.IntakeRequest{
 		Input:          input,
 		ProjectKey:     extraction.ProjectKey,
 		SourceType:     source.Category,
@@ -1257,7 +1279,7 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		s.audit(source.ID, "workflow.intake_failed", err.Error())
 		return err
 	}
-	if record != nil {
+	if record != nil && !s.routesWorkflowThroughPursuits() {
 		s.autoLinkPursuitWorkflow(source, extraction, record, input)
 	}
 	s.audit(source.ID, "workflow.intake_created", "actionable extraction sent to workflow engine")
