@@ -2,12 +2,14 @@ package memoryengine
 
 import (
 	"automation-hub-backend/internal/identity"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -66,6 +68,10 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 		return
 	}
 	if err := h.service.DeleteConversationForOwner(verifiedOwner(c), id); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

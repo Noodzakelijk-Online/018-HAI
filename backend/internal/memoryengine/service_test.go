@@ -437,6 +437,26 @@ func TestAuthenticatedImportDoesNotAdoptOwnerlessLegacyConversation(t *testing.T
 	}
 }
 
+func TestAuthenticatedUserCannotDeleteOwnerlessLegacyConversation(t *testing.T) {
+	legacyID := uuid.New()
+	repo := &memoryEngineRepoStub{conversations: []models.AIConversationArchive{{
+		ID:          legacyID,
+		Platform:    "chatgpt",
+		ExternalID:  "legacy-thread",
+		SourceURI:   "https://chatgpt.com/c/legacy-thread",
+		ContentHash: "legacy",
+		Revision:    1,
+	}}}
+	service := NewService(repo, &memoryEngineMemoryStub{}, nil, "test-memory-encryption-secret")
+
+	if err := service.DeleteConversationForOwner("alice", legacyID); err == nil {
+		t.Fatal("authenticated user deleted an ownerless legacy conversation")
+	}
+	if len(repo.conversations) != 1 || repo.conversations[0].ID != legacyID {
+		t.Fatalf("ownerless legacy conversation was changed: %#v", repo.conversations)
+	}
+}
+
 func TestDashboardSurfacesSourceCorrectionLessons(t *testing.T) {
 	now := time.Now().UTC()
 	service := NewService(
@@ -557,6 +577,12 @@ func (r *memoryEngineRepoStub) FindConversationsForOwner(ownerIdentity string, l
 }
 
 func (r *memoryEngineRepoStub) DeleteConversation(id uuid.UUID) error {
+	for index, conversation := range r.conversations {
+		if conversation.ID == id {
+			r.conversations = append(r.conversations[:index], r.conversations[index+1:]...)
+			break
+		}
+	}
 	return nil
 }
 

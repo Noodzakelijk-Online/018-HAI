@@ -409,6 +409,13 @@ func (s *service) DeleteConversationForOwner(ownerIdentity string, id uuid.UUID)
 	if err != nil {
 		return err
 	}
+	// Reads retain legacy ownerless archives for local migration, but an
+	// authenticated caller must never be able to delete or retract work from
+	// that shared compatibility data. Only an ownerless in-process maintenance
+	// call may operate on it.
+	if ownerIdentity != "" && strings.TrimSpace(conversation.OwnerIdentity) != ownerIdentity {
+		return gorm.ErrRecordNotFound
+	}
 	insights, err := s.repo.FindInsightsForOwner(ownerIdentity, "", "", nil, 500)
 	if err != nil {
 		return err

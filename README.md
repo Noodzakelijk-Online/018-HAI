@@ -96,9 +96,10 @@ the workflow remains the restart-safe execution ledger.
 - Runtime execution is constrained by enablement flags, allowlisted tools,
   hosts, paths, workspaces, timeouts, output limits, redacted audit records,
   and verification before completion.
-- Ownerless legacy data is read-compatible only for local-development
-  compatibility. Authenticated users cannot adopt or mutate it. Ownerless
-  scheduler work stays in-process and is not exposed as an operator action.
+- Ownerless legacy workflows, sources, extractions, and imported conversation
+  archives are read-compatible only for local-development compatibility.
+  Authenticated users cannot adopt, delete, or mutate them. Ownerless scheduler
+  work stays in-process and is not exposed as an operator action.
 
 For route-by-route ownership behavior, see
 [backend endpoint audit](docs/backend-endpoint-audit.md). For the broader
