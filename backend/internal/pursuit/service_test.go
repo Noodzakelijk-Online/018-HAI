@@ -3249,6 +3249,76 @@ func timelineSourceContains(items []PursuitTimelineItem, kind, sourcePart string
 	return false
 }
 
+func TestOwnerScopedMutationsDoNotAdoptOwnerlessLegacyPursuits(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	legacy, err := service.Create(CreateRequest{Title: "Legacy migration pursuit", ProjectKey: "legacy-project"})
+	if err != nil {
+		t.Fatalf("Create legacy pursuit: %v", err)
+	}
+
+	for _, operation := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "update", call: func() error {
+			_, err := service.UpdateForOwner("alice", legacy.ID, UpdateRequest{Title: "Alice update"})
+			return err
+		}},
+		{name: "archive", call: func() error { _, err := service.ArchiveForOwner("alice", legacy.ID, true, "alice"); return err }},
+		{name: "reopen", call: func() error { _, err := service.ReopenForOwner("alice", legacy.ID, "alice", "reopen"); return err }},
+		{name: "link", call: func() error {
+			_, err := service.Link(legacy.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkMemory, LinkID: uuid.NewString(), Relationship: "evidence"})
+			return err
+		}},
+		{name: "delete link", call: func() error { return service.DeleteLinkForOwner("alice", legacy.ID, uuid.New(), "alice") }},
+		{name: "intake", call: func() error {
+			_, err := service.IntakeForOwner("alice", legacy.ID, IntakeRequest{Input: "new operational work"})
+			return err
+		}},
+		{name: "plan", call: func() error {
+			_, err := service.PlanForOwner("alice", legacy.ID, PlanRequest{Input: "plan legacy work"})
+			return err
+		}},
+		{name: "resolve decision", call: func() error {
+			_, err := service.ResolveDecisionForOwner("alice", legacy.ID, DecisionResolutionRequest{DecisionID: "completion", Approved: true})
+			return err
+		}},
+		{name: "refresh summary", call: func() error { _, err := service.RefreshSummaryForOwner("alice", legacy.ID, "alice"); return err }},
+		{name: "review", call: func() error {
+			_, err := service.ReviewForOwner("alice", legacy.ID, ReviewRequest{Action: "complete", Actor: "alice"})
+			return err
+		}},
+		{name: "route intake", call: func() error {
+			_, err := service.RouteIntake(IntakeRequest{OwnerIdentity: "alice", ProjectKey: "legacy-project", Input: legacy.Title})
+			return err
+		}},
+	} {
+		if err := operation.call(); err == nil {
+			t.Fatalf("%s adopted an ownerless legacy pursuit", operation.name)
+		}
+	}
+
+	stored, err := repo.FindByID(legacy.ID)
+	if err != nil {
+		t.Fatalf("Find legacy pursuit: %v", err)
+	}
+	if stored.OwnerIdentity != "" || stored.Title != legacy.Title || stored.Archived || stored.Status != legacy.Status || stored.CompletionState != legacy.CompletionState {
+		t.Fatalf("owner-scoped mutation changed legacy pursuit: %#v", stored)
+	}
+	links, err := repo.FindLinks(legacy.ID)
+	if err != nil {
+		t.Fatalf("Find legacy links: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("owner-scoped mutation linked legacy pursuit: %#v", links)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("owner-scoped mutation sent work to workflow intake: %d calls", workflowService.calls)
+	}
+}
+
 type fakeRepo struct {
 	pursuits             map[uuid.UUID]models.Pursuit
 	links                map[uuid.UUID]models.PursuitLink

@@ -537,8 +537,11 @@ type PursuitOperationalDigest struct {
 type Service interface {
 	Create(request CreateRequest) (*models.Pursuit, error)
 	Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, error)
+	UpdateForOwner(ownerIdentity string, id uuid.UUID, request UpdateRequest) (*models.Pursuit, error)
 	Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error)
+	ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool, actor string) (*models.Pursuit, error)
 	Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, error)
+	ReopenForOwner(ownerIdentity string, id uuid.UUID, actor, note string) (*models.Pursuit, error)
 	List(includeArchived bool) ([]models.Pursuit, error)
 	ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
 	Dashboard() (*Dashboard, error)
@@ -559,6 +562,7 @@ type Service interface {
 	LinkVerification(pursuitID, verificationID uuid.UUID) error
 	LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error
 	DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error
+	DeleteLinkForOwner(ownerIdentity string, id uuid.UUID, linkID uuid.UUID, actor string) error
 	Match(request MatchRequest) ([]MatchCandidate, error)
 	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
 	AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult, error)
@@ -573,6 +577,7 @@ type Service interface {
 	RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error)
 	RefreshSummaryForOwner(ownerIdentity string, id uuid.UUID, actor string) (*PursuitDetail, error)
 	Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
+	ReviewForOwner(ownerIdentity string, id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
 	Activity(id uuid.UUID) ([]models.PursuitActivity, error)
 }
 
@@ -658,9 +663,16 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 }
 
 func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, error) {
+	return s.UpdateForOwner("", id, request)
+}
+
+func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request UpdateRequest) (*models.Pursuit, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	if updateAttemptsReopen(*pursuit, request) {
 		return nil, fmt.Errorf("cannot reopen a closed pursuit through a generic update; use the explicit reopen action")
@@ -736,19 +748,30 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 }
 
 func (s *service) Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error) {
+	return s.ArchiveForOwner("", id, archived, actor)
+}
+
+func (s *service) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool, actor string) (*models.Pursuit, error) {
 	if !archived {
-		return s.Reopen(id, actor, "")
+		return s.ReopenForOwner(ownerIdentity, id, actor, "")
 	}
-	return s.Update(id, UpdateRequest{Archived: &archived, Actor: actor})
+	return s.UpdateForOwner(ownerIdentity, id, UpdateRequest{Archived: &archived, Actor: actor})
 }
 
 // Reopen is the explicit, auditable transition from a completed or archived
 // pursuit back to active work. It never creates a workflow; subsequent intake
 // still flows through the normal approval and verification controls.
 func (s *service) Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, error) {
+	return s.ReopenForOwner("", id, actor, note)
+}
+
+func (s *service) ReopenForOwner(ownerIdentity string, id uuid.UUID, actor, note string) (*models.Pursuit, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	if !pursuitClosed(*pursuit) {
 		return pursuit, nil
@@ -809,6 +832,18 @@ func pursuitVisibleTo(pursuit models.Pursuit, ownerIdentity string) bool {
 	}
 	recordOwner := strings.TrimSpace(pursuit.OwnerIdentity)
 	return recordOwner == "" || recordOwner == ownerIdentity
+}
+
+// pursuitMutableBy is intentionally stricter than read visibility. Ownerless
+// legacy pursuits remain inspectable during local migration, but authenticated
+// users must not adopt or change them. Empty owner identity is reserved for
+// controlled in-process system work.
+func pursuitMutableBy(pursuit models.Pursuit, ownerIdentity string) bool {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return true
+	}
+	return strings.TrimSpace(pursuit.OwnerIdentity) == ownerIdentity
 }
 
 func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
@@ -1409,6 +1444,9 @@ func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, 
 	if err != nil {
 		return nil, err
 	}
+	if !pursuitMutableBy(*pursuit, request.OwnerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
 	linkType := strings.TrimSpace(request.LinkType)
 	linkID := strings.TrimSpace(request.LinkID)
 	if linkType == "" || linkID == "" {
@@ -1488,8 +1526,16 @@ func (s *service) linkVerificationForOwner(ownerIdentity string, pursuitID, veri
 }
 
 func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error {
-	if _, err := s.repo.FindByID(id); err != nil {
+	return s.DeleteLinkForOwner("", id, linkID, actor)
+}
+
+func (s *service) DeleteLinkForOwner(ownerIdentity string, id uuid.UUID, linkID uuid.UUID, actor string) error {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
 		return err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return fmt.Errorf("pursuit not found")
 	}
 	if err := s.repo.DeleteLink(id, linkID); err != nil {
 		return err
@@ -1714,7 +1760,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 	minimumScore := defaultAutoLinkMinimumScore
 	if len(matches) > 0 && matches[0].Score >= minimumScore && !pursuitClosed(matches[0].Pursuit) {
-		if _, err := s.Intake(matches[0].Pursuit.ID, request); err != nil {
+		if _, err := s.IntakeForOwner(request.OwnerIdentity, matches[0].Pursuit.ID, request); err != nil {
 			return nil, err
 		}
 		detail, err := s.DetailForOwner(request.OwnerIdentity, matches[0].Pursuit.ID)
@@ -2099,7 +2145,7 @@ func (s *service) IntakeForOwner(ownerIdentity string, id uuid.UUID, request Int
 	if err != nil {
 		return nil, err
 	}
-	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
 		return nil, fmt.Errorf("pursuit not found")
 	}
 	if err := ensurePursuitOpen(*pursuit, "add operational work to"); err != nil {
@@ -2266,7 +2312,7 @@ func (s *service) PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanR
 	if err != nil {
 		return nil, err
 	}
-	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
 		return nil, fmt.Errorf("pursuit not found")
 	}
 	if err := ensurePursuitOpen(*pursuit, "plan"); err != nil {
@@ -2344,7 +2390,7 @@ func (s *service) ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, re
 	if err != nil {
 		return nil, err
 	}
-	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
 		return nil, fmt.Errorf("pursuit not found")
 	}
 	if err := ensurePursuitOpen(*pursuit, "resolve a decision for"); err != nil {
@@ -2512,6 +2558,9 @@ func (s *service) RefreshSummaryForOwner(ownerIdentity string, id uuid.UUID, act
 	if err != nil {
 		return nil, err
 	}
+	if !pursuitMutableBy(detail.Pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
 	if pursuitClosed(detail.Pursuit) {
 		return detail, nil
 	}
@@ -2539,9 +2588,16 @@ func (s *service) RefreshSummaryForOwner(ownerIdentity string, id uuid.UUID, act
 }
 
 func (s *service) Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error) {
+	return s.ReviewForOwner("", id, request)
+}
+
+func (s *service) ReviewForOwner(ownerIdentity string, id uuid.UUID, request ReviewRequest) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	now := time.Now().UTC()
 	action := strings.ToLower(strings.TrimSpace(firstNonEmpty(request.Action, "complete")))
@@ -2581,7 +2637,7 @@ func (s *service) Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, e
 		return nil, fmt.Errorf("unsupported pursuit review action %q", request.Action)
 	}
 
-	return s.Detail(id)
+	return s.DetailForOwner(ownerIdentity, id)
 }
 
 func (s *service) Activity(id uuid.UUID) ([]models.PursuitActivity, error) {

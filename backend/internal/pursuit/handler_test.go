@@ -129,6 +129,74 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestPursuitMutationEndpointsRejectOwnerlessLegacyRecords(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	legacy, err := service.Create(CreateRequest{Title: "Legacy local pursuit", Description: "Read-compatible migration record"})
+	if err != nil {
+		t.Fatalf("Create legacy pursuit: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	handler := NewHandler(service)
+	router.PATCH("/pursuits/:id", handler.Update)
+	router.POST("/pursuits/:id/archive", handler.Archive)
+	router.POST("/pursuits/:id/reopen", handler.Reopen)
+	router.POST("/pursuits/:id/links", handler.Link)
+	router.DELETE("/pursuits/:id/links/:linkId", handler.DeleteLink)
+	router.POST("/pursuits/:id/intake", handler.Intake)
+	router.POST("/pursuits/:id/plan", handler.Plan)
+	router.POST("/pursuits/:id/decisions/resolve", handler.ResolveDecision)
+	router.POST("/pursuits/:id/summary", handler.RefreshSummary)
+	router.POST("/pursuits/:id/review", handler.Review)
+
+	missingLinkID := uuid.New()
+	for _, endpoint := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodPatch, path: "/pursuits/" + legacy.ID.String(), body: `{"title":"Alice adopts the legacy record"}`},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/archive", body: `{"archived":true}`},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/reopen", body: `{}`},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/links", body: `{"linkType":"memory","linkId":"memory-1","relationship":"evidence"}`},
+		{method: http.MethodDelete, path: "/pursuits/" + legacy.ID.String() + "/links/" + missingLinkID.String(), body: ""},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/intake", body: `{}`},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/plan", body: `{}`},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/decisions/resolve", body: `{}`},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/summary", body: `{}`},
+		{method: http.MethodPost, path: "/pursuits/" + legacy.ID.String() + "/review", body: `{"action":"complete"}`},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(endpoint.body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status = %d, want %d; body=%s", endpoint.method, endpoint.path, recorder.Code, http.StatusNotFound, recorder.Body.String())
+		}
+	}
+
+	stored, err := repo.FindByID(legacy.ID)
+	if err != nil {
+		t.Fatalf("Find legacy pursuit: %v", err)
+	}
+	if stored.OwnerIdentity != "" || stored.Title != legacy.Title || stored.Archived || stored.Status != legacy.Status || stored.CompletionState != legacy.CompletionState {
+		t.Fatalf("authenticated mutation changed legacy pursuit: %#v", stored)
+	}
+	links, err := repo.FindLinks(legacy.ID)
+	if err != nil {
+		t.Fatalf("Find legacy links: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("authenticated mutation linked legacy pursuit: %#v", links)
+	}
+}
+
 func TestDelegationPackageEndpointDoesNotExposeAnotherOwnersWork(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

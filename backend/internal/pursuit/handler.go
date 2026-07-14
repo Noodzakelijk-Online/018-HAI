@@ -109,7 +109,7 @@ func (h *Handler) Update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request UpdateRequest
@@ -118,7 +118,7 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	record, err := h.service.Update(id, request)
+	record, err := h.service.UpdateForOwner(pursuitOwner(c), id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -131,7 +131,7 @@ func (h *Handler) Archive(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request struct {
@@ -147,7 +147,7 @@ func (h *Handler) Archive(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	record, err := h.service.Archive(id, true, request.Actor)
+	record, err := h.service.ArchiveForOwner(pursuitOwner(c), id, true, request.Actor)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -160,14 +160,14 @@ func (h *Handler) Reopen(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request struct {
 		Note string `json:"note,omitempty"`
 	}
 	_ = c.ShouldBindJSON(&request)
-	record, err := h.service.Reopen(id, verifiedActor(c, "operator"), request.Note)
+	record, err := h.service.ReopenForOwner(pursuitOwner(c), id, verifiedActor(c, "operator"), request.Note)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -180,7 +180,7 @@ func (h *Handler) Link(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request LinkRequest
@@ -203,7 +203,7 @@ func (h *Handler) DeleteLink(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	linkID, err := uuid.Parse(c.Param("linkId"))
@@ -211,7 +211,7 @@ func (h *Handler) DeleteLink(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid link id"})
 		return
 	}
-	if err := h.service.DeleteLink(id, linkID, verifiedActor(c, "operator")); err != nil {
+	if err := h.service.DeleteLinkForOwner(pursuitOwner(c), id, linkID, verifiedActor(c, "operator")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -254,7 +254,7 @@ func (h *Handler) Intake(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request IntakeRequest
@@ -277,7 +277,7 @@ func (h *Handler) Plan(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request PlanRequest
@@ -299,7 +299,7 @@ func (h *Handler) ResolveDecision(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request DecisionResolutionRequest
@@ -321,7 +321,7 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request struct {
@@ -342,7 +342,7 @@ func (h *Handler) Review(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensurePursuitVisible(c, id) {
+	if !h.ensurePursuitMutable(c, id) {
 		return
 	}
 	var request ReviewRequest
@@ -351,7 +351,7 @@ func (h *Handler) Review(c *gin.Context) {
 		return
 	}
 	request.Actor = verifiedActor(c, "operator")
-	_, err := h.service.Review(id, request)
+	_, err := h.service.ReviewForOwner(pursuitOwner(c), id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -443,6 +443,15 @@ func (h *Handler) ensurePursuitVisible(c *gin.Context, id uuid.UUID) bool {
 	if _, err := h.service.DetailForOwner(pursuitOwner(c), id); err != nil {
 		// Keep an inaccessible record indistinguishable from one that does not
 		// exist so UUID probing does not disclose another user's work.
+		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
+		return false
+	}
+	return true
+}
+
+func (h *Handler) ensurePursuitMutable(c *gin.Context, id uuid.UUID) bool {
+	record, err := h.service.DetailForOwner(pursuitOwner(c), id)
+	if err != nil || !pursuitMutableBy(record.Pursuit, pursuitOwner(c)) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pursuit not found"})
 		return false
 	}

@@ -64,6 +64,10 @@ Recent hardening in the current baseline:
   owner-scoped service paths. Before they derive evidence, workflow follow-ups,
   or completion state, those paths filter legacy links that point to records the
   current owner cannot see.
+- Ownerless legacy pursuits remain visible only for local-development
+  compatibility. Authenticated API users cannot update, archive, reopen,
+  review, link, plan, intake, or otherwise adopt them; controlled in-process
+  maintenance remains the only supported write path.
 - The VA delegation endpoint is read-only and owner-scoped. It compiles only
   existing VA-ready workflow context, checklists, source references, delivery
   requirements, and escalation rules; it cannot assign a person, execute work,
