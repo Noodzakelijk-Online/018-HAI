@@ -174,6 +174,8 @@ export class PursuitService {
       timeline: source.timeline || [],
       evidence: source.evidence || [],
       memories: source.memories || [],
+      conversations: source.conversations || [],
+      ambientOpportunities: source.ambientOpportunities || [],
       taskRuns: source.taskRuns || [],
       taskAttempts: source.taskAttempts || [],
       verificationRuns: source.verificationRuns || [],

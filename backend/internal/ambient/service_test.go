@@ -221,6 +221,48 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	}
 }
 
+func TestAcceptPursuitOpportunityRetriesLinkWithoutDuplicatingWorkflow(t *testing.T) {
+	pursuitID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:               uuid.New(),
+		Status:           StatusProposed,
+		NeedKey:          "safety",
+		Title:            "Repair a pursuit follow-up",
+		Rationale:        "The operational plan needs a safe follow-up.",
+		NextAction:       "Prepare the next follow-up draft.",
+		SourceType:       "pursuit_blocker",
+		SourceID:         pursuitID.String(),
+		SourceURI:        "pursuit://" + pursuitID.String(),
+		Confidence:       80,
+		RequiresApproval: true,
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{}
+	pursuitSpy := &ambientPursuitSpy{linkFailures: 1}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, pursuitSpy)
+
+	if _, err := engine.Accept(opportunity.ID, ResolutionRequest{Actor: "verified-operator"}); err == nil {
+		t.Fatal("expected the initial pursuit link failure")
+	}
+	if len(workflowSpy.intakeRequests) != 1 {
+		t.Fatalf("workflow intake calls after failed link = %d, want 1", len(workflowSpy.intakeRequests))
+	}
+	if repo.opportunity.WorkflowID == nil || repo.opportunity.Status != StatusProposed {
+		t.Fatalf("failed acceptance did not preserve resumable proposed state: %#v", repo.opportunity)
+	}
+
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{Actor: "verified-operator"})
+	if err != nil {
+		t.Fatalf("retry Accept returned error: %v", err)
+	}
+	if len(workflowSpy.intakeRequests) != 1 {
+		t.Fatalf("workflow intake calls after retry = %d, want no duplicate workflow", len(workflowSpy.intakeRequests))
+	}
+	if accepted.Status != StatusAccepted || accepted.WorkflowID == nil || len(pursuitSpy.links) != 2 {
+		t.Fatalf("retry did not finish acceptance and restore both pursuit links: accepted=%#v links=%#v", accepted, pursuitSpy.links)
+	}
+}
+
 func TestPursuitOpportunityOwnerCannotAcceptAnotherOwnersOpportunity(t *testing.T) {
 	pursuitID := uuid.New()
 	opportunity := &models.AmbientOpportunity{
@@ -397,6 +439,7 @@ type ambientPursuitSpy struct {
 	links            []pursuitpkg.LinkRequest
 	linkedPursuitIDs []uuid.UUID
 	owners           map[uuid.UUID]string
+	linkFailures     int
 }
 
 func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {
@@ -425,6 +468,10 @@ func (s *ambientPursuitSpy) ListForOwner(ownerIdentity string, _ bool) ([]models
 }
 
 func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error) {
+	if s.linkFailures > 0 {
+		s.linkFailures--
+		return nil, errors.New("temporary pursuit link failure")
+	}
 	s.linkedPursuitIDs = append(s.linkedPursuitIDs, id)
 	s.links = append(s.links, request)
 	return &models.PursuitLink{

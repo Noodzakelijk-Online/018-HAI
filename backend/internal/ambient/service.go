@@ -545,7 +545,16 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 			return nil, fmt.Errorf("workflow intake did not return a workflow record")
 		}
 		item.WorkflowID = &record.Item.ID
-		if err := s.linkAcceptedPursuitOpportunity(item, record, actor); err != nil {
+
+		// Persist the execution reference before the cross-service pursuit links.
+		// If a link write fails, a later acceptance attempt repairs the links from
+		// this durable reference instead of creating another workflow item.
+		if _, err := s.repo.SaveOpportunity(item); err != nil {
+			return nil, fmt.Errorf("persist ambient workflow reference: %w", err)
+		}
+	}
+	if item.WorkflowID != nil && *item.WorkflowID != uuid.Nil {
+		if err := s.linkAcceptedPursuitOpportunity(item, *item.WorkflowID, actor); err != nil {
 			return nil, err
 		}
 	}
@@ -559,8 +568,8 @@ func (s *service) Accept(id uuid.UUID, request ResolutionRequest) (*models.Ambie
 	return saved, nil
 }
 
-func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity, record *workflow.WorkflowRecord, actor string) error {
-	if s.pursuits == nil || item == nil || record == nil || record.Item.ID == uuid.Nil || !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
+func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity, workflowID uuid.UUID, actor string) error {
+	if s.pursuits == nil || item == nil || workflowID == uuid.Nil || !strings.HasPrefix(strings.TrimSpace(item.SourceType), "pursuit") {
 		return nil
 	}
 	pursuitID, err := uuid.Parse(strings.TrimSpace(item.SourceID))
@@ -570,7 +579,7 @@ func (s *service) linkAcceptedPursuitOpportunity(item *models.AmbientOpportunity
 	_, err = s.pursuits.Link(pursuitID, pursuitpkg.LinkRequest{
 		OwnerIdentity: item.OwnerIdentity,
 		LinkType:      pursuitpkg.LinkWorkflow,
-		LinkID:        record.Item.ID.String(),
+		LinkID:        workflowID.String(),
 		Relationship:  "ambient_follow_up",
 		SourceURI:     item.SourceURI,
 		SourceLabel:   item.Title,
