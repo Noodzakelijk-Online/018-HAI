@@ -1,0 +1,102 @@
+.rc {
+  padding: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 24px;
+
+    h1 {
+      margin: 8px 0 4px;
+      font-size: 24px;
+      font-weight: 600;
+    }
+  }
+
+  &__subtitle {
+    max-width: 720px;
+    color: rgba(0, 0, 0, 0.55);
+    margin: 0;
+  }
+
+  &__control {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+
+    @media (max-width: 820px) {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  &__estop {
+    &--engaged {
+      border-color: #cf1322;
+      background: rgba(207, 19, 34, 0.04);
+    }
+
+    &-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+
+      [nz-icon] {
+        font-size: 26px;
+      }
+    }
+
+    &-title {
+      font-weight: 700;
+    }
+
+    &-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+  }
+
+  &__mode {
+    nz-radio-group {
+      display: flex;
+      flex-wrap: wrap;
+      margin: 10px 0;
+    }
+  }
+
+  &__meta {
+    div {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      font-size: 13px;
+    }
+  }
+
+  &__muted {
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+  }
+
+  &__readiness {
+    overflow-x: auto;
+  }
+
+  &__ready-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+}
+
+code {
+  font-size: 12px;
+}

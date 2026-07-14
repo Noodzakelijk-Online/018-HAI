@@ -1,0 +1,72 @@
+<div class="rl">
+  <header class="rl__header">
+    <div>
+      <button nz-button nzType="text" (click)="goBack()">
+        <span nz-icon nzType="arrow-left"></span>
+      </button>
+      <h1>Runtime Lab</h1>
+      <p class="rl__subtitle">
+        HAI is the control plane above external runtimes — it never rebuilds or fakes them. The local safe worker
+        actually executes and self-tests through the Operation Ledger; Hermes, OpenClaw and Odysseus show their exact
+        setup requirements and never report execution until a real runtime runs.
+      </p>
+    </div>
+    <button nz-button nzType="text" (click)="refresh()">
+      <span nz-icon nzType="reload"></span> Refresh
+    </button>
+  </header>
+
+  <div class="rl__grid" [class.rl__grid--loading]="loading">
+    <nz-card *ngFor="let r of runtimes" class="rl__card" nzSize="small">
+      <div class="rl__card-head">
+        <div>
+          <div class="rl__name">{{ r.info.displayName }}</div>
+          <div class="rl__kind">{{ r.info.kind }}</div>
+        </div>
+        <nz-tag [nzColor]="statusColor(r.status)">{{ r.status }}</nz-tag>
+      </div>
+
+      <p class="rl__desc">{{ r.info.description }}</p>
+
+      <div class="rl__row">
+        <span class="rl__label">Claim</span>
+        <span>{{ r.claimLevel }}</span>
+      </div>
+      <div class="rl__row">
+        <span class="rl__label">Executes</span>
+        <span>{{ r.canExecute ? 'yes' : 'no' }}</span>
+      </div>
+
+      <div class="rl__caps" *ngIf="r.capabilities?.length">
+        <nz-tag
+          *ngFor="let c of r.capabilities"
+          [nzColor]="c.startsWith('forbidden') ? 'red' : c.startsWith('exercised') ? 'green' : 'default'"
+        >
+          {{ c }}
+        </nz-tag>
+      </div>
+
+      <div class="rl__setup" *ngIf="r.setupRequirements?.length">
+        <div class="rl__label">Setup required</div>
+        <ol>
+          <li *ngFor="let s of r.setupRequirements">
+            <strong>{{ s.step }}</strong> — {{ s.detail }}
+          </li>
+        </ol>
+      </div>
+
+      <div class="rl__attempt" *ngIf="r.lastAttempt as a">
+        <span class="rl__label">Last attempt</span>
+        <nz-tag [nzColor]="attemptColor(a.status)">{{ a.status }}</nz-tag>
+        <span class="rl__attempt-detail">{{ a.detail }}</span>
+      </div>
+
+      <div class="rl__actions">
+        <button nz-button nzSize="small" [nzLoading]="busy[r.info.id]" (click)="probe(r)">Probe</button>
+        <button nz-button nzSize="small" nzType="primary" [nzLoading]="busy[r.info.id]" (click)="selfTest(r)">
+          Self-test
+        </button>
+      </div>
+    </nz-card>
+  </div>
+</div>

@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
+	"os"
 	"strings"
 
 	"automation-hub-backend/docs"
+	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/agentcycle"
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
@@ -18,12 +20,18 @@ import (
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
+	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
+	"automation-hub-backend/internal/modelintelligence"
+	"automation-hub-backend/internal/opscontrol"
+	"automation-hub-backend/internal/phase2"
+	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/rbac"
+	"automation-hub-backend/internal/runtimelab"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
@@ -115,6 +123,22 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeHAIOSRoutes(v1, osHandler)
 		initializeTaskRoutes(v1, task.NewHandler(taskService))
+		modelIntelService := modelintelligence.DefaultService()
+		initializeModelIntelligenceRoutes(v1, modelintelligence.NewHandler(modelIntelService))
+		initializeHardwareRoutes(v1, hardwareprofile.NewHandler(hardwareprofile.DefaultService()))
+		privacyService := privacyfilter.DefaultService()
+		initializePrivacyRoutes(v1, privacyfilter.NewHandler(privacyService))
+		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
+		initializePhase2Routes(v1, phase2Module.Handler())
+		runtimeLabService := runtimelab.NewService(phase2Module.Broker(), phase2Module.Service(), phase2Module.OwnerUserID(), phase2Module.WorkspaceID())
+		initializeRuntimeLabRoutes(v1, runtimelab.NewHandler(runtimeLabService))
+		feedRegistry := accountfeed.NewRegistry(phase2Module.Service(), privacyService, accountfeed.FetchOptions{
+			FeedsRoot: phase2Module.FeedsDir(),
+			AllowHTTP: strings.EqualFold(strings.TrimSpace(os.Getenv("HAI_PHASE2_ALLOW_HTTP_FEEDS")), "true"),
+		})
+		seedAccountFeeds(feedRegistry, phase2Module)
+		initializeAccountFeedRoutes(v1, accountfeed.NewHandler(feedRegistry, phase2Module.OwnerUserID(), phase2Module.WorkspaceID()))
+		initializeOpsControlRoutes(v1, opscontrol.NewHandler(phase2Module.OpsControl()))
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
@@ -345,6 +369,127 @@ func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandl
 		verificationRoutes.POST("/answer", requirePermission(rbac.PermWrite), verificationHandler.Answer)
 		verificationRoutes.GET("/runs", requirePermission(rbac.PermRead), verificationHandler.Runs)
 		verificationRoutes.GET("/runs/:id", requirePermission(rbac.PermRead), verificationHandler.RunDetails)
+	}
+}
+
+func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler) {
+	ops := apiVersion.Group("/operations")
+	{
+		ops.GET("", handler.ListOperations)
+		ops.GET("/dashboard", handler.Dashboard)
+		ops.GET("/:id", handler.GetOperation)
+		ops.GET("/:id/events", handler.OperationEvents)
+		ops.GET("/:id/approvals", handler.Approvals)
+		ops.POST("/:id/approve", handler.Approve)
+		ops.POST("/:id/reject", handler.Reject)
+		ops.POST("/:id/later", handler.Later)
+		ops.POST("/:id/block-similar", handler.BlockSimilar)
+		ops.POST("/:id/run", handler.RunOperation)
+		ops.POST("/:id/evidence-pack", handler.GenerateEvidencePack)
+	}
+	apiVersion.GET("/evidence-packs/:id", handler.GetEvidencePack)
+	apiVersion.POST("/background/run", handler.RunBackground)
+}
+
+func initializeAccountFeedRoutes(apiVersion *gin.RouterGroup, handler *accountfeed.Handler) {
+	af := apiVersion.Group("/account-feeds")
+	{
+		af.GET("", handler.List)
+		af.POST("", handler.Create)
+		af.GET("/bridges", handler.Bridges)
+		af.GET("/permissions", handler.Permissions)
+		af.POST("/sync-due", handler.SyncDue)
+		af.GET("/:id", handler.Get)
+		af.PATCH("/:id", handler.Patch)
+		af.POST("/:id/sync", handler.Sync)
+		af.GET("/:id/audit", handler.Audit)
+	}
+}
+
+// seedAccountFeeds registers the module's configured local feed files so they
+// appear in the Account Feeds API and can be synced on demand.
+func seedAccountFeeds(reg *accountfeed.Registry, m *phase2.Module) {
+	for _, name := range m.FeedFiles() {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		_, _ = reg.Register(accountfeed.Feed{
+			Name:         strings.TrimSuffix(name, ".json"),
+			Provider:     string(accountfeed.ProviderGenericJSONFeed),
+			AccountLabel: name,
+			SourceType:   accountfeed.SourceLocalJSONFile,
+			Path:         name,
+			OwnerUserID:  m.OwnerUserID(),
+			WorkspaceID:  m.WorkspaceID(),
+			Enabled:      true,
+		})
+	}
+}
+
+func initializeModelIntelligenceRoutes(apiVersion *gin.RouterGroup, handler *modelintelligence.Handler) {
+	mi := apiVersion.Group("/model-intelligence")
+	{
+		mi.GET("/overview", handler.Overview)
+		mi.GET("/profiles", handler.Profiles)
+		mi.GET("/profiles/:providerId/:modelId", handler.Profile)
+		mi.POST("/profiles/:providerId/:modelId/benchmark", handler.Benchmark)
+		mi.GET("/benchmarks", handler.Benchmarks)
+		mi.GET("/telemetry", handler.Telemetry)
+		mi.GET("/lane-winners", handler.LaneWinners)
+		mi.GET("/cache", handler.Cache)
+		mi.DELETE("/cache/:id", handler.DeleteCache)
+		mi.GET("/token-budgets", handler.TokenBudgets)
+		mi.PATCH("/token-budgets", handler.UpdateTokenBudgets)
+	}
+}
+
+func initializeHardwareRoutes(apiVersion *gin.RouterGroup, handler *hardwareprofile.Handler) {
+	hw := apiVersion.Group("/hardware")
+	{
+		hw.GET("/profile", handler.Profile)
+		hw.POST("/detect", handler.Detect)
+		hw.PATCH("/profile", handler.Patch)
+	}
+	power := apiVersion.Group("/power")
+	{
+		power.GET("/policy", handler.PowerPolicy)
+		power.PATCH("/policy", handler.UpdatePowerPolicy)
+	}
+}
+
+func initializePrivacyRoutes(apiVersion *gin.RouterGroup, handler *privacyfilter.Handler) {
+	privacy := apiVersion.Group("/privacy")
+	{
+		privacy.POST("/scan", handler.ScanContent)
+		privacy.GET("/scans", handler.Scans)
+		privacy.GET("/scans/:id", handler.ScanByID)
+	}
+}
+
+func initializeOpsControlRoutes(apiVersion *gin.RouterGroup, handler *opscontrol.Handler) {
+	bg := apiVersion.Group("/background")
+	{
+		bg.GET("/status", handler.Status)
+		bg.POST("/pause", handler.Pause)
+		bg.POST("/resume", handler.Resume)
+		bg.PATCH("/mode", handler.SetMode)
+	}
+	wr := apiVersion.Group("/windows-runtime")
+	{
+		wr.GET("/readiness", handler.Readiness)
+		wr.POST("/recovery", handler.Recovery)
+		wr.POST("/emergency-stop/verify", handler.VerifyEmergencyStop)
+	}
+}
+
+func initializeRuntimeLabRoutes(apiVersion *gin.RouterGroup, handler *runtimelab.Handler) {
+	rl := apiVersion.Group("/runtime-lab")
+	{
+		rl.GET("/overview", handler.Overview)
+		rl.POST("/:runtimeId/probe", handler.Probe)
+		rl.POST("/:runtimeId/self-test", handler.SelfTest)
+		rl.GET("/:runtimeId/attempts", handler.Attempts)
 	}
 }
 

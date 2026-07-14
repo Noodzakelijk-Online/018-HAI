@@ -1,0 +1,143 @@
+<div class="bg-ops">
+  <header class="bg-ops__header">
+    <div>
+      <button nz-button nzType="text" (click)="goBack()">
+        <span nz-icon nzType="arrow-left"></span>
+      </button>
+      <h1>Background Operations</h1>
+      <p class="bg-ops__subtitle">
+        The autonomous back-office control plane. HAI ingests account feeds, decides what is safe, runs low-risk
+        reversible work through the verified local worker, and hands everything else to you.
+      </p>
+    </div>
+    <button nz-button nzType="primary" [nzLoading]="running" (click)="runBackground()">
+      <span nz-icon nzType="thunderbolt"></span> Run background pass
+    </button>
+  </header>
+
+  <section class="bg-ops__stats" *ngIf="dashboard as d">
+    <nz-card class="stat" nzSize="small">
+      <div class="stat__value">{{ d.doneWhileAway }}</div>
+      <div class="stat__label">Done while away</div>
+    </nz-card>
+    <nz-card class="stat stat--attention" nzSize="small">
+      <div class="stat__value">{{ d.needsRobert }}</div>
+      <div class="stat__label">Needs Robert</div>
+    </nz-card>
+    <nz-card class="stat" nzSize="small">
+      <div class="stat__value">{{ d.running }}</div>
+      <div class="stat__label">Running</div>
+    </nz-card>
+    <nz-card class="stat stat--danger" nzSize="small">
+      <div class="stat__value">{{ d.blocked }}</div>
+      <div class="stat__label">Blocked</div>
+    </nz-card>
+    <nz-card class="stat stat--danger" nzSize="small">
+      <div class="stat__value">{{ d.failed }}</div>
+      <div class="stat__label">Failed</div>
+    </nz-card>
+  </section>
+
+  <section class="bg-ops__feeds" *ngIf="feeds.length">
+    <span class="bg-ops__feeds-label">Account feeds:</span>
+    <nz-tag *ngFor="let f of feeds" [nzColor]="f.enabled ? 'blue' : 'default'">
+      {{ f.name }} ({{ f.provider }})
+    </nz-tag>
+  </section>
+
+  <section class="bg-ops__filters">
+    <nz-radio-group [(ngModel)]="statusFilter" (ngModelChange)="setFilter($event)">
+      <label nz-radio-button *ngFor="let s of statusFilters" [nzValue]="s.value">{{ s.label }}</label>
+    </nz-radio-group>
+    <button nz-button nzType="text" (click)="refresh()">
+      <span nz-icon nzType="reload"></span> Refresh
+    </button>
+  </section>
+
+  <nz-table
+    #opsTable
+    [nzData]="operations"
+    [nzLoading]="loading"
+    [nzNoResult]="emptyTpl"
+    nzSize="small"
+    class="bg-ops__table"
+  >
+    <thead>
+      <tr>
+        <th>Operation</th>
+        <th>Status</th>
+        <th>Risk</th>
+        <th>Decision</th>
+        <th>Verification</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let op of opsTable.data" (click)="openDetail(op)" class="bg-ops__row">
+        <td>
+          <div class="bg-ops__title">{{ op.title }}</div>
+          <div class="bg-ops__source">{{ op.sourceType }} · {{ op.operationType }}</div>
+        </td>
+        <td><nz-tag [nzColor]="statusColor(op.status)">{{ op.status }}</nz-tag></td>
+        <td><nz-tag [nzColor]="riskColor(op.riskLevel)">{{ op.riskLevel }}</nz-tag></td>
+        <td>{{ op.currentDecision }}</td>
+        <td>{{ op.verificationStatus }}</td>
+        <td (click)="$event.stopPropagation()">
+          <button nz-button nzSize="small" nzType="primary" *ngIf="canApprove(op)" (click)="approve(op)">
+            Approve
+          </button>
+          <button nz-button nzSize="small" *ngIf="canRun(op)" (click)="run(op)">Run</button>
+        </td>
+      </tr>
+    </tbody>
+  </nz-table>
+
+  <ng-template #emptyTpl>
+    <nz-empty nzNotFoundContent="No operations yet. Run a background pass to ingest your feeds."></nz-empty>
+  </ng-template>
+
+  <nz-drawer
+    [nzVisible]="detailVisible"
+    [nzTitle]="selected?.title ?? 'Operation'"
+    nzWidth="520"
+    (nzOnClose)="closeDetail()"
+  >
+    <ng-container *nzDrawerContent>
+      <div *ngIf="selected as op" class="bg-ops__detail">
+        <div class="bg-ops__detail-tags">
+          <nz-tag [nzColor]="statusColor(op.status)">{{ op.status }}</nz-tag>
+          <nz-tag [nzColor]="riskColor(op.riskLevel)">risk: {{ op.riskLevel }}</nz-tag>
+          <nz-tag>autonomy: {{ op.autonomyLevel }}</nz-tag>
+          <nz-tag>owner: {{ op.ownerType }}</nz-tag>
+        </div>
+
+        <p *ngIf="op.description" class="bg-ops__detail-desc">{{ op.description }}</p>
+
+        <dl class="bg-ops__detail-meta">
+          <div><dt>Decision</dt><dd>{{ op.currentDecision }}</dd></div>
+          <div><dt>Recommended</dt><dd>{{ op.recommendedAction || '—' }}</dd></div>
+          <div><dt>Runtime</dt><dd>{{ op.runtimeId || '—' }}</dd></div>
+          <div><dt>Verification</dt><dd>{{ op.verificationStatus }}</dd></div>
+          <div *ngIf="op.resultSummary"><dt>Result</dt><dd>{{ op.resultSummary }}</dd></div>
+          <div *ngIf="op.lastError"><dt>Last error</dt><dd class="bg-ops__error">{{ op.lastError }}</dd></div>
+        </dl>
+
+        <div class="bg-ops__detail-actions">
+          <button nz-button nzType="primary" *ngIf="canApprove(op)" (click)="approve(op)">Approve</button>
+          <button nz-button *ngIf="canRun(op)" (click)="run(op)">Run safe worker</button>
+        </div>
+
+        <h3 class="bg-ops__audit-title">Audit trail</h3>
+        <nz-timeline>
+          <nz-timeline-item *ngFor="let e of selectedEvents">
+            <strong>{{ e.eventType }}</strong>
+            <span *ngIf="e.beforeStatus || e.afterStatus"> · {{ e.beforeStatus || '∅' }} → {{ e.afterStatus }}</span>
+            <div class="bg-ops__audit-msg">{{ e.message }}</div>
+            <div class="bg-ops__audit-actor">{{ e.actorType }} · {{ e.createdAt | date: 'short' }}</div>
+          </nz-timeline-item>
+        </nz-timeline>
+        <nz-empty *ngIf="!selectedEvents.length" nzNotFoundContent="No events recorded"></nz-empty>
+      </div>
+    </ng-container>
+  </nz-drawer>
+</div>

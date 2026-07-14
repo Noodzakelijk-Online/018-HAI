@@ -99,6 +99,46 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "background-operations",
+    loadChildren: () =>
+      import("./pages/background-operations/background-operations.module").then(
+        (m) => m.BackgroundOperationsModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "model-intelligence",
+    loadChildren: () =>
+      import("./pages/model-intelligence/model-intelligence.module").then(
+        (m) => m.ModelIntelligenceModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "runtime-lab",
+    loadChildren: () =>
+      import("./pages/runtime-lab/runtime-lab.module").then(
+        (m) => m.RuntimeLabModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "account-bridges",
+    loadChildren: () =>
+      import("./pages/account-bridges/account-bridges.module").then(
+        (m) => m.AccountBridgesModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "runtime-control",
+    loadChildren: () =>
+      import("./pages/runtime-control/runtime-control.module").then(
+        (m) => m.RuntimeControlModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "onboarding",
     loadChildren: () =>
       import("./pages/onboarding/onboarding.module").then(

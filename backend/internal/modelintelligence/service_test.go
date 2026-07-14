@@ -1,0 +1,154 @@
+package modelintelligence
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+func newTestService() *Service {
+	// Fixed clock keeps telemetry timestamps deterministic.
+	s := NewService(NewRegistryFromEnv())
+	s.now = func() time.Time { return time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC) }
+	return s
+}
+
+func TestRegistryTruthfulProviderStates(t *testing.T) {
+	s := newTestService()
+	over := s.Overview()
+	byID := map[string]ProviderSummary{}
+	for _, p := range over.Providers {
+		byID[p.ID] = p
+	}
+	// Test providers are active (local deterministic); remote providers with no
+	// env config must be not_configured — never fabricated as active.
+	if byID[ProviderTestFastTriage].Status != ProviderActive {
+		t.Fatalf("test-fast-triage must be active, got %s", byID[ProviderTestFastTriage].Status)
+	}
+	for _, id := range []string{"dspark", "ollama", "lm-studio", "custom-openai-compatible"} {
+		if byID[id].Status != ProviderNotConfigured {
+			t.Fatalf("%s must be not_configured without env config, got %s", id, byID[id].Status)
+		}
+	}
+}
+
+func TestFastTriageLaneAffectsBehavior(t *testing.T) {
+	s := newTestService()
+	res, err := s.Triage(context.Background(), "review_invoice", "Pay invoice", "Please pay the rent invoice", true, false, "op-1")
+	if err != nil {
+		t.Fatalf("triage: %v", err)
+	}
+	if !res.Routed {
+		t.Fatalf("fast-triage lane must route to an active model")
+	}
+	if res.Category != "financial" {
+		t.Fatalf("expected financial category, got %q", res.Category)
+	}
+	if res.ProviderID != ProviderTestFastTriage {
+		t.Fatalf("expected the triage provider, got %q", res.ProviderID)
+	}
+	// The call must have produced real telemetry.
+	if len(s.Telemetry()) == 0 {
+		t.Fatalf("triage must record telemetry")
+	}
+}
+
+func TestPrivacyLaneRestrictsCloud(t *testing.T) {
+	s := newTestService()
+	// All 2B providers are local, so a privacy-restricted route still succeeds
+	// on a local model; the decision must record the cloud restriction.
+	dec := s.router.Route(LaneFastTriage, LaneInput{SafeForCloud: false}, s.now())
+	if !dec.CloudRestricted {
+		t.Fatalf("route must record cloud restriction when content is not safe for cloud")
+	}
+	if dec.Routable && !dec.Local {
+		t.Fatalf("privacy-restricted route must select a local model")
+	}
+}
+
+func TestBenchmarkRecordsClaimAndTelemetry(t *testing.T) {
+	s := newTestService()
+	res, err := s.Benchmark(context.Background(), ProviderTestFastTriage, "triage-rules-v1")
+	if err != nil {
+		t.Fatalf("benchmark: %v", err)
+	}
+	if !res.OK || res.ClaimLevel != ClaimBenchmarked {
+		t.Fatalf("benchmark must promote to benchmarked, got ok=%v claim=%s", res.OK, res.ClaimLevel)
+	}
+	// A not-configured provider benchmarks truthfully: attempted, not usable, no promotion.
+	res2, err := s.Benchmark(context.Background(), "dspark", "dspark-default")
+	if err != nil {
+		t.Fatalf("benchmark dspark: %v", err)
+	}
+	if res2.OK {
+		t.Fatalf("dspark must not benchmark OK when not configured")
+	}
+	if res2.ClaimLevel == ClaimBenchmarked {
+		t.Fatalf("not-configured provider must not be promoted to benchmarked")
+	}
+}
+
+func TestLaneWinnersOnlyFromObservedRuns(t *testing.T) {
+	s := newTestService()
+	if len(s.LaneWinners()) != 0 {
+		t.Fatalf("no telemetry yet -> no lane winners")
+	}
+	_, _ = s.Triage(context.Background(), "note", "Organize notes", "cleanup", true, false, "op-2")
+	winners := s.LaneWinners()
+	if len(winners) == 0 {
+		t.Fatalf("a routed run must yield a lane winner")
+	}
+}
+
+func TestBudgetDefaultsConservativeAndValidated(t *testing.T) {
+	s := newTestService()
+	b := s.TokenBudgetDefaults()
+	if b.ContextStrategy != ContextEvidenceOnly || b.MaximumReasoning != EffortLow {
+		t.Fatalf("defaults must be conservative (evidence_only/low), got %s/%s", b.ContextStrategy, b.MaximumReasoning)
+	}
+	bad := b
+	bad.ContextStrategy = "everything"
+	if _, err := s.SetTokenBudgetDefaults(bad); err == nil {
+		t.Fatalf("invalid context strategy must be rejected")
+	}
+}
+
+func TestDSparkURLValidation(t *testing.T) {
+	bad := []string{"ftp://x", "http://169.254.169.254/v1", "http://0.0.0.0/", "http://metadata.google.internal/"}
+	for _, u := range bad {
+		if err := validateEndpointURL(u); err == nil {
+			t.Fatalf("URL %q must be rejected", u)
+		}
+	}
+	for _, u := range []string{"http://localhost:1234", "http://127.0.0.1:8080", "https://api.example.com"} {
+		if err := validateEndpointURL(u); err != nil {
+			t.Fatalf("URL %q must be allowed: %v", u, err)
+		}
+	}
+}
+
+func TestCacheReuseBoundaries(t *testing.T) {
+	c := NewCache()
+	now := time.Now()
+	c.Store(CacheDeterministicResult, "p1", "out", "revA", false, true, false, now)
+	// Unverified output must not be reused for a high-risk action.
+	if _, ok := c.Get(CacheLookup{CacheType: CacheDeterministicResult, Prompt: "p1", ForHighRiskAction: true, SafeForCloud: true}); ok {
+		t.Fatalf("unverified output must not be reused for high-risk actions")
+	}
+	// Changed source revision must invalidate reuse.
+	if _, ok := c.Get(CacheLookup{CacheType: CacheDeterministicResult, Prompt: "p1", SourceRevisionHash: "revB", SafeForCloud: true}); ok {
+		t.Fatalf("changed source revision must not be reused")
+	}
+	// Same revision, low-risk, safe -> reusable.
+	if _, ok := c.Get(CacheLookup{CacheType: CacheDeterministicResult, Prompt: "p1", SourceRevisionHash: "revA", SafeForCloud: true}); !ok {
+		t.Fatalf("matching, low-risk, safe lookup should hit")
+	}
+}
+
+func TestQualityScoreRewardsVerifiedWork(t *testing.T) {
+	low := ComputeQualityScore(QualityInputs{VerifiedCompletions: 1, TokensUsed: 100000, HumanRepairs: 5})
+	high := ComputeQualityScore(QualityInputs{VerifiedCompletions: 10, TokensUsed: 1000})
+	if high.Score <= low.Score {
+		t.Fatalf("more verified work at lower cost must score higher: high=%f low=%f", high.Score, low.Score)
+	}
+}

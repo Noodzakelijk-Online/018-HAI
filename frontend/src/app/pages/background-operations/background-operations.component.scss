@@ -1,0 +1,152 @@
+.bg-ops {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 24px;
+
+    h1 {
+      margin: 8px 0 4px;
+      font-size: 24px;
+      font-weight: 600;
+    }
+  }
+
+  &__subtitle {
+    max-width: 640px;
+    color: rgba(0, 0, 0, 0.55);
+    margin: 0;
+  }
+
+  &__stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+
+    .stat {
+      text-align: center;
+
+      &__value {
+        font-size: 28px;
+        font-weight: 700;
+        line-height: 1.1;
+      }
+
+      &__label {
+        color: rgba(0, 0, 0, 0.55);
+        font-size: 13px;
+      }
+
+      &--attention .stat__value {
+        color: #d48806;
+      }
+
+      &--danger .stat__value {
+        color: #cf1322;
+      }
+    }
+  }
+
+  &__feeds {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+
+    &-label {
+      color: rgba(0, 0, 0, 0.55);
+      font-size: 13px;
+    }
+  }
+
+  &__filters {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  &__table {
+    .bg-ops__row {
+      cursor: pointer;
+    }
+  }
+
+  &__title {
+    font-weight: 500;
+  }
+
+  &__source {
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 12px;
+  }
+
+  &__detail {
+    &-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    &-desc {
+      color: rgba(0, 0, 0, 0.7);
+    }
+
+    &-meta {
+      margin: 16px 0;
+
+      div {
+        display: flex;
+        gap: 8px;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      }
+
+      dt {
+        width: 120px;
+        color: rgba(0, 0, 0, 0.45);
+        margin: 0;
+      }
+
+      dd {
+        margin: 0;
+        flex: 1;
+      }
+    }
+
+    &-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+  }
+
+  &__error {
+    color: #cf1322;
+    word-break: break-word;
+  }
+
+  &__audit-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+
+  &__audit-msg {
+    color: rgba(0, 0, 0, 0.7);
+    font-size: 13px;
+  }
+
+  &__audit-actor {
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 12px;
+  }
+}
