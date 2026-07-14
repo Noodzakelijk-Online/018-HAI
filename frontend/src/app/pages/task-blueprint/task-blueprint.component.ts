@@ -579,6 +579,8 @@ export class TaskBlueprintComponent implements OnInit {
       title:
         command.pursuit?.awaitingAcceptance
           ? 'Pursuit candidate recorded'
+          : command.pursuit?.executionQueued
+          ? 'Governed workflow queued'
           : intent === 'cycle'
           ? 'Assistant cycle completed'
           : intent === 'run'

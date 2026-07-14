@@ -143,35 +143,36 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 				s.addLog(*result)
 				return result, nil
 			}
-			taskRequest.PursuitID = pursuitContext.PursuitID
-		}
-		if request.ExecuteAllowed && pursuitContext != nil && pursuitContext.ExecutionQueued {
-			// The durable workflow worker owns execution. Do not run the same command
-			// directly here, or a retry/scheduler could execute it twice.
-			taskRequest.ExecuteAllowed = false
+			if !pursuitContext.ExecutionQueued {
+				taskRequest.PursuitID = pursuitContext.PursuitID
+			}
 		}
 	}
-	if s.tasks == nil {
+	workflowQueued := result.Pursuit != nil && result.Pursuit.ExecutionQueued
+	if s.tasks == nil && !workflowQueued {
 		return nil, fmt.Errorf("task engine is not configured")
 	}
 
 	var plan *task.CompletionPlan
 	var err error
-	if request.ExecuteAllowed && (result.Pursuit == nil || !result.Pursuit.ExecutionQueued) {
+	if workflowQueued {
+		// Pursuit intake already created or reused the governed workflow. Its
+		// worker passes WorkflowID into the task engine, which keeps task-run
+		// evidence on the workflow ledger and avoids a duplicate direct plan.
+		result.record("pursuit workflow", nil, "created or reused governed workflow work; the workflow worker owns planning, execution, retries, and verification")
+	} else if request.ExecuteAllowed {
 		plan, err = s.tasks.Run(taskRequest)
 		result.record("task success engine", err, "ran safe allowed task steps")
 	} else {
 		plan, err = s.tasks.Plan(taskRequest)
-		if result.Pursuit != nil && result.Pursuit.ExecutionQueued {
-			result.record("task planner", err, "created a completion-first plan; execution is queued in the governed workflow worker")
-		} else {
-			result.record("task planner", err, "created completion-first plan")
-		}
+		result.record("task planner", err, "created completion-first plan")
 	}
 	if err != nil {
 		return result, err
 	}
-	result.Plan = plan
+	if plan != nil {
+		result.Plan = plan
+	}
 
 	if shouldRunCycle(message, request, intent) {
 		if s.cycle == nil {
@@ -192,6 +193,10 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 	result.ReviewRequired = planRequiresReview(result.Plan) || cycleRequiresReview(result.AgentCycle)
 	result.NextAction = deriveNextAction(result)
 	result.Summary = deriveSummary(result)
+	if workflowQueued && result.AgentCycle == nil {
+		result.NextAction = "review the governed workflow, its evidence, and any approval requirement before it runs"
+		result.Summary = "HAI added the command to governed workflow work. The workflow worker owns planning, execution, retries, verification, and the audit trail."
+	}
 	s.addLog(*result)
 	return result, nil
 }

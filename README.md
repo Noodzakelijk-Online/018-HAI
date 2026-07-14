@@ -199,6 +199,11 @@ work from the command dashboard.
   the candidate back to the chat result, asks Robert to accept or archive it,
   and creates no workflow, task attempt, runtime action, or side effect before
   the explicit candidate-acceptance action.
+- An assistant command that creates or reuses active pursuit work stops at the
+  governed workflow ledger. The workflow worker supplies its WorkflowID to the
+  task engine, so planning, retries, verification, and runtime evidence are
+  recorded once on the workflow instead of also creating a duplicate direct
+  task attempt from the chat command.
 - Pursuit decision resolution requires approval capability both in route
   registration and in the handler. Alternate or future route wiring cannot
   turn a non-approver's request into a workflow or decision audit event.

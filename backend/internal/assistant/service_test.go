@@ -208,6 +208,43 @@ func TestCommandCandidateHandoffDoesNotCreateDirectTaskWork(t *testing.T) {
 	}
 }
 
+func TestCommandQueuedWorkflowDoesNotCreateDuplicateDirectTaskPlan(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	pursuitID := uuid.New()
+	router := &fakePursuitCommandRouter{routed: &pursuit.RoutedIntakeResult{
+		Mode:      "matched_existing",
+		Matched:   true,
+		PursuitID: pursuitID,
+		Message:   "assistant command was added to the matched pursuit workflow",
+		Detail:    &pursuit.PursuitDetail{Pursuit: models.Pursuit{ID: pursuitID, Title: "Dashboard recovery"}},
+	}}
+	service := NewService(tasks, nil, router)
+
+	result, err := service.Command(CommandRequest{
+		Message:        "Run the dashboard recovery workflow safely.",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if tasks.planCalls != 0 || tasks.runCalls != 0 {
+		t.Fatalf("queued workflow created duplicate direct task work: plan=%d run=%d", tasks.planCalls, tasks.runCalls)
+	}
+	if result.Plan != nil {
+		t.Fatalf("queued workflow unexpectedly returned a direct task plan: %#v", result.Plan)
+	}
+	if result.Pursuit == nil || !result.Pursuit.ExecutionQueued || result.Pursuit.AwaitingAcceptance {
+		t.Fatalf("workflow context = %#v", result.Pursuit)
+	}
+	if !strings.Contains(result.Summary, "governed workflow") || !strings.Contains(result.NextAction, "workflow") {
+		t.Fatalf("workflow handoff was not explained: %#v", result)
+	}
+	if len(result.Actions) != 1 || result.Actions[0].Name != "pursuit workflow" {
+		t.Fatalf("workflow handoff action = %#v", result.Actions)
+	}
+}
+
 func TestCommandSelectedCandidateDoesNotCreatePlanOrWorkflow(t *testing.T) {
 	tasks := &fakeTaskEngine{}
 	pursuitID := uuid.New()
