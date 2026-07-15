@@ -320,6 +320,35 @@ If the Postgres data volume already exists, changing first-run values does not
 rewrite the existing account. Do not commit `.env.local`, Docker state,
 database directories, uploaded material, frontend build output, or secrets.
 
+### Optional Google sign-in and password recovery
+
+The local password login works without external accounts. The login page only
+offers Google sign-in or email recovery after their private credentials are set
+in `.env.local`; it will not route an operator to a broken OAuth flow or claim a
+reset code was delivered when no mail sender exists.
+
+For a dedicated Google OAuth **web** client, register this redirect URI for the
+local gateway:
+
+```text
+http://localhost/api/v1/auth/google/callback
+```
+
+Then set `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and
+`GOOGLE_LOGIN_REDIRECT_URL` in `.env.local`, and recreate the IDP container.
+The Gmail connected-source callback is separate and, if configured, uses
+`GOOGLE_OAUTH_REDIRECT_URL`; it must also be explicitly registered with Google.
+
+For reset emails, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+`SMTP_PASSWORD`, `SMTP_FROM`, and `SMTP_REQUIRE_STARTTLS=true` in `.env.local`.
+Use a dedicated mailbox or provider app password over STARTTLS (typically port
+587), never a primary mailbox password. Recreate the IDP container after
+changing either integration:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml up -d --build idp frontend gateway
+```
+
 ### Verify the local gateway
 
 ```powershell

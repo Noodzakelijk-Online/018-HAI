@@ -4,6 +4,7 @@ import (
 	"automation-hub-idp/internal/app/config"
 	"automation-hub-idp/internal/app/dto"
 	"automation-hub-idp/internal/app/models"
+	"automation-hub-idp/internal/app/services/iservice"
 	"automation-hub-idp/internal/app/utils"
 	"errors"
 	"testing"
@@ -153,6 +154,47 @@ func TestConfirmPasswordResetUpdatesPasswordAndClearsToken(t *testing.T) {
 	require.Nil(t, userService.updatedUser.ResetTokenExpires)
 }
 
+func TestRequestPasswordResetDoesNotPersistTokenWhenEmailDeliveryIsUnavailable(t *testing.T) {
+	setupAuthConfig(t)
+	userService := &fakeUserService{userByEmail: &models.User{ID: uuid.New(), Email: "operator@example.com"}}
+	svc := &service{
+		userService:      userService,
+		passwordResetter: fakePasswordResetSender{configured: false},
+		logger:           noopLogger{},
+	}
+
+	_, _, err := svc.RequestPasswordReset("operator@example.com")
+	require.EqualError(t, err, "password reset email delivery is not configured")
+	require.Nil(t, userService.updatedUser)
+}
+
+func TestRequestPasswordResetClearsTokenWhenEmailDeliveryFails(t *testing.T) {
+	setupAuthConfig(t)
+	userService := &fakeUserService{userByEmail: &models.User{ID: uuid.New(), Email: "operator@example.com"}}
+	svc := &service{
+		userService:      userService,
+		passwordResetter: fakePasswordResetSender{configured: true, err: errors.New("smtp unavailable")},
+		logger:           noopLogger{},
+	}
+
+	_, _, err := svc.RequestPasswordReset("operator@example.com")
+	require.EqualError(t, err, "failed to send password reset email")
+	require.NotNil(t, userService.updatedUser)
+	require.Empty(t, userService.updatedUser.ResetPasswordToken)
+	require.Nil(t, userService.updatedUser.ResetTokenExpires)
+}
+
+func TestAuthCapabilitiesReflectConfiguredOptionalPaths(t *testing.T) {
+	t.Setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret")
+	t.Setenv("GOOGLE_LOGIN_REDIRECT_URL", "http://localhost/api/v1/auth/google/callback")
+	svc := &service{jwtSecret: "test-secret", passwordResetter: fakePasswordResetSender{configured: true}}
+
+	capabilities := svc.Capabilities()
+	require.True(t, capabilities.GoogleLoginEnabled)
+	require.True(t, capabilities.PasswordRecoveryEmailEnabled)
+}
+
 func setupAuthConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("LOGGER_TOPIC", "logs")
@@ -257,5 +299,17 @@ func (noopLogger) Info(message string, args ...interface{})  {}
 func (noopLogger) Error(message string, args ...interface{}) {}
 func (noopLogger) Warn(message string, args ...interface{})  {}
 func (noopLogger) Debug(message string, args ...interface{}) {}
+
+type fakePasswordResetSender struct {
+	configured bool
+	err        error
+}
+
+func (f fakePasswordResetSender) Configured() bool { return f.configured }
+func (f fakePasswordResetSender) SendPasswordReset(string, string, time.Time) error {
+	return f.err
+}
+
+var _ iservice.PasswordResetSender = fakePasswordResetSender{}
 
 var _ IService = (*service)(nil)

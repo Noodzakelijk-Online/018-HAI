@@ -32,17 +32,24 @@ type service struct {
 	blockListService iservice.TokenBlockListService
 	logger           iservice.Logger
 	sender           iservice.MessageSender
+	passwordResetter iservice.PasswordResetSender
 	jwtSecret        string
 }
 
 func NewService(userService users.UserService, hasher utils.PasswordHasher, sender iservice.MessageSender,
-	blockListService iservice.TokenBlockListService, logger iservice.Logger, jwtSecret string) IService {
+	blockListService iservice.TokenBlockListService, logger iservice.Logger, jwtSecret string,
+	passwordResetter ...iservice.PasswordResetSender) IService {
+	var resetter iservice.PasswordResetSender
+	if len(passwordResetter) > 0 {
+		resetter = passwordResetter[0]
+	}
 	return &service{
 		userService:      userService,
 		hasher:           hasher,
 		blockListService: blockListService,
 		logger:           logger,
 		sender:           sender,
+		passwordResetter: resetter,
 		jwtSecret:        jwtSecret,
 	}
 }
@@ -65,7 +72,23 @@ func GetDefaultAuthService() (IService, error) {
 		return nil, err
 	}
 	blockListService := services.NewRedisTokenBlockListService()
-	return NewService(userService, hasher, sender, blockListService, logger, config.AuthenticationConfig.JwtSecret), nil
+	passwordResetter := services.NewSMTPPasswordResetSender(
+		config.MailConfig.Host,
+		config.MailConfig.Port,
+		config.MailConfig.Username,
+		config.MailConfig.Password,
+		config.MailConfig.From,
+		config.MailConfig.RequireStartTLS,
+	)
+	return NewService(userService, hasher, sender, blockListService, logger, config.AuthenticationConfig.JwtSecret, passwordResetter), nil
+}
+
+func (a *service) Capabilities() dto.AuthCapabilities {
+	googleOAuth := newGoogleOAuth(a.jwtSecret)
+	return dto.AuthCapabilities{
+		GoogleLoginEnabled:           googleOAuth.Configured(),
+		PasswordRecoveryEmailEnabled: a.passwordResetter != nil && a.passwordResetter.Configured(),
+	}
 }
 
 func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
@@ -419,6 +442,10 @@ func (a *service) IsUserAuthenticated(accessToken string) (bool, error) {
 }
 
 func (a *service) RequestPasswordReset(email string) (string, time.Time, error) {
+	if a.passwordResetter == nil || !a.passwordResetter.Configured() {
+		a.logger.Warn("Password reset requested while email delivery is not configured")
+		return "", time.Time{}, errors.New("password reset email delivery is not configured")
+	}
 	email = strings.TrimSpace(strings.ToLower(email))
 	parsedEmail, err := mail.ParseAddress(email)
 	if err != nil || parsedEmail.Address != email {
@@ -445,23 +472,17 @@ func (a *service) RequestPasswordReset(email string) (string, time.Time, error) 
 		return "", time.Time{}, errors.New("failed to update user")
 	}
 
-	// Send the message with the reset token
-	msg := struct {
-		Email          string
-		ResetToken     string
-		TokenExpiresIn int64
-	}{
-		Email:          email,
-		ResetToken:     resetToken,
-		TokenExpiresIn: resetTokenExpires.Unix(),
-	}
-	err = a.sender.Send(config.AuthenticationConfig.PasswordResetTopic, msg)
-	if err != nil {
-		a.logger.Error("Error sending reset token message: %v", err)
-		return "", time.Time{}, errors.New("failed to send reset token")
+	if err := a.passwordResetter.SendPasswordReset(email, resetToken, resetTokenExpires); err != nil {
+		a.logger.Error("Error sending password-reset email: %v", err)
+		user.ResetPasswordToken = ""
+		user.ResetTokenExpires = nil
+		if _, rollbackErr := a.userService.UpdateUser(*user); rollbackErr != nil {
+			a.logger.Error("Failed to remove undelivered reset token: %v", rollbackErr)
+		}
+		return "", time.Time{}, errors.New("failed to send password reset email")
 	}
 
-	a.logger.Info("Successfully sent reset token to user: %s", email)
+	a.logger.Info("Successfully sent password-reset email to user: %s", email)
 	return resetToken, resetTokenExpires, nil
 }
 

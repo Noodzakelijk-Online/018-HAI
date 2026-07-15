@@ -45,6 +45,7 @@ func initializeAuthRoutes(apiVersion *gin.RouterGroup) error {
 
 	auth := apiVersion.Group("/auth")
 	{
+		auth.GET("/capabilities", authHandler.Capabilities)
 		auth.POST("/register", authHandler.Register)
 		auth.POST("/login", authHandler.Login)
 		auth.GET("/google/login", authHandler.GoogleLogin)

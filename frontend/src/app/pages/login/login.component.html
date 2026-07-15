@@ -108,7 +108,7 @@
     </p>
 
     <p class="login-form-hint" *ngIf="recoveryMode && recoveryStep === 'request'">
-      HAI does not disclose whether an account exists. Reset codes are delivered only through the recovery channel configured for that account.
+      {{ passwordRecoveryEmailEnabled ? 'HAI does not disclose whether an account exists. Reset codes are delivered only through the configured email recovery channel.' : 'Email recovery is not configured for this local installation.' }}
     </p>
 
     <nz-form-control>
@@ -139,8 +139,9 @@
         [nzType]="'primary'"
         data-testid="login-submit"
         [nzLoading]="registering || recovering"
+        [disabled]="recoveryMode && recoveryStep === 'request' && authCapabilitiesLoaded && !passwordRecoveryEmailEnabled"
       >
-        {{ recoveryMode ? (recoveryStep === 'confirm' ? 'Set new password' : 'Request reset code') : (registrationMode ? 'Create account' : 'Log in') }}
+        {{ recoveryMode ? (recoveryStep === 'confirm' ? 'Set new password' : (authCapabilitiesLoaded && !passwordRecoveryEmailEnabled ? 'Email recovery unavailable' : 'Request reset code')) : (registrationMode ? 'Create account' : 'Log in') }}
       </button>
       <button type="button" class="login-register-link" (click)="showResetConfirmation()" *ngIf="recoveryMode && recoveryStep === 'request'">
         I already have a reset code
@@ -152,7 +153,7 @@
         Create a local operator account
       </button>
 
-      <div class="login-divider"><span>or</span></div>
+      <div class="login-divider" *ngIf="googleLoginEnabled"><span>or</span></div>
 
       <button
         type="button"
@@ -161,10 +162,14 @@
         [nzType]="'default'"
         (click)="loginWithGoogle()"
         data-testid="login-google"
+        *ngIf="googleLoginEnabled"
       >
         <span nz-icon nzType="google" nzTheme="outline"></span>
         Sign in with Google
       </button>
+      <p class="login-form-hint" *ngIf="authCapabilitiesLoaded && !googleLoginEnabled">
+        Google sign-in is not configured for this local installation.
+      </p>
     </nz-form-control>
   </form>
 </section>

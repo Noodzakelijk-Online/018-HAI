@@ -8,6 +8,7 @@ import (
 )
 
 type IService interface {
+	Capabilities() dto.AuthCapabilities
 	Register(userDTO dto.UserDTO) (*dto.UserResponse, error)
 	Login(email, password string) (*dto.TokenDetails, error)
 	// GoogleAuthURL returns the Google consent URL for "Sign in with Google".

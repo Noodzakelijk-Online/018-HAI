@@ -18,6 +18,9 @@ export class LoginComponent implements OnInit {
   recoveryStep: 'request' | 'confirm' = 'request';
   registering = false;
   recovering = false;
+  authCapabilitiesLoaded = false;
+  googleLoginEnabled = false;
+  passwordRecoveryEmailEnabled = false;
   validateForm: FormGroup = this.fb.group({});
 
   constructor(
@@ -29,6 +32,16 @@ export class LoginComponent implements OnInit {
 
   ngOnInit(): void {
     this.onInitForm();
+    this.authService.getCapabilities().subscribe({
+      next: (capabilities) => {
+        this.googleLoginEnabled = Boolean(capabilities.googleLoginEnabled);
+        this.passwordRecoveryEmailEnabled = Boolean(capabilities.passwordRecoveryEmailEnabled);
+        this.authCapabilitiesLoaded = true;
+      },
+      error: () => {
+        this.authCapabilitiesLoaded = true;
+      },
+    });
   }
 
   onInitForm() {
@@ -134,6 +147,13 @@ export class LoginComponent implements OnInit {
   }
 
   private requestPasswordReset(): void {
+    if (this.authCapabilitiesLoaded && !this.passwordRecoveryEmailEnabled) {
+      this.notification.warning(
+        'Email recovery is unavailable',
+        'Configure a private SMTP delivery account for this HAI installation before requesting a reset code.'
+      );
+      return;
+    }
     const emailControl = this.validateForm.controls['userName'];
     emailControl.updateValueAndValidity();
     if (emailControl.invalid) {

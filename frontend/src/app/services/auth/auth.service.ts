@@ -1,7 +1,7 @@
 import {Injectable} from '@angular/core';
 import {HttpClient, HttpHeaders, HttpParams} from '@angular/common/http';
 import {catchError, map} from 'rxjs/operators';
-import {IAuthService} from "../auth.service.interface";
+import {IAuthCapabilities, IAuthService} from "../auth.service.interface";
 import {Observable, of} from "rxjs";
 import {IUserModel} from "../../models/user.model.interface";
 
@@ -13,6 +13,10 @@ export class AuthService implements IAuthService {
     private apiUrl = '/api/v1/auth';
 
     constructor(private http: HttpClient) {
+    }
+
+    getCapabilities(): Observable<IAuthCapabilities> {
+        return this.http.get<IAuthCapabilities>(`${this.apiUrl}/capabilities`);
     }
 
     login(email: string, password: string) {

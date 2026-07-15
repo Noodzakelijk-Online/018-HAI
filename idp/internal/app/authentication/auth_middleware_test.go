@@ -61,6 +61,8 @@ type middlewareAuthService struct {
 	lastIdentityToken string
 }
 
+func (s *middlewareAuthService) Capabilities() dto.AuthCapabilities { return dto.AuthCapabilities{} }
+
 func (s *middlewareAuthService) Register(dto.UserDTO) (*dto.UserResponse, error) {
 	return nil, errors.New("not implemented")
 }

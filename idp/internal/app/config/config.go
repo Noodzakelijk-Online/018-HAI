@@ -11,6 +11,7 @@ var (
 	KafkaConfig          *kafkaConfig
 	PostgresConfig       *postgresConfig
 	RedisConfig          *redisConfig
+	MailConfig           *mailConfig
 )
 
 func Setup() error {
@@ -35,6 +36,7 @@ func Setup() error {
 	if err != nil {
 		return err
 	}
+	MailConfig = newMailConfig()
 
 	return nil
 }
@@ -52,6 +54,16 @@ func getEnvInt(key string, defaultValue int) int {
 func getEnvString(key string, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value, exists := os.LookupEnv(key); exists {
+		parsed, err := strconv.ParseBool(value)
+		if err == nil {
+			return parsed
+		}
 	}
 	return defaultValue
 }

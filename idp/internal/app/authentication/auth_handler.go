@@ -18,6 +18,12 @@ func NewHandler(authService IService) *Handler {
 	}
 }
 
+// Capabilities exposes only optional login-path availability; it never returns
+// provider settings, credentials, or account existence information.
+func (h *Handler) Capabilities(c *gin.Context) {
+	c.JSON(http.StatusOK, h.authService.Capabilities())
+}
+
 // Register
 // @Summary Register a new user
 // @Description Register a new user

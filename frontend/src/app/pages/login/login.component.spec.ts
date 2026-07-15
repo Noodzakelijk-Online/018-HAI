@@ -6,8 +6,9 @@ import { LoginComponent } from './login.component';
 
 describe('LoginComponent registration', () => {
   function createComponent(): { component: LoginComponent; auth: jasmine.SpyObj<any>; notification: jasmine.SpyObj<any> } {
-    const auth = jasmine.createSpyObj('AuthService', ['login', 'register', 'requestPasswordReset', 'confirmPasswordReset']);
-    const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'info', 'create']);
+    const auth = jasmine.createSpyObj('AuthService', ['getCapabilities', 'login', 'register', 'requestPasswordReset', 'confirmPasswordReset']);
+    auth.getCapabilities.and.returnValue(of({ googleLoginEnabled: false, passwordRecoveryEmailEnabled: false }));
+    const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'warning', 'info', 'create']);
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     const component = new LoginComponent(new FormBuilder(), notification as NzNotificationService, router, auth);
     component.ngOnInit();
@@ -82,6 +83,8 @@ describe('LoginComponent registration', () => {
 
   it('requests a password reset without showing developer recovery instructions', () => {
     const { component, auth, notification } = createComponent();
+    auth.getCapabilities.and.returnValue(of({ googleLoginEnabled: false, passwordRecoveryEmailEnabled: true }));
+    component.ngOnInit();
     auth.requestPasswordReset.and.returnValue(of(void 0));
     component.validateForm.patchValue({ userName: 'operator@example.com' });
 
@@ -94,6 +97,20 @@ describe('LoginComponent registration', () => {
     expect(notification.success).toHaveBeenCalledWith(
       'Recovery requested',
       'If recovery is available for this account, a one-time reset code has been sent through its configured recovery channel.'
+    );
+  });
+
+  it('does not request a reset code when email recovery is unavailable', () => {
+    const { component, auth, notification } = createComponent();
+    component.validateForm.patchValue({ userName: 'operator@example.com' });
+
+    component.showPasswordHelp();
+    component.submitForm();
+
+    expect(auth.requestPasswordReset).not.toHaveBeenCalled();
+    expect(notification.warning).toHaveBeenCalledWith(
+      'Email recovery is unavailable',
+      'Configure a private SMTP delivery account for this HAI installation before requesting a reset code.'
     );
   });
 
