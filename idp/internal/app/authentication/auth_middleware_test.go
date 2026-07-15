@@ -53,6 +53,22 @@ func TestAuthMiddlewareRefreshesBeforeResolvingExpiredAccessIdentity(t *testing.
 	}
 }
 
+func TestIsLoopbackHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"localhost":         true,
+		"localhost:8088":    true,
+		"127.0.0.1":         true,
+		"127.0.0.1:8088":    true,
+		"[::1]:8088":        true,
+		"192.168.1.10:8088": false,
+		"example.com":       false,
+	} {
+		if got := isLoopbackHost(host); got != want {
+			t.Errorf("isLoopbackHost(%q) = %t, want %t", host, got, want)
+		}
+	}
+}
+
 type middlewareAuthService struct {
 	valid             bool
 	refreshResult     *dto.TokenDetails
@@ -73,6 +89,9 @@ func (s *middlewareAuthService) GoogleAuthURL() (string, error) {
 	return "", errors.New("not implemented")
 }
 func (s *middlewareAuthService) LoginWithGoogle(context.Context, string, string) (*dto.TokenDetails, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *middlewareAuthService) LocalPreviewLogin() (*dto.TokenDetails, error) {
 	return nil, errors.New("not implemented")
 }
 func (s *middlewareAuthService) Logout(string) error { return errors.New("not implemented") }

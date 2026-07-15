@@ -19,6 +19,10 @@ export class AuthService implements IAuthService {
         return this.http.get<IAuthCapabilities>(`${this.apiUrl}/capabilities`);
     }
 
+    openLocalPreview(): Observable<void> {
+        return this.http.post<void>(`${this.apiUrl}/local-preview`, {});
+    }
+
     login(email: string, password: string) {
         return this.http.post(`${this.apiUrl}/login`, {email, password});
     }

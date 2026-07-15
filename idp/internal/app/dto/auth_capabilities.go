@@ -5,4 +5,5 @@ package dto
 type AuthCapabilities struct {
 	GoogleLoginEnabled           bool `json:"googleLoginEnabled"`
 	PasswordRecoveryEmailEnabled bool `json:"passwordRecoveryEmailEnabled"`
+	LocalPreviewEnabled          bool `json:"localPreviewEnabled"`
 }

@@ -4,10 +4,12 @@ import {IUserModel} from "../models/user.model.interface";
 export interface IAuthCapabilities {
   googleLoginEnabled: boolean;
   passwordRecoveryEmailEnabled: boolean;
+  localPreviewEnabled: boolean;
 }
 
 export interface IAuthService {
-	getCapabilities(): Observable<IAuthCapabilities>;
+  getCapabilities(): Observable<IAuthCapabilities>;
+	openLocalPreview(): Observable<void>;
   login(username: string, password: string): Observable<Object>;
   register(email: string, password: string): Observable<IUserModel>;
   requestPasswordReset(email: string): Observable<void>;

@@ -195,6 +195,26 @@ func TestAuthCapabilitiesReflectConfiguredOptionalPaths(t *testing.T) {
 	require.True(t, capabilities.PasswordRecoveryEmailEnabled)
 }
 
+func TestLocalPreviewLoginRequiresExplicitConfigAndOwner(t *testing.T) {
+	setupAuthConfig(t)
+	config.LocalPreviewConfig.Enabled = true
+	config.LocalPreviewConfig.OwnerEmail = "owner@example.com"
+	ownerID := uuid.New()
+	svc := &service{
+		userService: &fakeUserService{userByEmail: &models.User{ID: ownerID, Email: "owner@example.com", Role: "owner", IsActive: true}},
+		logger:      noopLogger{},
+		jwtSecret:   "test-secret",
+	}
+
+	tokens, err := svc.LocalPreviewLogin()
+	require.NoError(t, err)
+	require.NotEmpty(t, tokens.AccessToken)
+
+	config.LocalPreviewConfig.Enabled = false
+	_, err = svc.LocalPreviewLogin()
+	require.EqualError(t, err, "local preview is not enabled")
+}
+
 func setupAuthConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("LOGGER_TOPIC", "logs")

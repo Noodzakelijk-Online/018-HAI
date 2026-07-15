@@ -308,6 +308,12 @@ docker compose --env-file .env.local -f docker-compose.local.yml ps
 
 Open [http://localhost](http://localhost).
 
+For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep
+`GATEWAY_HOST_BIND=127.0.0.1`. The login screen then shows **Open local
+dashboard**, which creates a normal signed session for the configured first-run
+owner. It is deliberately hidden by default and must never be enabled on a
+LAN- or internet-exposed gateway.
+
 The `.env.example` development defaults are:
 
 ```text

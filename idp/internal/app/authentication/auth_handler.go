@@ -4,7 +4,9 @@ import (
 	"automation-hub-idp/internal/app/dto"
 	"errors"
 	"github.com/gin-gonic/gin"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -123,6 +125,33 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	setAccessTokenCookie(c.Writer, tokenDetails.AccessToken, time.Unix(tokenDetails.AtExpires, 0))
 	setRefreshTokenCookie(c.Writer, tokenDetails.RefreshToken, time.Unix(tokenDetails.RtExpires, 0))
 	c.Redirect(http.StatusFound, "/")
+}
+
+// LocalPreview establishes an ordinary signed owner session for the explicit
+// local-preview mode. It is never active by default and refuses non-loopback
+// Host headers even when the flag was accidentally enabled.
+func (h *Handler) LocalPreview(c *gin.Context) {
+	if !isLoopbackHost(c.Request.Host) {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	tokenDetails, err := h.authService.LocalPreviewLogin()
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	setAccessTokenCookie(c.Writer, tokenDetails.AccessToken, time.Unix(tokenDetails.AtExpires, 0))
+	setRefreshTokenCookie(c.Writer, tokenDetails.RefreshToken, time.Unix(tokenDetails.RtExpires, 0))
+	c.Status(http.StatusNoContent)
+}
+
+func isLoopbackHost(requestHost string) bool {
+	host := strings.TrimSpace(requestHost)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(host, "[]")
+	return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
 }
 
 // Logout

@@ -12,6 +12,7 @@ var (
 	PostgresConfig       *postgresConfig
 	RedisConfig          *redisConfig
 	MailConfig           *mailConfig
+	LocalPreviewConfig   *localPreviewConfig
 )
 
 func Setup() error {
@@ -37,6 +38,7 @@ func Setup() error {
 		return err
 	}
 	MailConfig = newMailConfig()
+	LocalPreviewConfig = newLocalPreviewConfig()
 
 	return nil
 }

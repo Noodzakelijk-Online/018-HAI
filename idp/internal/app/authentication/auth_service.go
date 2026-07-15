@@ -88,6 +88,7 @@ func (a *service) Capabilities() dto.AuthCapabilities {
 	return dto.AuthCapabilities{
 		GoogleLoginEnabled:           googleOAuth.Configured(),
 		PasswordRecoveryEmailEnabled: a.passwordResetter != nil && a.passwordResetter.Configured(),
+		LocalPreviewEnabled:          config.LocalPreviewConfig != nil && config.LocalPreviewConfig.Enabled && config.LocalPreviewConfig.OwnerEmail != "",
 	}
 }
 
@@ -271,6 +272,21 @@ func (a *service) LoginWithGoogle(ctx context.Context, code, state string) (*dto
 	}
 
 	a.logger.Info("Successfully logged in user via Google: %s", email)
+	return a.issueSession(user.ID, user.Role)
+}
+
+// LocalPreviewLogin issues a normal owner session only when the administrator
+// explicitly enabled the local-preview flag. The handler adds a loopback host
+// check; Compose binds the gateway to 127.0.0.1 by default for this mode.
+func (a *service) LocalPreviewLogin() (*dto.TokenDetails, error) {
+	if config.LocalPreviewConfig == nil || !config.LocalPreviewConfig.Enabled || config.LocalPreviewConfig.OwnerEmail == "" {
+		return nil, errors.New("local preview is not enabled")
+	}
+	user, err := a.userService.GetUserByEmail(config.LocalPreviewConfig.OwnerEmail)
+	if err != nil || user == nil || user.Role != "owner" || !user.IsActive {
+		a.logger.Warn("Local preview owner session was unavailable")
+		return nil, errors.New("local preview owner session is unavailable")
+	}
 	return a.issueSession(user.ID, user.Role)
 }
 

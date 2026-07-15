@@ -6,8 +6,8 @@ import { LoginComponent } from './login.component';
 
 describe('LoginComponent registration', () => {
   function createComponent(): { component: LoginComponent; auth: jasmine.SpyObj<any>; notification: jasmine.SpyObj<any> } {
-    const auth = jasmine.createSpyObj('AuthService', ['getCapabilities', 'login', 'register', 'requestPasswordReset', 'confirmPasswordReset']);
-    auth.getCapabilities.and.returnValue(of({ googleLoginEnabled: false, passwordRecoveryEmailEnabled: false }));
+    const auth = jasmine.createSpyObj('AuthService', ['getCapabilities', 'openLocalPreview', 'login', 'register', 'requestPasswordReset', 'confirmPasswordReset']);
+    auth.getCapabilities.and.returnValue(of({ googleLoginEnabled: false, passwordRecoveryEmailEnabled: false, localPreviewEnabled: false }));
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'warning', 'info', 'create']);
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     const component = new LoginComponent(new FormBuilder(), notification as NzNotificationService, router, auth);
@@ -83,7 +83,7 @@ describe('LoginComponent registration', () => {
 
   it('requests a password reset without showing developer recovery instructions', () => {
     const { component, auth, notification } = createComponent();
-    auth.getCapabilities.and.returnValue(of({ googleLoginEnabled: false, passwordRecoveryEmailEnabled: true }));
+    auth.getCapabilities.and.returnValue(of({ googleLoginEnabled: false, passwordRecoveryEmailEnabled: true, localPreviewEnabled: false }));
     component.ngOnInit();
     auth.requestPasswordReset.and.returnValue(of(void 0));
     component.validateForm.patchValue({ userName: 'operator@example.com' });
@@ -98,6 +98,15 @@ describe('LoginComponent registration', () => {
       'Recovery requested',
       'If recovery is available for this account, a one-time reset code has been sent through its configured recovery channel.'
     );
+  });
+
+  it('opens the dashboard through the explicit local preview session', () => {
+    const { component, auth } = createComponent();
+    auth.openLocalPreview.and.returnValue(of(void 0));
+
+    component.openLocalPreview();
+
+    expect(auth.openLocalPreview).toHaveBeenCalled();
   });
 
   it('does not request a reset code when email recovery is unavailable', () => {

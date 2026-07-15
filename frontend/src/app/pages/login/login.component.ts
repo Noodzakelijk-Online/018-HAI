@@ -21,6 +21,8 @@ export class LoginComponent implements OnInit {
   authCapabilitiesLoaded = false;
   googleLoginEnabled = false;
   passwordRecoveryEmailEnabled = false;
+  localPreviewEnabled = false;
+  openingLocalPreview = false;
   validateForm: FormGroup = this.fb.group({});
 
   constructor(
@@ -36,6 +38,7 @@ export class LoginComponent implements OnInit {
       next: (capabilities) => {
         this.googleLoginEnabled = Boolean(capabilities.googleLoginEnabled);
         this.passwordRecoveryEmailEnabled = Boolean(capabilities.passwordRecoveryEmailEnabled);
+        this.localPreviewEnabled = Boolean(capabilities.localPreviewEnabled);
         this.authCapabilitiesLoaded = true;
       },
       error: () => {
@@ -64,6 +67,17 @@ export class LoginComponent implements OnInit {
   // session cookies set by the callback.
   loginWithGoogle(): void {
     window.location.href = '/api/v1/auth/google/login';
+  }
+
+  openLocalPreview(): void {
+    this.openingLocalPreview = true;
+    this.authService.openLocalPreview().subscribe({
+      next: () => this.router.navigate(['/control-center']),
+      error: () => {
+        this.openingLocalPreview = false;
+        this.notification.error('Local preview unavailable', 'This device is not configured for login-free local access.');
+      },
+    });
   }
 
   submitForm(): void {

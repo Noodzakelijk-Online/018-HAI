@@ -39,6 +39,7 @@ services:
       FIRST_RUN_ADMIN_EMAIL: ${FIRST_RUN_ADMIN_EMAIL}
       FIRST_RUN_ADMIN_PASSWORD: ${FIRST_RUN_ADMIN_PASSWORD}
       IDP_COOKIE_SECURE: ${IDP_COOKIE_SECURE}
+      LOCAL_LOGIN_BYPASS_ENABLED: ${LOCAL_LOGIN_BYPASS_ENABLED:-false}
       # "Sign in with Google": the client id/secret are shared with the backend's
       # Gmail connector, but the login redirect is a distinct path routed to the
       # IDP, so it needs its own registered redirect URI on the Google app.
@@ -319,7 +320,7 @@ services:
       idp:
         condition: service_started
     ports:
-      - "${GATEWAY_HOST_PORT:-8088}:80"
+      - "${GATEWAY_HOST_BIND:-127.0.0.1}:${GATEWAY_HOST_PORT:-8088}:80"
     volumes:
       - ./nginx-config/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ./nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro

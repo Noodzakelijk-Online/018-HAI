@@ -152,6 +152,18 @@
       <button type="button" class="login-register-link" (click)="toggleRegistration()" *ngIf="!registrationMode && !recoveryMode">
         Create a local operator account
       </button>
+      <button
+        type="button"
+        nz-button
+        class="login-form-button login-local-preview"
+        [nzType]="'default'"
+        [nzLoading]="openingLocalPreview"
+        data-testid="login-local-preview"
+        (click)="openLocalPreview()"
+        *ngIf="!registrationMode && !recoveryMode && localPreviewEnabled"
+      >
+        Open local dashboard
+      </button>
 
       <div class="login-divider" *ngIf="googleLoginEnabled"><span>or</span></div>
 
