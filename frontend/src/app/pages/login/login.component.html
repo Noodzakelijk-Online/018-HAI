@@ -19,8 +19,8 @@
     class="login-box"
   >
     <div class="login-box__header">
-      <h2>{{ registrationMode ? 'Create local account' : 'Log in' }}</h2>
-      <span>{{ registrationMode ? 'New accounts are operator accounts. Owner access stays with the first-run admin.' : 'Use the local admin account from your environment file.' }}</span>
+      <h2>{{ recoveryMode ? (recoveryStep === 'confirm' ? 'Set a new password' : 'Recover your account') : (registrationMode ? 'Create local account' : 'Log in') }}</h2>
+      <span>{{ recoveryMode ? (recoveryStep === 'confirm' ? 'Enter the one-time code from your configured recovery channel.' : 'Enter your account email to request a one-time reset code.') : (registrationMode ? 'New accounts are operator accounts. Owner access stays with the first-run admin.' : 'Use the local admin account from your environment file.') }}</span>
     </div>
 
     <nz-form-item>
@@ -40,6 +40,24 @@
       </nz-form-control>
     </nz-form-item>
 
+    <nz-form-item *ngIf="recoveryMode && recoveryStep === 'confirm'">
+      <nz-form-control
+        nzErrorTip="Enter the one-time reset code."
+        nzHasFeedback
+        [nzValidateStatus]="validateForm.controls['resetToken']"
+      >
+        <nz-input-group nzPrefixIcon="key">
+          <input
+            type="text"
+            nz-input
+            formControlName="resetToken"
+            placeholder="One-time reset code"
+          />
+        </nz-input-group>
+      </nz-form-control>
+    </nz-form-item>
+
+    <ng-container *ngIf="!recoveryMode || recoveryStep === 'confirm'">
     <nz-form-item>
       <nz-form-control
         [nzErrorTip]="passwordErrorTip()"
@@ -51,7 +69,7 @@
             type="password"
             nz-input
             formControlName="password"
-            placeholder="Password"
+            placeholder="{{ recoveryMode ? 'New password' : 'Password' }}"
             [type]="hidePassword ? 'password' : 'text'"
           />
         </nz-input-group>
@@ -66,7 +84,7 @@
       </nz-form-control>
     </nz-form-item>
 
-    <nz-form-item *ngIf="registrationMode">
+    <nz-form-item *ngIf="registrationMode || (recoveryMode && recoveryStep === 'confirm')">
       <nz-form-control
         [nzErrorTip]="confirmationErrorTip()"
         nzHasFeedback
@@ -77,20 +95,25 @@
             type="password"
             nz-input
             formControlName="confirmPassword"
-            placeholder="Confirm password"
+            placeholder="{{ recoveryMode ? 'Confirm new password' : 'Confirm password' }}"
             [type]="hidePassword ? 'password' : 'text'"
           />
         </nz-input-group>
       </nz-form-control>
     </nz-form-item>
+    </ng-container>
 
-    <p class="login-form-hint" *ngIf="registrationMode">
+    <p class="login-form-hint" *ngIf="registrationMode || (recoveryMode && recoveryStep === 'confirm')">
       Use a password with at least {{ minimumRegistrationPasswordLength }} characters, then enter it again exactly.
+    </p>
+
+    <p class="login-form-hint" *ngIf="recoveryMode && recoveryStep === 'request'">
+      HAI does not disclose whether an account exists. Reset codes are delivered only through the recovery channel configured for that account.
     </p>
 
     <nz-form-control>
       <div class="login-options">
-      <label nz-checkbox formControlName="remember" *ngIf="!registrationMode">
+      <label nz-checkbox formControlName="remember" *ngIf="!registrationMode && !recoveryMode">
         <span>Remember me</span>
       </label>
       <button
@@ -98,11 +121,14 @@
         class="login-form-forgot"
         data-testid="login-password-help"
         (click)="showPasswordHelp()"
-        *ngIf="!registrationMode"
+        *ngIf="!registrationMode && !recoveryMode"
       >
         Forgot password?
       </button>
       <button type="button" class="login-form-forgot" (click)="toggleRegistration()" *ngIf="registrationMode">
+        Back to log in
+      </button>
+      <button type="button" class="login-form-forgot" (click)="backToLogin()" *ngIf="recoveryMode">
         Back to log in
       </button>
       </div>
@@ -112,11 +138,17 @@
         class="login-form-button"
         [nzType]="'primary'"
         data-testid="login-submit"
-        [nzLoading]="registering"
+        [nzLoading]="registering || recovering"
       >
-        {{ registrationMode ? 'Create account' : 'Log in' }}
+        {{ recoveryMode ? (recoveryStep === 'confirm' ? 'Set new password' : 'Request reset code') : (registrationMode ? 'Create account' : 'Log in') }}
       </button>
-      <button type="button" class="login-register-link" (click)="toggleRegistration()" *ngIf="!registrationMode">
+      <button type="button" class="login-register-link" (click)="showResetConfirmation()" *ngIf="recoveryMode && recoveryStep === 'request'">
+        I already have a reset code
+      </button>
+      <button type="button" class="login-register-link" (click)="showPasswordHelp()" *ngIf="recoveryMode && recoveryStep === 'confirm'">
+        Request a new reset code
+      </button>
+      <button type="button" class="login-register-link" (click)="toggleRegistration()" *ngIf="!registrationMode && !recoveryMode">
         Create a local operator account
       </button>
 

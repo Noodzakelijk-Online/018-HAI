@@ -192,22 +192,15 @@ func (h *Handler) IsUserAuthenticated(c *gin.Context) {
 // @Produce json
 // @Param email formData string true "Email"
 // @Success 200 {object} string
-// @Failure 400 {object} dto.ErrorResponse
-// @Failure 500 {object} dto.ErrorResponse
 // @Router /auth/request-password-reset [post]
 func (h *Handler) RequestPasswordReset(c *gin.Context) {
-	var errorResponse dto.ErrorResponse
 	email := c.PostForm("email")
 
-	_, _, err := h.authService.RequestPasswordReset(email)
-	if err != nil {
-		errorResponse.Message = err.Error()
-		errorResponse.ErrorCode = http.StatusInternalServerError
-		c.JSON(http.StatusBadRequest, errorResponse)
-		return
-	}
+	// Do not reveal whether an account exists or whether its delivery channel is available.
+	// The reset service records operational errors in its own logs.
+	_, _, _ = h.authService.RequestPasswordReset(email)
 	response := dto.SuccessResponse{
-		Message:    "Password reset token sent successfully",
+		Message:    "If recovery is available for this account, reset instructions have been sent",
 		StatusCode: http.StatusOK,
 	}
 	c.JSON(http.StatusOK, response)

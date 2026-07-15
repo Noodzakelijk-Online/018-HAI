@@ -1,5 +1,5 @@
 import {Injectable} from '@angular/core';
-import {HttpClient} from '@angular/common/http';
+import {HttpClient, HttpHeaders, HttpParams} from '@angular/common/http';
 import {catchError, map} from 'rxjs/operators';
 import {IAuthService} from "../auth.service.interface";
 import {Observable, of} from "rxjs";
@@ -21,6 +21,22 @@ export class AuthService implements IAuthService {
 
     register(email: string, password: string): Observable<IUserModel> {
         return this.http.post<IUserModel>(`${this.apiUrl}/register`, {email, password});
+    }
+
+    requestPasswordReset(email: string): Observable<void> {
+        return this.http.post<void>(
+            `${this.apiUrl}/request-password-reset`,
+            new HttpParams().set('email', email).toString(),
+            {headers: new HttpHeaders({'Content-Type': 'application/x-www-form-urlencoded'})}
+        );
+    }
+
+    confirmPasswordReset(token: string, newPassword: string): Observable<void> {
+        return this.http.post<void>(
+            `${this.apiUrl}/confirm-password-reset/${encodeURIComponent(token)}`,
+            new HttpParams().set('newPassword', newPassword).toString(),
+            {headers: new HttpHeaders({'Content-Type': 'application/x-www-form-urlencoded'})}
+        );
     }
 
 

@@ -6,7 +6,7 @@ import { LoginComponent } from './login.component';
 
 describe('LoginComponent registration', () => {
   function createComponent(): { component: LoginComponent; auth: jasmine.SpyObj<any>; notification: jasmine.SpyObj<any> } {
-    const auth = jasmine.createSpyObj('AuthService', ['login', 'register']);
+    const auth = jasmine.createSpyObj('AuthService', ['login', 'register', 'requestPasswordReset', 'confirmPasswordReset']);
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'info', 'create']);
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     const component = new LoginComponent(new FormBuilder(), notification as NzNotificationService, router, auth);
@@ -78,5 +78,40 @@ describe('LoginComponent registration', () => {
 
     expect(component.validateForm.controls['userName'].hasError('accountExists')).toBeTrue();
     expect(notification.error).toHaveBeenCalledWith('Account already exists', 'This email is already registered. Log in instead or use password recovery.');
+  });
+
+  it('requests a password reset without showing developer recovery instructions', () => {
+    const { component, auth, notification } = createComponent();
+    auth.requestPasswordReset.and.returnValue(of(void 0));
+    component.validateForm.patchValue({ userName: 'operator@example.com' });
+
+    component.showPasswordHelp();
+    component.submitForm();
+
+    expect(component.recoveryMode).toBeTrue();
+    expect(component.recoveryStep).toBe('confirm');
+    expect(auth.requestPasswordReset).toHaveBeenCalledWith('operator@example.com');
+    expect(notification.success).toHaveBeenCalledWith(
+      'Recovery requested',
+      'If recovery is available for this account, a one-time reset code has been sent through its configured recovery channel.'
+    );
+  });
+
+  it('does not confirm a reset when the new passwords differ', () => {
+    const { component, auth, notification } = createComponent();
+    component.showPasswordHelp();
+    component.showResetConfirmation();
+    component.validateForm.patchValue({
+      userName: 'operator@example.com',
+      resetToken: 'reset-token',
+      password: 'local-passphrase-2026',
+      confirmPassword: 'different-passphrase-2026',
+    });
+
+    component.submitForm();
+
+    expect(auth.confirmPasswordReset).not.toHaveBeenCalled();
+    expect(component.validateForm.controls['confirmPassword'].hasError('mismatch')).toBeTrue();
+    expect(notification.error).toHaveBeenCalledWith('Check your reset details', 'The confirmation password does not match.');
   });
 });

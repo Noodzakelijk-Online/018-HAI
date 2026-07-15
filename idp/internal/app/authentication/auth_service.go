@@ -20,6 +20,7 @@ import (
 )
 
 var (
+	minimumPasswordLength       = 12
 	ErrRegistrationEmailInvalid = errors.New("enter a valid email address")
 	ErrRegistrationPasswordWeak = errors.New("password must contain at least 12 characters")
 	ErrRegistrationEmailInUse   = errors.New("an account with this email already exists")
@@ -73,7 +74,7 @@ func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
 	if err != nil || parsedEmail.Address != email {
 		return nil, ErrRegistrationEmailInvalid
 	}
-	if len(userDTO.Password) < 12 {
+	if len(userDTO.Password) < minimumPasswordLength {
 		return nil, ErrRegistrationPasswordWeak
 	}
 
@@ -418,6 +419,12 @@ func (a *service) IsUserAuthenticated(accessToken string) (bool, error) {
 }
 
 func (a *service) RequestPasswordReset(email string) (string, time.Time, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	parsedEmail, err := mail.ParseAddress(email)
+	if err != nil || parsedEmail.Address != email {
+		return "", time.Time{}, errors.New("invalid email")
+	}
+
 	user, err := a.userService.GetUserByEmail(email)
 	if err != nil {
 		a.logger.Error("Error fetching user by email: %v", err)
@@ -463,8 +470,8 @@ func (a *service) ConfirmPasswordReset(token, newPassword string) error {
 	if token == "" {
 		return errors.New("invalid token")
 	}
-	if newPassword == "" {
-		return errors.New("new password is required")
+	if len(newPassword) < minimumPasswordLength {
+		return ErrRegistrationPasswordWeak
 	}
 
 	user, err := a.userService.GetUserByResetToken(token)

@@ -116,6 +116,18 @@ func TestConfirmPasswordResetRejectsEmptyTokenBeforeLookup(t *testing.T) {
 	require.Empty(t, userService.lookupResetToken)
 }
 
+func TestConfirmPasswordResetRejectsWeakPasswordBeforeLookup(t *testing.T) {
+	userService := &fakeUserService{}
+	svc := &service{
+		userService: userService,
+		logger:      noopLogger{},
+	}
+
+	err := svc.ConfirmPasswordReset("reset-token", "short-pass")
+	require.ErrorIs(t, err, ErrRegistrationPasswordWeak)
+	require.Empty(t, userService.lookupResetToken)
+}
+
 func TestConfirmPasswordResetUpdatesPasswordAndClearsToken(t *testing.T) {
 	userID := uuid.New()
 	userService := &fakeUserService{

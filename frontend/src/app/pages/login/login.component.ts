@@ -14,7 +14,10 @@ export class LoginComponent implements OnInit {
   readonly minimumRegistrationPasswordLength = 12;
   hidePassword: boolean = true;
   registrationMode = false;
+  recoveryMode = false;
+  recoveryStep: 'request' | 'confirm' = 'request';
   registering = false;
+  recovering = false;
   validateForm: FormGroup = this.fb.group({});
 
   constructor(
@@ -38,6 +41,7 @@ export class LoginComponent implements OnInit {
       ],
       password: ["", { updateOn: "submit", validators: [Validators.required] }],
       confirmPassword: [""],
+      resetToken: [""],
       remember: [true],
     });
   }
@@ -50,6 +54,14 @@ export class LoginComponent implements OnInit {
   }
 
   submitForm(): void {
+    if (this.recoveryMode) {
+      if (this.recoveryStep === 'confirm') {
+        this.confirmPasswordReset();
+      } else {
+        this.requestPasswordReset();
+      }
+      return;
+    }
     if (this.registrationMode) {
       this.registerAccount();
       return;
@@ -87,6 +99,7 @@ export class LoginComponent implements OnInit {
   }
 
   toggleRegistration(): void {
+    this.recoveryMode = false;
     this.registrationMode = !this.registrationMode;
     this.registering = false;
     this.validateForm.controls['password'].reset();
@@ -99,7 +112,7 @@ export class LoginComponent implements OnInit {
 
   passwordErrorTip(): string {
     const passwordControl = this.validateForm.controls['password'];
-    if (this.registrationMode && passwordControl.hasError('minLength')) {
+    if ((this.registrationMode || this.recoveryStep === 'confirm') && passwordControl.hasError('minLength')) {
       return `Use at least ${this.minimumRegistrationPasswordLength} characters.`;
     }
     return 'Please input your password!';
@@ -118,6 +131,96 @@ export class LoginComponent implements OnInit {
       return 'This email is already registered. Log in instead.';
     }
     return 'Please input a valid email!';
+  }
+
+  private requestPasswordReset(): void {
+    const emailControl = this.validateForm.controls['userName'];
+    emailControl.updateValueAndValidity();
+    if (emailControl.invalid) {
+      emailControl.markAsDirty();
+      emailControl.markAsTouched();
+      return;
+    }
+
+    this.recovering = true;
+    this.authService.requestPasswordReset(String(emailControl.value).trim()).subscribe({
+      next: () => this.finishRecoveryRequest(),
+      // Keep the response identical when delivery is temporarily unavailable or the email is unknown.
+      error: () => this.finishRecoveryRequest(),
+    });
+  }
+
+  private finishRecoveryRequest(): void {
+    this.recovering = false;
+    this.recoveryStep = 'confirm';
+    this.notification.success(
+      'Recovery requested',
+      'If recovery is available for this account, a one-time reset code has been sent through its configured recovery channel.'
+    );
+  }
+
+  private confirmPasswordReset(): void {
+    const tokenControl = this.validateForm.controls['resetToken'];
+    const passwordControl = this.validateForm.controls['password'];
+    const confirmationControl = this.validateForm.controls['confirmPassword'];
+    const token = String(tokenControl.value || '').trim();
+    const password = String(passwordControl.value || '');
+    const confirmation = String(confirmationControl.value || '');
+
+    this.clearValidationError(tokenControl, 'required');
+    this.clearValidationError(passwordControl, 'minLength');
+    this.clearValidationError(confirmationControl, 'mismatch');
+    if (!token) {
+      tokenControl.setErrors({ required: true });
+    }
+    if (password.length < this.minimumRegistrationPasswordLength) {
+      passwordControl.setErrors({ ...passwordControl.errors, minLength: true });
+    }
+    if (!confirmation) {
+      confirmationControl.setErrors({ ...confirmationControl.errors, required: true });
+    } else if (password !== confirmation) {
+      confirmationControl.setErrors({ ...confirmationControl.errors, mismatch: true });
+    } else {
+      this.clearValidationError(confirmationControl, 'required');
+    }
+
+    if (tokenControl.invalid || passwordControl.invalid || confirmationControl.invalid) {
+      [tokenControl, passwordControl, confirmationControl].forEach((control) => {
+        control.markAsDirty();
+        control.markAsTouched();
+      });
+      this.notification.error('Check your reset details', this.resetValidationSummary());
+      return;
+    }
+
+    this.recovering = true;
+    this.authService.confirmPasswordReset(token, password).subscribe({
+      next: () => {
+        this.recovering = false;
+        this.backToLogin();
+        this.notification.success('Password reset', 'Your password has been updated. Sign in with your new password.');
+      },
+      error: (error) => {
+        this.recovering = false;
+        this.notification.error('Reset could not be completed', error?.error?.message || 'The reset code is invalid or has expired. Request a new one and try again.');
+      },
+    });
+  }
+
+  private resetValidationSummary(): string {
+    const tokenControl = this.validateForm.controls['resetToken'];
+    const passwordControl = this.validateForm.controls['password'];
+    const confirmationControl = this.validateForm.controls['confirmPassword'];
+    if (tokenControl.invalid) {
+      return 'Enter the one-time reset code.';
+    }
+    if (passwordControl.hasError('minLength')) {
+      return `Your password must contain at least ${this.minimumRegistrationPasswordLength} characters.`;
+    }
+    if (confirmationControl.hasError('mismatch')) {
+      return 'The confirmation password does not match.';
+    }
+    return 'Confirm your new password.';
   }
 
   private registerAccount(): void {
@@ -198,9 +301,34 @@ export class LoginComponent implements OnInit {
   }
 
   showPasswordHelp(): void {
-    this.notification.info(
-      "Local account recovery",
-      "Use the first-run admin credentials from .env.example or update the local IDP database/reset seed for this Windows install."
-    );
+    this.registrationMode = false;
+    this.recoveryMode = true;
+    this.recoveryStep = 'request';
+    this.recovering = false;
+    this.validateForm.patchValue({ password: '', confirmPassword: '', resetToken: '' });
+    ['password', 'confirmPassword', 'resetToken'].forEach((name) => {
+      const control = this.validateForm.controls[name];
+      control.setErrors(null);
+      control.markAsPristine();
+      control.markAsUntouched();
+    });
+  }
+
+  showResetConfirmation(): void {
+    this.recoveryStep = 'confirm';
+  }
+
+  backToLogin(): void {
+    this.registrationMode = false;
+    this.recoveryMode = false;
+    this.recoveryStep = 'request';
+    this.recovering = false;
+    this.validateForm.patchValue({ password: '', confirmPassword: '', resetToken: '' });
+    ['password', 'confirmPassword', 'resetToken'].forEach((name) => {
+      const control = this.validateForm.controls[name];
+      control.setErrors(null);
+      control.markAsPristine();
+      control.markAsUntouched();
+    });
   }
 }
