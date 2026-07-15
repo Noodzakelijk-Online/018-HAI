@@ -40,7 +40,10 @@ func ConfigFromEnv() Config {
 		WorkspaceID:   env("HAI_PHASE2_WORKSPACE_ID", "local"),
 		WorkspaceDir:  env("HAI_PHASE2_WORKSPACE_DIR", filepath.Join("data", "phase2", "workspace")),
 		FeedsDir:      env("HAI_PHASE2_FEEDS_DIR", filepath.Join("data", "phase2", "feeds")),
-		FeedFiles:     splitList(env("HAI_PHASE2_FEED_FILES", "inbox.json")),
+		// No feed is configured until the operator connects or explicitly imports
+		// one. Assuming inbox.json made a fresh local install report a failed pass
+		// before it had any data to read.
+		FeedFiles:     splitList(env("HAI_PHASE2_FEED_FILES", "")),
 		StateDir:      env("HAI_PHASE2_STATE_DIR", filepath.Join("data", "phase2", "state")),
 		Mode:          autonomypolicy.Mode(env("HAI_PHASE2_MODE", string(autonomypolicy.ModeAutonomousSafe))),
 		EmergencyStop: env("HAI_PHASE2_EMERGENCY_STOP", "") == "true",

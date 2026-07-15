@@ -842,6 +842,7 @@ export class ControlCenterComponent implements OnInit {
   navigateToSection(section: ControlCenterSection): void {
     this.mobileNavigationOpen = false
     this.activeSection = section
+    this.openContainingDisclosure(section)
     if (section === 'diagnostics' && !this.diagnosticsExpanded) {
       this.diagnosticsExpanded = true
       this.loadDiagnosticsData()
@@ -854,9 +855,20 @@ export class ControlCenterComponent implements OnInit {
 
   private scrollToSection(section: ControlCenterSection): void {
     document.getElementById(section)?.scrollIntoView({
-      behavior: 'smooth',
+      // Action controls should make their destination visible immediately. A
+      // long smooth scroll made valid clicks appear to do nothing, especially
+      // on the compact dashboard viewport.
+      behavior: 'auto',
       block: 'start',
     })
+  }
+
+  private openContainingDisclosure(section: ControlCenterSection): void {
+    const target = document.getElementById(section)
+    const disclosure = target?.closest('details') as HTMLDetailsElement | null
+    if (disclosure) {
+      disclosure.open = true
+    }
   }
 
   openAction(action: CommandAction): void {
@@ -871,6 +883,13 @@ export class ControlCenterComponent implements OnInit {
     if (!this.selectedAction) return
     const action = this.selectedAction
     this.closeAction()
+    // NG-Zorro keeps the document scroll-locked until the inspector close
+    // animation finishes. Deferring the target action lets section actions
+    // land visibly instead of leaving users at the command cards.
+    window.setTimeout(() => this.continueSelectedAction(action), 360)
+  }
+
+  private continueSelectedAction(action: CommandAction): void {
     if (action.execute) {
       action.execute()
       return

@@ -1,3 +1,4 @@
+import { HttpErrorResponse } from '@angular/common/http'
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { forkJoin } from 'rxjs'
@@ -21,6 +22,7 @@ export class BackgroundOperationsComponent implements OnInit {
   operations: IOperation[] = []
   feeds: IAccountFeed[] = []
   lastReport?: IBackgroundRunReport
+  lastRunError = ''
 
   loading = false
   running = false
@@ -75,6 +77,7 @@ export class BackgroundOperationsComponent implements OnInit {
 
   runBackground(): void {
     this.running = true
+    this.lastRunError = ''
     this.service.runBackground().subscribe({
       next: (report) => {
         this.lastReport = report
@@ -87,9 +90,29 @@ export class BackgroundOperationsComponent implements OnInit {
       },
       error: (err) => {
         this.running = false
-        this.notification.error('Error', err?.error?.error ?? 'Background run failed.')
+        this.lastRunError = this.backgroundRunError(err)
+        this.notification.error('Background pass could not start', this.lastRunError)
       },
     })
+  }
+
+  backgroundRunError(err: unknown): string {
+    const response = err as HttpErrorResponse
+    const detail = response?.error?.error
+    if (typeof detail === 'string' && detail.trim()) return detail
+    if (response?.status === 404) {
+      return 'The background engine is not reachable. Refresh the page after the local gateway has restarted.'
+    }
+    if (response?.status === 409) {
+      return 'A background pass is already running. Wait a moment, then refresh this page.'
+    }
+    return 'The background pass could not start. Your sources and existing operations were not changed.'
+  }
+
+  selectStatus(status: string): void {
+    if (this.statusFilter === status) return
+    this.statusFilter = status
+    this.refresh()
   }
 
   openDetail(op: IOperation): void {
@@ -170,5 +193,9 @@ export class BackgroundOperationsComponent implements OnInit {
 
   goBack(): void {
     this.router.navigate(['/control-center'])
+  }
+
+  openSources(): void {
+    this.router.navigate(['/connected-sources'])
   }
 }
