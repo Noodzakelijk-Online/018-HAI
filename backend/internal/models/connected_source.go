@@ -22,7 +22,10 @@ type SourceConnector struct {
 }
 
 type ConnectedSource struct {
-	ID                uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	ID uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	// OwnerIdentity is derived from the verified IDP subject. It is intentionally
+	// omitted from API responses so callers cannot supply or inspect ownership.
+	OwnerIdentity     string     `gorm:"type:varchar(255);index" json:"-"`
 	ConnectorKey      string     `gorm:"type:varchar(80);index;not null" json:"connectorKey"`
 	Name              string     `gorm:"type:varchar(255);not null" json:"name"`
 	Category          string     `gorm:"type:varchar(80);index;not null" json:"category"`

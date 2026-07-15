@@ -14,7 +14,7 @@ func TestAutomationToolExecutorMapsControlledLaunchResult(t *testing.T) {
 	id := uuid.New()
 	launchEventID := uuid.New()
 	launchedAt := time.Now().UTC()
-	executor := NewAutomationToolExecutor(&fakeAutomationLauncher{
+	launcher := &fakeAutomationLauncher{
 		result: &automation.LaunchResult{
 			AutomationID:  id,
 			LaunchEventID: launchEventID,
@@ -37,9 +37,9 @@ func TestAutomationToolExecutorMapsControlledLaunchResult(t *testing.T) {
 			AuditEvents: []string{"script executed without shell"},
 			LaunchedAt:  launchedAt,
 		},
-	})
-
-	result, err := executor.Execute(ToolExecutionRequest{AutomationID: id.String(), Task: "Run tests"})
+	}
+	executor := NewAutomationToolExecutor(launcher)
+	result, err := executor.Execute(ToolExecutionRequest{OwnerIdentity: "alice", AutomationID: id.String(), Task: "Run tests"})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -52,6 +52,9 @@ func TestAutomationToolExecutorMapsControlledLaunchResult(t *testing.T) {
 	if result.RuntimeRouteTrace == nil || result.RuntimeRouteTrace.RuntimeID != "openclaw" || len(result.RuntimeRouteTrace.RecommendedSkills) != 2 {
 		t.Fatalf("runtime route trace was not preserved: %#v", result.RuntimeRouteTrace)
 	}
+	if launcher.request.OwnerIdentity != "alice" {
+		t.Fatalf("launch request owner = %q, want alice", launcher.request.OwnerIdentity)
+	}
 }
 
 func TestAutomationToolExecutorRejectsInvalidAutomationID(t *testing.T) {
@@ -62,8 +65,9 @@ func TestAutomationToolExecutorRejectsInvalidAutomationID(t *testing.T) {
 }
 
 type fakeAutomationLauncher struct {
-	result *automation.LaunchResult
-	err    error
+	result  *automation.LaunchResult
+	err     error
+	request automation.TaskLaunchRequest
 }
 
 func (f *fakeAutomationLauncher) Launch(id uuid.UUID) (*automation.LaunchResult, error) {
@@ -71,5 +75,6 @@ func (f *fakeAutomationLauncher) Launch(id uuid.UUID) (*automation.LaunchResult,
 }
 
 func (f *fakeAutomationLauncher) LaunchTask(id uuid.UUID, request automation.TaskLaunchRequest) (*automation.LaunchResult, error) {
+	f.request = request
 	return f.result, f.err
 }

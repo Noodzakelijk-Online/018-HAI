@@ -25,6 +25,12 @@ export class LLMPolicyService implements ILLMPolicyService {
     return this.http.get<ILLMProviderProbe[]>(`${this.apiUrl}/probes`);
   }
 
+  getProbeHistory(limit: number = 30): Observable<ILLMProviderProbe[]> {
+    return this.http.get<ILLMProviderProbe[]>(`${this.apiUrl}/probes/history`, {
+      params: { limit: String(limit) },
+    });
+  }
+
   routeTask(request: ILLMRouteRequest): Observable<ILLMRouteDecision> {
     return this.http.post<ILLMRouteDecision>(`${this.apiUrl}/route`, request);
   }

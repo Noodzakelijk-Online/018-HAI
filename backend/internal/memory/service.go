@@ -14,14 +14,15 @@ import (
 )
 
 type CreateRequest struct {
-	ProjectKey  string   `json:"projectKey,omitempty"`
-	Kind        string   `json:"kind"`
-	Content     string   `json:"content"`
-	Summary     string   `json:"summary,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Confidence  float64  `json:"confidence,omitempty"`
-	SourceURI   string   `json:"sourceUri,omitempty"`
-	SourceLabel string   `json:"sourceLabel,omitempty"`
+	OwnerIdentity string   `json:"-"`
+	ProjectKey    string   `json:"projectKey,omitempty"`
+	Kind          string   `json:"kind"`
+	Content       string   `json:"content"`
+	Summary       string   `json:"summary,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	Confidence    float64  `json:"confidence,omitempty"`
+	SourceURI     string   `json:"sourceUri,omitempty"`
+	SourceLabel   string   `json:"sourceLabel,omitempty"`
 }
 
 type UpdateRequest struct {
@@ -65,6 +66,19 @@ type Service interface {
 	Retrieve(request RetrieveRequest) (*RetrieveResult, error)
 }
 
+// OwnerScopedService is implemented by HAI's native memory service. Keeping it
+// separate preserves the narrow Service contract used by background workers
+// while giving authenticated boundaries a fail-closed owner-aware API.
+type OwnerScopedService interface {
+	CreateForOwner(ownerIdentity string, request CreateRequest) (*models.ContextMemory, error)
+	UpdateForOwner(ownerIdentity string, id uuid.UUID, request UpdateRequest) (*models.ContextMemory, error)
+	FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error)
+	FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error)
+	ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error)
+	DeleteForOwner(ownerIdentity string, id uuid.UUID) error
+	RetrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error)
+}
+
 type service struct {
 	repo Repository
 }
@@ -78,6 +92,41 @@ func DefaultService() Service {
 }
 
 func (s *service) Create(request CreateRequest) (*models.ContextMemory, error) {
+	return s.createForOwner("", request)
+}
+
+// CreateForOwner stores a memory under the authenticated owner. It never
+// deduplicates against ownerless legacy records or another owner's records.
+func (s *service) CreateForOwner(ownerIdentity string, request CreateRequest) (*models.ContextMemory, error) {
+	return s.createForOwner(ownerIdentity, request)
+}
+
+func CreateForOwner(service Service, ownerIdentity string, request CreateRequest) (*models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return service.Create(request)
+	}
+	scoped, ok := service.(OwnerScopedService)
+	if !ok {
+		return nil, fmt.Errorf("owner-scoped memory service is unavailable")
+	}
+	return scoped.CreateForOwner(ownerIdentity, request)
+}
+
+func RetrieveForOwner(service Service, ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return service.Retrieve(request)
+	}
+	scoped, ok := service.(OwnerScopedService)
+	if !ok {
+		return nil, fmt.Errorf("owner-scoped memory service is unavailable")
+	}
+	return scoped.RetrieveForOwner(ownerIdentity, request)
+}
+
+func (s *service) createForOwner(ownerIdentity string, request CreateRequest) (*models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	content := strings.TrimSpace(request.Content)
 	if content == "" {
 		return nil, fmt.Errorf("content is required")
@@ -86,10 +135,12 @@ func (s *service) Create(request CreateRequest) (*models.ContextMemory, error) {
 	projectKey := strings.TrimSpace(request.ProjectKey)
 	contentHash := hashContent(projectKey, kind, content)
 
-	if existing, err := s.repo.FindByHash(projectKey, kind, contentHash); err == nil {
-		return s.mergeExact(existing, request)
-	} else if err != nil && !isNotFound(err) {
-		return nil, err
+	if ownerIdentity == "" {
+		if existing, err := s.repo.FindByHash(projectKey, kind, contentHash); err == nil {
+			return s.mergeExact(existing, request)
+		} else if err != nil && !isNotFound(err) {
+			return nil, err
+		}
 	}
 
 	memories, err := s.repo.FindAll(projectKey, false)
@@ -97,6 +148,13 @@ func (s *service) Create(request CreateRequest) (*models.ContextMemory, error) {
 		return nil, err
 	}
 	for _, candidate := range memories {
+		if ownerIdentity != "" && candidate.OwnerIdentity != ownerIdentity {
+			continue
+		}
+		if candidate.Kind == kind && candidate.ContentHash == contentHash {
+			copyCandidate := candidate
+			return s.mergeExact(&copyCandidate, request)
+		}
 		if candidate.Kind == kind && similarity(candidate.Content, content) >= 0.78 {
 			copyCandidate := candidate
 			return s.mergeSimilar(&copyCandidate, request)
@@ -104,17 +162,26 @@ func (s *service) Create(request CreateRequest) (*models.ContextMemory, error) {
 	}
 
 	memory := &models.ContextMemory{
-		ProjectKey:  projectKey,
-		Kind:        kind,
-		Content:     content,
-		Summary:     compactSummary(firstNonEmpty(request.Summary, content)),
-		Tags:        joinTags(request.Tags),
-		Confidence:  normalizeConfidence(request.Confidence),
-		SourceURI:   strings.TrimSpace(request.SourceURI),
-		SourceLabel: strings.TrimSpace(request.SourceLabel),
-		ContentHash: contentHash,
+		OwnerIdentity: ownerIdentity,
+		ProjectKey:    projectKey,
+		Kind:          kind,
+		Content:       content,
+		Summary:       compactSummary(firstNonEmpty(request.Summary, content)),
+		Tags:          joinTags(request.Tags),
+		Confidence:    normalizeConfidence(request.Confidence),
+		SourceURI:     strings.TrimSpace(request.SourceURI),
+		SourceLabel:   strings.TrimSpace(request.SourceLabel),
+		ContentHash:   contentHash,
 	}
 	return s.repo.Create(memory)
+}
+
+func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request UpdateRequest) (*models.ContextMemory, error) {
+	memory, err := s.writeableMemoryForOwner(ownerIdentity, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.update(memory, request)
 }
 
 func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.ContextMemory, error) {
@@ -122,6 +189,10 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.ContextMe
 	if err != nil {
 		return nil, err
 	}
+	return s.update(memory, request)
+}
+
+func (s *service) update(memory *models.ContextMemory, request UpdateRequest) (*models.ContextMemory, error) {
 	if request.ProjectKey != "" {
 		memory.ProjectKey = strings.TrimSpace(request.ProjectKey)
 	}
@@ -159,8 +230,27 @@ func (s *service) FindAll(projectKey string, includeArchived bool) ([]models.Con
 	return s.repo.FindAll(projectKey, includeArchived)
 }
 
+func (s *service) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	memories, err := s.repo.FindAll(projectKey, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	return filterReadableMemories(memories, ownerIdentity), nil
+}
+
 func (s *service) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
 	return s.repo.FindByID(id)
+}
+
+func (s *service) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
+	memory, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !readableByOwner(memory, ownerIdentity) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return memory, nil
 }
 
 func (s *service) Archive(id uuid.UUID, archived bool) (*models.ContextMemory, error) {
@@ -172,11 +262,35 @@ func (s *service) Archive(id uuid.UUID, archived bool) (*models.ContextMemory, e
 	return s.repo.Update(memory)
 }
 
+func (s *service) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	memory, err := s.writeableMemoryForOwner(ownerIdentity, id)
+	if err != nil {
+		return nil, err
+	}
+	memory.Archived = archived
+	return s.repo.Update(memory)
+}
+
 func (s *service) Delete(id uuid.UUID) error {
 	return s.repo.Delete(id)
 }
 
+func (s *service) DeleteForOwner(ownerIdentity string, id uuid.UUID) error {
+	if _, err := s.writeableMemoryForOwner(ownerIdentity, id); err != nil {
+		return err
+	}
+	return s.repo.Delete(id)
+}
+
 func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
+	return s.retrieveForOwner("", request)
+}
+
+func (s *service) RetrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+	return s.retrieveForOwner(ownerIdentity, request)
+}
+
+func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
 	limit := request.Limit
 	if limit <= 0 || limit > 20 {
 		limit = 8
@@ -188,6 +302,9 @@ func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
 	}
 	candidates := make([]models.ContextMemory, 0, len(memories))
 	for _, memory := range memories {
+		if !readableByOwner(&memory, ownerIdentity) {
+			continue
+		}
 		if projectKey != "" && memory.ProjectKey != "" && memory.ProjectKey != projectKey {
 			continue
 		}
@@ -218,8 +335,10 @@ func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
 	for i := range ranked {
 		ranked[i].Memory.LastUsedAt = &now
 		updated := ranked[i].Memory
-		if saved, errUpdate := s.repo.Update(&updated); errUpdate == nil {
-			ranked[i].Memory = *saved
+		if writeableByOwner(&updated, ownerIdentity) {
+			if saved, errUpdate := s.repo.Update(&updated); errUpdate == nil {
+				ranked[i].Memory = *saved
+			}
 		}
 	}
 
@@ -227,8 +346,45 @@ func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
 		Query:       request.Query,
 		ProjectKey:  projectKey,
 		UsedContext: ranked,
-		Explanation: fmt.Sprintf("Retrieved %d relevant memories from %d stored candidates; project-scoped retrieval also considered global memories and did not load unrelated project memories.", len(ranked), len(candidates)),
+		Explanation: fmt.Sprintf("Retrieved %d relevant memories from %d visible candidates; project-scoped retrieval also considered visible global memories and did not load unrelated project or other-owner memories.", len(ranked), len(candidates)),
 	}, nil
+}
+
+func (s *service) writeableMemoryForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
+	memory, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !writeableByOwner(memory, ownerIdentity) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return memory, nil
+}
+
+func readableByOwner(memory *models.ContextMemory, ownerIdentity string) bool {
+	if memory == nil {
+		return false
+	}
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	return ownerIdentity == "" || memory.OwnerIdentity == "" || memory.OwnerIdentity == ownerIdentity
+}
+
+func writeableByOwner(memory *models.ContextMemory, ownerIdentity string) bool {
+	if memory == nil {
+		return false
+	}
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	return ownerIdentity == "" || (memory.OwnerIdentity != "" && memory.OwnerIdentity == ownerIdentity)
+}
+
+func filterReadableMemories(memories []models.ContextMemory, ownerIdentity string) []models.ContextMemory {
+	visible := make([]models.ContextMemory, 0, len(memories))
+	for _, memory := range memories {
+		if readableByOwner(&memory, ownerIdentity) {
+			visible = append(visible, memory)
+		}
+	}
+	return visible
 }
 
 func (s *service) mergeExact(existing *models.ContextMemory, request CreateRequest) (*models.ContextMemory, error) {

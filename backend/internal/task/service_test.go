@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,233 @@ func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	}
 }
 
+func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.T) {
+	mem := &fakeMemoryService{}
+	src := &fakeTaskSourceService{}
+	service := NewService(mem, newTaskTestLLMService(t), src)
+
+	plan, err := service.Plan(IntakeRequest{
+		OwnerIdentity: "alice",
+		Request:       "Summarize local project files and source context",
+		ProjectKey:    "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if plan.OwnerIdentity != "alice" {
+		t.Fatalf("plan owner = %q, want alice", plan.OwnerIdentity)
+	}
+	if len(mem.ownerRetrieveOwners) != 1 || mem.ownerRetrieveOwners[0] != "alice" {
+		t.Fatalf("owner-scoped memory retrieval = %#v, want alice", mem.ownerRetrieveOwners)
+	}
+	if src.refreshCalls != 0 {
+		t.Fatalf("owner-scoped task triggered global source refresh %d times", src.refreshCalls)
+	}
+	if len(src.ownerRefreshOwners) != 1 || src.ownerRefreshOwners[0] != "alice" {
+		t.Fatalf("owner-scoped refresh owners = %#v, want alice", src.ownerRefreshOwners)
+	}
+	if plan.ContextPlan.SourceRefresh == nil {
+		t.Fatal("owner-scoped task did not retain its source refresh result")
+	}
+	if len(src.searchRequests) != 1 || src.searchRequests[0].OwnerIdentity != "alice" {
+		t.Fatalf("source search requests = %#v, want owner alice", src.searchRequests)
+	}
+}
+
+func TestOwnerScopedTaskHistoryAndReviewQueueDoNotLeakAcrossOwners(t *testing.T) {
+	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t))
+	scoped, ok := service.(OwnerScopedService)
+	if !ok {
+		t.Fatal("native task service does not implement OwnerScopedService")
+	}
+	if _, err := service.Plan(IntakeRequest{OwnerIdentity: "alice", Request: "Plan Alice project context"}); err != nil {
+		t.Fatalf("Plan alice: %v", err)
+	}
+	if _, err := service.Plan(IntakeRequest{OwnerIdentity: "bob", Request: "Plan Bob project context"}); err != nil {
+		t.Fatalf("Plan bob: %v", err)
+	}
+	if logs := scoped.LogsForOwner("alice"); len(logs) != 1 || logs[0].OwnerIdentity != "alice" {
+		t.Fatalf("alice logs = %#v, want only Alice record", logs)
+	}
+
+	aliceReview, err := service.Run(IntakeRequest{OwnerIdentity: "alice", Request: "Delete Alice account data"})
+	if err != nil || aliceReview.ReviewQueueItem == nil {
+		t.Fatalf("Run alice high-risk task = %#v, %v", aliceReview, err)
+	}
+	bobReview, err := service.Run(IntakeRequest{OwnerIdentity: "bob", Request: "Delete Bob account data"})
+	if err != nil || bobReview.ReviewQueueItem == nil {
+		t.Fatalf("Run bob high-risk task = %#v, %v", bobReview, err)
+	}
+	if queue := scoped.ReviewQueueForOwner("alice"); len(queue) != 1 || queue[0].Request.OwnerIdentity != "alice" {
+		t.Fatalf("alice review queue = %#v, want only Alice item", queue)
+	}
+	if _, err := scoped.ResolveReviewItemForOwner("alice", bobReview.ReviewQueueItem.ID, ApprovalDecision{Approved: false}); err == nil {
+		t.Fatal("expected cross-owner review resolution to be rejected")
+	}
+	if _, err := scoped.ResolveReviewItemForOwner("alice", aliceReview.ReviewQueueItem.ID, ApprovalDecision{Approved: false, Note: "not approved"}); err != nil {
+		t.Fatalf("owner could not resolve own review item: %v", err)
+	}
+}
+
+func TestPursuitScopedTaskRunPersistsStartAndFinalOutcome(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		recorder,
+	)
+	pursuitID := uuid.New()
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		PursuitID:      pursuitID.String(),
+		Request:        "Delete account data after legal review with api_key=plain-text-secret",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(recorder.attempts) != 2 {
+		t.Fatalf("persist calls = %d, want start and final outcome", len(recorder.attempts))
+	}
+	final := recorder.attempts[1]
+	if final.PursuitID != pursuitID || final.TaskPlanID != plan.ID || final.Status != "review_required" {
+		t.Fatalf("final pursuit attempt = %#v", final)
+	}
+	if final.CompletedAt == nil || final.BlockedReason == "" {
+		t.Fatalf("final attempt lacks completion audit: %#v", final)
+	}
+	if strings.Contains(final.RequestSummary, "plain-text-secret") {
+		t.Fatalf("task attempt leaked request secret: %#v", final)
+	}
+}
+
+func TestWorkflowScopedPursuitTaskRunDoesNotDuplicateWorkflowAttempt(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		recorder,
+	)
+	if _, err := service.Run(IntakeRequest{
+		OwnerIdentity: "alice",
+		PursuitID:     uuid.NewString(),
+		WorkflowID:    uuid.NewString(),
+		Request:       "Create a bounded low-risk workflow summary.",
+		ProjectKey:    "018-HAI",
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(recorder.attempts) != 0 {
+		t.Fatalf("workflow-owned task run created duplicate pursuit attempts: %#v", recorder.attempts)
+	}
+}
+
+func TestPursuitScopedTaskPlanRejectsMalformedPursuitID(t *testing.T) {
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		&fakePursuitAttemptRecorder{},
+	)
+	if _, err := service.Plan(IntakeRequest{Request: "Plan a bounded review", PursuitID: "not-a-uuid"}); err == nil {
+		t.Fatal("expected malformed pursuit id to be rejected")
+	}
+}
+
+func TestPursuitScopedTaskPlanChecksLifecycleGuardBeforePlanning(t *testing.T) {
+	guard := &fakePursuitTaskGuard{err: fmt.Errorf("pursuit candidate must be accepted before direct task planning or execution")}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		nil,
+		nil,
+		nil,
+		nil,
+		guard,
+	)
+
+	_, err := service.Plan(IntakeRequest{
+		OwnerIdentity: "alice",
+		PursuitID:     uuid.NewString(),
+		Request:       "Prepare a task plan for this candidate.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("Plan returned %v, want lifecycle guard error", err)
+	}
+	if guard.calls != 1 || len(guard.attempts) != 0 {
+		t.Fatalf("guard calls=%d attempts=%#v, want one pre-plan check and no persisted attempts", guard.calls, guard.attempts)
+	}
+}
+
+func TestPursuitScopedTaskRunPersistsExactRuntimeLaunchEvidence(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{}
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	verifier := &sequencedVerificationService{}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		verifier,
+		executor,
+		recorder,
+	)
+	pursuitID := uuid.NewString()
+	if _, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		PursuitID:      pursuitID,
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(recorder.attempts) != 2 {
+		t.Fatalf("persist calls = %d, want start and final outcome", len(recorder.attempts))
+	}
+	if got := recorder.attempts[1].LaunchEventID; got != executor.result.LaunchEventID {
+		t.Fatalf("launch evidence = %q, want %q", got, executor.result.LaunchEventID)
+	}
+	if len(verifier.requests) != 1 || verifier.requests[0].PursuitID != pursuitID {
+		t.Fatalf("verification request pursuit id = %#v, want %q", verifier.requests, pursuitID)
+	}
+}
+
+func TestPursuitScopedTaskRunRequiresReviewWhenVerificationCannotLinkEvidence(t *testing.T) {
+	verifier := &sequencedVerificationService{pursuitLinkError: "pursuit is not visible to the authenticated owner"}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		verifier,
+		nil,
+		&fakePursuitAttemptRecorder{},
+	)
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity: "alice",
+		PursuitID:     uuid.NewString(),
+		Request:       "Summarize project context for the dashboard",
+		ProjectKey:    "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.ExecutionResult == nil {
+		t.Fatalf("verification link failure was treated as complete: %#v", plan)
+	}
+	if plan.ExecutionResult.BlockedReason != "verification evidence could not be linked to the pursuit" {
+		t.Fatalf("blocked reason = %q", plan.ExecutionResult.BlockedReason)
+	}
+}
+
 func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)
@@ -114,6 +342,41 @@ func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	}
 	if len(service.ReviewQueue()) == 0 {
 		t.Fatalf("expected service review queue entry")
+	}
+}
+
+func TestTaskClassificationProtectsExternalCommunicationAndMutations(t *testing.T) {
+	communication := analyzeIntake(IntakeRequest{Request: "Send a reply email to the client"})
+	if communication.RiskLevel != "high" || !communication.NeedsApproval {
+		t.Fatalf("external communication risk = %#v, want high risk with approval", communication)
+	}
+
+	mutation := analyzeIntake(IntakeRequest{Request: "Commit and push the repository update"})
+	if mutation.RiskLevel != "medium" || !mutation.NeedsApproval {
+		t.Fatalf("repository mutation risk = %#v, want medium risk with approval", mutation)
+	}
+}
+
+func TestRunQueuesReviewForMediumRiskRuntimeMutation(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Commit and push the repository update",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.RiskAssessment.Level != "medium" {
+		t.Fatalf("medium-risk mutation was not queued for review: %#v", plan.RiskAssessment)
+	}
+	if plan.ReviewQueueItem == nil || executor.calls != 0 {
+		t.Fatalf("medium-risk runtime mutation bypassed review: item=%#v calls=%d", plan.ReviewQueueItem, executor.calls)
 	}
 }
 
@@ -164,6 +427,31 @@ func TestRunWithoutExecutionPermissionQueuesReviewForToolWork(t *testing.T) {
 	}
 	if len(service.ReviewQueue()) == 0 {
 		t.Fatalf("expected review queue entry")
+	}
+}
+
+func TestRunQueuesMissingAutomationBeforeRuntimeExecution(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.RiskAssessment.ActionResolution != "clarify" {
+		t.Fatalf("missing runtime configuration was not converted into clarification: %#v", plan.RiskAssessment)
+	}
+	if len(plan.RiskAssessment.MissingParameters) != 1 || plan.RiskAssessment.MissingParameters[0] != "controlled automation" {
+		t.Fatalf("missing execution details = %#v", plan.RiskAssessment.MissingParameters)
+	}
+	if plan.ReviewQueueItem == nil || plan.ReviewQueueItem.Reason != "missing required execution details: controlled automation" || executor.calls != 0 {
+		t.Fatalf("runtime preflight bypassed review: item=%#v calls=%d", plan.ReviewQueueItem, executor.calls)
 	}
 }
 
@@ -415,7 +703,10 @@ func newTaskTestLLMService(t *testing.T) *llm.Service {
 	return llmService
 }
 
-type fakeMemoryService struct{}
+type fakeMemoryService struct {
+	ownerCreateOwners   []string
+	ownerRetrieveOwners []string
+}
 
 type fakeToolExecutor struct {
 	result   *ToolExecutionResult
@@ -457,9 +748,10 @@ func completedToolResult() *ToolExecutionResult {
 }
 
 type sequencedVerificationService struct {
-	statuses []string
-	calls    int
-	requests []verification.AnswerRequest
+	statuses         []string
+	pursuitLinkError string
+	calls            int
+	requests         []verification.AnswerRequest
 }
 
 func (s *sequencedVerificationService) Answer(request verification.AnswerRequest) (*verification.VerificationResult, error) {
@@ -482,7 +774,7 @@ func (s *sequencedVerificationService) Answer(request verification.AnswerRequest
 		Confidence:  0.9,
 		NeedsReview: status == verification.StatusNeedsReview,
 	}}
-	result := &verification.VerificationResult{Run: run, Claims: claims}
+	result := &verification.VerificationResult{Run: run, Claims: claims, PursuitLinkError: s.pursuitLinkError}
 	if status == verification.StatusNeedsReview {
 		result.UnsupportedClaims = claims
 	}
@@ -493,7 +785,15 @@ func (s *sequencedVerificationService) Runs() ([]models.VerificationRun, error) 
 	return nil, nil
 }
 
+func (s *sequencedVerificationService) RunsForOwner(string) ([]models.VerificationRun, error) {
+	return nil, nil
+}
+
 func (s *sequencedVerificationService) RunDetails(id uuid.UUID) (*verification.VerificationResult, error) {
+	return nil, nil
+}
+
+func (s *sequencedVerificationService) RunDetailsForOwner(string, uuid.UUID) (*verification.VerificationResult, error) {
 	return nil, nil
 }
 
@@ -519,10 +819,41 @@ func (fakeMemoryService) Create(request memory.CreateRequest) (*models.ContextMe
 	}, nil
 }
 
+func (f *fakeMemoryService) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	f.ownerCreateOwners = append(f.ownerCreateOwners, ownerIdentity)
+	created, err := f.Create(request)
+	if created != nil {
+		created.OwnerIdentity = ownerIdentity
+	}
+	return created, err
+}
+
+type fakePursuitAttemptRecorder struct {
+	attempts []models.PursuitTaskAttempt
+}
+
+func (f *fakePursuitAttemptRecorder) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
+	f.attempts = append(f.attempts, attempt)
+	return nil
+}
+
+type fakePursuitTaskGuard struct {
+	fakePursuitAttemptRecorder
+	err   error
+	calls int
+}
+
+func (f *fakePursuitTaskGuard) ValidatePursuitTaskAttempt(uuid.UUID, string) error {
+	f.calls++
+	return f.err
+}
+
 type fakeTaskSourceService struct {
-	refreshCalls int
-	searchCalls  int
-	order        []string
+	refreshCalls       int
+	ownerRefreshOwners []string
+	searchCalls        int
+	order              []string
+	searchRequests     []source.SearchRequest
 }
 
 func (s *fakeTaskSourceService) Connectors() ([]models.SourceConnector, error) {
@@ -563,6 +894,12 @@ func (s *fakeTaskSourceService) RunDueScheduledSyncs(now time.Time) (*source.Sch
 	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
 }
 
+func (s *fakeTaskSourceService) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*source.ScheduledSyncRun, error) {
+	s.ownerRefreshOwners = append(s.ownerRefreshOwners, ownerIdentity)
+	s.order = append(s.order, "owner-refresh")
+	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
+}
+
 func (s *fakeTaskSourceService) Reindex(sourceID uuid.UUID) (*source.SyncResult, error) {
 	return nil, nil
 }
@@ -578,6 +915,7 @@ func (s *fakeTaskSourceService) Revoke(sourceID uuid.UUID) (*models.ConnectedSou
 func (s *fakeTaskSourceService) Search(request source.SearchRequest) (*source.SearchResult, error) {
 	s.searchCalls++
 	s.order = append(s.order, "search")
+	s.searchRequests = append(s.searchRequests, request)
 	return &source.SearchResult{
 		Query: request.Query,
 		UsedContext: []source.RankedExtraction{
@@ -598,6 +936,10 @@ func (s *fakeTaskSourceService) Search(request source.SearchRequest) (*source.Se
 }
 
 func (s *fakeTaskSourceService) Extractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+	return nil, nil
+}
+
+func (s *fakeTaskSourceService) ExtractionsForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	return nil, nil
 }
 
@@ -657,4 +999,29 @@ func (fakeMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.Retri
 		},
 		Explanation: "retrieved fake context",
 	}, nil
+}
+
+func (f *fakeMemoryService) UpdateForOwner(_ string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return f.Update(id, request)
+}
+
+func (f *fakeMemoryService) FindAllForOwner(_ string, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	return f.FindAll(projectKey, includeArchived)
+}
+
+func (f *fakeMemoryService) FindByIDForOwner(_ string, id uuid.UUID) (*models.ContextMemory, error) {
+	return f.FindByID(id)
+}
+
+func (f *fakeMemoryService) ArchiveForOwner(_ string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return f.Archive(id, archived)
+}
+
+func (f *fakeMemoryService) DeleteForOwner(_ string, id uuid.UUID) error {
+	return f.Delete(id)
+}
+
+func (f *fakeMemoryService) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	f.ownerRetrieveOwners = append(f.ownerRetrieveOwners, ownerIdentity)
+	return f.Retrieve(request)
 }

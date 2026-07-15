@@ -8,6 +8,7 @@ import (
 
 type VerificationRun struct {
 	ID                uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	OwnerIdentity     string    `gorm:"type:varchar(255);index" json:"ownerIdentity,omitempty"`
 	Mode              string    `gorm:"type:varchar(40);index;not null" json:"mode"`
 	Question          string    `gorm:"type:text;not null" json:"question"`
 	ProjectKey        string    `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`

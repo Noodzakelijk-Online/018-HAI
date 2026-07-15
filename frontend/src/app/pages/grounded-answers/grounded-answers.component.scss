@@ -44,6 +44,22 @@ form {
   gap: 10px;
 }
 
+.linked-pursuit {
+  align-items: center;
+  background: #f0f7ff;
+  border: 1px solid #b7d9ff;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-start;
+  padding: 8px 10px;
+}
+
+.approval-notice {
+  align-self: center;
+  color: #6a4b00;
+  font-size: 12px;
+}
+
 textarea {
   resize: vertical;
 }

@@ -1,8 +1,5 @@
-# Stage 1: Compiling the application.
-# golang:1.23 (the module targets go 1.21, and Go is backward compatible): a
-# supported toolchain that also builds the go-redis dependency, which requires
-# go >= 1.18.
-FROM golang:1.23 AS builder
+# Stage 1: Compiling the application
+FROM golang:1.21.13 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
@@ -15,9 +12,6 @@ WORKDIR /app/cmd
 
 # Build the Go app
 RUN CGO_ENABLED=1 GOOS=linux go build -o app ./main.go
-
-# List the files (for debugging purposes)
-RUN ls -al
 
 # Stage 2: Build the minimal docker image
 FROM ubuntu:latest

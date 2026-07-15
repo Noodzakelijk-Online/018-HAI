@@ -2,12 +2,15 @@ package pursuit
 
 import (
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -25,21 +28,29 @@ const (
 
 	LinkWorkflow           = "workflow"
 	LinkMemory             = "memory"
+	LinkAIConversation     = "ai_conversation"
 	LinkSourceExtraction   = "source_extraction"
 	LinkSourceItem         = "source_item"
 	LinkVerification       = "verification"
 	LinkAutomation         = "automation"
 	LinkAgentRuntime       = "agent_runtime"
 	LinkAmbientOpportunity = "ambient_opportunity"
+	LinkAssistantCommand   = "assistant_command"
 	LinkPursuit            = "pursuit"
 )
 
 const defaultAutoLinkMinimumScore = 0.45
 
+// ErrLifecycleRouterRequired prevents a partially configured pursuit linker
+// from creating workflow work before pursuit matching and candidate acceptance.
+var ErrLifecycleRouterRequired = errors.New("pursuit lifecycle router is required when a pursuit linker is configured")
+
 type CreateRequest struct {
+	Actor                 string  `json:"-"`
 	OwnerIdentity         string  `json:"ownerIdentity,omitempty"`
 	Title                 string  `json:"title"`
 	Description           string  `json:"description,omitempty"`
+	WhyItMatters          string  `json:"whyItMatters,omitempty"`
 	ProjectKey            string  `json:"projectKey,omitempty"`
 	Domain                string  `json:"domain,omitempty"`
 	DesiredOutcome        string  `json:"desiredOutcome,omitempty"`
@@ -59,6 +70,7 @@ type CreateRequest struct {
 type UpdateRequest struct {
 	Title                 string   `json:"title,omitempty"`
 	Description           *string  `json:"description,omitempty"`
+	WhyItMatters          *string  `json:"whyItMatters,omitempty"`
 	ProjectKey            *string  `json:"projectKey,omitempty"`
 	Domain                *string  `json:"domain,omitempty"`
 	DesiredOutcome        *string  `json:"desiredOutcome,omitempty"`
@@ -104,22 +116,24 @@ type DecisionResolutionRequest struct {
 }
 
 type LinkRequest struct {
-	LinkType     string  `json:"linkType"`
-	LinkID       string  `json:"linkId"`
-	Relationship string  `json:"relationship,omitempty"`
-	SourceURI    string  `json:"sourceUri,omitempty"`
-	SourceLabel  string  `json:"sourceLabel,omitempty"`
-	Confidence   float64 `json:"confidence,omitempty"`
-	Actor        string  `json:"actor,omitempty"`
+	OwnerIdentity string  `json:"-"`
+	LinkType      string  `json:"linkType"`
+	LinkID        string  `json:"linkId"`
+	Relationship  string  `json:"relationship,omitempty"`
+	SourceURI     string  `json:"sourceUri,omitempty"`
+	SourceLabel   string  `json:"sourceLabel,omitempty"`
+	Confidence    float64 `json:"confidence,omitempty"`
+	Actor         string  `json:"actor,omitempty"`
 }
 
 type MatchRequest struct {
-	Input      string `json:"input,omitempty"`
-	ProjectKey string `json:"projectKey,omitempty"`
-	SourceType string `json:"sourceType,omitempty"`
-	SourceID   string `json:"sourceId,omitempty"`
-	SourceURI  string `json:"sourceUri,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
+	OwnerIdentity string `json:"-"`
+	Input         string `json:"input,omitempty"`
+	ProjectKey    string `json:"projectKey,omitempty"`
+	SourceType    string `json:"sourceType,omitempty"`
+	SourceID      string `json:"sourceId,omitempty"`
+	SourceURI     string `json:"sourceUri,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
 }
 
 type MatchCandidate struct {
@@ -130,29 +144,37 @@ type MatchCandidate struct {
 }
 
 type AutoLinkWorkflowRequest struct {
-	WorkflowID           uuid.UUID `json:"workflowId"`
-	Input                string    `json:"input,omitempty"`
-	ProjectKey           string    `json:"projectKey,omitempty"`
-	SourceType           string    `json:"sourceType,omitempty"`
-	SourceID             string    `json:"sourceId,omitempty"`
-	SourceURI            string    `json:"sourceUri,omitempty"`
-	SourceLabel          string    `json:"sourceLabel,omitempty"`
-	ExtractionID         string    `json:"extractionId,omitempty"`
-	RawItemID            string    `json:"rawItemId,omitempty"`
-	Actor                string    `json:"actor,omitempty"`
-	MinimumScore         float64   `json:"minimumScore,omitempty"`
-	AllowCreateCandidate bool      `json:"allowCreateCandidate,omitempty"`
+	OwnerIdentity         string    `json:"-"`
+	WorkflowID            uuid.UUID `json:"workflowId"`
+	Input                 string    `json:"input,omitempty"`
+	ProjectKey            string    `json:"projectKey,omitempty"`
+	SourceType            string    `json:"sourceType,omitempty"`
+	SourceID              string    `json:"sourceId,omitempty"`
+	SourceURI             string    `json:"sourceUri,omitempty"`
+	SourceLabel           string    `json:"sourceLabel,omitempty"`
+	ExtractionID          string    `json:"extractionId,omitempty"`
+	RawItemID             string    `json:"rawItemId,omitempty"`
+	ConversationID        uuid.UUID `json:"conversationId,omitempty"`
+	ConversationSourceURI string    `json:"conversationSourceUri,omitempty"`
+	ConversationLabel     string    `json:"conversationLabel,omitempty"`
+	Actor                 string    `json:"actor,omitempty"`
+	MinimumScore          float64   `json:"minimumScore,omitempty"`
+	AllowCreateCandidate  bool      `json:"allowCreateCandidate,omitempty"`
 }
 
 type AutoLinkMemoryRequest struct {
-	MemoryID             uuid.UUID `json:"memoryId"`
-	Input                string    `json:"input,omitempty"`
-	ProjectKey           string    `json:"projectKey,omitempty"`
-	SourceURI            string    `json:"sourceUri,omitempty"`
-	SourceLabel          string    `json:"sourceLabel,omitempty"`
-	Actor                string    `json:"actor,omitempty"`
-	MinimumScore         float64   `json:"minimumScore,omitempty"`
-	AllowCreateCandidate bool      `json:"allowCreateCandidate,omitempty"`
+	OwnerIdentity         string    `json:"-"`
+	MemoryID              uuid.UUID `json:"memoryId"`
+	Input                 string    `json:"input,omitempty"`
+	ProjectKey            string    `json:"projectKey,omitempty"`
+	SourceURI             string    `json:"sourceUri,omitempty"`
+	SourceLabel           string    `json:"sourceLabel,omitempty"`
+	ConversationID        uuid.UUID `json:"conversationId,omitempty"`
+	ConversationSourceURI string    `json:"conversationSourceUri,omitempty"`
+	ConversationLabel     string    `json:"conversationLabel,omitempty"`
+	Actor                 string    `json:"actor,omitempty"`
+	MinimumScore          float64   `json:"minimumScore,omitempty"`
+	AllowCreateCandidate  bool      `json:"allowCreateCandidate,omitempty"`
 }
 
 type AutoLinkResult struct {
@@ -166,11 +188,14 @@ type AutoLinkResult struct {
 }
 
 type IntakeRequest struct {
+	OwnerIdentity  string `json:"-"`
 	Input          string `json:"input"`
 	ProjectKey     string `json:"projectKey,omitempty"`
 	AutomationID   string `json:"automationId,omitempty"`
 	SourceType     string `json:"sourceType,omitempty"`
 	SourceID       string `json:"sourceId,omitempty"`
+	RawItemID      string `json:"rawItemId,omitempty"`
+	ExtractionID   string `json:"extractionId,omitempty"`
 	SourceURI      string `json:"sourceUri,omitempty"`
 	SourceLabel    string `json:"sourceLabel,omitempty"`
 	ContentType    string `json:"contentType,omitempty"`
@@ -193,6 +218,71 @@ type RoutedIntakeResult struct {
 	Matches          []MatchCandidate `json:"matches,omitempty"`
 	Detail           *PursuitDetail   `json:"detail,omitempty"`
 	AutoLink         *AutoLinkResult  `json:"autoLink,omitempty"`
+}
+
+// CandidatePendingError reports a normal deferred intake outcome. It lets
+// source and conversation importers preserve their candidate provenance
+// without treating the absence of operational work as a failed import.
+type CandidatePendingError struct {
+	Result *RoutedIntakeResult
+}
+
+func (e *CandidatePendingError) Error() string {
+	if e == nil || e.Result == nil {
+		return "pursuit candidate is awaiting explicit acceptance"
+	}
+	return firstNonEmpty(e.Result.Message, "pursuit candidate is awaiting explicit acceptance")
+}
+
+// CandidatePending is intentionally package-neutral so the workflow package
+// can return a truthful HTTP response without importing pursuit and creating
+// an import cycle.
+func (e *CandidatePendingError) CandidatePending() bool { return true }
+
+func (e *CandidatePendingError) CandidatePursuitID() string {
+	if e == nil || e.Result == nil || e.Result.PursuitID == uuid.Nil {
+		return ""
+	}
+	return e.Result.PursuitID.String()
+}
+
+func (e *CandidatePendingError) CandidateIntakeMessage() string {
+	if e == nil || e.Result == nil {
+		return "pursuit candidate is awaiting explicit acceptance"
+	}
+	return firstNonEmpty(e.Result.Message, "pursuit candidate is awaiting explicit acceptance")
+}
+
+func IsCandidatePending(err error) (*RoutedIntakeResult, bool) {
+	var pending *CandidatePendingError
+	if !errors.As(err, &pending) {
+		return nil, false
+	}
+	return pending.Result, true
+}
+
+// AmbientOpportunityRouteRequest describes an operator-accepted ambient
+// proposal before it becomes workflow work. It keeps pursuit matching ahead of
+// execution so an unaccepted candidate never acquires an orphan workflow.
+type AmbientOpportunityRouteRequest struct {
+	OwnerIdentity  string    `json:"-"`
+	OpportunityID  uuid.UUID `json:"opportunityId"`
+	Title          string    `json:"title"`
+	Rationale      string    `json:"rationale,omitempty"`
+	NextAction     string    `json:"nextAction"`
+	ProjectKey     string    `json:"projectKey,omitempty"`
+	SourceURI      string    `json:"sourceUri,omitempty"`
+	RequiresReview bool      `json:"requiresReview,omitempty"`
+	ReviewReason   string    `json:"reviewReason,omitempty"`
+	Actor          string    `json:"actor,omitempty"`
+}
+
+type AmbientOpportunityRouteResult struct {
+	Mode             string    `json:"mode"`
+	PursuitID        uuid.UUID `json:"pursuitId"`
+	WorkflowID       uuid.UUID `json:"workflowId,omitempty"`
+	CreatedCandidate bool      `json:"createdCandidate"`
+	Message          string    `json:"message,omitempty"`
 }
 
 type Dashboard struct {
@@ -237,20 +327,21 @@ type BriefCard struct {
 }
 
 type PursuitListItem struct {
-	Pursuit             models.Pursuit `json:"pursuit"`
-	NeedsRobert         int            `json:"needsRobert"`
-	Blocked             int            `json:"blocked"`
-	OpenLoops           int            `json:"openLoops"`
-	DecisionCards       int            `json:"decisionCards"`
-	LinkedEvidence      int            `json:"linkedEvidence"`
-	TimelineItems       int            `json:"timelineItems"`
-	CompletionCandidate bool           `json:"completionCandidate"`
-	CurrentState        string         `json:"currentState,omitempty"`
-	WhatChanged         string         `json:"whatChanged,omitempty"`
-	NextAction          string         `json:"nextAction,omitempty"`
-	Stale               bool           `json:"stale"`
-	ReviewDue           bool           `json:"reviewDue"`
-	PlanningNeeded      bool           `json:"planningNeeded"`
+	Pursuit                 models.Pursuit `json:"pursuit"`
+	NeedsRobert             int            `json:"needsRobert"`
+	Blocked                 int            `json:"blocked"`
+	OpenLoops               int            `json:"openLoops"`
+	DecisionCards           int            `json:"decisionCards"`
+	LinkedEvidence          int            `json:"linkedEvidence"`
+	TimelineItems           int            `json:"timelineItems"`
+	CompletionCandidate     bool           `json:"completionCandidate"`
+	CurrentState            string         `json:"currentState,omitempty"`
+	WhatChanged             string         `json:"whatChanged,omitempty"`
+	NextAction              string         `json:"nextAction,omitempty"`
+	EffectiveLastActivityAt *time.Time     `json:"effectiveLastActivityAt,omitempty"`
+	Stale                   bool           `json:"stale"`
+	ReviewDue               bool           `json:"reviewDue"`
+	PlanningNeeded          bool           `json:"planningNeeded"`
 }
 
 type PursuitDashboardDecision struct {
@@ -267,8 +358,10 @@ type PursuitDetail struct {
 	Links                []models.PursuitLink           `json:"links"`
 	Activity             []models.PursuitActivity       `json:"activity"`
 	Workflows            []models.WorkflowItem          `json:"workflows"`
+	ChecklistItems       []models.WorkflowChecklistItem `json:"checklistItems"`
 	OpenLoops            []models.WorkflowOpenLoop      `json:"openLoops"`
 	Proposals            []models.WorkflowProposal      `json:"proposals"`
+	QualityGates         []models.WorkflowQualityGate   `json:"qualityGates"`
 	Decisions            []models.WorkflowDecision      `json:"decisions"`
 	DecisionQueue        []PursuitDecision              `json:"decisionQueue"`
 	Transitions          []models.WorkflowTransition    `json:"transitions"`
@@ -277,7 +370,10 @@ type PursuitDetail struct {
 	Timeline             []PursuitTimelineItem          `json:"timeline"`
 	Evidence             []models.WorkflowEvidenceClaim `json:"evidence"`
 	Memories             []models.ContextMemory         `json:"memories"`
+	Conversations        []PursuitConversation          `json:"conversations"`
+	AmbientOpportunities []PursuitAmbientOpportunity    `json:"ambientOpportunities"`
 	TaskRuns             []PursuitTaskRun               `json:"taskRuns"`
+	TaskAttempts         []models.PursuitTaskAttempt    `json:"taskAttempts"`
 	VerificationRuns     []models.VerificationRun       `json:"verificationRuns"`
 	VerificationClaims   []models.VerificationClaim     `json:"verificationClaims"`
 	VerificationEvidence []models.VerificationEvidence  `json:"verificationEvidence"`
@@ -291,6 +387,91 @@ type PursuitDetail struct {
 	ApprovalItems        []models.WorkflowItem          `json:"approvalItems"`
 	Summary              PursuitSummary                 `json:"summary"`
 	OperationalDigest    PursuitOperationalDigest       `json:"operationalDigest"`
+}
+
+// PursuitConversation exposes only archive metadata needed for provenance.
+// It intentionally omits Preview and encrypted payload fields so a pursuit
+// detail response cannot become a second conversation-content endpoint.
+type PursuitConversation struct {
+	ID            uuid.UUID  `json:"id"`
+	Platform      string     `json:"platform"`
+	ExternalID    string     `json:"externalId"`
+	Title         string     `json:"title,omitempty"`
+	SourceURI     string     `json:"sourceUri,omitempty"`
+	Revision      int        `json:"revision"`
+	MessageCount  int        `json:"messageCount"`
+	CapturedAt    time.Time  `json:"capturedAt"`
+	LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
+	Archived      bool       `json:"archived"`
+}
+
+// PursuitAmbientOpportunity is the bounded proactive-planning projection for
+// a pursuit. It deliberately omits owner identity and the raw evidence
+// manifest; source evidence remains behind the existing source/evidence views.
+type PursuitAmbientOpportunity struct {
+	ID               uuid.UUID `json:"id"`
+	NeedKey          string    `json:"needKey"`
+	Title            string    `json:"title"`
+	Rationale        string    `json:"rationale,omitempty"`
+	NextAction       string    `json:"nextAction,omitempty"`
+	SourceType       string    `json:"sourceType,omitempty"`
+	SourceURI        string    `json:"sourceUri,omitempty"`
+	PriorityScore    int       `json:"priorityScore"`
+	Confidence       int       `json:"confidence"`
+	Risk             int       `json:"risk"`
+	RequiresApproval bool      `json:"requiresApproval"`
+	Status           string    `json:"status"`
+	LastSeenAt       time.Time `json:"lastSeenAt"`
+	ResolutionNote   string    `json:"resolutionNote,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+// PursuitDelegationPackage is a read-only handoff brief. It turns the
+// existing pursuit context into bounded work for a VA without assigning a
+// person, sending a message, or bypassing workflow approval controls.
+type PursuitDelegationPackage struct {
+	GeneratedAt              time.Time                   `json:"generatedAt"`
+	Ready                    bool                        `json:"ready"`
+	Status                   string                      `json:"status"`
+	Reason                   string                      `json:"reason"`
+	PursuitID                string                      `json:"pursuitId"`
+	Title                    string                      `json:"title"`
+	Objective                string                      `json:"objective"`
+	WhyItMatters             string                      `json:"whyItMatters,omitempty"`
+	CurrentState             string                      `json:"currentState"`
+	CompletionDefinition     string                      `json:"completionDefinition,omitempty"`
+	RiskLevel                string                      `json:"riskLevel"`
+	WorkItems                []PursuitDelegationWorkItem `json:"workItems"`
+	SourceContext            []PursuitDelegationSource   `json:"sourceContext"`
+	AllowedActions           []string                    `json:"allowedActions"`
+	BlockedActions           []string                    `json:"blockedActions"`
+	EscalationRules          []string                    `json:"escalationRules"`
+	DeliveryRequirements     []string                    `json:"deliveryRequirements"`
+	OutstandingRobertActions []PursuitAction             `json:"outstandingRobertActions"`
+}
+
+type PursuitDelegationWorkItem struct {
+	WorkflowID   string                           `json:"workflowId,omitempty"`
+	Title        string                           `json:"title"`
+	Instructions string                           `json:"instructions"`
+	State        string                           `json:"state,omitempty"`
+	DueAt        *time.Time                       `json:"dueAt,omitempty"`
+	Checklist    []PursuitDelegationChecklistItem `json:"checklist"`
+}
+
+type PursuitDelegationChecklistItem struct {
+	Label    string `json:"label"`
+	Status   string `json:"status"`
+	Required bool   `json:"required"`
+}
+
+type PursuitDelegationSource struct {
+	WorkflowID   string `json:"workflowId,omitempty"`
+	SourceType   string `json:"sourceType,omitempty"`
+	SourceURI    string `json:"sourceUri"`
+	SourceLabel  string `json:"sourceLabel,omitempty"`
+	Relationship string `json:"relationship,omitempty"`
 }
 
 type PursuitEvidenceResolution struct {
@@ -428,25 +609,26 @@ type PursuitActionQueues struct {
 }
 
 type PursuitSummary struct {
-	CurrentState        string  `json:"currentState"`
-	WhatChanged         string  `json:"whatChanged"`
-	NeedsRobert         int     `json:"needsRobert"`
-	Blocked             int     `json:"blocked"`
-	OpenLoops           int     `json:"openLoops"`
-	RobertActions       int     `json:"robertActions"`
-	VAReadyActions      int     `json:"vaReadyActions"`
-	SystemReadyActions  int     `json:"systemReadyActions"`
-	WaitingActions      int     `json:"waitingActions"`
-	ReviewDue           bool    `json:"reviewDue"`
-	DecisionCards       int     `json:"decisionCards"`
-	TimelineItems       int     `json:"timelineItems"`
-	TaskRuns            int     `json:"taskRuns"`
-	LinkedEvidence      int     `json:"linkedEvidence"`
-	VerificationRuns    int     `json:"verificationRuns"`
-	RuntimeAttempts     int     `json:"runtimeAttempts"`
-	Confidence          float64 `json:"confidence"`
-	PlanningNeeded      bool    `json:"planningNeeded"`
-	CompletionCandidate bool    `json:"completionCandidate"`
+	CurrentState              string  `json:"currentState"`
+	WhatChanged               string  `json:"whatChanged"`
+	NeedsRobert               int     `json:"needsRobert"`
+	Blocked                   int     `json:"blocked"`
+	OpenLoops                 int     `json:"openLoops"`
+	RobertActions             int     `json:"robertActions"`
+	VAReadyActions            int     `json:"vaReadyActions"`
+	SystemReadyActions        int     `json:"systemReadyActions"`
+	WaitingActions            int     `json:"waitingActions"`
+	ReviewDue                 bool    `json:"reviewDue"`
+	DecisionCards             int     `json:"decisionCards"`
+	TimelineItems             int     `json:"timelineItems"`
+	TaskRuns                  int     `json:"taskRuns"`
+	LinkedEvidence            int     `json:"linkedEvidence"`
+	VerificationRuns          int     `json:"verificationRuns"`
+	RuntimeAttempts           int     `json:"runtimeAttempts"`
+	QualityGatesNeedingReview int     `json:"qualityGatesNeedingReview"`
+	Confidence                float64 `json:"confidence"`
+	PlanningNeeded            bool    `json:"planningNeeded"`
+	CompletionCandidate       bool    `json:"completionCandidate"`
 }
 
 type PursuitOperationalDigest struct {
@@ -477,30 +659,72 @@ type PursuitOperationalDigest struct {
 type Service interface {
 	Create(request CreateRequest) (*models.Pursuit, error)
 	Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, error)
+	UpdateForOwner(ownerIdentity string, id uuid.UUID, request UpdateRequest) (*models.Pursuit, error)
 	Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error)
+	ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool, actor string) (*models.Pursuit, error)
+	Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, error)
+	ReopenForOwner(ownerIdentity string, id uuid.UUID, actor, note string) (*models.Pursuit, error)
 	List(includeArchived bool) ([]models.Pursuit, error)
+	ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
+	UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error
 	Dashboard() (*Dashboard, error)
+	DashboardForOwner(ownerIdentity string) (*Dashboard, error)
 	Decisions() ([]PursuitDashboardDecision, error)
+	DecisionsForOwner(ownerIdentity string) ([]PursuitDashboardDecision, error)
 	Brief() (*Brief, error)
+	BriefForOwner(ownerIdentity string) (*Brief, error)
 	Detail(id uuid.UUID) (*PursuitDetail, error)
+	DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDetail, error)
 	ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
+	ResolveEvidenceForOwner(ownerIdentity string, id uuid.UUID, uri string) (*PursuitEvidenceResolution, error)
 	Approvals(id uuid.UUID) (*PursuitApprovalOverview, error)
+	ApprovalsForOwner(ownerIdentity string, id uuid.UUID) (*PursuitApprovalOverview, error)
+	DelegationPackage(id uuid.UUID) (*PursuitDelegationPackage, error)
+	DelegationPackageForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDelegationPackage, error)
 	Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error)
-	DeleteLink(id uuid.UUID, linkID uuid.UUID) error
+	LinkVerification(pursuitID, verificationID uuid.UUID) error
+	LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error
+	DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error
+	DeleteLinkForOwner(ownerIdentity string, id uuid.UUID, linkID uuid.UUID, actor string) error
 	Match(request MatchRequest) ([]MatchCandidate, error)
 	AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkResult, error)
 	AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult, error)
 	RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error)
+	RouteAmbientOpportunity(request AmbientOpportunityRouteRequest) (*AmbientOpportunityRouteResult, error)
+	RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
 	Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
+	IntakeForOwner(ownerIdentity string, id uuid.UUID, request IntakeRequest) (*PursuitDetail, error)
 	Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
+	PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
+	AcceptCandidate(id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
+	AcceptCandidateForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error)
 	ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
+	ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error)
 	RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error)
+	RefreshSummaryForOwner(ownerIdentity string, id uuid.UUID, actor string) (*PursuitDetail, error)
 	Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
+	ReviewForOwner(ownerIdentity string, id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
 	Activity(id uuid.UUID) ([]models.PursuitActivity, error)
+	ActivityForOwner(ownerIdentity string, id uuid.UUID) ([]models.PursuitActivity, error)
+}
+
+type ownerScopedRepository interface {
+	FindAllForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error)
+}
+
+// ownerScopedLinkValidator protects direct links to records that carry private
+// user context. System-wide operational records retain their existing runtime
+// and approval controls.
+type ownerScopedLinkValidator interface {
+	LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (handled bool, visible bool, err error)
 }
 
 type workflowIntakeService interface {
 	Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
+}
+
+type workflowOwnerScopedRecordReader interface {
+	GetForOwner(ownerIdentity string, id uuid.UUID) (*workflow.WorkflowRecord, error)
 }
 
 type service struct {
@@ -521,22 +745,26 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 	if title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
+	contextText := title + " " + request.Description + " " + request.WhyItMatters + " " + request.DesiredOutcome
+	riskLevel := conservativeRisk(request.RiskLevel, classifyRisk(contextText))
+	autonomyLevel := conservativeAutonomy(request.AutonomyLevel, riskLevel)
 	now := time.Now().UTC()
 	nextReviewAt := parseOptionalTime(request.NextReviewAt)
 	pursuit := &models.Pursuit{
 		OwnerIdentity:         strings.TrimSpace(request.OwnerIdentity),
 		Title:                 title,
 		Description:           strings.TrimSpace(request.Description),
+		WhyItMatters:          strings.TrimSpace(request.WhyItMatters),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
-		Domain:                firstNonEmpty(request.Domain, classifyDomain(title+" "+request.Description)),
+		Domain:                firstNonEmpty(request.Domain, classifyDomain(contextText)),
 		DesiredOutcome:        strings.TrimSpace(request.DesiredOutcome),
 		CurrentStateSummary:   strings.TrimSpace(request.CurrentStateSummary),
 		Status:                firstNonEmpty(request.Status, StatusActive),
 		PriorityScore:         clampInt(request.PriorityScore, 0, 100, 50),
-		RiskLevel:             firstNonEmpty(request.RiskLevel, classifyRisk(title+" "+request.Description+" "+request.DesiredOutcome)),
+		RiskLevel:             riskLevel,
 		Confidence:            normalizeConfidence(request.Confidence, 0.7),
-		AutonomyLevel:         firstNonEmpty(request.AutonomyLevel, defaultAutonomy(classifyRisk(title+" "+request.Description+" "+request.DesiredOutcome))),
-		NeedCategory:          firstNonEmpty(request.NeedCategory, classifyNeed(title+" "+request.Description+" "+request.DesiredOutcome)),
+		AutonomyLevel:         autonomyLevel,
+		NeedCategory:          firstNonEmpty(request.NeedCategory, classifyNeed(contextText)),
 		SourceOfCreation:      firstNonEmpty(request.SourceOfCreation, "manual"),
 		NextRecommendedAction: strings.TrimSpace(request.NextRecommendedAction),
 		CompletionDefinition:  strings.TrimSpace(request.CompletionDefinition),
@@ -554,22 +782,38 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, "operator", "", "", "")
+	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, firstNonEmpty(request.Actor, "operator"), "", "", "")
+	if policyWasNormalized(request.RiskLevel, request.AutonomyLevel, riskLevel, autonomyLevel) {
+		_, _ = s.recordActivity(created.ID, "pursuit.safety_normalized", "Pursuit safety policy normalized from the goal context: "+riskLevel+" risk / "+autonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	}
 	return created, nil
 }
 
 func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, error) {
+	return s.UpdateForOwner("", id, request)
+}
+
+func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request UpdateRequest) (*models.Pursuit, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if updateAttemptsReopen(*pursuit, request) {
+		return nil, fmt.Errorf("cannot reopen a closed pursuit through a generic update; use the explicit reopen action")
+	}
 	if requestsVerifiedCompletion(*pursuit, request) {
-		if reason, err := s.completionActiveBlockerReason(id); err != nil {
+		if isPursuitCandidate(*pursuit) {
+			return nil, fmt.Errorf("pursuit candidate must be accepted and planned before it can be marked complete")
+		}
+		if reason, err := s.completionActiveBlockerReasonForOwner(ownerIdentity, id); err != nil {
 			return nil, err
 		} else if reason != "" {
 			return nil, fmt.Errorf("pursuit completion is blocked by unresolved operational work: %s", reason)
 		}
-		allowed, reason, err := s.completionEvidenceAvailable(id)
+		allowed, reason, err := s.completionEvidenceAvailableForOwner(ownerIdentity, id)
 		if err != nil {
 			return nil, err
 		}
@@ -577,10 +821,13 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 			return nil, fmt.Errorf("pursuit completion requires verified evidence, linked verification, or a verified completed workflow before it can be marked complete: %s", reason)
 		}
 	}
+	priorRiskLevel := pursuit.RiskLevel
+	priorAutonomyLevel := pursuit.AutonomyLevel
 	if strings.TrimSpace(request.Title) != "" {
 		pursuit.Title = strings.TrimSpace(request.Title)
 	}
 	assignString(request.Description, &pursuit.Description)
+	assignString(request.WhyItMatters, &pursuit.WhyItMatters)
 	assignString(request.ProjectKey, &pursuit.ProjectKey)
 	assignString(request.Domain, &pursuit.Domain)
 	assignString(request.DesiredOutcome, &pursuit.DesiredOutcome)
@@ -591,12 +838,9 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 	if request.Status != "" {
 		pursuit.Status = strings.TrimSpace(request.Status)
 	}
-	if request.RiskLevel != "" {
-		pursuit.RiskLevel = strings.TrimSpace(request.RiskLevel)
-	}
-	if request.AutonomyLevel != "" {
-		pursuit.AutonomyLevel = strings.TrimSpace(request.AutonomyLevel)
-	}
+	contextText := pursuit.Title + " " + pursuit.Description + " " + pursuit.WhyItMatters + " " + pursuit.DesiredOutcome
+	pursuit.RiskLevel = conservativeRisk(firstNonEmpty(request.RiskLevel, pursuit.RiskLevel), classifyRisk(contextText))
+	pursuit.AutonomyLevel = conservativeAutonomy(firstNonEmpty(request.AutonomyLevel, pursuit.AutonomyLevel), pursuit.RiskLevel)
 	if request.CompletionState != "" {
 		pursuit.CompletionState = strings.TrimSpace(request.CompletionState)
 	}
@@ -627,29 +871,141 @@ func (s *service) Update(id uuid.UUID, request UpdateRequest) (*models.Pursuit, 
 		return nil, err
 	}
 	_, _ = s.recordActivity(id, "pursuit.updated", "Pursuit details updated", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	if !strings.EqualFold(priorRiskLevel, updated.RiskLevel) || !strings.EqualFold(priorAutonomyLevel, updated.AutonomyLevel) {
+		_, _ = s.recordActivity(id, "pursuit.safety_normalized", "Pursuit safety policy recalculated from the current goal context: "+updated.RiskLevel+" risk / "+updated.AutonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	}
 	return updated, nil
 }
 
 func (s *service) Archive(id uuid.UUID, archived bool, actor string) (*models.Pursuit, error) {
-	return s.Update(id, UpdateRequest{Archived: &archived, Actor: actor})
+	return s.ArchiveForOwner("", id, archived, actor)
+}
+
+func (s *service) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool, actor string) (*models.Pursuit, error) {
+	if !archived {
+		return s.ReopenForOwner(ownerIdentity, id, actor, "")
+	}
+	return s.UpdateForOwner(ownerIdentity, id, UpdateRequest{Archived: &archived, Actor: actor})
+}
+
+// Reopen is the explicit, auditable transition from a completed or archived
+// pursuit back to active work. It never creates a workflow; subsequent intake
+// still flows through the normal approval and verification controls.
+func (s *service) Reopen(id uuid.UUID, actor, note string) (*models.Pursuit, error) {
+	return s.ReopenForOwner("", id, actor, note)
+}
+
+func (s *service) ReopenForOwner(ownerIdentity string, id uuid.UUID, actor, note string) (*models.Pursuit, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if !pursuitClosed(*pursuit) {
+		return pursuit, nil
+	}
+	now := time.Now().UTC()
+	pursuit.Archived = false
+	pursuit.Status = StatusActive
+	pursuit.CompletionState = CompletionOpen
+	pursuit.LastActivityAt = &now
+	pursuit.CurrentStateSummary = firstNonEmpty(strings.TrimSpace(note), "Pursuit reopened for further governed work. Review the prior evidence and define the next concrete action.")
+	pursuit.NextRecommendedAction = "Review the previous closure evidence and add the next governed workflow item if more work is needed."
+	updated, err := s.repo.Update(pursuit)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = s.recordActivity(id, "pursuit.reopened", firstNonEmpty(strings.TrimSpace(note), "Pursuit reopened for further governed work."), firstNonEmpty(actor, "operator"), "", "", "")
+	return updated, nil
 }
 
 func (s *service) List(includeArchived bool) ([]models.Pursuit, error) {
-	return s.repo.FindAll(includeArchived)
+	return s.ListForOwner("", includeArchived)
 }
 
 func (s *service) Dashboard() (*Dashboard, error) {
-	pursuits, err := s.repo.FindAll(false)
+	return s.DashboardForOwner("")
+}
+
+// ListForOwner scopes authenticated users to records they own while keeping
+// ownerless records available for local single-user deployments created before
+// identity-aware pursuit ownership existed.
+func (s *service) ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	var (
+		pursuits []models.Pursuit
+		err      error
+	)
+	if scopedRepo, ok := s.repo.(ownerScopedRepository); ok && ownerIdentity != "" {
+		pursuits, err = scopedRepo.FindAllForOwner(ownerIdentity, includeArchived)
+	} else {
+		pursuits, err = s.repo.FindAll(includeArchived)
+	}
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]models.Pursuit, 0, len(pursuits))
+	for _, pursuit := range pursuits {
+		if pursuitVisibleTo(pursuit, ownerIdentity) {
+			visible = append(visible, pursuit)
+		}
+	}
+	return visible, nil
+}
+
+func pursuitVisibleTo(pursuit models.Pursuit, ownerIdentity string) bool {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return true
+	}
+	recordOwner := strings.TrimSpace(pursuit.OwnerIdentity)
+	return recordOwner == "" || recordOwner == ownerIdentity
+}
+
+// pursuitMutableBy is intentionally stricter than read visibility. Ownerless
+// legacy pursuits remain inspectable during local migration, but authenticated
+// users must not adopt or change them. Empty owner identity is reserved for
+// controlled in-process system work.
+func pursuitMutableBy(pursuit models.Pursuit, ownerIdentity string) bool {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return true
+	}
+	return strings.TrimSpace(pursuit.OwnerIdentity) == ownerIdentity
+}
+
+func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
+	pursuits, err := s.ListForOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
 	dashboard := &Dashboard{
 		Counts: map[string]int64{
-			"active": 0, "waiting": 0, "blocked": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,
+			"active": 0, "waiting": 0, "blocked": 0, "completed": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,
 		},
+		DecisionQueue:        []PursuitDashboardDecision{},
+		NeedsRobert:          []PursuitListItem{},
+		VAReady:              []PursuitListItem{},
+		SystemReady:          []PursuitListItem{},
+		Blocked:              []PursuitListItem{},
+		Stale:                []PursuitListItem{},
+		ReviewDue:            []PursuitListItem{},
+		PlanningNeeded:       []PursuitListItem{},
+		RecentlyChanged:      []PursuitListItem{},
+		HighRisk:             []PursuitListItem{},
+		CompletionCandidates: []PursuitListItem{},
 	}
 	for _, pursuit := range pursuits {
-		item, detail, _ := s.listItemWithDetail(pursuit)
+		if pursuitClosed(pursuit) {
+			dashboard.Counts["completed"]++
+			continue
+		}
+		item, detail, detailErr := s.listItemWithDetailForOwner(ownerIdentity, pursuit)
+		if detailErr != nil {
+			item = detailUnavailableListItem(pursuit)
+		}
 		switch dashboardStatusBucket(pursuit, item) {
 		case StatusWaiting:
 			dashboard.Counts["waiting"]++
@@ -697,6 +1053,7 @@ func (s *service) Dashboard() (*Dashboard, error) {
 		dashboard.RecentlyChanged = append(dashboard.RecentlyChanged, item)
 	}
 	sortDashboardDecisions(dashboard.DecisionQueue)
+	sortListItemsByEffectiveActivity(dashboard.RecentlyChanged)
 	dashboard.Counts["decisionQueue"] = int64(len(dashboard.DecisionQueue))
 	limitDashboardDecisions(&dashboard.DecisionQueue, 12)
 	limitListItems(&dashboard.NeedsRobert, 8)
@@ -713,7 +1070,11 @@ func (s *service) Dashboard() (*Dashboard, error) {
 }
 
 func (s *service) Decisions() ([]PursuitDashboardDecision, error) {
-	dashboard, err := s.Dashboard()
+	return s.DecisionsForOwner("")
+}
+
+func (s *service) DecisionsForOwner(ownerIdentity string) ([]PursuitDashboardDecision, error) {
+	dashboard, err := s.DashboardForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -733,7 +1094,11 @@ func dashboardStatusBucket(pursuit models.Pursuit, item PursuitListItem) string 
 }
 
 func (s *service) Brief() (*Brief, error) {
-	dashboard, err := s.Dashboard()
+	return s.BriefForOwner("")
+}
+
+func (s *service) BriefForOwner(ownerIdentity string) (*Brief, error) {
+	dashboard, err := s.DashboardForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -754,61 +1119,273 @@ func (s *service) Brief() (*Brief, error) {
 	return brief, nil
 }
 
+// UpsertTaskAttempt records the durable, compact task-engine projection for a
+// pursuit-scoped direct plan or run. It deliberately does not create a
+// workflow: workflow-owned execution already persists on WorkflowItem and is
+// aggregated separately in pursuit detail.
+func (s *service) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
+	if attempt.PursuitID == uuid.Nil || strings.TrimSpace(attempt.TaskPlanID) == "" {
+		return fmt.Errorf("pursuit id and task plan id are required")
+	}
+	pursuit, err := s.taskAttemptPursuit(attempt.PursuitID, attempt.OwnerIdentity)
+	if err != nil {
+		return err
+	}
+	attempt.OwnerIdentity = firstNonEmpty(strings.TrimSpace(attempt.OwnerIdentity), pursuit.OwnerIdentity)
+	attempt.RequestSummary = compactPursuitTaskSummary(attempt.RequestSummary)
+	attempt.Mode = firstNonEmpty(strings.TrimSpace(attempt.Mode), "plan")
+	attempt.Status = firstNonEmpty(strings.TrimSpace(attempt.Status), "planned")
+	attempt.RiskLevel = firstNonEmpty(strings.TrimSpace(attempt.RiskLevel), pursuit.RiskLevel, "low")
+	attempt.BlockedReason = compactPursuitTaskSummary(attempt.BlockedReason)
+	stored, err := s.repo.UpsertTaskAttempt(&attempt)
+	if err != nil {
+		return err
+	}
+	if err := s.linkTaskAttemptRuntimeEvidence(*stored); err != nil {
+		return err
+	}
+	eventType, message := pursuitTaskAttemptActivity(*stored)
+	_, err = s.recordActivity(stored.PursuitID, eventType, message, firstNonEmpty(stored.OwnerIdentity, "task-engine"), "task_attempt", stored.TaskPlanID, "task://"+stored.TaskPlanID)
+	return err
+}
+
+// ValidatePursuitTaskAttempt is used by the direct task engine before it
+// builds a pursuit-scoped plan. It prevents an unaccepted candidate or closed
+// pursuit from receiving task work through APIs that do not create workflows.
+func (s *service) ValidatePursuitTaskAttempt(pursuitID uuid.UUID, ownerIdentity string) error {
+	_, err := s.taskAttemptPursuit(pursuitID, ownerIdentity)
+	return err
+}
+
+func (s *service) taskAttemptPursuit(pursuitID uuid.UUID, ownerIdentity string) (*models.Pursuit, error) {
+	pursuit, err := s.repo.FindByID(pursuitID)
+	if err != nil {
+		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("pursuit candidate must be accepted before direct task planning or execution")
+	}
+	if err := ensurePursuitOpen(*pursuit, "plan or execute direct task work for"); err != nil {
+		return nil, err
+	}
+	return pursuit, nil
+}
+
+// linkTaskAttemptRuntimeEvidence adds only the exact persisted launch event to
+// the pursuit. Linking the automation itself would make historical and future
+// launches of that shared capability look like evidence for this task.
+func (s *service) linkTaskAttemptRuntimeEvidence(attempt models.PursuitTaskAttempt) error {
+	launchID, err := uuid.Parse(strings.TrimSpace(attempt.LaunchEventID))
+	if err != nil {
+		return nil
+	}
+	launches, err := s.repo.FindLinkedAutomationLaunches(nil, []uuid.UUID{launchID}, 1)
+	if err != nil {
+		return err
+	}
+	launches = runtimeAttemptsVisibleToOwner(attempt.OwnerIdentity, launches)
+	if len(launches) != 1 || launches[0].ID != launchID {
+		return fmt.Errorf("runtime launch evidence is not available")
+	}
+	launch := launches[0]
+	if automationID, err := uuid.Parse(strings.TrimSpace(attempt.AutomationID)); err == nil && launch.AutomationID != uuid.Nil && launch.AutomationID != automationID {
+		return fmt.Errorf("runtime launch evidence does not match the task automation")
+	}
+	_, err = s.Link(attempt.PursuitID, LinkRequest{
+		OwnerIdentity: attempt.OwnerIdentity,
+		LinkType:      LinkAgentRuntime,
+		LinkID:        launchID.String(),
+		Relationship:  "execution_attempt",
+		SourceURI:     "automation-launch://" + launchID.String(),
+		SourceLabel:   firstNonEmpty(strings.TrimSpace(launch.RuntimeType), "controlled runtime") + " task evidence",
+		Confidence:    1,
+		Actor:         "task-engine",
+	})
+	return err
+}
+
+func compactPursuitTaskSummary(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(safety.RedactSecrets(value))), " ")
+	const limit = 500
+	if len([]rune(value)) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit]) + "..."
+}
+
+func pursuitTaskAttemptActivity(attempt models.PursuitTaskAttempt) (string, string) {
+	mode := firstNonEmpty(attempt.Mode, "task")
+	if attempt.CompletedAt == nil {
+		return "pursuit.task_attempt_started", "Direct " + mode + " task attempt started."
+	}
+	if attempt.Status == "validated" {
+		return "pursuit.task_attempt_validated", "Direct " + mode + " task attempt completed with verified output."
+	}
+	if strings.Contains(attempt.Status, "review") || strings.TrimSpace(attempt.BlockedReason) != "" {
+		return "pursuit.task_attempt_review_required", "Direct " + mode + " task attempt requires review: " + firstNonEmpty(attempt.BlockedReason, attempt.Status)
+	}
+	return "pursuit.task_attempt_recorded", "Direct " + mode + " task attempt recorded with status " + attempt.Status + "."
+}
+
 func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
+	return s.DetailForOwner("", id)
+}
+
+func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	links, err := s.repo.FindLinks(id)
 	if err != nil {
 		return nil, err
 	}
-	activity, _ := s.repo.FindActivities(id, 50)
+	links, err = s.visibleLinksForOwner(ownerIdentity, links)
+	if err != nil {
+		return nil, err
+	}
+	activity, err := s.repo.FindActivities(id, 50)
+	if err != nil {
+		return nil, pursuitDetailLoadError("activity", err)
+	}
+	taskAttempts, err := s.repo.FindTaskAttempts(id, 20)
+	if err != nil {
+		return nil, pursuitDetailLoadError("task attempts", err)
+	}
+	taskAttempts = taskAttemptsVisibleToOwner(ownerIdentity, taskAttempts)
+	if taskAttempts == nil {
+		taskAttempts = []models.PursuitTaskAttempt{}
+	}
 	workflowIDs := linkUUIDs(links, LinkWorkflow)
 	memoryIDs := linkUUIDs(links, LinkMemory)
+	conversationIDs := linkUUIDs(links, LinkAIConversation)
+	ambientOpportunityIDs := linkUUIDs(links, LinkAmbientOpportunity)
 	sourceItemIDs := linkUUIDs(links, LinkSourceItem)
 	extractionIDs := linkUUIDs(links, LinkSourceExtraction)
 	verificationIDs := linkUUIDs(links, LinkVerification)
 	linkedAutomationIDs := linkUUIDs(links, LinkAutomation)
 	linkedRuntimeAttemptIDs := linkUUIDs(links, LinkAgentRuntime)
-	workflows, _ := s.repo.FindLinkedWorkflows(workflowIDs)
+	workflows, err := s.repo.FindLinkedWorkflows(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked workflows", err)
+	}
+	checklistItems, err := s.repo.FindLinkedChecklistItems(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked checklist items", err)
+	}
 	automationIDs := uniqueUUIDs(append(linkedAutomationIDs, workflowAutomationIDs(workflows)...))
-	openLoops, _ := s.repo.FindLinkedOpenLoops(workflowIDs)
-	proposals, _ := s.repo.FindLinkedProposals(workflowIDs)
-	decisions, _ := s.repo.FindLinkedDecisions(workflowIDs)
-	transitions, _ := s.repo.FindLinkedTransitions(workflowIDs)
-	sourceLinks, _ := s.repo.FindLinkedSourceLinks(workflowIDs)
-	events, _ := s.repo.FindLinkedEvents(workflowIDs)
-	evidence, _ := s.repo.FindLinkedEvidence(workflowIDs)
-	memories, _ := s.repo.FindLinkedMemories(memoryIDs)
-	sourceItems, _ := s.repo.FindLinkedSourceItems(sourceItemIDs)
-	extractions, _ := s.repo.FindLinkedExtractions(extractionIDs)
-	verificationRuns, _ := s.repo.FindLinkedVerificationRuns(verificationIDs)
+	openLoops, err := s.repo.FindLinkedOpenLoops(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked open loops", err)
+	}
+	proposals, err := s.repo.FindLinkedProposals(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked proposals", err)
+	}
+	qualityGates, err := s.repo.FindLinkedQualityGates(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked quality gates", err)
+	}
+	decisions, err := s.repo.FindLinkedDecisions(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked decisions", err)
+	}
+	transitions, err := s.repo.FindLinkedTransitions(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked transitions", err)
+	}
+	sourceLinks, err := s.repo.FindLinkedSourceLinks(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked source links", err)
+	}
+	events, err := s.repo.FindLinkedEvents(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked events", err)
+	}
+	evidence, err := s.repo.FindLinkedEvidence(workflowIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked evidence", err)
+	}
+	memories, err := s.repo.FindLinkedMemories(memoryIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked memories", err)
+	}
+	conversations, err := s.repo.FindLinkedConversations(conversationIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked conversations", err)
+	}
+	if conversations == nil {
+		conversations = []models.AIConversationArchive{}
+	}
+	ambientOpportunities, err := s.repo.FindLinkedAmbientOpportunities(ambientOpportunityIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked ambient opportunities", err)
+	}
+	if ambientOpportunities == nil {
+		ambientOpportunities = []models.AmbientOpportunity{}
+	}
+	sourceItems, err := s.repo.FindLinkedSourceItems(sourceItemIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked source items", err)
+	}
+	extractions, err := s.repo.FindLinkedExtractions(extractionIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked source extractions", err)
+	}
+	verificationRuns, err := s.repo.FindLinkedVerificationRuns(verificationIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked verification runs", err)
+	}
 	runIDs := verificationRunIDs(verificationRuns)
-	verificationClaims, _ := s.repo.FindLinkedVerificationClaims(runIDs)
-	verificationEvidence, _ := s.repo.FindLinkedVerificationEvidence(runIDs)
-	automations, _ := s.repo.FindLinkedAutomations(automationIDs)
-	runtimeAttempts, _ := s.repo.FindLinkedAutomationLaunches(automationIDs, linkedRuntimeAttemptIDs, 20)
+	verificationClaims, err := s.repo.FindLinkedVerificationClaims(runIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked verification claims", err)
+	}
+	verificationEvidence, err := s.repo.FindLinkedVerificationEvidence(runIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked verification evidence", err)
+	}
+	automations, err := s.repo.FindLinkedAutomations(automationIDs)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked automations", err)
+	}
+	runtimeAttempts, err := s.repo.FindLinkedAutomationLaunches(automationIDs, linkedRuntimeAttemptIDs, 20)
+	if err != nil {
+		return nil, pursuitDetailLoadError("linked runtime attempts", err)
+	}
+	runtimeAttempts = runtimeAttemptsVisibleToOwner(ownerIdentity, runtimeAttempts)
 	if runtimeAttempts == nil {
 		runtimeAttempts = []models.AutomationLaunchEvent{}
 	}
 	resolvedDecisions := resolvedPursuitDecisions(activity)
 	sourceBlockers := sourceRetractionBlockers(links, extractions)
+	qualityGateBlockers := qualityGateBlockers(qualityGates)
 
 	detail := &PursuitDetail{
 		Pursuit:              *pursuit,
 		Links:                links,
 		Activity:             activity,
 		Workflows:            workflows,
+		ChecklistItems:       checklistItems,
 		OpenLoops:            openLoops,
 		Proposals:            proposals,
+		QualityGates:         qualityGates,
 		Decisions:            decisions,
 		Transitions:          transitions,
 		SourceLinks:          sourceLinks,
 		Events:               events,
 		Evidence:             evidence,
 		Memories:             memories,
+		Conversations:        compactConversations(conversations),
+		AmbientOpportunities: compactAmbientOpportunities(ambientOpportunities),
 		TaskRuns:             taskRunsFromWorkflows(workflows),
+		TaskAttempts:         taskAttempts,
 		VerificationRuns:     verificationRuns,
 		VerificationClaims:   verificationClaims,
 		VerificationEvidence: verificationEvidence,
@@ -819,12 +1396,14 @@ func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
 	}
 	detail.ApprovalItems = approvalWorkflows(workflows)
 	detail.DecisionQueue = decisionQueue(*pursuit, workflows, proposals, decisions, runtimeAttempts, resolvedDecisions)
-	detail.Timeline = pursuitTimeline(*pursuit, activity, workflows, transitions, sourceLinks, decisions, events, detail.TaskRuns, verificationRuns, runtimeAttempts)
+	detail.Timeline = pursuitTimeline(*pursuit, activity, workflows, transitions, sourceLinks, decisions, events, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts)
 	detail.Blockers = append(blockers(workflows, openLoops), runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedDecisions)...)
 	detail.Blockers = append(detail.Blockers, sourceBlockers...)
-	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions)
+	detail.Blockers = append(detail.Blockers, qualityGateBlockers...)
+	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions, len(qualityGateBlockers) > 0)
 	detail.ActionQueues = actionQueues(*pursuit, detail.NextActions, detail.Blockers)
-	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, verificationRuns, runtimeAttempts, activity, sourceBlockers)
+	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts, activity, sourceBlockers, qualityGateBlockers)
+	detail.Summary.QualityGatesNeedingReview = len(qualityGateBlockers)
 	if len(detail.Timeline) > 0 {
 		detail.Summary.WhatChanged = timelineChangeSummary(detail.Timeline[0])
 	}
@@ -848,11 +1427,15 @@ func (s *service) Detail(id uuid.UUID) (*PursuitDetail, error) {
 }
 
 func (s *service) ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error) {
+	return s.ResolveEvidenceForOwner("", id, uri)
+}
+
+func (s *service) ResolveEvidenceForOwner(ownerIdentity string, id uuid.UUID, uri string) (*PursuitEvidenceResolution, error) {
 	uri = strings.TrimSpace(uri)
 	if uri == "" {
 		return nil, fmt.Errorf("evidence uri is required")
 	}
-	detail, err := s.Detail(id)
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1015,7 +1598,11 @@ func (s *service) ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceRes
 }
 
 func (s *service) Approvals(id uuid.UUID) (*PursuitApprovalOverview, error) {
-	detail, err := s.Detail(id)
+	return s.ApprovalsForOwner("", id)
+}
+
+func (s *service) ApprovalsForOwner(ownerIdentity string, id uuid.UUID) (*PursuitApprovalOverview, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1039,14 +1626,209 @@ func (s *service) Approvals(id uuid.UUID) (*PursuitApprovalOverview, error) {
 	return overview, nil
 }
 
-func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error) {
-	if _, err := s.repo.FindByID(id); err != nil {
+func (s *service) DelegationPackage(id uuid.UUID) (*PursuitDelegationPackage, error) {
+	return s.DelegationPackageForOwner("", id)
+}
+
+func (s *service) DelegationPackageForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDelegationPackage, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, id)
+	if err != nil {
 		return nil, err
+	}
+	return delegationPackage(*detail), nil
+}
+
+func delegationPackage(detail PursuitDetail) *PursuitDelegationPackage {
+	pursuit := detail.Pursuit
+	packageResult := &PursuitDelegationPackage{
+		GeneratedAt:          time.Now().UTC(),
+		PursuitID:            pursuit.ID.String(),
+		Title:                pursuit.Title,
+		Objective:            firstNonEmpty(pursuit.DesiredOutcome, pursuit.Description, pursuit.Title),
+		WhyItMatters:         pursuit.WhyItMatters,
+		CurrentState:         firstNonEmpty(detail.Summary.CurrentState, pursuit.CurrentStateSummary, "No current state has been recorded yet."),
+		CompletionDefinition: pursuit.CompletionDefinition,
+		RiskLevel:            firstNonEmpty(pursuit.RiskLevel, "medium"),
+		AllowedActions: []string{
+			"Review the linked source references and organize the requested evidence.",
+			"Prepare drafts, checklists, summaries, and status updates inside the linked workflow.",
+			"Record missing information, blockers, and questions for Robert in HAI.",
+		},
+		BlockedActions: []string{
+			"Do not send external messages or make commitments on Robert's behalf.",
+			"Do not make legal, government, financial, medical, account, public-posting, or destructive decisions.",
+			"Do not delete or move source material outside the reviewed workflow path.",
+		},
+		DeliveryRequirements: []string{
+			"Keep work inside the linked workflow and preserve source references.",
+			"Mark only completed checklist steps that are supported by the linked evidence.",
+			"Post a concise status update with completed work, remaining blockers, and questions for Robert.",
+		},
+		OutstandingRobertActions: append([]PursuitAction{}, detail.ActionQueues.NeedsRobert...),
+	}
+
+	if len(detail.ActionQueues.VAReady) == 0 {
+		packageResult.Status = "not_ready"
+		packageResult.Reason = "HAI found no bounded VA-ready action. Resolve Robert approvals, evidence gaps, or blockers first."
+	} else {
+		packageResult.Ready = true
+		packageResult.Status = "ready"
+		packageResult.Reason = "The package contains only VA-ready preparation work. It does not authorize external execution."
+	}
+
+	byWorkflow := make(map[string]models.WorkflowItem, len(detail.Workflows))
+	for _, item := range detail.Workflows {
+		byWorkflow[item.ID.String()] = item
+	}
+	checklists := make(map[string][]PursuitDelegationChecklistItem, len(detail.ChecklistItems))
+	for _, item := range detail.ChecklistItems {
+		key := item.WorkflowID.String()
+		checklists[key] = append(checklists[key], PursuitDelegationChecklistItem{
+			Label:    item.Label,
+			Status:   item.Status,
+			Required: item.RequiresApproval,
+		})
+	}
+	seenWorkflows := map[string]bool{}
+	for _, action := range detail.ActionQueues.VAReady {
+		workflowID := strings.TrimSpace(action.WorkflowID)
+		if workflowID == "" || seenWorkflows[workflowID] {
+			continue
+		}
+		seenWorkflows[workflowID] = true
+		workflowItem := byWorkflow[workflowID]
+		packageResult.WorkItems = append(packageResult.WorkItems, PursuitDelegationWorkItem{
+			WorkflowID:   workflowID,
+			Title:        firstNonEmpty(workflowItem.Title, action.Label),
+			Instructions: firstNonEmpty(action.Label, workflowItem.NextAction, workflowItem.Description),
+			State:        workflowItem.CurrentState,
+			DueAt:        workflowItem.DueAt,
+			Checklist:    checklists[workflowID],
+		})
+	}
+	if packageResult.Ready && len(packageResult.WorkItems) == 0 {
+		packageResult.Ready = false
+		packageResult.Status = "not_ready"
+		packageResult.Reason = "VA-ready work was identified, but it is not linked to a governed workflow yet. Route it through pursuit planning first."
+	}
+
+	packageResult.SourceContext = delegationSources(detail, seenWorkflows)
+	for _, blocker := range detail.Blockers {
+		packageResult.EscalationRules = append(packageResult.EscalationRules, "Escalate to Robert: "+firstNonEmpty(blocker.Reason, blocker.Label, "a linked workflow is blocked"))
+	}
+	for _, action := range detail.ActionQueues.NeedsRobert {
+		packageResult.EscalationRules = append(packageResult.EscalationRules, "Do not proceed past Robert's decision: "+action.Label)
+	}
+	for _, extraction := range detail.SourceExtractions {
+		if extraction.Uncertain || extraction.Archived {
+			packageResult.EscalationRules = append(packageResult.EscalationRules, "Do not rely on uncertain or archived extracted material without Robert review: "+firstNonEmpty(extraction.SourceLabel, extraction.SourceURI, extraction.ID.String()))
+		}
+	}
+	packageResult.EscalationRules = uniqueStrings(packageResult.EscalationRules)
+	return packageResult
+}
+
+func delegationSources(detail PursuitDetail, selectedWorkflows map[string]bool) []PursuitDelegationSource {
+	result := []PursuitDelegationSource{}
+	seen := map[string]bool{}
+	add := func(workflowID, sourceType, uri, label, relationship string) {
+		uri = strings.TrimSpace(uri)
+		if uri == "" {
+			return
+		}
+		key := workflowID + "|" + uri
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		result = append(result, PursuitDelegationSource{WorkflowID: workflowID, SourceType: sourceType, SourceURI: uri, SourceLabel: label, Relationship: relationship})
+	}
+	for _, link := range detail.SourceLinks {
+		workflowID := link.WorkflowID.String()
+		if len(selectedWorkflows) > 0 && !selectedWorkflows[workflowID] {
+			continue
+		}
+		add(workflowID, link.SourceType, link.SourceURI, link.SourceLabel, link.Relationship)
+	}
+	for _, link := range detail.Links {
+		if link.LinkType == LinkSourceItem || link.LinkType == LinkSourceExtraction || link.LinkType == LinkMemory {
+			add("", link.LinkType, link.SourceURI, link.SourceLabel, link.Relationship)
+		}
+	}
+	return result
+}
+
+func (s *service) visibleLinksForOwner(ownerIdentity string, links []models.PursuitLink) ([]models.PursuitLink, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return links, nil
+	}
+	validator, ok := s.repo.(ownerScopedLinkValidator)
+	if !ok {
+		return links, nil
+	}
+	visible := make([]models.PursuitLink, 0, len(links))
+	for _, link := range links {
+		handled, allowed, err := validator.LinkVisibleToOwner(ownerIdentity, link.LinkType, link.LinkID)
+		if err != nil {
+			return nil, err
+		}
+		if !handled || allowed {
+			visible = append(visible, link)
+		}
+	}
+	return visible, nil
+}
+
+func runtimeAttemptsVisibleToOwner(ownerIdentity string, attempts []models.AutomationLaunchEvent) []models.AutomationLaunchEvent {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return attempts
+	}
+	visible := make([]models.AutomationLaunchEvent, 0, len(attempts))
+	for _, attempt := range attempts {
+		if strings.TrimSpace(attempt.OwnerIdentity) == ownerIdentity {
+			visible = append(visible, attempt)
+		}
+	}
+	return visible
+}
+
+func taskAttemptsVisibleToOwner(ownerIdentity string, attempts []models.PursuitTaskAttempt) []models.PursuitTaskAttempt {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return attempts
+	}
+	visible := make([]models.PursuitTaskAttempt, 0, len(attempts))
+	for _, attempt := range attempts {
+		if strings.TrimSpace(attempt.OwnerIdentity) == ownerIdentity {
+			visible = append(visible, attempt)
+		}
+	}
+	return visible
+}
+
+func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, request.OwnerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	linkType := strings.TrimSpace(request.LinkType)
 	linkID := strings.TrimSpace(request.LinkID)
 	if linkType == "" || linkID == "" {
 		return nil, fmt.Errorf("linkType and linkId are required")
+	}
+	if linkType == LinkPursuit {
+		linkedPursuitID, parseErr := uuid.Parse(linkID)
+		if parseErr == nil && linkedPursuitID == id {
+			return nil, fmt.Errorf("a pursuit cannot be linked to itself")
+		}
+	}
+	if err := s.validateLinkOwnership(*pursuit, request.OwnerIdentity, linkType, linkID); err != nil {
+		return nil, err
 	}
 	link := &models.PursuitLink{
 		PursuitID:    id,
@@ -1065,26 +1847,95 @@ func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, 
 	return created, nil
 }
 
-func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID) error {
-	if _, err := s.repo.FindByID(id); err != nil {
+func (s *service) validateLinkOwnership(pursuit models.Pursuit, ownerIdentity, linkType, linkID string) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil
+	}
+	if owner := strings.TrimSpace(pursuit.OwnerIdentity); owner != "" && owner != ownerIdentity {
+		return fmt.Errorf("pursuit is not visible to the authenticated owner")
+	}
+	validator, ok := s.repo.(ownerScopedLinkValidator)
+	if !ok {
+		return nil
+	}
+	handled, visible, err := validator.LinkVisibleToOwner(ownerIdentity, linkType, linkID)
+	if err != nil {
 		return err
+	}
+	if handled && !visible {
+		return fmt.Errorf("linked %s record is not visible to the authenticated owner", linkType)
+	}
+	return nil
+}
+
+func (s *service) LinkVerification(pursuitID, verificationID uuid.UUID) error {
+	return s.linkVerificationForOwner("", pursuitID, verificationID)
+}
+
+func (s *service) LinkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error {
+	if _, err := s.DetailForOwner(ownerIdentity, pursuitID); err != nil {
+		return err
+	}
+	return s.linkVerificationForOwner(ownerIdentity, pursuitID, verificationID)
+}
+
+func (s *service) linkVerificationForOwner(ownerIdentity string, pursuitID, verificationID uuid.UUID) error {
+	if pursuitID == uuid.Nil || verificationID == uuid.Nil {
+		return fmt.Errorf("pursuit and verification ids are required")
+	}
+	if _, err := s.Link(pursuitID, LinkRequest{
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkVerification,
+		LinkID:        verificationID.String(),
+		Relationship:  "verification_evidence",
+		SourceURI:     "verification://" + verificationID.String(),
+		SourceLabel:   "Source-grounded verification run",
+		Confidence:    1,
+		Actor:         "verification-engine",
+	}); err != nil {
+		return err
+	}
+	_, err := s.RefreshSummaryForOwner(ownerIdentity, pursuitID, "verification-engine")
+	return err
+}
+
+func (s *service) DeleteLink(id uuid.UUID, linkID uuid.UUID, actor string) error {
+	return s.DeleteLinkForOwner("", id, linkID, actor)
+}
+
+func (s *service) DeleteLinkForOwner(ownerIdentity string, id uuid.UUID, linkID uuid.UUID, actor string) error {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return fmt.Errorf("pursuit not found")
 	}
 	if err := s.repo.DeleteLink(id, linkID); err != nil {
 		return err
 	}
-	_, _ = s.recordActivity(id, "pursuit.link_removed", "Removed pursuit link", "operator", "", linkID.String(), "")
+	_, _ = s.recordActivity(id, "pursuit.link_removed", "Removed pursuit link", firstNonEmpty(actor, "operator"), "", linkID.String(), "")
 	return nil
 }
 
 func (s *service) Match(request MatchRequest) ([]MatchCandidate, error) {
-	pursuits, err := s.repo.FindAll(false)
+	ownerIdentity := strings.TrimSpace(request.OwnerIdentity)
+	pursuits, err := s.ListForOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
 	if request.SourceType != "" && request.SourceID != "" {
-		if link, err := s.repo.FindLink(request.SourceType, request.SourceID); err == nil {
-			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil {
+		if link, err := s.repo.FindLinkForOwner(ownerIdentity, request.SourceType, request.SourceID); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, ownerIdentity) {
 				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.98, Reasons: []string{"source is already linked to this pursuit"}, Confidence: "high"}}, nil
+			}
+		}
+	}
+	if sourceURI := strings.TrimSpace(request.SourceURI); sourceURI != "" {
+		if link, err := s.repo.FindLinkBySourceURIForOwner(ownerIdentity, sourceURI); err == nil {
+			if pursuit, err := s.repo.FindByID(link.PursuitID); err == nil && pursuitVisibleTo(*pursuit, ownerIdentity) {
+				return []MatchCandidate{{Pursuit: *pursuit, Score: 0.97, Reasons: []string{"source URI is already linked to this pursuit"}, Confidence: "high"}}, nil
 			}
 		}
 	}
@@ -1097,7 +1948,7 @@ func (s *service) Match(request MatchRequest) ([]MatchCandidate, error) {
 			score += 0.45
 			reasons = append(reasons, "project key matches")
 		}
-		words := normalizeWords(pursuit.Title + " " + pursuit.Description + " " + pursuit.DesiredOutcome + " " + pursuit.ProjectKey)
+		words := normalizeWords(pursuit.Title + " " + pursuit.Description + " " + pursuit.WhyItMatters + " " + pursuit.DesiredOutcome + " " + pursuit.ProjectKey)
 		overlap := wordOverlap(query, words)
 		if overlap > 0 {
 			score += math.Min(0.45, overlap)
@@ -1130,12 +1981,13 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 		matchSourceID = extractionID
 	}
 	matches, err := s.Match(MatchRequest{
-		Input:      request.Input,
-		ProjectKey: request.ProjectKey,
-		SourceType: matchSourceType,
-		SourceID:   matchSourceID,
-		SourceURI:  request.SourceURI,
-		Limit:      1,
+		OwnerIdentity: request.OwnerIdentity,
+		Input:         request.Input,
+		ProjectKey:    request.ProjectKey,
+		SourceType:    matchSourceType,
+		SourceID:      matchSourceID,
+		SourceURI:     request.SourceURI,
+		Limit:         1,
 	})
 	if err != nil {
 		return nil, err
@@ -1156,22 +2008,49 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 		result.Message = fmt.Sprintf("best pursuit match %.2f is below auto-link threshold %.2f", match.Score, minimumScore)
 		return result, nil
 	}
+	if pursuitClosed(match.Pursuit) {
+		result.Message = "matched pursuit is closed; reopen it explicitly or create a new pursuit before linking operational work"
+		return result, nil
+	}
+	if isPursuitCandidate(match.Pursuit) {
+		// A source or memory producer may already have created this workflow
+		// before it asks the pursuit layer to correlate it. Matching a reviewable
+		// candidate must not turn that workflow into candidate-owned operational
+		// work: Robert has not accepted the objective yet.
+		result.Message = "matched pursuit candidate awaits explicit acceptance; workflow was not linked"
+		_, _ = s.recordActivity(match.Pursuit.ID, "pursuit.candidate_workflow_link_deferred", "A source-derived workflow matched this reviewable candidate, but no operational link was created before explicit acceptance.", firstNonEmpty(request.Actor, "system"), LinkWorkflow, request.WorkflowID.String(), request.SourceURI)
+		return result, nil
+	}
 
 	actor := firstNonEmpty(request.Actor, "system")
 	links := []models.PursuitLink{}
 	workflowLink, err := s.Link(match.Pursuit.ID, LinkRequest{
-		LinkType:     LinkWorkflow,
-		LinkID:       request.WorkflowID.String(),
-		Relationship: "operational_work",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   match.Score,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      LinkWorkflow,
+		LinkID:        request.WorkflowID.String(),
+		Relationship:  "operational_work",
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    match.Score,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, err
 	}
 	links = append(links, *workflowLink)
+	if sourceLink, linked, err := s.linkExactSourceReference(match.Pursuit.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceLink)
+	}
+	if conversationLink, linked, err := s.linkConversationReference(match.Pursuit.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
+	if err := s.linkAssistantCommandReference(match.Pursuit.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
+		return nil, err
+	}
 	if sourceItemLink, linked, err := s.linkOptionalUUID(match.Pursuit.ID, LinkSourceItem, request.RawItemID, "source_record", request, match.Score, actor); err != nil {
 		return nil, err
 	} else if linked {
@@ -1186,7 +2065,7 @@ func (s *service) AutoLinkWorkflow(request AutoLinkWorkflowRequest) (*AutoLinkRe
 	result.Linked = true
 	result.Links = links
 	result.Message = "source-derived workflow linked to pursuit"
-	if _, err := s.RefreshSummary(match.Pursuit.ID, actor); err != nil {
+	if _, err := s.RefreshSummaryForOwner(request.OwnerIdentity, match.Pursuit.ID, actor); err != nil {
 		result.Message = "source-derived workflow linked to pursuit; summary refresh failed: " + err.Error()
 	}
 	return result, nil
@@ -1198,10 +2077,11 @@ func (s *service) AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult
 	}
 	minimumScore := autoLinkMinimum(request.MinimumScore)
 	matches, err := s.Match(MatchRequest{
-		Input:      request.Input,
-		ProjectKey: request.ProjectKey,
-		SourceURI:  request.SourceURI,
-		Limit:      1,
+		OwnerIdentity: request.OwnerIdentity,
+		Input:         request.Input,
+		ProjectKey:    request.ProjectKey,
+		SourceURI:     request.SourceURI,
+		Limit:         1,
 	})
 	if err != nil {
 		return nil, err
@@ -1224,22 +2104,29 @@ func (s *service) AutoLinkMemory(request AutoLinkMemoryRequest) (*AutoLinkResult
 	}
 	actor := firstNonEmpty(request.Actor, "system")
 	link, err := s.Link(match.Pursuit.ID, LinkRequest{
-		LinkType:     LinkMemory,
-		LinkID:       request.MemoryID.String(),
-		Relationship: "context_memory",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   match.Score,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      LinkMemory,
+		LinkID:        request.MemoryID.String(),
+		Relationship:  "context_memory",
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    match.Score,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, err
 	}
+	links := []models.PursuitLink{*link}
+	if conversationLink, linked, err := s.linkConversationReference(match.Pursuit.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", match.Score, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
 	_, _ = s.recordActivity(match.Pursuit.ID, "pursuit.memory_auto_linked", fmt.Sprintf("Context memory auto-linked to pursuit with %.2f confidence", match.Score), actor, LinkMemory, request.MemoryID.String(), request.SourceURI)
 	result.Linked = true
-	result.Links = []models.PursuitLink{*link}
+	result.Links = links
 	result.Message = "context memory linked to pursuit"
-	if _, err := s.RefreshSummary(match.Pursuit.ID, actor); err != nil {
+	if _, err := s.RefreshSummaryForOwner(request.OwnerIdentity, match.Pursuit.ID, actor); err != nil {
 		result.Message = "context memory linked to pursuit; summary refresh failed: " + err.Error()
 	}
 	return result, nil
@@ -1255,19 +2142,44 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 	actor := firstNonEmpty(request.Actor, "operator")
 	matches, err := s.Match(MatchRequest{
-		Input:      request.Input,
-		ProjectKey: request.ProjectKey,
-		SourceType: request.SourceType,
-		SourceID:   request.SourceID,
-		SourceURI:  request.SourceURI,
-		Limit:      3,
+		OwnerIdentity: request.OwnerIdentity,
+		Input:         request.Input,
+		ProjectKey:    request.ProjectKey,
+		SourceType:    request.SourceType,
+		SourceID:      request.SourceID,
+		SourceURI:     request.SourceURI,
+		Limit:         3,
 	})
 	if err != nil {
 		return nil, err
 	}
 	minimumScore := defaultAutoLinkMinimumScore
-	if len(matches) > 0 && matches[0].Score >= minimumScore {
-		detail, err := s.Intake(matches[0].Pursuit.ID, request)
+	if len(matches) > 0 && matches[0].Score >= minimumScore && !pursuitClosed(matches[0].Pursuit) {
+		if isPursuitCandidate(matches[0].Pursuit) {
+			detail, err := s.DetailForOwner(request.OwnerIdentity, matches[0].Pursuit.ID)
+			if err != nil {
+				return nil, err
+			}
+			// A repeated source event may prove the candidate is relevant, but it
+			// must not create new operational work until Robert explicitly accepts
+			// the objective. Preserve the original candidate workflow and keep the
+			// decision visible instead of silently promoting the candidate.
+			_, _ = s.recordActivity(matches[0].Pursuit.ID, "pursuit.candidate_intake_reseen", fmt.Sprintf("Global intake matched an unaccepted pursuit candidate with %.2f confidence; no new work was created.", matches[0].Score), actor, firstNonEmpty(request.SourceType, "intake"), request.SourceID, request.SourceURI)
+			return &RoutedIntakeResult{
+				Mode:      "matched_candidate",
+				Matched:   true,
+				PursuitID: matches[0].Pursuit.ID,
+				Score:     matches[0].Score,
+				Reasons:   matches[0].Reasons,
+				Message:   "intake matched an existing pursuit candidate awaiting explicit acceptance; no new operational work was created",
+				Matches:   matches,
+				Detail:    detail,
+			}, nil
+		}
+		if _, err := s.IntakeForOwner(request.OwnerIdentity, matches[0].Pursuit.ID, request); err != nil {
+			return nil, err
+		}
+		detail, err := s.DetailForOwner(request.OwnerIdentity, matches[0].Pursuit.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -1284,9 +2196,18 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		}, nil
 	}
 
-	reviewRequired := request.RequiresReview || strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high")
+	// Candidate-worthy unmatched input becomes a pursuit before workflow work
+	// exists. This keeps sources, imported conversations, and direct API intake
+	// from leaving behind a review-held but separately addressable workflow that
+	// Robert never accepted as a real objective.
+	candidateEligible := candidateHasEnoughSignal(request.Input, request.ProjectKey, request.SourceLabel, request.SourceURI)
+	if candidateEligible {
+		return s.createIntakeCandidate(request, matches)
+	}
+	reviewRequired := request.RequiresReview || candidateEligible || strings.EqualFold(classifyRisk(request.Input+" "+request.SourceLabel+" "+request.SourceType), "high")
 	reviewReason := firstNonEmpty(request.ReviewReason, routedIntakeReviewReason(reviewRequired, request))
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  request.OwnerIdentity,
 		Input:          request.Input,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
@@ -1314,21 +2235,25 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	}
 
 	autoLinkRequest := AutoLinkWorkflowRequest{
-		WorkflowID:           record.Item.ID,
-		Input:                request.Input,
-		ProjectKey:           request.ProjectKey,
-		SourceType:           request.SourceType,
-		SourceID:             request.SourceID,
-		SourceURI:            request.SourceURI,
-		SourceLabel:          request.SourceLabel,
-		Actor:                actor,
-		AllowCreateCandidate: true,
+		OwnerIdentity:         request.OwnerIdentity,
+		WorkflowID:            record.Item.ID,
+		Input:                 request.Input,
+		ProjectKey:            request.ProjectKey,
+		SourceType:            request.SourceType,
+		SourceID:              request.SourceID,
+		SourceURI:             request.SourceURI,
+		SourceLabel:           request.SourceLabel,
+		ConversationID:        conversationIDFromAIChatSource(request.SourceType, request.SourceID),
+		ConversationSourceURI: request.SourceURI,
+		ConversationLabel:     request.SourceLabel,
+		Actor:                 actor,
+		AllowCreateCandidate:  candidateEligible,
 	}
 	autoLink, err := s.AutoLinkWorkflow(autoLinkRequest)
 	if err != nil {
 		return nil, err
 	}
-	if (autoLink == nil || !autoLink.Linked) && workflowCandidateAllowed(autoLinkRequest) {
+	if (autoLink == nil || !autoLink.Linked) && candidateEligible {
 		autoLink, err = s.createWorkflowCandidate(autoLinkRequest)
 		if err != nil {
 			return nil, err
@@ -1347,7 +2272,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		result.Score = autoLink.Score
 		result.Reasons = autoLink.Reasons
 		if autoLink.PursuitID != uuid.Nil {
-			detail, err := s.Detail(autoLink.PursuitID)
+			detail, err := s.DetailForOwner(request.OwnerIdentity, autoLink.PursuitID)
 			if err != nil {
 				return nil, err
 			}
@@ -1362,6 +2287,277 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	return result, nil
 }
 
+func (s *service) createIntakeCandidate(request IntakeRequest, matches []MatchCandidate) (*RoutedIntakeResult, error) {
+	actor := firstNonEmpty(request.Actor, "system")
+	sourceType := firstNonEmpty(strings.TrimSpace(request.SourceType), "intake")
+	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, sourceType+" intake")
+	created, err := s.Create(CreateRequest{
+		OwnerIdentity:         request.OwnerIdentity,
+		Title:                 candidateTitle(sourceLabel, request.Input),
+		Description:           candidateDescription("intake", request.Input, request.SourceURI, sourceLabel),
+		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		DesiredOutcome:        "Turn this intake into a verified, governed outcome.",
+		CurrentStateSummary:   "Created as a reviewable pursuit candidate before operational workflow work because no active pursuit matched the intake.",
+		Status:                StatusWaiting,
+		RiskLevel:             classifyRisk(request.Input + " " + sourceLabel + " " + sourceType),
+		AutonomyLevel:         "suggest",
+		SourceOfCreation:      sourceType + "_pursuit_candidate",
+		NextRecommendedAction: "Review this pursuit candidate and accept it to create the first governed workflow plan.",
+		CompletionDefinition:  "Robert accepts the candidate, the governed workflow path is completed, and completion evidence is verified.",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	links := []models.PursuitLink{}
+	if sourceLink, linked, err := s.linkExactSourceReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceLink)
+	}
+	if conversationLink, linked, err := s.linkConversationReference(created.ID, request.OwnerIdentity, conversationIDFromAIChatSource(request.SourceType, request.SourceID), request.SourceURI, request.SourceLabel, "conversation_context", 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
+	if err := s.linkAssistantCommandReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
+		return nil, err
+	}
+	linkRequest := AutoLinkWorkflowRequest{
+		OwnerIdentity: request.OwnerIdentity,
+		RawItemID:     request.RawItemID,
+		ExtractionID:  request.ExtractionID,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+	}
+	if sourceItemLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceItem, request.RawItemID, "candidate_source_record", linkRequest, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceItemLink)
+	}
+	if extractionLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceExtraction, request.ExtractionID, "candidate_source_extraction", linkRequest, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *extractionLink)
+	}
+	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from unmatched intake before workflow creation.", actor, sourceType, request.SourceID, request.SourceURI)
+
+	result := &RoutedIntakeResult{
+		Mode:             "candidate_created",
+		CreatedCandidate: true,
+		PursuitID:        created.ID,
+		Score:            1,
+		Reasons:          []string{"no active pursuit matched", "candidate created before workflow work"},
+		Message:          "intake created a reviewable pursuit candidate; explicit acceptance is required before a workflow is created",
+		Matches:          matches,
+		AutoLink: &AutoLinkResult{
+			Linked:    true,
+			Created:   true,
+			PursuitID: created.ID,
+			Score:     1,
+			Reasons:   []string{"no active pursuit matched", "candidate created before workflow work"},
+			Message:   "pursuit candidate created before workflow work",
+			Links:     links,
+		},
+	}
+	detail, err := s.RefreshSummaryForOwner(request.OwnerIdentity, created.ID, actor)
+	if err != nil {
+		return nil, err
+	}
+	result.Detail = detail
+	return result, nil
+}
+
+// RouteAmbientOpportunity handles an already accepted ambient proposal before
+// a workflow exists. An existing active pursuit receives governed intake; a
+// candidate match or no match remains a reviewable candidate with provenance
+// instead of creating executable work that has no accepted pursuit owner.
+func (s *service) RouteAmbientOpportunity(request AmbientOpportunityRouteRequest) (*AmbientOpportunityRouteResult, error) {
+	if request.OpportunityID == uuid.Nil {
+		return nil, fmt.Errorf("ambient opportunity id is required")
+	}
+	request.Title = strings.TrimSpace(request.Title)
+	request.NextAction = strings.TrimSpace(request.NextAction)
+	if request.Title == "" || request.NextAction == "" {
+		return nil, fmt.Errorf("ambient opportunity title and next action are required")
+	}
+	ownerIdentity := strings.TrimSpace(request.OwnerIdentity)
+	sourceID := request.OpportunityID.String()
+	sourceURI := firstNonEmpty(strings.TrimSpace(request.SourceURI), "ambient://opportunities/"+sourceID)
+	actor := firstNonEmpty(strings.TrimSpace(request.Actor), "ambient-engine")
+	input := strings.TrimSpace(strings.Join([]string{request.Title, request.Rationale, request.NextAction}, "\n"))
+	matches, err := s.Match(MatchRequest{
+		OwnerIdentity: ownerIdentity,
+		Input:         input,
+		ProjectKey:    request.ProjectKey,
+		SourceType:    LinkAmbientOpportunity,
+		SourceID:      sourceID,
+		SourceURI:     sourceURI,
+		Limit:         1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) > 0 && matches[0].Score >= defaultAutoLinkMinimumScore && !pursuitClosed(matches[0].Pursuit) {
+		match := matches[0]
+		if isPursuitCandidate(match.Pursuit) {
+			if err := s.linkAcceptedAmbientOpportunity(match.Pursuit.ID, ownerIdentity, sourceID, sourceURI, request.Title, match.Score, actor); err != nil {
+				return nil, err
+			}
+			return &AmbientOpportunityRouteResult{
+				Mode:      "matched_candidate",
+				PursuitID: match.Pursuit.ID,
+				Message:   "accepted ambient proposal was linked as candidate context; explicit pursuit acceptance is still required before workflow work",
+			}, nil
+		}
+		detail, err := s.IntakeForOwner(ownerIdentity, match.Pursuit.ID, IntakeRequest{
+			OwnerIdentity:  ownerIdentity,
+			Input:          input,
+			ProjectKey:     request.ProjectKey,
+			SourceType:     LinkAmbientOpportunity,
+			SourceID:       sourceID,
+			SourceURI:      sourceURI,
+			SourceLabel:    request.Title,
+			ContentType:    "ambient_proposal",
+			Trigger:        "ambient.accept",
+			Actor:          actor,
+			RequiresReview: request.RequiresReview,
+			ReviewReason:   request.ReviewReason,
+		})
+		if err != nil {
+			return nil, err
+		}
+		workflowID := workflowIDForSource(detail, LinkAmbientOpportunity, sourceID, sourceURI)
+		if workflowID == uuid.Nil {
+			return nil, fmt.Errorf("ambient pursuit intake did not identify its workflow record")
+		}
+		if err := s.linkAcceptedAmbientOpportunity(match.Pursuit.ID, ownerIdentity, sourceID, sourceURI, request.Title, match.Score, actor); err != nil {
+			return nil, err
+		}
+		return &AmbientOpportunityRouteResult{
+			Mode:       "matched_existing",
+			PursuitID:  match.Pursuit.ID,
+			WorkflowID: workflowID,
+			Message:    "accepted ambient proposal created governed workflow work under the matched pursuit",
+		}, nil
+	}
+
+	candidate, err := s.Create(CreateRequest{
+		OwnerIdentity:         ownerIdentity,
+		Title:                 request.Title,
+		Description:           request.Rationale,
+		WhyItMatters:          "An accepted ambient proposal needs an explicit pursuit decision before HAI creates operational work.",
+		ProjectKey:            request.ProjectKey,
+		DesiredOutcome:        request.NextAction,
+		CurrentStateSummary:   "Ambient proposal accepted as context. This reviewable pursuit candidate has no workflow work until Robert explicitly accepts the objective.",
+		SourceOfCreation:      "ambient_pursuit_candidate",
+		NextRecommendedAction: "Review this ambient pursuit candidate and accept it to create the first governed workflow plan.",
+		CompletionDefinition:  "Robert accepts the candidate, the governed workflow path is completed, and completion evidence is verified.",
+		Actor:                 actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.linkAcceptedAmbientOpportunity(candidate.ID, ownerIdentity, sourceID, sourceURI, request.Title, 1, actor); err != nil {
+		return nil, err
+	}
+	return &AmbientOpportunityRouteResult{
+		Mode:             "candidate_created",
+		PursuitID:        candidate.ID,
+		CreatedCandidate: true,
+		Message:          "accepted ambient proposal created a reviewable pursuit candidate; no workflow work was created before explicit candidate acceptance",
+	}, nil
+}
+
+func (s *service) linkAcceptedAmbientOpportunity(pursuitID uuid.UUID, ownerIdentity, sourceID, sourceURI, title string, confidence float64, actor string) error {
+	_, err := s.Link(pursuitID, LinkRequest{
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkAmbientOpportunity,
+		LinkID:        sourceID,
+		Relationship:  "ambient_proposal_accepted",
+		SourceURI:     sourceURI,
+		SourceLabel:   title,
+		Confidence:    normalizeConfidence(confidence, 0.7),
+		Actor:         actor,
+	})
+	return err
+}
+
+func workflowIDForSource(detail *PursuitDetail, sourceType, sourceID, sourceURI string) uuid.UUID {
+	if detail == nil {
+		return uuid.Nil
+	}
+	for _, item := range detail.Workflows {
+		if strings.EqualFold(strings.TrimSpace(item.SourceType), strings.TrimSpace(sourceType)) && item.SourceID == sourceID {
+			return item.ID
+		}
+	}
+	for _, item := range detail.Workflows {
+		if sourceURI != "" && item.SourceURI == sourceURI {
+			return item.ID
+		}
+	}
+	return uuid.Nil
+}
+
+// RouteWorkflowIntake adapts the legacy workflow endpoint to the native
+// pursuit intake path. It returns CandidatePendingError when the input needs
+// explicit pursuit acceptance before any workflow record may exist.
+func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	routed, err := s.RouteIntake(IntakeRequest{
+		OwnerIdentity:  request.OwnerIdentity,
+		Input:          request.Input,
+		ProjectKey:     request.ProjectKey,
+		AutomationID:   request.AutomationID,
+		SourceType:     request.SourceType,
+		SourceID:       request.SourceID,
+		RawItemID:      request.RawItemID,
+		ExtractionID:   request.ExtractionID,
+		SourceURI:      request.SourceURI,
+		SourceLabel:    request.SourceLabel,
+		ContentType:    request.ContentType,
+		Sender:         request.Sender,
+		ReceivedAt:     request.ReceivedAt,
+		Trigger:        request.Trigger,
+		Actor:          request.Actor,
+		RequiresReview: request.RequiresReview,
+		ReviewReason:   request.ReviewReason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if routed != nil && (routed.CreatedCandidate || routed.Mode == "matched_candidate") {
+		return nil, &CandidatePendingError{Result: routed}
+	}
+	reader, ok := s.workflowService.(workflowOwnerScopedRecordReader)
+	if !ok {
+		return nil, fmt.Errorf("workflow service does not support owner-scoped record retrieval")
+	}
+	workflowID := routedWorkflowID(routed, request)
+	if workflowID == uuid.Nil {
+		return nil, fmt.Errorf("pursuit intake did not identify the created workflow record")
+	}
+	return reader.GetForOwner(request.OwnerIdentity, workflowID)
+}
+
+func routedWorkflowID(routed *RoutedIntakeResult, request workflow.IntakeRequest) uuid.UUID {
+	if routed == nil || routed.Detail == nil {
+		return uuid.Nil
+	}
+	for _, item := range routed.Detail.Workflows {
+		if strings.TrimSpace(request.SourceType) != "" && strings.TrimSpace(request.SourceID) != "" &&
+			strings.EqualFold(item.SourceType, request.SourceType) && item.SourceID == request.SourceID {
+			return item.ID
+		}
+	}
+	for _, item := range routed.Detail.Workflows {
+		if strings.TrimSpace(request.SourceURI) != "" && item.SourceURI == request.SourceURI {
+			return item.ID
+		}
+	}
+	return uuid.Nil
+}
+
 func routedIntakeReviewReason(reviewRequired bool, request IntakeRequest) string {
 	if !reviewRequired {
 		return ""
@@ -1371,6 +2567,24 @@ func routedIntakeReviewReason(reviewRequired bool, request IntakeRequest) string
 		return "global pursuit intake classified this as high-risk; Robert approval is required before consequential execution"
 	}
 	return "global pursuit intake requires review before consequential execution"
+}
+
+// conversationIDFromAIChatSource accepts only the internal source-id format
+// emitted by memory-engine imports: <conversation UUID>:<insight UUID>. The
+// result is still checked by LinkVisibleToOwner before it can be persisted.
+func conversationIDFromAIChatSource(sourceType, sourceID string) uuid.UUID {
+	if !strings.EqualFold(strings.TrimSpace(sourceType), "ai_chat") {
+		return uuid.Nil
+	}
+	conversationID, _, found := strings.Cut(strings.TrimSpace(sourceID), ":")
+	if !found {
+		return uuid.Nil
+	}
+	id, err := uuid.Parse(strings.TrimSpace(conversationID))
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
 }
 
 func autoLinkMessage(result *AutoLinkResult) string {
@@ -1384,6 +2598,7 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 	actor := firstNonEmpty(request.Actor, "system")
 	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, request.SourceType, "source-derived work")
 	created, err := s.Create(CreateRequest{
+		OwnerIdentity:         request.OwnerIdentity,
 		Title:                 candidateTitle(sourceLabel, request.Input),
 		Description:           candidateDescription("workflow", request.Input, request.SourceURI, sourceLabel),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
@@ -1399,20 +2614,25 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 	if err != nil {
 		return nil, err
 	}
+	// This compatibility path receives a workflow that was created before the
+	// pursuit layer was asked to correlate it. Preserve source provenance for
+	// review, but never attach that operational workflow to an unaccepted
+	// candidate. The supported lifecycle router creates the candidate before any
+	// workflow exists; legacy callers must not weaken that boundary.
 	links := []models.PursuitLink{}
-	workflowLink, err := s.Link(created.ID, LinkRequest{
-		LinkType:     LinkWorkflow,
-		LinkID:       request.WorkflowID.String(),
-		Relationship: "candidate_operational_work",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   1,
-		Actor:        actor,
-	})
-	if err != nil {
+	if sourceLink, linked, err := s.linkExactSourceReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *sourceLink)
+	}
+	if conversationLink, linked, err := s.linkConversationReference(created.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
+	}
+	if err := s.linkAssistantCommandReference(created.ID, request.OwnerIdentity, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, actor); err != nil {
 		return nil, err
 	}
-	links = append(links, *workflowLink)
 	if sourceItemLink, linked, err := s.linkOptionalUUID(created.ID, LinkSourceItem, request.RawItemID, "candidate_source_record", request, 1, actor); err != nil {
 		return nil, err
 	} else if linked {
@@ -1423,17 +2643,18 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 	} else if linked {
 		links = append(links, *extractionLink)
 	}
-	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from source-derived workflow because no existing pursuit matched.", actor, LinkWorkflow, request.WorkflowID.String(), request.SourceURI)
-	if _, err := s.RefreshSummary(created.ID, actor); err != nil {
-		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from source-derived workflow"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: links}, nil
+	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from unmatched source-derived workflow; no operational workflow was attached before acceptance.", actor, firstNonEmpty(request.SourceType, "workflow"), request.SourceID, request.SourceURI)
+	if _, err := s.RefreshSummaryForOwner(request.OwnerIdentity, created.ID, actor); err != nil {
+		return &AutoLinkResult{Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created before operational workflow could be linked"}, Message: "pursuit candidate created without attaching pre-existing workflow work; summary refresh failed: " + err.Error(), Links: links}, nil
 	}
-	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from source-derived workflow"}, Message: "pursuit candidate created from source-derived workflow", Links: links}, nil
+	return &AutoLinkResult{Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created before operational workflow could be linked"}, Message: "pursuit candidate created without attaching pre-existing workflow work", Links: links}, nil
 }
 
 func (s *service) createMemoryCandidate(request AutoLinkMemoryRequest) (*AutoLinkResult, error) {
 	actor := firstNonEmpty(request.Actor, "system")
 	sourceLabel := firstNonEmpty(request.SourceLabel, request.SourceURI, "memory insight")
 	created, err := s.Create(CreateRequest{
+		OwnerIdentity:         request.OwnerIdentity,
 		Title:                 candidateTitle(sourceLabel, request.Input),
 		Description:           candidateDescription("memory", request.Input, request.SourceURI, sourceLabel),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
@@ -1450,22 +2671,50 @@ func (s *service) createMemoryCandidate(request AutoLinkMemoryRequest) (*AutoLin
 		return nil, err
 	}
 	link, err := s.Link(created.ID, LinkRequest{
-		LinkType:     LinkMemory,
-		LinkID:       request.MemoryID.String(),
-		Relationship: "candidate_context_memory",
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   1,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      LinkMemory,
+		LinkID:        request.MemoryID.String(),
+		Relationship:  "candidate_context_memory",
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    1,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from memory insight because no existing pursuit matched.", actor, LinkMemory, request.MemoryID.String(), request.SourceURI)
-	if _, err := s.RefreshSummary(created.ID, actor); err != nil {
-		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: []models.PursuitLink{*link}}, nil
+	links := []models.PursuitLink{*link}
+	if conversationLink, linked, err := s.linkConversationReference(created.ID, request.OwnerIdentity, request.ConversationID, request.ConversationSourceURI, request.ConversationLabel, "conversation_context", 1, actor); err != nil {
+		return nil, err
+	} else if linked {
+		links = append(links, *conversationLink)
 	}
-	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created from memory insight", Links: []models.PursuitLink{*link}}, nil
+	_, _ = s.recordActivity(created.ID, "pursuit.candidate_created", "Created pursuit candidate from memory insight because no existing pursuit matched.", actor, LinkMemory, request.MemoryID.String(), request.SourceURI)
+	if _, err := s.RefreshSummaryForOwner(request.OwnerIdentity, created.ID, actor); err != nil {
+		return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created; summary refresh failed: " + err.Error(), Links: links}, nil
+	}
+	return &AutoLinkResult{Linked: true, Created: true, PursuitID: created.ID, Score: 1, Reasons: []string{"no existing pursuit matched", "candidate created from memory insight"}, Message: "pursuit candidate created from memory insight", Links: links}, nil
+}
+
+func (s *service) linkConversationReference(pursuitID uuid.UUID, ownerIdentity string, conversationID uuid.UUID, sourceURI, sourceLabel, relationship string, confidence float64, actor string) (*models.PursuitLink, bool, error) {
+	if conversationID == uuid.Nil {
+		return nil, false, nil
+	}
+	link, err := s.Link(pursuitID, LinkRequest{
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkAIConversation,
+		LinkID:        conversationID.String(),
+		Relationship:  firstNonEmpty(strings.TrimSpace(relationship), "conversation_context"),
+		SourceURI:     strings.TrimSpace(sourceURI),
+		SourceLabel:   firstNonEmpty(strings.TrimSpace(sourceLabel), "AI conversation archive"),
+		Confidence:    confidence,
+		Actor:         firstNonEmpty(actor, "memory-engine"),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	_, _ = s.recordActivity(pursuitID, "pursuit.conversation_linked", "Encrypted AI conversation archive linked as source context.", firstNonEmpty(actor, "memory-engine"), LinkAIConversation, conversationID.String(), strings.TrimSpace(sourceURI))
+	return link, true, nil
 }
 
 func workflowCandidateAllowed(request AutoLinkWorkflowRequest) bool {
@@ -1552,13 +2801,14 @@ func (s *service) linkOptionalUUID(pursuitID uuid.UUID, linkType, rawID, relatio
 		return nil, false, nil
 	}
 	link, err := s.Link(pursuitID, LinkRequest{
-		LinkType:     linkType,
-		LinkID:       id,
-		Relationship: relationship,
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   confidence,
-		Actor:        actor,
+		OwnerIdentity: request.OwnerIdentity,
+		LinkType:      linkType,
+		LinkID:        id,
+		Relationship:  relationship,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    confidence,
+		Actor:         actor,
 	})
 	if err != nil {
 		return nil, false, err
@@ -1574,9 +2824,22 @@ func autoLinkMinimum(value float64) float64 {
 }
 
 func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, error) {
+	return s.IntakeForOwner("", id, request)
+}
+
+func (s *service) IntakeForOwner(ownerIdentity string, id uuid.UUID, request IntakeRequest) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if err := ensurePursuitOpen(*pursuit, "add operational work to"); err != nil {
+		return nil, err
+	}
+	if isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("pursuit candidate must be accepted through the explicit plan action before adding operational work")
 	}
 	if strings.TrimSpace(request.Input) == "" {
 		return nil, fmt.Errorf("input is required")
@@ -1584,7 +2847,9 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	if s.workflowService == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
+	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity, request.OwnerIdentity)
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  effectiveOwner,
 		Input:          request.Input,
 		ProjectKey:     firstNonEmpty(request.ProjectKey, pursuit.ProjectKey),
 		AutomationID:   request.AutomationID,
@@ -1605,30 +2870,35 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 	}
 	if record != nil {
 		_, err = s.Link(id, LinkRequest{
-			LinkType:     LinkWorkflow,
-			LinkID:       record.Item.ID.String(),
-			Relationship: "operational_work",
-			SourceURI:    request.SourceURI,
-			SourceLabel:  request.SourceLabel,
-			Confidence:   0.9,
-			Actor:        "system",
+			OwnerIdentity: effectiveOwner,
+			LinkType:      LinkWorkflow,
+			LinkID:        record.Item.ID.String(),
+			Relationship:  "operational_work",
+			SourceURI:     request.SourceURI,
+			SourceLabel:   request.SourceLabel,
+			Confidence:    0.9,
+			Actor:         "system",
 		})
 		if err != nil {
 			return nil, err
 		}
 	}
-	if err := s.linkIntakeSourceReference(id, request); err != nil {
+	if err := s.linkIntakeSourceReference(id, effectiveOwner, request); err != nil {
+		return nil, err
+	}
+	if err := s.linkAssistantCommandReference(id, effectiveOwner, request.SourceType, request.SourceID, request.SourceURI, request.SourceLabel, firstNonEmpty(request.Actor, "system")); err != nil {
 		return nil, err
 	}
 	if launchID, ok := runtimeLaunchIDFromEvidenceURI(request.SourceURI); ok {
 		if _, err := s.Link(id, LinkRequest{
-			LinkType:     LinkAgentRuntime,
-			LinkID:       launchID.String(),
-			Relationship: "execution_attempt",
-			SourceURI:    request.SourceURI,
-			SourceLabel:  firstNonEmpty(request.SourceLabel, "Runtime launch evidence"),
-			Confidence:   0.95,
-			Actor:        "system",
+			OwnerIdentity: effectiveOwner,
+			LinkType:      LinkAgentRuntime,
+			LinkID:        launchID.String(),
+			Relationship:  "execution_attempt",
+			SourceURI:     request.SourceURI,
+			SourceLabel:   firstNonEmpty(request.SourceLabel, "Runtime launch evidence"),
+			Confidence:    0.95,
+			Actor:         "system",
 		}); err != nil {
 			return nil, err
 		}
@@ -1645,10 +2915,10 @@ func (s *service) Intake(id uuid.UUID, request IntakeRequest) (*PursuitDetail, e
 			Actor:         firstNonEmpty(request.Actor, "Robert"),
 		})
 	}
-	return s.RefreshSummary(id, "system")
+	return s.RefreshSummaryForOwner(ownerIdentity, id, "system")
 }
 
-func (s *service) linkIntakeSourceReference(id uuid.UUID, request IntakeRequest) error {
+func (s *service) linkIntakeSourceReference(id uuid.UUID, ownerIdentity string, request IntakeRequest) error {
 	sourceID := strings.TrimSpace(request.SourceID)
 	if sourceID == "" {
 		return nil
@@ -1669,23 +2939,98 @@ func (s *service) linkIntakeSourceReference(id uuid.UUID, request IntakeRequest)
 		return nil
 	}
 	_, err := s.Link(id, LinkRequest{
-		LinkType:     linkType,
-		LinkID:       sourceID,
-		Relationship: relationship,
-		SourceURI:    request.SourceURI,
-		SourceLabel:  request.SourceLabel,
-		Confidence:   0.9,
-		Actor:        "system",
+		OwnerIdentity: ownerIdentity,
+		LinkType:      linkType,
+		LinkID:        sourceID,
+		Relationship:  relationship,
+		SourceURI:     request.SourceURI,
+		SourceLabel:   request.SourceLabel,
+		Confidence:    0.9,
+		Actor:         "system",
 	})
 	return err
 }
 
+func (s *service) linkAssistantCommandReference(id uuid.UUID, ownerIdentity, sourceType, sourceID, sourceURI, sourceLabel, actor string) error {
+	if !strings.EqualFold(strings.TrimSpace(sourceType), LinkAssistantCommand) || strings.TrimSpace(sourceID) == "" {
+		return nil
+	}
+	_, err := s.Link(id, LinkRequest{
+		OwnerIdentity: ownerIdentity,
+		LinkType:      LinkAssistantCommand,
+		LinkID:        strings.TrimSpace(sourceID),
+		Relationship:  "command_origin",
+		SourceURI:     strings.TrimSpace(sourceURI),
+		SourceLabel:   firstNonEmpty(strings.TrimSpace(sourceLabel), "HAI chat command"),
+		Confidence:    1,
+		Actor:         firstNonEmpty(actor, "assistant"),
+	})
+	return err
+}
+
+// linkExactSourceReference preserves source identity for deterministic
+// re-matching. This is distinct from the workflow link, which identifies the
+// generated operational work rather than the input that produced it.
+func (s *service) linkExactSourceReference(id uuid.UUID, ownerIdentity, sourceType, sourceID, sourceURI, sourceLabel string, confidence float64, actor string) (*models.PursuitLink, bool, error) {
+	sourceType = strings.TrimSpace(sourceType)
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceType == "" || sourceID == "" || strings.EqualFold(sourceType, LinkAssistantCommand) {
+		return nil, false, nil
+	}
+	link, err := s.Link(id, LinkRequest{
+		OwnerIdentity: ownerIdentity,
+		LinkType:      sourceType,
+		LinkID:        sourceID,
+		Relationship:  "intake_origin",
+		SourceURI:     strings.TrimSpace(sourceURI),
+		SourceLabel:   strings.TrimSpace(sourceLabel),
+		Confidence:    confidence,
+		Actor:         firstNonEmpty(actor, "system"),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return link, true, nil
+}
+
 func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.PlanForOwner("", id, request)
+}
+
+func (s *service) PlanForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.planForOwner(ownerIdentity, id, request, false)
+}
+
+// AcceptCandidate is intentionally separate from generic planning. Callers
+// must use an approval-gated boundary before invoking it; keeping this
+// distinction in the service prevents future internal callers from silently
+// turning a reviewable candidate into active operational work.
+func (s *service) AcceptCandidate(id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.AcceptCandidateForOwner("", id, request)
+}
+
+func (s *service) AcceptCandidateForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest) (*PursuitDetail, error) {
+	return s.planForOwner(ownerIdentity, id, request, true)
+}
+
+func (s *service) planForOwner(ownerIdentity string, id uuid.UUID, request PlanRequest, acceptingCandidate bool) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
-	existing, err := s.Detail(id)
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if err := ensurePursuitOpen(*pursuit, "plan"); err != nil {
+		return nil, err
+	}
+	if isPursuitCandidate(*pursuit) && !acceptingCandidate {
+		return nil, fmt.Errorf("pursuit candidate acceptance requires the explicit approval action")
+	}
+	if acceptingCandidate && !isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("only an unaccepted pursuit candidate can use the candidate acceptance action")
+	}
+	existing, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1694,7 +3039,7 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 			if err := s.markPursuitCandidateAccepted(pursuit, firstNonEmpty(request.Actor, "Robert")); err != nil {
 				return nil, err
 			}
-			return s.RefreshSummary(id, firstNonEmpty(request.Actor, "pursuit-engine"))
+			return s.RefreshSummaryForOwner(ownerIdentity, id, firstNonEmpty(request.Actor, "pursuit-engine"))
 		}
 		return existing, nil
 	}
@@ -1707,7 +3052,9 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 		reviewReason = firstNonEmpty(request.ReviewReason, "high-risk pursuit planning requires Robert approval before execution")
 	}
 	input := firstNonEmpty(request.Input, pursuitPlanInput(*pursuit))
+	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity)
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  effectiveOwner,
 		Input:          input,
 		ProjectKey:     pursuit.ProjectKey,
 		SourceType:     LinkPursuit,
@@ -1725,13 +3072,14 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 	}
 	if record != nil {
 		if _, err := s.Link(id, LinkRequest{
-			LinkType:     LinkWorkflow,
-			LinkID:       record.Item.ID.String(),
-			Relationship: "first_workflow_plan",
-			SourceURI:    "pursuit://" + pursuit.ID.String(),
-			SourceLabel:  pursuit.Title,
-			Confidence:   0.95,
-			Actor:        firstNonEmpty(request.Actor, "pursuit-engine"),
+			OwnerIdentity: effectiveOwner,
+			LinkType:      LinkWorkflow,
+			LinkID:        record.Item.ID.String(),
+			Relationship:  "first_workflow_plan",
+			SourceURI:     "pursuit://" + pursuit.ID.String(),
+			SourceLabel:   pursuit.Title,
+			Confidence:    0.95,
+			Actor:         firstNonEmpty(request.Actor, "pursuit-engine"),
 		}); err != nil {
 			return nil, err
 		}
@@ -1742,31 +3090,57 @@ func (s *service) Plan(id uuid.UUID, request PlanRequest) (*PursuitDetail, error
 			return nil, err
 		}
 	}
-	return s.RefreshSummary(id, firstNonEmpty(request.Actor, "pursuit-engine"))
+	return s.RefreshSummaryForOwner(ownerIdentity, id, firstNonEmpty(request.Actor, "pursuit-engine"))
 }
 
 func (s *service) ResolveDecision(id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error) {
-	if _, err := s.repo.FindByID(id); err != nil {
+	return s.ResolveDecisionForOwner("", id, request)
+}
+
+func (s *service) ResolveDecisionForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) (*PursuitDetail, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
 		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if err := ensurePursuitOpen(*pursuit, "resolve a decision for"); err != nil {
+		return nil, err
+	}
+	if isPursuitCandidate(*pursuit) {
+		return nil, fmt.Errorf("pursuit candidate must be accepted through the explicit approval action before resolving operational decisions")
 	}
 	if strings.TrimSpace(request.DecisionID) == "" {
 		return nil, fmt.Errorf("decisionId is required")
 	}
+	if detail, err := s.DetailForOwner(ownerIdentity, id); err != nil {
+		return nil, err
+	} else if resolvedPursuitDecisions(detail.Activity)[strings.TrimSpace(request.DecisionID)] {
+		// Decision requests can be retried by the UI or a client after a network
+		// timeout. Returning the current detail avoids duplicating work or audit
+		// records after the first governed resolution succeeded.
+		return detail, nil
+	}
 	if request.Approved && strings.EqualFold(strings.TrimSpace(request.DecisionType), "pursuit_completion_review") {
-		if err := s.completePursuitFromDecision(id, request); err != nil {
+		if err := s.completePursuitFromDecisionForOwner(ownerIdentity, id, request); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.createApprovedDecisionWorkflowForOwner(ownerIdentity, id, request); err != nil {
+		return nil, err
 	}
 	if _, err := s.recordDecisionResolution(id, request); err != nil {
 		return nil, err
 	}
-	if err := s.createApprovedDecisionWorkflow(id, request); err != nil {
-		return nil, err
-	}
-	return s.RefreshSummary(id, firstNonEmpty(request.Actor, "Robert"))
+	return s.RefreshSummaryForOwner(ownerIdentity, id, firstNonEmpty(request.Actor, "Robert"))
 }
 
 func (s *service) completePursuitFromDecision(id uuid.UUID, request DecisionResolutionRequest) error {
+	return s.completePursuitFromDecisionForOwner("", id, request)
+}
+
+func (s *service) completePursuitFromDecisionForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
 	expectedID := completionReviewDecisionID(id)
 	if !strings.EqualFold(strings.TrimSpace(request.DecisionID), expectedID) {
 		return fmt.Errorf("completion review decision does not belong to this pursuit")
@@ -1778,12 +3152,15 @@ func (s *service) completePursuitFromDecision(id uuid.UUID, request DecisionReso
 	if pursuitClosed(*pursuit) {
 		return nil
 	}
-	if reason, err := s.completionActiveBlockerReason(id); err != nil {
+	if isPursuitCandidate(*pursuit) {
+		return fmt.Errorf("pursuit candidate must be accepted and planned before completion review")
+	}
+	if reason, err := s.completionActiveBlockerReasonForOwner(ownerIdentity, id); err != nil {
 		return err
 	} else if reason != "" {
 		return fmt.Errorf("pursuit completion is blocked by unresolved operational work: %s", reason)
 	}
-	allowed, reason, err := s.completionEvidenceAvailable(id)
+	allowed, reason, err := s.completionEvidenceAvailableForOwner(ownerIdentity, id)
 	if err != nil {
 		return err
 	}
@@ -1820,22 +3197,111 @@ func completionDecisionMessage(note string) string {
 }
 
 func (s *service) createApprovedDecisionWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
+	return s.createApprovedDecisionWorkflowForOwner("", id, request)
+}
+
+func (s *service) createApprovedDecisionWorkflowForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
 	if !request.Approved {
 		return nil
 	}
 	switch strings.ToLower(strings.TrimSpace(request.DecisionType)) {
+	case "pursuit_next_action":
+		return s.createNextActionWorkflowForOwner(ownerIdentity, id, request)
 	case "runtime_attempt_review":
-		return s.createRuntimeRecoveryWorkflow(id, request)
+		return s.createRuntimeRecoveryWorkflowForOwner(ownerIdentity, id, request)
 	default:
 		return nil
 	}
 }
 
-func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
+// createNextActionWorkflowForOwner is the only server-side path from a
+// high-risk pursuit's Yes/No decision to operational work. It preserves the
+// decision provenance and creates a separately approval-gated workflow rather
+// than letting a client turn a dashboard action into direct execution.
+func (s *service) createNextActionWorkflowForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
+	if !strings.EqualFold(strings.TrimSpace(request.DecisionID), nextActionDecisionID(id)) {
+		return fmt.Errorf("next-action decision does not belong to this pursuit")
+	}
 	if s.workflowService == nil {
 		return fmt.Errorf("workflow service is not configured")
 	}
-	detail, err := s.Detail(id)
+	detail, err := s.DetailForOwner(ownerIdentity, id)
+	if err != nil {
+		return err
+	}
+	if !pendingDecision(detail.DecisionQueue, request.DecisionID, "pursuit_next_action") {
+		return fmt.Errorf("next-action decision is not pending for this pursuit")
+	}
+	if !pursuitNeedsPlanning(detail.Pursuit, len(detail.Workflows)) {
+		return nil
+	}
+	actor := firstNonEmpty(request.Actor, "Robert")
+	sourceURI := firstNonEmpty(strings.TrimSpace(request.EvidenceURI), "pursuit://"+id.String())
+	sourceLabel := firstNonEmpty(strings.TrimSpace(request.EvidenceLabel), detail.Pursuit.Title)
+	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
+		Input:          pursuitPlanInput(detail.Pursuit),
+		ProjectKey:     detail.Pursuit.ProjectKey,
+		SourceType:     "pursuit_decision",
+		SourceID:       strings.TrimSpace(request.DecisionID),
+		SourceURI:      sourceURI,
+		SourceLabel:    sourceLabel,
+		ContentType:    "pursuit_next_action",
+		Trigger:        "pursuit_decision_approved",
+		Actor:          actor,
+		RequiresReview: true,
+		ReviewReason:   firstNonEmpty(request.Reason, "Robert approved creation of a governed workflow; consequential execution remains approval-gated"),
+	})
+	if err != nil {
+		return err
+	}
+	if record == nil || record.Item.ID == uuid.Nil {
+		return fmt.Errorf("workflow intake did not return a workflow record")
+	}
+	if _, err := s.Link(id, LinkRequest{
+		OwnerIdentity: firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
+		LinkType:      LinkWorkflow,
+		LinkID:        record.Item.ID.String(),
+		Relationship:  "approved_next_action_workflow",
+		SourceURI:     sourceURI,
+		SourceLabel:   sourceLabel,
+		Confidence:    1,
+		Actor:         actor,
+	}); err != nil {
+		return err
+	}
+	_, _ = s.recordActivity(
+		id,
+		"pursuit.next_action_workflow_created",
+		"Created governed workflow from Robert-approved next action: "+record.Item.Title,
+		actor,
+		LinkWorkflow,
+		record.Item.ID.String(),
+		sourceURI,
+	)
+	return nil
+}
+
+func pendingDecision(decisions []PursuitDecision, id, decisionType string) bool {
+	for _, decision := range decisions {
+		if strings.EqualFold(strings.TrimSpace(decision.ID), strings.TrimSpace(id)) &&
+			strings.EqualFold(strings.TrimSpace(decision.DecisionType), strings.TrimSpace(decisionType)) &&
+			strings.EqualFold(strings.TrimSpace(decision.Status), "pending") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionResolutionRequest) error {
+	return s.createRuntimeRecoveryWorkflowForOwner("", id, request)
+}
+
+func (s *service) createRuntimeRecoveryWorkflowForOwner(ownerIdentity string, id uuid.UUID, request DecisionResolutionRequest) error {
+	if s.workflowService == nil {
+		return fmt.Errorf("workflow service is not configured")
+	}
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return err
 	}
@@ -1848,6 +3314,7 @@ func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionRe
 		return nil
 	}
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
+		OwnerIdentity:  firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
 		Input:          runtimeRecoveryWorkflowInput(detail.Pursuit, attempt, request),
 		ProjectKey:     detail.Pursuit.ProjectKey,
 		SourceType:     "pursuit_decision",
@@ -1865,13 +3332,14 @@ func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionRe
 	}
 	if record != nil {
 		if _, err := s.Link(id, LinkRequest{
-			LinkType:     LinkWorkflow,
-			LinkID:       record.Item.ID.String(),
-			Relationship: "runtime_recovery_workflow",
-			SourceURI:    sourceURI,
-			SourceLabel:  firstNonEmpty(request.EvidenceLabel, runtimeAttemptLabel(attempt)),
-			Confidence:   0.95,
-			Actor:        firstNonEmpty(request.Actor, "pursuit-engine"),
+			OwnerIdentity: firstNonEmpty(detail.Pursuit.OwnerIdentity, ownerIdentity),
+			LinkType:      LinkWorkflow,
+			LinkID:        record.Item.ID.String(),
+			Relationship:  "runtime_recovery_workflow",
+			SourceURI:     sourceURI,
+			SourceLabel:   firstNonEmpty(request.EvidenceLabel, runtimeAttemptLabel(attempt)),
+			Confidence:    0.95,
+			Actor:         firstNonEmpty(request.Actor, "pursuit-engine"),
 		}); err != nil {
 			return err
 		}
@@ -1889,9 +3357,19 @@ func (s *service) createRuntimeRecoveryWorkflow(id uuid.UUID, request DecisionRe
 }
 
 func (s *service) RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, error) {
-	detail, err := s.Detail(id)
+	return s.RefreshSummaryForOwner("", id, actor)
+}
+
+func (s *service) RefreshSummaryForOwner(ownerIdentity string, id uuid.UUID, actor string) (*PursuitDetail, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitMutableBy(detail.Pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
+	}
+	if pursuitClosed(detail.Pursuit) {
+		return detail, nil
 	}
 	pursuit := detail.Pursuit
 	pursuit.CurrentStateSummary = detail.Summary.CurrentState
@@ -1907,21 +3385,26 @@ func (s *service) RefreshSummary(id uuid.UUID, actor string) (*PursuitDetail, er
 	} else if pursuit.Status == StatusBlocked || pursuit.Status == StatusWaiting {
 		pursuit.Status = StatusActive
 	}
-	now := time.Now().UTC()
-	pursuit.LastActivityAt = &now
 	updated, err := s.repo.Update(&pursuit)
 	if err != nil {
 		return nil, err
 	}
 	_, _ = s.recordActivity(id, "pursuit.summary_refreshed", "Pursuit summary refreshed from linked operational records", firstNonEmpty(actor, "system"), "", "", "")
 	detail.Pursuit = *updated
-	return s.Detail(id)
+	return s.DetailForOwner(ownerIdentity, id)
 }
 
 func (s *service) Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, error) {
+	return s.ReviewForOwner("", id, request)
+}
+
+func (s *service) ReviewForOwner(ownerIdentity string, id uuid.UUID, request ReviewRequest) (*PursuitDetail, error) {
 	pursuit, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
+	}
+	if !pursuitMutableBy(*pursuit, ownerIdentity) {
+		return nil, fmt.Errorf("pursuit not found")
 	}
 	now := time.Now().UTC()
 	action := strings.ToLower(strings.TrimSpace(firstNonEmpty(request.Action, "complete")))
@@ -1961,11 +3444,18 @@ func (s *service) Review(id uuid.UUID, request ReviewRequest) (*PursuitDetail, e
 		return nil, fmt.Errorf("unsupported pursuit review action %q", request.Action)
 	}
 
-	return s.Detail(id)
+	return s.DetailForOwner(ownerIdentity, id)
 }
 
 func (s *service) Activity(id uuid.UUID) ([]models.PursuitActivity, error) {
-	if _, err := s.repo.FindByID(id); err != nil {
+	return s.ActivityForOwner("", id)
+}
+
+// ActivityForOwner keeps the audit feed subject to the same ownership rule as
+// pursuit detail. This is intentionally enforced by the service, not just the
+// HTTP handler, because the feed contains source-derived operational history.
+func (s *service) ActivityForOwner(ownerIdentity string, id uuid.UUID) ([]models.PursuitActivity, error) {
+	if _, err := s.DetailForOwner(ownerIdentity, id); err != nil {
 		return nil, err
 	}
 	return s.repo.FindActivities(id, 100)
@@ -1978,9 +3468,23 @@ func (s *service) listItem(pursuit models.Pursuit) (PursuitListItem, error) {
 
 func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *PursuitDetail, error) {
 	detail, err := s.Detail(pursuit.ID)
+	return pursuitListItemWithDetail(pursuit, detail, err)
+}
+
+// listItemWithDetailForOwner keeps dashboard projections subject to the same
+// linked-record visibility checks as the underlying pursuit detail endpoint.
+// This protects owner dashboards from malformed links created before
+// owner-aware link validation was introduced.
+func (s *service) listItemWithDetailForOwner(ownerIdentity string, pursuit models.Pursuit) (PursuitListItem, *PursuitDetail, error) {
+	detail, err := s.DetailForOwner(ownerIdentity, pursuit.ID)
+	return pursuitListItemWithDetail(pursuit, detail, err)
+}
+
+func pursuitListItemWithDetail(pursuit models.Pursuit, detail *PursuitDetail, err error) (PursuitListItem, *PursuitDetail, error) {
 	if err != nil {
-		return PursuitListItem{Pursuit: pursuit, NextAction: pursuit.NextRecommendedAction, Stale: isStale(pursuit), ReviewDue: isReviewDue(pursuit), PlanningNeeded: pursuitNeedsPlanning(pursuit, 0)}, nil, err
+		return PursuitListItem{Pursuit: pursuit, NextAction: pursuit.NextRecommendedAction, EffectiveLastActivityAt: pursuit.LastActivityAt, Stale: isStale(pursuit), ReviewDue: isReviewDue(pursuit), PlanningNeeded: pursuitNeedsPlanning(pursuit, 0)}, nil, err
 	}
+	effectiveActivityAt := effectivePursuitActivity(pursuit, detail)
 	needsRobert := len(detail.ApprovalItems)
 	if pursuitNeedsRobert(pursuit, detail.NextActions) {
 		needsRobert++
@@ -1989,25 +3493,108 @@ func (s *service) listItemWithDetail(pursuit models.Pursuit) (PursuitListItem, *
 		needsRobert = detail.Summary.NeedsRobert
 	}
 	return PursuitListItem{
-		Pursuit:             pursuit,
-		NeedsRobert:         needsRobert,
-		Blocked:             len(detail.Blockers),
-		OpenLoops:           len(detail.OpenLoops),
-		DecisionCards:       detail.Summary.DecisionCards,
-		LinkedEvidence:      detail.Summary.LinkedEvidence,
-		TimelineItems:       detail.Summary.TimelineItems,
-		CompletionCandidate: detail.Summary.CompletionCandidate,
-		CurrentState:        detail.Summary.CurrentState,
-		WhatChanged:         detail.Summary.WhatChanged,
-		NextAction:          firstNonEmpty(pursuit.NextRecommendedAction, firstActionLabel(detail.NextActions)),
-		Stale:               isStale(pursuit),
-		ReviewDue:           isReviewDue(pursuit),
-		PlanningNeeded:      detail.Summary.PlanningNeeded,
+		Pursuit:                 pursuit,
+		NeedsRobert:             needsRobert,
+		Blocked:                 len(detail.Blockers),
+		OpenLoops:               len(detail.OpenLoops),
+		DecisionCards:           detail.Summary.DecisionCards,
+		LinkedEvidence:          detail.Summary.LinkedEvidence,
+		TimelineItems:           detail.Summary.TimelineItems,
+		CompletionCandidate:     detail.Summary.CompletionCandidate,
+		CurrentState:            detail.Summary.CurrentState,
+		WhatChanged:             detail.Summary.WhatChanged,
+		NextAction:              firstNonEmpty(pursuit.NextRecommendedAction, firstActionLabel(detail.NextActions)),
+		EffectiveLastActivityAt: optionalTime(effectiveActivityAt),
+		Stale:                   isStaleAt(effectiveActivityAt),
+		ReviewDue:               isReviewDue(pursuit),
+		PlanningNeeded:          detail.Summary.PlanningNeeded,
 	}, detail, nil
 }
 
+func detailUnavailableListItem(pursuit models.Pursuit) PursuitListItem {
+	return PursuitListItem{
+		Pursuit:                 pursuit,
+		NeedsRobert:             1,
+		Blocked:                 1,
+		CurrentState:            "Linked operational state is temporarily unavailable; do not advance this pursuit until it can be reviewed.",
+		WhatChanged:             "HAI could not refresh the linked operational state.",
+		NextAction:              "Retry the pursuit detail after checking HAI service health.",
+		EffectiveLastActivityAt: pursuit.LastActivityAt,
+		Stale:                   false,
+		ReviewDue:               isReviewDue(pursuit),
+		PlanningNeeded:          false,
+	}
+}
+
+func pursuitDetailLoadError(component string, err error) error {
+	return fmt.Errorf("load pursuit %s: %w", component, err)
+}
+
+// effectivePursuitActivity derives dashboard freshness from evidence that is
+// already linked to a pursuit. It intentionally does not write the derived
+// value back during a read: summary refreshes must not make stale work appear
+// active, while real workflow, task, verification, source, and runtime work
+// must keep a pursuit out of the stale queue.
+func effectivePursuitActivity(pursuit models.Pursuit, detail *PursuitDetail) time.Time {
+	// LastActivityAt is the semantic progress marker. UpdatedAt also changes
+	// when HAI writes a derived summary, so it is a legacy fallback only when a
+	// pursuit has never recorded an activity timestamp.
+	latest := timeFromPointer(pursuit.LastActivityAt)
+	if latest.IsZero() {
+		latest = pursuit.UpdatedAt
+	}
+	if detail == nil {
+		return latest
+	}
+	for _, item := range detail.Workflows {
+		latest = latestTime(latest, item.UpdatedAt, timeFromPointer(item.LastRunAt), timeFromPointer(item.CompletedAt))
+	}
+	for _, item := range detail.OpenLoops {
+		latest = latestTime(latest, item.UpdatedAt)
+	}
+	for _, item := range detail.TaskAttempts {
+		latest = latestTime(latest, item.UpdatedAt, timeFromPointer(item.CompletedAt), timeFromPointer(item.StartedAt))
+	}
+	for _, item := range detail.VerificationRuns {
+		latest = latestTime(latest, item.UpdatedAt, item.CreatedAt)
+	}
+	for _, item := range detail.RuntimeAttempts {
+		latest = latestTime(latest, item.CompletedAt, item.StartedAt)
+	}
+	for _, item := range detail.SourceItems {
+		latest = latestTime(latest, item.UpdatedAt, item.FetchedAt, item.CreatedAt)
+	}
+	for _, item := range detail.SourceExtractions {
+		latest = latestTime(latest, item.UpdatedAt, item.CreatedAt)
+	}
+	for _, item := range detail.Activity {
+		if !activityUpdatesFreshness(item.EventType) {
+			continue
+		}
+		latest = latestTime(latest, item.CreatedAt)
+	}
+	return latest
+}
+
+func latestTime(current time.Time, values ...time.Time) time.Time {
+	for _, value := range values {
+		if value.After(current) {
+			current = value
+		}
+	}
+	return current
+}
+
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	copy := value
+	return &copy
+}
+
 func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, sourceType, sourceID, sourceURI string) (*models.PursuitActivity, error) {
-	return s.repo.CreateActivity(&models.PursuitActivity{
+	activity, err := s.repo.CreateActivity(&models.PursuitActivity{
 		PursuitID:  id,
 		EventType:  eventType,
 		Message:    strings.TrimSpace(message),
@@ -2016,6 +3603,32 @@ func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, source
 		SourceID:   strings.TrimSpace(sourceID),
 		SourceURI:  strings.TrimSpace(sourceURI),
 	})
+	if err != nil {
+		return activity, err
+	}
+	if activity == nil {
+		return nil, fmt.Errorf("pursuit activity repository returned no activity")
+	}
+
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return activity, err
+	}
+	activityAt := activity.CreatedAt
+	if activityAt.IsZero() {
+		activityAt = time.Now().UTC()
+	}
+	if activityUpdatesFreshness(eventType) && (pursuit.LastActivityAt == nil || pursuit.LastActivityAt.Before(activityAt)) {
+		pursuit.LastActivityAt = &activityAt
+		if _, err := s.repo.Update(pursuit); err != nil {
+			return activity, err
+		}
+	}
+	return activity, nil
+}
+
+func activityUpdatesFreshness(eventType string) bool {
+	return !strings.EqualFold(strings.TrimSpace(eventType), "pursuit.summary_refreshed")
 }
 
 func (s *service) recordDecisionResolution(id uuid.UUID, request DecisionResolutionRequest) (*models.PursuitActivity, error) {
@@ -2150,6 +3763,26 @@ func sourceRetractionBlockers(links []models.PursuitLink, extractions []models.S
 	return result
 }
 
+func qualityGateBlockers(gates []models.WorkflowQualityGate) []PursuitBlocker {
+	result := []PursuitBlocker{}
+	for _, gate := range gates {
+		status := strings.ToLower(strings.TrimSpace(gate.Status))
+		if status != "failed" && status != "needs_review" {
+			continue
+		}
+		result = append(result, PursuitBlocker{
+			Label:      "Quality gate: " + firstNonEmpty(gate.Gate, "workflow acceptance"),
+			Reason:     firstNonEmpty(gate.Reason, "linked workflow quality gate requires review before the pursuit can move forward"),
+			Owner:      "Robert or task owner",
+			WorkflowID: gate.WorkflowID.String(),
+		})
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Label < result[j].Label
+	})
+	return result
+}
+
 func sourceExtractionStatus(extraction models.SourceExtraction) string {
 	if extraction.Archived {
 		return "archived"
@@ -2173,7 +3806,7 @@ func sourceExtractionLinkRequiresEvidenceReview(relationship string) bool {
 		strings.Contains(relationship, "provenance")
 }
 
-func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, proposals []models.WorkflowProposal, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool) []PursuitAction {
+func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, proposals []models.WorkflowProposal, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool, qualityGateNeedsReview bool) []PursuitAction {
 	actions := []PursuitAction{}
 	if pursuitClosed(pursuit) {
 		return actions
@@ -2230,11 +3863,12 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 	now := time.Now().UTC()
 	for _, loop := range loops {
 		if loop.Status == "open" || loop.Status == "follow_up_due" || loop.FollowUpAt != nil && loop.FollowUpAt.Before(now) {
+			actionRisk := followUpActionRisk(pursuit.RiskLevel, loop.NextAction)
 			actions = append(actions, PursuitAction{
 				Label:            firstNonEmpty(loop.NextAction, "Follow up on waiting state"),
-				Owner:            "System or VA",
-				RiskLevel:        pursuit.RiskLevel,
-				RequiresApproval: strings.EqualFold(pursuit.RiskLevel, "high"),
+				Owner:            "VA",
+				RiskLevel:        actionRisk,
+				RequiresApproval: actionRisk == "high",
 				Reason:           "open loop is due or still waiting",
 				WorkflowID:       loop.WorkflowID.String(),
 				YesLabel:         "Prepare",
@@ -2271,7 +3905,7 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 			NoLabel:          "Not now",
 		})
 	}
-	if len(actions) == 0 && workflowsReadyForCompletion(workflows) {
+	if len(actions) == 0 && !qualityGateNeedsReview && workflowsReadyForCompletion(workflows) {
 		actions = append(actions, PursuitAction{
 			Label:            "Review verified evidence and mark pursuit complete",
 			Owner:            "Robert",
@@ -2282,7 +3916,7 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 			NoLabel:          "Keep active",
 		})
 	}
-	if len(actions) == 0 {
+	if len(actions) == 0 && !qualityGateNeedsReview {
 		if resolvedDecisions["pursuit:"+pursuit.ID.String()+":next-action"] {
 			return actions
 		}
@@ -2297,6 +3931,48 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 		})
 	}
 	return actions
+}
+
+// followUpActionRisk classifies the proposed step, not the subject matter of
+// the entire pursuit. A legal or insurance pursuit can safely contain bounded
+// clerical preparation, while sending, filing, spending, publishing, deleting,
+// or changing accounts must still remain high-risk and approval-gated.
+func followUpActionRisk(pursuitRisk, action string) string {
+	lower := strings.ToLower(strings.TrimSpace(action))
+	if containsActionPhrase(lower,
+		"send", "submit", "file", "publish", "post", "sign", "accept", "agree",
+		"pay", "spend", "transfer", "delete", "remove", "change account", "change setting",
+		"escalate", "contact", "call", "message", "email") {
+		return "high"
+	}
+	if containsActionPhrase(lower,
+		"prepare", "organize", "collect", "list", "summarize", "classify", "catalog",
+		"review", "compare", "extract", "attach", "draft", "research") {
+		return "low"
+	}
+	if detected := classifyRisk(lower); detected != "low" {
+		return detected
+	}
+	if normalizeRisk(pursuitRisk) == "high" {
+		return "high"
+	}
+	return firstNonEmpty(normalizeRisk(pursuitRisk), "low")
+}
+
+func containsActionPhrase(text string, values ...string) bool {
+	normalized := " " + strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, text) + " "
+	for _, value := range values {
+		candidate := " " + strings.TrimSpace(strings.ToLower(value)) + " "
+		if strings.Contains(normalized, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func actionQueues(pursuit models.Pursuit, actions []PursuitAction, blockers []PursuitBlocker) PursuitActionQueues {
@@ -2526,7 +4202,7 @@ func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, prop
 			break
 		}
 	}
-	if len(result) == 0 && workflowsReadyForCompletion(workflows) {
+	if !hasPendingPursuitDecision(result) && !isPursuitCandidate(pursuit) && workflowsReadyForCompletion(workflows) {
 		decisionID := completionReviewDecisionID(pursuit.ID)
 		if resolvedDecisions[decisionID] {
 			return result
@@ -2546,8 +4222,8 @@ func decisionQueue(pursuit models.Pursuit, workflows []models.WorkflowItem, prop
 			CreatedAt:        optionalRFC3339(pursuit.UpdatedAt),
 		})
 	}
-	if len(result) == 0 && (strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")) {
-		decisionID := "pursuit:" + pursuit.ID.String() + ":next-action"
+	if !hasPendingPursuitDecision(result) && (strings.EqualFold(pursuit.RiskLevel, "high") || strings.EqualFold(pursuit.AutonomyLevel, "approve_before_execute")) {
+		decisionID := nextActionDecisionID(pursuit.ID)
 		if resolvedDecisions[decisionID] {
 			return result
 		}
@@ -2573,6 +4249,10 @@ func completionReviewDecisionID(id uuid.UUID) string {
 	return "pursuit:" + id.String() + ":completion-review"
 }
 
+func nextActionDecisionID(id uuid.UUID) string {
+	return "pursuit:" + id.String() + ":next-action"
+}
+
 func pendingDecisionCards(cards []PursuitDecision) int {
 	count := 0
 	for _, card := range cards {
@@ -2581,6 +4261,18 @@ func pendingDecisionCards(cards []PursuitDecision) int {
 		}
 	}
 	return count
+}
+
+// hasPendingPursuitDecision separates decision history from work that still
+// needs an operator. Recorded or approved decisions remain visible in the
+// audit timeline but must not hide a valid completion review.
+func hasPendingPursuitDecision(cards []PursuitDecision) bool {
+	for _, card := range cards {
+		if strings.EqualFold(strings.TrimSpace(card.Status), "pending") || card.RequiresApproval {
+			return true
+		}
+	}
+	return false
 }
 
 func decisionStatus(decision models.WorkflowDecision) string {
@@ -2634,6 +4326,7 @@ func pursuitTimeline(
 	decisions []models.WorkflowDecision,
 	events []models.WorkflowEvent,
 	taskRuns []PursuitTaskRun,
+	taskAttempts []models.PursuitTaskAttempt,
 	verificationRuns []models.VerificationRun,
 	runtimeAttempts []models.AutomationLaunchEvent,
 ) []PursuitTimelineItem {
@@ -2739,6 +4432,24 @@ func pursuitTimeline(
 			RiskLevel:     workflowRisks[workflowID],
 			NeedsReview:   run.NeedsReview,
 			CreatedAt:     when,
+		})
+	}
+	for _, attempt := range taskAttempts {
+		when := timeFromPointer(attempt.CompletedAt)
+		if when.IsZero() {
+			when = timeFromPointer(attempt.StartedAt)
+		}
+		items = appendTimeline(items, PursuitTimelineItem{
+			ID:          "task-attempt:" + attempt.TaskPlanID,
+			Kind:        "task_attempt",
+			Title:       "Direct task " + firstNonEmpty(attempt.Mode, "attempt") + ": " + firstNonEmpty(attempt.Status, "recorded"),
+			Message:     firstNonEmpty(attempt.BlockedReason, attempt.RequestSummary, attempt.VerificationStatus),
+			Status:      attempt.Status,
+			RiskLevel:   firstNonEmpty(attempt.RiskLevel, pursuit.RiskLevel),
+			SourceURI:   "task://" + attempt.TaskPlanID,
+			SourceLabel: "direct task attempt",
+			NeedsReview: strings.Contains(attempt.Status, "review") || strings.TrimSpace(attempt.BlockedReason) != "",
+			CreatedAt:   when,
 		})
 	}
 	for _, run := range verificationRuns {
@@ -2854,10 +4565,10 @@ func firstTime(values ...time.Time) time.Time {
 	return time.Time{}
 }
 
-func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker) PursuitSummary {
+func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, taskAttempts []models.PursuitTaskAttempt, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker, qualityGateBlockers []PursuitBlocker) PursuitSummary {
 	approvals := len(approvalWorkflows(workflows))
 	needsRobert := approvals
-	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers)
+	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers) + len(qualityGateBlockers)
 	linkedEvidence := len(evidence) + len(memories) + len(sourceItems) + activeSourceExtractions(extractions) + acceptedVerificationRuns(verificationRuns) + completedRuntimeAttempts(runtimeAttempts) + acceptedWorkflowCompletionEvidence(workflows) + acceptedAmbientOpportunityLinks(links)
 	completed := 0
 	for _, item := range workflows {
@@ -2883,6 +4594,9 @@ func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []m
 	if len(sourceBlockers) > 0 {
 		state = state + " Some linked source evidence was archived or is missing; review provenance before using it."
 	}
+	if len(qualityGateBlockers) > 0 {
+		state = state + " A linked workflow quality gate needs review before this pursuit can move forward."
+	}
 	reviewDue := isReviewDue(pursuit)
 	if reviewDue {
 		state = state + " Scheduled pursuit review is due."
@@ -2897,14 +4611,14 @@ func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []m
 		NeedsRobert:         needsRobert,
 		Blocked:             blocked,
 		OpenLoops:           len(loops),
-		TaskRuns:            len(taskRuns),
+		TaskRuns:            len(taskRuns) + len(taskAttempts),
 		LinkedEvidence:      linkedEvidence,
 		VerificationRuns:    len(verificationRuns),
 		RuntimeAttempts:     len(runtimeAttempts),
 		Confidence:          pursuit.Confidence,
 		PlanningNeeded:      planningNeeded,
 		ReviewDue:           reviewDue,
-		CompletionCandidate: !pursuitClosed(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0,
+		CompletionCandidate: !pursuitClosed(pursuit) && !isPursuitCandidate(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0,
 	}
 }
 
@@ -3080,7 +4794,15 @@ func requestsVerifiedCompletion(pursuit models.Pursuit, request UpdateRequest) b
 }
 
 func (s *service) completionActiveBlockerReason(id uuid.UUID) (string, error) {
+	return s.completionActiveBlockerReasonForOwner("", id)
+}
+
+func (s *service) completionActiveBlockerReasonForOwner(ownerIdentity string, id uuid.UUID) (string, error) {
 	links, err := s.repo.FindLinks(id)
+	if err != nil {
+		return "", err
+	}
+	links, err = s.visibleLinksForOwner(ownerIdentity, links)
 	if err != nil {
 		return "", err
 	}
@@ -3134,7 +4856,15 @@ func (s *service) completionActiveBlockerReason(id uuid.UUID) (string, error) {
 }
 
 func (s *service) completionEvidenceAvailable(id uuid.UUID) (bool, string, error) {
+	return s.completionEvidenceAvailableForOwner("", id)
+}
+
+func (s *service) completionEvidenceAvailableForOwner(ownerIdentity string, id uuid.UUID) (bool, string, error) {
 	links, err := s.repo.FindLinks(id)
+	if err != nil {
+		return false, "", err
+	}
+	links, err = s.visibleLinksForOwner(ownerIdentity, links)
 	if err != nil {
 		return false, "", err
 	}
@@ -3240,6 +4970,50 @@ func compactSourceItems(items []models.SourceRawItem) []PursuitSourceItem {
 			FetchedAt:  item.FetchedAt,
 			CreatedAt:  item.CreatedAt,
 			UpdatedAt:  item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func compactConversations(items []models.AIConversationArchive) []PursuitConversation {
+	result := make([]PursuitConversation, 0, len(items))
+	for _, item := range items {
+		result = append(result, PursuitConversation{
+			ID:            item.ID,
+			Platform:      item.Platform,
+			ExternalID:    item.ExternalID,
+			Title:         item.Title,
+			SourceURI:     item.SourceURI,
+			Revision:      item.Revision,
+			MessageCount:  item.MessageCount,
+			CapturedAt:    item.CapturedAt,
+			LastMessageAt: item.LastMessageAt,
+			Archived:      item.Archived,
+		})
+	}
+	return result
+}
+
+func compactAmbientOpportunities(items []models.AmbientOpportunity) []PursuitAmbientOpportunity {
+	result := make([]PursuitAmbientOpportunity, 0, len(items))
+	for _, item := range items {
+		result = append(result, PursuitAmbientOpportunity{
+			ID:               item.ID,
+			NeedKey:          item.NeedKey,
+			Title:            item.Title,
+			Rationale:        item.Rationale,
+			NextAction:       item.NextAction,
+			SourceType:       item.SourceType,
+			SourceURI:        item.SourceURI,
+			PriorityScore:    item.PriorityScore,
+			Confidence:       item.Confidence,
+			Risk:             item.Risk,
+			RequiresApproval: item.RequiresApproval,
+			Status:           item.Status,
+			LastSeenAt:       item.LastSeenAt,
+			ResolutionNote:   item.ResolutionNote,
+			CreatedAt:        item.CreatedAt,
+			UpdatedAt:        item.UpdatedAt,
 		})
 	}
 	return result
@@ -3395,9 +5169,38 @@ func pursuitClosed(pursuit models.Pursuit) bool {
 		strings.EqualFold(pursuit.CompletionState, CompletionVerified)
 }
 
+func ensurePursuitOpen(pursuit models.Pursuit, action string) error {
+	if !pursuitClosed(pursuit) {
+		return nil
+	}
+	return fmt.Errorf("cannot %s a closed pursuit; reopen it explicitly or create a new pursuit", action)
+}
+
+func updateAttemptsReopen(pursuit models.Pursuit, request UpdateRequest) bool {
+	if !pursuitClosed(pursuit) {
+		return false
+	}
+	if request.Archived != nil && !*request.Archived {
+		return true
+	}
+	if status := strings.TrimSpace(request.Status); status != "" && !strings.EqualFold(status, pursuit.Status) {
+		return true
+	}
+	if completion := strings.TrimSpace(request.CompletionState); completion != "" && !strings.EqualFold(completion, pursuit.CompletionState) {
+		return true
+	}
+	return false
+}
+
 func isPursuitCandidate(pursuit models.Pursuit) bool {
 	source := strings.ToLower(strings.TrimSpace(pursuit.SourceOfCreation))
 	return source == "pursuit_candidate" || strings.Contains(source, "_pursuit_candidate")
+}
+
+// IsCandidate exposes the pursuit lifecycle boundary to orchestrators without
+// letting them infer candidate state from storage fields themselves.
+func IsCandidate(pursuit models.Pursuit) bool {
+	return isPursuitCandidate(pursuit)
 }
 
 func (s *service) markPursuitCandidateAccepted(pursuit *models.Pursuit, actor string) error {
@@ -3954,11 +5757,40 @@ func limitListItems(items *[]PursuitListItem, limit int) {
 	}
 }
 
+// sortListItemsByEffectiveActivity keeps the observational dashboard lane in
+// the same order as the derived operational timestamp. Other queues retain
+// their own policy ordering (risk, approvals, or work readiness).
+func sortListItemsByEffectiveActivity(items []PursuitListItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left := effectiveListItemActivity(items[i])
+		right := effectiveListItemActivity(items[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		if items[i].Pursuit.PriorityScore != items[j].Pursuit.PriorityScore {
+			return items[i].Pursuit.PriorityScore > items[j].Pursuit.PriorityScore
+		}
+		return items[i].Pursuit.Title < items[j].Pursuit.Title
+	})
+}
+
+func effectiveListItemActivity(item PursuitListItem) time.Time {
+	return firstTime(
+		timeFromPointer(item.EffectiveLastActivityAt),
+		timeFromPointer(item.Pursuit.LastActivityAt),
+		item.Pursuit.UpdatedAt,
+	)
+}
+
 func isStale(pursuit models.Pursuit) bool {
-	if pursuit.LastActivityAt == nil {
-		return time.Since(pursuit.UpdatedAt) > 14*24*time.Hour
+	return isStaleAt(firstTime(timeFromPointer(pursuit.LastActivityAt), pursuit.UpdatedAt))
+}
+
+func isStaleAt(activityAt time.Time) bool {
+	if activityAt.IsZero() {
+		return true
 	}
-	return time.Since(*pursuit.LastActivityAt) > 14*24*time.Hour
+	return time.Since(activityAt) > 14*24*time.Hour
 }
 
 func isReviewDue(pursuit models.Pursuit) bool {
@@ -3979,6 +5811,9 @@ func pursuitPlanInput(pursuit models.Pursuit) string {
 	}
 	if strings.TrimSpace(pursuit.DesiredOutcome) != "" {
 		parts = append(parts, "Desired outcome: "+strings.TrimSpace(pursuit.DesiredOutcome))
+	}
+	if strings.TrimSpace(pursuit.WhyItMatters) != "" {
+		parts = append(parts, "Why it matters: "+strings.TrimSpace(pursuit.WhyItMatters))
 	}
 	if strings.TrimSpace(pursuit.Description) != "" {
 		parts = append(parts, "Context: "+strings.TrimSpace(pursuit.Description))
@@ -4068,6 +5903,89 @@ func defaultAutonomy(risk string) string {
 	return "autonomous_safe"
 }
 
+// conservativeRisk prevents a manually supplied label from downgrading risk
+// detected from the pursuit's own goal, background, rationale, and desired outcome.
+// A caller can always make a pursuit more conservative, never less so.
+func conservativeRisk(requested, detected string) string {
+	requested = normalizeRisk(requested)
+	detected = normalizeRisk(detected)
+	if detected == "" {
+		detected = "medium"
+	}
+	if riskRank(requested) > riskRank(detected) {
+		return requested
+	}
+	return detected
+}
+
+func normalizeRisk(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func riskRank(value string) int {
+	switch normalizeRisk(value) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// conservativeAutonomy keeps the pursuit label no more permissive than its
+// risk class. It is a presentation and planning guard; the workflow/task
+// engine remains the authority for any real execution.
+func conservativeAutonomy(requested, risk string) string {
+	requested = normalizeAutonomy(requested)
+	switch normalizeRisk(risk) {
+	case "high":
+		switch requested {
+		case "manual", "suggest", "approve_before_execute":
+			return requested
+		default:
+			return "approve_before_execute"
+		}
+	case "medium":
+		switch requested {
+		case "manual", "suggest", "approve_before_execute":
+			return requested
+		default:
+			return "suggest"
+		}
+	default:
+		switch requested {
+		case "manual", "suggest", "approve_before_execute", "autonomous_safe":
+			return requested
+		default:
+			return "autonomous_safe"
+		}
+	}
+}
+
+func normalizeAutonomy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "manual", "suggest", "approve_before_execute", "autonomous_safe", "autonomous_full_local_only":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func policyWasNormalized(requestedRisk, requestedAutonomy, risk, autonomy string) bool {
+	if strings.TrimSpace(requestedRisk) != "" && !strings.EqualFold(normalizeRisk(requestedRisk), risk) {
+		return true
+	}
+	return strings.TrimSpace(requestedAutonomy) != "" && !strings.EqualFold(normalizeAutonomy(requestedAutonomy), autonomy)
+}
+
 func normalizeWords(text string) map[string]bool {
 	result := map[string]bool{}
 	for _, token := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
@@ -4125,6 +6043,20 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func uniqueStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 func assignString(value *string, target *string) {

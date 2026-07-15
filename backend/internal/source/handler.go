@@ -1,10 +1,12 @@
 package source
 
 import (
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -71,6 +73,7 @@ func (h *Handler) CreateSource(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = sourceOwner(c)
 	source, err := h.service.CreateSource(request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -86,7 +89,7 @@ func (h *Handler) Sources(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, sources)
+	c.JSON(http.StatusOK, filterVisibleSources(sources, sourceOwner(c)))
 }
 
 func (h *Handler) SyncJobs(c *gin.Context) {
@@ -98,11 +101,22 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 			return
 		}
 		sourceID = &parsed
+		if !h.requireSourceAccess(c, parsed) {
+			return
+		}
 	}
 	jobs, err := h.service.SyncJobs(sourceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if sourceID == nil {
+		visibleSourceIDs, err := h.visibleSourceIDs(c)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		jobs = filterVisibleSyncJobs(jobs, visibleSourceIDs)
 	}
 	c.JSON(http.StatusOK, jobs)
 }
@@ -110,6 +124,9 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 func (h *Handler) UpdateSource(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {
+		return
+	}
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	var request UpdateSourceRequest
@@ -128,6 +145,9 @@ func (h *Handler) UpdateSource(c *gin.Context) {
 func (h *Handler) Sync(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {
+		return
+	}
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	var request ImportRequest
@@ -152,6 +172,9 @@ func (h *Handler) Reindex(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.requireMutableSource(c, id) {
+		return
+	}
 	result, err := h.service.Reindex(id)
 	if err != nil {
 		if errors.Is(err, ErrSyncInProgress) {
@@ -165,7 +188,15 @@ func (h *Handler) Reindex(c *gin.Context) {
 }
 
 func (h *Handler) RunDueScheduledSyncs(c *gin.Context) {
-	result, err := h.service.RunDueScheduledSyncs(time.Now().UTC())
+	ownerIdentity := sourceOwner(c)
+	if ownerIdentity == "" {
+		// The global scheduler is the only allowed ownerless source worker.
+		// An HTTP request must carry a verified identity so it cannot trigger a
+		// cross-owner refresh batch.
+		c.JSON(http.StatusForbidden, gin.H{"error": "scheduled source sync requires an authenticated owner"})
+		return
+	}
+	result, err := h.service.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -176,6 +207,9 @@ func (h *Handler) RunDueScheduledSyncs(c *gin.Context) {
 func (h *Handler) Pause(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {
+		return
+	}
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	source, err := h.service.Pause(id, true)
@@ -191,6 +225,9 @@ func (h *Handler) Resume(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.requireMutableSource(c, id) {
+		return
+	}
 	source, err := h.service.Pause(id, false)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -202,6 +239,9 @@ func (h *Handler) Resume(c *gin.Context) {
 func (h *Handler) Revoke(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {
+		return
+	}
+	if !h.requireMutableSource(c, id) {
 		return
 	}
 	source, err := h.service.Revoke(id)
@@ -218,6 +258,7 @@ func (h *Handler) Search(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	request.OwnerIdentity = sourceOwner(c)
 	result, err := h.service.Search(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -228,7 +269,7 @@ func (h *Handler) Search(c *gin.Context) {
 
 func (h *Handler) Extractions(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	extractions, err := h.service.Extractions(c.Query("projectKey"), includeArchived)
+	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -239,6 +280,9 @@ func (h *Handler) Extractions(c *gin.Context) {
 func (h *Handler) UpdateExtraction(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {
+		return
+	}
+	if !h.requireMutableExtraction(c, id) {
 		return
 	}
 	var request models.SourceExtraction
@@ -259,6 +303,9 @@ func (h *Handler) ArchiveExtraction(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.requireMutableExtraction(c, id) {
+		return
+	}
 	extraction, err := h.service.ArchiveExtraction(id, true)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -270,6 +317,9 @@ func (h *Handler) ArchiveExtraction(c *gin.Context) {
 func (h *Handler) DeleteExtraction(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {
+		return
+	}
+	if !h.requireMutableExtraction(c, id) {
 		return
 	}
 	if err := h.service.DeleteExtraction(id); err != nil {
@@ -288,13 +338,149 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 			return
 		}
 		sourceID = &parsed
+		if !h.requireSourceAccess(c, parsed) {
+			return
+		}
 	}
 	logs, err := h.service.AuditLogs(sourceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if sourceID == nil {
+		visibleSourceIDs, err := h.visibleSourceIDs(c)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		logs = filterVisibleAuditLogs(logs, visibleSourceIDs)
+	}
 	c.JSON(http.StatusOK, logs)
+}
+
+func sourceOwner(c *gin.Context) string {
+	if value, ok := c.Get(identity.ContextSubjectKey); ok {
+		if subject, ok := value.(string); ok {
+			return strings.TrimSpace(subject)
+		}
+	}
+	return ""
+}
+
+func sourceVisible(source models.ConnectedSource, owner string) bool {
+	owner = strings.TrimSpace(owner)
+	return owner == "" || source.OwnerIdentity == "" || source.OwnerIdentity == owner
+}
+
+// sourceMutable is stricter than sourceVisible. Ownerless legacy records may
+// remain readable during local migration, but a signed-in operator cannot
+// adopt, sync, alter, revoke, or delete their source-derived records.
+func sourceMutable(source models.ConnectedSource, owner string) bool {
+	owner = strings.TrimSpace(owner)
+	return owner != "" && strings.TrimSpace(source.OwnerIdentity) == owner
+}
+
+func filterVisibleSources(sources []models.ConnectedSource, owner string) []models.ConnectedSource {
+	visible := make([]models.ConnectedSource, 0, len(sources))
+	for _, source := range sources {
+		if sourceVisible(source, owner) {
+			visible = append(visible, source)
+		}
+	}
+	return visible
+}
+
+func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
+	sources, err := h.service.Sources(true)
+	if err != nil {
+		return nil, err
+	}
+	visible := make(map[uuid.UUID]bool, len(sources))
+	for _, source := range filterVisibleSources(sources, sourceOwner(c)) {
+		visible[source.ID] = true
+	}
+	return visible, nil
+}
+
+func (h *Handler) requireSourceAccess(c *gin.Context, id uuid.UUID) bool {
+	visibleSourceIDs, err := h.visibleSourceIDs(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	if visibleSourceIDs[id] {
+		return true
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+	return false
+}
+
+func (h *Handler) mutableSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
+	sources, err := h.service.Sources(true)
+	if err != nil {
+		return nil, err
+	}
+	owner := sourceOwner(c)
+	mutable := make(map[uuid.UUID]bool, len(sources))
+	for _, source := range sources {
+		if sourceMutable(source, owner) {
+			mutable[source.ID] = true
+		}
+	}
+	return mutable, nil
+}
+
+func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
+	mutableSourceIDs, err := h.mutableSourceIDs(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	if mutableSourceIDs[id] {
+		return true
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+	return false
+}
+
+func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
+	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), "", true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	mutableSourceIDs, err := h.mutableSourceIDs(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	for _, extraction := range extractions {
+		if extraction.ID == id && mutableSourceIDs[extraction.SourceID] {
+			return true
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "source extraction not found"})
+	return false
+}
+
+func filterVisibleSyncJobs(jobs []models.SourceSyncJob, sourceIDs map[uuid.UUID]bool) []models.SourceSyncJob {
+	visible := make([]models.SourceSyncJob, 0, len(jobs))
+	for _, job := range jobs {
+		if sourceIDs[job.SourceID] {
+			visible = append(visible, job)
+		}
+	}
+	return visible
+}
+
+func filterVisibleAuditLogs(logs []models.SourceAuditLog, sourceIDs map[uuid.UUID]bool) []models.SourceAuditLog {
+	visible := make([]models.SourceAuditLog, 0, len(logs))
+	for _, log := range logs {
+		if sourceIDs[log.SourceID] {
+			visible = append(visible, log)
+		}
+	}
+	return visible
 }
 
 func parseUUID(c *gin.Context) (uuid.UUID, bool) {

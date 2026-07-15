@@ -48,6 +48,7 @@ func RunMigrations(db *gorm.DB) error {
 		&models.AutomationAlert{},
 		&models.AutomationIncident{},
 		&models.AutomationSLO{},
+		&models.LLMProviderProbe{},
 		&models.ContextMemory{},
 		&models.AIConversationArchive{},
 		&models.AIMemoryInsight{},
@@ -79,7 +80,9 @@ func RunMigrations(db *gorm.DB) error {
 		&models.Pursuit{},
 		&models.PursuitLink{},
 		&models.PursuitActivity{},
+		&models.PursuitTaskAttempt{},
 		&models.AmbientNeed{},
+		&models.AmbientNeedOverride{},
 		&models.AmbientOpportunity{},
 		&models.AmbientScan{},
 		&models.AutonomyWorldState{},
@@ -87,6 +90,15 @@ func RunMigrations(db *gorm.DB) error {
 		&models.AutonomyEvaluation{},
 		&models.AutonomyStressRun{},
 	); err != nil {
+		return err
+	}
+	// Conversation identities were originally global. Keep legacy ownerless
+	// imports readable, but make new records unique per authenticated owner so
+	// two local HAI users cannot overwrite each other's imported history.
+	if err := db.Exec(`DROP INDEX IF EXISTS idx_ai_conversation_identity`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_conversation_owner_identity ON ai_conversation_archives (owner_identity, platform, external_id)`).Error; err != nil {
 		return err
 	}
 	return nil

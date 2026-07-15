@@ -145,7 +145,10 @@
           <nz-select formControlName="domain" nzPlaceHolder="Domain">
             <nz-option *ngFor="let domain of domains" [nzValue]="domain" [nzLabel]="domain"></nz-option>
           </nz-select>
+          <textarea nz-input formControlName="description" rows="2" placeholder="Background context (optional)"></textarea>
+          <textarea nz-input formControlName="whyItMatters" rows="2" placeholder="Why this matters"></textarea>
           <textarea nz-input formControlName="desiredOutcome" rows="2" placeholder="Desired outcome"></textarea>
+          <textarea nz-input formControlName="currentStateSummary" rows="2" placeholder="Current state (optional)"></textarea>
           <textarea nz-input formControlName="completionDefinition" rows="2" placeholder="Completion definition"></textarea>
           <div class="form-actions">
             <button nz-button nzType="primary" type="submit" [nzLoading]="creating">Create</button>
@@ -194,6 +197,7 @@
               <span class="page-kicker">{{ detail.pursuit.needCategory || 'goal' }}</span>
               <h2>{{ detail.pursuit.title }}</h2>
               <p>{{ detail.pursuit.desiredOutcome || detail.pursuit.description || 'Outcome not defined yet.' }}</p>
+              <p *ngIf="detail.pursuit.whyItMatters"><strong>Why it matters:</strong> {{ detail.pursuit.whyItMatters }}</p>
             </div>
             <div class="detail-actions">
               <nz-tag [nzColor]="riskColor(detail.pursuit.riskLevel)">{{ detail.pursuit.riskLevel }} risk</nz-tag>
@@ -201,11 +205,75 @@
                 <i nz-icon nzType="sync" nzTheme="outline"></i>
                 Refresh summary
               </button>
-              <button nz-button nzType="default" title="Archive or restore this pursuit." (click)="archiveSelected()">
-                {{ detail.pursuit.archived ? 'Restore' : 'Archive' }}
+              <button nz-button nzType="default" title="Edit the goal context HAI uses for matching, planning, and safety classification." (click)="openContextEditor()">
+                <i nz-icon nzType="edit" nzTheme="outline"></i>
+                Edit context
               </button>
+              <button nz-button nzType="default" title="Run a source-grounded verification and attach the resulting evidence to this pursuit. It does not approve an action or mark the pursuit complete." (click)="verifySelectedEvidence()">
+                <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+                Verify evidence
+              </button>
+              <button nz-button nzType="default" title="Continue this pursuit through HAI chat. Commands are linked to this pursuit and run through the workflow policy." (click)="openAssistant()">
+                <i nz-icon nzType="message" nzTheme="outline"></i>
+                Continue in HAI
+              </button>
+              <button
+                *ngIf="isClosedPursuit(detail.pursuit); else archivePursuit"
+                nz-button
+                nzType="default"
+                title="Reopen this pursuit for additional governed work. It does not run any task automatically."
+                (click)="reopenSelected()"
+              >
+                Reopen
+              </button>
+              <ng-template #archivePursuit>
+                <button nz-button nzType="default" title="Archive this pursuit and remove it from active operating queues." (click)="archiveSelected()">
+                  Archive
+                </button>
+              </ng-template>
             </div>
           </header>
+
+          <section class="operational-digest" *ngIf="showContextEditor">
+            <header>
+              <div>
+                <span class="page-kicker">Pursuit context</span>
+                <h3>Keep HAI aligned with the real objective</h3>
+                <p>These fields guide matching, planning, and conservative safety classification. They do not approve or execute work.</p>
+              </div>
+              <button nz-button nzType="default" type="button" (click)="showContextEditor = false">Cancel</button>
+            </header>
+            <form class="detail-grid" [formGroup]="contextForm" (ngSubmit)="savePursuitContext()">
+              <nz-form-item>
+                <nz-form-label>Background context</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="description" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Why it matters</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="whyItMatters" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Desired outcome</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="desiredOutcome" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Current state</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="currentStateSummary" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Recommended next action</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="nextRecommendedAction" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <nz-form-item>
+                <nz-form-label>Completion definition</nz-form-label>
+                <nz-form-control><textarea nz-input formControlName="completionDefinition" rows="3"></textarea></nz-form-control>
+              </nz-form-item>
+              <div class="form-actions">
+                <button nz-button nzType="primary" type="submit" [nzLoading]="detailLoading">Save context</button>
+                <button nz-button nzType="default" type="button" (click)="showContextEditor = false">Cancel</button>
+              </div>
+            </form>
+          </section>
 
           <div class="detail-summary">
             <article title="Current operational state inferred from linked records.">
@@ -254,22 +322,22 @@
               </nz-tag>
             </header>
             <div class="operational-digest__grid">
-              <button type="button" title="Robert-only decision, approval, or unblock work.">
+              <button type="button" title="Open the first Robert-only decision, approval, or unblock action." (click)="openDigestLane('robert')">
                 <span>Robert</span>
                 <strong>{{ digest.needsRobert }}</strong>
                 <small>{{ digest.robertLine }}</small>
               </button>
-              <button type="button" title="Work that can be packaged for a VA or assistant.">
+              <button type="button" title="Open the first VA-ready preparation action." (click)="openDigestLane('va')">
                 <span>VA-ready</span>
                 <strong>{{ digest.vaReady }}</strong>
                 <small>{{ digest.delegationLine }}</small>
               </button>
-              <button type="button" title="Low-risk work HAI can prepare through guarded execution.">
+              <button type="button" title="Open the first system-ready low-risk action." (click)="openDigestLane('system')">
                 <span>System-ready</span>
                 <strong>{{ digest.systemReady }}</strong>
                 <small>{{ digest.systemLine }}</small>
               </button>
-              <button type="button" title="Blocked, waiting, or follow-up work.">
+              <button type="button" title="Open the first blocked, waiting, or follow-up action." (click)="openDigestLane('waiting')">
                 <span>Waiting</span>
                 <strong>{{ digest.waiting }}</strong>
                 <small>{{ digest.waitingLine }}</small>
@@ -377,6 +445,16 @@
                 <h3>Action lanes</h3>
                 <span>Robert decisions stay separate from VA-ready, system-ready, and waiting work.</span>
               </div>
+              <button
+                nz-button
+                nzType="default"
+                title="Compile the current VA-ready work, linked checklists, sources, and escalation rules. This does not assign anyone or authorize external actions."
+                [nzLoading]="delegationLoading"
+                (click)="prepareDelegationPackage()"
+              >
+                <i nz-icon nzType="team" nzTheme="outline"></i>
+                Prepare VA brief
+              </button>
             </div>
             <div class="action-lanes">
               <article class="action-lane action-lane--robert">
@@ -384,7 +462,7 @@
                   <span>Robert-only</span>
                   <strong>{{ detail.actionQueues.needsRobert.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.needsRobert" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.needsRobert" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
@@ -396,7 +474,7 @@
                   <span>VA-ready</span>
                   <strong>{{ detail.actionQueues.vaReady.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.vaReady" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.vaReady" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
@@ -408,7 +486,7 @@
                   <span>System-ready</span>
                   <strong>{{ detail.actionQueues.systemReady.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.systemReady" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.systemReady" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
@@ -420,13 +498,51 @@
                   <span>Waiting</span>
                   <strong>{{ detail.actionQueues.waiting.length }}</strong>
                 </header>
-                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.waiting" [title]="action.reason" (click)="action.workflowId && openWorkflow(action.workflowId)">
+                <button type="button" class="next-action" *ngFor="let action of detail.actionQueues.waiting" [title]="action.reason" (click)="openAction(action)">
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} / {{ action.riskLevel }} risk</span>
                 </button>
                 <nz-empty *ngIf="!detail.actionQueues.waiting.length" nzNotFoundContent="Nothing waiting."></nz-empty>
               </article>
             </div>
+            <section class="operational-digest" *ngIf="delegationPackage as package">
+              <header>
+                <div>
+                  <span class="page-kicker">VA handoff</span>
+                  <h4>{{ package.ready ? 'Bounded handoff package' : 'Handoff not ready' }}</h4>
+                  <p>{{ package.reason }}</p>
+                </div>
+                <nz-tag [nzColor]="package.ready ? 'success' : 'warning'">{{ package.status }}</nz-tag>
+              </header>
+              <p><strong>Objective:</strong> {{ package.objective }}</p>
+              <p *ngIf="package.whyItMatters"><strong>Why it matters:</strong> {{ package.whyItMatters }}</p>
+              <div class="detail-grid">
+                <nz-card nzTitle="Work">
+                  <div *ngFor="let item of package.workItems" class="delegation-work-item">
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ item.instructions }}</span>
+                    <ul *ngIf="item.checklist.length">
+                      <li *ngFor="let step of item.checklist">{{ step.label }} <em>{{ step.status }}</em></li>
+                    </ul>
+                  </div>
+                  <span *ngIf="!package.workItems.length">No governed VA work is ready.</span>
+                </nz-card>
+                <nz-card nzTitle="Source context">
+                  <button nz-button nzType="link" *ngFor="let source of package.sourceContext" (click)="openSource(source.sourceUri)">
+                    {{ source.sourceLabel || source.sourceUri }}
+                  </button>
+                  <span *ngIf="!package.sourceContext.length">No linked source references yet.</span>
+                </nz-card>
+                <nz-card nzTitle="Authority limits">
+                  <ul><li *ngFor="let rule of package.allowedActions">{{ rule }}</li></ul>
+                  <ul><li *ngFor="let rule of package.blockedActions">{{ rule }}</li></ul>
+                </nz-card>
+                <nz-card nzTitle="Escalate">
+                  <ul><li *ngFor="let rule of package.escalationRules">{{ rule }}</li></ul>
+                  <span *ngIf="!package.escalationRules.length">No additional escalation rule was generated.</span>
+                </nz-card>
+              </div>
+            </section>
             <details class="legacy-actions">
               <summary>All generated actions</summary>
               <div class="action-list">
@@ -435,8 +551,8 @@
                   <strong>{{ action.label }}</strong>
                   <span>{{ actionOwnerLabel(action) }} · {{ action.riskLevel }} risk</span>
                 </div>
-                <button nz-button nzType="default" *ngIf="action.workflowId" (click)="openWorkflow(action.workflowId)">
-                  Open workflow
+                <button nz-button nzType="default" (click)="openAction(action)">
+                  {{ action.workflowId ? 'Open workflow' : 'Inspect action' }}
                 </button>
               </article>
                 <nz-empty *ngIf="!detail.nextActions.length" nzNotFoundContent="No next action generated yet."></nz-empty>
@@ -581,12 +697,15 @@
             <nz-card nzTitle="Linked records">
               <dl class="link-counts">
                 <div><dt>Workflows</dt><dd>{{ detail.workflows.length }}</dd></div>
+                <div><dt>Quality gates</dt><dd>{{ detail.qualityGates.length }}</dd></div>
                 <div><dt>Decisions</dt><dd>{{ detail.decisionQueue.length }}</dd></div>
                 <div><dt>Timeline</dt><dd>{{ detail.timeline.length }}</dd></div>
-                <div><dt>Task runs</dt><dd>{{ detail.taskRuns.length }}</dd></div>
+                <div><dt>Task attempts</dt><dd>{{ detail.taskRuns.length + detail.taskAttempts.length }}</dd></div>
                 <div><dt>Evidence</dt><dd>{{ detail.evidence.length }}</dd></div>
                 <div><dt>Verification</dt><dd>{{ detail.verificationRuns.length }}</dd></div>
                 <div><dt>Memory</dt><dd>{{ detail.memories.length }}</dd></div>
+                <div><dt>Conversations</dt><dd>{{ detail.conversations.length }}</dd></div>
+                <div><dt>Proactive</dt><dd>{{ detail.ambientOpportunities.length }}</dd></div>
                 <div><dt>Sources</dt><dd>{{ detail.sourceItems.length + detail.sourceExtractions.length }}</dd></div>
                 <div><dt>Runtime</dt><dd>{{ detail.runtimeAttempts.length }}</dd></div>
               </dl>
@@ -626,7 +745,20 @@
                     <tr *ngFor="let link of detail.links">
                       <td>{{ link.linkType }}</td>
                       <td>{{ link.relationship }}</td>
-                      <td>{{ link.linkId }}</td>
+                      <td>
+                        <span>{{ link.linkId }}</span>
+                        <button
+                          *ngIf="link.linkType === 'pursuit'"
+                          nz-button
+                          nzType="link"
+                          nzSize="small"
+                          type="button"
+                          title="Open linked pursuit"
+                          (click)="openLinkedPursuit(link)"
+                        >
+                          <i nz-icon nzType="arrow-right" nzTheme="outline"></i>
+                        </button>
+                      </td>
                       <td>
                         <button nz-button nzType="link" *ngIf="link.sourceUri" (click)="openSource(link.sourceUri)">
                           {{ link.sourceLabel || 'source' }}
@@ -668,6 +800,27 @@
                   </tr>
                 </tbody>
               </nz-table>
+            </details>
+
+            <details>
+              <summary>Quality gates ({{ detail.summary.qualityGatesNeedingReview }} need review)</summary>
+              <nz-table [nzData]="detail.qualityGates" nzSize="small" [nzPageSize]="6">
+                <thead>
+                  <tr>
+                    <th>Gate</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let gate of detail.qualityGates" [class.table-row-warning]="gate.status === 'failed' || gate.status === 'needs_review'">
+                    <td>{{ gate.gate }}</td>
+                    <td>{{ gate.status }}</td>
+                    <td>{{ gate.reason || '-' }}</td>
+                  </tr>
+                </tbody>
+              </nz-table>
+              <nz-empty *ngIf="!detail.qualityGates.length" nzNotFoundContent="No workflow quality gates linked yet."></nz-empty>
             </details>
 
             <details>
@@ -732,8 +885,20 @@
                   <small *ngIf="run.lastWorkerError">{{ run.lastWorkerError }}</small>
                   <button nz-button nzType="link" (click)="openWorkflow(run.workflowId)">Open workflow</button>
                 </article>
+                <article *ngFor="let attempt of detail.taskAttempts">
+                  <span>Direct task - {{ attempt.status }}</span>
+                  <strong>{{ attempt.requestSummary || 'Pursuit-scoped task attempt' }}</strong>
+                  <small>
+                    {{ attempt.taskPlanId }} /
+                    {{ attempt.verificationStatus || 'not verified' }} /
+                    {{ attempt.riskLevel || 'unknown' }} risk
+                  </small>
+                  <small *ngIf="attempt.blockedReason">{{ attempt.blockedReason }}</small>
+                  <small *ngIf="attempt.launchEventId">Runtime evidence: {{ attempt.launchEventId }}</small>
+                  <small *ngIf="attempt.completedAt">{{ attempt.completedAt | date: 'short' }}</small>
+                </article>
               </div>
-              <nz-empty *ngIf="!detail.taskRuns.length" nzNotFoundContent="No task execution evidence linked yet."></nz-empty>
+              <nz-empty *ngIf="!detail.taskRuns.length && !detail.taskAttempts.length" nzNotFoundContent="No task execution evidence linked yet."></nz-empty>
             </details>
 
             <details>
@@ -879,6 +1044,11 @@
                   <strong>{{ memory.summary || memory.content }}</strong>
                   <button nz-button nzType="link" (click)="openSource(memory.sourceUri)">Open source</button>
                 </article>
+                <article *ngFor="let conversation of detail.conversations">
+                  <span>Conversation · {{ conversation.platform }} · {{ conversation.messageCount }} messages</span>
+                  <strong>{{ conversation.title || conversation.externalId || 'AI conversation archive' }}</strong>
+                  <button nz-button nzType="link" *ngIf="conversation.sourceUri" (click)="openSource(conversation.sourceUri)">Open source</button>
+                </article>
                 <article *ngFor="let item of detail.sourceItems">
                   <span>Source item - {{ item.itemType || 'record' }}</span>
                   <strong>{{ item.title || item.externalId }}</strong>
@@ -890,6 +1060,22 @@
                   <button nz-button nzType="link" (click)="openSource(source.sourceUri)">Open source</button>
                 </article>
               </div>
+            </details>
+
+            <details>
+              <summary>Proactive opportunities</summary>
+              <div class="source-grid">
+                <article *ngFor="let opportunity of detail.ambientOpportunities">
+                  <span>{{ opportunity.needKey || 'general' }} · priority {{ opportunity.priorityScore }} · {{ opportunity.status }}</span>
+                  <strong>{{ opportunity.title }}</strong>
+                  <small>{{ opportunity.nextAction || opportunity.rationale || 'No next action recorded.' }}</small>
+                  <nz-tag [nzColor]="opportunity.requiresApproval ? 'warning' : 'success'">
+                    {{ opportunity.requiresApproval ? 'approval required' : 'proposal only' }}
+                  </nz-tag>
+                  <button nz-button nzType="link" *ngIf="opportunity.sourceUri" (click)="openSource(opportunity.sourceUri)">Open source</button>
+                </article>
+              </div>
+              <nz-empty *ngIf="!detail.ambientOpportunities.length" nzNotFoundContent="No proactive opportunities linked yet."></nz-empty>
             </details>
 
             <details>
@@ -932,6 +1118,47 @@
     </nz-content>
   </nz-layout>
 </section>
+
+<nz-modal
+  [nzVisible]="!!inspectedAction"
+  nzTitle="Action context"
+  nzWidth="620px"
+  [nzFooter]="null"
+  (nzOnCancel)="closeAction()"
+>
+  <ng-container *nzModalContent>
+    <section class="evidence-inspector" *ngIf="inspectedAction as action">
+      <header>
+        <span>{{ action.owner || 'HAI' }} action</span>
+        <nz-tag [nzColor]="action.riskLevel === 'high' ? 'error' : action.riskLevel === 'medium' ? 'warning' : 'success'">
+          {{ action.riskLevel || 'unknown' }} risk
+        </nz-tag>
+      </header>
+      <h3>{{ action.label }}</h3>
+      <p>{{ action.reason || 'No further context was recorded for this action.' }}</p>
+      <dl>
+        <div>
+          <dt>Owner</dt>
+          <dd>{{ action.owner || 'HAI' }}</dd>
+        </div>
+        <div>
+          <dt>Approval</dt>
+          <dd>{{ action.requiresApproval ? 'Required before consequential execution' : 'No additional pursuit approval flag' }}</dd>
+        </div>
+        <div *ngIf="action.yesLabel || action.noLabel">
+          <dt>Decision framing</dt>
+          <dd>{{ action.yesLabel || 'Yes' }} / {{ action.noLabel || 'No' }}</dd>
+        </div>
+      </dl>
+      <footer>
+        <button nz-button nzType="primary" *ngIf="action.workflowId" (click)="openWorkflow(action.workflowId)">
+          Open linked workflow
+        </button>
+        <button nz-button nzType="default" (click)="closeAction()">Done</button>
+      </footer>
+    </section>
+  </ng-container>
+</nz-modal>
 
 <nz-modal
   [nzVisible]="!!inspectedRuntimeEvidence"

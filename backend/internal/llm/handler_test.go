@@ -66,3 +66,41 @@ func TestGenerateHandlerIgnoresClientPaidApprovalFlag(t *testing.T) {
 		t.Fatalf("status = %q, want blocked", result.Status)
 	}
 }
+
+func TestProviderProbeHandlersRecordAndReturnHistory(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"models": []map[string]string{{"name": "phi3:mini"}},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{
+		policy:       Policy{Providers: []Provider{{ID: "ollama", Name: "Ollama", Enabled: true, Local: true, EndpointURL: server.URL}}},
+		probeHistory: &fakeProbeHistoryRepository{},
+	}
+	handler := NewHandler(service)
+	router := gin.New()
+	router.GET("/probes", handler.ProviderProbes)
+	router.GET("/probes/history", handler.ProviderProbeHistory)
+
+	probeResponse := httptest.NewRecorder()
+	router.ServeHTTP(probeResponse, httptest.NewRequest(http.MethodGet, "/probes", nil))
+	if probeResponse.Code != http.StatusOK {
+		t.Fatalf("probe status = %d, body=%s", probeResponse.Code, probeResponse.Body.String())
+	}
+
+	historyResponse := httptest.NewRecorder()
+	router.ServeHTTP(historyResponse, httptest.NewRequest(http.MethodGet, "/probes/history?limit=5", nil))
+	if historyResponse.Code != http.StatusOK {
+		t.Fatalf("history status = %d, body=%s", historyResponse.Code, historyResponse.Body.String())
+	}
+	var history []ProviderProbeResult
+	if err := json.Unmarshal(historyResponse.Body.Bytes(), &history); err != nil {
+		t.Fatalf("decode probe history: %v", err)
+	}
+	if len(history) != 1 || !history[0].Live || history[0].LastSuccessfulAt == nil {
+		t.Fatalf("history = %#v, want persisted live probe", history)
+	}
+}

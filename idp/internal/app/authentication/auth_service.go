@@ -70,6 +70,7 @@ func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
 	user := models.User{
 		Email:    userDTO.Email,
 		Password: hashedPassword,
+		Role:     "operator",
 	}
 
 	userCreated, err := a.userService.CreateUser(user)
@@ -167,7 +168,7 @@ func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
 		a.logger.Error("Failed to generate refresh token for user %s: %v", email, err)
 		return nil, errors.New("failed to generate refresh token")
 	}
-	td.AccessToken, td.AtExpires, err = a.generateAccessToken(user.ID, td.RefreshUUID, td.RtExpires)
+	td.AccessToken, td.AtExpires, err = a.generateAccessToken(user.ID, userRole(user.Role), td.RefreshUUID, td.RtExpires)
 	if err != nil {
 		a.logger.Error("Failed to generate access token for user %s: %v", email, err)
 		return nil, errors.New("failed to generate access token")
@@ -181,14 +182,14 @@ func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
 // issueSession mints an access/refresh token pair for an already-authenticated
 // user. Shared by password login and Google login so both produce identical
 // sessions.
-func (a *service) issueSession(userID uuid.UUID) (*dto.TokenDetails, error) {
+func (a *service) issueSession(userID uuid.UUID, role string) (*dto.TokenDetails, error) {
 	td := &dto.TokenDetails{}
 	var err error
 	td.RefreshToken, td.RefreshUUID, td.RtExpires, err = a.generateRefreshToken(userID)
 	if err != nil {
 		return nil, errors.New("failed to generate refresh token")
 	}
-	td.AccessToken, td.AtExpires, err = a.generateAccessToken(userID, td.RefreshUUID, td.RtExpires)
+	td.AccessToken, td.AtExpires, err = a.generateAccessToken(userID, userRole(role), td.RefreshUUID, td.RtExpires)
 	if err != nil {
 		return nil, errors.New("failed to generate access token")
 	}
@@ -227,7 +228,7 @@ func (a *service) LoginWithGoogle(ctx context.Context, code, state string) (*dto
 	}
 
 	a.logger.Info("Successfully logged in user via Google: %s", email)
-	return a.issueSession(user.ID)
+	return a.issueSession(user.ID, user.Role)
 }
 
 // createGoogleUser provisions an account for a Google identity. The password is
@@ -238,7 +239,7 @@ func (a *service) createGoogleUser(email string) (*models.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.userService.CreateUser(models.User{Email: email, Password: hashed, IsActive: true})
+	return a.userService.CreateUser(models.User{Email: email, Password: hashed, IsActive: true, Role: "operator"})
 }
 
 func calculateBlockDuration(failedLoginAttempts int) time.Duration {
@@ -346,7 +347,12 @@ func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 		a.logger.Warn("Refresh expiration time not found in the token for user: %s", userID)
 		return nil, errors.New("refresh expiration time not found in the token")
 	}
-	newAccessToken, atExpires, err := a.generateAccessToken(userID, refreshUUID, refreshExp)
+	user, err := a.userService.GetUserByID(userID)
+	if err != nil || user == nil {
+		a.logger.Warn("User is unavailable while refreshing an access token: %s", userID)
+		return nil, errors.New("user is unavailable")
+	}
+	newAccessToken, atExpires, err := a.generateAccessToken(userID, userRole(user.Role), refreshUUID, refreshExp)
 	if err != nil {
 		a.logger.Error("Failed to generate new access token: %v", err)
 		return nil, err
@@ -541,11 +547,12 @@ func (a *service) GetIdFromToken(accessToken string) (uuid.UUID, error) {
 	return userID, nil
 }
 
-func (a *service) generateAccessToken(userID uuid.UUID, refreshUUID string, refreshExp int64) (string, int64, error) {
+func (a *service) generateAccessToken(userID uuid.UUID, role, refreshUUID string, refreshExp int64) (string, int64, error) {
 	expires := time.Now().Add(time.Minute * config.AuthenticationConfig.AccessTokenDurationMinutes).Unix()
 
 	claims := jwt.MapClaims{}
 	claims["user_id"] = userID.String()
+	claims["role"] = userRole(role)
 	claims["access_uuid"] = uuid.New().String()
 	claims["refresh_uuid"] = refreshUUID
 	claims["refresh_exp"] = refreshExp
@@ -554,6 +561,15 @@ func (a *service) generateAccessToken(userID uuid.UUID, refreshUUID string, refr
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	accessToken, err := token.SignedString([]byte(a.jwtSecret))
 	return accessToken, expires, err
+}
+
+func userRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "owner", "operator", "viewer":
+		return strings.ToLower(strings.TrimSpace(role))
+	default:
+		return "operator"
+	}
 }
 
 func (a *service) generateRefreshToken(userID uuid.UUID) (string, string, int64, error) {

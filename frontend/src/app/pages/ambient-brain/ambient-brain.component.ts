@@ -282,12 +282,14 @@ export class AmbientBrainComponent implements OnInit {
       ? this.ambient.accept(item.id)
       : this.ambient.dismiss(item.id);
     request.subscribe({
-      next: () => {
+      next: (resolved) => {
         this.resolving = '';
         this.notification.success(
           accept ? 'Opportunity accepted' : 'Opportunity dismissed',
           accept
-            ? 'The item is linked to the controlled workflow engine.'
+            ? resolved.workflowId
+              ? 'The item is linked to controlled workflow work and its pursuit context.'
+              : 'The item is stored as reviewable pursuit context; explicit candidate acceptance is still required before workflow work.'
             : 'The item is hidden until its cooldown expires.'
         );
         this.refresh();

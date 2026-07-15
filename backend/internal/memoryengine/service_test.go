@@ -100,10 +100,9 @@ func TestEncryptedPayloadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
+func TestImportDefersActionWhenConfiguredPursuitLinkerLacksLifecycleRouter(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
-	workflowID := uuid.New()
-	workflowSpy := &memoryEngineWorkflowStub{recordID: workflowID}
+	workflowSpy := &memoryEngineWorkflowStub{recordID: uuid.New()}
 	pursuitSpy := &memoryEnginePursuitLinker{}
 	service := NewServiceWithPursuitLinker(
 		repo,
@@ -114,10 +113,79 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 	)
 
 	result, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-vivare-action",
+		Title:         "Vivare legal dispute",
+		SourceURI:     "https://chatgpt.com/c/thread-vivare-action",
+		ProjectKey:    "vivare",
+		Messages: []ChatMessage{{
+			Role:    "assistant",
+			Content: "Action: draft the legal reply for Vivare and attach evidence.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+	if len(result.WorkflowIDs) != 0 || len(workflowSpy.intakeRequests) != 0 || len(pursuitSpy.requests) != 0 {
+		t.Fatalf("partial pursuit integration created workflow work: ids=%#v direct=%#v links=%#v", result.WorkflowIDs, workflowSpy.intakeRequests, pursuitSpy.requests)
+	}
+	if !strings.Contains(strings.Join(result.Warnings, " "), "configured pursuit linker is missing the lifecycle router") {
+		t.Fatalf("deferred import warning missing: %#v", result.Warnings)
+	}
+}
+
+func TestImportDefersLowRiskActionWithoutPursuitGateway(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	workflowSpy := &memoryEngineWorkflowStub{recordID: uuid.New()}
+	pursuitSpy := &memoryEnginePursuitLinker{}
+	service := NewServiceWithPursuitLinker(
+		repo,
+		&memoryEngineMemoryStub{},
+		workflowSpy,
+		"test-memory-encryption-secret",
+		pursuitSpy,
+	)
+
+	result, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-low-risk-action",
+		Title:         "Local preparation",
+		SourceURI:     "https://chatgpt.com/c/thread-low-risk-action",
+		Messages: []ChatMessage{{
+			Role:    "assistant",
+			Content: "Action: create a local preparation checklist.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+	if len(result.WorkflowIDs) != 0 || len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("partial pursuit integration created low-risk work: ids=%#v direct=%#v", result.WorkflowIDs, workflowSpy.intakeRequests)
+	}
+	if !strings.Contains(strings.Join(result.Warnings, " "), "configured pursuit linker is missing the lifecycle router") {
+		t.Fatalf("deferred import warning missing: %#v", result.Warnings)
+	}
+}
+
+func TestImportRoutesActionWorkflowThroughPursuitGateway(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	workflowSpy := &memoryEngineWorkflowStub{}
+	pursuitGateway := &memoryEnginePursuitGateway{}
+	service := NewServiceWithPursuitLinker(
+		repo,
+		&memoryEngineMemoryStub{},
+		workflowSpy,
+		"test-memory-encryption-secret",
+		pursuitGateway,
+	)
+
+	result, err := service.Import(ImportRequest{
 		Platform:   "chatgpt",
-		ExternalID: "thread-vivare-action",
+		ExternalID: "thread-pursuit-gateway",
 		Title:      "Vivare legal dispute",
-		SourceURI:  "https://chatgpt.com/c/thread-vivare-action",
+		SourceURI:  "https://chatgpt.com/c/thread-pursuit-gateway",
 		ProjectKey: "vivare",
 		Messages: []ChatMessage{{
 			Role:    "assistant",
@@ -127,44 +195,55 @@ func TestImportAutoLinksActionWorkflowToPursuit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import returned error: %v", err)
 	}
-	if len(result.WorkflowIDs) != 1 || result.WorkflowIDs[0] != workflowID {
-		t.Fatalf("workflow ids = %#v, want %s", result.WorkflowIDs, workflowID)
+	if len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("direct workflow intake bypassed pursuit gateway: %#v", workflowSpy.intakeRequests)
 	}
-	if len(result.PursuitLinks) != 1 || !result.PursuitLinks[0].Linked || result.PursuitLinks[0].PursuitID == uuid.Nil {
-		t.Fatalf("pursuit link result = %#v, want visible linked pursuit", result.PursuitLinks)
+	if len(pursuitGateway.routed) != 1 || pursuitGateway.routed[0].Trigger != "memory_engine.import" {
+		t.Fatalf("pursuit gateway requests = %#v", pursuitGateway.routed)
 	}
-	if result.PursuitLinks[0].Message == "" {
-		t.Fatalf("pursuit link message missing from import result: %#v", result.PursuitLinks[0])
+	if len(result.WorkflowIDs) != 1 || result.WorkflowIDs[0] == uuid.Nil {
+		t.Fatalf("workflow ids = %#v, want routed workflow", result.WorkflowIDs)
 	}
-	if len(workflowSpy.intakeRequests) != 1 {
-		t.Fatalf("workflow intake requests = %d, want 1", len(workflowSpy.intakeRequests))
-	}
-	intake := workflowSpy.intakeRequests[0]
-	if intake.ProjectKey != "vivare" || intake.SourceType != "ai_chat" || intake.Trigger != "memory_engine.import" {
-		t.Fatalf("workflow intake = %#v", intake)
-	}
-	if !intake.RequiresReview || !strings.Contains(intake.ReviewReason, "Robert") {
-		t.Fatalf("workflow review gate = %#v", intake)
-	}
-	if len(pursuitSpy.requests) != 1 {
-		t.Fatalf("pursuit linker requests = %d, want 1", len(pursuitSpy.requests))
-	}
-	linkRequest := pursuitSpy.requests[0]
-	if linkRequest.WorkflowID != workflowID || linkRequest.ProjectKey != "vivare" || linkRequest.SourceType != "ai_chat" {
-		t.Fatalf("pursuit link request = %#v", linkRequest)
-	}
-	if !linkRequest.AllowCreateCandidate {
-		t.Fatalf("AI-chat action workflows must be allowed to create reviewable pursuit candidates when no match exists")
-	}
-	if !strings.Contains(linkRequest.SourceID, result.Conversation.ID.String()+":") {
-		t.Fatalf("source id = %q, want conversation:insight identity", linkRequest.SourceID)
-	}
-	if linkRequest.SourceURI != "https://chatgpt.com/c/thread-vivare-action" || linkRequest.SourceLabel != "chatgpt: Vivare legal dispute" {
-		t.Fatalf("source ref = %q/%q", linkRequest.SourceURI, linkRequest.SourceLabel)
+	if len(pursuitGateway.requests) != 0 {
+		t.Fatalf("workflow was linked twice after pursuit routing: %#v", pursuitGateway.requests)
 	}
 }
 
-func TestImportRoutesContradictionsAndHighRisksToGovernedWorkflows(t *testing.T) {
+func TestImportDefersCandidatePendingPursuitGatewayWithoutWorkflowFailure(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	workflowSpy := &memoryEngineWorkflowStub{}
+	pursuitGateway := &memoryEnginePursuitGateway{err: &pursuitpkg.CandidatePendingError{Result: &pursuitpkg.RoutedIntakeResult{
+		Mode:             "candidate_created",
+		CreatedCandidate: true,
+		PursuitID:        uuid.New(),
+		Message:          "conversation candidate awaits approval",
+		AutoLink:         &pursuitpkg.AutoLinkResult{Linked: true, Created: true, PursuitID: uuid.New()},
+	}}}
+	service := NewServiceWithPursuitLinker(repo, &memoryEngineMemoryStub{}, workflowSpy, "test-memory-encryption-secret", pursuitGateway)
+
+	result, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-candidate-pending",
+		Title:         "Imported objective",
+		SourceURI:     "https://chatgpt.com/c/thread-candidate-pending",
+		Messages: []ChatMessage{{
+			Role:    "assistant",
+			Content: "Action: collect the evidence and prepare the formal response.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(workflowSpy.intakeRequests) != 0 || len(pursuitGateway.routed) != 1 || len(result.WorkflowIDs) != 0 {
+		t.Fatalf("candidate pending import created workflow work: direct=%#v routed=%#v ids=%#v", workflowSpy.intakeRequests, pursuitGateway.routed, result.WorkflowIDs)
+	}
+	if len(result.PursuitLinks) != 1 || !result.PursuitLinks[0].Created || !strings.Contains(strings.Join(result.Warnings, " "), "awaits explicit pursuit candidate acceptance") {
+		t.Fatalf("candidate pending import result = %#v", result)
+	}
+}
+
+func TestImportDefersContradictionsAndHighRisksWithoutPursuitGateway(t *testing.T) {
 	repo := &memoryEngineRepoStub{}
 	workflowSpy := &memoryEngineWorkflowStub{}
 	pursuitSpy := &memoryEnginePursuitLinker{}
@@ -196,34 +275,15 @@ func TestImportRoutesContradictionsAndHighRisksToGovernedWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("Import returned error: %v", err)
 	}
-	if len(result.WorkflowIDs) != 2 {
-		t.Fatalf("workflow ids = %#v, want two review-critical workflows", result.WorkflowIDs)
+	if len(result.WorkflowIDs) != 0 || len(workflowSpy.intakeRequests) != 0 || len(pursuitSpy.requests) != 0 {
+		t.Fatalf("partial pursuit integration created review-critical work: ids=%#v direct=%#v links=%#v", result.WorkflowIDs, workflowSpy.intakeRequests, pursuitSpy.requests)
 	}
-	if len(workflowSpy.intakeRequests) != 2 {
-		t.Fatalf("workflow intake requests = %d, want 2", len(workflowSpy.intakeRequests))
+	if len(result.Warnings) != 2 {
+		t.Fatalf("warnings = %#v, want one deferred warning per review-critical insight", result.Warnings)
 	}
-	contentTypes := map[string]workflow.IntakeRequest{}
-	for _, request := range workflowSpy.intakeRequests {
-		contentTypes[request.ContentType] = request
-	}
-	for _, contentType := range []string{"ai_chat_contradiction", "ai_chat_risk"} {
-		request, ok := contentTypes[contentType]
-		if !ok {
-			t.Fatalf("missing workflow intake content type %s in %#v", contentType, workflowSpy.intakeRequests)
-		}
-		if request.ProjectKey != "vivare" || request.SourceType != "ai_chat" || request.Trigger != "memory_engine.import" {
-			t.Fatalf("workflow intake %s = %#v", contentType, request)
-		}
-		if !request.RequiresReview || request.ReviewReason == "" {
-			t.Fatalf("workflow intake %s missing review gate: %#v", contentType, request)
-		}
-	}
-	if len(pursuitSpy.requests) != 2 {
-		t.Fatalf("pursuit workflow link requests = %d, want 2", len(pursuitSpy.requests))
-	}
-	for _, request := range pursuitSpy.requests {
-		if !request.AllowCreateCandidate || request.ProjectKey != "vivare" || request.SourceType != "ai_chat" {
-			t.Fatalf("pursuit link request = %#v, want candidate-capable ai_chat request", request)
+	for _, warning := range result.Warnings {
+		if !strings.Contains(warning, "configured pursuit linker is missing the lifecycle router") {
+			t.Fatalf("unexpected deferred warning: %q", warning)
 		}
 	}
 }
@@ -270,11 +330,12 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 	)
 
 	result, err := service.Import(ImportRequest{
-		Platform:   "chatgpt",
-		ExternalID: "thread-vivare-rule",
-		Title:      "Vivare legal dispute",
-		SourceURI:  "https://chatgpt.com/c/thread-vivare-rule",
-		ProjectKey: "vivare",
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "thread-vivare-rule",
+		Title:         "Vivare legal dispute",
+		SourceURI:     "https://chatgpt.com/c/thread-vivare-rule",
+		ProjectKey:    "vivare",
 		Messages: []ChatMessage{{
 			Role:    "assistant",
 			Content: "Rule: Always use formal Dutch tone for Vivare correspondence.",
@@ -287,13 +348,13 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 		t.Fatalf("workflow ids = %#v, want none for stable memory insight", result.WorkflowIDs)
 	}
 	if len(result.PursuitLinks) != 1 || !result.PursuitLinks[0].Linked {
-		t.Fatalf("pursuit memory link result = %#v, want visible linked pursuit", result.PursuitLinks)
+		t.Fatalf("pursuit memory link result = %#v warnings=%#v insights=%#v, want visible linked pursuit", result.PursuitLinks, result.Warnings, result.Insights)
 	}
 	if len(pursuitSpy.memoryRequests) != 1 {
 		t.Fatalf("memory link requests = %d, want 1", len(pursuitSpy.memoryRequests))
 	}
 	linkRequest := pursuitSpy.memoryRequests[0]
-	if linkRequest.MemoryID == uuid.Nil || linkRequest.ProjectKey != "vivare" {
+	if linkRequest.MemoryID == uuid.Nil || linkRequest.ProjectKey != "vivare" || linkRequest.OwnerIdentity != "alice" || linkRequest.ConversationID != result.Conversation.ID || linkRequest.ConversationSourceURI != result.Conversation.SourceURI || linkRequest.ConversationLabel != result.Conversation.Title {
 		t.Fatalf("memory link request = %#v", linkRequest)
 	}
 	if linkRequest.AllowCreateCandidate {
@@ -304,6 +365,111 @@ func TestImportAutoLinksStableMemoryToPursuit(t *testing.T) {
 	}
 	if linkRequest.SourceURI != "https://chatgpt.com/c/thread-vivare-rule" || linkRequest.SourceLabel != "chatgpt: Vivare legal dispute" {
 		t.Fatalf("source ref = %q/%q", linkRequest.SourceURI, linkRequest.SourceLabel)
+	}
+}
+
+func TestImportedConversationAndInsightsAreScopedToOwner(t *testing.T) {
+	repo := &memoryEngineRepoStub{}
+	service := NewService(repo, &memoryEngineMemoryStub{}, nil, "test-memory-encryption-secret")
+
+	alice, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "shared-thread",
+		Title:         "Alice thread",
+		SourceURI:     "https://chatgpt.com/c/shared-thread",
+		Messages:      []ChatMessage{{Role: "user", Content: "Follow up with the insurer about the claim evidence."}},
+	})
+	if err != nil {
+		t.Fatalf("import alice: %v", err)
+	}
+	bob, err := service.Import(ImportRequest{
+		OwnerIdentity: "bob",
+		Platform:      "chatgpt",
+		ExternalID:    "shared-thread",
+		Title:         "Bob thread",
+		SourceURI:     "https://chatgpt.com/c/shared-thread",
+		Messages:      []ChatMessage{{Role: "user", Content: "Follow up with the developer about the deployment."}},
+	})
+	if err != nil {
+		t.Fatalf("import bob: %v", err)
+	}
+	if alice.Conversation.ID == bob.Conversation.ID || alice.Conversation.OwnerIdentity != "alice" || bob.Conversation.OwnerIdentity != "bob" {
+		t.Fatalf("owner-specific conversations = %#v / %#v", alice.Conversation, bob.Conversation)
+	}
+
+	aliceConversations, err := service.ConversationsForOwner("alice", 10)
+	if err != nil || len(aliceConversations) != 1 || aliceConversations[0].ID != alice.Conversation.ID {
+		t.Fatalf("alice conversations = %#v, err=%v", aliceConversations, err)
+	}
+	bobConversations, err := service.ConversationsForOwner("bob", 10)
+	if err != nil || len(bobConversations) != 1 || bobConversations[0].ID != bob.Conversation.ID {
+		t.Fatalf("bob conversations = %#v, err=%v", bobConversations, err)
+	}
+
+	if _, err := service.ConversationForOwner("bob", alice.Conversation.ID); err == nil {
+		t.Fatal("bob could read alice conversation")
+	}
+	if err := service.DeleteConversationForOwner("bob", alice.Conversation.ID); err == nil {
+		t.Fatal("bob could delete alice conversation")
+	}
+	aliceInsights, err := service.InsightsForOwner("alice", "", "", nil, 10)
+	if err != nil || len(aliceInsights) == 0 || aliceInsights[0].OwnerIdentity != "alice" {
+		t.Fatalf("alice insights = %#v, err=%v", aliceInsights, err)
+	}
+	for _, insight := range aliceInsights {
+		if insight.OwnerIdentity != "alice" {
+			t.Fatalf("alice received another owner's insight: %#v", insight)
+		}
+	}
+}
+
+func TestAuthenticatedImportDoesNotAdoptOwnerlessLegacyConversation(t *testing.T) {
+	repo := &memoryEngineRepoStub{conversations: []models.AIConversationArchive{{
+		ID:          uuid.New(),
+		Platform:    "chatgpt",
+		ExternalID:  "legacy-thread",
+		SourceURI:   "https://chatgpt.com/c/legacy-thread",
+		ContentHash: "legacy",
+		Revision:    1,
+	}}}
+	service := NewService(repo, &memoryEngineMemoryStub{}, nil, "test-memory-encryption-secret")
+	result, err := service.Import(ImportRequest{
+		OwnerIdentity: "alice",
+		Platform:      "chatgpt",
+		ExternalID:    "legacy-thread",
+		Title:         "Alice private continuation",
+		SourceURI:     "https://chatgpt.com/c/legacy-thread",
+		Messages:      []ChatMessage{{Role: "assistant", Content: "Rule: keep this private."}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Conversation.OwnerIdentity != "alice" || result.Conversation.ID == repo.conversations[0].ID {
+		t.Fatalf("authenticated import adopted legacy archive: %#v", result.Conversation)
+	}
+	if len(repo.conversations) != 2 || repo.conversations[0].OwnerIdentity != "" {
+		t.Fatalf("legacy archive was overwritten instead of retained separately: %#v", repo.conversations)
+	}
+}
+
+func TestAuthenticatedUserCannotDeleteOwnerlessLegacyConversation(t *testing.T) {
+	legacyID := uuid.New()
+	repo := &memoryEngineRepoStub{conversations: []models.AIConversationArchive{{
+		ID:          legacyID,
+		Platform:    "chatgpt",
+		ExternalID:  "legacy-thread",
+		SourceURI:   "https://chatgpt.com/c/legacy-thread",
+		ContentHash: "legacy",
+		Revision:    1,
+	}}}
+	service := NewService(repo, &memoryEngineMemoryStub{}, nil, "test-memory-encryption-secret")
+
+	if err := service.DeleteConversationForOwner("alice", legacyID); err == nil {
+		t.Fatal("authenticated user deleted an ownerless legacy conversation")
+	}
+	if len(repo.conversations) != 1 || repo.conversations[0].ID != legacyID {
+		t.Fatalf("ownerless legacy conversation was changed: %#v", repo.conversations)
 	}
 }
 
@@ -371,10 +537,30 @@ type memoryEngineRepoStub struct {
 }
 
 func (r *memoryEngineRepoStub) FindConversation(platform, externalID string) (*models.AIConversationArchive, error) {
+	return r.FindConversationForOwner("", platform, externalID)
+}
+
+func (r *memoryEngineRepoStub) FindConversationForOwner(ownerIdentity, platform, externalID string) (*models.AIConversationArchive, error) {
+	for _, conversation := range r.conversations {
+		if conversation.Platform == platform && conversation.ExternalID == externalID && !conversation.Archived && memoryEngineRecordVisibleTo(conversation.OwnerIdentity, ownerIdentity) {
+			copyConversation := conversation
+			return &copyConversation, nil
+		}
+	}
 	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *memoryEngineRepoStub) FindConversationByID(id uuid.UUID) (*models.AIConversationArchive, error) {
+	return r.FindConversationByIDForOwner("", id)
+}
+
+func (r *memoryEngineRepoStub) FindConversationByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.AIConversationArchive, error) {
+	for _, conversation := range r.conversations {
+		if conversation.ID == id && memoryEngineRecordVisibleTo(conversation.OwnerIdentity, ownerIdentity) {
+			copyConversation := conversation
+			return &copyConversation, nil
+		}
+	}
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -382,14 +568,37 @@ func (r *memoryEngineRepoStub) SaveConversation(conversation *models.AIConversat
 	if conversation.ID == uuid.Nil {
 		conversation.ID = uuid.New()
 	}
+	for index, stored := range r.conversations {
+		if stored.ID == conversation.ID {
+			r.conversations[index] = *conversation
+			return conversation, nil
+		}
+	}
+	r.conversations = append(r.conversations, *conversation)
 	return conversation, nil
 }
 
 func (r *memoryEngineRepoStub) FindConversations(limit int) ([]models.AIConversationArchive, error) {
-	return r.conversations, nil
+	return r.FindConversationsForOwner("", limit)
+}
+
+func (r *memoryEngineRepoStub) FindConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error) {
+	result := []models.AIConversationArchive{}
+	for _, conversation := range r.conversations {
+		if !conversation.Archived && memoryEngineRecordVisibleTo(conversation.OwnerIdentity, ownerIdentity) {
+			result = append(result, conversation)
+		}
+	}
+	return result, nil
 }
 
 func (r *memoryEngineRepoStub) DeleteConversation(id uuid.UUID) error {
+	for index, conversation := range r.conversations {
+		if conversation.ID == id {
+			r.conversations = append(r.conversations[:index], r.conversations[index+1:]...)
+			break
+		}
+	}
 	return nil
 }
 
@@ -397,12 +606,20 @@ func (r *memoryEngineRepoStub) SaveInsight(insight *models.AIMemoryInsight) (*mo
 	if insight.ID == uuid.Nil {
 		insight.ID = uuid.New()
 	}
+	r.insights = append(r.insights, *insight)
 	return insight, nil
 }
 
 func (r *memoryEngineRepoStub) FindInsights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
+	return r.FindInsightsForOwner("", kind, projectKey, needsReview, limit)
+}
+
+func (r *memoryEngineRepoStub) FindInsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
 	result := []models.AIMemoryInsight{}
 	for _, insight := range r.insights {
+		if !memoryEngineRecordVisibleTo(insight.OwnerIdentity, ownerIdentity) {
+			continue
+		}
 		if kind != "" && insight.Kind != kind {
 			continue
 		}
@@ -417,17 +634,23 @@ func (r *memoryEngineRepoStub) FindInsights(kind, projectKey string, needsReview
 	return result, nil
 }
 
+func memoryEngineRecordVisibleTo(recordOwner, ownerIdentity string) bool {
+	return ownerIdentity == "" || recordOwner == "" || recordOwner == ownerIdentity
+}
+
 func (r *memoryEngineRepoStub) ArchiveInsights(conversationID uuid.UUID, revision int) error {
 	return nil
 }
 
-func (r *memoryEngineRepoStub) DeleteMemoriesBySourceURI(sourceURI string) error {
+func (r *memoryEngineRepoStub) DeleteMemoriesBySourceURI(ownerIdentity, sourceURI string) error {
 	return nil
 }
 
 type memoryEngineMemoryStub struct {
 	memories []models.ContextMemory
 }
+
+var _ memory.OwnerScopedService = (*memoryEngineMemoryStub)(nil)
 
 func (s *memoryEngineMemoryStub) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
 	return &models.ContextMemory{
@@ -444,8 +667,21 @@ func (s *memoryEngineMemoryStub) Create(request memory.CreateRequest) (*models.C
 	}, nil
 }
 
+func (s *memoryEngineMemoryStub) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	created, err := s.Create(request)
+	if created != nil {
+		created.OwnerIdentity = ownerIdentity
+		s.memories = append(s.memories, *created)
+	}
+	return created, err
+}
+
 func (s *memoryEngineMemoryStub) Update(id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
 	return &models.ContextMemory{ID: id, Content: request.Content, Kind: request.Kind}, nil
+}
+
+func (s *memoryEngineMemoryStub) UpdateForOwner(ownerIdentity string, id uuid.UUID, request memory.UpdateRequest) (*models.ContextMemory, error) {
+	return s.Update(id, request)
 }
 
 func (s *memoryEngineMemoryStub) FindAll(projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
@@ -462,7 +698,22 @@ func (s *memoryEngineMemoryStub) FindAll(projectKey string, includeArchived bool
 	return result, nil
 }
 
+func (s *memoryEngineMemoryStub) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	all, _ := s.FindAll(projectKey, includeArchived)
+	visible := make([]models.ContextMemory, 0, len(all))
+	for _, item := range all {
+		if item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity {
+			visible = append(visible, item)
+		}
+	}
+	return visible, nil
+}
+
 func (s *memoryEngineMemoryStub) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *memoryEngineMemoryStub) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -470,12 +721,22 @@ func (s *memoryEngineMemoryStub) Archive(id uuid.UUID, archived bool) (*models.C
 	return &models.ContextMemory{ID: id, Archived: archived}, nil
 }
 
+func (s *memoryEngineMemoryStub) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
+	return s.Archive(id, archived)
+}
+
 func (s *memoryEngineMemoryStub) Delete(id uuid.UUID) error {
 	return nil
 }
 
+func (s *memoryEngineMemoryStub) DeleteForOwner(ownerIdentity string, id uuid.UUID) error { return nil }
+
 func (s *memoryEngineMemoryStub) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	return &memory.RetrieveResult{Query: request.Query, ProjectKey: request.ProjectKey}, nil
+}
+
+func (s *memoryEngineMemoryStub) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	return s.Retrieve(request)
 }
 
 type memoryEngineWorkflowStub struct {
@@ -495,16 +756,32 @@ func (s *memoryEngineWorkflowStub) Items(bool) ([]models.WorkflowItem, error) {
 	return nil, nil
 }
 
+func (s *memoryEngineWorkflowStub) ItemsForOwner(_ string, includeArchived bool) ([]models.WorkflowItem, error) {
+	return s.Items(includeArchived)
+}
+
 func (s *memoryEngineWorkflowStub) ApprovalItems() ([]models.WorkflowItem, error) {
 	return nil, nil
+}
+
+func (s *memoryEngineWorkflowStub) ApprovalItemsForOwner(string) ([]models.WorkflowItem, error) {
+	return s.ApprovalItems()
 }
 
 func (s *memoryEngineWorkflowStub) Dashboard() (*workflow.WorkflowDashboard, error) {
 	return &workflow.WorkflowDashboard{}, nil
 }
 
+func (s *memoryEngineWorkflowStub) DashboardForOwner(string) (*workflow.WorkflowDashboard, error) {
+	return s.Dashboard()
+}
+
 func (s *memoryEngineWorkflowStub) Get(uuid.UUID) (*workflow.WorkflowRecord, error) {
 	return nil, gorm.ErrRecordNotFound
+}
+
+func (s *memoryEngineWorkflowStub) GetForOwner(_ string, id uuid.UUID) (*workflow.WorkflowRecord, error) {
+	return s.Get(id)
 }
 
 func (s *memoryEngineWorkflowStub) Transition(uuid.UUID, workflow.TransitionRequest) (*workflow.WorkflowRecord, error) {
@@ -535,12 +812,24 @@ func (s *memoryEngineWorkflowStub) RecoverStaleClaims(workflow.RunDueRequest) (*
 	return &workflow.ClaimRecoverySummary{}, nil
 }
 
+func (s *memoryEngineWorkflowStub) RecoverStaleClaimsForOwner(_ string, request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {
+	return s.RecoverStaleClaims(request)
+}
+
 func (s *memoryEngineWorkflowStub) RunDue(workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
 	return &workflow.WorkflowRunSummary{}, nil
 }
 
+func (s *memoryEngineWorkflowStub) RunDueForOwner(_ string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
+	return s.RunDue(request)
+}
+
 func (s *memoryEngineWorkflowStub) RunDueOpenLoops(workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
 	return &workflow.OpenLoopRunSummary{}, nil
+}
+
+func (s *memoryEngineWorkflowStub) RunDueOpenLoopsForOwner(_ string, request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
+	return s.RunDueOpenLoops(request)
 }
 
 func (s *memoryEngineWorkflowStub) Overview() workflow.Overview {
@@ -550,6 +839,20 @@ func (s *memoryEngineWorkflowStub) Overview() workflow.Overview {
 type memoryEnginePursuitLinker struct {
 	requests       []pursuitpkg.AutoLinkWorkflowRequest
 	memoryRequests []pursuitpkg.AutoLinkMemoryRequest
+}
+
+type memoryEnginePursuitGateway struct {
+	memoryEnginePursuitLinker
+	routed []workflow.IntakeRequest
+	err    error
+}
+
+func (s *memoryEnginePursuitGateway) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	s.routed = append(s.routed, request)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &workflow.WorkflowRecord{Item: models.WorkflowItem{ID: uuid.New(), Title: request.Input, ProjectKey: request.ProjectKey}}, nil
 }
 
 func (s *memoryEnginePursuitLinker) AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error) {

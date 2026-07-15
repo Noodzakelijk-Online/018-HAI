@@ -1,6 +1,6 @@
 import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { timeout } from 'rxjs/operators';
 import {
@@ -115,6 +115,7 @@ export class TaskBlueprintComponent implements OnInit {
       [Validators.required],
     ],
     projectKey: ['018-HAI'],
+    pursuitId: [''],
     automationId: [''],
     successCriteria: [''],
   });
@@ -126,11 +127,23 @@ export class TaskBlueprintComponent implements OnInit {
     private assistantCommandService: AssistantCommandService,
     private notification: NzNotificationService,
     private router: Router,
+    private route: ActivatedRoute,
     private themeService: ThemeService
   ) {}
 
   ngOnInit(): void {
     this.themeMode = this.themeService.mode();
+    this.route.queryParamMap.subscribe((params) => {
+      const pursuitId = params.get('pursuitId') || '';
+      this.planForm.patchValue({
+        pursuitId,
+        projectKey: params.get('projectKey') || this.planForm.value.projectKey,
+        request: params.get('request') || this.planForm.value.request,
+      });
+      if (pursuitId) {
+        this.contextExpanded = true;
+      }
+    });
     this.loadLogs();
     this.loadReviewQueue();
   }
@@ -194,6 +207,7 @@ export class TaskBlueprintComponent implements OnInit {
     const request = {
       message: requestText,
       projectKey: this.planForm.value.projectKey,
+      pursuitId: this.planForm.value.pursuitId,
       automationId: this.planForm.value.automationId,
       successCriteria: this.criteria(),
       executeAllowed: intent === 'run' || intent === 'cycle',
@@ -504,6 +518,37 @@ export class TaskBlueprintComponent implements OnInit {
       .filter(Boolean);
   }
 
+  openCommandPursuit(): void {
+    const id = this.lastCommand?.pursuit?.pursuitId;
+    if (id) {
+      this.router.navigate(['/pursuits'], { queryParams: { selected: id } });
+    }
+  }
+
+  hasPursuitContext(): boolean {
+    return Boolean(String(this.planForm.value.pursuitId || '').trim());
+  }
+
+  pursuitContextLabel(): string {
+    return this.hasPursuitContext() ? 'Selected pursuit' : 'No pursuit selected';
+  }
+
+  pursuitContextTooltip(): string {
+    const pursuitId = String(this.planForm.value.pursuitId || '').trim();
+    return pursuitId
+      ? `Open the selected pursuit (${pursuitId}) and inspect its evidence, workflow, and decisions.`
+      : 'Set an optional pursuit context to keep this task attempt on its durable pursuit ledger.';
+  }
+
+  openPursuitContext(): void {
+    const pursuitId = String(this.planForm.value.pursuitId || '').trim();
+    if (pursuitId) {
+      this.router.navigate(['/pursuits'], { queryParams: { selected: pursuitId } });
+      return;
+    }
+    this.contextExpanded = true;
+  }
+
   private messageFromCommand(command: IAssistantCommandResult, intent: ChatIntent): ChatMessage {
     const plan = command.plan;
     const blocked = Boolean(command.reviewRequired || (plan?.riskAssessment?.approvalRequired && !plan?.riskAssessment?.approvalGranted));
@@ -518,11 +563,25 @@ export class TaskBlueprintComponent implements OnInit {
     if (command.actions?.length) {
       bullets.push(`Engines: ${command.actions.map((action) => `${action.name} ${action.status}`).join(', ')}.`);
     }
+    if (command.pursuit) {
+      const pursuit = command.pursuit;
+      if (pursuit.awaitingAcceptance) {
+        bullets.push('Pursuit: ' + (pursuit.title || pursuit.pursuitId || 'new candidate') + ' needs explicit acceptance before HAI creates a task, workflow, or execution attempt.');
+      } else if (pursuit.executionQueued) {
+        bullets.push(`Pursuit: ${pursuit.title || pursuit.pursuitId || 'governed workflow'} is queued for the controlled worker.`);
+      } else if (pursuit.matches?.length) {
+        bullets.push(`Pursuit matches: ${pursuit.matches.map((match) => match.pursuit.title).join(', ')}.`);
+      }
+    }
     return {
       id: this.newId(),
       role: 'assistant',
       title:
-        intent === 'cycle'
+        command.pursuit?.awaitingAcceptance
+          ? 'Pursuit candidate recorded'
+          : command.pursuit?.executionQueued
+          ? 'Governed workflow queued'
+          : intent === 'cycle'
           ? 'Assistant cycle completed'
           : intent === 'run'
           ? 'Success engine result'
@@ -591,6 +650,7 @@ export class TaskBlueprintComponent implements OnInit {
     safe.intake.successCriteria = safe.intake.successCriteria || [];
     safe.steps = safe.steps || [];
     safe.riskAssessment.reasons = safe.riskAssessment.reasons || [];
+    safe.riskAssessment.missingParameters = safe.riskAssessment.missingParameters || [];
     safe.validationPlan.steps = safe.validationPlan.steps || [];
     safe.validationResult.checked = safe.validationResult.checked || [];
     safe.validationResult.failures = safe.validationResult.failures || [];

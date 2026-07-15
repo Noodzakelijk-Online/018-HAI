@@ -47,6 +47,7 @@ export interface IAgentCycleAppliedContext {
 }
 
 export interface IAgentCycleRunResult {
+  executionScope: 'owner_scoped' | 'system_worker' | string;
   trigger: string;
   status: string;
   startedAt: string;

@@ -173,13 +173,13 @@
                 Selected: {{ selectedPursuitMatch.pursuit.title }} ({{ selectedPursuitMatch.confidence }} match)
               </small>
               <ng-template #noSelectedPursuit>
-                <small>Find whether this signal belongs under an existing life or work objective.</small>
+                <small>HAI checks for a confident existing objective before creating new operational work.</small>
               </ng-template>
             </div>
             <div class="pursuit-match-actions">
               <button type="button" nz-button nzType="default" data-testid="workflow-match-pursuit" (click)="matchPursuits()" [nzLoading]="matchingPursuits">
                 <i nz-icon nzType="branches" nzTheme="outline"></i>
-                Find match
+                Review matches
               </button>
               <button type="button" nz-button nzType="default" *ngIf="selectedPursuitMatch" (click)="clearPursuitMatch()">
                 Clear
@@ -329,7 +329,7 @@
             class="pursuit-link-card"
             *ngFor="let pursuit of selected?.pursuits"
             (click)="openPursuit(pursuit.id)"
-            [title]="pursuit.currentStateSummary || pursuit.desiredOutcome || 'Open pursuit'"
+            [title]="pursuit.whyItMatters || pursuit.currentStateSummary || pursuit.desiredOutcome || 'Open pursuit'"
           >
             <span>
               <strong>{{ pursuit.title }}</strong>
@@ -337,6 +337,7 @@
             </span>
             <em>{{ pursuit.priorityScore || 0 }}</em>
             <p>{{ pursuit.nextRecommendedAction || pursuit.currentStateSummary || pursuit.desiredOutcome || 'Open pursuit detail for context.' }}</p>
+            <small *ngIf="pursuit.whyItMatters">Why it matters: {{ pursuit.whyItMatters }}</small>
           </button>
         </article>
         <ng-template #noSelection>

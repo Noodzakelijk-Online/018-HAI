@@ -31,6 +31,7 @@ func (e *AutomationToolExecutor) Execute(request ToolExecutionRequest) (*ToolExe
 		return nil, fmt.Errorf("automationId must be a valid UUID")
 	}
 	result, err := e.launcher.LaunchTask(id, automation.TaskLaunchRequest{
+		OwnerIdentity: request.OwnerIdentity,
 		Task:          request.Task,
 		ProjectKey:    request.ProjectKey,
 		HumanApproved: request.HumanApproved,

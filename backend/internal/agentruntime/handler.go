@@ -2,6 +2,7 @@ package agentruntime
 
 import (
 	"archive/zip"
+	"automation-hub-backend/internal/identity"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,6 +48,9 @@ func (h *Handler) Skills(c *gin.Context) {
 }
 
 func (h *Handler) StopTask(c *gin.Context) {
+	if !requireRuntimeOwner(c) {
+		return
+	}
 	runtimeID := strings.TrimSpace(c.Param("id"))
 	taskID := strings.TrimSpace(c.Param("taskId"))
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
@@ -73,6 +77,9 @@ func (h *Handler) OpenClawEcosystem(c *gin.Context) {
 }
 
 func (h *Handler) SetOpenClawEcosystem(c *gin.Context) {
+	if !requireRuntimeOwner(c) {
+		return
+	}
 	var request openClawEcosystemRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body for openclaw ecosystem path"})
@@ -92,6 +99,9 @@ func (h *Handler) SetOpenClawEcosystem(c *gin.Context) {
 }
 
 func (h *Handler) RefreshOpenClawEcosystem(c *gin.Context) {
+	if !requireRuntimeOwner(c) {
+		return
+	}
 	info, err := h.registry.RefreshOpenClawEcosystem()
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -101,6 +111,9 @@ func (h *Handler) RefreshOpenClawEcosystem(c *gin.Context) {
 }
 
 func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
+	if !requireRuntimeOwner(c) {
+		return
+	}
 	file, err := c.FormFile("ecosystem")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing ecosystem zip upload field 'ecosystem'"})
@@ -176,6 +189,17 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, info)
+}
+
+func requireRuntimeOwner(c *gin.Context) bool {
+	value, ok := c.Get(identity.ContextSubjectKey)
+	if ok {
+		if owner, ok := value.(string); ok && strings.TrimSpace(owner) != "" {
+			return true
+		}
+	}
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for runtime control actions"})
+	return false
 }
 
 func validateOpenClawZip(path string) error {

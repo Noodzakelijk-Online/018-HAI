@@ -1,15 +1,48 @@
 package haios
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+func TestHAIOSRouteRequiresVerifiedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(nil, nil)
+
+	unauthenticated := gin.New()
+	unauthenticated.GET("/os/overview", handler.Overview)
+	recorder := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/os/overview", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("direct overview status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+
+	gated := gin.New()
+	gatedRoutes := gated.Group("/os")
+	gatedRoutes.Use(RequireAuthenticatedOwner())
+	gatedRoutes.GET("/overview", handler.Overview)
+	recorder = httptest.NewRecorder()
+	gated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/os/overview", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("route owner gate status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set(identity.ContextSubjectKey, "alice")
+	if owner := pursuitOwner(context); owner != "alice" {
+		t.Fatalf("pursuit owner = %q, want alice", owner)
+	}
+}
 
 func TestLiveProviderConfiguredIgnoresApprovalGatedRuntimeOnlyProvider(t *testing.T) {
 	policy := llm.Policy{
@@ -133,6 +166,29 @@ func TestPursuitOverviewPrioritizesRobertQueue(t *testing.T) {
 	if !strings.Contains(overview.Spotlight[0].EvidenceLine, "2 evidence") {
 		t.Fatalf("spotlight evidence line = %q, want linked evidence detail", overview.Spotlight[0].EvidenceLine)
 	}
+}
+
+func TestPursuitOverviewUsesOwnerScopedDashboard(t *testing.T) {
+	spy := &ownerScopedPursuitDashboard{dashboard: &pursuit.Dashboard{Counts: map[string]int64{"active": 1}}}
+	handler := NewHandler(nil, spy)
+	overview := handler.pursuitOverview("alice")
+
+	if spy.ownerIdentity != "alice" {
+		t.Fatalf("dashboard owner = %q, want alice", spy.ownerIdentity)
+	}
+	if !overview.Enabled || overview.TotalActive != 1 {
+		t.Fatalf("overview = %#v", overview)
+	}
+}
+
+type ownerScopedPursuitDashboard struct {
+	ownerIdentity string
+	dashboard     *pursuit.Dashboard
+}
+
+func (s *ownerScopedPursuitDashboard) DashboardForOwner(ownerIdentity string) (*pursuit.Dashboard, error) {
+	s.ownerIdentity = ownerIdentity
+	return s.dashboard, nil
 }
 
 func TestPursuitOverviewEmptyStateStaysActionable(t *testing.T) {

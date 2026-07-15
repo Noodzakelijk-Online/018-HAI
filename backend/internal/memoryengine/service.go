@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -33,6 +34,7 @@ type ChatMessage struct {
 }
 
 type ImportRequest struct {
+	OwnerIdentity string        `json:"-"`
 	Platform      string        `json:"platform"`
 	ExternalID    string        `json:"externalId,omitempty"`
 	Title         string        `json:"title"`
@@ -89,11 +91,17 @@ type SearchResult struct {
 type Service interface {
 	Import(request ImportRequest) (*ImportResult, error)
 	Conversations(limit int) ([]models.AIConversationArchive, error)
+	ConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error)
 	Conversation(id uuid.UUID) (*ConversationDetail, error)
+	ConversationForOwner(ownerIdentity string, id uuid.UUID) (*ConversationDetail, error)
 	DeleteConversation(id uuid.UUID) error
+	DeleteConversationForOwner(ownerIdentity string, id uuid.UUID) error
 	Insights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
+	InsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
 	Dashboard() (*CommandDashboard, error)
+	DashboardForOwner(ownerIdentity string) (*CommandDashboard, error)
 	Search(query, projectKey string, limit int) (*SearchResult, error)
+	SearchForOwner(ownerIdentity, query, projectKey string, limit int) (*SearchResult, error)
 }
 
 type service struct {
@@ -107,6 +115,12 @@ type service struct {
 type pursuitAutoLinker interface {
 	AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error)
 	AutoLinkMemory(request pursuitpkg.AutoLinkMemoryRequest) (*pursuitpkg.AutoLinkResult, error)
+}
+
+// pursuitWorkflowIntakeRouter ensures imported chat insights cannot create
+// workflow work under a closed pursuit by bypassing the pursuit lifecycle gate.
+type pursuitWorkflowIntakeRouter interface {
+	RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error)
 }
 
 func NewService(repo Repository, memoryService memory.Service, workflowService workflow.Service, encryptionSecret string) Service {
@@ -128,6 +142,24 @@ func NewServiceWithPursuitLinker(repo Repository, memoryService memory.Service, 
 	}
 }
 
+func (s *service) intakeWorkflow(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
+	if router, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter); ok {
+		return router.RouteWorkflowIntake(request)
+	}
+	if s.pursuitLinker != nil {
+		return nil, pursuitpkg.ErrLifecycleRouterRequired
+	}
+	if s.workflowService == nil {
+		return nil, fmt.Errorf("workflow service is not configured")
+	}
+	return s.workflowService.Intake(request)
+}
+
+func (s *service) routesWorkflowThroughPursuits() bool {
+	_, ok := s.pursuitLinker.(pursuitWorkflowIntakeRouter)
+	return ok
+}
+
 func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 	if len(s.encryptionKey) != 32 {
 		return nil, fmt.Errorf("HAI_MEMORY_ENCRYPTION_KEY or BACKEND_API_SHARED_KEY must be configured before importing private chat history")
@@ -136,12 +168,19 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	existing, err := s.repo.FindConversation(normalized.Platform, normalized.ExternalID)
+	normalized.OwnerIdentity = strings.TrimSpace(normalized.OwnerIdentity)
+	existing, err := s.repo.FindConversationForOwner(normalized.OwnerIdentity, normalized.Platform, normalized.ExternalID)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
+	// A legacy ownerless archive is readable for compatibility but cannot be
+	// adopted by an authenticated import. Create a distinct owner-scoped archive
+	// so new private content never remains attached to a globally visible row.
+	if existing != nil && normalized.OwnerIdentity != "" && strings.TrimSpace(existing.OwnerIdentity) == "" {
+		existing = nil
+	}
 	if existing != nil && existing.ContentHash == contentHash {
-		insights, _ := s.repo.FindInsights("", normalized.ProjectKey, nil, 100)
+		insights, _ := s.repo.FindInsightsForOwner(normalized.OwnerIdentity, "", normalized.ProjectKey, nil, 100)
 		return &ImportResult{
 			Conversation: *existing,
 			Insights:     filterConversationInsights(insights, existing.ID, existing.Revision),
@@ -149,7 +188,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		}, nil
 	}
 	if existing != nil {
-		oldInsights, errInsights := s.repo.FindInsights("", "", nil, 500)
+		oldInsights, errInsights := s.repo.FindInsightsForOwner(normalized.OwnerIdentity, "", "", nil, 500)
 		if errInsights != nil {
 			return nil, errInsights
 		}
@@ -161,7 +200,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 				}
 			}
 		}
-		if errDeleteMemory := s.repo.DeleteMemoriesBySourceURI(existing.SourceURI); errDeleteMemory != nil {
+		if errDeleteMemory := s.repo.DeleteMemoriesBySourceURI(existing.OwnerIdentity, existing.SourceURI); errDeleteMemory != nil {
 			return nil, fmt.Errorf("remove superseded searchable memory: %w", errDeleteMemory)
 		}
 	}
@@ -175,10 +214,11 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 	conversation := existing
 	if conversation == nil {
 		conversation = &models.AIConversationArchive{
-			ID:         uuid.New(),
-			Platform:   normalized.Platform,
-			ExternalID: normalized.ExternalID,
-			Revision:   1,
+			ID:            uuid.New(),
+			OwnerIdentity: normalized.OwnerIdentity,
+			Platform:      normalized.Platform,
+			ExternalID:    normalized.ExternalID,
+			Revision:      1,
 		}
 	} else {
 		conversation.Revision++
@@ -215,7 +255,7 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 		}
 		insights[index] = *stored
 		if s.memoryService != nil && memoryEligible(*stored) {
-			memoryRecord, errMemory := s.memoryService.Create(memory.CreateRequest{
+			memoryRecord, errMemory := memory.CreateForOwner(s.memoryService, saved.OwnerIdentity, memory.CreateRequest{
 				ProjectKey:  stored.ProjectKey,
 				Kind:        stored.Kind,
 				Content:     stored.Text,
@@ -234,7 +274,10 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 			}
 		}
 		if s.workflowService != nil && workflowEligibleInsight(*stored) {
-			record, errWorkflow := s.workflowService.Intake(workflow.IntakeRequest{
+			requiresReview := workflowInsightRequiresReview(*stored)
+			reviewReasonValue := reviewReason(*stored)
+			record, errWorkflow := s.intakeWorkflow(workflow.IntakeRequest{
+				OwnerIdentity:  saved.OwnerIdentity,
 				Input:          stored.Text,
 				ProjectKey:     stored.ProjectKey,
 				SourceType:     "ai_chat",
@@ -244,19 +287,32 @@ func (s *service) Import(request ImportRequest) (*ImportResult, error) {
 				ContentType:    "ai_chat_" + stored.Kind,
 				Trigger:        "memory_engine.import",
 				Actor:          "memory-engine",
-				RequiresReview: workflowInsightRequiresReview(*stored),
-				ReviewReason:   reviewReason(*stored),
+				RequiresReview: requiresReview,
+				ReviewReason:   reviewReasonValue,
 			})
 			if errWorkflow != nil {
+				if routed, pending := pursuitpkg.IsCandidatePending(errWorkflow); pending {
+					if routed != nil && routed.AutoLink != nil {
+						pursuitLinks = append(pursuitLinks, *routed.AutoLink)
+					}
+					warnings = append(warnings, "workflow for "+stored.Kind+" insight awaits explicit pursuit candidate acceptance")
+					continue
+				}
+				if errors.Is(errWorkflow, pursuitpkg.ErrLifecycleRouterRequired) {
+					warnings = append(warnings, "workflow for "+stored.Kind+" insight was deferred because the configured pursuit linker is missing the lifecycle router")
+					continue
+				}
 				warnings = append(warnings, "failed to create workflow for "+stored.Kind+" insight")
 			} else if record == nil || record.Item.ID == uuid.Nil {
 				warnings = append(warnings, "workflow intake for "+stored.Kind+" insight did not return a workflow record")
 			} else {
 				workflowIDs = append(workflowIDs, record.Item.ID)
-				if linkResult, errLink := s.autoLinkPursuitWorkflow(*saved, *stored, record); errLink != nil {
-					warnings = append(warnings, "failed to link "+stored.Kind+" insight workflow to pursuit")
-				} else if linkResult != nil {
-					pursuitLinks = append(pursuitLinks, *linkResult)
+				if !s.routesWorkflowThroughPursuits() {
+					if linkResult, errLink := s.autoLinkPursuitWorkflow(*saved, *stored, record); errLink != nil {
+						warnings = append(warnings, "failed to link "+stored.Kind+" insight workflow to pursuit")
+					} else if linkResult != nil {
+						pursuitLinks = append(pursuitLinks, *linkResult)
+					}
 				}
 			}
 		}
@@ -275,15 +331,19 @@ func (s *service) autoLinkPursuitWorkflow(conversation models.AIConversationArch
 		return nil, nil
 	}
 	result, err := s.pursuitLinker.AutoLinkWorkflow(pursuitpkg.AutoLinkWorkflowRequest{
-		WorkflowID:           record.Item.ID,
-		Input:                strings.Join([]string{conversation.Title, insight.Text}, "\n"),
-		ProjectKey:           insight.ProjectKey,
-		SourceType:           "ai_chat",
-		SourceID:             conversation.ID.String() + ":" + insight.ID.String(),
-		SourceURI:            insight.SourceURI,
-		SourceLabel:          insight.SourceLabel,
-		Actor:                "memory-engine",
-		AllowCreateCandidate: true,
+		OwnerIdentity:         conversation.OwnerIdentity,
+		WorkflowID:            record.Item.ID,
+		Input:                 strings.Join([]string{conversation.Title, insight.Text}, "\n"),
+		ProjectKey:            insight.ProjectKey,
+		SourceType:            "ai_chat",
+		SourceID:              conversation.ID.String() + ":" + insight.ID.String(),
+		SourceURI:             insight.SourceURI,
+		SourceLabel:           insight.SourceLabel,
+		ConversationID:        conversation.ID,
+		ConversationSourceURI: conversation.SourceURI,
+		ConversationLabel:     conversation.Title,
+		Actor:                 "memory-engine",
+		AllowCreateCandidate:  true,
 	})
 	if err != nil {
 		return nil, err
@@ -308,12 +368,16 @@ func (s *service) autoLinkPursuitMemory(conversation models.AIConversationArchiv
 		sourceLabel = memoryRecord.SourceLabel
 	}
 	result, err := s.pursuitLinker.AutoLinkMemory(pursuitpkg.AutoLinkMemoryRequest{
-		MemoryID:    memoryRecord.ID,
-		Input:       strings.Join([]string{conversation.Title, insight.Text, memoryRecord.Summary}, "\n"),
-		ProjectKey:  projectKey,
-		SourceURI:   sourceURI,
-		SourceLabel: sourceLabel,
-		Actor:       "memory-engine",
+		OwnerIdentity:         conversation.OwnerIdentity,
+		MemoryID:              memoryRecord.ID,
+		Input:                 strings.Join([]string{conversation.Title, insight.Text, memoryRecord.Summary}, "\n"),
+		ProjectKey:            projectKey,
+		SourceURI:             sourceURI,
+		SourceLabel:           sourceLabel,
+		ConversationID:        conversation.ID,
+		ConversationSourceURI: conversation.SourceURI,
+		ConversationLabel:     conversation.Title,
+		Actor:                 "memory-engine",
 	})
 	if err != nil {
 		return nil, err
@@ -322,14 +386,22 @@ func (s *service) autoLinkPursuitMemory(conversation models.AIConversationArchiv
 }
 
 func (s *service) Conversations(limit int) ([]models.AIConversationArchive, error) {
-	return s.repo.FindConversations(limit)
+	return s.ConversationsForOwner("", limit)
+}
+
+func (s *service) ConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error) {
+	return s.repo.FindConversationsForOwner(strings.TrimSpace(ownerIdentity), limit)
 }
 
 func (s *service) Conversation(id uuid.UUID) (*ConversationDetail, error) {
+	return s.ConversationForOwner("", id)
+}
+
+func (s *service) ConversationForOwner(ownerIdentity string, id uuid.UUID) (*ConversationDetail, error) {
 	if len(s.encryptionKey) != 32 {
 		return nil, fmt.Errorf("memory encryption key is not configured")
 	}
-	conversation, err := s.repo.FindConversationByID(id)
+	conversation, err := s.repo.FindConversationByIDForOwner(strings.TrimSpace(ownerIdentity), id)
 	if err != nil {
 		return nil, err
 	}
@@ -345,11 +417,23 @@ func (s *service) Conversation(id uuid.UUID) (*ConversationDetail, error) {
 }
 
 func (s *service) DeleteConversation(id uuid.UUID) error {
-	conversation, err := s.repo.FindConversationByID(id)
+	return s.DeleteConversationForOwner("", id)
+}
+
+func (s *service) DeleteConversationForOwner(ownerIdentity string, id uuid.UUID) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	conversation, err := s.repo.FindConversationByIDForOwner(ownerIdentity, id)
 	if err != nil {
 		return err
 	}
-	insights, err := s.repo.FindInsights("", "", nil, 500)
+	// Reads retain legacy ownerless archives for local migration, but an
+	// authenticated caller must never be able to delete or retract work from
+	// that shared compatibility data. Only an ownerless in-process maintenance
+	// call may operate on it.
+	if ownerIdentity != "" && strings.TrimSpace(conversation.OwnerIdentity) != ownerIdentity {
+		return gorm.ErrRecordNotFound
+	}
+	insights, err := s.repo.FindInsightsForOwner(ownerIdentity, "", "", nil, 500)
 	if err != nil {
 		return err
 	}
@@ -362,27 +446,36 @@ func (s *service) DeleteConversation(id uuid.UUID) error {
 			return fmt.Errorf("retract derived workflow: %w", err)
 		}
 	}
-	if err := s.repo.DeleteMemoriesBySourceURI(conversation.SourceURI); err != nil {
+	if err := s.repo.DeleteMemoriesBySourceURI(conversation.OwnerIdentity, conversation.SourceURI); err != nil {
 		return fmt.Errorf("delete derived memory: %w", err)
 	}
 	return s.repo.DeleteConversation(id)
 }
 
 func (s *service) Insights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
-	return s.repo.FindInsights(strings.TrimSpace(kind), strings.TrimSpace(projectKey), needsReview, limit)
+	return s.InsightsForOwner("", kind, projectKey, needsReview, limit)
+}
+
+func (s *service) InsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
+	return s.repo.FindInsightsForOwner(strings.TrimSpace(ownerIdentity), strings.TrimSpace(kind), strings.TrimSpace(projectKey), needsReview, limit)
 }
 
 func (s *service) Dashboard() (*CommandDashboard, error) {
-	conversations, err := s.repo.FindConversations(50)
+	return s.DashboardForOwner("")
+}
+
+func (s *service) DashboardForOwner(ownerIdentity string) (*CommandDashboard, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	conversations, err := s.repo.FindConversationsForOwner(ownerIdentity, 50)
 	if err != nil {
 		return nil, err
 	}
-	insights, err := s.repo.FindInsights("", "", nil, 500)
+	insights, err := s.repo.FindInsightsForOwner(ownerIdentity, "", "", nil, 500)
 	if err != nil {
 		return nil, err
 	}
 	workflowDashboard := &workflow.WorkflowDashboard{}
-	if s.workflowService != nil {
+	if ownerIdentity == "" && s.workflowService != nil {
 		workflowDashboard, err = s.workflowService.Dashboard()
 		if err != nil {
 			return nil, err
@@ -406,13 +499,16 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 			"AI-extracted actions and uncertain facts remain approval-gated.",
 		},
 	}
-	if s.memoryService != nil {
+	if ownerIdentity == "" && s.memoryService != nil {
 		memories, errMemory := s.memoryService.FindAll("", false)
 		if errMemory != nil {
 			result.Warnings = append(result.Warnings, "Correction memory review is unavailable: "+errMemory.Error())
 		} else {
 			result.SourceCorrections = sourceCorrectionMemories(memories)
 		}
+	}
+	if ownerIdentity != "" {
+		result.Warnings = append(result.Warnings, "Workflow queues are shown through the owner-scoped Pursuits dashboard until workflow ownership is persisted.")
 	}
 	projects := map[string]*ProjectSummary{}
 	for _, insight := range insights {
@@ -469,21 +565,35 @@ func (s *service) Dashboard() (*CommandDashboard, error) {
 }
 
 func (s *service) Search(query, projectKey string, limit int) (*SearchResult, error) {
+	return s.SearchForOwner("", query, projectKey, limit)
+}
+
+func (s *service) SearchForOwner(ownerIdentity, query, projectKey string, limit int) (*SearchResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("query is required")
 	}
 	if limit <= 0 || limit > 30 {
 		limit = 12
 	}
-	retrieved, err := s.memoryService.Retrieve(memory.RetrieveRequest{
-		Query:      query,
-		ProjectKey: projectKey,
-		Limit:      limit,
-	})
-	if err != nil {
-		return nil, err
+	retrieved := &memory.RetrieveResult{
+		Query:       query,
+		ProjectKey:  projectKey,
+		UsedContext: []memory.RankedMemory{},
+		Explanation: "Owner-scoped AI-history facts only. Generic context-memory results remain unavailable until those records carry owner identity.",
 	}
-	all, err := s.repo.FindInsights("", projectKey, nil, 500)
+	if ownerIdentity == "" && s.memoryService != nil {
+		var err error
+		retrieved, err = s.memoryService.Retrieve(memory.RetrieveRequest{
+			Query:      query,
+			ProjectKey: projectKey,
+			Limit:      limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	all, err := s.repo.FindInsightsForOwner(ownerIdentity, "", projectKey, nil, 500)
 	if err != nil {
 		return nil, err
 	}
@@ -607,17 +717,18 @@ func extractInsights(conversation models.AIConversationArchive, request ImportRe
 				confidence = 0.55
 			}
 			result = append(result, models.AIMemoryInsight{
-				Kind:         kind,
-				Text:         sentence,
-				ProjectKey:   request.ProjectKey,
-				Owner:        owner,
-				RobertNeeded: robertNeeded,
-				RiskLevel:    risk,
-				Confidence:   confidence,
-				SourceURI:    conversation.SourceURI,
-				SourceLabel:  conversation.Platform + ": " + conversation.Title,
-				NeedsReview:  needsReview,
-				Status:       "open",
+				OwnerIdentity: conversation.OwnerIdentity,
+				Kind:          kind,
+				Text:          sentence,
+				ProjectKey:    request.ProjectKey,
+				Owner:         owner,
+				RobertNeeded:  robertNeeded,
+				RiskLevel:     risk,
+				Confidence:    confidence,
+				SourceURI:     conversation.SourceURI,
+				SourceLabel:   conversation.Platform + ": " + conversation.Title,
+				NeedsReview:   needsReview,
+				Status:        "open",
 			})
 		}
 	}

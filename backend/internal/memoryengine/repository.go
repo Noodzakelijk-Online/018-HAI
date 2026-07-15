@@ -10,14 +10,18 @@ import (
 
 type Repository interface {
 	FindConversation(platform, externalID string) (*models.AIConversationArchive, error)
+	FindConversationForOwner(ownerIdentity, platform, externalID string) (*models.AIConversationArchive, error)
 	FindConversationByID(id uuid.UUID) (*models.AIConversationArchive, error)
+	FindConversationByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.AIConversationArchive, error)
 	SaveConversation(conversation *models.AIConversationArchive) (*models.AIConversationArchive, error)
 	FindConversations(limit int) ([]models.AIConversationArchive, error)
+	FindConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error)
 	DeleteConversation(id uuid.UUID) error
 	SaveInsight(insight *models.AIMemoryInsight) (*models.AIMemoryInsight, error)
 	FindInsights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
+	FindInsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error)
 	ArchiveInsights(conversationID uuid.UUID, revision int) error
-	DeleteMemoriesBySourceURI(sourceURI string) error
+	DeleteMemoriesBySourceURI(ownerIdentity, sourceURI string) error
 }
 
 type GormRepository struct {
@@ -37,10 +41,14 @@ func DefaultRepository() Repository {
 }
 
 func (r *GormRepository) FindConversation(platform, externalID string) (*models.AIConversationArchive, error) {
+	return r.FindConversationForOwner("", platform, externalID)
+}
+
+func (r *GormRepository) FindConversationForOwner(ownerIdentity, platform, externalID string) (*models.AIConversationArchive, error) {
 	var conversation models.AIConversationArchive
-	err := r.DB.
-		Where("platform = ? AND external_id = ? AND archived = ?", platform, externalID, false).
-		First(&conversation).Error
+	query := r.DB.Where("platform = ? AND external_id = ? AND archived = ?", platform, externalID, false)
+	query = applyConversationOwnerScope(query, ownerIdentity)
+	err := query.First(&conversation).Error
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +56,13 @@ func (r *GormRepository) FindConversation(platform, externalID string) (*models.
 }
 
 func (r *GormRepository) FindConversationByID(id uuid.UUID) (*models.AIConversationArchive, error) {
+	return r.FindConversationByIDForOwner("", id)
+}
+
+func (r *GormRepository) FindConversationByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.AIConversationArchive, error) {
 	var conversation models.AIConversationArchive
-	if err := r.DB.First(&conversation, "id = ?", id).Error; err != nil {
+	query := applyConversationOwnerScope(r.DB.Where("id = ?", id), ownerIdentity)
+	if err := query.First(&conversation).Error; err != nil {
 		return nil, err
 	}
 	return &conversation, nil
@@ -63,15 +76,18 @@ func (r *GormRepository) SaveConversation(conversation *models.AIConversationArc
 }
 
 func (r *GormRepository) FindConversations(limit int) ([]models.AIConversationArchive, error) {
+	return r.FindConversationsForOwner("", limit)
+}
+
+func (r *GormRepository) FindConversationsForOwner(ownerIdentity string, limit int) ([]models.AIConversationArchive, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	var conversations []models.AIConversationArchive
-	err := r.DB.
-		Where("archived = ?", false).
+	query := applyConversationOwnerScope(r.DB.Where("archived = ?", false), ownerIdentity).
 		Order("captured_at desc").
-		Limit(limit).
-		Find(&conversations).Error
+		Limit(limit)
+	err := query.Find(&conversations).Error
 	return conversations, err
 }
 
@@ -92,11 +108,18 @@ func (r *GormRepository) SaveInsight(insight *models.AIMemoryInsight) (*models.A
 }
 
 func (r *GormRepository) FindInsights(kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
+	return r.FindInsightsForOwner("", kind, projectKey, needsReview, limit)
+}
+
+func (r *GormRepository) FindInsightsForOwner(ownerIdentity, kind, projectKey string, needsReview *bool, limit int) ([]models.AIMemoryInsight, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	var insights []models.AIMemoryInsight
 	query := r.DB.Where("status <> ?", "superseded")
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+	}
 	if kind != "" {
 		query = query.Where("kind = ?", kind)
 	}
@@ -110,6 +133,13 @@ func (r *GormRepository) FindInsights(kind, projectKey string, needsReview *bool
 	return insights, err
 }
 
+func applyConversationOwnerScope(query *gorm.DB, ownerIdentity string) *gorm.DB {
+	if ownerIdentity == "" {
+		return query
+	}
+	return query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+}
+
 func (r *GormRepository) ArchiveInsights(conversationID uuid.UUID, revision int) error {
 	return r.DB.
 		Model(&models.AIMemoryInsight{}).
@@ -117,11 +147,13 @@ func (r *GormRepository) ArchiveInsights(conversationID uuid.UUID, revision int)
 		Update("status", "superseded").Error
 }
 
-func (r *GormRepository) DeleteMemoriesBySourceURI(sourceURI string) error {
+func (r *GormRepository) DeleteMemoriesBySourceURI(ownerIdentity, sourceURI string) error {
 	if sourceURI == "" {
 		return nil
 	}
-	return r.DB.
-		Where("source_uri = ? AND tags LIKE ?", sourceURI, "%ai-history%").
-		Delete(&models.ContextMemory{}).Error
+	query := r.DB.Where("source_uri = ? AND tags LIKE ?", sourceURI, "%ai-history%")
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ?", ownerIdentity)
+	}
+	return query.Delete(&models.ContextMemory{}).Error
 }

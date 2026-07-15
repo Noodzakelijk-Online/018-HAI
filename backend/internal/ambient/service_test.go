@@ -5,6 +5,8 @@ import (
 	"automation-hub-backend/internal/models"
 	pursuitpkg "automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/workflow"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,7 +189,7 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	pursuitSpy := &ambientPursuitSpy{}
 	engine := NewServiceWithPursuits(&ambientRepositoryStub{opportunity: opportunity}, workflowSpy, nil, pursuitSpy)
 
-	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{Note: "Approve draft creation."})
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{Note: "Approve draft creation.", Actor: "verified-operator"})
 	if err != nil {
 		t.Fatalf("Accept returned error: %v", err)
 	}
@@ -196,6 +198,9 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	}
 	if len(workflowSpy.intakeRequests) != 1 || !workflowSpy.intakeRequests[0].RequiresReview {
 		t.Fatalf("workflow intake requests = %#v", workflowSpy.intakeRequests)
+	}
+	if workflowSpy.intakeRequests[0].Actor != "verified-operator" {
+		t.Fatalf("workflow actor = %q, want verified operator", workflowSpy.intakeRequests[0].Actor)
 	}
 	if len(pursuitSpy.links) != 2 || pursuitSpy.linkedPursuitIDs[0] != pursuitID || pursuitSpy.linkedPursuitIDs[1] != pursuitID {
 		t.Fatalf("pursuit links = %#v ids=%#v", pursuitSpy.links, pursuitSpy.linkedPursuitIDs)
@@ -211,6 +216,325 @@ func TestAcceptPursuitOpportunityCreatesWorkflowAndLinksBack(t *testing.T) {
 	if proposalLink.SourceURI != opportunity.SourceURI || proposalLink.SourceLabel != opportunity.Title {
 		t.Fatalf("proposal provenance was not preserved: %#v", proposalLink)
 	}
+	if link.Actor != "verified-operator" || proposalLink.Actor != "verified-operator" {
+		t.Fatalf("pursuit link actors were not attributed to verified operator: %#v %#v", link, proposalLink)
+	}
+}
+
+func TestAcceptPursuitOpportunityRetriesLinkWithoutDuplicatingWorkflow(t *testing.T) {
+	pursuitID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:               uuid.New(),
+		Status:           StatusProposed,
+		NeedKey:          "safety",
+		Title:            "Repair a pursuit follow-up",
+		Rationale:        "The operational plan needs a safe follow-up.",
+		NextAction:       "Prepare the next follow-up draft.",
+		SourceType:       "pursuit_blocker",
+		SourceID:         pursuitID.String(),
+		SourceURI:        "pursuit://" + pursuitID.String(),
+		Confidence:       80,
+		RequiresApproval: true,
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{}
+	pursuitSpy := &ambientPursuitSpy{linkFailures: 1}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, pursuitSpy)
+
+	if _, err := engine.Accept(opportunity.ID, ResolutionRequest{Actor: "verified-operator"}); err == nil {
+		t.Fatal("expected the initial pursuit link failure")
+	}
+	if len(workflowSpy.intakeRequests) != 1 {
+		t.Fatalf("workflow intake calls after failed link = %d, want 1", len(workflowSpy.intakeRequests))
+	}
+	if repo.opportunity.WorkflowID == nil || repo.opportunity.Status != StatusProposed {
+		t.Fatalf("failed acceptance did not preserve resumable proposed state: %#v", repo.opportunity)
+	}
+
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{Actor: "verified-operator"})
+	if err != nil {
+		t.Fatalf("retry Accept returned error: %v", err)
+	}
+	if len(workflowSpy.intakeRequests) != 1 {
+		t.Fatalf("workflow intake calls after retry = %d, want no duplicate workflow", len(workflowSpy.intakeRequests))
+	}
+	if accepted.Status != StatusAccepted || accepted.WorkflowID == nil || len(pursuitSpy.links) != 2 {
+		t.Fatalf("retry did not finish acceptance and restore both pursuit links: accepted=%#v links=%#v", accepted, pursuitSpy.links)
+	}
+}
+
+func TestAcceptNonPursuitOpportunityFailsClosedWithoutNativePursuitRouter(t *testing.T) {
+	opportunity := &models.AmbientOpportunity{
+		ID:               uuid.New(),
+		OwnerIdentity:    "alice",
+		Status:           StatusProposed,
+		NeedKey:          "safety",
+		Title:            "Resolve conflicting account evidence",
+		Rationale:        "A source-backed contradiction needs review before it can guide action.",
+		NextAction:       "Review the conflicting evidence and prepare the safest next step.",
+		SourceType:       "memory_insight",
+		SourceID:         uuid.NewString(),
+		Confidence:       88,
+		RequiresApproval: true,
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{recordID: uuid.New()}
+	pursuitSpy := &ambientPursuitSpy{}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, pursuitSpy)
+
+	_, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "verified-operator"})
+	if !errors.Is(err, pursuitpkg.ErrLifecycleRouterRequired) {
+		t.Fatalf("Accept error = %v, want lifecycle router requirement", err)
+	}
+	if len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("incomplete pursuit integration created workflow work: %#v", workflowSpy.intakeRequests)
+	}
+	if repo.opportunity.Status != StatusProposed || repo.opportunity.WorkflowID != nil {
+		t.Fatalf("failed-closed acceptance mutated opportunity: %#v", repo.opportunity)
+	}
+}
+
+func TestAcceptNonPursuitOpportunityWithExistingWorkflowFailsClosedWithoutNativePursuitRouter(t *testing.T) {
+	workflowID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		Status:        StatusProposed,
+		NeedKey:       "safety",
+		Title:         "Repair an older ambient proposal",
+		Rationale:     "A prior integration attempt retained a workflow reference.",
+		NextAction:    "Review the source before taking another action.",
+		SourceType:    "memory_insight",
+		SourceID:      uuid.NewString(),
+		WorkflowID:    &workflowID,
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, &ambientPursuitSpy{})
+
+	_, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "verified-operator"})
+	if !errors.Is(err, pursuitpkg.ErrLifecycleRouterRequired) {
+		t.Fatalf("Accept error = %v, want lifecycle router requirement", err)
+	}
+	if len(workflowSpy.intakeRequests) != 0 || repo.opportunity.Status != StatusProposed || repo.opportunity.WorkflowID == nil || *repo.opportunity.WorkflowID != workflowID {
+		t.Fatalf("failed-closed retry mutated legacy opportunity: intake=%#v opportunity=%#v", workflowSpy.intakeRequests, repo.opportunity)
+	}
+}
+
+func TestAcceptNonPursuitOpportunityDefersCandidateWithoutWorkflow(t *testing.T) {
+	opportunity := &models.AmbientOpportunity{
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		Status:        StatusProposed,
+		NeedKey:       "safety",
+		Title:         "Review unmatched evidence",
+		Rationale:     "This needs an explicit pursuit decision.",
+		NextAction:    "Review the evidence and decide whether to create work.",
+		SourceType:    "memory_insight",
+		SourceID:      uuid.NewString(),
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{recordID: uuid.New()}
+	router := &ambientPursuitRouterSpy{
+		ambientPursuitSpy: &ambientPursuitSpy{},
+		result: &pursuitpkg.AmbientOpportunityRouteResult{
+			Mode:             "candidate_created",
+			PursuitID:        uuid.New(),
+			CreatedCandidate: true,
+			Message:          "candidate is awaiting explicit pursuit acceptance",
+		},
+	}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, router)
+
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "alice"})
+	if err != nil {
+		t.Fatalf("Accept returned error: %v", err)
+	}
+	if accepted.Status != StatusAccepted || accepted.WorkflowID != nil {
+		t.Fatalf("accepted ambient candidate = %#v", accepted)
+	}
+	if len(workflowSpy.intakeRequests) != 0 || len(router.requests) != 1 {
+		t.Fatalf("candidate acceptance created work or skipped routing: intake=%#v routes=%#v", workflowSpy.intakeRequests, router.requests)
+	}
+	if router.requests[0].OpportunityID != opportunity.ID || router.requests[0].OwnerIdentity != "alice" {
+		t.Fatalf("candidate route request = %#v", router.requests[0])
+	}
+}
+
+func TestPursuitOpportunityOwnerCannotAcceptAnotherOwnersOpportunity(t *testing.T) {
+	pursuitID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:         uuid.New(),
+		Status:     StatusProposed,
+		NeedKey:    "safety",
+		Title:      "Private pursuit decision",
+		Rationale:  "Requires review.",
+		NextAction: "Review private evidence.",
+		SourceType: "pursuit_decision",
+		SourceID:   pursuitID.String(),
+	}
+	workflowSpy := &ambientWorkflowSpy{}
+	pursuitSpy := &ambientPursuitSpy{owners: map[uuid.UUID]string{pursuitID: "bob"}}
+	engine := NewServiceWithPursuits(&ambientRepositoryStub{opportunity: opportunity}, workflowSpy, nil, pursuitSpy)
+
+	if _, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice"}); err == nil {
+		t.Fatal("expected cross-owner pursuit opportunity acceptance to be rejected")
+	}
+	if len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("cross-owner acceptance created workflow work: %#v", workflowSpy.intakeRequests)
+	}
+}
+
+func TestAcceptPursuitCandidateKeepsAmbientProposalAsContextOnly(t *testing.T) {
+	pursuitID := uuid.New()
+	opportunity := &models.AmbientOpportunity{
+		ID:            uuid.New(),
+		OwnerIdentity: "alice",
+		Status:        StatusProposed,
+		NeedKey:       "safety",
+		Title:         "Review imported legal candidate",
+		Rationale:     "The candidate needs explicit acceptance before operational work.",
+		NextAction:    "Review candidate evidence and accept or archive it.",
+		SourceType:    "pursuit_decision",
+		SourceID:      pursuitID.String(),
+		SourceURI:     "pursuit://" + pursuitID.String(),
+	}
+	repo := &ambientRepositoryStub{opportunity: opportunity}
+	workflowSpy := &ambientWorkflowSpy{recordID: uuid.New()}
+	pursuitSpy := &ambientPursuitSpy{details: map[uuid.UUID]models.Pursuit{
+		pursuitID: {
+			ID:               pursuitID,
+			OwnerIdentity:    "alice",
+			SourceOfCreation: "source_pursuit_candidate",
+		},
+	}}
+	engine := NewServiceWithPursuits(repo, workflowSpy, nil, pursuitSpy)
+
+	accepted, err := engine.Accept(opportunity.ID, ResolutionRequest{OwnerIdentity: "alice", Actor: "alice"})
+	if err != nil {
+		t.Fatalf("Accept returned error: %v", err)
+	}
+	if accepted.Status != StatusAccepted || accepted.WorkflowID != nil {
+		t.Fatalf("candidate acceptance = %#v, want accepted context without workflow", accepted)
+	}
+	if len(workflowSpy.intakeRequests) != 0 {
+		t.Fatalf("candidate ambient acceptance created workflow work: %#v", workflowSpy.intakeRequests)
+	}
+	if len(pursuitSpy.links) != 1 || pursuitSpy.links[0].LinkType != pursuitpkg.LinkAmbientOpportunity || pursuitSpy.links[0].LinkID != opportunity.ID.String() {
+		t.Fatalf("candidate ambient proposal was not linked as pursuit context: %#v", pursuitSpy.links)
+	}
+	if !strings.Contains(accepted.ResolutionNote, "explicit candidate acceptance") {
+		t.Fatalf("candidate acceptance note = %q, want explicit acceptance guard", accepted.ResolutionNote)
+	}
+}
+
+func TestPursuitOpportunitiesAreFilteredForAuthenticatedOwner(t *testing.T) {
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	engine := NewServiceWithPursuits(nil, nil, nil, &ambientPursuitSpy{owners: map[uuid.UUID]string{aliceID: "alice", bobID: "bob"}}).(*service)
+	visible := engine.visibleOpportunities("alice", []models.AmbientOpportunity{
+		{ID: uuid.New(), OwnerIdentity: "alice", SourceType: "pursuit_stale", SourceID: aliceID.String()},
+		{ID: uuid.New(), OwnerIdentity: "bob", SourceType: "pursuit_stale", SourceID: bobID.String()},
+		{ID: uuid.New(), SourceType: "workflow", SourceID: "shared-workflow"},
+	})
+	if len(visible) != 1 || visible[0].SourceID != aliceID.String() {
+		t.Fatalf("owner-visible opportunities = %#v", visible)
+	}
+}
+
+func TestScanForOwnerBuildsPrivatePursuitProposalsOnly(t *testing.T) {
+	pursuitID := uuid.New()
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	pursuits := &ambientPursuitSpy{
+		dashboard: &pursuitpkg.Dashboard{
+			ReviewDue: []pursuitpkg.PursuitListItem{{
+				Pursuit:    models.Pursuit{ID: pursuitID, OwnerIdentity: "alice", Title: "Prepare evidence bundle", RiskLevel: "medium", Confidence: 0.82, PriorityScore: 80},
+				NextAction: "Review the evidence bundle and choose the next safe action.",
+			}},
+		},
+		pursuits: []models.Pursuit{{ID: pursuitID, OwnerIdentity: "alice", Title: "Prepare evidence bundle", Status: pursuitpkg.StatusActive}},
+	}
+	engine := NewServiceWithPursuits(repo, nil, nil, pursuits)
+
+	scan, err := engine.ScanForOwner("alice", "manual")
+	if err != nil {
+		t.Fatalf("ScanForOwner: %v", err)
+	}
+	if scan.OwnerIdentity != "alice" || scan.Created != 1 || scan.Advanced != 0 {
+		t.Fatalf("owner scan = %#v, want one private suggestion-only proposal", scan)
+	}
+	if repo.opportunity == nil || repo.opportunity.OwnerIdentity != "alice" || repo.opportunity.SourceID != pursuitID.String() {
+		t.Fatalf("stored opportunity = %#v, want Alice pursuit proposal", repo.opportunity)
+	}
+	if repo.opportunity.WorkflowID != nil {
+		t.Fatalf("personal scan unexpectedly created executable workflow state: %#v", repo.opportunity)
+	}
+}
+
+func TestAmbientNeedProfilesArePrivateToEachOwner(t *testing.T) {
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	engine := NewService(repo, nil, nil).(*service)
+	priority := 17
+	note := "Prioritize stabilizing this account's legal and financial exposure."
+
+	updated, err := engine.UpdateNeedForOwner("alice", "safety", NeedUpdateRequest{PriorityWeight: &priority, Notes: &note})
+	if err != nil {
+		t.Fatalf("UpdateNeedForOwner: %v", err)
+	}
+	if updated.PriorityWeight != priority || updated.Notes != note {
+		t.Fatalf("alice update = %#v", updated)
+	}
+
+	aliceNeeds, err := engine.needsForOwner("alice")
+	if err != nil {
+		t.Fatalf("alice needs: %v", err)
+	}
+	bobNeeds, err := engine.needsForOwner("bob")
+	if err != nil {
+		t.Fatalf("bob needs: %v", err)
+	}
+	if findAmbientNeed(aliceNeeds, "safety").PriorityWeight != priority {
+		t.Fatalf("alice safety profile was not applied: %#v", aliceNeeds)
+	}
+	if findAmbientNeed(bobNeeds, "safety").PriorityWeight != 100 {
+		t.Fatalf("bob did not retain the system default: %#v", bobNeeds)
+	}
+	if findAmbientNeed(bobNeeds, "safety").Notes != "" {
+		t.Fatalf("bob received alice's ambient notes: %#v", bobNeeds)
+	}
+}
+
+func TestOwnerScanUsesPrivateNeedProfile(t *testing.T) {
+	pursuitID := uuid.New()
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	engine := NewServiceWithPursuits(repo, nil, nil, &ambientPursuitSpy{
+		dashboard: &pursuitpkg.Dashboard{PlanningNeeded: []pursuitpkg.PursuitListItem{{
+			Pursuit:    models.Pursuit{ID: pursuitID, OwnerIdentity: "alice", Title: "Draft a future plan", NeedCategory: "growth", RiskLevel: "low", Confidence: 0.8, PriorityScore: 72},
+			NextAction: "Prepare a safe first plan.",
+		}}},
+		pursuits: []models.Pursuit{{ID: pursuitID, OwnerIdentity: "alice", Status: pursuitpkg.StatusActive}},
+	}).(*service)
+	disabled := false
+	if _, err := engine.UpdateNeedForOwner("alice", "growth", NeedUpdateRequest{Enabled: &disabled}); err != nil {
+		t.Fatalf("disable Alice growth need: %v", err)
+	}
+
+	scan, err := engine.ScanForOwner("alice", "manual")
+	if err != nil {
+		t.Fatalf("ScanForOwner: %v", err)
+	}
+	if scan.Created != 0 || repo.opportunity != nil {
+		t.Fatalf("disabled private need still produced a proposal: scan=%#v opportunity=%#v", scan, repo.opportunity)
+	}
+}
+
+func findAmbientNeed(needs []models.AmbientNeed, key string) models.AmbientNeed {
+	for _, need := range needs {
+		if need.Key == key {
+			return need
+		}
+	}
+	return models.AmbientNeed{}
 }
 
 func testNeedMap() map[string]models.AmbientNeed {
@@ -252,8 +576,30 @@ func (s *ambientWorkflowSpy) RunDueOpenLoops(workflow.RunDueRequest) (*workflow.
 
 type ambientPursuitSpy struct {
 	dashboard        *pursuitpkg.Dashboard
+	pursuits         []models.Pursuit
+	details          map[uuid.UUID]models.Pursuit
 	links            []pursuitpkg.LinkRequest
 	linkedPursuitIDs []uuid.UUID
+	owners           map[uuid.UUID]string
+	linkFailures     int
+	autoLinkRequests []pursuitpkg.AutoLinkWorkflowRequest
+	autoLinkResult   *pursuitpkg.AutoLinkResult
+	autoLinkErr      error
+}
+
+type ambientPursuitRouterSpy struct {
+	*ambientPursuitSpy
+	requests []pursuitpkg.AmbientOpportunityRouteRequest
+	result   *pursuitpkg.AmbientOpportunityRouteResult
+	err      error
+}
+
+func (s *ambientPursuitRouterSpy) RouteAmbientOpportunity(request pursuitpkg.AmbientOpportunityRouteRequest) (*pursuitpkg.AmbientOpportunityRouteResult, error) {
+	s.requests = append(s.requests, request)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.result, nil
 }
 
 func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {
@@ -263,7 +609,29 @@ func (s *ambientPursuitSpy) Dashboard() (*pursuitpkg.Dashboard, error) {
 	return &pursuitpkg.Dashboard{}, nil
 }
 
+func (s *ambientPursuitSpy) DashboardForOwner(_ string) (*pursuitpkg.Dashboard, error) {
+	return s.Dashboard()
+}
+
+func (s *ambientPursuitSpy) List(bool) ([]models.Pursuit, error) {
+	return s.pursuits, nil
+}
+
+func (s *ambientPursuitSpy) ListForOwner(ownerIdentity string, _ bool) ([]models.Pursuit, error) {
+	result := []models.Pursuit{}
+	for _, item := range s.pursuits {
+		if item.OwnerIdentity == ownerIdentity {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
 func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (*models.PursuitLink, error) {
+	if s.linkFailures > 0 {
+		s.linkFailures--
+		return nil, errors.New("temporary pursuit link failure")
+	}
 	s.linkedPursuitIDs = append(s.linkedPursuitIDs, id)
 	s.links = append(s.links, request)
 	return &models.PursuitLink{
@@ -276,4 +644,58 @@ func (s *ambientPursuitSpy) Link(id uuid.UUID, request pursuitpkg.LinkRequest) (
 		SourceLabel:  request.SourceLabel,
 		Confidence:   request.Confidence,
 	}, nil
+}
+
+func (s *ambientPursuitSpy) AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflowRequest) (*pursuitpkg.AutoLinkResult, error) {
+	s.autoLinkRequests = append(s.autoLinkRequests, request)
+	if s.autoLinkErr != nil {
+		return nil, s.autoLinkErr
+	}
+	if s.autoLinkResult != nil {
+		return s.autoLinkResult, nil
+	}
+	return &pursuitpkg.AutoLinkResult{}, nil
+}
+
+func (s *ambientPursuitSpy) DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuitpkg.PursuitDetail, error) {
+	if owner, found := s.owners[id]; found && owner != "" && owner != ownerIdentity {
+		return nil, errors.New("pursuit not found")
+	}
+	detail := models.Pursuit{ID: id, OwnerIdentity: ownerIdentity}
+	if item, found := s.details[id]; found {
+		detail = item
+		if detail.OwnerIdentity == "" {
+			detail.OwnerIdentity = ownerIdentity
+		}
+	}
+	return &pursuitpkg.PursuitDetail{Pursuit: detail}, nil
+}
+
+func TestClosedPursuitOpportunityUpdatesCompleteOnlyOpenPursuitWork(t *testing.T) {
+	completedID := uuid.New()
+	archivedID := uuid.New()
+	activeID := uuid.New()
+	updatedAt := time.Now().UTC()
+	updates := closedPursuitOpportunityUpdates(
+		[]models.AmbientOpportunity{
+			{ID: uuid.New(), SourceType: "pursuit_decision", SourceID: completedID.String(), Status: StatusProposed},
+			{ID: uuid.New(), SourceType: "pursuit_blocker", SourceID: archivedID.String(), Status: StatusAccepted},
+			{ID: uuid.New(), SourceType: "pursuit_high_risk", SourceID: activeID.String(), Status: StatusProposed},
+			{ID: uuid.New(), SourceType: "pursuit_review_due", SourceID: completedID.String(), Status: StatusDismissed},
+		},
+		[]models.Pursuit{
+			{ID: completedID, Status: pursuitpkg.StatusCompleted},
+			{ID: archivedID, Status: pursuitpkg.StatusArchived, Archived: true},
+			{ID: activeID, Status: pursuitpkg.StatusActive},
+		},
+		updatedAt,
+	)
+	if len(updates) != 2 {
+		t.Fatalf("updates = %#v, want completed and archived pursuit opportunities only", updates)
+	}
+	for _, item := range updates {
+		if item.Status != StatusCompleted || item.LastSeenAt != updatedAt || !strings.Contains(item.ResolutionNote, "Linked pursuit closed") {
+			t.Fatalf("closed pursuit update = %#v", item)
+		}
+	}
 }

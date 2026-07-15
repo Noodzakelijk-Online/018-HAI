@@ -14,6 +14,7 @@ export interface IEvidenceInput {
 export interface IAnswerRequest {
   question: string;
   projectKey?: string;
+  pursuitId?: string;
   mode?: string;
   externalEvidence?: IEvidenceInput[];
   includeSensitive?: boolean;
@@ -66,6 +67,9 @@ export interface IVerificationClaim {
 
 export interface IVerificationResult {
   run: IVerificationRun;
+  pursuitId?: string;
+  pursuitLinked?: boolean;
+  pursuitLinkError?: string;
   claims: IVerificationClaim[];
   evidence: IVerificationEvidence[];
   unsupportedClaims: IVerificationClaim[];

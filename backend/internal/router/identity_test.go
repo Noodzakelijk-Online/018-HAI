@@ -78,3 +78,59 @@ func TestJWTDisabledWhenNoSecret(t *testing.T) {
 		t.Fatalf("with no secret, identity is disabled and admin default-denies (403), got %d", code)
 	}
 }
+
+func TestRequireAuthenticatedOwnerRejectsMissingPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(requireAuthenticatedOwner())
+	engine.GET("/private", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	unauthenticated := httptest.NewRecorder()
+	engine.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/private", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("missing owner status = %d, want %d", unauthenticated.Code, http.StatusUnauthorized)
+	}
+
+	authenticated := gin.New()
+	authenticated.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "alice")
+		c.Next()
+	})
+	authenticated.Use(requireAuthenticatedOwner())
+	authenticated.GET("/private", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	recorder := httptest.NewRecorder()
+	authenticated.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/private", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("authenticated owner status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestIDPCookieSetsBundledUserIDAsSubject(t *testing.T) {
+	prev := config.AppConfig.JWTSecret
+	config.AppConfig.JWTSecret = "router-secret"
+	defer func() { config.AppConfig.JWTSecret = prev }()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(identityMiddleware())
+	engine.GET("/whoami", func(c *gin.Context) {
+		value, _ := c.Get(contextSubjectKey)
+		c.String(http.StatusOK, value.(string))
+	})
+
+	token := identity.SignToken(identity.Claims{
+		UserID: "bundled-idp-user",
+		Expiry: time.Now().Add(time.Hour).Unix(),
+	}, "router-secret")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/whoami", nil)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cookie-authenticated request status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Body.String(); got != "bundled-idp-user" {
+		t.Fatalf("cookie principal = %q, want bundled IDP user_id", got)
+	}
+}

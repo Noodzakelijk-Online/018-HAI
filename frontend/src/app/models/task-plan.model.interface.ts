@@ -7,6 +7,7 @@ import { IAutomationRuntimeRouteTrace } from './automation.model.interface';
 export interface ITaskPlanRequest {
   request: string;
   projectKey?: string;
+  pursuitId?: string;
   automationId?: string;
   successCriteria?: string[];
   executeAllowed?: boolean;
@@ -132,6 +133,8 @@ export interface IRiskAssessment {
   level: string;
   approvalRequired: boolean;
   approvalGranted: boolean;
+  actionResolution?: 'proceed' | 'clarify' | 'block';
+  missingParameters?: string[];
   reasons: string[];
   allowedNow: boolean;
 }
@@ -195,6 +198,7 @@ export interface ICompletionPlan {
   createdAt: string;
   request: string;
   projectKey?: string;
+  pursuitId?: string;
   realGoal: string;
   intake: IIntakeAnalysis;
   contextPlan: IContextPlan;

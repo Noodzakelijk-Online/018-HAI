@@ -14,9 +14,11 @@ import {
   IPursuitBlocker,
   IPursuitDashboard,
   IPursuitDashboardDecision,
+  IPursuitDelegationPackage,
   IPursuitDecision,
   IPursuitDetail,
   IPursuitEvidenceResolution,
+  IPursuitLink,
   IPursuitListItem,
 } from '../../models/pursuit.model.interface';
 import { AutomationsService } from '../../services/automations/automations.service';
@@ -39,12 +41,16 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   routedIntakeRunning = false;
   reviewing = false;
   planning = false;
+  delegationLoading = false;
   resolvingDecisionId = '';
   stoppingAutomationId = '';
   resolvingEvidenceUri = '';
   inspectedEvidence?: IPursuitEvidenceResolution;
   inspectedRuntimeEvidence?: IAutomationLaunchEvent;
+  inspectedAction?: IPursuitAction;
+  delegationPackage?: IPursuitDelegationPackage;
   showCreate = false;
+  showContextEditor = false;
   includeArchived = false;
   private requestedPursuitId = '';
   private requestedEvidenceUri = '';
@@ -63,8 +69,11 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   ];
 
   readonly linkTypes = [
+    'pursuit',
     'workflow',
     'memory',
+    'ai_conversation',
+    'ambient_opportunity',
     'source_item',
     'source_extraction',
     'verification',
@@ -74,10 +83,21 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   createForm: FormGroup = this.fb.group({
     title: ['', [Validators.required]],
+    description: [''],
     projectKey: [''],
     domain: ['operations'],
+    whyItMatters: [''],
     desiredOutcome: [''],
     currentStateSummary: [''],
+    completionDefinition: [''],
+  });
+
+  contextForm: FormGroup = this.fb.group({
+    description: [''],
+    whyItMatters: [''],
+    desiredOutcome: [''],
+    currentStateSummary: [''],
+    nextRecommendedAction: [''],
     completionDefinition: [''],
   });
 
@@ -206,6 +226,13 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.selectPursuit(card.pursuit);
   }
 
+  openLinkedPursuit(link: IPursuitLink): void {
+    if (link.linkType !== 'pursuit' || !link.linkId) {
+      return;
+    }
+    this.router.navigate(['/pursuits'], { queryParams: { selected: link.linkId } });
+  }
+
   resolveDashboardDecision(card: IPursuitDashboardDecision, approved: boolean): void {
     if (this.resolvingDecisionId || !this.canResolveDecision(card.decision)) {
       return;
@@ -244,6 +271,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   private loadPursuitDetail(id: string, updateRoute: boolean): void {
     this.detailLoading = true;
+    this.delegationPackage = undefined;
+    this.showContextEditor = false;
     this.pursuitsService.get(id).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -303,7 +332,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.creating = true;
     this.pursuitsService.create({
       ...this.createForm.value,
-      ownerIdentity: 'Robert Velhorst',
       sourceOfCreation: 'dashboard',
     }).subscribe({
       next: (pursuit) => {
@@ -321,6 +349,45 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     });
   }
 
+  openContextEditor(): void {
+    if (!this.selected) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.contextForm.reset({
+      description: pursuit.description || '',
+      whyItMatters: pursuit.whyItMatters || '',
+      desiredOutcome: pursuit.desiredOutcome || '',
+      currentStateSummary: pursuit.currentStateSummary || '',
+      nextRecommendedAction: pursuit.nextRecommendedAction || '',
+      completionDefinition: pursuit.completionDefinition || '',
+    });
+    this.showContextEditor = true;
+  }
+
+  savePursuitContext(): void {
+    if (!this.selected || this.detailLoading) {
+      return;
+    }
+    this.detailLoading = true;
+    const pursuitID = this.selected.pursuit.id;
+    this.pursuitsService.update(pursuitID, this.contextForm.value).subscribe({
+      next: (pursuit) => {
+        if (this.selected?.pursuit.id === pursuitID) {
+          this.selected = { ...this.selected, pursuit };
+        }
+        this.detailLoading = false;
+        this.showContextEditor = false;
+        this.notification.success('Pursuit context saved', 'HAI will use the updated goal context for matching, planning, and safety checks.');
+        this.load();
+      },
+      error: (error) => {
+        this.detailLoading = false;
+        this.notification.error('Context update failed', error?.error?.error || 'HAI could not save the pursuit context.');
+      },
+    });
+  }
+
   runIntake(): void {
     if (!this.selected || this.intakeForm.invalid) {
       this.intakeForm.markAllAsTouched();
@@ -331,7 +398,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       ...this.intakeForm.value,
       projectKey: this.selected.pursuit.projectKey,
       trigger: 'pursuit_dashboard',
-      actor: 'robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -354,7 +420,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.routedIntakeRunning = true;
     this.pursuitsService.routeIntake({
       ...this.routedIntakeForm.value,
-      actor: 'robert',
       trigger: 'pursuit_dashboard_global_intake',
     }).subscribe({
       next: (result) => {
@@ -363,10 +428,17 @@ export class PursuitsComponent implements OnInit, OnDestroy {
         if (result.detail) {
           this.selected = result.detail;
         }
-        this.notification.success(
-          result.createdCandidate ? 'Pursuit candidate created' : 'Input routed',
-          result.message || 'HAI matched the input and created governed workflow context.'
-        );
+        if (result.createdCandidate) {
+          this.notification.info(
+            'Pursuit candidate needs review',
+            'HAI recorded the unmatched input as a reviewable pursuit candidate. No workflow was created until an approver accepts it.'
+          );
+        } else {
+          this.notification.success(
+            'Input routed',
+            result.message || 'HAI matched the input and created governed workflow context.'
+          );
+        }
         this.load();
         if (result.pursuitId) {
           this.selectPursuitById(result.pursuitId, true);
@@ -405,7 +477,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.reviewing = true;
     this.pursuitsService.review(this.selected.pursuit.id, {
       action: 'complete',
-      actor: 'robert',
       note: 'Scheduled pursuit review completed from the dashboard.',
     }).subscribe({
       next: (detail) => {
@@ -428,7 +499,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.reviewing = true;
     this.pursuitsService.review(this.selected.pursuit.id, {
       action: 'snooze',
-      actor: 'robert',
       snoozeDays: days,
       note: `Scheduled pursuit review snoozed for ${days} days from the dashboard.`,
     }).subscribe({
@@ -451,7 +521,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     }
     this.planning = true;
     this.pursuitsService.plan(this.selected.pursuit.id, {
-      actor: 'robert',
       requiresReview: this.selected.pursuit.riskLevel === 'high',
       reviewReason: this.selected.pursuit.riskLevel === 'high'
         ? 'High-risk pursuit planning requires Robert approval before execution.'
@@ -470,14 +539,37 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     });
   }
 
+  prepareDelegationPackage(): void {
+    if (!this.selected || this.delegationLoading) {
+      return;
+    }
+    this.delegationLoading = true;
+    this.pursuitsService.delegationPackage(this.selected.pursuit.id).subscribe({
+      next: (delegationPackage) => {
+        this.delegationPackage = delegationPackage;
+        this.delegationLoading = false;
+        const title = delegationPackage.ready ? 'VA brief ready' : 'VA brief blocked';
+        this.notification.info(title, delegationPackage.reason);
+      },
+      error: (error) => {
+        this.delegationLoading = false;
+        this.notification.error('VA brief unavailable', error?.error?.error || 'HAI could not prepare the delegation package.');
+      },
+    });
+  }
+
   archiveSelected(): void {
     if (!this.selected) {
       return;
     }
-    const archived = !this.selected.pursuit.archived;
+    if (this.isClosedPursuit(this.selected.pursuit)) {
+      this.reopenSelected();
+      return;
+    }
+    const archived = true;
     this.pursuitsService.archive(this.selected.pursuit.id, archived).subscribe({
       next: () => {
-        this.notification.success(archived ? 'Pursuit archived' : 'Pursuit restored', 'The pursuit registry was updated.');
+        this.notification.success('Pursuit archived', 'The pursuit registry was updated.');
         this.selected = undefined;
         this.requestedPursuitId = '';
         this.setSelectedQuery();
@@ -487,8 +579,84 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     });
   }
 
+  reopenSelected(): void {
+    if (!this.selected || !this.isClosedPursuit(this.selected.pursuit)) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.pursuitsService.reopen(pursuit.id).subscribe({
+      next: () => {
+        this.notification.success('Pursuit reopened', 'HAI can now prepare new governed work for this pursuit.');
+        this.loadPursuitDetail(pursuit.id, false);
+        this.load();
+      },
+      error: (error) => this.notification.error('Reopen failed', error?.error?.error || 'HAI could not reopen this pursuit.'),
+    });
+  }
+
+  isClosedPursuit(pursuit: IPursuit): boolean {
+    return pursuit.archived || pursuit.status === 'completed' || pursuit.completionState === 'verified';
+  }
+
   openWorkflow(workflowId?: string): void {
     this.router.navigate(['/workflow-engine'], { queryParams: workflowId ? { workflowId } : undefined });
+  }
+
+  verifySelectedEvidence(): void {
+    if (!this.selected) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.router.navigate(['/grounded-answers'], {
+      queryParams: {
+        pursuitId: pursuit.id,
+        projectKey: pursuit.projectKey || undefined,
+        question: pursuit.nextRecommendedAction || pursuit.desiredOutcome || pursuit.title,
+      },
+    });
+  }
+
+  openAssistant(): void {
+    if (!this.selected) {
+      return;
+    }
+    const pursuit = this.selected.pursuit;
+    this.router.navigate(['/task-blueprint'], {
+      queryParams: {
+        pursuitId: pursuit.id,
+        projectKey: pursuit.projectKey || undefined,
+        request: pursuit.nextRecommendedAction || pursuit.desiredOutcome || pursuit.title,
+      },
+    });
+  }
+
+  openAction(action: IPursuitAction): void {
+    if (action.workflowId) {
+      this.openWorkflow(action.workflowId);
+      return;
+    }
+    this.inspectedAction = action;
+  }
+
+  openDigestLane(lane: 'robert' | 'va' | 'system' | 'waiting'): void {
+    const queues = this.selected?.actionQueues;
+    const actions = lane === 'robert'
+      ? queues?.needsRobert
+      : lane === 'va'
+        ? queues?.vaReady
+        : lane === 'system'
+          ? queues?.systemReady
+          : queues?.waiting;
+    if (!actions?.length) {
+      const label = lane === 'robert' ? 'Robert-only' : lane === 'va' ? 'VA-ready' : lane === 'system' ? 'System-ready' : 'Waiting';
+      this.notification.info(`${label} lane`, `There is no ${label.toLowerCase()} action to open for this pursuit.`);
+      return;
+    }
+    this.openAction(actions[0]);
+  }
+
+  closeAction(): void {
+    this.inspectedAction = undefined;
   }
 
   openAutomations(): void {
@@ -653,7 +821,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.detailLoading = true;
     this.pursuitsService.link(this.selected.pursuit.id, {
       ...this.linkForm.value,
-      actor: 'Robert',
     }).subscribe({
       next: () => {
         this.notification.success('Link added', 'The pursuit now includes this operational record.');
@@ -924,52 +1091,34 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       return;
     }
     this.resolvingDecisionId = decision.id;
-    if (approved) {
-      this.pursuitsService.intake(this.selected.pursuit.id, {
-        input: decision.recommended,
-        projectKey: this.selected.pursuit.projectKey,
-        sourceType: 'pursuit_decision',
-        sourceId: decision.id,
-        sourceUri: decision.evidenceUri,
-        sourceLabel: decision.evidenceLabel || 'Robert approved pursuit next action',
-        contentType: decision.decisionType,
-        trigger: 'pursuit_decision_approved',
-        actor: 'Robert',
-        requiresReview: decision.requiresApproval,
-        reviewReason: decision.reason,
-      }).subscribe({
-        next: (detail) => {
-          this.selected = detail;
-          this.resolvingDecisionId = '';
-          this.notification.success('Workflow created', 'The pursuit decision became a governed workflow item.');
-          this.load();
-        },
-        error: (error) => {
-          this.resolvingDecisionId = '';
-          this.notification.error('Workflow creation blocked', error?.error?.error || 'HAI could not create the governed workflow.');
-        },
-      });
-      return;
-    }
     this.pursuitsService.resolveDecision(this.selected.pursuit.id, {
       decisionId: decision.id,
       decisionType: decision.decisionType,
-      approved: false,
+      approved,
       reason: decision.reason,
-      note: decision.noConsequence || `Robert rejected the proposed next action: ${decision.recommended}`,
+      note: approved
+        ? decision.yesConsequence || `Robert approved the proposed next action: ${decision.recommended}`
+        : decision.noConsequence || `Robert rejected the proposed next action: ${decision.recommended}`,
       evidenceUri: decision.evidenceUri,
       evidenceLabel: decision.evidenceLabel,
-      actor: 'Robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.resolvingDecisionId = '';
-        this.notification.success('Decision recorded', 'The pursuit decision is now resolved in the audit trail.');
+        this.notification.success(
+          approved ? 'Workflow created' : 'Decision recorded',
+          approved
+            ? 'The approved pursuit decision became a governed workflow item.'
+            : 'The pursuit decision is now resolved in the audit trail.'
+        );
         this.load();
       },
       error: (error) => {
         this.resolvingDecisionId = '';
-        this.notification.error('Decision blocked', error?.error?.error || 'The pursuit decision could not be recorded.');
+        this.notification.error(
+          approved ? 'Workflow creation blocked' : 'Decision blocked',
+          error?.error?.error || 'The pursuit decision could not be recorded.'
+        );
       },
     });
   }
@@ -987,7 +1136,6 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       note: approved ? decision.yesConsequence || decision.recommended : decision.noConsequence || 'Keep runtime attempt blocked until reviewed.',
       evidenceUri: decision.evidenceUri,
       evidenceLabel: decision.evidenceLabel,
-      actor: 'Robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
@@ -1015,44 +1163,34 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       return;
     }
     this.resolvingDecisionId = decision.id;
-    if (approved) {
-      this.pursuitsService.update(this.selected.pursuit.id, {
-        status: 'completed',
-        completionState: 'verified',
-        currentStateSummary: decision.yesConsequence,
-        actor: 'Robert',
-      }).subscribe({
-        next: () => {
-          this.resolvingDecisionId = '';
-          this.notification.success('Pursuit completed', 'Verified completion was recorded through the evidence guard.');
-          this.reloadSelectedAfterDecision();
-        },
-        error: (error) => {
-          this.resolvingDecisionId = '';
-          this.notification.error('Completion blocked', error?.error?.error || 'HAI could not verify enough evidence to close this pursuit.');
-        },
-      });
-      return;
-    }
     this.pursuitsService.resolveDecision(this.selected.pursuit.id, {
       decisionId: decision.id,
       decisionType: decision.decisionType,
-      approved: false,
+      approved,
       reason: decision.reason,
-      note: decision.noConsequence || 'Robert kept the pursuit active after completion review.',
+      note: approved
+        ? decision.yesConsequence || 'Robert approved verified pursuit completion.'
+        : decision.noConsequence || 'Robert kept the pursuit active after completion review.',
       evidenceUri: decision.evidenceUri,
       evidenceLabel: decision.evidenceLabel,
-      actor: 'Robert',
     }).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.resolvingDecisionId = '';
-        this.notification.success('Pursuit kept active', 'The completion review decision was recorded.');
+        this.notification.success(
+          approved ? 'Pursuit completed' : 'Pursuit kept active',
+          approved
+            ? 'Verified completion and the Robert decision were recorded in the audit trail.'
+            : 'The completion review decision was recorded.'
+        );
         this.load();
       },
       error: (error) => {
         this.resolvingDecisionId = '';
-        this.notification.error('Decision blocked', error?.error?.error || 'The completion review decision could not be recorded.');
+        this.notification.error(
+          approved ? 'Completion blocked' : 'Decision blocked',
+          error?.error?.error || 'The completion review decision could not be recorded.'
+        );
       },
     });
   }
@@ -1063,8 +1201,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     }
     this.resolvingDecisionId = decision.id;
     if (approved) {
-      this.pursuitsService.plan(this.selected.pursuit.id, {
-        actor: 'Robert',
+      this.pursuitsService.acceptCandidate(this.selected.pursuit.id, {
         requiresReview: decision.riskLevel === 'high',
         reviewReason: decision.reason,
       }).subscribe({

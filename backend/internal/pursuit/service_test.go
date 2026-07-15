@@ -1,14 +1,175 @@
 package pursuit
 
 import (
-	"automation-hub-backend/internal/models"
-	"automation-hub-backend/internal/workflow"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/workflow"
+
 	"github.com/google/uuid"
 )
+
+func TestDashboardSerializesEmptyQueuesAsArrays(t *testing.T) {
+	service := NewService(newFakeRepo(), nil)
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard returned error: %v", err)
+	}
+	payload, err := json.Marshal(dashboard)
+	if err != nil {
+		t.Fatalf("marshal dashboard: %v", err)
+	}
+	for _, field := range []string{
+		"decisionQueue", "needsRobert", "vaReady", "systemReady", "blocked", "stale",
+		"reviewDue", "planningNeeded", "recentlyChanged", "highRisk", "completionCandidates",
+	} {
+		if strings.Contains(string(payload), `"`+field+`":null`) {
+			t.Fatalf("dashboard field %q serialized as null: %s", field, payload)
+		}
+	}
+}
+
+func TestDetailSerializesEmptyConversationsAsArray(t *testing.T) {
+	service := NewService(newFakeRepo(), nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Empty conversation context", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	if strings.Contains(string(payload), `"conversations":null`) {
+		t.Fatalf("conversation metadata serialized as null: %s", payload)
+	}
+}
+
+func TestDetailLoadFailureBlocksDashboardInsteadOfInventingEmptyState(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Recover unavailable pursuit state", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	repo.linkedWorkflowErr = errors.New("database connection unavailable")
+
+	if _, err := service.DetailForOwner("alice", created.ID); err == nil || !strings.Contains(err.Error(), "load pursuit linked workflows") {
+		t.Fatalf("DetailForOwner error = %v, want linked-workflow load error", err)
+	}
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if dashboard.Counts["blocked"] != 1 || dashboard.Counts["needsRobert"] != 1 || len(dashboard.Blocked) != 1 || len(dashboard.NeedsRobert) != 1 {
+		t.Fatalf("dashboard hid detail failure: counts=%#v blocked=%#v needsRobert=%#v", dashboard.Counts, dashboard.Blocked, dashboard.NeedsRobert)
+	}
+	item := dashboard.Blocked[0]
+	if !strings.Contains(item.CurrentState, "temporarily unavailable") || !strings.Contains(item.NextAction, "Retry") {
+		t.Fatalf("dashboard failure item = %#v", item)
+	}
+	if len(dashboard.SystemReady) != 0 || len(dashboard.VAReady) != 0 || item.CompletionCandidate {
+		t.Fatalf("failed detail was treated as ready: %#v", dashboard)
+	}
+}
+
+func TestConversationArchiveLinksAreOwnerScopedAndMetadataOnly(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Resolve housing dispute", OwnerIdentity: "alice", ProjectKey: "housing"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	memoryID := uuid.New()
+	repo.memories[memoryID] = models.ContextMemory{ID: memoryID, OwnerIdentity: "alice", ProjectKey: "housing", Summary: "Collect the housing evidence."}
+	conversationID := uuid.New()
+	repo.conversations[conversationID] = models.AIConversationArchive{
+		ID:               conversationID,
+		OwnerIdentity:    "alice",
+		Platform:         "chatgpt",
+		ExternalID:       "thread-housing-1",
+		Title:            "Housing evidence discussion",
+		SourceURI:        "chatgpt://thread-housing-1",
+		MessageCount:     8,
+		Preview:          "private conversation preview must not leak through pursuit detail",
+		EncryptedPayload: []byte("private encrypted payload"),
+		CapturedAt:       time.Now().UTC(),
+	}
+
+	result, err := service.AutoLinkMemory(AutoLinkMemoryRequest{
+		OwnerIdentity:         "alice",
+		MemoryID:              memoryID,
+		Input:                 "Resolve housing dispute evidence",
+		ProjectKey:            "housing",
+		ConversationID:        conversationID,
+		ConversationSourceURI: "chatgpt://thread-housing-1",
+		ConversationLabel:     "Housing evidence discussion",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkMemory returned error: %v", err)
+	}
+	if !result.Linked || !hasPursuitLink(result.Links, LinkAIConversation, conversationID.String()) {
+		t.Fatalf("conversation metadata link missing from auto-link result: %#v", result)
+	}
+
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if len(detail.Conversations) != 1 || detail.Conversations[0].ID != conversationID || detail.Conversations[0].Title != "Housing evidence discussion" {
+		t.Fatalf("conversation metadata = %#v", detail.Conversations)
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	if strings.Contains(string(payload), "private encrypted payload") || strings.Contains(string(payload), "private conversation preview") || strings.Contains(string(payload), "encryptedPayload") || strings.Contains(string(payload), "preview") {
+		t.Fatalf("pursuit detail exposed archive content: %s", payload)
+	}
+
+	bobConversationID := uuid.New()
+	repo.conversations[bobConversationID] = models.AIConversationArchive{ID: bobConversationID, OwnerIdentity: "bob", Platform: "chatgpt", ExternalID: "thread-bob", SourceURI: "chatgpt://thread-bob"}
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAIConversation, LinkID: bobConversationID.String(), Relationship: "conversation_context"}); err == nil {
+		t.Fatal("owner could link another user's conversation archive")
+	}
+}
+
+func TestConversationIDFromAIChatSourceRejectsUntrustedFormats(t *testing.T) {
+	conversationID := uuid.New()
+	if got := conversationIDFromAIChatSource("ai_chat", conversationID.String()+":"+uuid.NewString()); got != conversationID {
+		t.Fatalf("conversation ID = %s, want %s", got, conversationID)
+	}
+	for _, test := range []struct {
+		sourceType string
+		sourceID   string
+	}{
+		{sourceType: "email", sourceID: conversationID.String() + ":" + uuid.NewString()},
+		{sourceType: "ai_chat", sourceID: conversationID.String()},
+		{sourceType: "ai_chat", sourceID: "not-a-uuid:" + uuid.NewString()},
+	} {
+		if got := conversationIDFromAIChatSource(test.sourceType, test.sourceID); got != uuid.Nil {
+			t.Fatalf("conversation ID for %#v = %s, want nil", test, got)
+		}
+	}
+}
+
+func hasPursuitLink(links []models.PursuitLink, linkType, linkID string) bool {
+	for _, link := range links {
+		if link.LinkType == linkType && link.LinkID == linkID {
+			return true
+		}
+	}
+	return false
+}
 
 func TestCreateClassifiesAndAuditsPursuit(t *testing.T) {
 	repo := newFakeRepo()
@@ -35,6 +196,120 @@ func TestCreateClassifiesAndAuditsPursuit(t *testing.T) {
 	}
 }
 
+func TestCreateCannotDowngradeDetectedHighRiskOrUpgradeAutonomy(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+
+	created, err := service.Create(CreateRequest{
+		Title:         "Send legal evidence to the government",
+		Description:   "Prepare the lawyer reply and attach the insurance evidence.",
+		RiskLevel:     "low",
+		AutonomyLevel: "autonomous_full_local_only",
+		Actor:         "test-operator",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if created.RiskLevel != "high" || created.AutonomyLevel != "approve_before_execute" {
+		t.Fatalf("unsafe policy override was accepted: %q/%q", created.RiskLevel, created.AutonomyLevel)
+	}
+	activity, _ := repo.FindActivities(created.ID, 10)
+	foundNormalization := false
+	for _, item := range activity {
+		if item.EventType == "pursuit.safety_normalized" && item.Actor == "test-operator" {
+			foundNormalization = true
+		}
+	}
+	if !foundNormalization {
+		t.Fatalf("safety normalization was not audited: %#v", activity)
+	}
+}
+
+func TestUpdateCannotDowngradeRiskWhenGoalBecomesHighRisk(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Organize documents", RiskLevel: "low", AutonomyLevel: "autonomous_safe"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	description := "Prepare the legal evidence bundle and lawyer reply."
+	updated, err := service.Update(created.ID, UpdateRequest{
+		Description:   &description,
+		RiskLevel:     "low",
+		AutonomyLevel: "autonomous_safe",
+		Actor:         "test-operator",
+	})
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if updated.RiskLevel != "high" || updated.AutonomyLevel != "approve_before_execute" {
+		t.Fatalf("unsafe update override was accepted: %q/%q", updated.RiskLevel, updated.AutonomyLevel)
+	}
+	activity, _ := repo.FindActivities(created.ID, 10)
+	foundNormalization := false
+	for _, item := range activity {
+		if item.EventType == "pursuit.safety_normalized" && item.Actor == "test-operator" {
+			foundNormalization = true
+		}
+	}
+	if !foundNormalization {
+		t.Fatalf("updated safety normalization was not audited: %#v", activity)
+	}
+}
+
+func TestPursuitRationaleFlowsIntoOperationalContext(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	rationale := "Legal evidence must be ready before the municipality deadline."
+	created, err := service.Create(CreateRequest{
+		Title:          "Prepare case materials",
+		WhyItMatters:   rationale,
+		DesiredOutcome: "A source-linked evidence package is ready for review.",
+		RiskLevel:      "low",
+		AutonomyLevel:  "autonomous_safe",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if created.WhyItMatters != rationale {
+		t.Fatalf("why it matters = %q, want %q", created.WhyItMatters, rationale)
+	}
+	if created.RiskLevel != "high" || created.AutonomyLevel != "approve_before_execute" {
+		t.Fatalf("rationale did not raise the safety floor: %q/%q", created.RiskLevel, created.AutonomyLevel)
+	}
+	if created.Domain != "stability" {
+		t.Fatalf("rationale did not classify the pursuit domain: %q", created.Domain)
+	}
+
+	matches, err := service.Match(MatchRequest{Input: "municipality legal evidence"})
+	if err != nil {
+		t.Fatalf("Match returned error: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Pursuit.ID != created.ID {
+		t.Fatalf("rationale was not included in matching: %#v", matches)
+	}
+	if !strings.Contains(pursuitPlanInput(*created), "Why it matters: "+rationale) {
+		t.Fatalf("planner input did not include rationale: %q", pursuitPlanInput(*created))
+	}
+
+	updatedRationale := "A complete evidence trail protects the case and prevents an unsupported response."
+	updated, err := service.Update(created.ID, UpdateRequest{WhyItMatters: &updatedRationale, Actor: "test-operator"})
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if updated.WhyItMatters != updatedRationale {
+		t.Fatalf("updated rationale = %q, want %q", updated.WhyItMatters, updatedRationale)
+	}
+
+	brief, err := service.DelegationPackage(created.ID)
+	if err != nil {
+		t.Fatalf("DelegationPackage returned error: %v", err)
+	}
+	if brief.WhyItMatters != updatedRationale {
+		t.Fatalf("delegation rationale = %q, want %q", brief.WhyItMatters, updatedRationale)
+	}
+}
+
 func TestMatchUsesProjectAndExistingSourceLink(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -53,6 +328,21 @@ func TestMatchUsesProjectAndExistingSourceLink(t *testing.T) {
 	if len(sourceMatches) != 1 || sourceMatches[0].Score < 0.9 {
 		t.Fatalf("source match = %#v", sourceMatches)
 	}
+	if _, err := service.Link(created.ID, LinkRequest{
+		LinkType:     LinkWorkflow,
+		LinkID:       uuid.New().String(),
+		Relationship: "operational_work",
+		SourceURI:    "local://email/asr-claim-12",
+	}); err != nil {
+		t.Fatalf("Link source URI returned error: %v", err)
+	}
+	uriMatches, err := service.Match(MatchRequest{SourceURI: "local://email/asr-claim-12"})
+	if err != nil {
+		t.Fatalf("Match source URI returned error: %v", err)
+	}
+	if len(uriMatches) != 1 || uriMatches[0].Pursuit.ID != created.ID || uriMatches[0].Score < 0.9 {
+		t.Fatalf("source URI match = %#v", uriMatches)
+	}
 
 	projectMatches, err := service.Match(MatchRequest{Input: "follow up insurance claim documents", ProjectKey: "asr"})
 	if err != nil {
@@ -60,6 +350,55 @@ func TestMatchUsesProjectAndExistingSourceLink(t *testing.T) {
 	}
 	if len(projectMatches) == 0 || projectMatches[0].Pursuit.ID != created.ID {
 		t.Fatalf("project match = %#v", projectMatches)
+	}
+}
+
+func TestMatchUsesVisibleExactLinkWhenAnotherOwnerHasTheSameSource(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice legal evidence", OwnerIdentity: "alice", ProjectKey: "alice-case"})
+	if err != nil {
+		t.Fatalf("create alice pursuit: %v", err)
+	}
+	bob, err := service.Create(CreateRequest{Title: "Bob legal evidence", OwnerIdentity: "bob", ProjectKey: "bob-case"})
+	if err != nil {
+		t.Fatalf("create bob pursuit: %v", err)
+	}
+	const sourceID = "shared-message-41"
+	const sourceURI = "local://mail/shared-message-41"
+	if _, err := service.Link(bob.ID, LinkRequest{
+		LinkType: LinkSourceItem, LinkID: sourceID, Relationship: "evidence", SourceURI: sourceURI, Confidence: 0.99,
+	}); err != nil {
+		t.Fatalf("link bob source: %v", err)
+	}
+	if _, err := service.Link(alice.ID, LinkRequest{
+		LinkType: LinkSourceItem, LinkID: sourceID, Relationship: "evidence", SourceURI: sourceURI, Confidence: 0.10,
+	}); err != nil {
+		t.Fatalf("link alice source: %v", err)
+	}
+
+	sourceMatches, err := service.Match(MatchRequest{OwnerIdentity: " alice ", SourceType: LinkSourceItem, SourceID: sourceID})
+	if err != nil {
+		t.Fatalf("match by source id: %v", err)
+	}
+	if len(sourceMatches) != 1 || sourceMatches[0].Pursuit.ID != alice.ID {
+		t.Fatalf("alice source matches = %#v, want alice pursuit", sourceMatches)
+	}
+
+	uriMatches, err := service.Match(MatchRequest{OwnerIdentity: "alice", SourceURI: sourceURI})
+	if err != nil {
+		t.Fatalf("match by source URI: %v", err)
+	}
+	if len(uriMatches) != 1 || uriMatches[0].Pursuit.ID != alice.ID {
+		t.Fatalf("alice URI matches = %#v, want alice pursuit", uriMatches)
+	}
+
+	outsiderMatches, err := service.Match(MatchRequest{OwnerIdentity: "charlie", SourceType: LinkSourceItem, SourceID: sourceID})
+	if err != nil {
+		t.Fatalf("match for unrelated owner: %v", err)
+	}
+	if len(outsiderMatches) != 0 {
+		t.Fatalf("unrelated owner received exact source match: %#v", outsiderMatches)
 	}
 }
 
@@ -149,6 +488,78 @@ func TestAutoLinkWorkflowSkipsWeakPursuitMatch(t *testing.T) {
 	}
 }
 
+func TestAutoLinkWorkflowDoesNotAttachOperationalWorkToClosedPursuit(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Completed ASR insurance claim", ProjectKey: "asr"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	closed := repo.pursuits[created.ID]
+	closed.Status = StatusCompleted
+	closed.CompletionState = CompletionVerified
+	repo.pursuits[created.ID] = closed
+
+	result, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
+		WorkflowID: uuid.New(),
+		Input:      "New ASR claim follow-up arrived after completion.",
+		ProjectKey: "asr",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkWorkflow returned error: %v", err)
+	}
+	if result.Linked || !strings.Contains(result.Message, "closed") {
+		t.Fatalf("closed pursuit must reject operational auto-linking: %#v", result)
+	}
+	links, _ := repo.FindLinks(created.ID)
+	if len(links) != 0 {
+		t.Fatalf("closed pursuit links = %#v, want none", links)
+	}
+}
+
+func TestRouteIntakeCreatesCandidateInsteadOfReopeningClosedPursuit(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	closed, err := service.Create(CreateRequest{Title: "Completed ASR insurance claim", ProjectKey: "asr"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	closedRecord := repo.pursuits[closed.ID]
+	closedRecord.Status = StatusCompleted
+	closedRecord.CompletionState = CompletionVerified
+	repo.pursuits[closed.ID] = closedRecord
+
+	result, err := service.RouteIntake(IntakeRequest{
+		Input:       "A new ASR claim follow-up arrived after the earlier claim was completed.",
+		ProjectKey:  "asr",
+		SourceType:  "email",
+		SourceID:    "new-asr-follow-up",
+		SourceURI:   "email://asr/new-follow-up",
+		SourceLabel: "New ASR follow-up",
+	})
+	if err != nil {
+		t.Fatalf("RouteIntake returned error: %v", err)
+	}
+	if !result.CreatedCandidate || result.PursuitID == uuid.Nil || result.PursuitID == closed.ID {
+		t.Fatalf("closed pursuit should produce a new candidate: %#v", result)
+	}
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("closed-pursuit follow-up created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
+	}
+	persistedClosed, err := repo.FindByID(closed.ID)
+	if err != nil {
+		t.Fatalf("FindByID(closed): %v", err)
+	}
+	if persistedClosed.Status != StatusCompleted || persistedClosed.CompletionState != CompletionVerified {
+		t.Fatalf("closed pursuit was reactivated: %#v", persistedClosed)
+	}
+	links, _ := repo.FindLinks(closed.ID)
+	if len(links) != 0 {
+		t.Fatalf("closed pursuit received new operational links: %#v", links)
+	}
+}
+
 func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -172,7 +583,7 @@ func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.
 	if err != nil {
 		t.Fatalf("AutoLinkWorkflow returned error: %v", err)
 	}
-	if !result.Linked || !result.Created || result.PursuitID == uuid.Nil {
+	if result.Linked || !result.Created || result.PursuitID == uuid.Nil {
 		t.Fatalf("candidate result = %#v", result)
 	}
 
@@ -191,8 +602,10 @@ func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.
 	for _, link := range links {
 		found[link.LinkType+":"+link.Relationship] = true
 	}
+	if found[LinkWorkflow+":candidate_operational_work"] {
+		t.Fatalf("unaccepted candidate received pre-existing workflow work: %#v", links)
+	}
 	for _, expected := range []string{
-		LinkWorkflow + ":candidate_operational_work",
 		LinkSourceItem + ":candidate_source_record",
 		LinkSourceExtraction + ":candidate_source_extraction",
 	} {
@@ -204,7 +617,8 @@ func TestAutoLinkWorkflowCreatesReviewableCandidateWhenNoMatchExists(t *testing.
 
 func TestAutoCreatedCandidateRequiresRobertDecisionAndCanBeAccepted(t *testing.T) {
 	repo := newFakeRepo()
-	service := NewService(repo, nil)
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
 	workflowID := uuid.New()
 
 	result, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
@@ -255,9 +669,12 @@ func TestAutoCreatedCandidateRequiresRobertDecisionAndCanBeAccepted(t *testing.T
 		t.Fatalf("candidate review decision missing: %#v", detail.DecisionQueue)
 	}
 
-	accepted, err := service.Plan(result.PursuitID, PlanRequest{Actor: "Robert"})
+	accepted, err := service.AcceptCandidate(result.PursuitID, PlanRequest{Actor: "Robert"})
 	if err != nil {
-		t.Fatalf("Plan accepted candidate returned error: %v", err)
+		t.Fatalf("AcceptCandidate returned error: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("accepted candidate created %d governed workflow(s), want 1", workflowService.calls)
 	}
 	if accepted.Pursuit.SourceOfCreation != "openclaw_pursuit_intake" {
 		t.Fatalf("source marker was not cleared after acceptance: %q", accepted.Pursuit.SourceOfCreation)
@@ -310,27 +727,72 @@ func TestAutoLinkMemoryLinksStableContextToPursuit(t *testing.T) {
 	}
 }
 
+func TestAutoLinkMemoryRefreshDoesNotPersistOtherOwnerWorkflowState(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Alice evidence pursuit", OwnerIdentity: "alice", ProjectKey: "housing"})
+	if err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{ID: bobWorkflowID, OwnerIdentity: "bob", Title: "Bob private workflow"}
+	repo.links[uuid.New()] = models.PursuitLink{
+		ID:           uuid.New(),
+		PursuitID:    pursuit.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_malformed",
+	}
+	memoryID := uuid.New()
+	repo.memories[memoryID] = models.ContextMemory{ID: memoryID, OwnerIdentity: "alice", ProjectKey: "housing", Content: "Use the verified housing evidence timeline."}
+
+	result, err := service.AutoLinkMemory(AutoLinkMemoryRequest{
+		OwnerIdentity: "alice",
+		MemoryID:      memoryID,
+		Input:         "Update Alice evidence pursuit with the verified housing evidence timeline.",
+		ProjectKey:    "housing",
+		Actor:         "memory-engine",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkMemory: %v", err)
+	}
+	if !result.Linked || result.PursuitID != pursuit.ID {
+		t.Fatalf("auto-link result = %#v", result)
+	}
+	updated, err := repo.FindByID(pursuit.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if strings.Contains(updated.CurrentStateSummary, "1 linked workflows") || strings.Contains(updated.CurrentStateSummary, "Bob private workflow") {
+		t.Fatalf("owner-scoped refresh persisted other-owner workflow state: %#v", updated)
+	}
+}
+
 func TestIntakeCreatesWorkflowAndLinksOperationalWork(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
-	created, err := service.Create(CreateRequest{Title: "Government letter response", ProjectKey: "letter", Description: "Legal/government reply"})
+	created, err := service.Create(CreateRequest{Title: "Government letter response", OwnerIdentity: "alice", ProjectKey: "letter", Description: "Legal/government reply"})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 
 	detail, err := service.Intake(created.ID, IntakeRequest{
-		Input:       "New government letter asks for a reply before Friday.",
-		SourceType:  "email",
-		SourceID:    "email-2",
-		SourceURI:   "local://email-2",
-		SourceLabel: "Government letter",
+		OwnerIdentity: "bob",
+		Input:         "New government letter asks for a reply before Friday.",
+		SourceType:    "email",
+		SourceID:      "email-2",
+		SourceURI:     "local://email-2",
+		SourceLabel:   "Government letter",
 	})
 	if err != nil {
 		t.Fatalf("Intake returned error: %v", err)
 	}
 	if workflowService.received.ProjectKey != "letter" {
 		t.Fatalf("workflow project key = %q", workflowService.received.ProjectKey)
+	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
 	}
 	if len(detail.Workflows) != 1 || len(detail.ApprovalItems) != 1 {
 		t.Fatalf("detail workflows/approvals = %#v / %#v", detail.Workflows, detail.ApprovalItems)
@@ -350,9 +812,102 @@ func TestIntakeCreatesWorkflowAndLinksOperationalWork(t *testing.T) {
 	}
 }
 
+func TestCandidateIntakeRequiresExplicitAcceptanceBeforeCreatingWorkflow(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Imported legal follow-up",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "ai_chat_pursuit_candidate",
+		Status:           StatusWaiting,
+	})
+	if err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+
+	_, err = service.IntakeForOwner("alice", candidate.ID, IntakeRequest{
+		Input:      "Draft the requested response.",
+		SourceType: "ai_chat",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("candidate intake error = %v, want explicit acceptance guard", err)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("candidate intake created %d workflow(s), want none", workflowService.calls)
+	}
+
+	if _, err := service.PlanForOwner("alice", candidate.ID, PlanRequest{Actor: "alice"}); err == nil || !strings.Contains(err.Error(), "explicit approval action") {
+		t.Fatalf("PlanForOwner error = %v, want explicit approval action guard", err)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("generic candidate plan created %d workflow(s), want none", workflowService.calls)
+	}
+	if _, err := service.AcceptCandidateForOwner("alice", candidate.ID, PlanRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("AcceptCandidateForOwner returned error: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("accepted candidate created %d workflow(s), want one", workflowService.calls)
+	}
+}
+
+func TestAutoLinkWorkflowDoesNotAttachOperationalWorkToUnacceptedCandidate(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Imported runtime recovery",
+		OwnerIdentity:    "alice",
+		ProjectKey:       "018-HAI",
+		SourceOfCreation: "ai_chat_pursuit_candidate",
+		Status:           StatusWaiting,
+	})
+	if err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+	workflowID := uuid.New()
+
+	result, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
+		OwnerIdentity: "alice",
+		WorkflowID:    workflowID,
+		Input:         "Prepare the local runtime recovery workflow safely.",
+		ProjectKey:    "018-HAI",
+		SourceType:    "ai_chat",
+		SourceID:      "conversation:insight",
+		SourceURI:     "chatgpt://conversation/runtime-recovery",
+		Actor:         "memory-engine",
+	})
+	if err != nil {
+		t.Fatalf("AutoLinkWorkflow returned error: %v", err)
+	}
+	if result.Linked || result.PursuitID != candidate.ID || !strings.Contains(result.Message, "awaits explicit acceptance") {
+		t.Fatalf("candidate auto-link result = %#v", result)
+	}
+	links, err := repo.FindLinks(candidate.ID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
+	}
+	if pursuitLinkExists(links, LinkWorkflow, workflowID.String(), "operational_work") {
+		t.Fatalf("unaccepted candidate received an operational workflow link: %#v", links)
+	}
+	activities, err := repo.FindActivities(candidate.ID, 20)
+	if err != nil {
+		t.Fatalf("FindActivities returned error: %v", err)
+	}
+	foundDeferredAudit := false
+	for _, activity := range activities {
+		if activity.EventType == "pursuit.candidate_workflow_link_deferred" && activity.SourceID == workflowID.String() {
+			foundDeferredAudit = true
+			break
+		}
+	}
+	if !foundDeferredAudit {
+		t.Fatalf("candidate workflow deferral was not audited: %#v", activities)
+	}
+}
+
 func TestIntakeLinksSourceReferenceIntoPursuitEvidence(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "ASR claim evidence", ProjectKey: "asr"})
 	if err != nil {
@@ -413,7 +968,7 @@ func TestIntakeLinksSourceReferenceIntoPursuitEvidence(t *testing.T) {
 
 func TestIntakePreservesDecisionEvidenceOnWorkflowLink(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{Title: "Recover failed runtime", ProjectKey: "hai"})
 	if err != nil {
@@ -497,25 +1052,27 @@ func TestIntakePreservesDecisionEvidenceOnWorkflowLink(t *testing.T) {
 
 func TestRouteIntakeMatchesExistingPursuitAndCreatesGovernedWorkflow(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{
-		Title:       "Vivare legal dispute",
-		ProjectKey:  "vivare",
-		Description: "Housing/legal evidence and formal replies.",
+		Title:         "Vivare legal dispute",
+		OwnerIdentity: "alice",
+		ProjectKey:    "vivare",
+		Description:   "Housing/legal evidence and formal replies.",
 	})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 
 	result, err := service.RouteIntake(IntakeRequest{
-		Input:       "New Vivare lawyer email asks for evidence before the hearing.",
-		ProjectKey:  "vivare",
-		SourceType:  "email",
-		SourceID:    "email-77",
-		SourceURI:   "local://email/vivare-77",
-		SourceLabel: "Vivare lawyer email",
-		Actor:       "source-worker",
+		Input:         "New Vivare lawyer email asks for evidence before the hearing.",
+		ProjectKey:    "vivare",
+		SourceType:    "email",
+		SourceID:      "email-77",
+		SourceURI:     "local://email/vivare-77",
+		SourceLabel:   "Vivare lawyer email",
+		Actor:         "source-worker",
+		OwnerIdentity: "alice",
 	})
 	if err != nil {
 		t.Fatalf("RouteIntake returned error: %v", err)
@@ -529,6 +1086,9 @@ func TestRouteIntakeMatchesExistingPursuitAndCreatesGovernedWorkflow(t *testing.
 	if workflowService.received.ProjectKey != "vivare" || workflowService.received.SourceURI != "local://email/vivare-77" {
 		t.Fatalf("workflow intake provenance = %#v", workflowService.received)
 	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("matched workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
+	}
 	links, _ := repo.FindLinks(created.ID)
 	found := false
 	for _, link := range links {
@@ -541,19 +1101,177 @@ func TestRouteIntakeMatchesExistingPursuitAndCreatesGovernedWorkflow(t *testing.
 	}
 }
 
+func TestDetailForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alicePursuit, err := service.Create(CreateRequest{
+		Title:         "Alice private pursuit",
+		OwnerIdentity: "alice",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:               bobWorkflowID,
+		OwnerIdentity:    "bob",
+		Title:            "Bob private approval workflow",
+		CurrentState:     workflow.StateNeedsApproval,
+		RequiresApproval: true,
+		ApprovalStatus:   "pending",
+	}
+	foreignURI := "workflow://private/bob-approval"
+	foreignLinkID := uuid.New()
+	repo.links[foreignLinkID] = models.PursuitLink{
+		ID:           foreignLinkID,
+		PursuitID:    alicePursuit.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_import",
+		SourceURI:    foreignURI,
+		SourceLabel:  "Bob private workflow",
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	detail, err := service.DetailForOwner("alice", alicePursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if len(detail.Links) != 0 || len(detail.Workflows) != 0 || len(detail.ApprovalItems) != 0 {
+		t.Fatalf("owner detail exposed legacy foreign workflow: %#v", detail)
+	}
+	if _, err := service.ResolveEvidenceForOwner("alice", alicePursuit.ID, foreignURI); err == nil {
+		t.Fatalf("ResolveEvidenceForOwner resolved evidence from a hidden legacy link")
+	}
+	overview, err := service.ApprovalsForOwner("alice", alicePursuit.ID)
+	if err != nil {
+		t.Fatalf("ApprovalsForOwner returned error: %v", err)
+	}
+	if len(overview.ApprovalItems) != 0 || overview.Counts["approvalItems"] != 0 {
+		t.Fatalf("owner approval overview exposed legacy foreign workflow: %#v", overview)
+	}
+}
+
+func TestActivityForOwnerRejectsAnotherOwnersAuditFeed(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice private activity", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	bob, err := service.Create(CreateRequest{Title: "Bob private activity", OwnerIdentity: "bob"})
+	if err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+	if _, err := repo.CreateActivity(&models.PursuitActivity{PursuitID: bob.ID, EventType: "pursuit.private", Message: "Bob's private source activity"}); err != nil {
+		t.Fatalf("Create Bob activity: %v", err)
+	}
+
+	if _, err := service.ActivityForOwner("alice", bob.ID); err == nil {
+		t.Fatalf("ActivityForOwner exposed another owner's audit feed")
+	}
+	activities, err := service.ActivityForOwner("alice", alice.ID)
+	if err != nil {
+		t.Fatalf("ActivityForOwner returned error for owner pursuit: %v", err)
+	}
+	if len(activities) == 0 {
+		t.Fatalf("ActivityForOwner omitted owner's audit records")
+	}
+}
+
+func TestDashboardForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alicePursuit, err := service.Create(CreateRequest{
+		Title:         "Alice dashboard pursuit",
+		OwnerIdentity: "alice",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:               bobWorkflowID,
+		OwnerIdentity:    "bob",
+		Title:            "Bob private approval workflow",
+		CurrentState:     workflow.StateNeedsApproval,
+		RequiresApproval: true,
+		ApprovalStatus:   "pending",
+	}
+	foreignLinkID := uuid.New()
+	repo.links[foreignLinkID] = models.PursuitLink{
+		ID:           foreignLinkID,
+		PursuitID:    alicePursuit.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_import",
+		SourceURI:    "workflow://private/bob-dashboard-approval",
+		SourceLabel:  "Bob private workflow",
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if dashboard.Counts["needsRobert"] != 0 || dashboard.Counts["decisionQueue"] != 0 || len(dashboard.NeedsRobert) != 0 || len(dashboard.DecisionQueue) != 0 {
+		t.Fatalf("owner dashboard exposed legacy foreign workflow: %#v", dashboard)
+	}
+	if len(dashboard.RecentlyChanged) != 1 || dashboard.RecentlyChanged[0].NeedsRobert != 0 || dashboard.RecentlyChanged[0].DecisionCards != 0 {
+		t.Fatalf("dashboard list item retained foreign workflow state: %#v", dashboard.RecentlyChanged)
+	}
+}
+
+func TestAutoLinkWorkflowRejectsForeignOwnerWorkflow(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	if _, err := service.Create(CreateRequest{
+		Title:         "Prepare Vivare evidence bundle",
+		Description:   "Collect evidence for the Vivare hearing.",
+		OwnerIdentity: "alice",
+		ProjectKey:    "vivare",
+	}); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:            bobWorkflowID,
+		OwnerIdentity: "bob",
+		Title:         "Bob private evidence workflow",
+		ProjectKey:    "vivare",
+		CurrentState:  workflow.StateReady,
+	}
+
+	_, err := service.AutoLinkWorkflow(AutoLinkWorkflowRequest{
+		OwnerIdentity: "alice",
+		WorkflowID:    bobWorkflowID,
+		Input:         "Prepare Vivare evidence bundle for the hearing.",
+		ProjectKey:    "vivare",
+		SourceURI:     "local://alice/vivare-intake",
+		SourceLabel:   "Alice evidence intake",
+	})
+	if err == nil {
+		t.Fatalf("AutoLinkWorkflow accepted a workflow owned by another user")
+	}
+}
+
 func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 
 	result, err := service.RouteIntake(IntakeRequest{
-		Input:       "Prepare YouTube removal appeal evidence and draft platform support follow-up.",
-		ProjectKey:  "youtube-removal",
-		SourceType:  "ai_chat",
-		SourceID:    "chat-99:action-1",
-		SourceURI:   "chat://youtube-removal/99",
-		SourceLabel: "YouTube appeal planning chat",
-		Actor:       "memory-engine",
+		OwnerIdentity: "alice",
+		Input:         "Prepare YouTube removal appeal evidence and draft platform support follow-up.",
+		ProjectKey:    "youtube-removal",
+		SourceType:    "ai_chat",
+		SourceID:      "chat-99:action-1",
+		SourceURI:     "chat://youtube-removal/99",
+		SourceLabel:   "YouTube appeal planning chat",
+		Actor:         "memory-engine",
 	})
 	if err != nil {
 		t.Fatalf("RouteIntake returned error: %v", err)
@@ -570,17 +1288,142 @@ func TestRouteIntakeCreatesReviewableCandidateWhenNoPursuitMatches(t *testing.T)
 	if len(result.Detail.DecisionQueue) == 0 || result.Detail.Summary.NeedsRobert == 0 {
 		t.Fatalf("candidate did not surface Robert review: decisions=%#v summary=%#v", result.Detail.DecisionQueue, result.Detail.Summary)
 	}
-	if workflowService.received.Trigger != "pursuit_global_intake" {
-		t.Fatalf("workflow trigger = %q", workflowService.received.Trigger)
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("unmatched candidate created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
 	}
+	links, err := repo.FindLinks(result.PursuitID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
+	}
+	if !pursuitLinkExists(links, "ai_chat", "chat-99:action-1", "intake_origin") {
+		t.Fatalf("candidate did not retain source provenance: %#v", links)
+	}
+}
+
+func TestCandidateFirstIntakeCreatesWorkflowOnlyAfterExplicitAcceptance(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+
+	routed, err := service.RouteIntake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Collect the evidence and prepare the formal response for the new legal matter.",
+		ProjectKey:    "legal",
+		SourceType:    "email",
+		SourceID:      "new-legal-matter",
+		SourceURI:     "email://legal/new-matter",
+		SourceLabel:   "New legal matter",
+		Actor:         "source-worker",
+	})
+	if err != nil {
+		t.Fatalf("RouteIntake: %v", err)
+	}
+	if !routed.CreatedCandidate || workflowService.calls != 0 {
+		t.Fatalf("candidate-first intake = %#v calls=%d", routed, workflowService.calls)
+	}
+
+	detail, err := service.AcceptCandidateForOwner("alice", routed.PursuitID, PlanRequest{Actor: "Robert"})
+	if err != nil {
+		t.Fatalf("AcceptCandidateForOwner: %v", err)
+	}
+	if workflowService.calls != 1 || len(detail.Workflows) != 1 || isPursuitCandidate(detail.Pursuit) {
+		t.Fatalf("accepted candidate did not create exactly one governed workflow: calls=%d detail=%#v", workflowService.calls, detail)
+	}
+}
+
+func TestRouteWorkflowIntakeDefersUnmatchedCandidateBeforeWorkflowCreation(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	request := workflow.IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Prepare the evidence bundle for the government hearing.",
+		ProjectKey:    "vivare",
+		SourceType:    "workflow_api",
+		SourceID:      "workflow-api-vivare-01",
+		SourceURI:     "workflow-api://intake/workflow-api-vivare-01",
+		SourceLabel:   "Direct workflow API intake",
+		Trigger:       "workflow_api_intake",
+		Actor:         "verified-operator",
+	}
+
+	record, err := service.RouteWorkflowIntake(request)
+	routed, pending := IsCandidatePending(err)
+	if !pending {
+		t.Fatalf("RouteWorkflowIntake error = %v, want candidate pending", err)
+	}
+	if record != nil || routed == nil || !routed.CreatedCandidate || routed.PursuitID == uuid.Nil {
+		t.Fatalf("candidate pending result = record:%#v routed:%#v", record, routed)
+	}
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("unmatched workflow endpoint intake created work: %#v", workflowService)
+	}
+	matches, err := service.Match(MatchRequest{SourceType: request.SourceType, SourceID: request.SourceID})
+	if err != nil {
+		t.Fatalf("Match returned error: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Pursuit.ID == uuid.Nil {
+		t.Fatalf("routed workflow did not create a traceable pursuit match: %#v", matches)
+	}
+}
+
+func TestRouteIntakeReusesPursuitLinkedByAssistantCommandIdentity(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	request := IntakeRequest{
+		Input:       "Prepare a local runtime recovery workflow safely.",
+		ProjectKey:  "018-HAI",
+		SourceType:  LinkAssistantCommand,
+		SourceID:    "assistant-7bc9d40f",
+		SourceURI:   "assistant://command/assistant-7bc9d40f",
+		SourceLabel: "HAI chat command",
+		Actor:       "operator",
+	}
+
+	first, err := service.RouteIntake(request)
+	if err != nil {
+		t.Fatalf("first RouteIntake returned error: %v", err)
+	}
+	if !first.CreatedCandidate || first.PursuitID == uuid.Nil {
+		t.Fatalf("first route result = %#v, want candidate", first)
+	}
+
+	second, err := service.RouteIntake(request)
+	if err != nil {
+		t.Fatalf("second RouteIntake returned error: %v", err)
+	}
+	if !second.Matched || second.CreatedCandidate || second.PursuitID != first.PursuitID {
+		t.Fatalf("second route result = %#v, want exact existing pursuit match", second)
+	}
+	if second.Mode != "matched_candidate" || workflowService.calls != 0 {
+		t.Fatalf("repeated candidate intake mode/workflows = %s/%d, want matched_candidate/0", second.Mode, workflowService.calls)
+	}
+	links, err := repo.FindLinks(first.PursuitID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
+	}
+	if !pursuitLinkExists(links, LinkAssistantCommand, request.SourceID, "command_origin") {
+		t.Fatalf("assistant command source identity was not persisted: %#v", links)
+	}
+}
+
+func pursuitLinkExists(links []models.PursuitLink, linkType, linkID, relationship string) bool {
+	for _, link := range links {
+		if link.LinkType == linkType && link.LinkID == linkID && link.Relationship == relationship {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 	created, err := service.Create(CreateRequest{
 		Title:                "Insurance claim evidence bundle",
+		OwnerIdentity:        "alice",
 		ProjectKey:           "asr",
 		Description:          "Collect evidence for insurer before any external response.",
 		DesiredOutcome:       "Verified evidence bundle and approved reply draft.",
@@ -600,6 +1443,9 @@ func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	}
 	if workflowService.received.Trigger != "pursuit_planning" || !workflowService.received.RequiresReview {
 		t.Fatalf("workflow trigger/review = %s/%v", workflowService.received.Trigger, workflowService.received.RequiresReview)
+	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("planned workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
 	}
 	if !strings.Contains(workflowService.received.Input, "Verified evidence bundle") || !strings.Contains(workflowService.received.Input, "approval-gated") {
 		t.Fatalf("workflow input missing pursuit context: %s", workflowService.received.Input)
@@ -627,6 +1473,78 @@ func TestPlanCreatesFirstWorkflowFromPursuitContext(t *testing.T) {
 	}
 	if !foundPlanned {
 		t.Fatalf("pursuit planned activity missing: %#v", activity)
+	}
+}
+
+func TestRouteAmbientOpportunityCreatesCandidateBeforeWorkflow(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	opportunityID := uuid.New()
+	repo.ambientOpportunities[opportunityID] = models.AmbientOpportunity{ID: opportunityID, OwnerIdentity: "alice"}
+
+	result, err := service.RouteAmbientOpportunity(AmbientOpportunityRouteRequest{
+		OwnerIdentity: "alice",
+		OpportunityID: opportunityID,
+		Title:         "Review an unresolved supplier dispute",
+		Rationale:     "A source-backed issue needs a deliberate objective before work begins.",
+		NextAction:    "Review the evidence and decide whether this should become active work.",
+		SourceURI:     "ambient://opportunities/" + opportunityID.String(),
+		Actor:         "alice",
+	})
+	if err != nil {
+		t.Fatalf("RouteAmbientOpportunity returned error: %v", err)
+	}
+	if !result.CreatedCandidate || result.PursuitID == uuid.Nil || result.WorkflowID != uuid.Nil {
+		t.Fatalf("ambient route result = %#v, want candidate without workflow", result)
+	}
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("unmatched ambient opportunity created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
+	}
+	candidate, err := repo.FindByID(result.PursuitID)
+	if err != nil || !isPursuitCandidate(*candidate) {
+		t.Fatalf("ambient candidate = %#v err=%v", candidate, err)
+	}
+	links, err := repo.FindLinks(result.PursuitID)
+	if err != nil || len(links) != 1 || links[0].LinkType != LinkAmbientOpportunity || links[0].LinkID != opportunityID.String() {
+		t.Fatalf("ambient candidate provenance links = %#v err=%v", links, err)
+	}
+}
+
+func TestRouteAmbientOpportunityCreatesWorkflowForActiveMatch(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	active, err := service.Create(CreateRequest{Title: "Supplier dispute", OwnerIdentity: "alice", ProjectKey: "legal"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	opportunityID := uuid.New()
+	repo.ambientOpportunities[opportunityID] = models.AmbientOpportunity{ID: opportunityID, OwnerIdentity: "alice"}
+
+	result, err := service.RouteAmbientOpportunity(AmbientOpportunityRouteRequest{
+		OwnerIdentity:  "alice",
+		OpportunityID:  opportunityID,
+		Title:          "Prepare supplier dispute evidence",
+		NextAction:     "Prepare the evidence bundle for review.",
+		ProjectKey:     "legal",
+		SourceURI:      "ambient://opportunities/" + opportunityID.String(),
+		RequiresReview: true,
+		ReviewReason:   "evidence needs review before action",
+		Actor:          "alice",
+	})
+	if err != nil {
+		t.Fatalf("RouteAmbientOpportunity returned error: %v", err)
+	}
+	if result.PursuitID != active.ID || result.WorkflowID == uuid.Nil || result.CreatedCandidate {
+		t.Fatalf("ambient route result = %#v, want active pursuit workflow", result)
+	}
+	if workflowService.calls != 1 || !workflowService.received.RequiresReview || workflowService.received.SourceType != LinkAmbientOpportunity || workflowService.received.SourceID != opportunityID.String() {
+		t.Fatalf("ambient workflow intake = %#v calls=%d", workflowService.received, workflowService.calls)
+	}
+	links, err := repo.FindLinks(active.ID)
+	if err != nil || len(links) != 2 {
+		t.Fatalf("active ambient links = %#v err=%v", links, err)
 	}
 }
 
@@ -665,6 +1583,48 @@ func TestDetailSurfacesBlockersAndCompletionCandidate(t *testing.T) {
 	}
 	if detail.Summary.CompletionCandidate {
 		t.Fatalf("blocked pursuit cannot be a completion candidate")
+	}
+}
+
+func TestDetailSurfacesFailedQualityGateAsPursuitBlocker(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Production-ready dashboard", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:                 workflowID,
+		Title:              "Validate dashboard build",
+		ProjectKey:         "018-HAI",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	repo.qualityGates = append(repo.qualityGates, models.WorkflowQualityGate{
+		ID:         uuid.New(),
+		WorkflowID: workflowID,
+		Gate:       "tests or build evidence",
+		Status:     "failed",
+		Reason:     "the production build evidence is missing",
+	})
+	_, _ = service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String()})
+
+	detail, err := service.Detail(created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.QualityGates) != 1 || detail.Summary.QualityGatesNeedingReview != 1 {
+		t.Fatalf("quality gate summary = gates=%#v summary=%#v", detail.QualityGates, detail.Summary)
+	}
+	if len(detail.Blockers) != 1 || !strings.Contains(detail.Blockers[0].Label, "tests or build evidence") {
+		t.Fatalf("quality gate blocker = %#v", detail.Blockers)
+	}
+	if len(detail.ActionQueues.NeedsRobert) != 1 || !strings.Contains(detail.ActionQueues.NeedsRobert[0].Label, "production build evidence") {
+		t.Fatalf("quality gate action queue = %#v", detail.ActionQueues)
+	}
+	if detail.Summary.CompletionCandidate {
+		t.Fatalf("failed quality gate must prevent a completion candidate: %#v", detail.Summary)
 	}
 }
 
@@ -715,6 +1675,54 @@ func TestDetailSurfacesCompletionReviewDecisionForVerifiedWorkflows(t *testing.T
 	}
 	if !foundAction || len(detail.ActionQueues.NeedsRobert) == 0 {
 		t.Fatalf("completion review action missing: actions=%#v queues=%#v", detail.NextActions, detail.ActionQueues)
+	}
+}
+
+func TestDetailCompletionReviewIsNotHiddenByRecordedWorkflowDecision(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Close verified decision trail", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:                 workflowID,
+		Title:              "Verify the decision trail",
+		ProjectKey:         "018-HAI",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	repo.decisions = append(repo.decisions, models.WorkflowDecision{
+		ID:           uuid.New(),
+		WorkflowID:   workflowID,
+		DecisionType: "approval_gate",
+		Decision:     "approved",
+		Reason:       "Robert approved the governed workflow.",
+		Actor:        "Robert",
+		CreatedAt:    time.Now().UTC(),
+	})
+	_, _ = service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String()})
+
+	detail, err := service.Detail(created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if !detail.Summary.CompletionCandidate {
+		t.Fatalf("recorded decision hid completion candidate: %#v", detail.Summary)
+	}
+	foundRecorded := false
+	foundCompletionReview := false
+	for _, decision := range detail.DecisionQueue {
+		if decision.DecisionType == "approval_gate" && decision.Status == "recorded" {
+			foundRecorded = true
+		}
+		if decision.DecisionType == "pursuit_completion_review" && decision.Status == "pending" {
+			foundCompletionReview = true
+		}
+	}
+	if !foundRecorded || !foundCompletionReview {
+		t.Fatalf("decision queue = %#v, want recorded history and pending completion review", detail.DecisionQueue)
 	}
 }
 
@@ -802,6 +1810,133 @@ func TestResolveCompletionReviewDecisionRejectsUnverifiedRequest(t *testing.T) {
 	}
 }
 
+func TestCandidateCannotCompleteUntilAcceptedAndPlanned(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Candidate from a chat import",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "ai_chat_pursuit_candidate",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:                 workflowID,
+		OwnerIdentity:      "alice",
+		Title:              "Completed imported workflow",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	repo.evidence = append(repo.evidence, models.WorkflowEvidenceClaim{
+		ID:         uuid.New(),
+		WorkflowID: workflowID,
+		ClaimText:  "Imported work has verified evidence.",
+		SourceURI:  "local://evidence/imported-work",
+		Status:     "verified",
+	})
+	if _, err := service.Link(candidate.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "candidate_operational_work"}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+
+	detail, err := service.DetailForOwner("alice", candidate.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if detail.Summary.CompletionCandidate {
+		t.Fatalf("unaccepted candidate must not be a completion candidate: %#v", detail.Summary)
+	}
+	for _, decision := range detail.DecisionQueue {
+		if decision.DecisionType == "pursuit_completion_review" {
+			t.Fatalf("unaccepted candidate exposed completion decision: %#v", detail.DecisionQueue)
+		}
+	}
+	if _, err := service.UpdateForOwner("alice", candidate.ID, UpdateRequest{Status: StatusCompleted, Actor: "Robert"}); err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("UpdateForOwner error = %v, want candidate acceptance guard", err)
+	}
+	if _, err := service.ResolveDecisionForOwner("alice", candidate.ID, DecisionResolutionRequest{
+		DecisionID:   completionReviewDecisionID(candidate.ID),
+		DecisionType: "pursuit_completion_review",
+		Approved:     true,
+		Actor:        "Robert",
+	}); err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("ResolveDecisionForOwner error = %v, want candidate acceptance guard", err)
+	}
+	stored, err := repo.FindByID(candidate.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if pursuitClosed(*stored) {
+		t.Fatalf("candidate was closed without acceptance: %#v", stored)
+	}
+}
+
+func TestCandidateRejectsOperationalDecisionResolution(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Candidate with runtime evidence",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "agent_runtime_pursuit_candidate",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = service.ResolveDecisionForOwner("alice", candidate.ID, DecisionResolutionRequest{
+		DecisionID:   "runtime-attempt:retry",
+		DecisionType: "runtime_attempt_review",
+		Approved:     true,
+		Actor:        "Robert",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("candidate operational decision resolution = %v, want acceptance guard", err)
+	}
+	if workflowService.calls != 0 || len(repo.workflows) != 0 {
+		t.Fatalf("candidate decision created workflow work: calls=%d workflows=%#v", workflowService.calls, repo.workflows)
+	}
+}
+
+func TestOwnerScopedCompletionIgnoresForeignLinkedEvidence(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice private completion", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	bobWorkflowID := uuid.New()
+	repo.workflows[bobWorkflowID] = models.WorkflowItem{
+		ID:                 bobWorkflowID,
+		OwnerIdentity:      "bob",
+		Title:              "Bob verified private workflow",
+		CurrentState:       workflow.StateCompleted,
+		VerificationStatus: "verified",
+	}
+	foreignLinkID := uuid.New()
+	repo.links[foreignLinkID] = models.PursuitLink{
+		ID:           foreignLinkID,
+		PursuitID:    alice.ID,
+		LinkType:     LinkWorkflow,
+		LinkID:       bobWorkflowID.String(),
+		Relationship: "legacy_import",
+		SourceURI:    "workflow://private/bob-completion",
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	if _, err := service.UpdateForOwner("alice", alice.ID, UpdateRequest{Status: StatusCompleted, Actor: "Alice"}); err == nil || !strings.Contains(err.Error(), "requires verified evidence") {
+		t.Fatalf("UpdateForOwner error = %v, want owner-visible evidence guard", err)
+	}
+	stored, err := repo.FindByID(alice.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if pursuitClosed(*stored) {
+		t.Fatalf("foreign evidence closed Alice pursuit: %#v", stored)
+	}
+}
+
 func TestDashboardUsesComputedCompletionCandidate(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -874,6 +2009,163 @@ func TestDashboardStatusCountsUseComputedBlockers(t *testing.T) {
 	if activePursuit.ID == uuid.Nil {
 		t.Fatalf("active pursuit was not created")
 	}
+}
+
+func TestDashboardExcludesClosedPursuitsFromOperationalQueues(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	closed, err := service.Create(CreateRequest{Title: "Completed insurance evidence pursuit", ProjectKey: "asr"})
+	if err != nil {
+		t.Fatalf("Create closed pursuit returned error: %v", err)
+	}
+	active, err := service.Create(CreateRequest{Title: "Active automation pursuit", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create active pursuit returned error: %v", err)
+	}
+	stored, _ := repo.FindByID(closed.ID)
+	stored.Status = StatusCompleted
+	stored.CompletionState = CompletionVerified
+	if _, err := repo.Update(stored); err != nil {
+		t.Fatalf("mark pursuit complete: %v", err)
+	}
+
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard returned error: %v", err)
+	}
+	if dashboard.Counts["completed"] != 1 || dashboard.Counts["active"] != 1 {
+		t.Fatalf("dashboard counts = %#v, want completed=1 active=1", dashboard.Counts)
+	}
+	for _, queue := range [][]PursuitListItem{
+		dashboard.NeedsRobert,
+		dashboard.VAReady,
+		dashboard.SystemReady,
+		dashboard.Blocked,
+		dashboard.Stale,
+		dashboard.ReviewDue,
+		dashboard.PlanningNeeded,
+		dashboard.HighRisk,
+		dashboard.CompletionCandidates,
+		dashboard.RecentlyChanged,
+	} {
+		for _, item := range queue {
+			if item.Pursuit.ID == closed.ID {
+				t.Fatalf("closed pursuit leaked into operational queue: %#v", item)
+			}
+		}
+	}
+	if active.ID == uuid.Nil {
+		t.Fatalf("active pursuit was not created")
+	}
+}
+
+func TestClosedPursuitRejectsOperationalMutationAndSummaryRefresh(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Completed legal evidence pursuit", ProjectKey: "vivare"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	stored, _ := repo.FindByID(created.ID)
+	stored.Status = StatusCompleted
+	stored.CompletionState = CompletionVerified
+	if _, err := repo.Update(stored); err != nil {
+		t.Fatalf("mark pursuit complete: %v", err)
+	}
+
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "intake",
+			run: func() error {
+				_, err := service.Intake(created.ID, IntakeRequest{Input: "Draft another lawyer response"})
+				return err
+			},
+		},
+		{
+			name: "plan",
+			run: func() error {
+				_, err := service.Plan(created.ID, PlanRequest{})
+				return err
+			},
+		},
+		{
+			name: "decision",
+			run: func() error {
+				_, err := service.ResolveDecision(created.ID, DecisionResolutionRequest{DecisionID: "workflow:late:approval", Approved: true})
+				return err
+			},
+		},
+	}
+	for _, operation := range operations {
+		if err := operation.run(); err == nil || !strings.Contains(err.Error(), "closed pursuit") {
+			t.Fatalf("%s error = %v, want closed pursuit rejection", operation.name, err)
+		}
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("closed pursuit created %d workflow(s)", workflowService.calls)
+	}
+
+	refreshed, err := service.RefreshSummary(created.ID, "system")
+	if err != nil {
+		t.Fatalf("RefreshSummary returned error: %v", err)
+	}
+	if refreshed.Pursuit.Status != StatusCompleted || refreshed.Pursuit.CompletionState != CompletionVerified {
+		t.Fatalf("closed pursuit was reactivated by refresh: %#v", refreshed.Pursuit)
+	}
+}
+
+func TestReopenRequiresExplicitTransitionAndRestoresGovernedIntake(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Archived automation recovery", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	stored, _ := repo.FindByID(created.ID)
+	stored.Status = StatusCompleted
+	stored.CompletionState = CompletionVerified
+	stored.Archived = true
+	if _, err := repo.Update(stored); err != nil {
+		t.Fatalf("close pursuit: %v", err)
+	}
+
+	if _, err := service.Update(created.ID, UpdateRequest{Status: StatusActive, Actor: "operator"}); err == nil || !strings.Contains(err.Error(), "explicit reopen") {
+		t.Fatalf("generic reactivation error = %v, want explicit reopen rejection", err)
+	}
+	if _, err := service.Archive(created.ID, false, "Robert"); err != nil {
+		t.Fatalf("Archive restore should use reopen transition: %v", err)
+	}
+	reopened, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("Find reopened pursuit: %v", err)
+	}
+	if reopened.Archived || reopened.Status != StatusActive || reopened.CompletionState != CompletionOpen {
+		t.Fatalf("reopened pursuit = %#v", reopened)
+	}
+	activity, _ := repo.FindActivities(created.ID, 20)
+	if !activityContains(activity, "pursuit.reopened") {
+		t.Fatalf("reopen was not audited: %#v", activity)
+	}
+	if _, err := service.Intake(created.ID, IntakeRequest{Input: "Create a governed recovery workflow"}); err != nil {
+		t.Fatalf("reopened pursuit intake returned error: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("reopened pursuit created %d workflows, want 1", workflowService.calls)
+	}
+}
+
+func activityContains(activity []models.PursuitActivity, eventType string) bool {
+	for _, item := range activity {
+		if item.EventType == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDetailSeparatesRobertVAAndSystemActionQueues(t *testing.T) {
@@ -1259,6 +2551,54 @@ func TestDetailSurfacesLinkedVerificationRunEvidence(t *testing.T) {
 	}
 }
 
+func TestLinkVerificationCreatesAuditableEvidenceLink(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Verify legal evidence", ProjectKey: "vivare"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	verificationID := uuid.New()
+
+	if err := service.LinkVerification(created.ID, verificationID); err != nil {
+		t.Fatalf("LinkVerification returned error: %v", err)
+	}
+
+	links, err := repo.FindLinks(created.ID)
+	if err != nil {
+		t.Fatalf("FindLinks returned error: %v", err)
+	}
+	found := false
+	for _, link := range links {
+		if link.LinkType == LinkVerification && link.LinkID == verificationID.String() && link.Relationship == "verification_evidence" && link.SourceURI == "verification://"+verificationID.String() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("verification evidence link missing: %#v", links)
+	}
+}
+
+func TestOwnerScopedVerificationLinkRejectsAnotherOwner(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	bob, err := service.Create(CreateRequest{Title: "Bob private verification", OwnerIdentity: "bob"})
+	if err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+
+	if err := service.LinkVerificationForOwner("alice", bob.ID, uuid.New()); err == nil {
+		t.Fatal("Alice could link verification evidence to Bob's pursuit")
+	}
+	links, err := repo.FindLinks(bob.ID)
+	if err != nil {
+		t.Fatalf("FindLinks: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("cross-owner verification link persisted: %#v", links)
+	}
+}
+
 func TestDetailSurfacesTaskRunEvidenceFromLinkedWorkflows(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -1298,6 +2638,256 @@ func TestDetailSurfacesTaskRunEvidenceFromLinkedWorkflows(t *testing.T) {
 	}
 	if detail.Summary.TaskRuns != 1 {
 		t.Fatalf("summary task runs = %d, want 1", detail.Summary.TaskRuns)
+	}
+}
+
+func TestDetailSurfacesDirectPursuitTaskAttempts(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Plan direct evidence review", OwnerIdentity: "alice", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	now := time.Now().UTC()
+	completed := now.Add(time.Minute)
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:          created.ID,
+		TaskPlanID:         "direct-plan-123",
+		OwnerIdentity:      "alice",
+		RequestSummary:     "Review the evidence before approving the response.",
+		ProjectKey:         "018-HAI",
+		Mode:               "run",
+		Status:             "review_required",
+		RiskLevel:          "high",
+		VerificationStatus: "needs_review",
+		BlockedReason:      "approval required before external action",
+		StartedAt:          &now,
+		CompletedAt:        &completed,
+	}); err != nil {
+		t.Fatalf("UpsertTaskAttempt returned error: %v", err)
+	}
+
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.TaskAttempts) != 1 {
+		t.Fatalf("task attempts = %#v, want one direct task attempt", detail.TaskAttempts)
+	}
+	attempt := detail.TaskAttempts[0]
+	if attempt.TaskPlanID != "direct-plan-123" || attempt.Status != "review_required" || attempt.BlockedReason == "" {
+		t.Fatalf("task attempt = %#v", attempt)
+	}
+	if detail.Summary.TaskRuns != 1 {
+		t.Fatalf("summary task runs = %d, want direct attempt included", detail.Summary.TaskRuns)
+	}
+	foundTimeline := false
+	for _, item := range detail.Timeline {
+		if item.Kind == "task_attempt" && item.ID == "task-attempt:direct-plan-123" {
+			foundTimeline = true
+		}
+	}
+	if !foundTimeline {
+		t.Fatalf("direct task attempt missing from timeline: %#v", detail.Timeline)
+	}
+}
+
+func TestDirectPursuitTaskAttemptRejectsAnotherOwner(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Alice private pursuit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     created.ID,
+		TaskPlanID:    "bob-direct-plan",
+		OwnerIdentity: "bob",
+		Mode:          "plan",
+		Status:        "planned",
+	}); err == nil {
+		t.Fatal("Bob could persist a task attempt under Alice's pursuit")
+	}
+	// Simulate an invalid pre-owner-scoping row that may already exist in a
+	// local database. Detail must not disclose it to Alice.
+	repo.taskAttempts["legacy-bob-direct-plan"] = models.PursuitTaskAttempt{
+		PursuitID:      created.ID,
+		TaskPlanID:     "legacy-bob-direct-plan",
+		OwnerIdentity:  "bob",
+		RequestSummary: "Bob private task request",
+		Mode:           "run",
+		Status:         "review_required",
+	}
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner: %v", err)
+	}
+	if len(detail.TaskAttempts) != 0 {
+		t.Fatalf("cross-owner task attempt leaked into pursuit detail: %#v", detail.TaskAttempts)
+	}
+}
+
+func TestDirectPursuitTaskAttemptRejectsUnacceptedCandidate(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	candidate, err := service.Create(CreateRequest{
+		Title:            "Review imported legal correspondence",
+		OwnerIdentity:    "alice",
+		SourceOfCreation: "source_pursuit_candidate",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	err = service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     candidate.ID,
+		TaskPlanID:    "candidate-direct-plan",
+		OwnerIdentity: "alice",
+		Mode:          "plan",
+		Status:        "planned",
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate must be accepted") {
+		t.Fatalf("unaccepted candidate accepted direct task attempt: %v", err)
+	}
+	if attempts, findErr := repo.FindTaskAttempts(candidate.ID, 10); findErr != nil || len(attempts) != 0 {
+		t.Fatalf("candidate task attempt persisted: attempts=%#v err=%v", attempts, findErr)
+	}
+}
+
+func TestDirectPursuitTaskAttemptRejectsClosedPursuit(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Closed evidence review", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := service.ArchiveForOwner("alice", created.ID, true, "alice"); err != nil {
+		t.Fatalf("ArchiveForOwner returned error: %v", err)
+	}
+
+	err = service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     created.ID,
+		TaskPlanID:    "closed-direct-plan",
+		OwnerIdentity: "alice",
+		Mode:          "plan",
+		Status:        "planned",
+	})
+	if err == nil || !strings.Contains(err.Error(), "closed pursuit") {
+		t.Fatalf("closed pursuit accepted direct task attempt: %v", err)
+	}
+	if attempts, findErr := repo.FindTaskAttempts(created.ID, 10); findErr != nil || len(attempts) != 0 {
+		t.Fatalf("closed pursuit task attempt persisted: attempts=%#v err=%v", attempts, findErr)
+	}
+}
+
+func TestDirectPursuitTaskAttemptRedactsPersistedText(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Protect direct task audit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:      created.ID,
+		TaskPlanID:     "redacted-direct-plan",
+		OwnerIdentity:  "alice",
+		RequestSummary: "Run source check with api_key=plain-text-secret",
+		BlockedReason:  "provider token=another-plain-secret requires review",
+		Mode:           "run",
+		Status:         "review_required",
+	}); err != nil {
+		t.Fatalf("UpsertTaskAttempt returned error: %v", err)
+	}
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.TaskAttempts) != 1 {
+		t.Fatalf("task attempts = %#v", detail.TaskAttempts)
+	}
+	attempt := detail.TaskAttempts[0]
+	for _, value := range []string{attempt.RequestSummary, attempt.BlockedReason} {
+		if strings.Contains(value, "plain-text-secret") || strings.Contains(value, "another-plain-secret") {
+			t.Fatalf("task attempt leaked secret: %#v", attempt)
+		}
+	}
+}
+
+func TestDirectPursuitTaskAttemptLinksOnlyItsExactRuntimeLaunchEvidence(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Retain exact runtime evidence", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	automationID := uuid.New()
+	selectedLaunchID := uuid.New()
+	repo.launchEvents = append(repo.launchEvents,
+		models.AutomationLaunchEvent{ID: selectedLaunchID, AutomationID: automationID, OwnerIdentity: "alice", RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
+		models.AutomationLaunchEvent{ID: uuid.New(), AutomationID: automationID, OwnerIdentity: "alice", RuntimeType: "openclaw", LaunchType: "agent_runtime", Status: "completed", StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()},
+	)
+	if err := service.UpsertTaskAttempt(models.PursuitTaskAttempt{
+		PursuitID:     created.ID,
+		TaskPlanID:    "runtime-evidence-direct-plan",
+		OwnerIdentity: "alice",
+		Mode:          "run",
+		Status:        "validated",
+		AutomationID:  automationID.String(),
+		LaunchEventID: selectedLaunchID.String(),
+	}); err != nil {
+		t.Fatalf("UpsertTaskAttempt returned error: %v", err)
+	}
+	detail, err := service.DetailForOwner("alice", created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if len(detail.RuntimeAttempts) != 1 || detail.RuntimeAttempts[0].ID != selectedLaunchID {
+		t.Fatalf("runtime attempts = %#v, want only the selected launch", detail.RuntimeAttempts)
+	}
+	if len(detail.Automations) != 0 {
+		t.Fatalf("direct task attempt must not link a shared automation: %#v", detail.Automations)
+	}
+	foundLaunchLink := false
+	for _, link := range detail.Links {
+		if link.LinkType == LinkAgentRuntime && link.LinkID == selectedLaunchID.String() && link.Relationship == "execution_attempt" {
+			foundLaunchLink = true
+		}
+	}
+	if !foundLaunchLink {
+		t.Fatalf("exact runtime evidence link missing: %#v", detail.Links)
+	}
+}
+
+func TestOwnerScopedPursuitRejectsAndHidesAnotherOwnersRuntimeEvidence(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Alice private runtime review", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+	bobLaunchID := uuid.New()
+	repo.launchEvents = append(repo.launchEvents, models.AutomationLaunchEvent{
+		ID:            bobLaunchID,
+		OwnerIdentity: "bob",
+		RuntimeType:   "openclaw",
+		LaunchType:    "agent_runtime",
+		Status:        "completed",
+		Output:        "Bob private runtime output",
+		StartedAt:     time.Now().UTC(),
+		CompletedAt:   time.Now().UTC(),
+	})
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAgentRuntime, LinkID: bobLaunchID.String(), Relationship: "execution_attempt"}); err == nil {
+		t.Fatal("owner could link another user's runtime evidence")
+	}
+
+	legacyLinkID := uuid.New()
+	repo.links[legacyLinkID] = models.PursuitLink{ID: legacyLinkID, PursuitID: pursuit.ID, LinkType: LinkAgentRuntime, LinkID: bobLaunchID.String(), Relationship: "legacy_evidence"}
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner: %v", err)
+	}
+	if len(detail.RuntimeAttempts) != 0 || hasPursuitLink(detail.Links, LinkAgentRuntime, bobLaunchID.String()) {
+		t.Fatalf("private runtime evidence leaked into owner detail: %#v", detail)
 	}
 }
 
@@ -1584,6 +3174,55 @@ func TestAmbientOpportunityLinkCountsAsPursuitEvidence(t *testing.T) {
 	}
 }
 
+func TestAmbientOpportunityLinksAreOwnerScopedAndProjected(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{Title: "Advance housing case", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	opportunityID := uuid.New()
+	repo.ambientOpportunities[opportunityID] = models.AmbientOpportunity{
+		ID:               opportunityID,
+		OwnerIdentity:    "alice",
+		NeedKey:          "safety",
+		Title:            "Review missing evidence",
+		Rationale:        "The pursuit has not moved because a source is missing.",
+		NextAction:       "Prepare a request for the missing document.",
+		PriorityScore:    78,
+		Confidence:       82,
+		Risk:             65,
+		RequiresApproval: true,
+		Status:           "accepted",
+		EvidenceManifest: "raw manifest must not be returned in pursuit detail",
+		LastSeenAt:       time.Now().UTC(),
+	}
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAmbientOpportunity, LinkID: opportunityID.String(), Relationship: "ambient_proposal_accepted", SourceURI: "ambient://opportunities/" + opportunityID.String()}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+
+	detail, err := service.DetailForOwner("alice", pursuit.ID)
+	if err != nil {
+		t.Fatalf("DetailForOwner returned error: %v", err)
+	}
+	if len(detail.AmbientOpportunities) != 1 || detail.AmbientOpportunities[0].ID != opportunityID || detail.AmbientOpportunities[0].NextAction == "" {
+		t.Fatalf("ambient opportunity projection = %#v", detail.AmbientOpportunities)
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	if strings.Contains(string(payload), "raw manifest must not be returned") || strings.Contains(string(payload), "evidenceManifest") {
+		t.Fatalf("pursuit detail exposed private ambient fields: %s", payload)
+	}
+
+	bobOpportunityID := uuid.New()
+	repo.ambientOpportunities[bobOpportunityID] = models.AmbientOpportunity{ID: bobOpportunityID, OwnerIdentity: "bob", Title: "Bob private proposal"}
+	if _, err := service.Link(pursuit.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkAmbientOpportunity, LinkID: bobOpportunityID.String(), Relationship: "ambient_proposal_accepted"}); err == nil {
+		t.Fatal("owner could link another user's ambient opportunity")
+	}
+}
+
 func TestResolveEvidenceReturnsLinkedRuntimeAttempt(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -1769,9 +3408,9 @@ func TestResolvedRuntimeAttemptDecisionStaysBlockedWithoutRepromptingRobert(t *t
 
 func TestApprovedRuntimeAttemptDecisionCreatesGovernedRecoveryWorkflow(t *testing.T) {
 	repo := newFakeRepo()
-	workflowService := &fakeWorkflowIntake{}
+	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
-	created, err := service.Create(CreateRequest{Title: "Recover OpenClaw runtime safely", ProjectKey: "018-HAI"})
+	created, err := service.Create(CreateRequest{Title: "Recover OpenClaw runtime safely", OwnerIdentity: "alice", ProjectKey: "018-HAI"})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
@@ -1829,6 +3468,9 @@ func TestApprovedRuntimeAttemptDecisionCreatesGovernedRecoveryWorkflow(t *testin
 	if workflowService.received.ContentType != "runtime_attempt_review" || workflowService.received.Trigger != "pursuit_decision_approved" || !workflowService.received.RequiresReview {
 		t.Fatalf("workflow recovery metadata = %#v", workflowService.received)
 	}
+	if workflowService.received.OwnerIdentity != "alice" {
+		t.Fatalf("recovery workflow owner = %q, want persisted pursuit owner alice", workflowService.received.OwnerIdentity)
+	}
 	for _, expected := range []string{"Route trace:", "skills=autoreview, gitcrawl", "Required controls:", "Validation checklist:", "Do not retry the runtime directly"} {
 		if !strings.Contains(workflowService.received.Input, expected) {
 			t.Fatalf("recovery workflow input missing %q:\n%s", expected, workflowService.received.Input)
@@ -1854,6 +3496,66 @@ func TestApprovedRuntimeAttemptDecisionCreatesGovernedRecoveryWorkflow(t *testin
 			t.Fatalf("approved runtime decision was regenerated: %#v", detail.DecisionQueue)
 		}
 	}
+}
+
+func TestApprovedRuntimeDecisionRemainsPendingWhenRecoveryWorkflowFails(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{err: errNotFound("workflow intake")}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Keep failed runtime recovery actionable", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	launchID := uuid.New()
+	sourceURI := "automation-launch://" + launchID.String()
+	repo.launchEvents = append(repo.launchEvents, models.AutomationLaunchEvent{
+		ID:          launchID,
+		RuntimeType: "openclaw",
+		LaunchType:  "agent_runtime",
+		Status:      "blocked",
+		Message:     "agent runtime registry is not configured",
+		ExitCode:    -1,
+		StartedAt:   time.Now().UTC(),
+		CompletedAt: time.Now().UTC(),
+	})
+	if _, err := service.Link(created.ID, LinkRequest{
+		LinkType:     LinkAgentRuntime,
+		LinkID:       launchID.String(),
+		Relationship: "execution_attempt",
+		SourceURI:    sourceURI,
+		SourceLabel:  "OpenClaw blocked launch",
+	}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+	decisionID := "runtime:" + launchID.String() + ":review"
+
+	_, err = service.ResolveDecision(created.ID, DecisionResolutionRequest{
+		DecisionID:   decisionID,
+		DecisionType: "runtime_attempt_review",
+		Approved:     true,
+		EvidenceURI:  sourceURI,
+		Actor:        "Robert",
+	})
+	if err == nil || !strings.Contains(err.Error(), "workflow intake not found") {
+		t.Fatalf("ResolveDecision error = %v, want recovery workflow failure", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("workflow intake calls = %d, want 1", workflowService.calls)
+	}
+
+	detail, err := service.Detail(created.ID)
+	if err != nil {
+		t.Fatalf("Detail returned error: %v", err)
+	}
+	if detail.Summary.NeedsRobert == 0 || detail.Summary.Blocked == 0 {
+		t.Fatalf("failed recovery decision was removed from operator queues: summary=%#v", detail.Summary)
+	}
+	for _, decision := range detail.DecisionQueue {
+		if decision.ID == decisionID && decision.Status == "pending" {
+			return
+		}
+	}
+	t.Fatalf("failed recovery decision was incorrectly resolved: %#v", detail.DecisionQueue)
 }
 
 func TestRecoveredRuntimeAttemptStopsBlockingPursuit(t *testing.T) {
@@ -2030,6 +3732,189 @@ func TestDashboardAggregatesRobertDecisionCards(t *testing.T) {
 	}
 	if card.CurrentState == "" || card.NextAction == "" || card.EvidenceLine == "" {
 		t.Fatalf("decision card missing dashboard context: %#v", card)
+	}
+}
+
+func TestApprovedPursuitNextActionCreatesGovernedWorkflowOnServer(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{
+		Title:                 "Prepare legal recovery plan",
+		OwnerIdentity:         "alice",
+		ProjectKey:            "018-HAI",
+		RiskLevel:             "high",
+		AutonomyLevel:         "approve_before_execute",
+		NextRecommendedAction: "Prepare a source-linked legal recovery workflow for Robert to review.",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	decisionID := nextActionDecisionID(created.ID)
+
+	detail, err := service.ResolveDecisionForOwner("alice", created.ID, DecisionResolutionRequest{
+		DecisionID:   decisionID,
+		DecisionType: "pursuit_next_action",
+		Approved:     true,
+		Reason:       "Robert approved creating the governed workflow.",
+		Actor:        "Robert",
+	})
+	if err != nil {
+		t.Fatalf("ResolveDecisionForOwner returned error: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("workflow intake calls = %d, want 1", workflowService.calls)
+	}
+	if workflowService.received.OwnerIdentity != "alice" || workflowService.received.SourceID != decisionID || workflowService.received.SourceType != "pursuit_decision" {
+		t.Fatalf("workflow decision provenance = %#v", workflowService.received)
+	}
+	if workflowService.received.ContentType != "pursuit_next_action" || workflowService.received.Trigger != "pursuit_decision_approved" || !workflowService.received.RequiresReview {
+		t.Fatalf("workflow decision guard = %#v", workflowService.received)
+	}
+	if !strings.Contains(workflowService.received.Input, "Recommended next action: Prepare a source-linked legal recovery workflow") {
+		t.Fatalf("workflow input lost pursuit context: %q", workflowService.received.Input)
+	}
+	if len(detail.Workflows) != 1 || !detail.Workflows[0].RequiresApproval || detail.Workflows[0].SourceID != decisionID {
+		t.Fatalf("governed workflow not linked to approved pursuit decision: %#v", detail.Workflows)
+	}
+	foundWorkflowLink := false
+	for _, link := range detail.Links {
+		if link.LinkType == LinkWorkflow && link.Relationship == "approved_next_action_workflow" && link.LinkID == detail.Workflows[0].ID.String() {
+			foundWorkflowLink = true
+		}
+	}
+	if !foundWorkflowLink {
+		t.Fatalf("approved next-action workflow link missing: %#v", detail.Links)
+	}
+	for _, decision := range detail.DecisionQueue {
+		if decision.ID == decisionID {
+			t.Fatalf("approved next-action decision was regenerated: %#v", detail.DecisionQueue)
+		}
+	}
+
+	if _, err := service.ResolveDecisionForOwner("alice", created.ID, DecisionResolutionRequest{
+		DecisionID: decisionID, DecisionType: "pursuit_next_action", Approved: true, Actor: "Robert",
+	}); err != nil {
+		t.Fatalf("replayed approval should be idempotent: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("replayed approval created duplicate workflow work: %d calls", workflowService.calls)
+	}
+}
+
+func TestPursuitNextActionDecisionRejectsForgedOrNoLongerPendingAction(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{Title: "Low-risk notes", OwnerIdentity: "alice", RiskLevel: "low"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	_, err = service.ResolveDecisionForOwner("alice", created.ID, DecisionResolutionRequest{
+		DecisionID: nextActionDecisionID(created.ID), DecisionType: "pursuit_next_action", Approved: true, Actor: "Robert",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not pending") {
+		t.Fatalf("forged next-action decision error = %v, want pending-decision guard", err)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("forged next-action decision created workflow work: %d calls", workflowService.calls)
+	}
+}
+
+func TestDelegationPackageCompilesBoundedVAWorkWithChecklistAndSources(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{
+		Title:          "Organize insurance evidence",
+		DesiredOutcome: "A complete, source-linked evidence bundle is ready for Robert to review.",
+		RiskLevel:      "low",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:           workflowID,
+		Title:        "Collect and organize evidence",
+		Description:  "Review the source material and organize the evidence list.",
+		CurrentState: "waiting_external_input",
+		RiskLevel:    "low",
+		NextAction:   "Prepare the evidence list from the linked sources.",
+	}
+	repo.openLoops = append(repo.openLoops, models.WorkflowOpenLoop{
+		ID:               uuid.New(),
+		WorkflowID:       workflowID,
+		ResponsibleParty: "VA",
+		WaitingFor:       "evidence review",
+		NextAction:       "Prepare the evidence list from the linked sources.",
+		Status:           "open",
+	})
+	repo.checklistItems = append(repo.checklistItems, models.WorkflowChecklistItem{
+		ID:         uuid.New(),
+		WorkflowID: workflowID,
+		Label:      "List each source with its date and relevance.",
+		Status:     "pending",
+		Position:   1,
+	})
+	repo.sourceLinks = append(repo.sourceLinks, models.WorkflowSourceLink{
+		ID:           uuid.New(),
+		WorkflowID:   workflowID,
+		SourceType:   "email_export",
+		SourceURI:    "file:///connected-sources/claim.mbox",
+		SourceLabel:  "Claim correspondence export",
+		Relationship: "evidence",
+	})
+	if _, err := service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "operational_work"}); err != nil {
+		t.Fatalf("Link workflow returned error: %v", err)
+	}
+
+	brief, err := service.DelegationPackage(created.ID)
+	if err != nil {
+		t.Fatalf("DelegationPackage returned error: %v", err)
+	}
+	if !brief.Ready || brief.Status != "ready" {
+		t.Fatalf("delegation package not ready: %#v", brief)
+	}
+	if len(brief.WorkItems) != 1 || brief.WorkItems[0].WorkflowID != workflowID.String() || len(brief.WorkItems[0].Checklist) != 1 {
+		t.Fatalf("delegation work items missing workflow/checklist: %#v", brief.WorkItems)
+	}
+	if len(brief.SourceContext) != 1 || brief.SourceContext[0].SourceURI != "file:///connected-sources/claim.mbox" {
+		t.Fatalf("delegation source context missing: %#v", brief.SourceContext)
+	}
+	if len(brief.BlockedActions) == 0 || len(brief.DeliveryRequirements) == 0 {
+		t.Fatalf("delegation safety boundaries missing: %#v", brief)
+	}
+}
+
+func TestDelegationPackageDoesNotReleaseHighRiskWorkToVA(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Send legal position to municipality", RiskLevel: "high"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{ID: workflowID, Title: "Prepare legal response", CurrentState: "needs_approval", RiskLevel: "high", RequiresApproval: true, ApprovalStatus: "pending"}
+	repo.openLoops = append(repo.openLoops, models.WorkflowOpenLoop{ID: uuid.New(), WorkflowID: workflowID, ResponsibleParty: "VA", NextAction: "Send the legal response to the municipality", Status: "open"})
+	if _, err := service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "operational_work"}); err != nil {
+		t.Fatalf("Link workflow returned error: %v", err)
+	}
+
+	brief, err := service.DelegationPackage(created.ID)
+	if err != nil {
+		t.Fatalf("DelegationPackage returned error: %v", err)
+	}
+	if brief.Ready || brief.Status != "not_ready" || len(brief.OutstandingRobertActions) == 0 {
+		t.Fatalf("high-risk work leaked into VA handoff: %#v", brief)
+	}
+}
+
+func TestFollowUpActionRiskUsesWholeActionTerms(t *testing.T) {
+	if got := followUpActionRisk("high", "Prepare the applicant profile for Robert to review"); got != "low" {
+		t.Fatalf("preparation action risk = %q, want low", got)
+	}
+	if got := followUpActionRisk("low", "File the completed response with the municipality"); got != "high" {
+		t.Fatalf("filing action risk = %q, want high", got)
 	}
 }
 
@@ -2294,19 +4179,237 @@ func TestDeleteLinkRequiresOwningPursuit(t *testing.T) {
 		t.Fatalf("Link returned error: %v", err)
 	}
 
-	if err := service.DeleteLink(second.ID, link.ID); err == nil {
+	if err := service.DeleteLink(second.ID, link.ID, "test-operator"); err == nil {
 		t.Fatalf("expected deleting another pursuit's link to fail")
 	}
 	links, _ := repo.FindLinks(first.ID)
 	if len(links) != 1 {
 		t.Fatalf("link was removed from wrong pursuit: %#v", links)
 	}
-	if err := service.DeleteLink(first.ID, link.ID); err != nil {
+	if err := service.DeleteLink(first.ID, link.ID, "test-operator"); err != nil {
 		t.Fatalf("DeleteLink returned error for owner: %v", err)
 	}
 	links, _ = repo.FindLinks(first.ID)
 	if len(links) != 0 {
 		t.Fatalf("owned link still present: %#v", links)
+	}
+	activities, _ := repo.FindActivities(first.ID, 20)
+	for _, activity := range activities {
+		if activity.EventType == "pursuit.link_removed" {
+			if activity.Actor != "test-operator" {
+				t.Fatalf("link removal actor = %q, want verified actor", activity.Actor)
+			}
+			return
+		}
+	}
+	t.Fatal("expected pursuit.link_removed activity")
+}
+
+func TestPursuitLinkRejectsSelfReference(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Keep relationship graph meaningful", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = service.Link(created.ID, LinkRequest{
+		OwnerIdentity: "alice",
+		LinkType:      LinkPursuit,
+		LinkID:        created.ID.String(),
+		Relationship:  "related_case",
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be linked to itself") {
+		t.Fatalf("self pursuit link error = %v, want self-link rejection", err)
+	}
+	links, findErr := repo.FindLinks(created.ID)
+	if findErr != nil {
+		t.Fatalf("FindLinks returned error: %v", findErr)
+	}
+	if len(links) != 0 {
+		t.Fatalf("self pursuit link was persisted: %#v", links)
+	}
+}
+
+func TestLinkActivityRefreshesPursuitFreshness(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Refresh pursuit activity"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	staleAt := time.Now().UTC().Add(-15 * 24 * time.Hour)
+	record := repo.pursuits[created.ID]
+	record.LastActivityAt = &staleAt
+	repo.pursuits[created.ID] = record
+
+	if _, err := service.Link(created.ID, LinkRequest{
+		LinkType:     LinkMemory,
+		LinkID:       uuid.New().String(),
+		Relationship: "context_memory",
+		SourceURI:    "memory://project-context",
+		Actor:        "operator",
+	}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+
+	updated, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if updated.LastActivityAt == nil || !updated.LastActivityAt.After(staleAt) {
+		t.Fatalf("last activity = %v, want time after %v", updated.LastActivityAt, staleAt)
+	}
+	if isStale(*updated) {
+		t.Fatalf("pursuit remained stale after a recorded link activity: %#v", updated)
+	}
+}
+
+func TestSummaryRefreshDoesNotMaskStalePursuit(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Keep stale pursuit visible"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	staleAt := time.Now().UTC().Add(-15 * 24 * time.Hour)
+	record := repo.pursuits[created.ID]
+	record.LastActivityAt = &staleAt
+	repo.pursuits[created.ID] = record
+	for index := range repo.activity[created.ID] {
+		repo.activity[created.ID][index].CreatedAt = staleAt
+	}
+
+	if _, err := service.RefreshSummary(created.ID, "system"); err != nil {
+		t.Fatalf("RefreshSummary returned error: %v", err)
+	}
+	updated, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if updated.LastActivityAt == nil || !updated.LastActivityAt.Equal(staleAt) {
+		t.Fatalf("summary refresh changed last activity to %v, want %v", updated.LastActivityAt, staleAt)
+	}
+	if !isStale(*updated) {
+		t.Fatalf("summary refresh hid a stale pursuit: %#v", updated)
+	}
+	activity, err := repo.FindActivities(created.ID, 20)
+	if err != nil {
+		t.Fatalf("FindActivities returned error: %v", err)
+	}
+	if !activityContains(activity, "pursuit.summary_refreshed") {
+		t.Fatalf("summary refresh was not retained in the audit feed: %#v", activity)
+	}
+	dashboard, err := service.Dashboard()
+	if err != nil {
+		t.Fatalf("Dashboard returned error: %v", err)
+	}
+	if len(dashboard.Stale) != 1 || dashboard.Stale[0].Pursuit.ID != created.ID {
+		t.Fatalf("summary-only audit activity hid stale work from dashboard: %#v", dashboard.Stale)
+	}
+}
+
+func TestDashboardUsesLinkedOperationalActivityForFreshness(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Track workflow progress", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	workflowID := uuid.New()
+	now := time.Now().UTC()
+	repo.workflows[workflowID] = models.WorkflowItem{
+		ID:            workflowID,
+		OwnerIdentity: "alice",
+		Title:         "Run governed evidence check",
+		CurrentState:  workflow.StateInProgress,
+		UpdatedAt:     now,
+	}
+	if _, err := service.Link(created.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "operational_work"}); err != nil {
+		t.Fatalf("Link returned error: %v", err)
+	}
+	staleAt := now.Add(-15 * 24 * time.Hour)
+	record := repo.pursuits[created.ID]
+	record.LastActivityAt = &staleAt
+	repo.pursuits[created.ID] = record
+
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if len(dashboard.Stale) != 0 {
+		t.Fatalf("linked workflow activity was ignored for freshness: %#v", dashboard.Stale)
+	}
+	if len(dashboard.RecentlyChanged) != 1 || dashboard.RecentlyChanged[0].EffectiveLastActivityAt == nil {
+		t.Fatalf("recently changed pursuit lacks derived activity: %#v", dashboard.RecentlyChanged)
+	}
+	if dashboard.RecentlyChanged[0].EffectiveLastActivityAt.Before(now) {
+		t.Fatalf("effective activity = %v, want workflow update at or after %v", dashboard.RecentlyChanged[0].EffectiveLastActivityAt, now)
+	}
+	updated, err := repo.FindByID(created.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if updated.LastActivityAt == nil || !updated.LastActivityAt.Equal(staleAt) {
+		t.Fatalf("dashboard read mutated persisted freshness: %#v", updated)
+	}
+}
+
+func TestDashboardRecentlyChangedRanksLinkedOperationalActivity(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	older, err := service.Create(CreateRequest{Title: "Earlier workflow update", OwnerIdentity: "alice", PriorityScore: 80})
+	if err != nil {
+		t.Fatalf("Create older pursuit returned error: %v", err)
+	}
+	newer, err := service.Create(CreateRequest{Title: "Latest workflow update", OwnerIdentity: "alice", PriorityScore: 10})
+	if err != nil {
+		t.Fatalf("Create newer pursuit returned error: %v", err)
+	}
+	now := time.Now().UTC()
+	olderWorkflowID := uuid.New()
+	newerWorkflowID := uuid.New()
+	repo.workflows[olderWorkflowID] = models.WorkflowItem{
+		ID:            olderWorkflowID,
+		OwnerIdentity: "alice",
+		Title:         "Older linked work",
+		CurrentState:  workflow.StateInProgress,
+		UpdatedAt:     now.Add(-3 * time.Minute),
+	}
+	repo.workflows[newerWorkflowID] = models.WorkflowItem{
+		ID:            newerWorkflowID,
+		OwnerIdentity: "alice",
+		Title:         "Newer linked work",
+		CurrentState:  workflow.StateInProgress,
+		UpdatedAt:     now.Add(-1 * time.Minute),
+	}
+	for _, link := range []struct {
+		pursuitID  uuid.UUID
+		workflowID uuid.UUID
+	}{
+		{pursuitID: older.ID, workflowID: olderWorkflowID},
+		{pursuitID: newer.ID, workflowID: newerWorkflowID},
+	} {
+		if _, err := service.Link(link.pursuitID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkWorkflow, LinkID: link.workflowID.String(), Relationship: "operational_work"}); err != nil {
+			t.Fatalf("Link returned error: %v", err)
+		}
+		staleAt := now.Add(-15 * 24 * time.Hour)
+		record := repo.pursuits[link.pursuitID]
+		record.LastActivityAt = &staleAt
+		repo.pursuits[link.pursuitID] = record
+	}
+
+	dashboard, err := service.DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("DashboardForOwner returned error: %v", err)
+	}
+	if len(dashboard.RecentlyChanged) != 2 {
+		t.Fatalf("recently changed = %#v, want both pursuits", dashboard.RecentlyChanged)
+	}
+	if dashboard.RecentlyChanged[0].Pursuit.ID != newer.ID || dashboard.RecentlyChanged[1].Pursuit.ID != older.ID {
+		t.Fatalf("recently changed order = %#v, want newest linked activity first", dashboard.RecentlyChanged)
 	}
 }
 
@@ -2328,19 +4431,94 @@ func timelineSourceContains(items []PursuitTimelineItem, kind, sourcePart string
 	return false
 }
 
+func TestOwnerScopedMutationsDoNotAdoptOwnerlessLegacyPursuits(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	legacy, err := service.Create(CreateRequest{Title: "Legacy migration pursuit", ProjectKey: "legacy-project"})
+	if err != nil {
+		t.Fatalf("Create legacy pursuit: %v", err)
+	}
+
+	for _, operation := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "update", call: func() error {
+			_, err := service.UpdateForOwner("alice", legacy.ID, UpdateRequest{Title: "Alice update"})
+			return err
+		}},
+		{name: "archive", call: func() error { _, err := service.ArchiveForOwner("alice", legacy.ID, true, "alice"); return err }},
+		{name: "reopen", call: func() error { _, err := service.ReopenForOwner("alice", legacy.ID, "alice", "reopen"); return err }},
+		{name: "link", call: func() error {
+			_, err := service.Link(legacy.ID, LinkRequest{OwnerIdentity: "alice", LinkType: LinkMemory, LinkID: uuid.NewString(), Relationship: "evidence"})
+			return err
+		}},
+		{name: "delete link", call: func() error { return service.DeleteLinkForOwner("alice", legacy.ID, uuid.New(), "alice") }},
+		{name: "intake", call: func() error {
+			_, err := service.IntakeForOwner("alice", legacy.ID, IntakeRequest{Input: "new operational work"})
+			return err
+		}},
+		{name: "plan", call: func() error {
+			_, err := service.PlanForOwner("alice", legacy.ID, PlanRequest{Input: "plan legacy work"})
+			return err
+		}},
+		{name: "resolve decision", call: func() error {
+			_, err := service.ResolveDecisionForOwner("alice", legacy.ID, DecisionResolutionRequest{DecisionID: "completion", Approved: true})
+			return err
+		}},
+		{name: "refresh summary", call: func() error { _, err := service.RefreshSummaryForOwner("alice", legacy.ID, "alice"); return err }},
+		{name: "review", call: func() error {
+			_, err := service.ReviewForOwner("alice", legacy.ID, ReviewRequest{Action: "complete", Actor: "alice"})
+			return err
+		}},
+		{name: "route intake", call: func() error {
+			_, err := service.RouteIntake(IntakeRequest{OwnerIdentity: "alice", ProjectKey: "legacy-project", Input: legacy.Title})
+			return err
+		}},
+	} {
+		if err := operation.call(); err == nil {
+			t.Fatalf("%s adopted an ownerless legacy pursuit", operation.name)
+		}
+	}
+
+	stored, err := repo.FindByID(legacy.ID)
+	if err != nil {
+		t.Fatalf("Find legacy pursuit: %v", err)
+	}
+	if stored.OwnerIdentity != "" || stored.Title != legacy.Title || stored.Archived || stored.Status != legacy.Status || stored.CompletionState != legacy.CompletionState {
+		t.Fatalf("owner-scoped mutation changed legacy pursuit: %#v", stored)
+	}
+	links, err := repo.FindLinks(legacy.ID)
+	if err != nil {
+		t.Fatalf("Find legacy links: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("owner-scoped mutation linked legacy pursuit: %#v", links)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("owner-scoped mutation sent work to workflow intake: %d calls", workflowService.calls)
+	}
+}
+
 type fakeRepo struct {
 	pursuits             map[uuid.UUID]models.Pursuit
 	links                map[uuid.UUID]models.PursuitLink
 	activity             map[uuid.UUID][]models.PursuitActivity
+	taskAttempts         map[string]models.PursuitTaskAttempt
 	workflows            map[uuid.UUID]models.WorkflowItem
+	checklistItems       []models.WorkflowChecklistItem
 	openLoops            []models.WorkflowOpenLoop
 	proposals            []models.WorkflowProposal
+	qualityGates         []models.WorkflowQualityGate
 	decisions            []models.WorkflowDecision
 	transitions          []models.WorkflowTransition
 	sourceLinks          []models.WorkflowSourceLink
 	events               []models.WorkflowEvent
 	evidence             []models.WorkflowEvidenceClaim
 	memories             map[uuid.UUID]models.ContextMemory
+	conversations        map[uuid.UUID]models.AIConversationArchive
+	ambientOpportunities map[uuid.UUID]models.AmbientOpportunity
 	automations          map[uuid.UUID]models.Automation
 	launchEvents         []models.AutomationLaunchEvent
 	verificationRuns     map[uuid.UUID]models.VerificationRun
@@ -2348,6 +4526,8 @@ type fakeRepo struct {
 	verificationEvidence map[uuid.UUID]models.VerificationEvidence
 	sourceItems          map[uuid.UUID]models.SourceRawItem
 	extractions          map[uuid.UUID]models.SourceExtraction
+	sourceOwners         map[uuid.UUID]string
+	linkedWorkflowErr    error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -2355,14 +4535,18 @@ func newFakeRepo() *fakeRepo {
 		pursuits:             map[uuid.UUID]models.Pursuit{},
 		links:                map[uuid.UUID]models.PursuitLink{},
 		activity:             map[uuid.UUID][]models.PursuitActivity{},
+		taskAttempts:         map[string]models.PursuitTaskAttempt{},
 		workflows:            map[uuid.UUID]models.WorkflowItem{},
 		memories:             map[uuid.UUID]models.ContextMemory{},
+		conversations:        map[uuid.UUID]models.AIConversationArchive{},
+		ambientOpportunities: map[uuid.UUID]models.AmbientOpportunity{},
 		automations:          map[uuid.UUID]models.Automation{},
 		verificationRuns:     map[uuid.UUID]models.VerificationRun{},
 		verificationClaims:   map[uuid.UUID]models.VerificationClaim{},
 		verificationEvidence: map[uuid.UUID]models.VerificationEvidence{},
 		sourceItems:          map[uuid.UUID]models.SourceRawItem{},
 		extractions:          map[uuid.UUID]models.SourceExtraction{},
+		sourceOwners:         map[uuid.UUID]string{},
 	}
 }
 
@@ -2424,6 +4608,86 @@ func (r *fakeRepo) CreateLink(link *models.PursuitLink) (*models.PursuitLink, er
 	return link, nil
 }
 
+func (r *fakeRepo) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (bool, bool, error) {
+	switch linkType {
+	case LinkPursuit:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.pursuits[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkWorkflow:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.workflows[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkMemory:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.memories[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkAIConversation:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.conversations[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkAmbientOpportunity:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.ambientOpportunities[id]
+		return true, ok && item.OwnerIdentity == ownerIdentity, nil
+	case LinkSourceItem:
+		for id, item := range r.sourceItems {
+			if linkID != id.String() && linkID != item.ExternalID {
+				continue
+			}
+			owner := r.sourceOwners[item.SourceID]
+			return true, owner == "" || owner == ownerIdentity, nil
+		}
+		return true, false, nil
+	case LinkSourceExtraction:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.extractions[id]
+		if !ok {
+			return true, false, nil
+		}
+		owner := r.sourceOwners[item.SourceID]
+		return true, owner == "" || owner == ownerIdentity, nil
+	case LinkVerification:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		item, ok := r.verificationRuns[id]
+		return true, ok && (item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity), nil
+	case LinkAgentRuntime:
+		id, err := uuid.Parse(linkID)
+		if err != nil {
+			return true, false, nil
+		}
+		for _, item := range r.launchEvents {
+			if item.ID == id {
+				return true, item.OwnerIdentity == ownerIdentity, nil
+			}
+		}
+		return true, false, nil
+	default:
+		return false, true, nil
+	}
+}
+
 func (r *fakeRepo) DeleteLink(pursuitID uuid.UUID, id uuid.UUID) error {
 	link, ok := r.links[id]
 	if !ok || link.PursuitID != pursuitID {
@@ -2453,6 +4717,46 @@ func (r *fakeRepo) FindLink(linkType, linkID string) (*models.PursuitLink, error
 	return nil, errNotFound("link")
 }
 
+func (r *fakeRepo) FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error) {
+	for _, link := range r.links {
+		if link.SourceURI == sourceURI {
+			copyLink := link
+			return &copyLink, nil
+		}
+	}
+	return nil, errNotFound("link")
+}
+
+func (r *fakeRepo) FindLinkForOwner(ownerIdentity, linkType, linkID string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, func(link models.PursuitLink) bool {
+		return link.LinkType == linkType && link.LinkID == linkID
+	})
+}
+
+func (r *fakeRepo) FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, func(link models.PursuitLink) bool {
+		return link.SourceURI == sourceURI
+	})
+}
+
+func (r *fakeRepo) findVisibleLink(ownerIdentity string, matches func(models.PursuitLink) bool) (*models.PursuitLink, error) {
+	var best *models.PursuitLink
+	for _, link := range r.links {
+		pursuit, ok := r.pursuits[link.PursuitID]
+		if !ok || !pursuitVisibleTo(pursuit, ownerIdentity) || !matches(link) {
+			continue
+		}
+		if best == nil || link.Confidence > best.Confidence || (link.Confidence == best.Confidence && link.CreatedAt.After(best.CreatedAt)) {
+			copyLink := link
+			best = &copyLink
+		}
+	}
+	if best == nil {
+		return nil, errNotFound("link")
+	}
+	return best, nil
+}
+
 func (r *fakeRepo) CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error) {
 	if activity.ID == uuid.Nil {
 		activity.ID = uuid.New()
@@ -2472,10 +4776,59 @@ func (r *fakeRepo) FindActivities(pursuitID uuid.UUID, limit int) ([]models.Purs
 	return result, nil
 }
 
+func (r *fakeRepo) UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error) {
+	if existing, ok := r.taskAttempts[attempt.TaskPlanID]; ok {
+		if existing.PursuitID != attempt.PursuitID {
+			return nil, fmt.Errorf("task attempt is already linked to another pursuit")
+		}
+		attempt.ID = existing.ID
+		attempt.CreatedAt = existing.CreatedAt
+	} else if attempt.ID == uuid.Nil {
+		attempt.ID = uuid.New()
+	}
+	if attempt.CreatedAt.IsZero() {
+		attempt.CreatedAt = time.Now().UTC()
+	}
+	attempt.UpdatedAt = time.Now().UTC()
+	r.taskAttempts[attempt.TaskPlanID] = *attempt
+	return attempt, nil
+}
+
+func (r *fakeRepo) FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error) {
+	result := []models.PursuitTaskAttempt{}
+	for _, attempt := range r.taskAttempts {
+		if attempt.PursuitID == pursuitID {
+			result = append(result, attempt)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt.After(result[j].UpdatedAt) })
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
 func (r *fakeRepo) FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error) {
+	if r.linkedWorkflowErr != nil {
+		return nil, r.linkedWorkflowErr
+	}
 	result := []models.WorkflowItem{}
 	for _, id := range ids {
 		if item, ok := r.workflows[id]; ok {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedChecklistItems(workflowIDs []uuid.UUID) ([]models.WorkflowChecklistItem, error) {
+	workflowSet := map[uuid.UUID]bool{}
+	for _, id := range workflowIDs {
+		workflowSet[id] = true
+	}
+	result := []models.WorkflowChecklistItem{}
+	for _, item := range r.checklistItems {
+		if workflowSet[item.WorkflowID] {
 			result = append(result, item)
 		}
 	}
@@ -2505,6 +4858,20 @@ func (r *fakeRepo) FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.Workfl
 	for _, proposal := range r.proposals {
 		if workflowSet[proposal.WorkflowID] {
 			result = append(result, proposal)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedQualityGates(workflowIDs []uuid.UUID) ([]models.WorkflowQualityGate, error) {
+	workflowSet := map[uuid.UUID]bool{}
+	for _, id := range workflowIDs {
+		workflowSet[id] = true
+	}
+	result := []models.WorkflowQualityGate{}
+	for _, gate := range r.qualityGates {
+		if workflowSet[gate.WorkflowID] {
+			result = append(result, gate)
 		}
 	}
 	return result, nil
@@ -2574,6 +4941,26 @@ func (r *fakeRepo) FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, 
 	result := []models.ContextMemory{}
 	for _, id := range ids {
 		if item, ok := r.memories[id]; ok {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversationArchive, error) {
+	result := []models.AIConversationArchive{}
+	for _, id := range ids {
+		if item, ok := r.conversations[id]; ok {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) FindLinkedAmbientOpportunities(ids []uuid.UUID) ([]models.AmbientOpportunity, error) {
+	result := []models.AmbientOpportunity{}
+	for _, id := range ids {
+		if item, ok := r.ambientOpportunities[id]; ok {
 			result = append(result, item)
 		}
 	}
@@ -2670,19 +5057,30 @@ func (r *fakeRepo) FindLinkedAutomationLaunches(automationIDs []uuid.UUID, launc
 }
 
 type fakeWorkflowIntake struct {
-	received workflow.IntakeRequest
-	calls    int
+	received     workflow.IntakeRequest
+	calls        int
+	lastGetOwner string
+	records      map[uuid.UUID]*workflow.WorkflowRecord
+	repo         *fakeRepo
+	err          error
 }
 
 func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.WorkflowRecord, error) {
 	f.calls++
 	f.received = request
+	if f.err != nil {
+		return nil, f.err
+	}
 	id := uuid.New()
-	return &workflow.WorkflowRecord{
+	record := &workflow.WorkflowRecord{
 		Item: models.WorkflowItem{
 			ID:               id,
+			OwnerIdentity:    request.OwnerIdentity,
 			Title:            request.Input,
 			ProjectKey:       request.ProjectKey,
+			SourceType:       request.SourceType,
+			SourceID:         request.SourceID,
+			SourceURI:        request.SourceURI,
 			CurrentState:     workflow.StateNeedsApproval,
 			RiskLevel:        "high",
 			RequiresApproval: true,
@@ -2690,7 +5088,27 @@ func (f *fakeWorkflowIntake) Intake(request workflow.IntakeRequest) (*workflow.W
 			ApprovalReason:   "high-risk pursuit intake",
 			NextAction:       "Robert should approve the prepared response.",
 		},
-	}, nil
+	}
+	if f.records == nil {
+		f.records = make(map[uuid.UUID]*workflow.WorkflowRecord)
+	}
+	f.records[id] = record
+	if f.repo != nil {
+		f.repo.workflows[id] = record.Item
+	}
+	return record, nil
+}
+
+func (f *fakeWorkflowIntake) GetForOwner(ownerIdentity string, id uuid.UUID) (*workflow.WorkflowRecord, error) {
+	record, ok := f.records[id]
+	if !ok {
+		return nil, errNotFound("workflow")
+	}
+	f.lastGetOwner = ownerIdentity
+	if record.Item.OwnerIdentity != "" && record.Item.OwnerIdentity != ownerIdentity {
+		return nil, errNotFound("workflow")
+	}
+	return record, nil
 }
 
 type errNotFound string

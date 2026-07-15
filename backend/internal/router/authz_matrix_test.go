@@ -18,7 +18,7 @@ func TestForbiddenUsesApiErrorEnvelope(t *testing.T) {
 	rec := httptest.NewRecorder()
 	engine := newAuthzEngine()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/thing", nil)
-	req.Header.Set("X-HAI-Role", "viewer")
+	req.Header.Set("X-Test-Verified-Role", "viewer")
 	engine.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
@@ -47,6 +47,12 @@ func TestForbiddenUsesApiErrorEnvelope(t *testing.T) {
 func TestRolePermissionMatrixEnforcement(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		if role := c.GetHeader("X-Test-Verified-Role"); role != "" {
+			c.Set(contextRoleKey, role)
+		}
+		c.Next()
+	})
 	for path, perm := range map[string]rbac.Permission{
 		"/read":    rbac.PermRead,
 		"/write":   rbac.PermWrite,
@@ -68,7 +74,7 @@ func TestRolePermissionMatrixEnforcement(t *testing.T) {
 		for path, allowed := range paths {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/api/v1"+path+"/x", nil)
-			req.Header.Set("X-HAI-Role", role)
+			req.Header.Set("X-Test-Verified-Role", role)
 			engine.ServeHTTP(rec, req)
 			wantCode := http.StatusForbidden
 			if allowed {

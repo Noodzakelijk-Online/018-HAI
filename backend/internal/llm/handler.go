@@ -2,6 +2,7 @@ package llm
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,7 +28,22 @@ func (h *Handler) Policy(c *gin.Context) {
 }
 
 func (h *Handler) ProviderProbes(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service.ProbeProviders())
+	probes, err := h.service.ProbeAndRecordProviders()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, probes)
+}
+
+func (h *Handler) ProviderProbeHistory(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
+	probes, err := h.service.ProviderProbeHistory(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, probes)
 }
 
 func (h *Handler) Route(c *gin.Context) {

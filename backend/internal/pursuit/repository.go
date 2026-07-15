@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,17 +20,26 @@ type Repository interface {
 	DeleteLink(pursuitID uuid.UUID, id uuid.UUID) error
 	FindLinks(pursuitID uuid.UUID) ([]models.PursuitLink, error)
 	FindLink(linkType, linkID string) (*models.PursuitLink, error)
+	FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error)
+	FindLinkForOwner(ownerIdentity, linkType, linkID string) (*models.PursuitLink, error)
+	FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error)
 	CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error)
 	FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error)
+	UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error)
+	FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error)
 	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
+	FindLinkedChecklistItems(workflowIDs []uuid.UUID) ([]models.WorkflowChecklistItem, error)
 	FindLinkedOpenLoops(workflowIDs []uuid.UUID) ([]models.WorkflowOpenLoop, error)
 	FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.WorkflowProposal, error)
+	FindLinkedQualityGates(workflowIDs []uuid.UUID) ([]models.WorkflowQualityGate, error)
 	FindLinkedDecisions(workflowIDs []uuid.UUID) ([]models.WorkflowDecision, error)
 	FindLinkedTransitions(workflowIDs []uuid.UUID) ([]models.WorkflowTransition, error)
 	FindLinkedSourceLinks(workflowIDs []uuid.UUID) ([]models.WorkflowSourceLink, error)
 	FindLinkedEvents(workflowIDs []uuid.UUID) ([]models.WorkflowEvent, error)
 	FindLinkedEvidence(workflowIDs []uuid.UUID) ([]models.WorkflowEvidenceClaim, error)
 	FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, error)
+	FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversationArchive, error)
+	FindLinkedAmbientOpportunities(ids []uuid.UUID) ([]models.AmbientOpportunity, error)
 	FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error)
 	FindLinkedExtractions(ids []uuid.UUID) ([]models.SourceExtraction, error)
 	FindLinkedVerificationRuns(ids []uuid.UUID) ([]models.VerificationRun, error)
@@ -74,15 +84,132 @@ func (r *GormRepository) FindByID(id uuid.UUID) (*models.Pursuit, error) {
 }
 
 func (r *GormRepository) FindAll(includeArchived bool) ([]models.Pursuit, error) {
+	return r.findAllForOwner("", includeArchived)
+}
+
+// FindAllForOwner enforces the ownership predicate in Postgres. Ownerless
+// records remain visible to support local single-user data created before
+// identity-aware ownership was introduced.
+func (r *GormRepository) FindAllForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error) {
+	return r.findAllForOwner(ownerIdentity, includeArchived)
+}
+
+func (r *GormRepository) findAllForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error) {
 	var pursuits []models.Pursuit
 	query := r.DB.Order("priority_score DESC, updated_at DESC")
 	if !includeArchived {
 		query = query.Where("archived = ?", false)
 	}
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+	}
 	if err := query.Find(&pursuits).Error; err != nil {
 		return nil, err
 	}
 	return pursuits, nil
+}
+
+// LinkVisibleToOwner verifies links to records that are private to a user. A
+// source item inherits its owner from ConnectedSource rather than duplicating
+// the identity on every raw item and extraction.
+func (r *GormRepository) LinkVisibleToOwner(ownerIdentity, linkType, linkID string) (bool, bool, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return false, true, nil
+	}
+	visibleOwner := "owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL"
+
+	switch strings.TrimSpace(linkType) {
+	case LinkPursuit:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.Pursuit{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkWorkflow:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.WorkflowItem{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkMemory:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.ContextMemory{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkAIConversation:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.AIConversationArchive{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkAmbientOpportunity:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.AmbientOpportunity{}).Where("id = ? AND owner_identity = ?", id, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkSourceItem:
+		return r.sourceItemVisibleToOwner(ownerIdentity, linkID)
+	case LinkSourceExtraction:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.SourceExtraction{}).
+			Where("id = ?", id).
+			Where("source_id IN (?)", r.visibleSourceIDs(ownerIdentity)).
+			Count(&count).Error
+		return true, count > 0, err
+	case LinkVerification:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.VerificationRun{}).Where("id = ?", id).Where(visibleOwner, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	case LinkAgentRuntime:
+		id, err := uuid.Parse(strings.TrimSpace(linkID))
+		if err != nil {
+			return true, false, nil
+		}
+		var count int64
+		err = r.DB.Model(&models.AutomationLaunchEvent{}).Where("id = ? AND owner_identity = ?", id, ownerIdentity).Count(&count).Error
+		return true, count > 0, err
+	default:
+		return false, true, nil
+	}
+}
+
+func (r *GormRepository) sourceItemVisibleToOwner(ownerIdentity, linkID string) (bool, bool, error) {
+	query := r.DB.Model(&models.SourceRawItem{}).Where("source_id IN (?)", r.visibleSourceIDs(ownerIdentity))
+	if id, err := uuid.Parse(strings.TrimSpace(linkID)); err == nil {
+		query = query.Where("id = ? OR external_id = ?", id, linkID)
+	} else {
+		query = query.Where("external_id = ?", linkID)
+	}
+	var count int64
+	err := query.Count(&count).Error
+	return true, count > 0, err
+}
+
+func (r *GormRepository) visibleSourceIDs(ownerIdentity string) *gorm.DB {
+	return r.DB.Model(&models.ConnectedSource{}).
+		Select("id").
+		Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
 }
 
 func (r *GormRepository) CreateLink(link *models.PursuitLink) (*models.PursuitLink, error) {
@@ -136,6 +263,40 @@ func (r *GormRepository) FindLink(linkType, linkID string) (*models.PursuitLink,
 	return &link, nil
 }
 
+func (r *GormRepository) FindLinkBySourceURI(sourceURI string) (*models.PursuitLink, error) {
+	var link models.PursuitLink
+	if err := r.DB.Where("source_uri = ?", sourceURI).Order("confidence DESC, created_at DESC").First(&link).Error; err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
+// FindLinkForOwner applies pursuit visibility before selecting an exact source
+// match. This avoids allowing another user's more recent or higher-confidence
+// link to hide an exact link that the current user is allowed to use.
+func (r *GormRepository) FindLinkForOwner(ownerIdentity, linkType, linkID string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, "pursuit_links.link_type = ? AND pursuit_links.link_id = ?", linkType, linkID)
+}
+
+func (r *GormRepository) FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error) {
+	return r.findVisibleLink(ownerIdentity, "pursuit_links.source_uri = ?", sourceURI)
+}
+
+func (r *GormRepository) findVisibleLink(ownerIdentity, condition string, args ...interface{}) (*models.PursuitLink, error) {
+	var link models.PursuitLink
+	query := r.DB.Table("pursuit_links").
+		Select("pursuit_links.*").
+		Joins("JOIN pursuits ON pursuits.id = pursuit_links.pursuit_id").
+		Where(condition, args...)
+	if ownerIdentity != "" {
+		query = query.Where("pursuits.owner_identity = ? OR pursuits.owner_identity = '' OR pursuits.owner_identity IS NULL", ownerIdentity)
+	}
+	if err := query.Order("pursuit_links.confidence DESC, pursuit_links.created_at DESC").First(&link).Error; err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
 func (r *GormRepository) CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error) {
 	if activity.CreatedAt.IsZero() {
 		activity.CreatedAt = time.Now().UTC()
@@ -157,12 +318,57 @@ func (r *GormRepository) FindActivities(pursuitID uuid.UUID, limit int) ([]model
 	return activity, nil
 }
 
+func (r *GormRepository) UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error) {
+	var existing models.PursuitTaskAttempt
+	err := r.DB.Where("task_plan_id = ?", attempt.TaskPlanID).First(&existing).Error
+	if err == nil {
+		if existing.PursuitID != attempt.PursuitID {
+			return nil, fmt.Errorf("task attempt is already linked to another pursuit")
+		}
+		attempt.ID = existing.ID
+		attempt.CreatedAt = existing.CreatedAt
+		if err := r.DB.Save(attempt).Error; err != nil {
+			return nil, err
+		}
+		return attempt, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	if err := r.DB.Create(attempt).Error; err != nil {
+		return nil, err
+	}
+	return attempt, nil
+}
+
+func (r *GormRepository) FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	var attempts []models.PursuitTaskAttempt
+	if err := r.DB.Where("pursuit_id = ?", pursuitID).Order("updated_at DESC").Limit(limit).Find(&attempts).Error; err != nil {
+		return nil, err
+	}
+	return attempts, nil
+}
+
 func (r *GormRepository) FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error) {
 	var items []models.WorkflowItem
 	if len(ids) == 0 {
 		return items, nil
 	}
 	if err := r.DB.Where("id IN ?", ids).Order("priority_score DESC, updated_at DESC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *GormRepository) FindLinkedChecklistItems(workflowIDs []uuid.UUID) ([]models.WorkflowChecklistItem, error) {
+	var items []models.WorkflowChecklistItem
+	if len(workflowIDs) == 0 {
+		return items, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("workflow_id ASC, position ASC, created_at ASC").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -188,6 +394,17 @@ func (r *GormRepository) FindLinkedProposals(workflowIDs []uuid.UUID) ([]models.
 		return nil, err
 	}
 	return proposals, nil
+}
+
+func (r *GormRepository) FindLinkedQualityGates(workflowIDs []uuid.UUID) ([]models.WorkflowQualityGate, error) {
+	var gates []models.WorkflowQualityGate
+	if len(workflowIDs) == 0 {
+		return gates, nil
+	}
+	if err := r.DB.Where("workflow_id IN ?", workflowIDs).Order("updated_at DESC, created_at DESC").Find(&gates).Error; err != nil {
+		return nil, err
+	}
+	return gates, nil
 }
 
 func (r *GormRepository) FindLinkedDecisions(workflowIDs []uuid.UUID) ([]models.WorkflowDecision, error) {
@@ -254,6 +471,37 @@ func (r *GormRepository) FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMe
 		return nil, err
 	}
 	return memories, nil
+}
+
+// FindLinkedConversations deliberately selects metadata only. Conversation
+// payloads remain encrypted and are available only through the memory-engine
+// conversation endpoint after its separate owner and key checks.
+func (r *GormRepository) FindLinkedConversations(ids []uuid.UUID) ([]models.AIConversationArchive, error) {
+	var conversations []models.AIConversationArchive
+	if len(ids) == 0 {
+		return conversations, nil
+	}
+	if err := r.DB.Select("id", "owner_identity", "platform", "external_id", "title", "source_uri", "content_hash", "revision", "message_count", "captured_at", "last_message_at", "archived", "created_at", "updated_at").
+		Where("id IN ?", ids).
+		Order("captured_at DESC").
+		Find(&conversations).Error; err != nil {
+		return nil, err
+	}
+	return conversations, nil
+}
+
+func (r *GormRepository) FindLinkedAmbientOpportunities(ids []uuid.UUID) ([]models.AmbientOpportunity, error) {
+	var opportunities []models.AmbientOpportunity
+	if len(ids) == 0 {
+		return opportunities, nil
+	}
+	if err := r.DB.Select("id", "need_key", "title", "rationale", "next_action", "source_type", "source_uri", "priority_score", "confidence", "risk", "requires_approval", "status", "last_seen_at", "resolution_note", "created_at", "updated_at").
+		Where("id IN ?", ids).
+		Order("last_seen_at DESC, updated_at DESC").
+		Find(&opportunities).Error; err != nil {
+		return nil, err
+	}
+	return opportunities, nil
 }
 
 func (r *GormRepository) FindLinkedSourceItems(ids []uuid.UUID) ([]models.SourceRawItem, error) {
