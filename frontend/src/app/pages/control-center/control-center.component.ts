@@ -124,6 +124,7 @@ export class ControlCenterComponent implements OnInit {
       label: 'Work',
       items: [
         { label: 'Command Center', icon: 'appstore', section: 'overview' },
+        { label: 'Background Ops', icon: 'thunderbolt', route: '/background-operations' },
         { label: 'Pursuits', icon: 'flag', route: '/pursuits' },
         { label: 'Approvals', icon: 'check-square', section: 'attention' },
         { label: 'Workflows', icon: 'unordered-list', route: '/workflow-engine' },
@@ -135,6 +136,7 @@ export class ControlCenterComponent implements OnInit {
       items: [
         { label: 'Priorities', icon: 'heart', section: 'priorities' },
         { label: 'Sources', icon: 'cluster', route: '/connected-sources' },
+        { label: 'Account Bridges', icon: 'link', route: '/account-bridges' },
         { label: 'Memory', icon: 'database', route: '/memory' },
         { label: 'Task Planning', icon: 'partition', route: '/task-blueprint' },
         { label: 'Verified Answers', icon: 'safety-certificate', route: '/grounded-answers' },
@@ -145,8 +147,11 @@ export class ControlCenterComponent implements OnInit {
       label: 'System',
       items: [
         { label: 'System Status', icon: 'heart', route: '/system-status' },
+        { label: 'Runtime Control', icon: 'poweroff', route: '/runtime-control' },
         { label: 'Brain Settings', icon: 'safety-certificate', route: '/ambient-brain' },
         { label: 'Models', icon: 'deployment-unit', route: '/llm-policy' },
+        { label: 'Model Intelligence', icon: 'experiment', route: '/model-intelligence' },
+        { label: 'Runtime Lab', icon: 'api', route: '/runtime-lab' },
       ],
     },
   ]

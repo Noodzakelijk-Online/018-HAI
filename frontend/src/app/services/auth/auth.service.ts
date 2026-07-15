@@ -19,6 +19,10 @@ export class AuthService implements IAuthService {
         return this.http.post(`${this.apiUrl}/login`, {email, password});
     }
 
+    register(email: string, password: string): Observable<IUserModel> {
+        return this.http.post<IUserModel>(`${this.apiUrl}/register`, {email, password});
+    }
+
 
     logout() {
         return this.http.get<void>(`${this.apiUrl}/logout`);

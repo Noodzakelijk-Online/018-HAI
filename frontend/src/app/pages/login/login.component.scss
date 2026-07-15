@@ -120,6 +120,13 @@
   margin-bottom: 16px;
 }
 
+.login-form-hint {
+  margin: -4px 0 16px;
+  color: var(--hai-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .login-options {
   display: flex;
   gap: 12px;
@@ -145,6 +152,26 @@
 
 .login-form-forgot:hover,
 .login-form-forgot:focus-visible {
+  text-decoration: underline;
+  outline: 0;
+}
+
+.login-register-link {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 0;
+  color: var(--hai-blue);
+  font: inherit;
+  font-weight: 650;
+  text-align: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.login-register-link:hover,
+.login-register-link:focus-visible {
   text-decoration: underline;
   outline: 0;
 }

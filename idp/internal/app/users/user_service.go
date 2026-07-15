@@ -19,6 +19,8 @@ type userServiceImpl struct {
 	hasher   utils.PasswordHasher
 }
 
+var ErrUserAlreadyExists = errors.New("user already exists")
+
 func NewUserService(repo irepository.UserRepository, logger iservice.Logger, hasher utils.PasswordHasher) UserService {
 	return &userServiceImpl{
 		userRepo: repo,
@@ -44,10 +46,14 @@ func GetDefaultUserService() (UserService, error) {
 func (s *userServiceImpl) CreateUser(user models.User) (*models.User, error) {
 	if existingUser, _ := s.userRepo.FindByEmail(user.Email); existingUser != nil {
 		s.logger.Error("User already exists with email: %s", user.Email)
-		return nil, errors.New("user already exists")
+		return nil, ErrUserAlreadyExists
 	}
 
-	return s.userRepo.Create(&user)
+	createdUser, err := s.userRepo.Create(&user)
+	if errors.Is(err, irepository.ErrDuplicateUser) {
+		return nil, ErrUserAlreadyExists
+	}
+	return createdUser, err
 }
 
 func (s *userServiceImpl) GetUserByID(id uuid.UUID) (*models.User, error) {

@@ -1,0 +1,127 @@
+<div class="mi">
+  <header class="mi__header">
+    <div>
+      <button nz-button nzType="text" (click)="goBack()">
+        <span nz-icon nzType="arrow-left"></span>
+      </button>
+      <h1>Model Intelligence</h1>
+      <p class="mi__subtitle">
+        Architecture-aware model routing. HAI is provider-agnostic and truthful: local test providers run
+        deterministically, unconfigured providers are shown as not_configured, and no state is ever faked.
+      </p>
+    </div>
+    <button nz-button nzType="text" (click)="refresh()">
+      <span nz-icon nzType="reload"></span> Refresh
+    </button>
+  </header>
+
+  <section class="mi__stats" *ngIf="overview as o">
+    <nz-card class="stat" nzSize="small">
+      <div class="stat__value">{{ o.activeModels }}/{{ o.totalProfiles }}</div>
+      <div class="stat__label">Active models</div>
+    </nz-card>
+    <nz-card class="stat" nzSize="small">
+      <div class="stat__value">{{ o.lanes.length }}</div>
+      <div class="stat__label">Routing lanes</div>
+    </nz-card>
+    <nz-card class="stat" nzSize="small">
+      <div class="stat__value">{{ o.telemetryRuns }}</div>
+      <div class="stat__label">Telemetry runs</div>
+    </nz-card>
+    <nz-card class="stat" nzSize="small">
+      <div class="stat__value">{{ o.cacheHits }}/{{ o.cacheHits + o.cacheMisses }}</div>
+      <div class="stat__label">Cache hits</div>
+    </nz-card>
+  </section>
+
+  <section class="mi__grid">
+    <nz-card nzTitle="Providers" nzSize="small" *ngIf="overview">
+      <nz-table #provTable [nzData]="overview.providers" nzSize="small" [nzShowPagination]="false">
+        <thead>
+          <tr><th>Provider</th><th>Status</th><th>Claim</th><th>Models</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let p of provTable.data">
+            <td>{{ p.name }}<span class="mi__local" *ngIf="p.local"> · local</span></td>
+            <td><nz-tag [nzColor]="statusColor(p.status)">{{ p.status }}</nz-tag></td>
+            <td>{{ p.claimLevel }}</td>
+            <td>{{ p.models }}</td>
+          </tr>
+        </tbody>
+      </nz-table>
+    </nz-card>
+
+    <nz-card nzTitle="Lane winners" nzSize="small" *ngIf="overview">
+      <nz-empty *ngIf="!overview.laneWinners.length" nzNotFoundContent="No observed runs yet"></nz-empty>
+      <ul class="mi__lanes" *ngIf="overview.laneWinners.length">
+        <li *ngFor="let w of overview.laneWinners">
+          <nz-tag nzColor="blue">{{ w.lane }}</nz-tag>
+          <span>{{ w.providerId }}/{{ w.modelId }}</span>
+          <span class="mi__tps">{{ w.tokensPerSecond | number: '1.0-0' }} tok/s</span>
+        </li>
+      </ul>
+    </nz-card>
+  </section>
+
+  <nz-card nzTitle="Model profiles" nzSize="small" class="mi__profiles">
+    <nz-table #profTable [nzData]="profiles" [nzLoading]="loading" nzSize="small" [nzNoResult]="emptyTpl">
+      <thead>
+        <tr>
+          <th>Model</th><th>Architecture</th><th>Lanes</th><th>Status</th>
+          <th>Claim</th><th>Observed tok/s</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let p of profTable.data">
+          <td>{{ p.providerId }}/{{ p.modelId }}</td>
+          <td><code>{{ p.architectureFamily }}</code></td>
+          <td>
+            <nz-tag *ngFor="let l of p.lanes" nzColor="purple">{{ l }}</nz-tag>
+          </td>
+          <td><nz-tag [nzColor]="statusColor(p.status)">{{ p.status }}</nz-tag></td>
+          <td>{{ p.claimLevel }}</td>
+          <td>{{ p.observedTokensPerSecond | number: '1.0-0' }}</td>
+          <td>
+            <button
+              nz-button
+              nzSize="small"
+              [nzLoading]="benchmarking[p.providerId + '/' + p.modelId]"
+              (click)="benchmark(p)"
+            >
+              Benchmark
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </nz-table>
+    <ng-template #emptyTpl><nz-empty></nz-empty></ng-template>
+  </nz-card>
+
+  <section class="mi__grid">
+    <nz-card nzTitle="Hardware profile" nzSize="small" *ngIf="hardware as hw">
+      <dl class="mi__meta">
+        <div><dt>OS</dt><dd>{{ hw.profile.operatingSystem }}</dd></div>
+        <div><dt>CPU cores</dt><dd>{{ hw.profile.cpuCores }}</dd></div>
+        <div><dt>GPU</dt><dd>{{ hw.profile.gpuVendor }}</dd></div>
+        <div><dt>NPU</dt><dd>{{ hw.profile.npuVendor }}</dd></div>
+        <div><dt>Serving stack</dt><dd><nz-tag nzColor="geekblue">{{ hw.selectedServingStack }}</nz-tag></dd></div>
+      </dl>
+      <button nz-button nzSize="small" (click)="detectHardware()">
+        <span nz-icon nzType="scan"></span> Re-detect
+      </button>
+    </nz-card>
+
+    <nz-card nzTitle="Budgets & power" nzSize="small">
+      <dl class="mi__meta" *ngIf="budgets as b">
+        <div><dt>Context strategy</dt><dd>{{ b.contextStrategy }}</dd></div>
+        <div><dt>Max reasoning</dt><dd>{{ b.maximumReasoningEffort }}</dd></div>
+        <div><dt>Max input tokens</dt><dd>{{ b.maximumInputTokens }}</dd></div>
+        <div><dt>Max output tokens</dt><dd>{{ b.maximumOutputTokens }}</dd></div>
+      </dl>
+      <dl class="mi__meta" *ngIf="power as pw">
+        <div><dt>Power mode</dt><dd>{{ pw.mode }}</dd></div>
+        <div><dt>Defer on battery</dt><dd>{{ pw.deferHeavyWorkOnBattery ? 'yes' : 'no' }}</dd></div>
+      </dl>
+    </nz-card>
+  </section>
+</div>

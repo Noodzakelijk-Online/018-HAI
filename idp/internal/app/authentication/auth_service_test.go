@@ -2,6 +2,7 @@ package authentication
 
 import (
 	"automation-hub-idp/internal/app/config"
+	"automation-hub-idp/internal/app/dto"
 	"automation-hub-idp/internal/app/models"
 	"automation-hub-idp/internal/app/utils"
 	"errors"
@@ -12,6 +13,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRegisterRejectsInvalidInputBeforeHashing(t *testing.T) {
+	svc := &service{}
+
+	_, err := svc.Register(dto.UserDTO{Email: "not-an-email", Password: "local-passphrase-2026"})
+	require.ErrorIs(t, err, ErrRegistrationEmailInvalid)
+
+	_, err = svc.Register(dto.UserDTO{Email: "operator@example.com", Password: "short-pass"})
+	require.ErrorIs(t, err, ErrRegistrationPasswordWeak)
+}
 
 func TestRefreshTokenUsesRefreshTokenExpiration(t *testing.T) {
 	setupAuthConfig(t)

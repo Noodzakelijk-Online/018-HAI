@@ -1,0 +1,69 @@
+<div class="ab">
+  <header class="ab__header">
+    <div>
+      <button nz-button nzType="text" (click)="goBack()">
+        <span nz-icon nzType="arrow-left"></span>
+      </button>
+      <h1>Account Bridges</h1>
+      <p class="ab__subtitle">
+        Read-only account bridges. The generic JSON feed is the production path; Gmail, GitHub, Trello, Drive and
+        Calendar are honest contracts — they show exact setup requirements and never fake OAuth or a connected status.
+      </p>
+    </div>
+    <button nz-button nzType="primary" (click)="syncAll()">
+      <span nz-icon nzType="sync"></span> Sync all
+    </button>
+  </header>
+
+  <nz-card nzTitle="Registered feeds" nzSize="small" class="ab__feeds">
+    <nz-table #feedTable [nzData]="feeds" [nzLoading]="loading" nzSize="small" [nzNoResult]="emptyTpl">
+      <thead>
+        <tr>
+          <th>Feed</th><th>Provider</th><th>Status</th><th>Last read</th><th>Enabled</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let f of feedTable.data">
+          <td>{{ f.feed.name }}<div class="ab__muted">{{ f.feed.accountLabel }}</div></td>
+          <td><code>{{ f.feed.provider }}</code></td>
+          <td><nz-tag [nzColor]="statusColor(f.connectionStatus)">{{ f.connectionStatus }}</nz-tag></td>
+          <td>{{ f.lastItemsRead }}</td>
+          <td><nz-tag [nzColor]="f.feed.enabled ? 'green' : 'default'">{{ f.feed.enabled ? 'on' : 'off' }}</nz-tag></td>
+          <td>
+            <button nz-button nzSize="small" [nzLoading]="syncing[f.feed.id]" (click)="sync(f)">Sync</button>
+          </td>
+        </tr>
+      </tbody>
+    </nz-table>
+    <ng-template #emptyTpl><nz-empty nzNotFoundContent="No feeds registered yet"></nz-empty></ng-template>
+  </nz-card>
+
+  <h2 class="ab__section">Provider bridge contracts</h2>
+  <div class="ab__grid">
+    <nz-card *ngFor="let b of bridges" class="ab__card" nzSize="small">
+      <div class="ab__card-head">
+        <div>
+          <div class="ab__name">{{ b.displayName }}</div>
+          <div class="ab__muted">{{ b.provider }}</div>
+        </div>
+        <nz-tag [nzColor]="statusColor(b.connectionStatus)">{{ b.connectionStatus }}</nz-tag>
+      </div>
+
+      <div class="ab__badges">
+        <nz-tag [nzColor]="b.readOnly ? 'green' : 'red'">{{ b.readOnly ? 'read-only' : 'write' }}</nz-tag>
+        <nz-tag *ngFor="let s of b.requiredScopes" nzColor="purple">{{ s }}</nz-tag>
+      </div>
+
+      <div class="ab__pref">
+        <span class="ab__muted">Connector preference:</span> {{ b.connectorPreference.join(' → ') }}
+      </div>
+
+      <div class="ab__setup" *ngIf="b.setupRequirements?.length">
+        <div class="ab__muted">Setup required</div>
+        <ol>
+          <li *ngFor="let s of b.setupRequirements"><strong>{{ s.step }}</strong> — {{ s.detail }}</li>
+        </ol>
+      </div>
+    </nz-card>
+  </div>
+</div>

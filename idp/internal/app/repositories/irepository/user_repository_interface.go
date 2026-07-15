@@ -3,8 +3,11 @@ package irepository
 import (
 	"automation-hub-idp/internal/app/models"
 	"automation-hub-idp/internal/app/utils"
+	"errors"
 	"github.com/google/uuid"
 )
+
+var ErrDuplicateUser = errors.New("duplicate user")
 
 type UserRepository interface {
 	FindByID(id uuid.UUID) (*models.User, error)

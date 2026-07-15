@@ -2,6 +2,7 @@ package authentication
 
 import (
 	"automation-hub-idp/internal/app/dto"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"time"
@@ -26,6 +27,7 @@ func NewHandler(authService IService) *Handler {
 // @Param body body dto.UserDTO true "User registration details"
 // @Success 200 {object} dto.UserDTO
 // @Failure 400 {object} dto.ErrorResponse
+// @Failure 409 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
 // @Router /auth/register [post]
 func (h *Handler) Register(c *gin.Context) {
@@ -40,9 +42,16 @@ func (h *Handler) Register(c *gin.Context) {
 
 	response, err := h.authService.Register(userDTO)
 	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, ErrRegistrationEmailInvalid), errors.Is(err, ErrRegistrationPasswordWeak):
+			status = http.StatusBadRequest
+		case errors.Is(err, ErrRegistrationEmailInUse):
+			status = http.StatusConflict
+		}
 		errorResponse.Message = err.Error()
-		errorResponse.ErrorCode = http.StatusInternalServerError
-		c.JSON(http.StatusInternalServerError, errorResponse)
+		errorResponse.ErrorCode = status
+		c.JSON(status, errorResponse)
 		return
 	}
 

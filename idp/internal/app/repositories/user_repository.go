@@ -6,6 +6,7 @@ import (
 	"automation-hub-idp/internal/app/utils"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -51,6 +52,10 @@ func (r *GormUserRepository) FindByEmail(email string) (*models.User, error) {
 func (r *GormUserRepository) Create(user *models.User) (*models.User, error) {
 	err := r.DB.Create(user).Error
 	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+			return nil, irepository.ErrDuplicateUser
+		}
 		r.logger.Error("Failed to create user: %s", err)
 		return nil, errors.New("failed to create user")
 	}
