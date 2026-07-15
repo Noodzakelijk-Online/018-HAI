@@ -16,6 +16,12 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o idp ./main.go
 # Stage 2: Build the minimal docker image
 FROM ubuntu:latest
 
+# CA certificates are required for outbound HTTPS (the Google "Sign in with
+# Google" token exchange and userinfo calls); the minimal base ships without them.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /root/
 
 # Copy the pre-built binary from the previous stage

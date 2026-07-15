@@ -1,0 +1,97 @@
+<div class="system-status">
+  <div class="header">
+    <div>
+      <h1>System status</h1>
+      <p class="subtitle">
+        Live readiness of the backend and the dependencies it runs on. This
+        reflects real connectivity probes, not configuration guesses.
+      </p>
+    </div>
+    <button
+      nz-button
+      nzType="default"
+      (click)="refresh()"
+      [nzLoading]="loading"
+    >
+      <span nz-icon nzType="reload"></span>
+      Refresh
+    </button>
+  </div>
+
+  <div *ngIf="loadError && !readiness" class="load-error">
+    <span nz-icon nzType="disconnect"></span>
+    Could not reach the readiness probe. If you were redirected to sign in, your
+    session may have expired.
+  </div>
+
+  <ng-container *ngIf="readiness">
+    <div class="status-banner" [ngClass]="statusClass()">
+      <span
+        nz-icon
+        [nzType]="
+          readiness.status === 'ready'
+            ? 'check-circle'
+            : readiness.status === 'degraded'
+            ? 'warning'
+            : 'close-circle'
+        "
+        nzTheme="fill"
+      ></span>
+      <div class="banner-text">
+        <strong>{{ statusLabel() }}</strong>
+        <span class="counts">
+          {{ readiness.summary.ok }} ok · {{ readiness.summary.warn }} warning<span
+            *ngIf="readiness.summary.warn !== 1"
+            >s</span
+          >
+          · {{ readiness.summary.fail }} failing
+        </span>
+      </div>
+      <span class="updated" *ngIf="lastUpdated">
+        Updated {{ lastUpdated | date: 'HH:mm:ss' }}
+      </span>
+    </div>
+
+    <div
+      *ngIf="recommendedActions.length > 0"
+      class="recommended"
+      [ngClass]="readiness.summary.fail > 0 ? 'status-fail' : 'status-warn'"
+    >
+      <h3>
+        <span nz-icon nzType="bulb" nzTheme="outline"></span>
+        Recommended next actions
+      </h3>
+      <ul>
+        <li *ngFor="let action of recommendedActions">{{ action }}</li>
+      </ul>
+    </div>
+
+    <div class="groups">
+      <nz-card
+        *ngFor="let group of groups"
+        class="group-card"
+        [ngClass]="'border-' + severityClass(group.worst)"
+      >
+        <div class="group-head">
+          <span
+            nz-icon
+            [nzType]="severityIcon(group.worst)"
+            [ngClass]="severityClass(group.worst)"
+          ></span>
+          <span class="group-title">{{ group.title }}</span>
+        </div>
+        <ul class="check-list">
+          <li *ngFor="let check of group.checks">
+            <span
+              nz-icon
+              [nzType]="severityIcon(check.severity)"
+              [ngClass]="severityClass(check.severity)"
+            ></span>
+            <span class="check-name">{{ check.name }}</span>
+            <span class="check-detail">{{ check.detail }}</span>
+          </li>
+        </ul>
+      </nz-card>
+    </div>
+  </ng-container>
+</div>

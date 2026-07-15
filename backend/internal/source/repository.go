@@ -32,6 +32,8 @@ type Repository interface {
 	DeletePendingVectorIndex(extractionID uuid.UUID) error
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
 	FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
+	SaveOAuthToken(token *models.SourceOAuthToken) error
+	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
 }
 
 type GormRepository struct {
@@ -274,4 +276,30 @@ func (r *GormRepository) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAudi
 	}
 	err := query.Find(&logs).Error
 	return logs, err
+}
+
+// SaveOAuthToken upserts the token for a source (one token set per source).
+func (r *GormRepository) SaveOAuthToken(token *models.SourceOAuthToken) error {
+	var existing models.SourceOAuthToken
+	err := r.DB.Where("source_id = ?", token.SourceID).First(&existing).Error
+	if err == nil {
+		token.ID = existing.ID
+		token.CreatedAt = existing.CreatedAt
+		return r.DB.Select("*").Save(token).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if token.ID == uuid.Nil {
+		token.ID = uuid.New()
+	}
+	return r.DB.Create(token).Error
+}
+
+func (r *GormRepository) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error) {
+	var token models.SourceOAuthToken
+	if err := r.DB.Where("source_id = ?", sourceID).First(&token).Error; err != nil {
+		return nil, err
+	}
+	return &token, nil
 }

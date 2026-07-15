@@ -378,26 +378,42 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Connectors: %v", err)
 	}
-	foundLocal := false
-	foundJSONFeed := false
-	operational := map[string]bool{}
+	// The catalog must be honest about what each connector actually does: only
+	// the two live remote adapters are "operational"; the local-file readers are
+	// "local_only"; odoo-herp is "modeled". Every one is still enabled and usable
+	// — honesty about kind is not the same as disabling anything.
+	wantStatus := map[string]string{
+		"github":          AdapterOperational,
+		"json-feed":       AdapterOperational,
+		"email":           AdapterLocalOnly,
+		"calendar":        AdapterLocalOnly,
+		"cloud-documents": AdapterLocalOnly,
+		"project-board":   AdapterLocalOnly,
+		"local-folder":    AdapterLocalOnly,
+		"whatsapp-export": AdapterLocalOnly,
+		"odoo-herp":       AdapterModeled,
+	}
+	seen := map[string]bool{}
 	for _, connector := range connectors {
-		switch connector.ConnectorKey {
-		case "local-folder", "email", "calendar", "cloud-documents", "project-board", "github":
-			foundLocal = true
-			if !connector.Enabled || connector.AdapterStatus != "operational" {
-				t.Fatalf("%s connector = %#v, want operational enabled", connector.ConnectorKey, connector)
-			}
-			operational[connector.ConnectorKey] = true
-		case "json-feed":
-			foundJSONFeed = true
-			if !connector.Enabled || connector.AdapterStatus != "operational" {
-				t.Fatalf("json-feed connector = %#v, want operational enabled", connector)
-			}
+		want, tracked := wantStatus[connector.ConnectorKey]
+		if !tracked {
+			continue
+		}
+		seen[connector.ConnectorKey] = true
+		if !connector.Enabled {
+			t.Fatalf("%s connector should stay enabled, got %#v", connector.ConnectorKey, connector)
+		}
+		if connector.AdapterStatus != want {
+			t.Fatalf("%s AdapterStatus = %q, want %q", connector.ConnectorKey, connector.AdapterStatus, want)
+		}
+		if !adapterIsUsable(connector.AdapterStatus) {
+			t.Fatalf("%s should remain usable despite honest status %q", connector.ConnectorKey, connector.AdapterStatus)
 		}
 	}
-	if !foundLocal || !foundJSONFeed || len(operational) != 6 {
-		t.Fatalf("expected six operational direct connectors plus json-feed, got %#v", connectors)
+	for key := range wantStatus {
+		if !seen[key] {
+			t.Fatalf("connector %s missing from catalog", key)
+		}
 	}
 }
 
@@ -1544,6 +1560,7 @@ type fakeSourceRepo struct {
 	lastExtractionSourceIDs []uuid.UUID
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
+	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
 }
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
@@ -1552,11 +1569,29 @@ func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
 		sources:     map[uuid.UUID]*models.ConnectedSource{},
 		rawItems:    map[uuid.UUID]*models.SourceRawItem{},
 		extractions: map[uuid.UUID]*models.SourceExtraction{},
+		oauthTokens: map[uuid.UUID]*models.SourceOAuthToken{},
 	}
 	for _, source := range sources {
 		repo.sources[source.ID] = source
 	}
 	return repo
+}
+
+func (r *fakeSourceRepo) SaveOAuthToken(token *models.SourceOAuthToken) error {
+	if r.oauthTokens == nil {
+		r.oauthTokens = map[uuid.UUID]*models.SourceOAuthToken{}
+	}
+	stored := *token
+	r.oauthTokens[token.SourceID] = &stored
+	return nil
+}
+
+func (r *fakeSourceRepo) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error) {
+	if token, ok := r.oauthTokens[sourceID]; ok {
+		copy := *token
+		return &copy, nil
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *fakeSourceRepo) SaveConnector(connector *models.SourceConnector) (*models.SourceConnector, error) {

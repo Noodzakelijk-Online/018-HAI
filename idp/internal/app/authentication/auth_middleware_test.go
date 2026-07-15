@@ -1,6 +1,7 @@
 package authentication
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -64,6 +65,12 @@ func (s *middlewareAuthService) Register(dto.UserDTO) (*dto.UserResponse, error)
 	return nil, errors.New("not implemented")
 }
 func (s *middlewareAuthService) Login(string, string) (*dto.TokenDetails, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *middlewareAuthService) GoogleAuthURL() (string, error) {
+	return "", errors.New("not implemented")
+}
+func (s *middlewareAuthService) LoginWithGoogle(context.Context, string, string) (*dto.TokenDetails, error) {
 	return nil, errors.New("not implemented")
 }
 func (s *middlewareAuthService) Logout(string) error { return errors.New("not implemented") }

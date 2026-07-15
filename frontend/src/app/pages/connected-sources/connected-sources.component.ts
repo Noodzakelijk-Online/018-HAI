@@ -18,7 +18,7 @@ import { CONNECTED_SOURCE_SERVICE_TOKEN } from '../../services/connected-source/
 import { IConnectedSourceService } from '../../services/connected-source.service.interface';
 import { ThemeMode, ThemeService } from '../../services/theme.service';
 
-type SourceAction = 'connect' | 'odoo' | 'import' | 'folder' | 'whatsapp' | 'search';
+type SourceAction = 'connect' | 'gmail' | 'odoo' | 'import' | 'folder' | 'whatsapp' | 'search';
 
 interface SourceActionCard {
   id: SourceAction;
@@ -256,6 +256,14 @@ export class ConnectedSourcesComponent implements OnInit {
         tone: 'green',
       },
       {
+        id: 'gmail',
+        title: 'Connect Gmail',
+        detail: 'Live read-only sync over Google OAuth.',
+        icon: 'mail',
+        metric: `${this.operationalConnectorCount()} live`,
+        tone: 'blue',
+      },
+      {
         id: 'whatsapp',
         title: 'Import WhatsApp',
         detail: 'Parse selected chat exports.',
@@ -306,8 +314,42 @@ export class ConnectedSourcesComponent implements OnInit {
     return this.sources.filter((source) => source.localOnly).length;
   }
 
+  // "operational" now means a live remote adapter only (GitHub, JSON feed). The
+  // local-file readers and the modeled connector are counted separately, so the
+  // dashboard stops presenting a local-folder reader as a live cloud connector.
   operationalConnectorCount(): number {
-    return this.connectors.filter((connector) => connector.enabled && connector.adapterStatus === 'operational').length;
+    return this.connectorCountByStatus('operational');
+  }
+
+  localOnlyConnectorCount(): number {
+    return this.connectorCountByStatus('local_only');
+  }
+
+  modeledConnectorCount(): number {
+    return this.connectorCountByStatus('modeled');
+  }
+
+  private connectorCountByStatus(status: string): number {
+    return this.connectors.filter(
+      (connector) => connector.enabled && connector.adapterStatus === status
+    ).length;
+  }
+
+  // Human-readable label for an adapter status, so the UI does not surface raw
+  // enum values and does not overstate what a connector does.
+  adapterStatusLabel(status?: string): string {
+    switch ((status || '').toLowerCase()) {
+      case 'operational':
+        return 'live';
+      case 'local_only':
+        return 'local files only';
+      case 'modeled':
+        return 'built-in model';
+      case 'not_implemented':
+        return 'not implemented';
+      default:
+        return this.statusText(status);
+    }
   }
 
   failedJobCount(): number {
@@ -381,7 +423,11 @@ export class ConnectedSourcesComponent implements OnInit {
       case 'running':
       case 'pending':
       case 'not_configured':
+      case 'local_only':
+      case 'modeled':
         return 'watch';
+      case 'not_implemented':
+        return 'bad';
       case 'failed':
       case 'revoked':
       case 'error':
@@ -440,7 +486,7 @@ export class ConnectedSourcesComponent implements OnInit {
 
   connectorLabel(connector: ISourceConnector): string {
     const status = connector.adapterStatus || (connector.enabled ? 'operational' : 'not_implemented');
-    return `${connector.name} (${status})`;
+    return `${connector.name} — ${this.adapterStatusLabel(status)}`;
   }
 
   connectorChanged(connectorKey: string): void {
@@ -633,10 +679,49 @@ export class ConnectedSourcesComponent implements OnInit {
     });
   }
 
+  // Creates a gmail source, then opens Google's consent screen so the user
+  // authorizes in their own browser. On return, Google redirects to the backend
+  // callback which stores the tokens.
+  connectGmail(): void {
+    const connector = this.connectors.find((item) => item.connectorKey === 'gmail');
+    if (!connector?.enabled || connector.adapterStatus === 'not_implemented') {
+      this.notification.warning(
+        'Gmail not configured',
+        'The backend needs GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REDIRECT_URL set before Gmail can be connected.'
+      );
+      return;
+    }
+    this.sourceService
+      .createSource({
+        connectorKey: 'gmail',
+        name: 'Gmail (Google account)',
+        category: 'email',
+        enabled: true,
+        localOnly: false,
+        syncFrequency: 'manual',
+        permissions: ['metadata:read', 'gmail.readonly'],
+      })
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (source) => {
+          this.sourceService.startGoogleOAuth(source.id).subscribe({
+            next: ({ authorizeUrl }) => {
+              this.notification.info('Redirecting to Google', 'Approve access in the window that opens.');
+              window.open(authorizeUrl, '_blank', 'noopener,noreferrer');
+              this.refresh();
+            },
+            error: (error) =>
+              this.notification.error('Error', error?.error?.error || 'Could not start Google authorization.'),
+          });
+        },
+        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to create Gmail source.'),
+      });
+  }
+
   connectWhatsAppSource(): void {
     const connector = this.connectors.find((item) => item.connectorKey === 'whatsapp-export');
     if (!connector?.enabled) {
-      this.notification.warning('WhatsApp connector unavailable', 'Refresh connectors and verify the backend exposes whatsapp-export as operational.');
+      this.notification.warning('WhatsApp connector unavailable', 'Refresh connectors and verify the backend exposes whatsapp-export as enabled.');
       return;
     }
     this.sourceService
@@ -666,7 +751,7 @@ export class ConnectedSourcesComponent implements OnInit {
   connectOdooSource(): void {
     const connector = this.connectors.find((item) => item.connectorKey === 'odoo-herp');
     if (!connector?.enabled) {
-      this.notification.warning('Odoo connector unavailable', 'Refresh connectors and verify the backend exposes odoo-herp as operational.');
+      this.notification.warning('Odoo connector unavailable', 'Refresh connectors and verify the backend exposes odoo-herp as enabled.');
       return;
     }
     this.sourceService

@@ -28,6 +28,10 @@ const (
 	rateLimitPerMin  string = "RATE_LIMIT_PER_MINUTE"
 	runMode          string = "RUN_MODE"
 	jwtSecret        string = "JWT_SECRET"
+	redisAddr        string = "REDIS_ADDR"
+	googleClientID   string = "GOOGLE_OAUTH_CLIENT_ID"
+	googleClientKey  string = "GOOGLE_OAUTH_CLIENT_SECRET"
+	googleRedirect   string = "GOOGLE_OAUTH_REDIRECT_URL"
 )
 
 type Configuration struct {
@@ -45,11 +49,15 @@ type Configuration struct {
 	ImageSaveDir    string
 	Brokers         []string
 	Topic           string
+	RedisAddr       string
 	BackendAPIKey      string
 	MemoryEngineKey    string
 	RateLimitPerMinute int
 	RunMode            string
 	JWTSecret          string
+	GoogleOAuthClientID     string
+	GoogleOAuthClientSecret string
+	GoogleOAuthRedirectURL  string
 }
 
 var AppConfig Configuration
@@ -81,6 +89,10 @@ func Init() {
 		ImageSaveDir:    getEnvString(imageSaveDir, "images"),
 		Brokers:         kafkaBrokersList,
 		Topic:           getEnvString(kafkaTopic, "automation-events"),
+		RedisAddr:       getEnvString(redisAddr, ""),
+		GoogleOAuthClientID:     getEnvString(googleClientID, ""),
+		GoogleOAuthClientSecret: getEnvString(googleClientKey, ""),
+		GoogleOAuthRedirectURL:  getEnvString(googleRedirect, ""),
 		BackendAPIKey:      getEnvString(backendAPIKey, ""),
 		MemoryEngineKey:    getEnvString(memoryEngineKey, ""),
 		RateLimitPerMinute: getEnvInt(rateLimitPerMin, 0),

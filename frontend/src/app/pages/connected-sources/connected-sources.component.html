@@ -31,9 +31,9 @@
         <strong>{{ enabledSources().length }}</strong>
         <span>active sources</span>
       </button>
-      <button type="button" title="Connector adapters exposed by the backend and currently operational">
-        <strong>{{ operationalConnectorCount() }}/{{ connectors.length }}</strong>
-        <span>connectors operational</span>
+      <button type="button" title="Live connectors fetch from the external service directly (GitHub, JSON feed). Local connectors read exported files from an allowlisted folder. Modeled connectors generate built-in records. None connect to Gmail/Drive/Calendar/Trello via OAuth yet.">
+        <strong>{{ operationalConnectorCount() }} live · {{ localOnlyConnectorCount() }} local · {{ modeledConnectorCount() }} modeled</strong>
+        <span>of {{ connectors.length }} connectors</span>
       </button>
       <button type="button" title="Extracted records available for source-grounded memory and task context">
         <strong>{{ extractions.length }}</strong>
@@ -222,6 +222,31 @@
                 <button type="button" nz-button nzType="primary" (click)="syncFolder()" [nzLoading]="syncing">Scan folder</button>
               </div>
             </form>
+          </div>
+
+          <div *ngSwitchCase="'gmail'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Connect Gmail</h2>
+                <p>
+                  Live, read-only Gmail sync over Google OAuth (message metadata only —
+                  headers and snippet, never full bodies). You approve access in your own
+                  Google account; the tokens are stored encrypted and can be revoked.
+                </p>
+              </div>
+            </div>
+            <div class="operation-form">
+              <p *ngIf="operationalConnectorCount() === 0" class="hint">
+                The backend needs GOOGLE_OAUTH_CLIENT_ID, _SECRET and _REDIRECT_URL set
+                before Gmail can be connected.
+              </p>
+              <div class="form-footer">
+                <button type="button" nz-button nzType="primary" (click)="connectGmail()">
+                  <span nz-icon nzType="google"></span>
+                  Connect Google account
+                </button>
+              </div>
+            </div>
           </div>
 
           <div *ngSwitchCase="'whatsapp'" class="operation">

@@ -34,6 +34,39 @@ func (h *Handler) Connectors(c *gin.Context) {
 	c.JSON(http.StatusOK, connectors)
 }
 
+// StartGoogleOAuth returns the Google consent URL for a gmail source. The UI
+// opens the returned url so the user authorizes in their own browser.
+func (h *Handler) StartGoogleOAuth(c *gin.Context) {
+	sourceID, err := uuid.Parse(c.Query("sourceId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid sourceId query parameter is required"})
+		return
+	}
+	url, err := h.service.StartGoogleOAuth(sourceID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"authorizeUrl": url})
+}
+
+// GoogleOAuthCallback is the redirect target Google calls after consent. It is
+// reached without a session (Google calls it directly), so it is protected by
+// the signed state rather than the gateway login. On success it redirects the
+// browser back to the connected-sources page.
+func (h *Handler) GoogleOAuthCallback(c *gin.Context) {
+	if oauthErr := c.Query("error"); oauthErr != "" {
+		c.Redirect(http.StatusFound, "/connected-sources?oauth=denied")
+		return
+	}
+	_, err := h.service.CompleteGoogleOAuth(c.Request.Context(), c.Query("code"), c.Query("state"))
+	if err != nil {
+		c.Redirect(http.StatusFound, "/connected-sources?oauth=error")
+		return
+	}
+	c.Redirect(http.StatusFound, "/connected-sources?oauth=connected")
+}
+
 func (h *Handler) CreateSource(c *gin.Context) {
 	var request CreateSourceRequest
 	if err := c.ShouldBindJSON(&request); err != nil {

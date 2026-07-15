@@ -18,6 +18,7 @@ export interface IConnectedSourceService {
   sources(includeDisabled: boolean): Observable<IConnectedSource[]>;
   syncJobs(sourceId?: string): Observable<ISourceSyncJob[]>;
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource>;
+  startGoogleOAuth(sourceId: string): Observable<{ authorizeUrl: string }>;
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult>;
   runDueScheduledSyncs(): Observable<IScheduledSyncRun>;
   reindex(sourceId: string): Observable<ISourceSyncResult>;

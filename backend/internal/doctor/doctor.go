@@ -115,17 +115,30 @@ func Diagnose(cfg config.Configuration) Report {
 		add("database.password", SeverityOK, "set")
 	}
 
-	// Security-sensitive keys.
-	if strings.TrimSpace(cfg.BackendAPIKey) == "" {
-		add("security.backendApiKey", SeverityWarn, "BACKEND_API_SHARED_KEY is empty; the API is unauthenticated and must stay on a trusted local network only")
-	} else {
-		add("security.backendApiKey", SeverityOK, "set")
+	// Security-sensitive keys. A shipped placeholder is not a secret: treating
+	// "change-this-..." as OK is how a default credential reaches production,
+	// so it is reported as loudly as an empty one.
+	production := demomode.Parse(cfg.RunMode).IsProduction()
+	secretCheck := func(name, envVar, value, emptyDetail string) {
+		switch {
+		case strings.TrimSpace(value) == "":
+			add(name, SeverityWarn, emptyDetail)
+		case IsPlaceholderSecret(value):
+			severity := SeverityWarn
+			if production {
+				severity = SeverityFail
+			}
+			add(name, severity, envVar+" still holds a shipped placeholder value; generate a real secret (openssl rand -hex 32)")
+		default:
+			add(name, SeverityOK, "set")
+		}
 	}
-	if strings.TrimSpace(cfg.MemoryEngineKey) == "" {
-		add("security.memoryEncryptionKey", SeverityWarn, "HAI_MEMORY_ENCRYPTION_KEY is empty; memory-engine falls back to the backend API key")
-	} else {
-		add("security.memoryEncryptionKey", SeverityOK, "set")
-	}
+	secretCheck("security.backendApiKey", "BACKEND_API_SHARED_KEY", cfg.BackendAPIKey,
+		"BACKEND_API_SHARED_KEY is empty; the API is unauthenticated and must stay on a trusted local network only")
+	secretCheck("security.memoryEncryptionKey", "HAI_MEMORY_ENCRYPTION_KEY", cfg.MemoryEngineKey,
+		"HAI_MEMORY_ENCRYPTION_KEY is empty; memory-engine falls back to the backend API key")
+	secretCheck("security.jwtSecret", "JWT_SECRET", cfg.JWTSecret,
+		"JWT_SECRET is empty; issued tokens cannot be verified")
 
 	// Event bus.
 	if countNonEmpty(cfg.Brokers) == 0 {
@@ -180,6 +193,38 @@ func Render(w io.Writer, r Report) int {
 		fmt.Fprintln(w, "readiness: READY")
 	}
 	return r.ExitCode()
+}
+
+// placeholderSecretMarkers are substrings that only ever appear in a value that
+// was copied from an example file and never replaced.
+var placeholderSecretMarkers = []string{
+	"change-this",
+	"changeme",
+	"change-me",
+	"replace-me",
+	"replace-this",
+	"your-secret",
+	"example",
+	"placeholder",
+	"insert-",
+	"todo",
+	"xxx",
+}
+
+// IsPlaceholderSecret reports whether value is a shipped example credential
+// rather than a real one. It is deliberately substring-based: the failure mode
+// worth catching is an operator who copied .env.example and booted it.
+func IsPlaceholderSecret(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range placeholderSecretMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func trimmedPort(port string) string {

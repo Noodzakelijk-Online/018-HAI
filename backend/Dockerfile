@@ -16,6 +16,12 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o app ./main.go
 # Stage 2: Build the minimal docker image
 FROM ubuntu:latest
 
+# curl backs the container healthcheck, which polls /readyz. It has to live in
+# the runtime image, not just the builder.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /root/
 
 # Copy the pre-built binary from the previous stage

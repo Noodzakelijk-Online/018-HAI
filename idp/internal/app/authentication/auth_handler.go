@@ -90,6 +90,35 @@ func (h *Handler) Login(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// GoogleLogin redirects the browser to Google's consent screen. The user picks
+// their Google account there; nothing sensitive is handled here.
+func (h *Handler) GoogleLogin(c *gin.Context) {
+	url, err := h.authService.GoogleAuthURL()
+	if err != nil {
+		c.Redirect(http.StatusFound, "/login?error=google_unavailable")
+		return
+	}
+	c.Redirect(http.StatusFound, url)
+}
+
+// GoogleCallback is where Google returns after consent. It runs without a HAI
+// session (Google calls it directly), protected by the signed state. On success
+// it sets the same session cookies as a password login and lands on the app.
+func (h *Handler) GoogleCallback(c *gin.Context) {
+	if c.Query("error") != "" {
+		c.Redirect(http.StatusFound, "/login?error=google_denied")
+		return
+	}
+	tokenDetails, err := h.authService.LoginWithGoogle(c.Request.Context(), c.Query("code"), c.Query("state"))
+	if err != nil {
+		c.Redirect(http.StatusFound, "/login?error=google_failed")
+		return
+	}
+	setAccessTokenCookie(c.Writer, tokenDetails.AccessToken, time.Unix(tokenDetails.AtExpires, 0))
+	setRefreshTokenCookie(c.Writer, tokenDetails.RefreshToken, time.Unix(tokenDetails.RtExpires, 0))
+	c.Redirect(http.StatusFound, "/")
+}
+
 // Logout
 // @Summary Logout
 // @Description Logout

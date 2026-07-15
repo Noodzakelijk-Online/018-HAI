@@ -21,6 +21,7 @@ import (
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
+	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
@@ -47,8 +48,13 @@ func initializeRoutes(router *gin.Engine) error {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
-	router.GET("/readyz", readinessHandler(func() doctor.Report {
-		return doctor.Diagnose(config.AppConfig)
+	router.GET("/readyz", readinessHandler(func(ctx context.Context) doctor.Report {
+		// Static configuration diagnosis, then live dependency probes. The
+		// second half is what makes the answer trustworthy: without it a
+		// process with an unreachable database still reports itself ready.
+		configured := doctor.Diagnose(config.AppConfig)
+		live := doctor.RunProbes(ctx, health.DefaultTimeout, health.Probes(config.AppConfig))
+		return configured.Merge(live...)
 	}))
 
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"
@@ -346,6 +352,16 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.POST("/:id/pause", requirePermission(rbac.PermWrite), sourceHandler.Pause)
 		sourceRoutes.POST("/:id/resume", requirePermission(rbac.PermWrite), sourceHandler.Resume)
 		sourceRoutes.POST("/:id/revoke", requirePermission(rbac.PermWrite), sourceHandler.Revoke)
+	}
+
+	// Google OAuth for the Gmail connector. Not under requireAuthenticatedOwner:
+	// the callback is invoked directly by Google with no HAI session, and is
+	// protected by the HMAC-signed OAuth state instead. start needs write; the
+	// public callback resolves to viewer, so it is gated read.
+	sourceOAuth := apiVersion.Group("/sources")
+	{
+		sourceOAuth.GET("/oauth/google/start", requirePermission(rbac.PermWrite), sourceHandler.StartGoogleOAuth)
+		sourceOAuth.GET("/oauth/google/callback", requirePermission(rbac.PermRead), sourceHandler.GoogleOAuthCallback)
 	}
 }
 

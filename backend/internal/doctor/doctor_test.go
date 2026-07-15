@@ -23,6 +23,7 @@ func healthyConfig() config.Configuration {
 		Topic:           "automation-events",
 		BackendAPIKey:   "shared-key",
 		MemoryEngineKey: "encryption-key",
+		JWTSecret:       "jwt-signing-secret",
 	}
 }
 

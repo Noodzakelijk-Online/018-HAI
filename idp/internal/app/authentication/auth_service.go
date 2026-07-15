@@ -8,6 +8,7 @@ import (
 	"automation-hub-idp/internal/app/services/iservice"
 	"automation-hub-idp/internal/app/users"
 	"automation-hub-idp/internal/app/utils"
+	"context"
 	"errors"
 	"fmt"
 	"github.com/dgrijalva/jwt-go"
@@ -195,6 +196,69 @@ func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
 	a.logger.Info("Successfully logged in user: %s", email)
 
 	return td, nil
+}
+
+// issueSession mints an access/refresh token pair for an already-authenticated
+// user. Shared by password login and Google login so both produce identical
+// sessions.
+func (a *service) issueSession(userID uuid.UUID, role string) (*dto.TokenDetails, error) {
+	td := &dto.TokenDetails{}
+	var err error
+	td.RefreshToken, td.RefreshUUID, td.RtExpires, err = a.generateRefreshToken(userID)
+	if err != nil {
+		return nil, errors.New("failed to generate refresh token")
+	}
+	td.AccessToken, td.AtExpires, err = a.generateAccessToken(userID, userRole(role), td.RefreshUUID, td.RtExpires)
+	if err != nil {
+		return nil, errors.New("failed to generate access token")
+	}
+	return td, nil
+}
+
+// GoogleAuthURL returns the Google consent URL for "Sign in with Google".
+func (a *service) GoogleAuthURL() (string, error) {
+	oauth := newGoogleOAuth(a.jwtSecret)
+	if !oauth.Configured() {
+		return "", errors.New("google login is not configured")
+	}
+	return oauth.AuthCodeURL()
+}
+
+// LoginWithGoogle completes the Google authorization-code flow, resolves the
+// account by verified email (creating it on first sign-in), and issues a session.
+func (a *service) LoginWithGoogle(ctx context.Context, code, state string) (*dto.TokenDetails, error) {
+	oauth := newGoogleOAuth(a.jwtSecret)
+	if !oauth.Configured() {
+		return nil, errors.New("google login is not configured")
+	}
+	email, err := oauth.Exchange(ctx, code, state)
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := a.userService.GetUserByEmail(email)
+	if err != nil || user == nil {
+		user, err = a.createGoogleUser(email)
+		if err != nil {
+			a.logger.Error("Failed to provision Google user %s: %v", email, err)
+			return nil, errors.New("failed to provision account")
+		}
+		a.logger.Info("Provisioned new user via Google sign-in: %s", email)
+	}
+
+	a.logger.Info("Successfully logged in user via Google: %s", email)
+	return a.issueSession(user.ID, user.Role)
+}
+
+// createGoogleUser provisions an account for a Google identity. The password is
+// a random, unusable value: the account authenticates through Google, never a
+// typed password, but the column stays non-empty and non-guessable.
+func (a *service) createGoogleUser(email string) (*models.User, error) {
+	hashed, err := a.hasher.Hash(uuid.NewString() + uuid.NewString())
+	if err != nil {
+		return nil, err
+	}
+	return a.userService.CreateUser(models.User{Email: email, Password: hashed, IsActive: true, Role: "operator"})
 }
 
 func calculateBlockDuration(failedLoginAttempts int) time.Duration {
