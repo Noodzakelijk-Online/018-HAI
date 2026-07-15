@@ -96,10 +96,6 @@ services:
       # instances. Was previously not passed through, so the limiter could never
       # be enabled regardless of .env.
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE}
-      # Shared with the IDP so identityMiddleware can verify IDP-issued JWTs.
-      # Without it the backend cannot validate per-user tokens and silently
-      # falls back to the shared-key single-operator model.
-      JWT_SECRET: ${JWT_SECRET}
       RUN_MODE: ${RUN_MODE}
       LLM_POLICY_JSON: ${LLM_POLICY_JSON}
       LLM_PROVIDERS_JSON: ${LLM_PROVIDERS_JSON}
