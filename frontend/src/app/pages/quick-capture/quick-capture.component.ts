@@ -2,6 +2,7 @@ import { Component, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import { debounceTime } from 'rxjs/operators';
+import { ContextMemoryService } from '../../services/context-memory/context-memory.service';
 
 const DRAFT_KEY = 'hai_quick_capture_draft';
 
@@ -14,10 +15,15 @@ export class QuickCaptureComponent implements OnInit, OnDestroy {
   form: FormGroup;
   savedAt: Date | null = null;
   submitted = false;
+  saving = false;
+  saveError = '';
 
   private sub?: Subscription;
 
-  constructor(private fb: FormBuilder) {
+  constructor(
+    private fb: FormBuilder,
+    private memoryService: ContextMemoryService
+  ) {
     this.form = this.fb.group({
       title: ['', [Validators.required, Validators.maxLength(120)]],
       content: ['', [Validators.required, Validators.minLength(3)]],
@@ -52,7 +58,7 @@ export class QuickCaptureComponent implements OnInit, OnDestroy {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(value));
       this.savedAt = new Date();
     } catch {
-      /* storage unavailable — skip autosave silently */
+      /* storage unavailable - skip autosave silently */
     }
   }
 
@@ -70,18 +76,41 @@ export class QuickCaptureComponent implements OnInit, OnDestroy {
       this.form.markAllAsTouched();
       return;
     }
-    // A real submit would POST to /memory; on success the draft is cleared.
-    this.submitted = true;
-    this.clearDraft();
+    const { title, content } = this.form.getRawValue();
+    this.saving = true;
+    this.submitted = false;
+    this.saveError = '';
+    this.memoryService.create({
+      kind: 'note',
+      content,
+      summary: title,
+      tags: ['quick-capture'],
+      confidence: 0.7,
+      sourceLabel: 'Quick capture',
+    }).subscribe({
+      next: () => {
+        this.saving = false;
+        this.clearDraft(false);
+        this.submitted = true;
+      },
+      error: () => {
+        this.saving = false;
+        this.saveError = 'Could not save to local memory. Your draft is still available here.';
+      },
+    });
   }
 
-  clearDraft(): void {
+  clearDraft(resetStatus = true): void {
     try {
       localStorage.removeItem(DRAFT_KEY);
     } catch {
       /* ignore */
     }
-    this.form.reset();
+    this.form.reset({ title: '', content: '' }, { emitEvent: false });
     this.savedAt = null;
+    if (resetStatus) {
+      this.submitted = false;
+      this.saveError = '';
+    }
   }
 }

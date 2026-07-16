@@ -497,6 +497,15 @@ input::placeholder {
   border-radius: 8px !important;
 }
 
+/* Status notices must never make the action beneath them unreachable. */
+.ant-notification-notice {
+  pointer-events: none;
+}
+
+.ant-notification-notice-close {
+  pointer-events: auto;
+}
+
 .status-pill,
 .budget-pill,
 .model-tag-meta {

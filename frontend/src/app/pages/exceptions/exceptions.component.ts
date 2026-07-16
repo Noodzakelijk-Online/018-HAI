@@ -1,13 +1,8 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
+import { Router } from '@angular/router';
+import { IWorkflowItem } from '../../models/workflow.model.interface';
+import { WorkflowService } from '../../services/workflow/workflow.service';
 
-export interface WorkflowItem {
-  id: string;
-  title: string;
-  state: string;
-  updatedAt?: string;
-}
-
-/** States that require a human to look — everything else is "handled". */
 const ATTENTION_STATES = [
   'awaiting_approval',
   'failed',
@@ -21,13 +16,38 @@ const ATTENTION_STATES = [
   templateUrl: './exceptions.component.html',
   styleUrls: ['./exceptions.component.scss'],
 })
-export class ExceptionsComponent {
-  items: WorkflowItem[] = [];
+export class ExceptionsComponent implements OnInit {
+  items: IWorkflowItem[] = [];
+  loading = false;
+  loadError = '';
 
-  /** Only the items that need attention, newest first when timestamps exist. */
-  get exceptions(): WorkflowItem[] {
+  constructor(
+    private workflowService: WorkflowService,
+    private router: Router
+  ) {}
+
+  ngOnInit(): void {
+    this.refresh();
+  }
+
+  refresh(): void {
+    this.loading = true;
+    this.loadError = '';
+    this.workflowService.items(false).subscribe({
+      next: (items) => {
+        this.items = items || [];
+        this.loading = false;
+      },
+      error: () => {
+        this.loading = false;
+        this.loadError = 'Could not load workflow exceptions. Refresh to try again.';
+      },
+    });
+  }
+
+  get exceptions(): IWorkflowItem[] {
     return this.items
-      .filter((item) => ExceptionsComponent.needsAttention(item.state))
+      .filter((item) => ExceptionsComponent.needsAttention(item.currentState))
       .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
   }
 
@@ -35,9 +55,14 @@ export class ExceptionsComponent {
     return ATTENTION_STATES.includes((state ?? '').toLowerCase());
   }
 
-  /** Replace the current items (wired to the workflow API by the caller). */
-  setItems(items: WorkflowItem[]): void {
-    this.items = items ?? [];
+  openWorkflow(item: IWorkflowItem): void {
+    this.router.navigate(['/workflow-engine'], {
+      queryParams: { workflowId: item.id },
+    });
+  }
+
+  goBack(): void {
+    this.router.navigate(['/control-center']);
   }
 
   tagColor(state: string): string {

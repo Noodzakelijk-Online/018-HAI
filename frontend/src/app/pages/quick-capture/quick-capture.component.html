@@ -40,13 +40,14 @@
       <div class="quick-capture__status" aria-live="polite">
         <span *ngIf="savedAt">Draft autosaved at {{ savedAt | date: 'shortTime' }}</span>
         <span *ngIf="submitted" class="quick-capture__ok">Saved.</span>
+        <span *ngIf="saveError" class="quick-capture__error">{{ saveError }}</span>
       </div>
 
       <div class="quick-capture__actions">
         <button nz-button nzType="default" type="button" (click)="clearDraft()">
           Clear
         </button>
-        <button nz-button nzType="primary" type="submit">Save</button>
+        <button nz-button nzType="primary" type="submit" [nzLoading]="saving">Save to memory</button>
       </div>
     </form>
   </nz-card>

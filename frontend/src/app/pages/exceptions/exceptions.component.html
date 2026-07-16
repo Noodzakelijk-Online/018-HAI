@@ -1,16 +1,28 @@
 <main class="exceptions" role="main" aria-labelledby="exceptions-title">
   <nz-card>
-    <h1 id="exceptions-title" class="exceptions__title">
-      Needs your attention
-      <nz-tag class="exceptions__count" [nzColor]="exceptions.length ? 'red' : 'green'">
-        {{ exceptions.length }}
-      </nz-tag>
-    </h1>
+    <header class="exceptions__header">
+      <div>
+        <h1 id="exceptions-title" class="exceptions__title">
+          Needs your attention
+          <nz-tag class="exceptions__count" [nzColor]="exceptions.length ? 'red' : 'green'">
+            {{ exceptions.length }}
+          </nz-tag>
+        </h1>
+        <p>Only workflow items that require a human decision or recovery appear here.</p>
+      </div>
+      <div class="exceptions__actions">
+        <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">Refresh</button>
+        <button nz-button nzType="text" (click)="goBack()">Command Center</button>
+      </div>
+    </header>
+
+    <p class="exceptions__error" *ngIf="loadError" role="alert">{{ loadError }}</p>
 
     <nz-table
       *ngIf="exceptions.length; else allClear"
       #table
       [nzData]="exceptions"
+      [nzLoading]="loading"
       nzSize="small"
       aria-label="Workflow items needing attention"
     >
@@ -19,23 +31,28 @@
           <th scope="col">Item</th>
           <th scope="col">State</th>
           <th scope="col">Updated</th>
+          <th scope="col" class="exceptions__action-column">Action</th>
         </tr>
       </thead>
       <tbody>
         <tr *ngFor="let item of table.data">
           <td>{{ item.title }}</td>
           <td>
-            <nz-tag [nzColor]="tagColor(item.state)">{{ item.state }}</nz-tag>
+            <nz-tag [nzColor]="tagColor(item.currentState)">{{ item.currentState }}</nz-tag>
           </td>
-          <td>{{ item.updatedAt || '—' }}</td>
+          <td>{{ item.updatedAt || 'Not recorded' }}</td>
+          <td class="exceptions__action-column">
+            <button nz-button nzSize="small" (click)="openWorkflow(item)">Open workflow</button>
+          </td>
         </tr>
       </tbody>
     </nz-table>
 
     <ng-template #allClear>
-      <nz-empty
-        nzNotFoundContent="All clear — nothing needs your attention right now."
-      ></nz-empty>
+      <nz-spin *ngIf="loading; else emptyState" nzSimple></nz-spin>
+      <ng-template #emptyState>
+        <nz-empty nzNotFoundContent="All clear - nothing needs your attention right now."></nz-empty>
+      </ng-template>
     </ng-template>
   </nz-card>
 </main>

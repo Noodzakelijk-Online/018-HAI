@@ -1,11 +1,16 @@
 import { FormBuilder } from '@angular/forms';
+import { of, throwError } from 'rxjs';
+import { ContextMemoryService } from '../../services/context-memory/context-memory.service';
 import { QuickCaptureComponent } from './quick-capture.component';
 
 describe('QuickCaptureComponent', () => {
   beforeEach(() => localStorage.removeItem('hai_quick_capture_draft'));
 
-  function make(): QuickCaptureComponent {
-    return new QuickCaptureComponent(new FormBuilder());
+  function make(memoryService?: Pick<ContextMemoryService, 'create'>): QuickCaptureComponent {
+    return new QuickCaptureComponent(
+      new FormBuilder(),
+      (memoryService || { create: () => of({}) }) as ContextMemoryService
+    );
   }
 
   it('is invalid empty and valid when filled', () => {
@@ -36,5 +41,33 @@ describe('QuickCaptureComponent', () => {
     const c = make();
     c.submit();
     expect(c.submitted).toBeFalse();
+  });
+
+  it('stores a valid capture in local memory before clearing the draft', () => {
+    const create = jasmine.createSpy().and.returnValue(of({}));
+    const c = make({ create });
+    c.form.setValue({ title: 'Call solicitor', content: 'Prepare the evidence list.' });
+
+    c.submit();
+
+    expect(create).toHaveBeenCalledWith(jasmine.objectContaining({
+      kind: 'note',
+      summary: 'Call solicitor',
+      content: 'Prepare the evidence list.',
+      sourceLabel: 'Quick capture',
+    }));
+    expect(c.submitted).toBeTrue();
+    expect(c.form.value).toEqual({ title: '', content: '' });
+  });
+
+  it('retains the form when local memory rejects the capture', () => {
+    const c = make({ create: () => throwError(() => new Error('offline')) });
+    c.form.setValue({ title: 'Call solicitor', content: 'Prepare the evidence list.' });
+
+    c.submit();
+
+    expect(c.submitted).toBeFalse();
+    expect(c.saveError).toContain('Could not save');
+    expect(c.form.value.content).toBe('Prepare the evidence list.');
   });
 });

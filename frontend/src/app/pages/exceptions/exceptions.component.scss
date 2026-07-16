@@ -10,6 +10,36 @@
     margin: 0 0 16px;
   }
 
+  &__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+
+    p {
+      margin: -8px 0 0;
+      color: var(--hai-text-muted, rgba(0, 0, 0, 0.55));
+    }
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  &__error {
+    margin: 0 0 16px;
+    color: #cf1322;
+  }
+
+  &__action-column {
+    width: 1%;
+    white-space: nowrap;
+  }
+
   &__count {
     font-variant-numeric: tabular-nums;
   }
@@ -18,5 +48,9 @@
 @media (max-width: 480px) {
   .exceptions {
     padding: 12px 8px;
+
+    &__header {
+      flex-direction: column;
+    }
   }
 }
