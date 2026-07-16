@@ -450,6 +450,22 @@ export class ControlCenterComponent implements OnInit {
     return this.commandActionsView
   }
 
+  primaryCommandActions(): CommandAction[] {
+    const primaryIds = ['scan', 'approvals', 'blocked']
+    return primaryIds
+      .map((id) => this.commandActionsView.find((action) => action.id === id))
+      .filter((action): action is CommandAction => !!action)
+  }
+
+  secondaryCommandActions(): CommandAction[] {
+    const primaryIds = new Set(this.primaryCommandActions().map((action) => action.id))
+    return this.commandActionsView.filter((action) => !primaryIds.has(action.id))
+  }
+
+  hasLiveWork(): boolean {
+    return this.loading || this.attentionItemsView.length > 0 || this.activeItemsView.length > 0
+  }
+
   private buildRecentActivity(): ActivityEntry[] {
     const cycleActivity = this.lastAgentCycle
       ? [

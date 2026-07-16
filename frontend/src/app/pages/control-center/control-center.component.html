@@ -83,48 +83,9 @@
             <span>High-risk actions require approval</span>
           </div>
         </button>
-        <button
-          type="button"
-          class="summary-item"
-          title="Items reviewed: open recent AI activity and scan history."
-          data-testid="summary-items-reviewed"
-          (click)="navigateToSection('activity')"
-        >
-          <i nz-icon nzType="cluster" nzTheme="outline"></i>
-          <div>
-            <strong>{{ reviewedItemCount() }} items reviewed</strong>
-            <span>{{ lastScanAt() ? ('Last scan ' + (lastScanAt() | date: 'shortTime')) : 'Ready to scan' }}</span>
-          </div>
-        </button>
-        <button
-          type="button"
-          class="summary-item"
-          title="Needs attention: jump to approval decisions and blocked work."
-          data-testid="summary-attention"
-          (click)="navigateToSection('attention')"
-        >
-          <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
-          <div>
-            <strong>{{ attentionItems().length }} need attention</strong>
-            <span>{{ completedCount() }} completed workflows</span>
-          </div>
-        </button>
       </div>
 
       <div class="top-actions">
-        <div class="mode-control">
-          <span>Action mode</span>
-          <button
-            type="button"
-            data-testid="top-action-mode"
-            title="Open autonomy and ambient brain settings"
-            (click)="navigate('/ambient-brain')"
-          >
-            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
-            {{ autonomyMode() }}
-            <i nz-icon nzType="right" nzTheme="outline"></i>
-          </button>
-        </div>
         <button
           type="button"
           class="theme-toggle"
@@ -134,17 +95,6 @@
         >
           <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
           {{ themeLabel() }}
-        </button>
-        <button
-          type="button"
-          nz-button
-          nzType="primary"
-          data-testid="top-review-approvals"
-          title="Review approvals: open human decision queue"
-          (click)="navigateToSection('attention')"
-        >
-          Review approvals
-          <strong *ngIf="attentionItems().length">{{ attentionItems().length }}</strong>
         </button>
         <button
           type="button"
@@ -190,7 +140,7 @@
         <button
           type="button"
           class="command-card"
-          *ngFor="let action of commandActions()"
+          *ngFor="let action of primaryCommandActions()"
           [attr.data-tone]="action.tone"
           [attr.data-testid]="'action-' + action.id"
           [attr.title]="controlTitle(action.title, action.context)"
@@ -213,7 +163,60 @@
         </button>
       </section>
 
-      <section class="primary-grid">
+      <details class="more-actions" *ngIf="secondaryCommandActions().length">
+        <summary title="Expand additional operating controls">
+          <span>More controls</span>
+          <small>{{ secondaryCommandActions().length }} tools for setup, memory, models, and runtime checks</small>
+        </summary>
+        <section class="command-board command-board--secondary" aria-label="Additional actions">
+          <button
+            type="button"
+            class="command-card"
+            *ngFor="let action of secondaryCommandActions()"
+            [attr.data-tone]="action.tone"
+            [attr.data-testid]="'action-' + action.id"
+            [attr.title]="controlTitle(action.title, action.context)"
+            (click)="openAction(action)"
+          >
+            <span class="command-card__help" [attr.title]="action.context">?</span>
+            <span class="command-card__icon">
+              <i nz-icon [nzType]="action.icon" nzTheme="outline"></i>
+            </span>
+            <span class="command-card__copy">
+              <strong>{{ action.title }}</strong>
+              <small>{{ action.detail }}</small>
+            </span>
+            <span class="command-card__metric">{{ action.primaryMetric }}</span>
+            <span class="command-card__hover">
+              <strong>{{ action.primaryMetric }}</strong>
+              <small>{{ action.secondaryMetric }}</small>
+              <em>Open inspector</em>
+            </span>
+          </button>
+        </section>
+      </details>
+
+      <section class="quiet-dashboard" *ngIf="!hasLiveWork()">
+        <div class="quiet-dashboard__icon">
+          <i nz-icon nzType="check-circle" nzTheme="outline"></i>
+        </div>
+        <div>
+          <h2>Nothing needs you right now</h2>
+          <p>HAI has no pending approvals or active workflows. Run a scan when you want it to check connected sources for the next useful action.</p>
+        </div>
+        <button
+          type="button"
+          nz-button
+          nzType="default"
+          data-testid="quiet-dashboard-open-sources"
+          title="Open connected sources and choose what HAI may review"
+          (click)="navigate('/connected-sources')"
+        >
+          Sources
+        </button>
+      </section>
+
+      <section class="primary-grid" *ngIf="hasLiveWork()">
         <article class="panel attention-panel" id="attention">
           <div class="panel-heading">
             <div>
@@ -371,7 +374,7 @@
         </article>
       </section>
 
-      <details class="advanced-section" open>
+      <details class="advanced-section">
         <summary title="Expand or collapse blockers and priority controls">
           <span>Operational Controls</span>
           <small>Blockers, priorities, and open loops</small>
