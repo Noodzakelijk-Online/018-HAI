@@ -23,34 +23,40 @@
     </nz-header>
 
     <nz-content class="page-content">
-      <section class="metric-strip" *ngIf="dashboard as view">
-        <button type="button" class="metric-card" title="All active pursuits HAI is tracking." (click)="load()">
-          <span>Active</span>
-          <strong>{{ count('active') }}</strong>
-        </button>
-        <button type="button" class="metric-card metric-card--alert" title="Open the first pursuit where Robert must approve, decide, or unblock something." (click)="selectFirstFromQueue(view.needsRobert)">
-          <span>Needs Robert</span>
-          <strong>{{ view.needsRobert.length }}</strong>
-        </button>
-        <button type="button" class="metric-card metric-card--warning" title="Open the first pursuit that is blocked, stale, or missing input." (click)="selectFirstFromQueue(view.blocked.length ? view.blocked : view.stale)">
-          <span>Blocked or stale</span>
-          <strong>{{ view.blocked.length + view.stale.length }}</strong>
-        </button>
-        <button type="button" class="metric-card metric-card--warning" title="Open the first pursuit scheduled for a fresh review." (click)="selectFirstFromQueue(view.reviewDue)">
-          <span>Review due</span>
-          <strong>{{ view.reviewDue.length }}</strong>
-        </button>
-        <button type="button" class="metric-card metric-card--warning" title="Open the first pursuit that needs a concrete workflow before HAI can move it forward." (click)="selectFirstFromQueue(view.planningNeeded)">
-          <span>Needs planning</span>
-          <strong>{{ view.planningNeeded.length }}</strong>
-        </button>
-        <button type="button" class="metric-card" title="Open the first pursuit that may be ready to close after verification." (click)="selectFirstFromQueue(view.completionCandidates)">
-          <span>Completion candidates</span>
-          <strong>{{ view.completionCandidates.length }}</strong>
-        </button>
-      </section>
+      <details class="pursuit-health" *ngIf="dashboard as view">
+        <summary title="Expand pursuit metrics and operating queues">
+          <span>Pursuit health</span>
+          <small>{{ count('active') }} active · {{ topQueue().length }} need attention</small>
+        </summary>
+        <section class="metric-strip">
+          <button type="button" class="metric-card" title="All active pursuits HAI is tracking." (click)="load()">
+            <span>Active</span>
+            <strong>{{ count('active') }}</strong>
+          </button>
+          <button type="button" class="metric-card metric-card--alert" title="Open the first pursuit where Robert must approve, decide, or unblock something." (click)="selectFirstFromQueue(view.needsRobert)">
+            <span>Needs Robert</span>
+            <strong>{{ view.needsRobert.length }}</strong>
+          </button>
+          <button type="button" class="metric-card metric-card--warning" title="Open the first pursuit that is blocked, stale, or missing input." (click)="selectFirstFromQueue(view.blocked.length ? view.blocked : view.stale)">
+            <span>Blocked or stale</span>
+            <strong>{{ view.blocked.length + view.stale.length }}</strong>
+          </button>
+          <button type="button" class="metric-card metric-card--warning" title="Open the first pursuit scheduled for a fresh review." (click)="selectFirstFromQueue(view.reviewDue)">
+            <span>Review due</span>
+            <strong>{{ view.reviewDue.length }}</strong>
+          </button>
+          <button type="button" class="metric-card metric-card--warning" title="Open the first pursuit that needs a concrete workflow before HAI can move it forward." (click)="selectFirstFromQueue(view.planningNeeded)">
+            <span>Needs planning</span>
+            <strong>{{ view.planningNeeded.length }}</strong>
+          </button>
+          <button type="button" class="metric-card" title="Open the first pursuit that may be ready to close after verification." (click)="selectFirstFromQueue(view.completionCandidates)">
+            <span>Completion candidates</span>
+            <strong>{{ view.completionCandidates.length }}</strong>
+          </button>
+        </section>
+      </details>
 
-      <section class="dashboard-decision-band" *ngIf="dashboard as view">
+      <section class="dashboard-decision-band" *ngIf="dashboard as view" [hidden]="!view.decisionQueue.length">
         <div class="section-title">
           <div>
             <h2>Robert decision queue</h2>
@@ -60,7 +66,7 @@
             {{ view.counts['decisionQueue'] || view.decisionQueue.length }} open
           </nz-tag>
         </div>
-        <div class="dashboard-decision-grid" *ngIf="view.decisionQueue.length; else noDashboardDecisions">
+        <div class="dashboard-decision-grid">
           <article
             class="dashboard-decision-card"
             *ngFor="let card of view.decisionQueue"
@@ -105,15 +111,13 @@
             </div>
           </article>
         </div>
-        <ng-template #noDashboardDecisions>
-          <div class="dashboard-decision-empty">
-            <strong>No Robert-only decisions right now</strong>
-            <span>HAI will keep scanning pursuits, sources, workflows, and runtime attempts for choices that need Robert.</span>
-          </div>
-        </ng-template>
       </section>
 
-      <section class="route-intake-panel">
+      <details class="route-intake-panel">
+        <summary title="Add a note, source, or signal for HAI to connect to a pursuit">
+          <span>Route new input</span>
+          <small>Connect a note, message, document, or open loop</small>
+        </summary>
         <form [formGroup]="routedIntakeForm" (ngSubmit)="routeIntake()">
           <div class="form-heading">
             <strong>Drop new input into HAI</strong>
@@ -132,7 +136,7 @@
             </button>
           </div>
         </form>
-      </section>
+      </details>
 
       <section class="create-panel" *ngIf="showCreate">
         <form [formGroup]="createForm" (ngSubmit)="createPursuit()">
@@ -157,7 +161,19 @@
         </form>
       </section>
 
-      <div class="main-grid">
+      <section class="pursuits-empty" *ngIf="!pursuits.length && !loading">
+        <div class="pursuits-empty__icon"><i nz-icon nzType="flag" nzTheme="outline"></i></div>
+        <div>
+          <h2>Start with one outcome</h2>
+          <p>A pursuit keeps connected tasks, sources, decisions, and evidence focused on a single result.</p>
+        </div>
+        <button nz-button nzType="primary" type="button" (click)="showCreate = true">
+          <i nz-icon nzType="plus" nzTheme="outline"></i>
+          New pursuit
+        </button>
+      </section>
+
+      <div class="main-grid" *ngIf="pursuits.length || loading">
         <aside class="pursuit-list">
           <div class="section-title">
             <div>
@@ -1098,7 +1114,7 @@
         </ng-template>
       </div>
 
-      <section class="queue-panel" *ngIf="dashboard">
+      <section class="queue-panel" *ngIf="dashboard && topQueue().length">
         <div class="section-title">
           <div>
             <h2>Attention queue</h2>

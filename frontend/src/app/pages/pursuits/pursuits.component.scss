@@ -1,13 +1,13 @@
 .pursuits-page {
   min-height: 100vh;
-  background: #f3f6fa;
-  color: #162033;
+  background: var(--hai-page-bg);
+  color: var(--hai-text);
 }
 
 .page-header {
   align-items: center;
-  background: #ffffff;
-  border-bottom: 1px solid #dfe6ef;
+  background: color-mix(in srgb, var(--hai-shell) 94%, transparent);
+  border-bottom: 1px solid var(--hai-border);
   display: flex;
   height: auto;
   justify-content: space-between;
@@ -37,15 +37,14 @@
 .compact-list span,
 .activity-list span,
 .activity-list time {
-  color: #667085;
+  color: var(--hai-muted);
 }
 
 .page-kicker {
-  color: #1769e0;
+  color: var(--hai-blue);
   display: block;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0;
   margin-bottom: 5px;
   text-transform: uppercase;
 }
@@ -61,25 +60,27 @@
 .page-content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 20px 24px 32px;
+  gap: 18px;
+  max-width: 1260px;
+  margin: 0 auto;
+  padding: 30px 32px 42px;
 }
 
 .metric-strip {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 16px;
 }
 
 .metric-card {
-  background: #ffffff;
-  border: 1px solid #dfe6ef;
+  background: var(--hai-surface-muted);
+  border: 1px solid var(--hai-border);
   border-radius: 8px;
   cursor: pointer;
   min-height: 92px;
   padding: 16px;
   text-align: left;
-  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 
 .metric-card:hover,
@@ -100,7 +101,7 @@
 }
 
 .metric-card span {
-  color: #667085;
+  color: var(--hai-muted);
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
@@ -109,7 +110,6 @@
 .metric-card strong {
   font-size: 30px;
   line-height: 1;
-  margin-top: 10px;
 }
 
 .metric-card--alert strong {
@@ -121,9 +121,6 @@
 }
 
 .dashboard-decision-band {
-  background: #ffffff;
-  border: 1px solid #dfe6ef;
-  border-radius: 8px;
   padding: 16px;
 }
 
@@ -205,12 +202,11 @@
 }
 
 .create-panel,
-.route-intake-panel,
 .pursuit-list,
 .detail-panel,
 .queue-panel {
-  background: #ffffff;
-  border: 1px solid #dfe6ef;
+  background: var(--hai-surface);
+  border: 1px solid var(--hai-border);
   border-radius: 8px;
 }
 
