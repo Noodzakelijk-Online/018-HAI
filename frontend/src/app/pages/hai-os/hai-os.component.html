@@ -140,16 +140,14 @@
 
       <nz-card nzTitle="System Metrics" class="section-card">
         <div class="metric-grid">
-          <button
-            nz-button
-            nzType="default"
+          <div
             class="metric-button"
             *ngFor="let metric of os.metrics"
           >
             <span>{{ metric.label }}</span>
             <strong>{{ metric.value }}</strong>
             <small>{{ metric.status }}</small>
-          </button>
+          </div>
         </div>
       </nz-card>
 

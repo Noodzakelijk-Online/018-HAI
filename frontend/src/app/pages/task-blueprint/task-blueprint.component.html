@@ -15,30 +15,30 @@
     </button>
 
     <div class="topbar-signals">
-      <button type="button" class="signal signal--safe" title="Safe mode: high-risk work requires approval">
+      <div class="signal signal--safe signal--status" title="Safe mode: high-risk work requires approval">
         <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
         <span>
           <strong>{{ safeModeLabel() }}</strong>
           <small>Risky actions stay gated</small>
         </span>
         <b>?</b>
-      </button>
-      <button type="button" class="signal signal--review" title="Review queue: decisions waiting for you">
+      </div>
+      <div class="signal signal--review signal--status" title="Review queue: decisions waiting for you">
         <i nz-icon nzType="audit" nzTheme="outline"></i>
         <span>
           <strong>{{ reviewQueueOpenCount() }} approvals waiting</strong>
           <small>{{ reviewQueue.length }} total review items</small>
         </span>
         <b>?</b>
-      </button>
-      <button type="button" class="signal" title="Context used by the last task">
+      </div>
+      <div class="signal signal--status" title="Context used by the last task">
         <i nz-icon nzType="database" nzTheme="outline"></i>
         <span>
           <strong>{{ contextUsedCount() }} context items</strong>
           <small>Loaded only when relevant</small>
         </span>
         <b>?</b>
-      </button>
+      </div>
     </div>
 
     <div class="topbar-actions">
@@ -218,10 +218,10 @@
             <i nz-icon nzType="database" nzTheme="outline"></i>
             Sources
           </button>
-          <button type="button" class="chip-button" title="Controlled runtime execution uses automation ID when configured">
+          <span class="chip-button chip-button--status" title="Controlled runtime execution uses automation ID when configured">
             <i nz-icon nzType="deployment-unit" nzTheme="outline"></i>
             Runtime
-          </button>
+          </span>
           <span class="composer-spacer"></span>
           <button
             type="button"
@@ -291,7 +291,7 @@
           <h2>Outcome Inspector</h2>
           <p>Specifics stay here until you need them.</p>
         </div>
-        <button type="button" title="General information: HAI converts chat into structured planning, routing, verification, and safe execution.">?</button>
+        <span class="inspector-info" title="General information: HAI converts chat into structured planning, routing, verification, and safe execution.">?</span>
       </header>
 
       <nav class="inspector-tabs" aria-label="Inspector sections">

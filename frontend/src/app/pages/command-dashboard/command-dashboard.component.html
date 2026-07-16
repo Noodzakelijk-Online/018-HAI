@@ -322,38 +322,34 @@
           </header>
 
           <div class="openclaw-cockpit__metrics">
-            <button
-              type="button"
+            <div
               class="openclaw-metric"
               title="Total indexed OpenClaw items visible to HAI planning and operator review."
             >
               <span>Indexed surfaces</span>
               <strong>{{ openClawSurfaceCount(openClaw) }}</strong>
-            </button>
-            <button
-              type="button"
+            </div>
+            <div
               class="openclaw-metric"
               title="Surface categories that require HAI approval before execution or downstream use."
             >
               <span>Approval-gated</span>
               <strong>{{ openClawApprovalSurfaceCount(openClaw) }}</strong>
-            </button>
-            <button
-              type="button"
+            </div>
+            <div
               class="openclaw-metric openclaw-metric--risk"
               title="High-risk categories such as messaging channels, host tools, shell, browser, cron, and public posting."
             >
               <span>High-risk groups</span>
               <strong>{{ openClawHighRiskSurfaceCount(openClaw) }}</strong>
-            </button>
-            <button
-              type="button"
+            </div>
+            <div
               class="openclaw-metric"
               title="Runtime health from the HAI runtime registry."
             >
               <span>Health</span>
               <strong>{{ runtimeStatus(openClaw) }}</strong>
-            </button>
+            </div>
           </div>
 
           <div class="openclaw-groups">

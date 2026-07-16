@@ -27,34 +27,34 @@
 
   <main class="memory-content">
     <section class="status-strip" aria-label="Memory status">
-      <button type="button" title="Active memory records available for retrieval">
+      <div title="Active memory records available for retrieval">
         <strong>{{ activeMemories().length }}</strong>
         <span>active memories</span>
-      </button>
-      <button type="button" title="Memory records archived and excluded from normal context">
+      </div>
+      <div title="Memory records archived and excluded from normal context">
         <strong>{{ archivedCount() }}</strong>
         <span>archived</span>
-      </button>
-      <button type="button" title="Memory records with explicit source URI or source label">
+      </div>
+      <div title="Memory records with explicit source URI or source label">
         <strong>{{ sourceLinkedCount() }}</strong>
         <span>source-linked</span>
-      </button>
-      <button type="button" [class.attention]="sourceCorrectionCount() > 0" title="Robert-corrected connected-source lessons available for review">
+      </div>
+      <div [class.attention]="sourceCorrectionCount() > 0" title="Robert-corrected connected-source lessons available for review">
         <strong>{{ sourceCorrectionCount() }}</strong>
         <span>learned corrections</span>
-      </button>
-      <button type="button" [class.attention]="importPursuitLinkCount() > 0" title="Pursuits linked by the most recent AI-thread import">
+      </div>
+      <div [class.attention]="importPursuitLinkCount() > 0" title="Pursuits linked by the most recent AI-thread import">
         <strong>{{ importPursuitLinkCount() }}</strong>
         <span>import pursuit links</span>
-      </button>
-      <button type="button" title="Average confidence across the currently loaded memory set">
+      </div>
+      <div title="Average confidence across the currently loaded memory set">
         <strong>{{ averageConfidence() }}</strong>
         <span>avg confidence</span>
-      </button>
-      <button type="button" [class.attention]="lowConfidenceCount() > 0" title="Records that may need review or correction">
+      </div>
+      <div [class.attention]="lowConfidenceCount() > 0" title="Records that may need review or correction">
         <strong>{{ lowConfidenceCount() }}</strong>
         <span>needs review</span>
-      </button>
+      </div>
     </section>
 
     <section class="action-rail" aria-label="Memory actions">

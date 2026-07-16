@@ -67,7 +67,6 @@
 
 .status-tile,
 .scorecard-grid button,
-.provider-stats button,
 .tier-card {
   color: inherit;
   text-align: left;
@@ -82,6 +81,15 @@
     box-shadow: var(--shadow);
     outline: 0;
   }
+}
+
+.provider-stats > div {
+  color: inherit;
+  text-align: left;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: help;
 }
 
 .llm-status-strip {

@@ -454,10 +454,10 @@
           </header>
 
           <div class="provider-stats">
-            <button type="button" title="Remaining quota for this provider">
+            <div title="Remaining quota for this provider">
               <span>Quota</span>
               <strong>{{ quotaText(provider) }}</strong>
-            </button>
+            </div>
             <button
               type="button"
               nz-tooltip
@@ -467,14 +467,14 @@
               <span>Budget</span>
               <strong>{{ budgetText(provider) }}</strong>
             </button>
-            <button type="button" title="Provider input and output tokens">
+            <div title="Provider input and output tokens">
               <span>Tokens</span>
               <strong>{{ formatNumber(totalTokens(provider)) }}</strong>
-            </button>
-            <button type="button" title="Enabled models available from this provider">
+            </div>
+            <div title="Enabled models available from this provider">
               <span>Models</span>
               <strong>{{ enabledModelCount(provider) }}/{{ providerModelCount(provider) }}</strong>
-            </button>
+            </div>
           </div>
 
           <div class="usage-meter" [title]="'Provider budget usage: ' + providerBudgetPercent(provider) + '%'">

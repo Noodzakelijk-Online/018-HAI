@@ -201,6 +201,11 @@ textarea {
   background: var(--orange-soft);
 }
 
+.signal--status,
+.chip-button--status {
+  cursor: help;
+}
+
 .signal b,
 .rail-section h2 span,
 .inspector-card h3 span {

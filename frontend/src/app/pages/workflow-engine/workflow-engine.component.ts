@@ -536,6 +536,10 @@ export class WorkflowEngineComponent implements OnInit {
     this.workflowSearch = '';
   }
 
+  focusFilters(): void {
+    document.getElementById('workflow-state-filter')?.focus();
+  }
+
   focusIntake(): void {
     const element = document.getElementById('workflow-intake-input');
     if (element) {

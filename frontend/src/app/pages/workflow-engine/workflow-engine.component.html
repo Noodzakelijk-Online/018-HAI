@@ -4,7 +4,7 @@
       <h1>Workflow Engine</h1>
       <p>
         Turn real-world signals into governed, traceable work.
-        <button type="button" class="help-dot" title="HAI creates workflows from signals, keeps risky actions approval-gated, and logs every step.">?</button>
+        <span class="help-dot" title="HAI creates workflows from signals, keeps risky actions approval-gated, and logs every step.">?</span>
       </p>
     </div>
 
@@ -89,7 +89,7 @@
       <section class="rail-card">
         <div class="rail-heading">
           <h2>Workflow queue</h2>
-          <button type="button" class="icon-button" title="Queue filters control the inbox list.">
+          <button type="button" class="icon-button" title="Focus workflow filters" (click)="focusFilters()">
             <i nz-icon nzType="filter" nzTheme="outline"></i>
           </button>
         </div>
@@ -120,7 +120,7 @@
         <h2>Quick filters</h2>
         <label>
           <span>State</span>
-          <select [(ngModel)]="stateFilter" aria-label="State filter">
+          <select id="workflow-state-filter" [(ngModel)]="stateFilter" aria-label="State filter">
             <option value="all">All states</option>
             <option *ngFor="let state of stateOptions()" [value]="state">{{ readable(state) }}</option>
           </select>
@@ -147,7 +147,7 @@
             <h2>Tell HAI what happened</h2>
             <p>Describe the signal, what should be achieved, and any important context.</p>
           </div>
-          <button type="button" class="help-dot" title="HAI classifies the input, creates success criteria, checks risk, creates a checklist, and stores provenance.">?</button>
+          <span class="help-dot" title="HAI classifies the input, creates success criteria, checks risk, creates a checklist, and stores provenance.">?</span>
         </div>
 
         <form nz-form [formGroup]="intakeForm" class="intake-form">
@@ -276,7 +276,7 @@
       <section class="panel detail-card">
         <div class="panel-heading compact">
           <h2>Operational detail</h2>
-          <button type="button" class="help-dot" title="This panel shows the result of the last operation and the selected workflow's control surface.">?</button>
+          <span class="help-dot" title="This panel shows the result of the last operation and the selected workflow's control surface.">?</span>
         </div>
 
         <article class="detail-box" *ngIf="lastOperation as operation; else noOperation" [class.detail-box--failed]="operation.status === 'failed'">
