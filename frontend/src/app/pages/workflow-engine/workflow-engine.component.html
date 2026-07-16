@@ -17,22 +17,30 @@
         <i nz-icon nzType="play-circle" nzTheme="outline"></i>
         Run worker
       </button>
-      <button type="button" nz-button nzType="default" data-testid="workflow-run-followups" (click)="runDueOpenLoops()" [nzLoading]="isActionRunning('followups')" [disabled]="anyActionRunning() && !isActionRunning('followups')">
-        <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
-        Follow-ups
-      </button>
-      <button type="button" nz-button nzType="default" data-testid="workflow-recover-stale" (click)="recoverStaleClaims()" [nzLoading]="isActionRunning('recovery')" [disabled]="anyActionRunning() && !isActionRunning('recovery')">
-        <i nz-icon nzType="sync" nzTheme="outline"></i>
-        Recover state
-      </button>
-      <button type="button" nz-button nzType="default" data-testid="workflow-open-automations" (click)="goHome()" [disabled]="anyActionRunning()">
-        <i nz-icon nzType="appstore" nzTheme="outline"></i>
-        Automations
-      </button>
+      <details class="workflow-more-tools">
+        <summary title="Open follow-up, recovery, and automation controls.">
+          <i nz-icon nzType="tool" nzTheme="outline"></i>
+          More controls
+        </summary>
+        <div class="workflow-more-tools__body">
+          <button type="button" nz-button nzType="default" data-testid="workflow-run-followups" (click)="runDueOpenLoops()" [nzLoading]="isActionRunning('followups')" [disabled]="anyActionRunning() && !isActionRunning('followups')">
+            <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
+            Follow-ups
+          </button>
+          <button type="button" nz-button nzType="default" data-testid="workflow-recover-stale" (click)="recoverStaleClaims()" [nzLoading]="isActionRunning('recovery')" [disabled]="anyActionRunning() && !isActionRunning('recovery')">
+            <i nz-icon nzType="sync" nzTheme="outline"></i>
+            Recover state
+          </button>
+          <button type="button" nz-button nzType="default" data-testid="workflow-open-automations" (click)="goHome()" [disabled]="anyActionRunning()">
+            <i nz-icon nzType="appstore" nzTheme="outline"></i>
+            Automations
+          </button>
+        </div>
+      </details>
     </div>
   </header>
 
-  <section class="action-strip" aria-label="Workflow actions">
+  <section class="action-strip" *ngIf="hasWorkflowAttention()" aria-label="Workflow actions">
     <button type="button" class="action-card" (click)="activeQueue = 'approval'" title="Open work that requires a human approval before HAI may continue.">
       <span class="action-icon action-icon--green"><i nz-icon nzType="check-square" nzTheme="outline"></i></span>
       <span>
@@ -53,26 +61,6 @@
       <i nz-icon nzType="right" nzTheme="outline"></i>
     </button>
 
-    <button type="button" class="action-card" (click)="runDueOpenLoops()" [disabled]="anyActionRunning() && !isActionRunning('followups')" title="Process follow-up claims and waiting states that are due.">
-      <span class="action-icon action-icon--purple"><i nz-icon nzType="message" nzTheme="outline"></i></span>
-      <span>
-        <strong>Process follow-ups</strong>
-        <em>{{ count('dueOpenLoops') }} due</em>
-        <small>{{ openLoopRunSummary ? (openLoopRunSummary.triggered + ' triggered last run') : 'Open loops stay visible' }}</small>
-      </span>
-      <i nz-icon nzType="right" nzTheme="outline"></i>
-    </button>
-
-    <button type="button" class="action-card" (click)="recoverStaleClaims()" [disabled]="anyActionRunning() && !isActionRunning('recovery')" title="Recover stale worker claims and move uncertain work to review.">
-      <span class="action-icon action-icon--amber"><i nz-icon nzType="sync" nzTheme="outline"></i></span>
-      <span>
-        <strong>Recover stale state</strong>
-        <em>{{ count('expiredWorkflowClaims') + count('expiredOpenLoopClaims') }} stale</em>
-        <small>{{ recoverySummary ? (recoverySummary.checked + ' checked last run') : 'System recovery path' }}</small>
-      </span>
-      <i nz-icon nzType="right" nzTheme="outline"></i>
-    </button>
-
     <button type="button" class="action-card" (click)="focusIntake()" title="Create a workflow from a new real-world signal.">
       <span class="action-icon action-icon--blue"><i nz-icon nzType="plus-square" nzTheme="outline"></i></span>
       <span>
@@ -84,8 +72,20 @@
     </button>
   </section>
 
-  <main class="workflow-main">
-    <aside class="queue-rail" *ngIf="dashboard as monitor">
+  <section class="workflow-quiet" *ngIf="!hasWorkflowAttention()">
+    <span class="workflow-quiet__icon"><i nz-icon nzType="inbox" nzTheme="outline"></i></span>
+    <div>
+      <h2>Start with a real-world signal</h2>
+      <p>HAI will classify it, set the safe next action, and keep the work traceable from intake to completion.</p>
+    </div>
+    <button type="button" nz-button nzType="primary" (click)="focusIntake()">
+      <i nz-icon nzType="plus" nzTheme="outline"></i>
+      Capture a signal
+    </button>
+  </section>
+
+  <main class="workflow-main" [class.workflow-main--idle]="!hasWorkflowAttention()">
+    <aside class="queue-rail" *ngIf="dashboard && hasWorkflowAttention()">
       <section class="rail-card">
         <div class="rail-heading">
           <h2>Workflow queue</h2>
@@ -231,7 +231,7 @@
         </form>
       </article>
 
-      <article class="panel inbox-panel">
+      <article class="panel inbox-panel" *ngIf="filteredItems().length">
         <div class="panel-heading">
           <div>
             <h2>Workflow inbox</h2>
@@ -240,7 +240,7 @@
           <input nz-input [(ngModel)]="workflowSearch" placeholder="Search..." />
         </div>
 
-        <div class="inbox-table" *ngIf="filteredItems().length; else noWorkflows">
+        <div class="inbox-table">
           <div class="inbox-head">
             <span>Priority</span>
             <span>Workflow</span>
@@ -262,17 +262,18 @@
           </button>
         </div>
 
-        <ng-template #noWorkflows>
-          <div class="empty-state">
-            <i nz-icon nzType="inbox" nzTheme="outline"></i>
-            <strong>No workflows yet</strong>
-            <p>Capture a signal above to create the first controlled workflow.</p>
-          </div>
-        </ng-template>
       </article>
+
+      <section class="workflow-empty" *ngIf="!filteredItems().length && !loading">
+        <i nz-icon nzType="inbox" nzTheme="outline"></i>
+        <div>
+          <h2>{{ hasWorkflowAttention() ? 'No workflows match this view' : 'No workflows yet' }}</h2>
+          <p>{{ hasWorkflowAttention() ? 'Adjust the queue or filters to see other work.' : 'Capture a signal above to create the first controlled workflow.' }}</p>
+        </div>
+      </section>
     </section>
 
-    <aside class="detail-rail">
+    <aside class="detail-rail" *ngIf="selected || lastOperation?.status === 'failed'">
       <section class="panel detail-card">
         <div class="panel-heading compact">
           <h2>Operational detail</h2>

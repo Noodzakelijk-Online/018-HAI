@@ -1,4 +1,4 @@
-import {NgModule} from '@angular/core';
+import {ErrorHandler, NgModule} from '@angular/core';
 import {BrowserModule} from '@angular/platform-browser';
 import {AppRoutingModule} from './app-routing.module';
 import {AppComponent} from './app.component';
@@ -10,6 +10,7 @@ import {HttpClientModule} from "@angular/common/http";
 import {BrowserAnimationsModule} from '@angular/platform-browser/animations';
 import {AUTH_SERVICE_TOKEN} from './services/auth/auth.service.token';
 import {AuthService} from './services/auth/auth.service';
+import {ChunkLoadRecoveryHandler} from './services/chunk-load-recovery.handler';
 
 registerLocaleData(en);
 
@@ -26,6 +27,7 @@ registerLocaleData(en);
     providers: [
         {provide: NZ_I18N, useValue: en_US},
         {provide: AUTH_SERVICE_TOKEN, useClass: AuthService},
+        {provide: ErrorHandler, useClass: ChunkLoadRecoveryHandler},
     ],
     bootstrap: [AppComponent]
 })

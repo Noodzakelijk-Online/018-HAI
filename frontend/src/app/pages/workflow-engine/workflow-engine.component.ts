@@ -490,6 +490,19 @@ export class WorkflowEngineComponent implements OnInit {
     return this.count('interruptedReview');
   }
 
+  hasWorkflowAttention(): boolean {
+    return (
+      this.queueCount('all') > 0 ||
+      this.queueCount('approval') > 0 ||
+      this.queueCount('ready') > 0 ||
+      this.queueCount('blocked') > 0 ||
+      this.queueCount('review') > 0 ||
+      this.count('dueOpenLoops') > 0 ||
+      this.count('expiredWorkflowClaims') > 0 ||
+      this.count('expiredOpenLoopClaims') > 0
+    );
+  }
+
   stateOptions(): string[] {
     const states = this.overview?.states || [];
     const itemStates = this.items.map((item) => item.currentState).filter(Boolean);
