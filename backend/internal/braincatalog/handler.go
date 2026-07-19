@@ -8,11 +8,22 @@ import (
 
 // Handler exposes the transparent catalog. It deliberately has no enable or
 // install endpoint: activation belongs to a reviewed runtime adapter.
-type Handler struct{ reviewer UpstreamReviewer }
+type Handler struct {
+	reviewer           UpstreamReviewer
+	collectionReviewer OSSInsightCollectionReviewer
+}
 
-func NewHandler() *Handler { return NewHandlerWithReviewer(NewUpstreamReviewer(nil)) }
+func NewHandler() *Handler {
+	return NewHandlerWithReviewers(NewUpstreamReviewer(nil), NewOSSInsightCollectionReviewer(nil))
+}
 
-func NewHandlerWithReviewer(reviewer UpstreamReviewer) *Handler { return &Handler{reviewer: reviewer} }
+func NewHandlerWithReviewer(reviewer UpstreamReviewer) *Handler {
+	return NewHandlerWithReviewers(reviewer, NewOSSInsightCollectionReviewer(nil))
+}
+
+func NewHandlerWithReviewers(reviewer UpstreamReviewer, collectionReviewer OSSInsightCollectionReviewer) *Handler {
+	return &Handler{reviewer: reviewer, collectionReviewer: collectionReviewer}
+}
 
 func (h *Handler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
@@ -50,6 +61,22 @@ func (h *Handler) Revalidate(c *gin.Context) {
 	review, err := h.reviewer.Review(entry)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "could not revalidate the configured upstream"})
+		return
+	}
+	c.JSON(http.StatusOK, review)
+}
+
+// RevalidateCollections compares HAI's fixed 138-category source snapshot to
+// the public OSS Insight list. It is an admin-only, read-only drift check; it
+// cannot add entries, change their status, or activate third-party code.
+func (h *Handler) RevalidateCollections(c *gin.Context) {
+	if h.collectionReviewer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OSS Insight collection revalidation is unavailable"})
+		return
+	}
+	review, err := h.collectionReviewer.ReviewCollections()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "could not revalidate the OSS Insight collection list"})
 		return
 	}
 	c.JSON(http.StatusOK, review)

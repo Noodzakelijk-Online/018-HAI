@@ -21,7 +21,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
   }
 
   function createComponent() {
-    const catalogService = { revalidate: jasmine.createSpy('revalidate') }
+	const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
@@ -83,4 +83,23 @@ describe('BrainCatalogComponent adapter reviews', () => {
     expect(component.upstreamReview?.license).toBe('Apache-2.0')
     expect(notification.success).toHaveBeenCalledWith('Upstream rechecked', 'Cline was checked without changing its HAI activation state.')
   })
+
+	it('reports collection drift without changing catalog or runtime state', () => {
+	  const { component, notification } = createComponent()
+	  const catalogService = (component as any).service
+	  catalogService.revalidateOSSInsightCollections.and.returnValue(of({
+	    available: true,
+	    expectedTotal: 138,
+	    currentTotal: 139,
+	    newCollections: ['Future capability'],
+	    missingExpected: [],
+	    message: 'drift only',
+	  }))
+
+	  component.revalidateOSSInsightCollections()
+
+	  expect(catalogService.revalidateOSSInsightCollections).toHaveBeenCalled()
+	  expect(component.ossInsightReview?.newCollections).toEqual(['Future capability'])
+	  expect(notification.success).toHaveBeenCalledWith('OSS Insight checked', 'Collection drift needs catalog review. No project was installed or activated.')
+	})
 })

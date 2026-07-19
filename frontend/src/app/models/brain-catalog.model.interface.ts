@@ -46,6 +46,17 @@ export interface IBrainCatalogUpstreamReview {
   disposition: BrainCatalogStatus
 }
 
+export interface IBrainCatalogOSSInsightReview {
+  checkedAt: string
+  sourceUrl: string
+  available: boolean
+  expectedTotal: number
+  currentTotal: number
+  newCollections?: string[]
+  missingExpected?: string[]
+  message: string
+}
+
 export interface IBrainCatalogSource {
   name: string
   url: string

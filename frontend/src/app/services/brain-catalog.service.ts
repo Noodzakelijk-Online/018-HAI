@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http'
 import { Injectable } from '@angular/core'
 import { Observable } from 'rxjs'
-import { IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../models/brain-catalog.model.interface'
+import { IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../models/brain-catalog.model.interface'
 
 @Injectable({ providedIn: 'root' })
 export class BrainCatalogService {
@@ -12,6 +12,10 @@ export class BrainCatalogService {
   }
 
   revalidate(id: string): Observable<IBrainCatalogUpstreamReview> {
-    return this.http.post<IBrainCatalogUpstreamReview>(`/api/v1/brain-catalog/${encodeURIComponent(id)}/revalidate`, {})
+	return this.http.post<IBrainCatalogUpstreamReview>(`/api/v1/brain-catalog/${encodeURIComponent(id)}/revalidate`, {})
+  }
+
+  revalidateOSSInsightCollections(): Observable<IBrainCatalogOSSInsightReview> {
+    return this.http.post<IBrainCatalogOSSInsightReview>('/api/v1/brain-catalog/ossinsight/revalidate', {})
   }
 }

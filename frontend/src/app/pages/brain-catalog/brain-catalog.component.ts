@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { BrainCatalogCollectionDisposition, IBrainCatalogEntry, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
+import { BrainCatalogCollectionDisposition, IBrainCatalogEntry, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { PursuitService } from '../../services/pursuit.service'
 
@@ -17,7 +17,9 @@ export class BrainCatalogComponent implements OnInit {
   loadFailed = false
   reviewingCandidateId = ''
   revalidatingId = ''
+	checkingOSSInsight = false
   upstreamReview?: IBrainCatalogUpstreamReview
+	ossInsightReview?: IBrainCatalogOSSInsightReview
 
   constructor(
     private service: BrainCatalogService,
@@ -79,6 +81,24 @@ export class BrainCatalogComponent implements OnInit {
       error: () => {
         this.revalidatingId = ''
         this.notification.error('Upstream recheck unavailable', 'HAI could not retrieve public GitHub metadata. No catalog decision or runtime state changed.')
+      },
+    })
+  }
+
+  revalidateOSSInsightCollections(): void {
+    if (this.checkingOSSInsight) return
+    this.checkingOSSInsight = true
+    this.ossInsightReview = undefined
+    this.service.revalidateOSSInsightCollections().subscribe({
+      next: (review) => {
+        this.checkingOSSInsight = false
+        this.ossInsightReview = review
+        const drift = (review.newCollections?.length ?? 0) + (review.missingExpected?.length ?? 0)
+        this.notification.success('OSS Insight checked', drift ? 'Collection drift needs catalog review. No project was installed or activated.' : 'The collection snapshot still matches. No project was installed or activated.')
+      },
+      error: () => {
+        this.checkingOSSInsight = false
+        this.notification.error('OSS Insight check unavailable', 'HAI could not retrieve the public collection list. No catalog decision or runtime state changed.')
       },
     })
   }

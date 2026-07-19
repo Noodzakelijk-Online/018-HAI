@@ -14,6 +14,15 @@ type fakeUpstreamReviewer struct {
 	err    error
 }
 
+type fakeCollectionReviewer struct {
+	review OSSInsightCollectionReview
+	err    error
+}
+
+func (f fakeCollectionReviewer) ReviewCollections() (OSSInsightCollectionReview, error) {
+	return f.review, f.err
+}
+
 func (f fakeUpstreamReviewer) Review(entry Entry) (UpstreamReview, error) {
 	if f.review.ID == "" {
 		f.review.ID = entry.ID
@@ -59,6 +68,22 @@ func TestRevalidateHandlerReturnsBoundedReview(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/opencode/revalidate", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":"opencode"`) || !strings.Contains(response.Body.String(), `"license":"MIT"`) {
+		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRevalidateCollectionsHandlerReportsDriftWithoutMutatingCatalog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewHandlerWithReviewers(
+		fakeUpstreamReviewer{},
+		fakeCollectionReviewer{review: OSSInsightCollectionReview{Available: true, ExpectedTotal: 138, CurrentTotal: 139, NewCollections: []string{"Future capability"}, Message: "drift only"}},
+	)
+	router.POST("/ossinsight/revalidate", handler.RevalidateCollections)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ossinsight/revalidate", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"newCollections":["Future capability"]`) || !strings.Contains(response.Body.String(), "drift only") {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 	}
 }

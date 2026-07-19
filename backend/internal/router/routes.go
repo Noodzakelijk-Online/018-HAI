@@ -246,6 +246,7 @@ func initializeBrainCatalogRoutes(apiVersion *gin.RouterGroup, handler *braincat
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/", requirePermission(rbac.PermRead), handler.List)
+		routes.POST("/ossinsight/revalidate", requirePermission(rbac.PermAdmin), handler.RevalidateCollections)
 		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
 		routes.POST("/:id/revalidate", requirePermission(rbac.PermAdmin), handler.Revalidate)
 	}
