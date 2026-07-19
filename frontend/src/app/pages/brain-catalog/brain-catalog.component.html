@@ -86,6 +86,19 @@
         </ng-container>
         <span *ngIf="ragflowStatusUnavailable">The local bridge status could not be read. No RAGFlow action was started.</span>
       </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'presidio'">
+        <strong>Local bridge state</strong>
+        <span *ngIf="loadingPresidioStatus">Checking the configured local bridge.</span>
+        <ng-container *ngIf="presidioStatus as status">
+          <span>{{ status.configured ? 'Configured for bounded local PII detection.' : 'Not configured. HAI cannot contact or analyze through Presidio.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>Language: {{ status.language || 'not configured' }}. Approved entities: {{ status.entityTypes.length }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="presidioStatusUnavailable">The local bridge status could not be read. No Presidio action was started.</span>
+      </div>
       <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
       <div class="brain-catalog-page__review-action" *ngIf="canStartReview(entry)">
         <div>

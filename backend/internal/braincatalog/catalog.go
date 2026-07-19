@@ -226,9 +226,9 @@ var entries = []Entry{
 		Status: StatusCandidate, Category: "sensitive-data detection and redaction", IntegrationMode: "contained local redaction adapter",
 		Capabilities: []string{"PII detection", "redaction", "masking", "anonymisation"}, RecommendedFor: []string{"secret redaction", "source-import privacy checks", "safe audit previews"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a local-only pipeline with explicit entity recognisers, confidence thresholds, false-positive handling, source retention, and audit events. Redaction can create a review item, but it cannot delete source records, change approval status, or conceal original evidence from an authorised owner.",
-		Rationale:  "Presidio is a maintained candidate for strengthening HAI's existing redaction boundary across source ingestion, logs, and evaluation fixtures without introducing a second data authority.",
-		VerifiedAt: "2026-07-20", VerificationNote: "OSS Insight AI Safety & Alignment listing and the current data-privacy-stack/presidio upstream were checked on 2026-07-20. The project has moved from the Microsoft GitHub namespace, is MIT licensed, and explicitly warns that automated detection is not complete; no Presidio service is installed or configured by HAI.",
+		Activation: "HAI ships a disabled-by-default local Analyzer bridge for bounded, manually submitted text and explicit language/entity allowlists. Before enabling it, review false positives, local model/language coverage, source retention, and capacity. The bridge returns metadata only; it cannot anonymize, delete source records, change approval status, or conceal original evidence from an authorised owner.",
+		Rationale:  "Presidio is a maintained candidate for strengthening HAI's existing deterministic privacy boundary with a local PII-detection second pass without introducing a second data authority.",
+		VerifiedAt: "2026-07-20", VerificationNote: "OSS Insight AI Safety & Alignment listing and the current data-privacy-stack/presidio upstream were checked on 2026-07-20. The project has moved from the Microsoft GitHub namespace, is MIT licensed, and explicitly warns that automated detection is not complete. HAI has a disabled local Analyzer bridge but does not install or configure a Presidio service.",
 	},
 	{
 		ID: "guardrails-ai", Name: "Guardrails AI", UpstreamURL: "https://github.com/guardrails-ai/guardrails", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",

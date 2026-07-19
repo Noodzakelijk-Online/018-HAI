@@ -24,12 +24,14 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const catalogService = { adoptionPlan: jasmine.createSpy('adoptionPlan'), revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), discoverReviewableOSSInsightRepositories: jasmine.createSpy('discoverReviewableOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const ragflowService = { status: jasmine.createSpy('status') }
+    const presidioService = { status: jasmine.createSpy('status') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
     return {
-      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, notification, router as any),
+      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, presidioService as any, notification, router as any),
       pursuitService,
       ragflowService,
+      presidioService,
       notification,
       router,
     }
@@ -175,6 +177,16 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     expect(ragflowService.status).toHaveBeenCalled()
     expect(component.ragflowStatus?.configured).toBeFalse()
+  })
+
+  it('reads Presidio bridge state only when the Presidio candidate is selected', () => {
+    const { component, presidioService } = createComponent()
+    presidioService.status.and.returnValue(of({ enabled: false, configured: false, provider: 'Presidio Analyzer', language: '', entityTypes: [], capabilities: [], restrictions: ['no persistence'], scope: 'review metadata only' }))
+
+    component.select({ ...candidate, id: 'presidio', name: 'Presidio' } as any)
+
+    expect(presidioService.status).toHaveBeenCalled()
+    expect(component.presidioStatus?.configured).toBeFalse()
   })
 
   it('shows discovery results without changing runtime state', () => {

@@ -3,7 +3,9 @@ import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { BrainCatalogCollectionDisposition, IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { IRAGFlowStatus } from '../../models/ragflow.model.interface'
+import { IPresidioStatus } from '../../models/presidio.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
+import { PresidioService } from '../../services/presidio.service'
 import { PursuitService } from '../../services/pursuit.service'
 import { RAGFlowService } from '../../services/ragflow.service'
 
@@ -35,11 +37,15 @@ export class BrainCatalogComponent implements OnInit {
   ragflowStatus?: IRAGFlowStatus
   loadingRAGFlowStatus = false
   ragflowStatusUnavailable = false
+  presidioStatus?: IPresidioStatus
+  loadingPresidioStatus = false
+  presidioStatusUnavailable = false
 
   constructor(
     private service: BrainCatalogService,
     private pursuitService: PursuitService,
     private ragflowService: RAGFlowService,
+    private presidioService: PresidioService,
     private notification: NzNotificationService,
     private router: Router,
   ) {}
@@ -84,7 +90,10 @@ export class BrainCatalogComponent implements OnInit {
     this.upstreamReview = undefined
     this.ragflowStatus = undefined
     this.ragflowStatusUnavailable = false
+    this.presidioStatus = undefined
+    this.presidioStatusUnavailable = false
     if (entry.id === 'ragflow') this.loadRAGFlowStatus()
+    if (entry.id === 'presidio') this.loadPresidioStatus()
   }
 
   loadRAGFlowStatus(): void {
@@ -98,6 +107,21 @@ export class BrainCatalogComponent implements OnInit {
       error: () => {
         this.loadingRAGFlowStatus = false
         this.ragflowStatusUnavailable = true
+      },
+    })
+  }
+
+  loadPresidioStatus(): void {
+    if (this.loadingPresidioStatus) return
+    this.loadingPresidioStatus = true
+    this.presidioService.status().subscribe({
+      next: (status) => {
+        this.loadingPresidioStatus = false
+        this.presidioStatus = status
+      },
+      error: () => {
+        this.loadingPresidioStatus = false
+        this.presidioStatusUnavailable = true
       },
     })
   }

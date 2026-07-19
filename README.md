@@ -493,6 +493,17 @@ credential, dataset permissions, or evidence quality. Keep RAGFlow's optional
 agent and code-executor features disabled and complete the capacity, retention,
 and provenance review described in the catalog before enabling this bridge.
 
+Optional Presidio analysis is a separate, operator-managed local deployment.
+Set `HAI_PRESIDIO_ENABLED=true`, a loopback, `host.docker.internal`, `presidio`,
+or private-network `HAI_PRESIDIO_BASE_URL`, the configured language, and the
+explicit `HAI_PRESIDIO_ENTITIES` allowlist. HAI sends only an operator-submitted,
+bounded text value to Presidio's local analyzer endpoint and returns entity type,
+confidence, and offsets; it never stores, replays, anonymizes, masks, or returns
+the submitted text. A detection is a review signal only, while no detections do
+not prove content safe for storage, cloud providers, or external action. This
+bridge cannot edit sources, write HAI memory or facts, change policy, run a
+workflow, or contact an external service.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job

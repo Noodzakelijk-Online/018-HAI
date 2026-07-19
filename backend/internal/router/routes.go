@@ -34,6 +34,7 @@ import (
 	"automation-hub-backend/internal/opscontrol"
 	"automation-hub-backend/internal/phase2"
 	"automation-hub-backend/internal/planningoptimizer"
+	"automation-hub-backend/internal/presidio"
 	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/ragflow"
@@ -89,6 +90,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
 		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
 		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
+		initializePresidioRoutes(v1, presidio.NewHandler(presidio.DefaultService()))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -447,6 +449,17 @@ func initializeRAGFlowRoutes(apiVersion *gin.RouterGroup, handler *ragflow.Handl
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.POST("/retrieve", requirePermission(rbac.PermWrite), handler.Retrieve)
+	}
+}
+
+func initializePresidioRoutes(apiVersion *gin.RouterGroup, handler *presidio.Handler) {
+	routes := apiVersion.Group("/presidio")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		// Text leaves the request process only for the explicitly configured local
+		// analyzer; analysis has no persistence or external-action capability.
+		routes.POST("/analyze", requirePermission(rbac.PermWrite), handler.Analyze)
 	}
 }
 
