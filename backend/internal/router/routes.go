@@ -36,6 +36,7 @@ import (
 	"automation-hub-backend/internal/planningoptimizer"
 	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/ragflow"
 	"automation-hub-backend/internal/rbac"
 	"automation-hub-backend/internal/research"
 	"automation-hub-backend/internal/runtimelab"
@@ -87,6 +88,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
 		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
+		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -435,6 +437,16 @@ func initializeResearchRoutes(apiVersion *gin.RouterGroup, handler *research.Han
 	{
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
 		routes.POST("/search", requirePermission(rbac.PermWrite), handler.Search)
+	}
+}
+
+func initializeRAGFlowRoutes(apiVersion *gin.RouterGroup, handler *ragflow.Handler) {
+	routes := apiVersion.Group("/ragflow")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/retrieve", requirePermission(rbac.PermWrite), handler.Retrieve)
 	}
 }
 

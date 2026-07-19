@@ -56,12 +56,17 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
 | mistral.rs | Thinking and local inference | Candidate | Loopback server, approved model and licence, resource limit, and disabled upstream agentic tools. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
-| RAGFlow | Memory and source intake | Candidate | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, and disabled code executor. |
+| RAGFlow | Memory and source intake | Candidate, local bridge implemented | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, disabled code executor, and fixed-dataset local retrieval configuration. |
 
 RAGFlow is deliberately not presented as HAI memory. Its parsed chunks and
 citations are candidate evidence that must pass HAI's source-grounding,
 freshness, conflict, and memory-update controls before influencing a fact,
 task, or external action.
+
+HAI's disabled-by-default bridge exposes only a local endpoint probe and fixed-
+dataset retrieval. It cannot ingest or delete documents, invoke RAGFlow chat,
+agents, MCP, or code execution, alter RAGFlow configuration, or create memory,
+facts, workflows, or external actions automatically.
 
 ## Non-negotiable boundaries
 

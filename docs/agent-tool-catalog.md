@@ -10,6 +10,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 - OSS Insight discovery scans every repository row returned for HAI's eligible categories (currently 33 candidate or represented categories). It labels the upstream result as a ranked collection response, never as an exhaustive GitHub inventory; the public endpoint currently returns a fixed 20-row list and does not honor ordinary paging parameters.
 - An owner-admin can run `POST /api/v1/brain-catalog/:id/revalidate` to retrieve bounded public GitHub metadata for one fixed catalog entry. The recheck never fetches source code or changes an adoption decision.
 - The optional local SearXNG profile is a discovery adapter, not an answer engine. `GET /api/v1/research/status` shows its configuration and `POST /api/v1/research/search` returns bounded, unverified source candidates only when the owner has enabled a local endpoint.
+- The optional local RAGFlow bridge is a fixed-dataset candidate-evidence adapter, not HAI memory or an agent runtime. `GET /api/v1/ragflow/status` reports non-secret configuration, `POST /api/v1/ragflow/probe` checks reachability, and `POST /api/v1/ragflow/retrieve` can query only configured local dataset IDs. It cannot ingest, delete, call an agent/MCP/code-executor, or update HAI state automatically.
 - Task planning can recommend a project capability, but does not select it as an executable tool.
 - A project becomes executable only after a dedicated adapter has been reviewed, configured, health-checked, and routed through HAI's existing approval and audit controls.
 - HAI remains the policy owner: an external framework cannot bypass the local-first policy, paid budget, source controls, folder allowlist, emergency stop, or approval queue.
@@ -62,7 +63,7 @@ none is installed, configured, or executable through HAI.
 | [LiveKit Agents](https://github.com/livekit/agents) | Candidate | Explicitly opt-in real-time voice and multimodal intake | No microphone, call, MCP tool, or external contact is activated without session consent, configured local/self-hosted service, and HAI approval. |
 | [mistral.rs](https://github.com/ericlbuehler/mistral.rs) | Candidate | Loopback OpenAI-compatible local model serving and multimodal evaluation | The upstream's built-in shell, web, and code tools stay disabled; only a separately reviewed loopback provider can be used through HAI's existing EUR 0 router. |
 | [AG2](https://github.com/ag2ai/ag2) | Compatibility only | Existing AG2 / AutoGen-era workload migration and pattern review | It cannot become a second agent control plane. Any bridge must use a fixed schema and HAI-owned model policy, audit, approvals, workspace limits, and tool allowlist. |
-| [RAGFlow](https://github.com/infiniflow/ragflow) | Candidate | Complex document parsing, evidence-linked retrieval, and reranking | It remains an external retrieval index, not HAI memory or truth. Its optional agent/code executor is disabled and any deployment first needs a measured gap, source allowlist, resource budget, provenance, and deletion review. |
+| [RAGFlow](https://github.com/infiniflow/ragflow) | Candidate, local bridge implemented | Complex document parsing, evidence-linked retrieval, and reranking | HAI has a disabled-by-default, local-only retrieval bridge with an explicit dataset allowlist. It remains an external retrieval index, not HAI memory or truth; its optional agent/code executor is disabled and any deployment first needs a measured gap, source allowlist, resource budget, provenance, and deletion review. |
 | [Serena](https://github.com/oraios/serena) | Candidate | Read-only semantic repository context and language-server diagnostics | One local MCP service may be reviewed only for a named repository and a read-only symbol/diagnostic allowlist. Editing, shell, memory writing, and automatic language-server installation remain disabled. |
 | [Microsoft UFO](https://github.com/microsoft/UFO) | Reference only | Windows and multi-device execution architecture | It exposes GUI, UIA, Win32, WinCOM, and cross-device agent capabilities. HAI will not connect it to a Windows session, screen, device, provider, or tool surface without a separate execution-safety design. |
 | [Goose](https://github.com/aaif-goose/goose) | Reference only | General-purpose local-agent and MCP interoperability patterns | Its desktop, CLI, API, provider, extension, and execution surfaces would create a second control plane. It is not embedded, installed, or run by HAI. |
@@ -71,7 +72,9 @@ none is installed, configured, or executable through HAI.
 
 RAGFlow's own self-hosting guidance calls for at least 4 CPU cores, 16 GB RAM,
 50 GB disk, Docker Compose, and gVisor when its optional code executor is
-used. HAI does not provision it automatically. A local deployment review must
+used. HAI does not provision it automatically. The implemented retrieval bridge
+is disabled until `HAI_RAGFLOW_ENABLED`, its API key, and at least one approved
+dataset ID are configured. A local deployment review must
 record its resource reservation, document folder/connector allowlist, model and
 embedding endpoint, retention/deletion/export rules, and proof that its code
 executor is disabled before the HAI adapter review can begin.

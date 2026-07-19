@@ -480,6 +480,19 @@ candidate, after which the normal grounded-answer claim checks remain
 authoritative. The SearXNG source is AGPL-3.0; operate it as a separate local
 service and review its license and search-engine configuration before enabling.
 
+Optional RAGFlow retrieval is a separate, operator-managed local deployment.
+Set `HAI_RAGFLOW_ENABLED=true`, a loopback, `host.docker.internal`, `ragflow`,
+or private-network `HAI_RAGFLOW_BASE_URL`, a local API key, and the comma-
+separated `HAI_RAGFLOW_DATASET_IDS` that HAI is allowed to query. The bridge
+only uses RAGFlow's retrieval endpoint for those fixed datasets and returns
+candidate evidence for normal HAI source-grounding and verification. It does
+not upload, ingest, edit, delete, run agents, use MCP, execute code, change
+RAGFlow settings, write HAI memory, or trigger a workflow or external action.
+The optional probe checks endpoint reachability only; it does not prove the
+credential, dataset permissions, or evidence quality. Keep RAGFlow's optional
+agent and code-executor features disabled and complete the capacity, retention,
+and provenance review described in the catalog before enabling this bridge.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job
