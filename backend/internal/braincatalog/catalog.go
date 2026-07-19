@@ -105,6 +105,15 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "GitHub repository and Apache-2.0 licence metadata checked on 2026-07-19.",
 	},
 	{
+		ID: "opencode", Name: "OpenCode", UpstreamURL: "https://github.com/anomalyco/opencode", SourceCatalogURL: "https://ossinsight.io/collections/model-context-protocol-mcp-client", SourceCollection: "Model Context Protocol (MCP) Client",
+		Status: StatusCandidate, Category: "terminal coding agent", IntegrationMode: "operator-configured local CLI or confined bridge",
+		Capabilities: []string{"interactive coding assistance", "terminal-mediated workspace work", "MCP-aware development workflows"}, RecommendedFor: []string{"coding", "repository review", "developer-controlled task execution"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Keep OpenCode outside HAI until a reviewed, workspace-confined adapter exists. Any proposed bridge must use an explicit model provider, tool and network allowlists, a review-first change flow, and HAI approval before write-capable work.",
+		Rationale:  "Active MIT local CLI candidate from the MCP-client collection with useful developer workflows, but terminal and workspace access must remain independently reviewed and approval-gated.",
+		VerifiedAt: verifiedAt, VerificationNote: "GitHub repository metadata checked on 2026-07-19; the upstream repository reports an active anomalyco/opencode project and MIT licence.",
+	},
+	{
 		ID: "openhands", Name: "OpenHands", UpstreamURL: "https://github.com/OpenHands/OpenHands", SourceCatalogURL: sourceCatalogURL,
 		Status: StatusCandidate, Category: "sandboxed development agent", IntegrationMode: "operator-configured container or service adapter",
 		Capabilities: []string{"coding agent", "sandboxed workspace", "skills", "MCP integration"}, RecommendedFor: []string{"coding", "repository work", "sandboxed task execution"},
@@ -376,7 +385,7 @@ func Recommend(taskType, request string) []Recommendation {
 	text := strings.ToLower(taskType + " " + request)
 	ids := []string{}
 	if containsAny(text, "code", "coding", "repository", "repo", "pull request", "test", "build", "bug", "commit") {
-		ids = append(ids, "continue", "cline", "aider", "openhands")
+		ids = append(ids, "continue", "cline", "opencode", "aider", "openhands")
 	}
 	if containsAny(text, "plan", "research", "workflow", "delegate", "multi-agent", "orchestr") {
 		ids = append(ids, "crewai")
