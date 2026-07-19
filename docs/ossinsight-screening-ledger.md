@@ -193,3 +193,11 @@ state. In particular, a recommendation never installs a package, configures a
 service, creates credentials, or executes a tool. An integrated profile still
 requires its own local health and configuration checks; a candidate requires a
 manual adapter review under the adoption gates above.
+
+Task planning consumes the same ranked matches as planning context and returns
+them with the tool-routing decision. This makes a relevant reviewed capability
+visible to the operator without selecting it as a runnable tool. Candidate
+matches remain skipped until an adapter has been reviewed and configured;
+compatibility profiles remain blocked behind an explicit bridge and approval;
+and integrated profiles remain skipped until local configuration and live
+health evidence are present.

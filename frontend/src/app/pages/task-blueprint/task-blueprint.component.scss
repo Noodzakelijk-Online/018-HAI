@@ -629,6 +629,21 @@ textarea {
   font-size: 12px;
 }
 
+.task-capability-option {
+  align-items: start;
+}
+
+.task-capability-option > div {
+  display: grid;
+  gap: 3px;
+}
+
+.task-capability-option small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .inspector-card dl {
   display: grid;
   gap: 8px;

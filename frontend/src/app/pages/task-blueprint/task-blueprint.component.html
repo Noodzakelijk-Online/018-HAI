@@ -470,6 +470,19 @@
             <span>{{ gate.status }}</span>
           </div>
         </article>
+
+        <article class="inspector-card" *ngIf="plan?.toolDecision?.capabilityRecommendations?.length">
+          <h3>Reviewed capability options <span title="Catalog matches are planning context only. HAI still requires a configured adapter, health evidence, and any required approval before it can use one.">?</span></h3>
+          <p>Matched from the reviewed HAI catalog. No external project was installed, configured, or executed.</p>
+          <div class="mini-table task-capability-option" *ngFor="let option of plan?.toolDecision?.capabilityRecommendations || []">
+            <div>
+              <strong>{{ option.name }}</strong>
+              <small>{{ option.role }} - {{ option.status }}</small>
+              <small>{{ option.reasons.join('; ') }}</small>
+            </div>
+            <span>{{ option.nextStep }}</span>
+          </div>
+        </article>
       </section>
 
       <section class="inspector-body" *ngIf="inspectorMode === 'evidence'">

@@ -117,7 +117,25 @@ export interface IToolRouteDecision {
   selectedTools: string[];
   skippedTools: string[];
   blockedTools: string[];
+  catalogRecommendations?: ICatalogRecommendation[];
+  capabilityRecommendations?: ICapabilityRecommendation[];
   reason: string;
+}
+
+export interface ICatalogRecommendation {
+  id: string;
+  name: string;
+  status: string;
+  role: string;
+  rationale: string;
+  requiresApproval: boolean;
+  activation: string;
+}
+
+export interface ICapabilityRecommendation extends ICatalogRecommendation {
+  score: number;
+  reasons: string[];
+  nextStep: string;
 }
 
 export interface ITaskStep {

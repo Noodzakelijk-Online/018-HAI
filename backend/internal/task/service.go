@@ -76,11 +76,12 @@ type ExecutionPlan struct {
 }
 
 type ToolRouteDecision struct {
-	SelectedTools          []string                      `json:"selectedTools"`
-	SkippedTools           []string                      `json:"skippedTools"`
-	BlockedTools           []string                      `json:"blockedTools"`
-	CatalogRecommendations []braincatalog.Recommendation `json:"catalogRecommendations,omitempty"`
-	Reason                 string                        `json:"reason"`
+	SelectedTools             []string                                `json:"selectedTools"`
+	SkippedTools              []string                                `json:"skippedTools"`
+	BlockedTools              []string                                `json:"blockedTools"`
+	CatalogRecommendations    []braincatalog.Recommendation           `json:"catalogRecommendations,omitempty"`
+	CapabilityRecommendations []braincatalog.CapabilityRecommendation `json:"capabilityRecommendations,omitempty"`
+	Reason                    string                                  `json:"reason"`
 }
 
 type TaskStep struct {
@@ -1478,27 +1479,39 @@ func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
 	}
 
 	catalogRecommendations := braincatalog.Recommend(intake.TaskType, request)
-	if len(catalogRecommendations) > 0 {
+	capabilityRecommendations, capabilityRecommendationErr := braincatalog.RecommendForNeed(request)
+	if len(catalogRecommendations) > 0 || (capabilityRecommendationErr == nil && len(capabilityRecommendations.Recommendations) > 0) {
 		reasons = append(reasons, "external agent capabilities are recommendations only until a reviewed adapter is configured")
 		for _, recommendation := range catalogRecommendations {
-			switch recommendation.Status {
-			case braincatalog.StatusCandidate:
-				skipped = append(skipped, "agent-catalog."+recommendation.ID+": operator-configured adapter required")
-			case braincatalog.StatusCompatibility:
-				blocked = append(blocked, "agent-catalog."+recommendation.ID+": compatibility bridge and approval required")
-			default:
-				blocked = append(blocked, "agent-catalog."+recommendation.ID+": "+string(recommendation.Status))
-			}
+			skipped, blocked = applyCatalogBoundary(recommendation.ID, recommendation.Status, skipped, blocked)
+		}
+		for _, recommendation := range capabilityRecommendations.Recommendations {
+			skipped, blocked = applyCatalogBoundary(recommendation.ID, recommendation.Status, skipped, blocked)
 		}
 	}
 
 	return ToolRouteDecision{
-		SelectedTools:          uniqueStrings(selected),
-		SkippedTools:           uniqueStrings(skipped),
-		BlockedTools:           uniqueStrings(blocked),
-		CatalogRecommendations: catalogRecommendations,
-		Reason:                 strings.Join(reasons, "; "),
+		SelectedTools:             uniqueStrings(selected),
+		SkippedTools:              uniqueStrings(skipped),
+		BlockedTools:              uniqueStrings(blocked),
+		CatalogRecommendations:    catalogRecommendations,
+		CapabilityRecommendations: capabilityRecommendations.Recommendations,
+		Reason:                    strings.Join(reasons, "; "),
 	}
+}
+
+func applyCatalogBoundary(id string, status braincatalog.Status, skipped, blocked []string) ([]string, []string) {
+	switch status {
+	case braincatalog.StatusIntegrated:
+		skipped = append(skipped, "agent-catalog."+id+": integrated profile requires local configuration and live health")
+	case braincatalog.StatusCandidate:
+		skipped = append(skipped, "agent-catalog."+id+": operator-configured adapter required")
+	case braincatalog.StatusCompatibility:
+		blocked = append(blocked, "agent-catalog."+id+": compatibility bridge and approval required")
+	default:
+		blocked = append(blocked, "agent-catalog."+id+": "+string(status))
+	}
+	return skipped, blocked
 }
 
 func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {

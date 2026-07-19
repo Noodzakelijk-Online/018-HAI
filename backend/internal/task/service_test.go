@@ -84,6 +84,15 @@ func hasCatalogRecommendation(recommendations []braincatalog.Recommendation, id 
 	return false
 }
 
+func hasCapabilityRecommendation(recommendations []braincatalog.CapabilityRecommendation, id string) bool {
+	for _, recommendation := range recommendations {
+		if recommendation.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func containsToolDecisionItem(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
@@ -91,6 +100,26 @@ func containsToolDecisionItem(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func TestPlanAddsReviewedCapabilityMatchesWithoutActivatingThem(t *testing.T) {
+	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t))
+
+	plan, err := service.Plan(IntakeRequest{Request: "Run an offline local model evaluation benchmark before changing routing."})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !hasCapabilityRecommendation(plan.ToolDecision.CapabilityRecommendations, "lm-eval-harness") {
+		t.Fatalf("expected ranked local evaluation recommendation: %#v", plan.ToolDecision.CapabilityRecommendations)
+	}
+	if !containsToolDecisionItem(plan.ToolDecision.SkippedTools, "agent-catalog.lm-eval-harness: operator-configured adapter required") {
+		t.Fatalf("candidate recommendation must remain unavailable: %#v", plan.ToolDecision)
+	}
+	for _, selected := range plan.ToolDecision.SelectedTools {
+		if strings.HasPrefix(selected, "agent-catalog.") {
+			t.Fatalf("catalog recommendation became an executable tool: %#v", plan.ToolDecision)
+		}
+	}
 }
 
 func TestAnalyzeIntakeDoesNotRequireRuntimeForAPIExplanation(t *testing.T) {
