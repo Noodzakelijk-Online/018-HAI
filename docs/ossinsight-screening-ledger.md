@@ -89,6 +89,17 @@ LLM Guard project archived, so it is not admitted as a profile. HAI therefore
 keeps every new runtime-capable project review-first, and holds the
 licence-sensitive or external-sandbox candidates as references.
 
+The same-day expansion also checked the next operationally relevant OSS Insight
+repositories. GitHub MCP Server, Playwright MCP, Gen AI Toolbox, Qodo PR-Agent,
+SWE-agent, OpenLIT, and LangMem reported `archived=false`; their GitHub API
+licences were MIT, Apache-2.0, Apache-2.0, MIT, MIT, Apache-2.0, and MIT
+respectively. They are catalogued only as review-first candidates or a memory
+reference. No MCP service, token, browser profile, database connection, code
+worker, collector, or memory store was installed by this screening. Arize
+Phoenix reported `NOASSERTION`, so it remains under licence review. PyRIT and
+TaskWeaver reported `archived=true`, so HAI records them as excluded rather
+than making them selectable capabilities.
+
 ## Complete collection screen
 
 Each listed collection was classified by its suitability for HAI's thinking,

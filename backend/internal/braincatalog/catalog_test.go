@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -245,6 +245,43 @@ func TestRecommendAdditionalOSSInsightCandidatesStayReviewFirst(t *testing.T) {
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
 		}
+	}
+}
+
+func TestRecommendNewControlledMCPAndCodeCandidatesStayReviewFirst(t *testing.T) {
+	recommendations := Recommend("coding", "Use GitHub MCP to inspect a pull request, run a Playwright MCP browser check, and propose a sandboxed bug-fix patch")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"github-mcp-server", "playwright-mcp", "qodo-pr-agent", "swe-agent"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
+			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
+		}
+	}
+}
+
+func TestNewOSSInsightReferencesAndExclusionsDoNotClaimActivation(t *testing.T) {
+	recommendations := Recommend("operations", "Compare long-term memory consolidation, OpenTelemetry traces, Phoenix, and TaskWeaver")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	if recommendation, ok := ids["langmem"]; !ok || recommendation.Status != StatusReferenceOnly || recommendation.Role != "reference or review only" {
+		t.Fatalf("LangMem must remain a non-activating memory reference: %#v", recommendations)
+	}
+	for _, id := range []string{"openlit", "phoenix"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Role != "optional capability" && recommendation.Role != "reference or review only" {
+			t.Fatalf("%s must not claim activation: %#v", id, recommendations)
+		}
+	}
+	if entry, ok := EntryByID("pyrit"); !ok || entry.Status != StatusExcluded {
+		t.Fatalf("archived PyRIT must remain excluded: %#v", entry)
+	}
+	if entry, ok := EntryByID("taskweaver"); !ok || entry.Status != StatusExcluded {
+		t.Fatalf("archived TaskWeaver must remain excluded: %#v", entry)
 	}
 }
 

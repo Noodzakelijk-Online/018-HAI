@@ -104,6 +104,108 @@ func DiscoverySources() []CatalogSource {
 
 var entries = []Entry{
 	{
+		ID: "github-mcp-server", Name: "GitHub MCP Server", UpstreamURL: "https://github.com/github/github-mcp-server", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		Status: StatusCandidate, Category: "scoped GitHub tool integration", IntegrationMode: "reviewed local MCP bridge",
+		Capabilities: []string{"repository inspection", "issue and pull-request operations", "GitHub tool schemas"}, RecommendedFor: []string{"repository context", "issue triage", "pull-request review"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review one local MCP process, a GitHub App or fine-grained token with the minimum repository scope, fixed tool allowlist, rate limits, audit events, and a read-only-first operating mode. Write, merge, label, comment, or workflow actions remain separate HAI approvals.",
+		Rationale:  "The maintained official GitHub MCP server is a useful candidate for source-grounded repository work, but HAI must keep repository scope, credentials, write policy, and final execution authority in its own connector and approval layers.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no GitHub MCP server is installed, configured, or credentialed by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "GitHub MCP tools", HAIControl: "GitHub connector scopes, audit events, and approval queue", Boundary: "catalog discovery never creates credentials or grants repository access"},
+			{SourcePattern: "repository write operations", HAIControl: "risk policy and per-action confirmation", Boundary: "writes, comments, merges, and workflow dispatches stay approval-gated"},
+		},
+	},
+	{
+		ID: "playwright-mcp", Name: "Playwright MCP", UpstreamURL: "https://github.com/microsoft/playwright-mcp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		Status: StatusCandidate, Category: "controlled browser MCP automation", IntegrationMode: "reviewed local browser adapter",
+		Capabilities: []string{"browser tool schemas", "page inspection", "scripted browser actions"}, RecommendedFor: []string{"approved browser verification", "reproducible UI checks", "read-first web workflows"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local browser profile with explicit origin, download, upload, credential, storage, and action allowlists. Begin with read-only checks and deterministic test flows; external messages, posts, account changes, uploads, purchases, and deletion require a separate HAI approval.",
+		Rationale:  "Playwright MCP can expose HAI's existing browser verification discipline through a standard tool boundary, without broadening browser autonomy or bypassing the current approval policy.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no Playwright MCP server is installed or connected by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "browser MCP tools", HAIControl: "browser origin and action allowlists", Boundary: "the tool cannot inherit logged-in accounts or external-action permission"},
+			{SourcePattern: "browser state", HAIControl: "source evidence and verification records", Boundary: "browser observations do not become facts without HAI verification"},
+		},
+	},
+	{
+		ID: "google-genai-toolbox", Name: "Gen AI Toolbox", UpstreamURL: "https://github.com/googleapis/genai-toolbox", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		Status: StatusCandidate, Category: "database tool boundary", IntegrationMode: "reviewed local database-tool bridge",
+		Capabilities: []string{"database tool definitions", "MCP exposure", "connection pooling patterns"}, RecommendedFor: []string{"approved read-only data lookup", "source-backed operational queries", "connector design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a named local database connection with read-only credentials, approved query templates, row and time limits, parameter validation, redacted audit logs, and a disconnect path. It cannot receive production credentials, execute arbitrary SQL, or become a second source-of-truth service.",
+		Rationale:  "Gen AI Toolbox offers a relevant MCP design for narrowly exposing approved data queries, while HAI keeps connection ownership, provenance, query policy, and write denial in its own back office.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no Gen AI Toolbox process or database connection is configured by HAI.",
+	},
+	{
+		ID: "qodo-pr-agent", Name: "Qodo PR-Agent", UpstreamURL: "https://github.com/qodo-ai/pr-agent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
+		Status: StatusCandidate, Category: "repository-review automation", IntegrationMode: "reviewed read-only pull-request analysis adapter",
+		Capabilities: []string{"pull-request analysis", "change summaries", "review suggestions", "test-gap detection"}, RecommendedFor: []string{"developer quality gates", "pull-request triage", "review preparation"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a read-only repository scope, an operator-selected local or approved model, prompt and diff redaction, result retention, and a no-comment/no-merge default. Any remote model egress, issue comment, review submission, label change, or merge remains a separate HAI approval.",
+		Rationale:  "Qodo PR-Agent is a maintained candidate for making code-review work more inspectable, but it must remain a proposal generator under HAI's source, test, and approval gates.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Code Review repository list and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no Qodo PR-Agent integration is installed or authorised by HAI.",
+	},
+	{
+		ID: "swe-agent", Name: "SWE-agent", UpstreamURL: "https://github.com/SWE-agent/SWE-agent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
+		Status: StatusCandidate, Category: "sandboxed code-task execution", IntegrationMode: "reviewed local workspace worker candidate",
+		Capabilities: []string{"issue-to-patch planning", "test-driven code changes", "workspace task loops"}, RecommendedFor: []string{"contained bug-fix experiments", "repository task planning", "test-backed patch proposals"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review an isolated local workspace image, fixed repository mount, no-secret environment, deny-by-default network, command and time limits, test allowlist, diff capture, rollback, and explicit human acceptance. It cannot commit, push, merge, access unrelated folders, or invoke a paid model without separate approval.",
+		Rationale:  "SWE-agent is a relevant maintained candidate for a narrowly contained coding-worker path, but HAI will preserve its own planning, verification, approval, and repository-boundary controls.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Code Review and Agent Harness repository lists and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no SWE-agent worker is installed or executable through HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "agent shell loop", HAIControl: "controlled runtime worker and workspace allowlist", Boundary: "no generic shell, secret, network, or host access"},
+			{SourcePattern: "generated patch", HAIControl: "diff audit and deterministic tests", Boundary: "a patch never becomes a commit, push, or completion claim automatically"},
+		},
+	},
+	{
+		ID: "openlit", Name: "OpenLIT", UpstreamURL: "https://github.com/openlit/openlit", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusCandidate, Category: "local AI observability", IntegrationMode: "reviewed local telemetry adapter",
+		Capabilities: []string{"LLM traces", "latency and token metrics", "tool observability", "OpenTelemetry export"}, RecommendedFor: []string{"model routing diagnostics", "tool failure analysis", "local performance evidence"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local collector, attribute allowlist, prompt and secret redaction, retention limit, sampling policy, export disablement, and health checks. Telemetry stays read-only and cannot select models, alter paid budgets, approve tasks, or transmit data to an unapproved endpoint.",
+		Rationale:  "OpenLIT is a maintained alternative observability candidate. It is useful for a future measured telemetry gap, while HAI keeps OpenLLMetry, audit records, and its local cost policy authoritative.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Observability repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no OpenLIT collector is installed or configured by HAI.",
+	},
+	{
+		ID: "langmem", Name: "LangMem", UpstreamURL: "https://github.com/langchain-ai/langmem", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10114/repos/", SourceCollection: "AI Agent Memory",
+		Status: StatusReferenceOnly, Category: "memory-consolidation patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"memory extraction", "long-term memory patterns", "context management"}, RecommendedFor: []string{"memory-consolidation review", "context retrieval design", "preference revision patterns"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not introduce a parallel memory store. Revisit only for a measured gap in HAI's source-linked memory consolidation, with a provenance, correction, export, deletion, and rollback design that preserves HAI as the sole active memory authority.",
+		Rationale:  "LangMem supplies useful memory-engineering patterns but must not replace HAI's editable, local-first, source-grounded memory plane.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Agent Memory repository list and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; LangMem is not installed or connected.",
+	},
+	{
+		ID: "pyrit", Name: "PyRIT", UpstreamURL: "https://github.com/Azure/PyRIT", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10138/repos/", SourceCollection: "AI Red Teaming",
+		Status: StatusExcluded, Category: "AI red-team evaluation", IntegrationMode: "excluded upstream",
+		Capabilities: []string{"adversarial prompt testing", "risk evaluation patterns"}, RecommendedFor: []string{"safety-test research only"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not integrate. Select a maintained safety-testing alternative only after a separate fixture, provider, egress, and no-write evaluation review.",
+		Rationale:  "PyRIT is visible in the OSS Insight AI Red Teaming list but is archived upstream, so it does not meet HAI's active-candidate maintenance bar.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Red Teaming repository list and GitHub metadata checked on 2026-07-19: archived=true, MIT licence; excluded from activation.",
+	},
+	{
+		ID: "phoenix", Name: "Arize Phoenix", UpstreamURL: "https://github.com/Arize-ai/phoenix", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusLicenseReview, Category: "LLM observability", IntegrationMode: "license-review reference",
+		Capabilities: []string{"traces", "evaluation dashboards", "retrieval observability"}, RecommendedFor: []string{"observability comparison"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not integrate until the upstream licence files, local deployment terms, telemetry retention, data egress, redaction, and collector ownership are reviewed. A missing SPDX value is not treated as an open-source licence grant.",
+		Rationale:  "Phoenix is maintained and relevant, but the current GitHub API metadata reports NOASSERTION. HAI holds it for explicit licence and data-handling review rather than assuming it is acceptable.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Observability repository list and GitHub metadata checked on 2026-07-19: active main branch, licence=NOASSERTION; no Phoenix deployment is configured by HAI.",
+	},
+	{
+		ID: "taskweaver", Name: "TaskWeaver", UpstreamURL: "https://github.com/microsoft/TaskWeaver", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10137/repos/", SourceCollection: "Agent Sandboxing",
+		Status: StatusExcluded, Category: "code-interpreter agent", IntegrationMode: "excluded upstream",
+		Capabilities: []string{"code-interpreter patterns", "plugin orchestration"}, RecommendedFor: []string{"architecture research only"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not integrate. Reconsider only if a maintained successor and a complete sandbox, tool, data, and rollback design are independently reviewed.",
+		Rationale:  "TaskWeaver is relevant to governed code execution but is archived upstream, which disqualifies it from HAI's active-candidate set.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Agent Sandboxing and Agent Harness repository lists and GitHub metadata checked on 2026-07-19: archived=true, MIT licence; excluded from activation.",
+	},
+	{
 		ID: "presidio", Name: "Microsoft Presidio", UpstreamURL: "https://github.com/microsoft/presidio", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
 		Status: StatusCandidate, Category: "sensitive-data detection and redaction", IntegrationMode: "contained local redaction adapter",
 		Capabilities: []string{"PII detection", "redaction", "masking", "anonymisation"}, RecommendedFor: []string{"secret redaction", "source-import privacy checks", "safe audit previews"},
@@ -618,7 +720,7 @@ func Recommend(taskType, request string) []Recommendation {
 	text := strings.ToLower(taskType + " " + request)
 	ids := []string{}
 	if containsAny(text, "code", "coding", "repository", "repo", "pull request", "test", "build", "bug", "commit") {
-		ids = append(ids, "continue", "cline", "opencode", "aider", "openhands")
+		ids = append(ids, "continue", "cline", "opencode", "aider", "openhands", "qodo-pr-agent", "swe-agent")
 	}
 	if containsAny(text, "plan", "research", "workflow", "delegate", "multi-agent", "orchestr") {
 		ids = append(ids, "crewai")
@@ -650,11 +752,20 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "mcp inspect", "mcp health", "mcp server", "mcp inspector") {
 		ids = append(ids, "mcp-inspector")
 	}
-	if containsAny(text, "mcp server", "create a tool server", "publish a tool", "fastmcp") {
+	if containsAny(text, "mcp server", "create a tool server", "publish a tool", "fastmcp", "github mcp", "playwright mcp", "database mcp") {
 		ids = append(ids, "fastmcp")
+		if containsAny(text, "github mcp", "repository", "repo", "pull request", "issue") {
+			ids = append(ids, "github-mcp-server")
+		}
+		if containsAny(text, "playwright mcp", "browser") {
+			ids = append(ids, "playwright-mcp")
+		}
+		if containsAny(text, "database mcp", "database", "sql", "query") {
+			ids = append(ids, "google-genai-toolbox")
+		}
 	}
 	if containsAny(text, "browser verification", "browser test", "browser flow", "web flow", "playwright", "ui regression") {
-		ids = append(ids, "playwright")
+		ids = append(ids, "playwright", "playwright-mcp")
 	}
 	if containsAny(text, "browser agent", "browser-use", "browser use", "web research", "browse website") {
 		ids = append(ids, "browser-use", "playwright")
@@ -675,7 +786,7 @@ func Recommend(taskType, request string) []Recommendation {
 		ids = append(ids, "lm-eval-harness")
 	}
 	if containsAny(text, "trace instrumentation", "trace telemetry", "open telemetry", "opentelemetry", "openllmetry", "model traces") {
-		ids = append(ids, "openllmetry")
+		ids = append(ids, "openllmetry", "openlit", "phoenix")
 	}
 	if containsAny(text, "voice note", "audio", "transcribe", "transcription", "speech to text", "speech-to-text") {
 		ids = append(ids, "whisper-cpp")
@@ -686,8 +797,8 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "tabby", "self-hosted coding assistant", "code completion") {
 		ids = append(ids, "tabby")
 	}
-	if containsAny(text, "letta", "agent memory") {
-		ids = append(ids, "letta")
+	if containsAny(text, "letta", "agent memory", "memory consolidation", "long term memory", "long-term memory", "langmem") {
+		ids = append(ids, "letta", "langmem")
 	}
 	if containsAny(text, "comfyui", "image generation", "generate image") {
 		ids = append(ids, "comfyui")
