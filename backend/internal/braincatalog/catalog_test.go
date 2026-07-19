@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -232,6 +232,20 @@ func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
 	if recommendation, ok := ids["a2a"]; !ok || recommendation.Status != StatusCompatibility || !recommendation.RequiresApproval {
 		t.Fatalf("A2A must remain a gated compatibility recommendation: %#v", recommendations)
 	}
+}
+
+func TestRecommendAnythingLLMWorkspaceStaysReviewFirst(t *testing.T) {
+	recommendations := Recommend("research", "Create a local RAG workspace in AnythingLLM for approved document research")
+	for _, recommendation := range recommendations {
+		if recommendation.ID != "anythingllm" {
+			continue
+		}
+		if recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
+			t.Fatalf("AnythingLLM must remain a review-first candidate: %#v", recommendation)
+		}
+		return
+	}
+	t.Fatalf("AnythingLLM workspace request should surface the local workspace candidate: %#v", recommendations)
 }
 
 func TestRecommendAdditionalOSSInsightCandidatesStayReviewFirst(t *testing.T) {

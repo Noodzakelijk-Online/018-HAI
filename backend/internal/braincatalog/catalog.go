@@ -104,6 +104,19 @@ func DiscoverySources() []CatalogSource {
 
 var entries = []Entry{
 	{
+		ID: "anythingllm", Name: "AnythingLLM", UpstreamURL: "https://github.com/Mintplex-Labs/anything-llm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10108/repos/", SourceCollection: "RAG Frameworks",
+		Status: StatusCandidate, Category: "local RAG workspace adapter", IntegrationMode: "reviewed local workspace bridge",
+		Capabilities: []string{"document workspaces", "RAG retrieval", "agent workspace patterns", "local-model connections"}, RecommendedFor: []string{"approved document workspaces", "RAG adapter evaluation", "local research preparation"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review one local workspace deployment with source-folder and connector allowlists, local-model endpoints, document retention and deletion controls, import provenance, role boundaries, audit export, and a no-external-action default. AnythingLLM may prepare retrieved context or draft output, but it cannot become HAI's memory authority, modify source records, send content, or execute tools without separate HAI approval.",
+		Rationale:  "AnythingLLM is a maintained, local-first workspace/RAG candidate that can complement HAI's source-grounded research flow when a demonstrated workspace need exists, while HAI keeps project memory, verification, provider policy, and approvals authoritative.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight RAG Frameworks repository list and GitHub metadata checked on 2026-07-19: active master branch, MIT licence; no AnythingLLM workspace, connector, model, or agent is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "document workspace", HAIControl: "source registry, provenance links, and memory review", Boundary: "imports do not become HAI memory facts without source support or confirmation"},
+			{SourcePattern: "workspace agent", HAIControl: "task planner and approval-gated runtime adapters", Boundary: "no workspace agent can self-authorize tools or external effects"},
+		},
+	},
+	{
 		ID: "github-mcp-server", Name: "GitHub MCP Server", UpstreamURL: "https://github.com/github/github-mcp-server", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
 		Status: StatusCandidate, Category: "scoped GitHub tool integration", IntegrationMode: "reviewed local MCP bridge",
 		Capabilities: []string{"repository inspection", "issue and pull-request operations", "GitHub tool schemas"}, RecommendedFor: []string{"repository context", "issue triage", "pull-request review"},
@@ -826,8 +839,11 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "daytona", "managed sandbox", "workspace sandbox") {
 		ids = append(ids, "daytona")
 	}
-	if containsAny(text, "graphrag", "knowledge graph", "entity linking", "langchain", "llamaindex", "llama index", "cognee", "haystack", "document pipeline") {
+	if containsAny(text, "graphrag", "knowledge graph", "entity linking", "langchain", "llamaindex", "llama index", "cognee", "haystack", "document pipeline", "anythingllm", "anything llm", "rag workspace", "document workspace") {
 		ids = append(ids, "langchain", "llamaindex", "cognee", "graphrag", "haystack")
+		if containsAny(text, "anythingllm", "anything llm", "rag workspace", "document workspace") {
+			ids = append(ids, "anythingllm")
+		}
 	}
 	if containsAny(text, "qdrant", "dedicated vector database") {
 		ids = append(ids, "qdrant")

@@ -100,6 +100,12 @@ Phoenix reported `NOASSERTION`, so it remains under licence review. PyRIT and
 TaskWeaver reported `archived=true`, so HAI records them as excluded rather
 than making them selectable capabilities.
 
+AnythingLLM was separately confirmed in the same OSS Insight RAG Frameworks
+repository list. Its GitHub metadata reported `archived=false`, an active
+`master` branch, and MIT on 2026-07-19. It is a review-first local workspace
+and RAG adapter candidate, not a parallel HAI memory, source, verification, or
+execution authority; no AnythingLLM deployment or connector was installed.
+
 ## Complete collection screen
 
 Each listed collection was classified by its suitability for HAI's thinking,
