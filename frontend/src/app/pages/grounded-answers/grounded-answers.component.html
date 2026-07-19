@@ -71,6 +71,28 @@
         </form>
       </nz-card>
 
+      <nz-card nzSize="small" nzTitle="Local source discovery" class="section-card">
+        <p class="research-scope" *ngIf="researchStatus as status">
+          {{ status.configured ? 'Ready: ' + status.provider : 'Not configured' }}. {{ status.scope }}
+        </p>
+        <p class="research-scope" *ngIf="!researchStatus">Research status could not be loaded.</p>
+        <button nz-button nzType="default" (click)="searchResearch()" [nzLoading]="researchLoading" [disabled]="!researchStatus?.configured" title="Searches only the configured local SearXNG instance. Results are candidates, not verified facts.">
+          <i nz-icon nzType="search" nzTheme="outline"></i>
+          Find source candidates
+        </button>
+        <nz-empty *ngIf="!researchLoading && researchStatus?.configured && !researchResults.length" nzNotFoundContent="Search when you need public sources. HAI will not add anything until you select a candidate."></nz-empty>
+        <div class="research-results" *ngIf="researchResults.length">
+          <article class="research-result" *ngFor="let candidate of researchResults">
+            <div>
+              <strong>{{ candidate.title || candidate.sourceUri }}</strong>
+              <p>{{ candidate.snippet || 'No snippet returned.' }}</p>
+              <a [href]="candidate.sourceUri" target="_blank" rel="noopener noreferrer">{{ candidate.sourceUri }}</a>
+            </div>
+            <button nz-button nzSize="small" nzType="default" (click)="useResearchResult(candidate)">Use as unverified evidence</button>
+          </article>
+        </div>
+      </nz-card>
+
       <div class="answer-grid" *ngIf="result as r">
         <nz-card nzSize="small" nzTitle="Answer">
           <p><strong>Status:</strong> {{ r.run.status }}</p>

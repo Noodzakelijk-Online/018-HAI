@@ -299,6 +299,15 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight ChatGPT Alternatives listing plus upstream MIT license and current release activity checked on 2026-07-19.",
 	},
 	{
+		ID: "searxng", Name: "SearXNG", UpstreamURL: "https://github.com/searxng/searxng", SourceCatalogURL: "https://ossinsight.io/collections/search-engine", SourceCollection: "Search Engine",
+		Status: StatusIntegrated, Category: "local public-source discovery", IntegrationMode: "operator-configured local JSON search adapter",
+		Capabilities: []string{"self-hosted metasearch", "JSON source candidates", "privacy-oriented discovery", "search-engine aggregation"}, RecommendedFor: []string{"current public research", "source discovery", "grounded-answer evidence selection"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Run and review a local SearXNG instance separately, enable its JSON format, then set HAI_SEARXNG_ENABLED=true and HAI_SEARXNG_BASE_URL to a local/private endpoint. HAI sends bounded queries only, returns candidate sources, does not fetch pages, and does not treat snippets as verified evidence.",
+		Rationale:  "HAI now has a constrained local discovery adapter for the gap between a research question and source selection. It remains disabled by default because its configured search engines receive the query, and AGPL-3.0 deployment terms must be reviewed independently.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Search Engine collection, upstream repository activity, AGPL-3.0 license, and the official JSON search API documentation checked on 2026-07-19.",
+	},
+	{
 		ID: "playwright", Name: "Playwright", UpstreamURL: "https://github.com/microsoft/playwright", SourceCatalogURL: "https://ossinsight.io/collections/testing-tools", SourceCollection: "Testing Tools",
 		Status: StatusIntegrated, Category: "controlled browser verification", IntegrationMode: "opt-in named local read-only verification worker",
 		Capabilities: []string{"browser automation", "deterministic web verification", "trace artifacts", "cross-browser testing"}, RecommendedFor: []string{"web workflow verification", "regression checks", "approved browser tasks"},

@@ -6,6 +6,8 @@ import {
   IVerificationResult,
   IVerificationRun,
 } from '../../models/verification.model.interface';
+import { IResearchResult, IResearchStatus } from '../../models/research.model.interface';
+import { ResearchService } from '../../services/research.service';
 import { VERIFICATION_SERVICE_TOKEN } from '../../services/verification/verification.service.token';
 import { IVerificationService } from '../../services/verification.service.interface';
 
@@ -18,6 +20,10 @@ export class GroundedAnswersComponent implements OnInit {
   result?: IVerificationResult;
   runs: IVerificationRun[] = [];
   loading = false;
+  researchLoading = false;
+  researchStatus?: IResearchStatus;
+  researchResults: IResearchResult[] = [];
+  selectedResearchCandidate?: IResearchResult;
 
   answerForm: FormGroup = this.fb.group({
     question: ['What did connected sources say about source-grounded task context?', [Validators.required]],
@@ -37,6 +43,7 @@ export class GroundedAnswersComponent implements OnInit {
     private fb: FormBuilder,
     @Inject(VERIFICATION_SERVICE_TOKEN)
     private verificationService: IVerificationService,
+    private researchService: ResearchService,
     private notification: NzNotificationService,
     private route: ActivatedRoute,
     private router: Router
@@ -50,6 +57,7 @@ export class GroundedAnswersComponent implements OnInit {
       question: params.get('question') || this.answerForm.value.question,
     });
     this.loadRuns();
+    this.loadResearchStatus();
   }
 
   answer(): void {
@@ -69,7 +77,7 @@ export class GroundedAnswersComponent implements OnInit {
         externalEvidence: snippet
           ? [
               {
-                sourceType: 'manual',
+                sourceType: this.selectedResearchCandidate ? 'local_research' : 'manual',
                 sourceLabel: this.answerForm.value.evidenceLabel,
                 sourceUri: this.answerForm.value.evidenceUri,
                 snippet,
@@ -104,6 +112,43 @@ export class GroundedAnswersComponent implements OnInit {
       next: (runs) => (this.runs = runs),
       error: () => (this.runs = []),
     });
+  }
+
+  loadResearchStatus(): void {
+    this.researchService.status().subscribe({
+      next: (status) => (this.researchStatus = status),
+      error: () => (this.researchStatus = undefined),
+    });
+  }
+
+  searchResearch(): void {
+    const query = String(this.answerForm.value.question || '').trim();
+    if (!query || this.researchLoading) return;
+    this.researchLoading = true;
+    this.researchResults = [];
+    this.researchService.search(query).subscribe({
+      next: (response) => {
+        this.researchLoading = false;
+        this.researchResults = response.results || [];
+      },
+      error: () => {
+        this.researchLoading = false;
+        this.notification.warning('Local research unavailable', 'Configure a reviewed local SearXNG instance to discover public source candidates. No evidence was added.');
+        this.loadResearchStatus();
+      },
+    });
+  }
+
+  useResearchResult(result: IResearchResult): void {
+    this.selectedResearchCandidate = result;
+    this.answerForm.patchValue({
+      evidenceLabel: result.title || 'Local research candidate',
+      evidenceUri: result.sourceUri,
+      evidenceSnippet: result.snippet,
+      official: false,
+      primary: false,
+    });
+    this.notification.info('Candidate selected', 'The source is attached as unverified evidence. Claim verification remains required.');
   }
 
   loadDetails(run: IVerificationRun): void {

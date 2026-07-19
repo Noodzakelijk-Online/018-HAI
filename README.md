@@ -467,6 +467,17 @@ falls back to provenance-preserving keyword search when vectors are not
 available. The Compose database image is pinned to pgvector's Postgres 17
 build; back up a live local volume before changing its database image.
 
+Optional public-source discovery uses an operator-managed local SearXNG
+instance. Set `HAI_SEARXNG_ENABLED=true` and a loopback,
+`host.docker.internal`, or private-network `HAI_SEARXNG_BASE_URL` only after
+the instance has its JSON output enabled. HAI sends one bounded general query
+to the local instance and returns at most ten candidate sources. It does not
+fetch result pages, retain cookies or credentials, use public instances, or
+turn snippets into verified evidence. An operator must explicitly select a
+candidate, after which the normal grounded-answer claim checks remain
+authoritative. The SearXNG source is AGPL-3.0; operate it as a separate local
+service and review its license and search-engine configuration before enabling.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job

@@ -37,6 +37,7 @@ import (
 	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/rbac"
+	"automation-hub-backend/internal/research"
 	"automation-hub-backend/internal/runtimelab"
 	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/source"
@@ -85,6 +86,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
 		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
+		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -418,6 +420,15 @@ func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandl
 		verificationRoutes.POST("/answer", requirePermission(rbac.PermWrite), verificationHandler.Answer)
 		verificationRoutes.GET("/runs", requirePermission(rbac.PermRead), verificationHandler.Runs)
 		verificationRoutes.GET("/runs/:id", requirePermission(rbac.PermRead), verificationHandler.RunDetails)
+	}
+}
+
+func initializeResearchRoutes(apiVersion *gin.RouterGroup, handler *research.Handler) {
+	routes := apiVersion.Group("/research")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/search", requirePermission(rbac.PermWrite), handler.Search)
 	}
 }
 

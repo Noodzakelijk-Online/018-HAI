@@ -8,6 +8,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 - Listing a project never downloads, installs, enables, or executes it.
 - The back-office **Start review** action creates a normal, owner-scoped HAI pursuit with the catalog provenance and adapter-review gates; it does not activate the project.
 - An owner-admin can run `POST /api/v1/brain-catalog/:id/revalidate` to retrieve bounded public GitHub metadata for one fixed catalog entry. The recheck never fetches source code or changes an adoption decision.
+- The optional local SearXNG profile is a discovery adapter, not an answer engine. `GET /api/v1/research/status` shows its configuration and `POST /api/v1/research/search` returns bounded, unverified source candidates only when the owner has enabled a local endpoint.
 - Task planning can recommend a project capability, but does not select it as an executable tool.
 - A project becomes executable only after a dedicated adapter has been reviewed, configured, health-checked, and routed through HAI's existing approval and audit controls.
 - HAI remains the policy owner: an external framework cannot bypass the local-first policy, paid budget, source controls, folder allowlist, emergency stop, or approval queue.
@@ -34,6 +35,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Integrated profile | Local-only pre-activation MCP inspection | HAI performs only a bounded Streamable HTTP handshake and tool inventory for configured local endpoints; it never spawns a process or calls a tool. |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | Integrated, opt-in | Local GGUF model inference | Loopback-only model server through HAI's existing local-provider, provenance, live-probe, and approval policy. |
 | [Playwright](https://github.com/microsoft/playwright) | Integrated, opt-in | Read-only local browser verification | Named allowlisted local routes only; no clicks, forms, downloads, retained state, public origins, sending, publishing, purchasing, or account changes. |
+| [SearXNG](https://github.com/searxng/searxng) | Integrated, opt-in | Local public-source discovery | Operator-hosted local JSON endpoint only. HAI uses bounded queries and returns source candidates, never fetches result pages or accepts snippets as verified facts. AGPL-3.0 requires a separate license and deployment review. |
 | [Wasmtime](https://github.com/bytecodealliance/wasmtime) | Integrated, opt-in | Bounded local WASI helper runtime | Reviewed modules only, with no inherited network and explicit resource/capability limits; every run remains approval-gated. |
 | [OR-Tools](https://github.com/google/or-tools) | Integrated profile | Internal deterministic CP-SAT schedule proposals | Opt-in `optimization` Compose profile accepts bounded opaque jobs and returns an audited proposal only; it has no workflow, calendar, filesystem, tool, or external-network apply endpoint. |
 | [LangChain](https://github.com/langchain-ai/langchain) | Reference only | Retrieval and tool-orchestration patterns | HAI will not add a parallel agent stack without a documented gap. |
@@ -74,6 +76,7 @@ boundary explicit.
 2. OpenHands: a locally containerized adapter with per-workspace and per-network allowlists plus a durable stop handle.
 3. CrewAI: an operator-hosted, local-model service adapter with a narrow task schema; HAI continues to own approvals and execution.
 4. Aider: a review-first adapter that produces a patch proposal and validation evidence before any write is permitted.
+5. SearXNG: an operator-managed local source-discovery endpoint. The built-in adapter is ready, but is disabled until its local instance, JSON format, search-engine policy, and AGPL deployment are explicitly reviewed.
 
 Do not add a generic `run arbitrary agent` endpoint. That would collapse the safety boundary this catalog exists to preserve.
 
