@@ -7,6 +7,8 @@ import {
   IVerificationRun,
 } from '../../models/verification.model.interface';
 import { IResearchResult, IResearchStatus } from '../../models/research.model.interface';
+import { IRAGFlowResult, IRAGFlowStatus } from '../../models/ragflow.model.interface';
+import { RAGFlowService } from '../../services/ragflow.service';
 import { ResearchService } from '../../services/research.service';
 import { VERIFICATION_SERVICE_TOKEN } from '../../services/verification/verification.service.token';
 import { IVerificationService } from '../../services/verification.service.interface';
@@ -24,6 +26,10 @@ export class GroundedAnswersComponent implements OnInit {
   researchStatus?: IResearchStatus;
   researchResults: IResearchResult[] = [];
   selectedResearchCandidate?: IResearchResult;
+  ragflowLoading = false;
+  ragflowStatus?: IRAGFlowStatus;
+  ragflowResults: IRAGFlowResult[] = [];
+  selectedRAGFlowCandidate?: IRAGFlowResult;
 
   answerForm: FormGroup = this.fb.group({
     question: ['What did connected sources say about source-grounded task context?', [Validators.required]],
@@ -44,6 +50,7 @@ export class GroundedAnswersComponent implements OnInit {
     @Inject(VERIFICATION_SERVICE_TOKEN)
     private verificationService: IVerificationService,
     private researchService: ResearchService,
+    private ragflowService: RAGFlowService,
     private notification: NzNotificationService,
     private route: ActivatedRoute,
     private router: Router
@@ -58,6 +65,7 @@ export class GroundedAnswersComponent implements OnInit {
     });
     this.loadRuns();
     this.loadResearchStatus();
+    this.loadRAGFlowStatus();
   }
 
   answer(): void {
@@ -77,7 +85,11 @@ export class GroundedAnswersComponent implements OnInit {
         externalEvidence: snippet
           ? [
               {
-                sourceType: this.selectedResearchCandidate ? 'local_research' : 'manual',
+                sourceType: this.selectedRAGFlowCandidate
+                  ? 'ragflow_candidate_evidence'
+                  : this.selectedResearchCandidate
+                    ? 'local_research'
+                    : 'manual',
                 sourceLabel: this.answerForm.value.evidenceLabel,
                 sourceUri: this.answerForm.value.evidenceUri,
                 snippet,
@@ -141,6 +153,7 @@ export class GroundedAnswersComponent implements OnInit {
 
   useResearchResult(result: IResearchResult): void {
     this.selectedResearchCandidate = result;
+    this.selectedRAGFlowCandidate = undefined;
     this.answerForm.patchValue({
       evidenceLabel: result.title || 'Local research candidate',
       evidenceUri: result.sourceUri,
@@ -149,6 +162,49 @@ export class GroundedAnswersComponent implements OnInit {
       primary: false,
     });
     this.notification.info('Candidate selected', 'The source is attached as unverified evidence. Claim verification remains required.');
+  }
+
+  loadRAGFlowStatus(): void {
+    this.ragflowService.status().subscribe({
+      next: (status) => (this.ragflowStatus = status),
+      error: () => (this.ragflowStatus = undefined),
+    });
+  }
+
+  searchRAGFlow(): void {
+    const query = String(this.answerForm.value.question || '').trim();
+    if (!query || this.ragflowLoading) return;
+    this.ragflowLoading = true;
+    this.ragflowResults = [];
+    this.ragflowService.retrieve(query).subscribe({
+      next: (response) => {
+        this.ragflowLoading = false;
+        this.ragflowResults = response.results || [];
+      },
+      error: () => {
+        this.ragflowLoading = false;
+        this.notification.warning('Local RAGFlow unavailable', 'Configure and approve a local RAGFlow dataset allowlist before retrieving candidate evidence. No evidence was added.');
+        this.loadRAGFlowStatus();
+      },
+    });
+  }
+
+  useRAGFlowResult(result: IRAGFlowResult): void {
+    this.selectedRAGFlowCandidate = result;
+    this.selectedResearchCandidate = undefined;
+    this.answerForm.patchValue({
+      evidenceLabel: result.documentName || `RAGFlow document ${result.documentId || 'candidate'}`,
+      evidenceUri: this.ragflowEvidenceURI(result),
+      evidenceSnippet: result.content,
+      official: false,
+      primary: false,
+    });
+    this.notification.info('Candidate selected', 'This local RAGFlow chunk is unverified candidate evidence. It cannot update memory or trigger actions by itself.');
+  }
+
+  private ragflowEvidenceURI(result: IRAGFlowResult): string {
+    const segment = (value?: string) => encodeURIComponent(value || 'unknown');
+    return `ragflow://dataset/${segment(result.datasetId)}/document/${segment(result.documentId)}/chunk/${segment(result.chunkId)}`;
   }
 
   loadDetails(run: IVerificationRun): void {

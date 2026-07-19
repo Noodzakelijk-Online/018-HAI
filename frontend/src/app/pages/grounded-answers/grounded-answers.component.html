@@ -93,6 +93,28 @@
         </div>
       </nz-card>
 
+      <nz-card nzSize="small" nzTitle="Local RAGFlow evidence retrieval" class="section-card">
+        <p class="research-scope" *ngIf="ragflowStatus as status">
+          {{ status.configured ? 'Ready: ' + status.provider + ' (' + status.datasetCount + ' approved datasets)' : 'Not configured' }}. {{ status.scope }}
+        </p>
+        <p class="research-scope" *ngIf="!ragflowStatus">RAGFlow status could not be loaded.</p>
+        <button nz-button nzType="default" (click)="searchRAGFlow()" [nzLoading]="ragflowLoading" [disabled]="!ragflowStatus?.configured" title="Retrieves chunks only from the explicit, operator-approved local RAGFlow dataset allowlist. Results are not verified facts.">
+          <i nz-icon nzType="database" nzTheme="outline"></i>
+          Retrieve local candidates
+        </button>
+        <nz-empty *ngIf="!ragflowLoading && ragflowStatus?.configured && !ragflowResults.length" nzNotFoundContent="Retrieve only when local indexed documents may contain relevant evidence. HAI will not add anything until you select a chunk."></nz-empty>
+        <div class="research-results" *ngIf="ragflowResults.length">
+          <article class="research-result" *ngFor="let candidate of ragflowResults">
+            <div>
+              <strong>{{ candidate.documentName || 'RAGFlow document candidate' }}</strong>
+              <p>{{ candidate.content }}</p>
+              <span class="candidate-provenance">Dataset {{ candidate.datasetId }} · chunk {{ candidate.chunkId }}<ng-container *ngIf="candidate.similarity !== undefined"> · similarity {{ candidate.similarity | number: '1.2-2' }}</ng-container></span>
+            </div>
+            <button nz-button nzSize="small" nzType="default" (click)="useRAGFlowResult(candidate)">Use as unverified evidence</button>
+          </article>
+        </div>
+      </nz-card>
+
       <div class="answer-grid" *ngIf="result as r">
         <nz-card nzSize="small" nzTitle="Answer">
           <p><strong>Status:</strong> {{ r.run.status }}</p>

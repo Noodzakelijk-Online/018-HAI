@@ -65,6 +65,14 @@
   overflow-wrap: anywhere;
 }
 
+.candidate-provenance {
+  color: var(--hai-text-secondary, #667085);
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
 form {
   display: flex;
   flex-direction: column;

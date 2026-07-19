@@ -485,9 +485,12 @@ Set `HAI_RAGFLOW_ENABLED=true`, a loopback, `host.docker.internal`, `ragflow`,
 or private-network `HAI_RAGFLOW_BASE_URL`, a local API key, and the comma-
 separated `HAI_RAGFLOW_DATASET_IDS` that HAI is allowed to query. The bridge
 only uses RAGFlow's retrieval endpoint for those fixed datasets and returns
-candidate evidence for normal HAI source-grounding and verification. It does
-not upload, ingest, edit, delete, run agents, use MCP, execute code, change
-RAGFlow settings, write HAI memory, or trigger a workflow or external action.
+candidate evidence for normal HAI source-grounding and verification. In
+**Grounded Answers**, an operator must explicitly select a returned chunk before
+it is attached as unverified evidence; retrieval never silently changes an
+answer, memory, workflow, or external action. It does not upload, ingest, edit,
+delete, run agents, use MCP, execute code, change RAGFlow settings, write HAI
+memory, or trigger a workflow or external action.
 The optional probe checks endpoint reachability only; it does not prove the
 credential, dataset permissions, or evidence quality. Keep RAGFlow's optional
 agent and code-executor features disabled and complete the capacity, retention,
