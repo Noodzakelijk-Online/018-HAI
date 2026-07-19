@@ -158,7 +158,7 @@ func validate(s *service) string {
 		return "HAI_WASI_RUNNER_URL must be a local http URL"
 	}
 	host := strings.ToLower(u.Hostname())
-	if host != "wasi-runner" && host != "localhost" && host != "host.docker.internal" && net.ParseIP(host) == nil {
+	if !isLocalRunnerHost(host) {
 		return "HAI_WASI_RUNNER_URL may only target the local wasi-runner, localhost, host.docker.internal, or a loopback IP"
 	}
 	seen := map[string]bool{}
@@ -169,6 +169,14 @@ func validate(s *service) string {
 		seen[m.ID] = true
 	}
 	return ""
+}
+
+func isLocalRunnerHost(host string) bool {
+	if host == "wasi-runner" || host == "localhost" || host == "host.docker.internal" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 func validHash(v string) bool {
 	if len(v) != 64 {
