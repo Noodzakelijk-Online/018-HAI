@@ -21,7 +21,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
-	for _, id := range []string{"litellm", "pgvector", "temporal", "prometheus", "mcp-inspector"} {
+	for _, id := range []string{"litellm", "pgvector", "temporal", "prometheus", "mcp-inspector", "llama-cpp", "playwright", "wasmtime", "ortools"} {
 		entry, ok := EntryByID(id)
 		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
@@ -29,6 +29,17 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	}
 	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
+	}
+	for _, id := range []string{"activepieces", "mem0", "openmetadata"} {
+		if entry, ok := EntryByID(id); !ok || entry.Status != StatusReferenceOnly {
+			t.Fatalf("%s must remain a reference rather than a parallel control plane: %#v", id, entry)
+		}
+	}
+	if entry, ok := EntryByID("n8n"); !ok || entry.Status != StatusLicenseReview {
+		t.Fatalf("n8n must remain under license review: %#v", entry)
+	}
+	if entry, ok := EntryByID("minio"); !ok || entry.Status != StatusExcluded {
+		t.Fatalf("archived MinIO must remain excluded: %#v", entry)
 	}
 	if sources := DiscoverySources(); len(sources) < 2 || sources[1].Name != "OSS Insight" {
 		t.Fatalf("OSS Insight source is missing: %#v", sources)
@@ -73,6 +84,39 @@ func TestRecommendOperationalCapabilitiesPreservesReviewGates(t *testing.T) {
 	}
 	if !ids["temporal"].RequiresApproval || !ids["litellm"].RequiresApproval {
 		t.Fatalf("durable execution and gateway candidates need explicit review: %#v", recommendations)
+	}
+}
+
+func TestRecommendNewCandidatesNeverClaimsExecution(t *testing.T) {
+	recommendations := Recommend("operations", "Use a local GGUF model, verify a browser flow, run a WASI helper, and create a route optimization proposal")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"llama-cpp", "playwright", "wasmtime", "ortools"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Status != StatusCandidate || recommendation.Role != "optional capability" {
+			t.Fatalf("missing non-executable %s recommendation: %#v", id, recommendations)
+		}
+	}
+	if !ids["llama-cpp"].RequiresApproval || !ids["playwright"].RequiresApproval || !ids["wasmtime"].RequiresApproval {
+		t.Fatalf("local inference configuration and executable adapters must remain gated: %#v", recommendations)
+	}
+}
+
+func TestRecommendPlatformReferencesStayBlocked(t *testing.T) {
+	recommendations := Recommend("operations", "Compare Activepieces, n8n, Mem0, and OpenMetadata for an automation platform and data lineage")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"activepieces", "mem0", "openmetadata"} {
+		if recommendation, ok := ids[id]; !ok || recommendation.Status != StatusReferenceOnly || recommendation.Role != "reference or review only" {
+			t.Fatalf("%s must not be recommended as an active tool: %#v", id, recommendations)
+		}
+	}
+	if recommendation, ok := ids["n8n"]; !ok || recommendation.Status != StatusLicenseReview || recommendation.Role != "reference or review only" {
+		t.Fatalf("n8n must remain a license-review recommendation: %#v", recommendations)
 	}
 }
 

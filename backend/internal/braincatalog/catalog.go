@@ -253,6 +253,87 @@ var entries = []Entry{
 		Rationale:  "Qdrant is a credible dedicated option, but is intentionally deferred to avoid two active vector stores before HAI has a demonstrated need.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Vector Database & Vector Store listing checked on 2026-07-19.",
 	},
+	{
+		ID: "llama-cpp", Name: "llama.cpp", UpstreamURL: "https://github.com/ggml-org/llama.cpp", SourceCatalogURL: "https://ossinsight.io/collections/chatgpt-alternatives", SourceCollection: "ChatGPT Alternatives",
+		Status: StatusCandidate, Category: "local model inference", IntegrationMode: "operator-configured loopback OpenAI-compatible model server",
+		Capabilities: []string{"local GGUF inference", "OpenAI-compatible server", "CPU and GPU deployment", "offline model serving"}, RecommendedFor: []string{"local-first LLM routing", "low-VRAM inference", "offline fallback"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Install and start llama.cpp outside HAI on a loopback-only endpoint, record model provenance and hardware limits, then add the endpoint through the existing local-provider configuration and health-check path. Do not expose the server to a network by default.",
+		Rationale:  "HAI already supports llama.cpp configuration. This profile makes the implementation source, local-boundary, and model-provenance requirements explicit without introducing a second routing policy.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight ChatGPT Alternatives listing plus upstream MIT license and current release activity checked on 2026-07-19.",
+	},
+	{
+		ID: "playwright", Name: "Playwright", UpstreamURL: "https://github.com/microsoft/playwright", SourceCatalogURL: "https://ossinsight.io/collections/testing-tools", SourceCollection: "Testing Tools",
+		Status: StatusCandidate, Category: "controlled browser verification", IntegrationMode: "reviewed local browser-test adapter",
+		Capabilities: []string{"browser automation", "deterministic web verification", "trace artifacts", "cross-browser testing"}, RecommendedFor: []string{"web workflow verification", "regression checks", "approved browser tasks"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Use only through a reviewed adapter with named approved flows, origin allowlists, no secret capture, bounded downloads, and trace retention controls. A browser test cannot send, publish, purchase, or change accounts without the normal HAI approval gate.",
+		Rationale:  "Playwright is a maintained, Apache-2.0 local testing framework that can verify an approved browser workflow. It is not a general web-execution permission.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Testing Tools listing and upstream Apache-2.0 license/current releases checked on 2026-07-19.",
+	},
+	{
+		ID: "wasmtime", Name: "Wasmtime", UpstreamURL: "https://github.com/bytecodealliance/wasmtime", SourceCatalogURL: "https://ossinsight.io/collections/webassembly-runtime", SourceCollection: "WebAssembly Runtime",
+		Status: StatusCandidate, Category: "bounded local WASM execution", IntegrationMode: "reviewed WASI module adapter",
+		Capabilities: []string{"WASM runtime", "WASI capability controls", "resource limits", "portable local execution"}, RecommendedFor: []string{"deterministic transforms", "untrusted plugin experiments", "bounded local helpers"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Add only reviewed, content-addressed WASI modules through a dedicated adapter with no inherited network, explicit read-only preopens, CPU, memory, and wall-time limits. Do not represent a raw Wasmtime process as a generic sandbox or safe execution approval.",
+		Rationale:  "Wasmtime is a maintained Apache-2.0 runtime with Windows distributions and configurable resource controls, but sandboxing still depends on HAI's explicit capability policy and adapter implementation.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight WebAssembly Runtime listing and upstream Apache-2.0/current release documentation checked on 2026-07-19.",
+	},
+	{
+		ID: "ortools", Name: "OR-Tools", UpstreamURL: "https://github.com/google/or-tools", SourceCatalogURL: "https://ossinsight.io/collections/optimization-solvers", SourceCollection: "Optimization Solvers",
+		Status: StatusCandidate, Category: "deterministic planning optimisation", IntegrationMode: "operator-hosted planning-only solver adapter",
+		Capabilities: []string{"constraint solving", "scheduling", "routing", "resource assignment"}, RecommendedFor: []string{"calendar suggestions", "task sequencing", "field-job routing"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Use a narrow local solver adapter that returns ranked plans with assumptions, constraints, and infeasibility evidence. HAI must present the output as a proposal; applying a plan or sending changes still follows normal approval and execution policy.",
+		Rationale:  "OR-Tools provides maintained Apache-2.0 deterministic optimisation, which complements LLM planning without treating a model recommendation as the sole scheduling authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Optimization Solvers listing and upstream Apache-2.0/current Windows release checked on 2026-07-19.",
+	},
+	{
+		ID: "activepieces", Name: "Activepieces", UpstreamURL: "https://github.com/activepieces/activepieces", SourceCatalogURL: "https://ossinsight.io/collections/zapier-alternatives", SourceCollection: "Zapier Alternatives",
+		Status: StatusReferenceOnly, Category: "workflow connector platform", IntegrationMode: "operator-hosted platform reference",
+		Capabilities: []string{"workflow connectors", "event triggers", "MCP ecosystem", "approval-aware automation patterns"}, RecommendedFor: []string{"connector design", "workflow template research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Keep as a reference until HAI has a specific connector gap that justifies a reviewed, narrowly scoped adapter. Do not deploy a second autonomous workflow control plane by default.",
+		Rationale:  "The community edition is MIT and actively maintained, but a broad automation platform would duplicate HAI's workflow, secrets, approval, and audit responsibilities without a demonstrated gap.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Zapier Alternatives listing and upstream community/enterprise licensing split checked on 2026-07-19.",
+	},
+	{
+		ID: "n8n", Name: "n8n", UpstreamURL: "https://github.com/n8n-io/n8n", SourceCatalogURL: "https://ossinsight.io/collections/zapier-alternatives", SourceCollection: "Zapier Alternatives",
+		Status: StatusLicenseReview, Category: "workflow automation platform", IntegrationMode: "separate platform deployment",
+		Capabilities: []string{"workflow automation", "integrations", "visual workflows", "self-hosting"}, RecommendedFor: []string{"connector landscape", "workflow pattern research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not integrate or vendor n8n until the Sustainable Use License, enterprise-file restrictions, secret handling, and overlap with HAI workflow ownership are reviewed for the intended deployment.",
+		Rationale:  "n8n is capable and currently maintained, but its fair-code licensing and overlapping automation control plane require an explicit legal and architecture decision before adoption.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Zapier Alternatives listing and upstream Sustainable Use License restrictions checked on 2026-07-19.",
+	},
+	{
+		ID: "mem0", Name: "Mem0", UpstreamURL: "https://github.com/mem0ai/mem0", SourceCatalogURL: "https://ossinsight.io/collections/llm-tools", SourceCollection: "LLM Tools",
+		Status: StatusReferenceOnly, Category: "agent memory patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"long-term memory", "memory consolidation", "retrieval filters", "memory lifecycle"}, RecommendedFor: []string{"memory evaluation", "consolidation design"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Do not add as a second memory authority. Port only a measured memory capability through HAI's existing source-link, correction, retention, and deletion model after a native gap is demonstrated.",
+		Rationale:  "Mem0 is an active Apache-2.0 memory project, but adopting it wholesale would split ownership of provenance, corrections, and personal-data retention.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Tools listing and upstream Apache-2.0/current release activity checked on 2026-07-19.",
+	},
+	{
+		ID: "openmetadata", Name: "OpenMetadata", UpstreamURL: "https://github.com/open-metadata/OpenMetadata", SourceCatalogURL: "https://ossinsight.io/collections/open-source-data-catalogs", SourceCollection: "Open Source Data Catalogs",
+		Status: StatusReferenceOnly, Category: "source-governance and lineage patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"metadata catalog", "data lineage", "governance", "source discovery"}, RecommendedFor: []string{"connected-source provenance", "data-quality governance"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Use as a reference until HAI's connected-source estate has a demonstrated enterprise-scale metadata governance gap. Keep HAI's source registry and audit model authoritative for local personal data.",
+		Rationale:  "OpenMetadata is actively maintained and Apache-2.0, but is a large independent control plane whose deployment would exceed HAI's current local-first scope.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Open Source Data Catalogs listing and upstream Apache-2.0/current release activity checked on 2026-07-19.",
+	},
+	{
+		ID: "minio", Name: "MinIO", UpstreamURL: "https://github.com/minio/minio", SourceCatalogURL: "https://ossinsight.io/collections/distributed-file-storage", SourceCollection: "Distributed File Storage",
+		Status: StatusExcluded, Category: "object storage", IntegrationMode: "not adopted",
+		Capabilities: []string{"S3-compatible object storage", "local artifact storage"}, RecommendedFor: []string{"storage architecture reference"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not add to HAI. Reassess object storage only after an attachment-volume need is measured and a maintained, licence-compatible option is selected.",
+		Rationale:  "The upstream repository is archived and AGPLv3, so it does not meet HAI's current maintenance and licensing adoption bar.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Distributed File Storage listing and upstream archive/licensing status checked on 2026-07-19.",
+	},
 }
 
 // Entries returns a deep copy so callers cannot mutate the registry.
@@ -299,6 +380,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "provider", "model gateway", "quota", "token cost", "model routing", "litellm") {
 		ids = append(ids, "litellm")
 	}
+	if containsAny(text, "local model", "local inference", "gguf", "llama.cpp", "llama cpp", "offline model") {
+		ids = append(ids, "llama-cpp")
+	}
 	if containsAny(text, "semantic memory", "embedding", "vector search", "pgvector") {
 		ids = append(ids, "pgvector")
 	}
@@ -310,6 +394,29 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "mcp inspect", "mcp health", "mcp server", "mcp inspector") {
 		ids = append(ids, "mcp-inspector")
+	}
+	if containsAny(text, "browser verification", "browser test", "browser flow", "web flow", "playwright", "ui regression") {
+		ids = append(ids, "playwright")
+	}
+	if containsAny(text, "wasm", "webassembly", "wasi", "bounded helper") {
+		ids = append(ids, "wasmtime")
+	}
+	if containsAny(text, "schedule optimization", "route optimization", "resource assignment", "constraint solver", "or-tools", "ortools") {
+		ids = append(ids, "ortools")
+	}
+	if containsAny(text, "activepieces", "connector platform", "automation platform", "n8n", "mem0", "data lineage", "openmetadata", "open metadata") {
+		if containsAny(text, "activepieces", "connector platform", "automation platform") {
+			ids = append(ids, "activepieces")
+		}
+		if containsAny(text, "n8n") {
+			ids = append(ids, "n8n")
+		}
+		if containsAny(text, "mem0") {
+			ids = append(ids, "mem0")
+		}
+		if containsAny(text, "data lineage", "openmetadata", "open metadata") {
+			ids = append(ids, "openmetadata")
+		}
 	}
 	if containsAny(text, "graphrag", "knowledge graph", "entity linking", "langchain", "llamaindex", "llama index", "cognee") {
 		ids = append(ids, "langchain", "llamaindex", "cognee")

@@ -28,10 +28,19 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [Prometheus](https://github.com/prometheus/prometheus) | Candidate | Source-backed service and queue metrics | Requires local scrape configuration; it does not replace HAI's action-oriented system status. |
 | [Grafana](https://github.com/grafana/grafana) | Reference only | Optional advanced metrics visualization | Deferred until real Prometheus metrics justify a second dashboard. |
 | [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Candidate | Pre-activation MCP server inspection | Operator-only test tool for allowlisted MCP servers; never execution approval. |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | Candidate | Local GGUF model inference | Loopback-only model server through HAI's existing local-provider, provenance, and health policy. |
+| [Playwright](https://github.com/microsoft/playwright) | Candidate | Controlled browser verification | Named allowlisted flows only; it cannot send, publish, purchase, or change accounts without approval. |
+| [Wasmtime](https://github.com/bytecodealliance/wasmtime) | Candidate | Bounded local WASI helper runtime | Reviewed modules only, with no inherited network and explicit resource/capability limits. |
+| [OR-Tools](https://github.com/google/or-tools) | Candidate | Deterministic scheduling and routing proposals | A solver returns explainable proposals; applying them remains approval-gated. |
 | [LangChain](https://github.com/langchain-ai/langchain) | Reference only | Retrieval and tool-orchestration patterns | HAI will not add a parallel agent stack without a documented gap. |
 | [LlamaIndex](https://github.com/run-llama/llama_index) | Reference only | Connected-source and retrieval patterns | Deferred while HAI's native extraction, search, and pgvector path mature. |
 | [Cognee](https://github.com/topoteretes/cognee) | Reference only | Evidence-graph and entity-linking patterns | Deferred until a graph-query need, provenance model, and retention plan are proven. |
 | [Qdrant](https://github.com/qdrant/qdrant) | Reference only | Future dedicated vector-store option | Deferred to avoid a second vector store before pgvector has a measured limit. |
+| [Activepieces](https://github.com/activepieces/activepieces) | Reference only | Connector and workflow-pattern reference | Do not introduce a competing workflow, secrets, or approval control plane by default. |
+| [Mem0](https://github.com/mem0ai/mem0) | Reference only | Memory-consolidation reference | HAI remains the sole personal-memory and provenance authority. |
+| [OpenMetadata](https://github.com/open-metadata/OpenMetadata) | Reference only | Source-governance reference | Defer its independent metadata control plane until an enterprise-scale gap is measured. |
+| [n8n](https://github.com/n8n-io/n8n) | License review | Workflow-platform comparison | Sustainable Use License restrictions and workflow overlap require an explicit decision. |
+| [MinIO](https://github.com/minio/minio) | Excluded | Object-storage reference | Archived upstream and AGPLv3 are outside HAI's adoption bar. |
 
 The API includes the source URL, verification date, activation requirements, safety disposition, and task recommendation rationale for every entry. This lets the frontend show the difference between a capable project, a configured integration, and an executable runtime.
 
@@ -73,3 +82,6 @@ schedulers, LLM developer tools, and monitoring. The resulting entries are
 recorded in the authenticated read-only API together with their exact source
 collection. This is a curation snapshot, not a claim that all repositories in
 the database are suitable, installed, or safe to run.
+
+The full 102-collection screen and its per-category disposition are maintained
+in [the OSS Insight screening ledger](ossinsight-screening-ledger.md).
