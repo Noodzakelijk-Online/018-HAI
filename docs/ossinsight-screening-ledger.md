@@ -178,3 +178,18 @@ Every readiness response repeats the required adapter gates: owner approval,
 local deployment and data-egress design, health/audit/rollback/no-op validation,
 and existing approval policy for consequential actions. These gates remain in
 force even for `review_now` candidates.
+
+## Capability recommendation
+
+The Brain Catalog also provides a read-only capability recommendation endpoint
+for task planning. It ranks already reviewed catalog entries against a specific
+need using the entry name, category, capabilities, and intended use. Entries
+held for licensing, excluded from adoption, or retained only as references are
+not recommended.
+
+The result explains its match, readiness, and the next review step. It neither
+queries an upstream repository nor changes catalog, runtime, provider, or task
+state. In particular, a recommendation never installs a package, configures a
+service, creates credentials, or executes a tool. An integrated profile still
+requires its own local health and configuration checks; a candidate requires a
+manual adapter review under the adoption gates above.

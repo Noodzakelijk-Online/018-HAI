@@ -113,3 +113,18 @@ func TestDiscoverRepositoriesHandlerReportsUnreviewedCandidates(t *testing.T) {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 	}
 }
+
+func TestRecommendCapabilitiesHandlerUsesReviewedCatalogOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewHandler()
+	router.POST("/recommend", handler.RecommendCapabilities)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/recommend", strings.NewReader(`{"need":"local model evaluation"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "lm-eval-harness") || strings.Contains(response.Body.String(), `"id":"minio"`) {
+		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}

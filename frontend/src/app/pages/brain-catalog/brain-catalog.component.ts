@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { BrainCatalogCollectionDisposition, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
+import { BrainCatalogCollectionDisposition, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { PursuitService } from '../../services/pursuit.service'
 
@@ -21,9 +21,11 @@ export class BrainCatalogComponent implements OnInit {
   revalidatingId = ''
   checkingOSSInsight = false
   discoveringOSSInsight = false
+  recommendingCapabilities = false
   upstreamReview?: IBrainCatalogUpstreamReview
   ossInsightReview?: IBrainCatalogOSSInsightReview
   ossInsightDiscovery?: IBrainCatalogOSSInsightDiscoveryReport
+  capabilityRecommendation?: IBrainCatalogCapabilityRecommendationResponse
   discoveryReviews: Record<string, IBrainCatalogUpstreamReview> = {}
 
   constructor(
@@ -138,6 +140,27 @@ export class BrainCatalogComponent implements OnInit {
       error: () => {
         this.verifyingDiscoveryRepository = ''
         this.notification.error('Candidate metadata unavailable', 'HAI could not verify this source-discovered repository. It was not added to the catalog or activated.')
+      },
+    })
+  }
+
+  recommendCapabilities(need: string): void {
+    if (this.recommendingCapabilities) return
+    const normalized = need.trim()
+    if (!normalized) {
+      this.notification.error('Describe the capability need', 'Use a concrete need such as local model evaluation or read-only browser verification.')
+      return
+    }
+    this.recommendingCapabilities = true
+    this.capabilityRecommendation = undefined
+    this.service.recommendCapabilities(normalized).subscribe({
+      next: (recommendation) => {
+        this.recommendingCapabilities = false
+        this.capabilityRecommendation = recommendation
+      },
+      error: () => {
+        this.recommendingCapabilities = false
+        this.notification.error('Capability recommendation unavailable', 'HAI could not search its reviewed catalog. No upstream was queried and no runtime state changed.')
       },
     })
   }

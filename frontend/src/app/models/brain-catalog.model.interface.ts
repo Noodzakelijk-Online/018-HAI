@@ -84,6 +84,25 @@ export interface IBrainCatalogOSSInsightDiscoveryReport {
   message: string
 }
 
+export interface IBrainCatalogCapabilityRecommendation {
+  id: string
+  name: string
+  status: BrainCatalogStatus
+  role: string
+  rationale: string
+  requiresApproval: boolean
+  activation: string
+  score: number
+  reasons: string[]
+  nextStep: string
+}
+
+export interface IBrainCatalogCapabilityRecommendationResponse {
+  need: string
+  recommendations: IBrainCatalogCapabilityRecommendation[]
+  message: string
+}
+
 export interface IBrainCatalogSource {
   name: string
   url: string

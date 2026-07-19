@@ -11,6 +11,10 @@ type discoveryReviewRequest struct {
 	Repository string `json:"repository"`
 }
 
+type capabilityRecommendationRequest struct {
+	Need string `json:"need"`
+}
+
 // Handler exposes the transparent catalog. It deliberately has no enable or
 // install endpoint: activation belongs to a reviewed runtime adapter.
 type Handler struct {
@@ -142,4 +146,20 @@ func (h *Handler) RevalidateDiscovery(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, review)
+}
+
+// RecommendCapabilities maps a stated need to the reviewed catalog only. It
+// is a planner aid and cannot revalidate, install, configure, or run anything.
+func (h *Handler) RecommendCapabilities(c *gin.Context) {
+	var request capabilityRecommendationRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "capability need is required"})
+		return
+	}
+	response, err := RecommendForNeed(request.Need)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }

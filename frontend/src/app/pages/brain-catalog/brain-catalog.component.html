@@ -95,6 +95,23 @@
     </div>
   </hai-progressive-section>
 
+  <hai-progressive-section moduleId="brain-catalog" sectionId="capability-match" title="Match a capability need" summary="Find reviewed HAI profiles and review-first candidates. This is planning context only and never activates a project.">
+    <div class="brain-catalog-page__capability-search">
+      <input #capabilityNeed type="text" maxlength="240" placeholder="Example: local model evaluation or read-only browser verification">
+      <button nz-button nzType="primary" (click)="recommendCapabilities(capabilityNeed.value)" [nzLoading]="recommendingCapabilities" [disabled]="recommendingCapabilities">Find capability</button>
+    </div>
+    <div class="brain-catalog-page__source-result" *ngIf="capabilityRecommendation as recommendation">
+      <strong>{{ recommendation.recommendations.length }} reviewed matches</strong>
+      <span>{{ recommendation.message }}</span>
+    </div>
+    <div class="brain-catalog-page__recommendations" *ngIf="capabilityRecommendation?.recommendations?.length">
+      <article *ngFor="let recommendation of capabilityRecommendation?.recommendations">
+        <div><strong>{{ recommendation.name }}</strong><small>{{ recommendation.role }} - score {{ recommendation.score }}</small><span>{{ recommendation.nextStep }}</span></div>
+        <div><nz-tag [nzColor]="statusColor(recommendation.status)">{{ statusLabel(recommendation.status) }}</nz-tag><small>{{ recommendation.reasons.join('; ') }}</small></div>
+      </article>
+    </div>
+  </hai-progressive-section>
+
   <hai-progressive-section moduleId="brain-catalog" sectionId="held" title="Held, reference, and license-review projects" summary="Useful patterns remain visible, but HAI will not create a second control plane or import code without an explicit decision.">
     <div class="brain-catalog-page__advanced-grid">
       <button type="button" class="catalog-entry" *ngFor="let entry of held" (click)="select(entry)">

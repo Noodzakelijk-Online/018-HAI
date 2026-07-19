@@ -21,7 +21,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
   }
 
   function createComponent() {
-    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery') }
+    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
@@ -130,6 +130,17 @@ describe('BrainCatalogComponent adapter reviews', () => {
     expect(catalogService.revalidateOSSInsightDiscovery).toHaveBeenCalledWith('owner/new-mcp')
     expect(component.discoveryReviews['owner/new-mcp'].license).toBe('MIT')
     expect(notification.success).toHaveBeenCalled()
+  })
+
+  it('matches a need against the reviewed catalog without activating a candidate', () => {
+    const { component } = createComponent()
+    const catalogService = (component as any).service
+    catalogService.recommendCapabilities.and.returnValue(of({ need: 'local model evaluation', message: 'planning only', recommendations: [{ id: 'lm-eval-harness', name: 'LM Evaluation Harness', status: 'candidate', role: 'offline model evaluation', rationale: 'test', requiresApproval: true, activation: 'review first', score: 14, reasons: ['matches capability'], nextStep: 'Create a manual adapter review.' }] }))
+
+    component.recommendCapabilities('local model evaluation')
+
+    expect(catalogService.recommendCapabilities).toHaveBeenCalledWith('local model evaluation')
+    expect(component.capabilityRecommendation?.recommendations[0].id).toBe('lm-eval-harness')
   })
 
   it('shows discovery results without changing runtime state', () => {
