@@ -52,7 +52,7 @@ var capabilityPlaneOrder = []CapabilityPlane{
 var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	PlaneThinking: {
 		name: "Thinking and planning", description: "Local reasoning, model routing, research, and deterministic planning proposals.",
-		entryIDs: []string{"anythingllm", "autogen", "autogpt", "crewai", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "metagpt", "ollama", "ortools", "searxng", "vllm"},
+		entryIDs: []string{"anythingllm", "autogen", "autogpt", "crewai", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
 	},
 	PlaneMemory: {
 		name: "Memory and knowledge", description: "Source-linked retrieval, workspace context, and durable knowledge patterns.",
@@ -60,27 +60,27 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneIntake: {
 		name: "Source intake", description: "Read-first connector, document, search, and transcription capability candidates.",
-		entryIDs: []string{"airbyte", "google-genai-toolbox", "searxng", "whisper-cpp"},
+		entryIDs: []string{"airbyte", "cloudquery", "google-genai-toolbox", "omniparser", "pipecat", "searxng", "whisper-cpp"},
 	},
 	PlaneOperations: {
 		name: "Operations", description: "Durable workflows, business-system bridges, and controlled operational data flows.",
-		entryIDs: []string{"activepieces", "airbyte", "minio", "n8n", "odoo", "openmetadata", "temporal"},
+		entryIDs: []string{"activepieces", "airbyte", "cloudquery", "minio", "n8n", "odoo", "openmetadata", "temporal"},
 	},
 	PlaneExecution: {
 		name: "Controlled execution", description: "Scoped browser, MCP, workspace, CLI, and WASI execution patterns behind HAI controls.",
-		entryIDs: []string{"a2a", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "google-genai-toolbox", "mcp-inspector", "metagpt", "opencode", "openhands", "playwright", "playwright-mcp", "swe-agent", "tabby", "taskweaver", "wasmtime"},
+		entryIDs: []string{"a2a", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "google-genai-toolbox", "mcp-inspector", "mcp-servers", "metagpt", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "swe-agent", "tabby", "taskweaver", "wasmtime"},
 	},
 	PlaneVerification: {
 		name: "Verification and safety", description: "Evaluation, redaction, guardrails, code review, and adversarial testing before completion or action.",
-		entryIDs: []string{"browser-use", "deepeval", "garak", "guardrails-ai", "langfuse", "lm-eval-harness", "nemo-guardrails", "presidio", "promptfoo", "pyrit", "qodo-pr-agent"},
+		entryIDs: []string{"agentbench", "browser-use", "deepeval", "deepteam", "garak", "guardrails-ai", "langfuse", "llm-guard", "lm-eval-harness", "nemo-guardrails", "openai-evals", "opik", "presidio", "promptfoo", "pyrit", "qodo-pr-agent"},
 	},
 	PlaneGovernance: {
 		name: "Governance and boundaries", description: "Approval, protocol, policy, and data-boundary patterns that remain HAI-owned.",
-		entryIDs: []string{"a2a", "autogen", "fastmcp", "guardrails-ai", "mcp-inspector", "openmetadata", "presidio"},
+		entryIDs: []string{"a2a", "autogen", "fastmcp", "guardrails-ai", "llm-guard", "mcp-inspector", "mcp-servers", "openmetadata", "presidio", "pydantic-ai"},
 	},
 	PlaneObservability: {
 		name: "Observability", description: "Local metrics, traces, evaluations, and diagnostics for inspectable agent behavior.",
-		entryIDs: []string{"grafana", "langfuse", "openlit", "openllmetry", "phoenix", "prometheus"},
+		entryIDs: []string{"grafana", "langfuse", "openlit", "openllmetry", "opik", "phoenix", "prometheus"},
 	},
 }
 

@@ -696,6 +696,142 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Open Source Data Catalogs listing and upstream Apache-2.0/current release activity checked on 2026-07-19.",
 	},
 	{
+		ID: "pydantic-ai", Name: "PydanticAI", UpstreamURL: "https://github.com/pydantic/pydantic-ai", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusCandidate, Category: "typed agent planning and structured-output boundary", IntegrationMode: "reviewed local structured-output adapter",
+		Capabilities: []string{"typed model outputs", "schema-first agent plans", "tool result validation", "dependency injection patterns"}, RecommendedFor: []string{"structured planning", "schema-constrained extraction", "validated agent proposals"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a narrow local adapter that accepts only HAI-defined input and output schemas, uses an approved local provider, redacts traces, and returns a proposal for HAI validation. It cannot choose providers, retain memory, self-authorize tools, or execute external actions.",
+		Rationale:  "PydanticAI offers a maintained, schema-first pattern for making model plans and extractions more deterministic without replacing HAI's planner, verifier, provider router, memory, or approval control plane.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no PydanticAI package, provider, or agent is installed by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "typed agent output", HAIControl: "HAI-owned schemas and verification status", Boundary: "model output remains a draft until HAI validates it"},
+			{SourcePattern: "tool-capable agent", HAIControl: "runtime allowlists and approval queue", Boundary: "the adapter cannot select tools or produce side effects"},
+		},
+	},
+	{
+		ID: "localai", Name: "LocalAI", UpstreamURL: "https://github.com/mudler/LocalAI", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
+		Status: StatusCandidate, Category: "local multimodal OpenAI-compatible inference", IntegrationMode: "reviewed loopback provider candidate",
+		Capabilities: []string{"local OpenAI-compatible API", "local model hosting", "multimodal serving", "CPU-capable inference"}, RecommendedFor: []string{"local model fallback", "OpenAI-compatible local endpoint", "offline multimodal preparation"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a loopback-only LocalAI endpoint with explicit model provenance, resource limits, model allowlists, no public bind, provider health checks, and HAI's existing EUR 0 budget policy. HAI must not auto-download models, expose the endpoint, or route sensitive data before configuration review.",
+		Rationale:  "LocalAI can fill a measured local serving gap behind HAI's existing local-first provider policy, but it remains a candidate because Ollama and llama.cpp are the current profiles and a second model server needs operational evidence.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines listing and GitHub metadata checked on 2026-07-19: active master branch, MIT licence; no LocalAI service or model is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "OpenAI-compatible server", HAIControl: "LLM router provider policy and loopback probe", Boundary: "the server cannot enable paid fallback or public egress"},
+			{SourcePattern: "model catalogue", HAIControl: "operator-approved model provenance", Boundary: "HAI never downloads or selects a model implicitly"},
+		},
+	},
+	{
+		ID: "cloudquery", Name: "CloudQuery", UpstreamURL: "https://github.com/cloudquery/cloudquery", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10056/repos/", SourceCollection: "Data Integration",
+		Status: StatusCandidate, Category: "read-first source inventory connector", IntegrationMode: "reviewed scoped data-ingestion bridge",
+		Capabilities: []string{"connector schemas", "incremental extraction patterns", "source inventory", "local destination support"}, RecommendedFor: []string{"approved source ingestion", "account inventory", "incremental connector design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a single read-first source connector with least-privilege credentials, field and folder allowlists, cursor handling, local retention, provenance links, audit events, revocation, and a no-write probe. Do not import broad cloud or SaaS account inventories by default.",
+		Rationale:  "CloudQuery offers mature connector and incremental-ingestion patterns that can inform a scoped HAI source adapter, while HAI remains the owner of source permissions, extraction, memory updates, deletion, and approvals.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Data Integration listing and GitHub metadata checked on 2026-07-19: active main branch, MPL-2.0 licence; no CloudQuery connector, credential, or destination is installed by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "source connector", HAIControl: "connector registry and per-source permission policy", Boundary: "no credentials, scopes, or sync jobs are created from catalog discovery"},
+			{SourcePattern: "extracted records", HAIControl: "provenance, memory review, and deletion controls", Boundary: "ingested data does not become a fact or task without HAI processing"},
+		},
+	},
+	{
+		ID: "opik", Name: "Opik", UpstreamURL: "https://github.com/comet-ml/opik", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusCandidate, Category: "local trace and evaluation observability", IntegrationMode: "reviewed local telemetry adapter",
+		Capabilities: []string{"LLM traces", "agent evaluation", "experiment comparison", "quality monitoring"}, RecommendedFor: []string{"local evaluation evidence", "trace review", "agent quality diagnostics"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local-only telemetry deployment with trace redaction, short retention, non-production fixtures first, explicit provider egress control, and an export/delete path. It cannot become HAI's audit authority or receive secrets, full personal documents, or unredacted credentials.",
+		Rationale:  "Opik is a maintained Apache-2.0 local observability candidate that can complement HAI's audit records with evaluation evidence when Langfuse or OpenLLMetry do not meet a demonstrated review need.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Observability and AI Evaluation & Testing listings plus GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no Opik service or telemetry export is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "LLM trace", HAIControl: "redaction and audit-event policy", Boundary: "observability data cannot override HAI verification or approval decisions"},
+			{SourcePattern: "evaluation dashboard", HAIControl: "source-backed metric definitions", Boundary: "metrics remain advisory and must identify their scope and freshness"},
+		},
+	},
+	{
+		ID: "deepteam", Name: "DeepTeam", UpstreamURL: "https://github.com/confident-ai/deepteam", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10138/repos/", SourceCollection: "AI Red Teaming",
+		Status: StatusCandidate, Category: "contained AI red-team evaluation", IntegrationMode: "reviewed no-write local evaluation adapter",
+		Capabilities: []string{"agent red teaming", "attack scenario generation", "safety evaluation", "reporting patterns"}, RecommendedFor: []string{"redacted safety regression", "prompt-injection evaluation", "agent policy tests"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review an isolated test-only runner with approved synthetic or redacted fixtures, local or explicitly approved providers, strict rate and cost limits, no external target actions, and report-only output. It cannot access connected accounts, real secrets, or execute discovered attack paths.",
+		Rationale:  "DeepTeam is a maintained Apache-2.0 candidate for repeatable safety regression testing that can strengthen HAI's verification plane without granting a test harness any operational authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Red Teaming listing and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no DeepTeam dependency or evaluation job is installed by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "red-team scenario", HAIControl: "synthetic fixture and provider policy", Boundary: "tests cannot use connected sources or real accounts"},
+			{SourcePattern: "safety report", HAIControl: "verification review queue", Boundary: "a finding creates review work, not an autonomous remediation"},
+		},
+	},
+	{
+		ID: "openspec", Name: "OpenSpec", UpstreamURL: "https://github.com/Fission-AI/OpenSpec", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10112/repos/", SourceCollection: "AI Coding Assistants",
+		Status: StatusCandidate, Category: "spec-driven coding workflow", IntegrationMode: "reviewed repository-local planning adapter",
+		Capabilities: []string{"change specifications", "acceptance criteria", "implementation plans", "coding workflow structure"}, RecommendedFor: []string{"software task planning", "acceptance criteria", "reviewable coding proposals"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a repository-local, read-only specification generator that writes no files until an owner approves a proposed change scope, tests, rollback, and workspace boundary. Generated specifications are planning artifacts and cannot authorize code edits, commits, branches, or pulls.",
+		Rationale:  "OpenSpec provides a maintained, lightweight spec-first pattern that can improve HAI coding-task clarity without introducing another coding agent, source authority, or execution path.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Coding Assistants listing and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no OpenSpec package, repository hook, or filesystem writer is installed by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "change specification", HAIControl: "task success criteria and review queue", Boundary: "a specification is not permission to edit code"},
+			{SourcePattern: "repository workflow", HAIControl: "workspace allowlist and approval policy", Boundary: "no commit, pull request, or network action is implicit"},
+		},
+	},
+	{
+		ID: "pipecat", Name: "Pipecat", UpstreamURL: "https://github.com/pipecat-ai/pipecat", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10118/repos/", SourceCollection: "Multimodal AI",
+		Status: StatusCandidate, Category: "local voice and multimodal intake", IntegrationMode: "reviewed local input pipeline adapter",
+		Capabilities: []string{"voice pipelines", "multimodal events", "turn detection patterns", "local transport options"}, RecommendedFor: []string{"approved voice capture", "multimodal intake", "ambient input prototypes"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review an opt-in local microphone or file-import adapter with explicit capture indicator, per-source consent, local retention, transcription provenance, redaction, pause controls, and no always-on recording default. It cannot invoke tools or contacts from a spoken instruction without HAI's standard approval path.",
+		Rationale:  "Pipecat is a maintained BSD-2-Clause framework that can inform a consentful local voice-intake path, while HAI preserves the user-controlled ambient, memory, execution, and safety boundaries.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Multimodal AI and Agent Harness listings plus GitHub metadata checked on 2026-07-19: active main branch, BSD-2-Clause licence; no Pipecat pipeline or audio capture is enabled by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "voice event", HAIControl: "source intake permission and provenance", Boundary: "audio is never captured or retained by default"},
+			{SourcePattern: "multimodal agent turn", HAIControl: "planner and approval-gated runtime", Boundary: "input interpretation cannot self-authorize action"},
+		},
+	},
+	{
+		ID: "llm-guard", Name: "LLM Guard", UpstreamURL: "https://github.com/protectai/llm-guard", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
+		Status: StatusExcluded, Category: "LLM security toolkit", IntegrationMode: "not adopted",
+		Capabilities: []string{"prompt filtering", "output filtering", "security scanning"}, RecommendedFor: []string{"safety pattern research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not integrate. Reassess only if a maintained successor, clear data-handling model, and a demonstrated gap beyond HAI's existing redaction and validation controls are recorded.",
+		Rationale:  "The current upstream is archived. HAI will not add an archived safety dependency to a control plane that must remain maintainable.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Safety & Alignment listing and GitHub metadata checked on 2026-07-19: repository reports archived=true despite an MIT licence; no LLM Guard package is installed by HAI.",
+	},
+	{
+		ID: "openai-evals", Name: "OpenAI Evals", UpstreamURL: "https://github.com/openai/evals", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",
+		Status: StatusLicenseReview, Category: "LLM evaluation framework", IntegrationMode: "licence-review reference",
+		Capabilities: []string{"evaluation framework", "benchmark registry", "model quality patterns"}, RecommendedFor: []string{"evaluation design", "benchmark research"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Do not integrate until the missing SPDX licence signal, current dependency/maintenance model, provider egress, test-data handling, and HAI evaluation overlap are explicitly reviewed.",
+		Rationale:  "The repository remains active, but its GitHub metadata does not currently provide an SPDX licence assertion. HAI holds it rather than treating its popularity as deployment approval.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Evaluation & Testing listing and GitHub metadata checked on 2026-07-19: active main branch, licence reported as NOASSERTION; no OpenAI Evals package or provider access is configured by HAI.",
+	},
+	{
+		ID: "agentbench", Name: "AgentBench", UpstreamURL: "https://github.com/THUDM/AgentBench", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10141/repos/", SourceCollection: "Agent Harness",
+		Status: StatusReferenceOnly, Category: "agent benchmark reference", IntegrationMode: "evaluation architecture reference",
+		Capabilities: []string{"agent benchmark tasks", "agent evaluation taxonomy", "completion assessment patterns"}, RecommendedFor: []string{"benchmark design", "agent quality research"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Use as a reference for HAI-native, redacted evaluation fixtures only. Do not import its task environments, external services, or benchmark claims as HAI production evidence without a dedicated reproduction plan.",
+		Rationale:  "AgentBench is maintained and Apache-2.0, but HAI needs task-specific, source-controlled evaluation fixtures rather than a second benchmark runtime.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Agent Harness listing and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no AgentBench task environment is installed by HAI.",
+	},
+	{
+		ID: "omniparser", Name: "OmniParser", UpstreamURL: "https://github.com/microsoft/OmniParser", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10113/repos/", SourceCollection: "AI Browser Agents",
+		Status: StatusLicenseReview, Category: "screen parsing for GUI agents", IntegrationMode: "licence-review reference",
+		Capabilities: []string{"screen parsing", "visual element detection", "GUI grounding patterns"}, RecommendedFor: []string{"screen-understanding research", "browser verification design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not integrate until its CC-BY-4.0 distribution implications, screenshot privacy, model weights, local hardware requirements, output retention, and interaction with HAI's browser allowlists are reviewed.",
+		Rationale:  "The project is active, but screen capture is sensitive and the reported licence needs an explicit product and data-handling review before it can influence HAI browser workflows.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Browser Agents listing and GitHub metadata checked on 2026-07-19: active master branch, CC-BY-4.0 licence; no OmniParser model, screenshot capture, or GUI agent is installed by HAI.",
+	},
+	{
+		ID: "mcp-servers", Name: "MCP Servers Reference", UpstreamURL: "https://github.com/modelcontextprotocol/servers", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		Status: StatusLicenseReview, Category: "MCP server reference collection", IntegrationMode: "licence-review reference",
+		Capabilities: []string{"MCP server examples", "tool schema patterns", "connector reference"}, RecommendedFor: []string{"MCP adapter design", "tool boundary research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not adopt the collection as a tool bundle. Each server needs its own repository, licence, credential, network, tool allowlist, preflight, audit, rollback, and approval review before any local adapter is considered.",
+		Rationale:  "The repository is active but reports no SPDX licence through GitHub metadata and contains heterogeneous server examples; a collection cannot inherit a single trust decision.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers listing and GitHub metadata checked on 2026-07-19: active main branch, licence reported as NOASSERTION; no MCP Servers example or tool has been installed or enabled by HAI.",
+	},
+	{
 		ID: "minio", Name: "MinIO", UpstreamURL: "https://github.com/minio/minio", SourceCatalogURL: "https://ossinsight.io/collections/distributed-file-storage", SourceCollection: "Distributed File Storage",
 		Status: StatusExcluded, Category: "object storage", IntegrationMode: "not adopted",
 		Capabilities: []string{"S3-compatible object storage", "local artifact storage"}, RecommendedFor: []string{"storage architecture reference"},
@@ -741,6 +877,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "plan", "research", "workflow", "delegate", "multi-agent", "orchestr") {
 		ids = append(ids, "crewai")
 	}
+	if containsAny(text, "typed plan", "typed output", "structured plan", "structured extraction", "schema first", "plan schema", "pydantic ai", "pydanticai") {
+		ids = append(ids, "pydantic-ai")
+	}
 	if containsAny(text, "sandbox", "isolate", "untrusted code") {
 		ids = append(ids, "e2b")
 	}
@@ -753,11 +892,17 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "local model", "local inference", "gguf", "llama.cpp", "llama cpp", "offline model", "ollama") {
 		ids = append(ids, "ollama", "llama-cpp")
 	}
+	if containsAny(text, "localai", "local ai", "openai compatible local", "multimodal local model") {
+		ids = append(ids, "localai")
+	}
 	if containsAny(text, "vllm", "high throughput", "batched inference", "serve a model") {
 		ids = append(ids, "vllm")
 	}
 	if containsAny(text, "semantic memory", "embedding", "vector search", "pgvector") {
 		ids = append(ids, "pgvector")
+	}
+	if containsAny(text, "source inventory", "inventory source", "inventory a source", "inventory sources", "source ingestion", "incremental connector", "cloudquery", "read first connector", "account inventory") {
+		ids = append(ids, "cloudquery")
 	}
 	if containsAny(text, "durable workflow", "scheduled", "follow-up", "follow up", "retry", "temporal") {
 		ids = append(ids, "temporal")
@@ -789,6 +934,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "guardrail", "prompt injection", "llm safety", "red team", "red-team", "jailbreak", "safety evaluation") {
 		ids = append(ids, "nemo-guardrails", "garak", "promptfoo")
 	}
+	if containsAny(text, "deepteam", "red team regression", "agent red team") {
+		ids = append(ids, "deepteam")
+	}
 	if containsAny(text, "pii", "personal data", "sensitive data", "secret redaction", "redact", "redaction", "anonymize", "anonymise", "presidio") {
 		ids = append(ids, "presidio")
 	}
@@ -797,6 +945,9 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "evaluate", "evaluation", "quality regression", "retrieval evaluation", "deepeval") {
 		ids = append(ids, "deepeval")
+	}
+	if containsAny(text, "opik", "evaluation traces", "experiment comparison") {
+		ids = append(ids, "opik")
 	}
 	if containsAny(text, "model benchmark", "benchmark model", "benchmark a local model", "offline model evaluation", "lm evaluation", "lm-eval", "lm evaluation harness") {
 		ids = append(ids, "lm-eval-harness")
@@ -807,11 +958,17 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "voice note", "audio", "transcribe", "transcription", "speech to text", "speech-to-text") {
 		ids = append(ids, "whisper-cpp")
 	}
+	if containsAny(text, "voice pipeline", "multimodal intake", "pipecat", "ambient voice") {
+		ids = append(ids, "pipecat")
+	}
 	if containsAny(text, "agent to agent", "agent-to-agent", "a2a protocol", "a2a") {
 		ids = append(ids, "a2a")
 	}
 	if containsAny(text, "tabby", "self-hosted coding assistant", "code completion") {
 		ids = append(ids, "tabby")
+	}
+	if containsAny(text, "openspec", "spec driven", "specification", "acceptance criteria", "change plan") {
+		ids = append(ids, "openspec")
 	}
 	if containsAny(text, "letta", "agent memory", "memory consolidation", "long term memory", "long-term memory", "langmem") {
 		ids = append(ids, "letta", "langmem")

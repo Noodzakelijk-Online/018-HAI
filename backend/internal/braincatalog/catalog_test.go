@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "pydantic-ai", "localai", "cloudquery", "opik", "deepteam", "openspec", "pipecat"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -99,6 +99,17 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	}
 	if entry, ok := EntryByID("minio"); !ok || entry.Status != StatusExcluded {
 		t.Fatalf("archived MinIO must remain excluded: %#v", entry)
+	}
+	if entry, ok := EntryByID("llm-guard"); !ok || entry.Status != StatusExcluded {
+		t.Fatalf("archived LLM Guard must remain excluded: %#v", entry)
+	}
+	for _, id := range []string{"openai-evals", "omniparser", "mcp-servers"} {
+		if entry, ok := EntryByID(id); !ok || entry.Status != StatusLicenseReview {
+			t.Fatalf("%s must remain held for licence review: %#v", id, entry)
+		}
+	}
+	if entry, ok := EntryByID("agentbench"); !ok || entry.Status != StatusReferenceOnly {
+		t.Fatalf("AgentBench must remain a reference-only evaluation pattern: %#v", entry)
 	}
 	if sources := DiscoverySources(); len(sources) < 2 || sources[1].Name != "OSS Insight" {
 		t.Fatalf("OSS Insight source is missing: %#v", sources)
@@ -352,6 +363,33 @@ func TestRecommendRetrievalReferencesNeverClaimActivation(t *testing.T) {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusReferenceOnly || recommendation.Role != "reference or review only" {
 			t.Fatalf("%s must remain a non-activating reference: %#v", id, recommendations)
+		}
+	}
+}
+
+func TestRecommendLiveGapCandidatesStayReviewFirst(t *testing.T) {
+	recommendations := Recommend("operations", "Create typed structured plans, use LocalAI for local inference, inventory a source, prepare a voice pipeline, and run DeepTeam red-team regression")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"pydantic-ai", "localai", "cloudquery", "pipecat", "deepteam"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
+			t.Fatalf("%s must remain a review-first live-gap candidate: %#v", id, recommendations)
+		}
+	}
+}
+
+func TestHeldLiveGapProfilesDoNotClaimActivation(t *testing.T) {
+	recommendations := Recommend("safety", "Compare LLM Guard, OpenAI Evals, OmniParser, AgentBench, and MCP Servers")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"llm-guard", "openai-evals", "omniparser", "agentbench", "mcp-servers"} {
+		if _, ok := ids[id]; ok {
+			t.Fatalf("held profile %s must not be returned by generic capability recommendation: %#v", id, recommendations)
 		}
 	}
 }

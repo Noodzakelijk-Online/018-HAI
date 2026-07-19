@@ -230,3 +230,31 @@ The plane mapping has a test that rejects an unclassified catalog entry or a
 plane reference to a missing entry. This keeps future OSS Insight additions
 visible in an operational layer instead of turning the catalog into an
 unstructured list of repositories.
+
+## Live candidate-gap pass
+
+On 2026-07-19, HAI compared the repository names returned by every
+`review_candidate` OSS Insight collection with the reviewed catalog, then
+checked GitHub metadata for the capability gaps below. The list records a
+decision, not a package installation or an endorsement of every upstream in a
+high-ranking collection.
+
+| Repository | Capability gap | Decision | Boundary |
+| --- | --- | --- | --- |
+| `pydantic/pydantic-ai` | Typed planning and schema-constrained output | Review-first candidate | HAI schemas, validation, provider policy, and approvals remain authoritative. |
+| `mudler/LocalAI` | Alternative local OpenAI-compatible model serving | Review-first candidate | Loopback only, approved model provenance, no automatic model download or paid routing. |
+| `cloudquery/cloudquery` | Read-first incremental source inventory | Review-first candidate | One least-privilege connector at a time; HAI retains source permissions and provenance. |
+| `comet-ml/opik` | Local trace and evaluation evidence | Review-first candidate | Redacted local traces, retention/export controls, no audit-authority replacement. |
+| `confident-ai/deepteam` | No-write agent red-team regression | Review-first candidate | Synthetic or redacted fixtures only; never connected accounts or real attack targets. |
+| `Fission-AI/OpenSpec` | Spec-first coding plans | Review-first candidate | Read-only planning artifact; no implicit edit, commit, branch, or pull request. |
+| `pipecat-ai/pipecat` | Consentful local voice or multimodal intake | Review-first candidate | Opt-in capture, provenance, pause, retention, and no action from speech without HAI approval. |
+| `protectai/llm-guard` | LLM security filtering | Excluded | GitHub metadata reports the upstream as archived. |
+| `openai/evals` | LLM evaluation framework | Licence review | GitHub metadata reports `NOASSERTION`; provider and dependency review is also required. |
+| `THUDM/AgentBench` | Agent benchmark taxonomy | Reference only | Use only to inform HAI-native, redacted evaluation fixtures. |
+| `microsoft/OmniParser` | GUI screen-understanding patterns | Licence review | CC-BY-4.0, screenshot privacy, weights, and retention require separate review. |
+| `modelcontextprotocol/servers` | MCP examples collection | Licence review | The collection is not a trust bundle; each server needs an individual review. |
+
+The live comparison also found many overlapping coding agents, hosted
+workspaces, duplicate RAG systems, broad browser agents, and business suites.
+HAI keeps those as unreviewed discovery records or category-level non-adoption
+decisions unless a measured product gap justifies a narrow adapter design.
