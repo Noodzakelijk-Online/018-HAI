@@ -42,7 +42,7 @@ http {
         # Backend route groups. Anything not listed here falls through to the
         # IDP below and 404s. Keep this list aligned with backend router groups;
         # background operations need operations, background and account-feeds.
-        location ~ ^/api/v1/(account-feeds|agent-cycle|agent-runtimes|ambient|assistant|automation|autonomy|background|evidence-packs|flags|hardware|llm|memory|memory-engine|model-intelligence|operations|os|power|privacy|pursuits|runtime-lab|sources|system|task|verification|windows-runtime|workflow)(/|$) {
+        location ~ ^/api/v1/(account-feeds|agent-cycle|agent-runtimes|ambient|assistant|automation|autonomy|background|brain-catalog|evidence-packs|flags|hardware|llm|memory|memory-engine|model-intelligence|operations|os|power|privacy|pursuits|runtime-lab|sources|system|task|verification|windows-runtime|workflow)(/|$) {
             auth_request /auth-verify;
             proxy_pass http://backend:80;
             proxy_set_header X-Original-URI $request_uri;
