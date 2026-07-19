@@ -467,6 +467,15 @@ falls back to provenance-preserving keyword search when vectors are not
 available. The Compose database image is pinned to pgvector's Postgres 17
 build; back up a live local volume before changing its database image.
 
+Optional deterministic planning uses the local OR-Tools `optimization` Compose
+profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
+`docker compose --profile optimization up --build`. HAI sends only opaque job
+IDs, minute windows, durations, priorities, and optional fixed starts to the
+internal solver. It records the returned schedule proposal and deferred work
+as an owner-scoped audit entry. The service cannot write workflows or calendar
+events, access files or sources, call tools, or reach external services; a
+separate reviewed action must apply any accepted proposal.
+
 ### Metrics
 
 Prometheus telemetry is disabled by default. To enable it for a local collector,

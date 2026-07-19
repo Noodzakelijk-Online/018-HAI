@@ -31,7 +31,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | Candidate | Local GGUF model inference | Loopback-only model server through HAI's existing local-provider, provenance, and health policy. |
 | [Playwright](https://github.com/microsoft/playwright) | Candidate | Controlled browser verification | Named allowlisted flows only; it cannot send, publish, purchase, or change accounts without approval. |
 | [Wasmtime](https://github.com/bytecodealliance/wasmtime) | Candidate | Bounded local WASI helper runtime | Reviewed modules only, with no inherited network and explicit resource/capability limits. |
-| [OR-Tools](https://github.com/google/or-tools) | Candidate | Deterministic scheduling and routing proposals | A solver returns explainable proposals; applying them remains approval-gated. |
+| [OR-Tools](https://github.com/google/or-tools) | Integrated profile | Internal deterministic CP-SAT schedule proposals | Opt-in `optimization` Compose profile accepts bounded opaque jobs and returns an audited proposal only; it has no workflow, calendar, filesystem, tool, or external-network apply endpoint. |
 | [LangChain](https://github.com/langchain-ai/langchain) | Reference only | Retrieval and tool-orchestration patterns | HAI will not add a parallel agent stack without a documented gap. |
 | [LlamaIndex](https://github.com/run-llama/llama_index) | Reference only | Connected-source and retrieval patterns | Deferred while HAI's native extraction, search, and pgvector path mature. |
 | [Cognee](https://github.com/topoteretes/cognee) | Reference only | Evidence-graph and entity-linking patterns | Deferred until a graph-query need, provenance model, and retention plan are proven. |
@@ -93,6 +93,24 @@ URL credentials, query strings, external hosts, redirects, response bodies
 over 1 MiB, and non-JSON responses. It returns a bounded tool name inventory
 only. It does not execute a listed tool, retain schemas/descriptions, expose
 headers, accept bearer tokens, or enable an HAI runtime.
+
+## OR-Tools planning profile
+
+The optional `optimization` Compose profile runs a private OR-Tools CP-SAT
+service without a host port. HAI exposes only three owner-scoped routes:
+
+- `GET /api/v1/planning-optimizer/status`
+- `GET /api/v1/planning-optimizer/runs`
+- `POST /api/v1/planning-optimizer/proposals`
+
+The proposal request accepts at most 100 opaque IDs plus bounded integer minute
+windows, durations, priorities, and optional fixed starts. HAI rejects remote
+solver URLs, redirects, URL credentials, query strings, oversized request and
+response bodies, unknown solver statuses, unexpected job IDs, altered
+durations/priorities/windows, overlapping output, and incomplete job
+accounting. It persists only the request digest and bounded proposal result.
+No route applies a proposal to a workflow, task, calendar, source, file, tool,
+or external account.
 
 ## OSS Insight curation scope
 

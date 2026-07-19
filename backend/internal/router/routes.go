@@ -31,6 +31,7 @@ import (
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/opscontrol"
 	"automation-hub-backend/internal/phase2"
+	"automation-hub-backend/internal/planningoptimizer"
 	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/rbac"
@@ -72,6 +73,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeAgentRuntimeRoutes(v1, runtimeHandler)
 		initializeBrainCatalogRoutes(v1, braincatalog.NewHandler())
 		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
+		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
@@ -531,6 +533,16 @@ func initializeMCPPreflightRoutes(apiVersion *gin.RouterGroup, handler *mcpprefl
 	{
 		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
 		routes.POST("/:serverId/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializePlanningOptimizerRoutes(apiVersion *gin.RouterGroup, handler *planningoptimizer.Handler) {
+	routes := apiVersion.Group("/planning-optimizer")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
+		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
 	}
 }
 

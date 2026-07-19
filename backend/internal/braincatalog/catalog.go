@@ -283,12 +283,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "ortools", Name: "OR-Tools", UpstreamURL: "https://github.com/google/or-tools", SourceCatalogURL: "https://ossinsight.io/collections/optimization-solvers", SourceCollection: "Optimization Solvers",
-		Status: StatusCandidate, Category: "deterministic planning optimisation", IntegrationMode: "operator-hosted planning-only solver adapter",
-		Capabilities: []string{"constraint solving", "scheduling", "routing", "resource assignment"}, RecommendedFor: []string{"calendar suggestions", "task sequencing", "field-job routing"},
+		Status: StatusIntegrated, Category: "deterministic planning optimisation", IntegrationMode: "opt-in internal CP-SAT proposal service",
+		Capabilities: []string{"constraint solving", "bounded schedule proposals", "no-overlap planning", "infeasibility evidence"}, RecommendedFor: []string{"task sequencing", "calendar suggestions", "field-job planning"},
 		RequiresApproval: false, LocalFirstCompatible: true,
-		Activation: "Use a narrow local solver adapter that returns ranked plans with assumptions, constraints, and infeasibility evidence. HAI must present the output as a proposal; applying a plan or sending changes still follows normal approval and execution policy.",
-		Rationale:  "OR-Tools provides maintained Apache-2.0 deterministic optimisation, which complements LLM planning without treating a model recommendation as the sole scheduling authority.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Optimization Solvers listing and upstream Apache-2.0/current Windows release checked on 2026-07-19.",
+		Activation: "Set HAI_PLANNING_OPTIMIZER_ENABLED=true and run the Compose optimization profile. The internal service accepts only opaque job IDs, minute windows, durations, priorities, and optional fixed starts; it returns a schedule proposal and deferred work. It has no workflow, calendar, filesystem, tool, or external-network apply endpoint.",
+		Rationale:  "HAI now uses OR-Tools in a narrow local CP-SAT service that complements LLM planning with deterministic constraints. Results remain proposals; external or workflow changes still require the existing HAI planning, verification, and approval paths.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Optimization Solvers listing and upstream OR-Tools Apache-2.0 v9.15 release, CP-SAT documentation, and current Python package checked on 2026-07-19.",
 	},
 	{
 		ID: "activepieces", Name: "Activepieces", UpstreamURL: "https://github.com/activepieces/activepieces", SourceCatalogURL: "https://ossinsight.io/collections/zapier-alternatives", SourceCollection: "Zapier Alternatives",

@@ -126,6 +126,11 @@ services:
       HAI_EMBEDDING_API_KEY: ${HAI_EMBEDDING_API_KEY:-}
       HAI_EMBEDDING_INPUT_LIMIT: ${HAI_EMBEDDING_INPUT_LIMIT}
       HAI_EMBEDDING_TIMEOUT_SECONDS: ${HAI_EMBEDDING_TIMEOUT_SECONDS}
+      # Optional internal-only OR-Tools planner. It emits proposals only and
+      # cannot apply workflow, calendar, filesystem, or external changes.
+      HAI_PLANNING_OPTIMIZER_ENABLED: ${HAI_PLANNING_OPTIMIZER_ENABLED}
+      HAI_PLANNING_OPTIMIZER_BASE_URL: ${HAI_PLANNING_OPTIMIZER_BASE_URL}
+      HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS: ${HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS}
       ODYSSEUS_BASE_URL: ${ODYSSEUS_BASE_URL}
       ODYSSEUS_API_TOKEN: ${ODYSSEUS_API_TOKEN}
       AGENT_RUNTIME_ALLOWED_HOSTS: ${AGENT_RUNTIME_ALLOWED_HOSTS}
@@ -370,6 +375,31 @@ services:
         condition: service_started
     volumes:
       - ./nginx-config/sites-enabled:/app/sites-enabled
+    networks:
+      - service-hub
+
+  ortools-solver:
+    build:
+      context: ./services/ortools-solver
+    profiles: ["optimization"]
+    restart: unless-stopped
+    environment:
+      MAX_SOLVE_SECONDS: ${HAI_PLANNING_OPTIMIZER_MAX_SOLVE_SECONDS:-2}
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - service-hub
 

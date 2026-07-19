@@ -33,7 +33,7 @@ role in one of these planes:
 | ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
 | Testing Tools | Playwright | Candidate | Verify named, allowlisted browser flows; it cannot bypass approval gates. |
 | WebAssembly Runtime | Wasmtime | Candidate | Run reviewed capability-limited WASI helper modules only. |
-| Optimization Solvers | OR-Tools | Candidate | Return deterministic planning proposals with constraints and assumptions. |
+| Optimization Solvers | OR-Tools | Integrated profile | Optional internal CP-SAT schedule proposals with bounded inputs and no apply capability. |
 | Monitoring Tool | Grafana | Reference only | Revisit only after real Prometheus data needs advanced visualization. |
 | GraphRAG | LangChain, LlamaIndex, Cognee | Reference only | Revisit only for a measured retrieval or graph-provenance gap. |
 | Vector Database & Vector Store | Qdrant | Reference only | Revisit only if pgvector proves insufficient with a migration and rollback plan. |
@@ -102,3 +102,14 @@ source ownership and sensitivity filters in the database query, and uses the
 existing keyword search when the semantic path is disabled, empty, or
 unavailable. It never sends source text to an arbitrary cloud URL and does not
 create embeddings until the operator enables the feature.
+
+## Implemented OR-Tools boundary
+
+HAI now has an opt-in, internal-only OR-Tools CP-SAT planning service. The
+`optimization` Compose profile is not started by default and exposes no host
+port. HAI passes only opaque job IDs and bounded integer scheduling constraints
+to it, validates the full response against the request, and saves an
+owner-scoped proposal audit record. The service has no capability to apply a
+proposal, call a tool, access sources, read files, or change a calendar or
+workflow. Any implementation of a chosen proposal must use HAI's separate
+approval and verification paths.

@@ -21,7 +21,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
-	for _, id := range []string{"temporal", "playwright", "wasmtime", "ortools"} {
+	for _, id := range []string{"temporal", "playwright", "wasmtime"} {
 		entry, ok := EntryByID(id)
 		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
@@ -41,6 +41,9 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	}
 	if entry, ok := EntryByID("litellm"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("LiteLLM must report its integrated-but-approval-gated local gateway profile: %#v", entry)
+	}
+	if entry, ok := EntryByID("ortools"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || entry.RequiresApproval {
+		t.Fatalf("OR-Tools must report its integrated proposal-only local planning profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
@@ -114,11 +117,14 @@ func TestRecommendNewCandidatesNeverClaimsExecution(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"playwright", "wasmtime", "ortools"} {
+	for _, id := range []string{"playwright", "wasmtime"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || recommendation.Role != "optional capability" {
 			t.Fatalf("missing non-executable %s recommendation: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["ortools"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("OR-Tools must surface as an integrated proposal-only profile: %#v", recommendations)
 	}
 	if recommendation, ok := ids["llama-cpp"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" || !recommendation.RequiresApproval {
 		t.Fatalf("llama.cpp must surface as an integrated profile with its activation gate: %#v", recommendations)

@@ -104,6 +104,7 @@ func RunMigrations(db *gorm.DB) error {
 		&models.OperationEvent{},
 		// Phase 2 — durable model telemetry (§18/§10.9).
 		&models.ModelRunTelemetry{},
+		&models.OptimizationProposalRun{},
 	); err != nil {
 		return err
 	}
