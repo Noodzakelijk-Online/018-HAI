@@ -14,7 +14,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 - A project becomes executable only after a dedicated adapter has been reviewed, configured, health-checked, and routed through HAI's existing approval and audit controls.
 - HAI remains the policy owner: an external framework cannot bypass the local-first policy, paid budget, source controls, folder allowlist, emergency stop, or approval queue.
 
-## Curation snapshot: 2026-07-19
+## Curation snapshot: 2026-07-20
 
 | Project | HAI disposition | Intended role | Why |
 | --- | --- | --- | --- |
@@ -49,6 +49,29 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [OpenMetadata](https://github.com/open-metadata/OpenMetadata) | Reference only | Source-governance reference | Defer its independent metadata control plane until an enterprise-scale gap is measured. |
 | [n8n](https://github.com/n8n-io/n8n) | License review | Workflow-platform comparison | Sustainable Use License restrictions and workflow overlap require an explicit decision. |
 | [MinIO](https://github.com/minio/minio) | Excluded | Object-storage reference | Archived upstream and AGPLv3 are outside HAI's adoption bar. |
+
+## Newly reviewed capability candidates
+
+The following candidates were reviewed against their public upstream records.
+They appear in HAI's Brain Catalog, capability matcher, and adoption roadmap;
+none is installed, configured, or executable through HAI.
+
+| Project | HAI disposition | Intended role | Hard boundary |
+| --- | --- | --- | --- |
+| [Evidently](https://github.com/evidentlyai/evidently) | Candidate | Local LLM/RAG quality evaluation, test suites, and monitoring evidence | A report can create review work but cannot verify completion, alter routing, change policy, or export prompts/source data by default. |
+| [LiveKit Agents](https://github.com/livekit/agents) | Candidate | Explicitly opt-in real-time voice and multimodal intake | No microphone, call, MCP tool, or external contact is activated without session consent, configured local/self-hosted service, and HAI approval. |
+| [mistral.rs](https://github.com/ericlbuehler/mistral.rs) | Candidate | Loopback OpenAI-compatible local model serving and multimodal evaluation | The upstream's built-in shell, web, and code tools stay disabled; only a separately reviewed loopback provider can be used through HAI's existing EUR 0 router. |
+| [AG2](https://github.com/ag2ai/ag2) | Compatibility only | Existing AG2 / AutoGen-era workload migration and pattern review | It cannot become a second agent control plane. Any bridge must use a fixed schema and HAI-owned model policy, audit, approvals, workspace limits, and tool allowlist. |
+| [RAGFlow](https://github.com/infiniflow/ragflow) | Candidate | Complex document parsing, evidence-linked retrieval, and reranking | It remains an external retrieval index, not HAI memory or truth. Its optional agent/code executor is disabled and any deployment first needs a measured gap, source allowlist, resource budget, provenance, and deletion review. |
+
+### RAGFlow capacity gate
+
+RAGFlow's own self-hosting guidance calls for at least 4 CPU cores, 16 GB RAM,
+50 GB disk, Docker Compose, and gVisor when its optional code executor is
+used. HAI does not provision it automatically. A local deployment review must
+record its resource reservation, document folder/connector allowlist, model and
+embedding endpoint, retention/deletion/export rules, and proof that its code
+executor is disabled before the HAI adapter review can begin.
 
 The API includes the source URL, verification date, activation requirements, safety disposition, and task recommendation rationale for every entry. This lets the frontend show the difference between a capable project, a configured integration, and an executable runtime.
 

@@ -52,15 +52,15 @@ var capabilityPlaneOrder = []CapabilityPlane{
 var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	PlaneThinking: {
 		name: "Thinking and planning", description: "Local reasoning, model routing, research, and deterministic planning proposals.",
-		entryIDs: []string{"anythingllm", "autogen", "autogpt", "crewai", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "microsoft-agent-framework", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
+		entryIDs: []string{"ag2", "anythingllm", "autogen", "autogpt", "crewai", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "microsoft-agent-framework", "mistral-rs", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
 	},
 	PlaneMemory: {
 		name: "Memory and knowledge", description: "Source-linked retrieval, workspace context, and durable knowledge patterns.",
-		entryIDs: []string{"anythingllm", "cognee", "graphrag", "haystack", "langchain", "langmem", "letta", "llamaindex", "mem0", "pgvector", "qdrant"},
+		entryIDs: []string{"anythingllm", "cognee", "graphrag", "haystack", "langchain", "langmem", "letta", "llamaindex", "mem0", "pgvector", "qdrant", "ragflow"},
 	},
 	PlaneIntake: {
 		name: "Source intake", description: "Read-first connector, document, search, and transcription capability candidates.",
-		entryIDs: []string{"airbyte", "cloudquery", "google-genai-toolbox", "omniparser", "pipecat", "searxng", "whisper-cpp"},
+		entryIDs: []string{"airbyte", "cloudquery", "google-genai-toolbox", "livekit-agents", "omniparser", "pipecat", "ragflow", "searxng", "whisper-cpp"},
 	},
 	PlaneOperations: {
 		name: "Operations", description: "Durable workflows, business-system bridges, and controlled operational data flows.",
@@ -68,11 +68,11 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneExecution: {
 		name: "Controlled execution", description: "Scoped browser, MCP, workspace, CLI, and WASI execution patterns behind HAI controls.",
-		entryIDs: []string{"a2a", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "google-genai-toolbox", "mcp-inspector", "mcp-servers", "metagpt", "microsoft-agent-framework", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "swe-agent", "tabby", "taskweaver", "wasmtime"},
+		entryIDs: []string{"a2a", "ag2", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "google-genai-toolbox", "livekit-agents", "mcp-inspector", "mcp-servers", "metagpt", "microsoft-agent-framework", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "swe-agent", "tabby", "taskweaver", "wasmtime"},
 	},
 	PlaneVerification: {
 		name: "Verification and safety", description: "Evaluation, redaction, guardrails, code review, and adversarial testing before completion or action.",
-		entryIDs: []string{"agentbench", "browser-use", "deepeval", "deepteam", "garak", "guardrails-ai", "langfuse", "llm-guard", "lm-eval-harness", "nemo-guardrails", "openai-evals", "opik", "presidio", "promptfoo", "pyrit", "qodo-pr-agent"},
+		entryIDs: []string{"agentbench", "browser-use", "deepeval", "deepteam", "evidently", "garak", "guardrails-ai", "langfuse", "llm-guard", "lm-eval-harness", "nemo-guardrails", "openai-evals", "opik", "presidio", "promptfoo", "pyrit", "qodo-pr-agent"},
 	},
 	PlaneGovernance: {
 		name: "Governance and boundaries", description: "Approval, protocol, policy, and data-boundary patterns that remain HAI-owned.",
@@ -80,7 +80,7 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneObservability: {
 		name: "Observability", description: "Local metrics, traces, evaluations, and diagnostics for inspectable agent behavior.",
-		entryIDs: []string{"grafana", "langfuse", "openlit", "openllmetry", "opik", "phoenix", "prometheus"},
+		entryIDs: []string{"evidently", "grafana", "langfuse", "openlit", "openllmetry", "opik", "phoenix", "prometheus"},
 	},
 }
 

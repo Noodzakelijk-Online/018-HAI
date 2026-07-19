@@ -848,6 +848,72 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers listing and GitHub metadata checked on 2026-07-19: active main branch, licence reported as NOASSERTION; no MCP Servers example or tool has been installed or enabled by HAI.",
 	},
 	{
+		ID: "evidently", Name: "Evidently", UpstreamURL: "https://github.com/evidentlyai/evidently", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusCandidate, Category: "local AI quality evaluation and monitoring", IntegrationMode: "reviewed, report-only local evaluation adapter",
+		Capabilities: []string{"LLM evaluation", "RAG evaluation", "data-quality checks", "drift detection", "pass/fail test suites"}, RecommendedFor: []string{"source-grounded answer regression", "retrieval evaluation", "routing quality review", "input-quality monitoring"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local, report-only runner using synthetic or redacted fixtures, an explicit model-provider allowlist, bounded resources, result retention, and a no-egress default. Evidently reports may create HAI review work, but cannot mark an answer verified, change routing, alter policy, or enable a provider.",
+		Rationale:  "Evidently provides maintained evaluation, testing, and monitoring patterns that fit HAI's verification plane without displacing HAI's source grounding, deterministic validators, approval gates, or audit authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "Official repository reviewed on 2026-07-19: Apache-2.0, latest v0.7.21 released 2026-03-10, with offline evaluation, test-suite, JSON/HTML export, and optional self-hosted monitoring support. No Evidently dependency, runner, or telemetry export is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "evaluation report or test suite", HAIControl: "verification evidence and review queue", Boundary: "a score cannot claim completion or change policy automatically"},
+			{SourcePattern: "monitoring dashboard", HAIControl: "local observability and retention policy", Boundary: "no prompt, source, or telemetry egress is implicit"},
+		},
+	},
+	{
+		ID: "livekit-agents", Name: "LiveKit Agents", UpstreamURL: "https://github.com/livekit/agents", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10118/repos/", SourceCollection: "Multimodal AI",
+		Status: StatusCandidate, Category: "opt-in realtime voice and multimodal intake", IntegrationMode: "reviewed, operator-hosted realtime intake bridge",
+		Capabilities: []string{"realtime voice sessions", "multimodal conversation", "MCP tool compatibility", "agent testing", "job scheduling"}, RecommendedFor: []string{"opt-in voice assistant", "accessibility intake", "real-time local interaction prototypes"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review an opt-in local or self-hosted LiveKit deployment with a visible capture state, per-session consent, explicit STT/LLM/TTS providers, retained-transcript controls, a named room allowlist, and HAI's existing tool and approval gates. It must not activate a microphone, make calls, contact anyone, or invoke MCP tools without separate HAI authorization.",
+		Rationale:  "LiveKit Agents is a maintained Apache-2.0 framework for real-time multimodal interaction and can eventually provide a consentful voice front door, while HAI keeps task creation, memory, provider routing, execution, and external effects under its own controls.",
+		VerifiedAt: verifiedAt, VerificationNote: "Official repository reviewed on 2026-07-19: Apache-2.0, latest livekit-agents@1.6.6 released 2026-07-18, supports MCP and local terminal testing but production requires explicit LiveKit URL, API key, and secret. No LiveKit service, room, capture device, or credentials are configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "realtime voice session", HAIControl: "source-intake consent, provenance, and pause controls", Boundary: "audio is not captured or retained by default"},
+			{SourcePattern: "function or MCP tool", HAIControl: "runtime registry and approval-gated action policy", Boundary: "a spoken instruction cannot self-authorize a tool or external effect"},
+		},
+	},
+	{
+		ID: "mistral-rs", Name: "mistral.rs", UpstreamURL: "https://github.com/ericlbuehler/mistral.rs", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
+		Status: StatusCandidate, Category: "local multimodal model serving", IntegrationMode: "reviewed local OpenAI-compatible provider candidate",
+		Capabilities: []string{"local inference", "OpenAI-compatible serving", "Anthropic-compatible serving", "multimodal inputs", "hardware-aware tuning"}, RecommendedFor: []string{"local-first model experiments", "multimodal intake evaluation", "OpenAI-compatible provider compatibility"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review one loopback-only local server with an approved model, model licence, hardware and resource limit, context window, request retention setting, file-input policy, and disabled built-in agentic tools. Only then map its OpenAI-compatible endpoint through HAI's existing local provider probe and EUR 0 routing policy; HAI never starts the server or selects a model automatically.",
+		Rationale:  "mistral.rs is a current MIT local inference option with standard-compatible endpoints and multimodal support. It can broaden HAI's local model choice after an explicit model, resource, and tool-surface review, without creating a second routing or execution authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "Official repository reviewed on 2026-07-19: MIT, provides OpenAI-compatible /v1 and Anthropic-compatible Messages endpoints plus optional agentic tools. HAI has no mistral.rs server, model, file endpoint, or built-in tool surface configured.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "OpenAI-compatible server", HAIControl: "local provider probe and EUR 0 router", Boundary: "provider availability does not bypass model selection, budget, or task approval"},
+			{SourcePattern: "agentic shell, web, or code tool", HAIControl: "controlled runtime executor", Boundary: "upstream built-in tools remain disabled and are never inherited by HAI"},
+		},
+	},
+	{
+		ID: "ag2", Name: "AG2", UpstreamURL: "https://github.com/ag2ai/ag2", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10104/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusCompatibility, Category: "multi-agent framework compatibility", IntegrationMode: "operator-hosted compatibility bridge or migration reference",
+		Capabilities: []string{"agent collaboration", "human-in-the-loop workflows", "tool-use patterns", "structured outputs", "multi-agent orchestration"}, RecommendedFor: []string{"existing AG2 workload review", "AutoGen-era migration analysis", "multi-agent interoperability research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not make AG2 a second HAI runtime. Review only a narrow, local bridge for an existing AG2 workload with a fixed task schema, model allowlist, disabled code execution by default, workspace and network constraints, and HAI-owned audit and approval enforcement. New HAI work continues to use native workflow controls or separately reviewed successor profiles.",
+		Rationale:  "AG2 remains an actively maintained, Apache-2.0 AutoGen-derived framework with useful human-in-the-loop and multi-agent patterns. It overlaps HAI's orchestration layer, so its correct role is compatibility and migration review, not a parallel autonomous control plane.",
+		VerifiedAt: verifiedAt, VerificationNote: "Official repository reviewed on 2026-07-19: Apache-2.0, active main branch, now uses the ag2 package and documents multi-agent, tool, and code-execution patterns. No AG2 package, agent, model key, or code executor is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "agent cooperation and handoff", HAIControl: "workflow state, assignments, and approval queue", Boundary: "HAI owns lifecycle, approval, and completion state"},
+			{SourcePattern: "code execution or registered tool", HAIControl: "controlled runtime executor and tool allowlist", Boundary: "no AG2 agent receives generic host, secret, or network authority"},
+		},
+	},
+	{
+		ID: "ragflow", Name: "RAGFlow", UpstreamURL: "https://github.com/infiniflow/ragflow", SourceCatalogURL: "https://github.com/infiniflow/ragflow", SourceCollection: "user-provided RAG candidate",
+		Status: StatusCandidate, Category: "source-linked document retrieval and parsing", IntegrationMode: "reviewed, local document-ingestion and retrieval bridge",
+		Capabilities: []string{"document parsing", "retrieval and reranking", "grounded citations", "chunk inspection", "multimodal document intake"}, RecommendedFor: []string{"document-heavy research", "evidence-linked retrieval evaluation", "complex PDF and office-document parsing"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "First measure a real document parsing or retrieval gap against HAI's existing source-ingestion path. Then review a separately deployed local instance with a named source-folder allowlist, explicit connector scopes, local model endpoints, retention/deletion/export controls, citation and chunk provenance, CPU/RAM/disk limits, and every code-execution feature disabled. Imported text remains an external retrieval index: it cannot become HAI memory, create facts, send data, or call tools without HAI verification and approval.",
+		Rationale:  "RAGFlow is a current Apache-2.0, self-hostable RAG engine with document parsing, reranking, citation, and multimodal ingestion capabilities. It can strengthen document-heavy retrieval after a measured gap review, but it is too broad to become a competing source, memory, workflow, or agent control plane.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official repository reviewed on 2026-07-20: Apache-2.0, active main branch, current v0.26.4 deployment guidance, with cited retrieval and document-parsing capabilities. Its self-hosting guidance requires at least 4 CPU cores, 16 GB RAM, 50 GB disk, Docker Compose, and gVisor only for its optional code executor. No RAGFlow service, index, connector, model, or code executor is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "document parsing and chunks", HAIControl: "source registry, provenance, and correction workflow", Boundary: "parsed material is not trusted memory or a verified claim by default"},
+			{SourcePattern: "retrieval citation", HAIControl: "grounded-answer claim verification", Boundary: "a cited chunk must still be checked for support, freshness, and conflicts"},
+			{SourcePattern: "agent or code-executor component", HAIControl: "approval-gated runtime registry", Boundary: "RAGFlow agent and executor features remain disabled outside a separately reviewed adapter"},
+		},
+	},
+	{
 		ID: "minio", Name: "MinIO", UpstreamURL: "https://github.com/minio/minio", SourceCatalogURL: "https://ossinsight.io/collections/distributed-file-storage", SourceCollection: "Distributed File Storage",
 		Status: StatusExcluded, Category: "object storage", IntegrationMode: "not adopted",
 		Capabilities: []string{"S3-compatible object storage", "local artifact storage"}, RecommendedFor: []string{"storage architecture reference"},
@@ -893,6 +959,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "plan", "research", "workflow", "delegate", "multi-agent", "orchestr") {
 		ids = append(ids, "crewai")
 	}
+	if containsAny(text, "ag2", "ag2 migration", "ag2 workflow") {
+		ids = append(ids, "ag2")
+	}
 	if containsAny(text, "typed plan", "typed output", "structured plan", "structured extraction", "schema first", "plan schema", "pydantic ai", "pydanticai") {
 		ids = append(ids, "pydantic-ai")
 	}
@@ -917,8 +986,14 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "vllm", "high throughput", "batched inference", "serve a model") {
 		ids = append(ids, "vllm")
 	}
+	if containsAny(text, "mistral.rs", "mistral rs", "anthropic compatible local", "local multimodal model", "local multimodal inference") {
+		ids = append(ids, "mistral-rs")
+	}
 	if containsAny(text, "semantic memory", "embedding", "vector search", "pgvector") {
 		ids = append(ids, "pgvector")
+	}
+	if containsAny(text, "ragflow", "document retrieval", "document parsing", "complex pdf", "evidence retrieval", "reranking", "re-ranking") {
+		ids = append(ids, "ragflow")
 	}
 	if containsAny(text, "source inventory", "inventory source", "inventory a source", "inventory sources", "source ingestion", "incremental connector", "cloudquery", "read first connector", "account inventory") {
 		ids = append(ids, "cloudquery")
@@ -963,7 +1038,7 @@ func Recommend(taskType, request string) []Recommendation {
 		ids = append(ids, "guardrails-ai")
 	}
 	if containsAny(text, "evaluate", "evaluation", "quality regression", "retrieval evaluation", "deepeval") {
-		ids = append(ids, "deepeval")
+		ids = append(ids, "deepeval", "evidently")
 	}
 	if containsAny(text, "opik", "evaluation traces", "experiment comparison") {
 		ids = append(ids, "opik")
@@ -978,7 +1053,10 @@ func Recommend(taskType, request string) []Recommendation {
 		ids = append(ids, "whisper-cpp")
 	}
 	if containsAny(text, "voice pipeline", "multimodal intake", "pipecat", "ambient voice") {
-		ids = append(ids, "pipecat")
+		ids = append(ids, "pipecat", "livekit-agents")
+	}
+	if containsAny(text, "livekit", "realtime voice", "real-time voice", "voice session", "voice assistant") {
+		ids = append(ids, "livekit-agents")
 	}
 	if containsAny(text, "agent to agent", "agent-to-agent", "a2a protocol", "a2a") {
 		ids = append(ids, "a2a")

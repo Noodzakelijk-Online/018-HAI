@@ -86,6 +86,20 @@ func TestRecommendRecordsMicrosoftAgentFrameworkAsCandidateNotRuntime(t *testing
 	}
 }
 
+func TestRecommendReviewedHighPriorityCandidatesWithoutClaimingActivation(t *testing.T) {
+	recommendations := Recommend("operations", "Evaluate source-grounded answers with Evidently, then trial mistral.rs, RAGFlow document retrieval, and a LiveKit realtime voice session")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"evidently", "mistral-rs", "ragflow", "livekit-agents"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
+			t.Fatalf("%s must remain a reviewed, approval-gated candidate: %#v", id, recommendations)
+		}
+	}
+}
+
 func hasRecommendationID(recommendations []CapabilityRecommendation, id string) bool {
 	for _, recommendation := range recommendations {
 		if recommendation.ID == id {

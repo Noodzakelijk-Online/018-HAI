@@ -43,6 +43,26 @@ role in one of these planes:
 | Zapier Alternatives | n8n | License review | Fair-code licensing and overlapping workflow ownership need an explicit decision. |
 | Distributed File Storage | MinIO | Excluded | Archived upstream and AGPLv3 do not meet the current adoption bar. |
 
+## Direct upstream additions after the collection pass
+
+The collection pass is not the only valid discovery input. A project supplied
+by the owner can enter the same review-first catalog when its upstream record
+is inspected and it has a concrete HAI plane. Direct review does not bypass
+the collection-screening, adapter, provenance, safety, or resource gates.
+
+| Project | Plane | Disposition | Required first gate |
+| --- | --- | --- | --- |
+| Evidently | Verification and observability | Candidate | Local redacted evaluation runner; report-only output and no default egress. |
+| LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
+| mistral.rs | Thinking and local inference | Candidate | Loopback server, approved model and licence, resource limit, and disabled upstream agentic tools. |
+| AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
+| RAGFlow | Memory and source intake | Candidate | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, and disabled code executor. |
+
+RAGFlow is deliberately not presented as HAI memory. Its parsed chunks and
+citations are candidate evidence that must pass HAI's source-grounding,
+freshness, conflict, and memory-update controls before influencing a fact,
+task, or external action.
+
 ## Non-negotiable boundaries
 
 1. A catalog candidate is not an installed integration.
