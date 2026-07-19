@@ -68,6 +68,7 @@ export interface IBrainCatalogOSSInsightDiscoveryReport {
   checkedAt: string
   sourceUrl: string
   available: boolean
+  cached: boolean
   collectionsScreened: number
   candidateCollections: number
   collectionsChecked: number

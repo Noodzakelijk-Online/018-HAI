@@ -45,4 +45,8 @@ func TestOSSInsightRepositoryScoutOnlyQueriesCandidateCollectionEndpoints(t *tes
 	if !strings.Contains(report.Message, "did not add catalog entries") {
 		t.Fatalf("discovery must preserve activation boundary: %#v", report)
 	}
+	cached, err := scout.DiscoverRepositories()
+	if err != nil || !cached.Cached || len(requested) != 3 {
+		t.Fatalf("repeat discovery must reuse the bounded report: cached=%#v err=%v requests=%v", cached, err, requested)
+	}
 }

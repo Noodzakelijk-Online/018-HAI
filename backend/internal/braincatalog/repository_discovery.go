@@ -8,12 +8,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	maxOSSInsightRepositoryBytes = 128 << 10
 	maxOSSInsightDiscoveries     = 120
+	ossInsightDiscoveryCacheTTL  = 5 * time.Minute
 )
 
 // OSSInsightRepositoryScout reads repository names only from collections HAI
@@ -34,6 +36,7 @@ type OSSInsightRepositoryDiscoveryReport struct {
 	CheckedAt              string                          `json:"checkedAt"`
 	SourceURL              string                          `json:"sourceUrl"`
 	Available              bool                            `json:"available"`
+	Cached                 bool                            `json:"cached"`
 	CollectionsScreened    int                             `json:"collectionsScreened"`
 	CandidateCollections   int                             `json:"candidateCollections"`
 	CollectionsChecked     int                             `json:"collectionsChecked"`
@@ -47,8 +50,11 @@ type OSSInsightRepositoryDiscoveryReport struct {
 }
 
 type ossInsightRepositoryScout struct {
-	client *http.Client
-	now    func() time.Time
+	client       *http.Client
+	now          func() time.Time
+	cacheMu      sync.Mutex
+	cachedReport OSSInsightRepositoryDiscoveryReport
+	cacheExpires time.Time
 }
 
 func NewOSSInsightRepositoryScout(client *http.Client) OSSInsightRepositoryScout {
@@ -64,6 +70,22 @@ func NewOSSInsightRepositoryScout(client *http.Client) OSSInsightRepositoryScout
 }
 
 func (s *ossInsightRepositoryScout) DiscoverRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.cacheExpires.After(s.now()) {
+		report := s.cachedReport
+		report.Cached = true
+		return report, nil
+	}
+	report, err := s.discoverRepositories()
+	if err == nil {
+		s.cachedReport = report
+		s.cacheExpires = s.now().Add(ossInsightDiscoveryCacheTTL)
+	}
+	return report, err
+}
+
+func (s *ossInsightRepositoryScout) discoverRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
 	report := OSSInsightRepositoryDiscoveryReport{
 		CheckedAt:           s.now().UTC().Format(time.RFC3339),
 		SourceURL:           ossInsightCollectionsURL,

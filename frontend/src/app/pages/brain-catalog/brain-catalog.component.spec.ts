@@ -125,6 +125,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const catalogService = (component as any).service
     catalogService.discoverOSSInsightRepositories.and.returnValue(of({
       available: true,
+      cached: false,
       collectionsScreened: 138,
       candidateCollections: 12,
       collectionsChecked: 12,

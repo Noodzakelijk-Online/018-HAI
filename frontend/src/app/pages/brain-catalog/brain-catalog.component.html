@@ -120,7 +120,7 @@
     <div class="brain-catalog-page__source-result" *ngIf="ossInsightDiscovery as report" [class.brain-catalog-page__source-result--warning]="!!report.unavailableCollections?.length || !!report.missingCollections?.length">
       <strong>{{ report.discoveries?.length ?? 0 }} unreviewed / {{ report.repositoriesChecked }} repository names</strong>
       <span>{{ report.message }}</span>
-      <small>{{ report.collectionsChecked }} of {{ report.candidateCollections }} candidate collections checked; {{ report.knownProfileHits }} known profiles skipped.</small>
+      <small>{{ report.collectionsChecked }} of {{ report.candidateCollections }} candidate collections checked; {{ report.knownProfileHits }} known profiles skipped.<ng-container *ngIf="report.cached"> Reused the recent read-only result.</ng-container></small>
       <small *ngIf="report.discoveriesTruncated">Results were capped to keep the back office responsive.</small>
       <small *ngIf="report.unavailableCollections?.length">Unavailable: {{ report.unavailableCollections?.join(', ') }}</small>
       <small *ngIf="report.missingCollections?.length">Missing from source: {{ report.missingCollections?.join(', ') }}</small>
