@@ -16,11 +16,12 @@ func NewHandlerWithReviewer(reviewer UpstreamReviewer) *Handler { return &Handle
 
 func (h *Handler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"sourceCatalog":    sourceCatalogURL,
-		"discoverySources": DiscoverySources(),
-		"verifiedAt":       verifiedAt,
-		"entries":          Entries(),
-		"activationPolicy": "Catalog discovery is read-only. HAI never installs, enables, or executes a listed project without a reviewed adapter and the existing approval gates.",
+		"sourceCatalog":       sourceCatalogURL,
+		"discoverySources":    DiscoverySources(),
+		"verifiedAt":          verifiedAt,
+		"entries":             Entries(),
+		"collectionScreening": OSSInsightScreening(),
+		"activationPolicy":    "Catalog discovery is read-only. HAI never installs, enables, or executes a listed project without a reviewed adapter and the existing approval gates.",
 	})
 }
 

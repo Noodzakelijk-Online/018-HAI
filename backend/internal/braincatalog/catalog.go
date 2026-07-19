@@ -104,6 +104,42 @@ func DiscoverySources() []CatalogSource {
 
 var entries = []Entry{
 	{
+		ID: "langfuse", Name: "Langfuse", UpstreamURL: "https://github.com/langfuse/langfuse", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
+		Status: StatusCandidate, Category: "self-hosted LLM observability", IntegrationMode: "operator-hosted trace and evaluation service adapter",
+		Capabilities: []string{"LLM traces", "prompt versions", "evaluations", "datasets"}, RecommendedFor: []string{"model routing audit", "prompt evaluation", "agent trace review"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Host Langfuse locally and complete an adapter review covering trace redaction, retention, service credentials, data-egress controls, and health checks. HAI will not export prompts or task data by catalog entry.",
+		Rationale:  "A self-hostable observability and evaluation candidate that can make HAI's model and agent decisions more inspectable without replacing the existing audit ledger.",
+		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository, self-hosting path, and LLM trace/evaluation capabilities checked on 2026-07-19.",
+	},
+	{
+		ID: "promptfoo", Name: "Promptfoo", UpstreamURL: "https://github.com/promptfoo/promptfoo", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
+		Status: StatusCandidate, Category: "LLM evaluation", IntegrationMode: "operator-configured local CLI or contained evaluation service",
+		Capabilities: []string{"prompt regression testing", "provider comparison", "red-team evaluation"}, RecommendedFor: []string{"LLM routing validation", "prompt regression checks", "evaluation design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Complete a review for provider credentials, test-data redaction, workspace confinement, network access, artifact retention, and no-write validation before HAI can invoke any evaluation run.",
+		Rationale:  "A useful evaluation candidate for verifying routing and prompt changes, but test inputs can contain sensitive context and must not bypass HAI's source and secret controls.",
+		VerifiedAt: verifiedAt, VerificationNote: "Catalog candidate recorded for review on 2026-07-19; no Promptfoo runtime is configured by HAI.",
+	},
+	{
+		ID: "airbyte", Name: "Airbyte", UpstreamURL: "https://github.com/airbytehq/airbyte", SourceCatalogURL: "https://ossinsight.io/collections/data-integration", SourceCollection: "Data Integration",
+		Status: StatusCandidate, Category: "connector ingestion", IntegrationMode: "operator-hosted, read-first connector bridge",
+		Capabilities: []string{"incremental source sync", "connector catalogue", "schema-aware ingestion"}, RecommendedFor: []string{"connected-source ingestion", "incremental sync design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review one connector at a time with least-privilege credentials, source scope, retention, cursors, audit events, local-only storage, pause/revoke controls, and no destructive destination writes.",
+		Rationale:  "A potential adapter for expanding HAI's source ingestion, but it must not become a parallel source-of-truth or receive broad account access by default.",
+		VerifiedAt: verifiedAt, VerificationNote: "Upstream data-movement project checked on 2026-07-19; no Airbyte service or connector is configured by HAI.",
+	},
+	{
+		ID: "odoo", Name: "Odoo", UpstreamURL: "https://github.com/odoo/odoo", SourceCatalogURL: "https://ossinsight.io/collections/business-management", SourceCollection: "Business Management",
+		Status: StatusCandidate, Category: "business system bridge", IntegrationMode: "scoped, read-first business-system API adapter",
+		Capabilities: []string{"business records", "projects", "contacts", "accounting-adjacent workflows"}, RecommendedFor: []string{"business context", "project operations", "account bridge design"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Start with a read-only, named Odoo instance and resource allowlist. Any write, financial, customer, or accounting action remains a separate approval-gated workflow.",
+		Rationale:  "A relevant external business-system integration candidate, not a replacement for HAI's decision, approval, audit, or memory planes.",
+		VerifiedAt: verifiedAt, VerificationNote: "Upstream business-management project checked on 2026-07-19; HAI has no Odoo connection or credentials configured.",
+	},
+	{
 		ID: "continue", Name: "Continue", UpstreamURL: "https://github.com/continuedev/continue", SourceCatalogURL: sourceCatalogURL,
 		Status: StatusCandidate, Category: "coding review", IntegrationMode: "operator-configured CLI or CI check",
 		Capabilities: []string{"source-controlled coding checks", "PR review", "local CLI"}, RecommendedFor: []string{"coding", "repository review", "verification"},

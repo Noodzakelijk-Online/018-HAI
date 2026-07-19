@@ -18,6 +18,33 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
+	for _, id := range []string{"langfuse", "promptfoo", "airbyte", "odoo"} {
+		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
+			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
+		}
+	}
+}
+
+func TestOSSInsightCollectionScreeningCoversEveryCollection(t *testing.T) {
+	screening := OSSInsightScreening()
+	if screening.Total != 102 || len(screening.Entries) != 102 {
+		t.Fatalf("screening coverage = %d/%d, want 102", screening.Total, len(screening.Entries))
+	}
+	seen := map[string]bool{}
+	for _, entry := range screening.Entries {
+		if entry.Collection == "" || entry.SourceURL == "" || entry.Rationale == "" || seen[entry.Collection] {
+			t.Fatalf("invalid or duplicate collection screen: %#v", entry)
+		}
+		seen[entry.Collection] = true
+	}
+	for _, collection := range []string{"ai-gateways", "Data Integration", "Business Management", "Search Engine", "WebAssembly Runtime"} {
+		if !seen[collection] {
+			t.Fatalf("missing required collection screen: %s", collection)
+		}
+	}
+	if screening.Represented == 0 || screening.Candidates == 0 || screening.Deferred == 0 {
+		t.Fatalf("screening summary must make every outcome visible: %#v", screening)
+	}
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {

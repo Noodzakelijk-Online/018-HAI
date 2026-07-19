@@ -157,6 +157,14 @@ const authenticatedRoutes: Routes = [
       ),
     canActivate: [authGuard],
   },
+  {
+    path: "brain-catalog",
+    loadChildren: () =>
+      import("./pages/brain-catalog/brain-catalog.module").then(
+        (m) => m.BrainCatalogModule
+      ),
+    canActivate: [authGuard],
+  },
 ]
 
 const routes: Routes = [
@@ -171,14 +179,6 @@ const routes: Routes = [
     loadChildren: () =>
       import("./pages/onboarding/onboarding.module").then(
         (m) => m.OnboardingModule
-      ),
-    canActivate: [authGuard],
-  },
-  {
-    path: "brain-catalog",
-    loadChildren: () =>
-      import("./pages/brain-catalog/brain-catalog.module").then(
-        (m) => m.BrainCatalogModule
       ),
     canActivate: [authGuard],
   },

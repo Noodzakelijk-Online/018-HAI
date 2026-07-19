@@ -52,10 +52,35 @@ export interface IBrainCatalogSource {
   scope: string
 }
 
+export type BrainCatalogCollectionDisposition =
+  | 'represented_in_catalog'
+  | 'review_candidate'
+  | 'reference_only'
+  | 'not_adopted'
+
+export interface IBrainCatalogCollectionScreeningEntry {
+  collection: string
+  page: number
+  disposition: BrainCatalogCollectionDisposition
+  relatedEntryIds?: string[]
+  rationale: string
+  sourceUrl: string
+}
+
+export interface IBrainCatalogCollectionScreening {
+  total: number
+  represented: number
+  candidates: number
+  reference: number
+  deferred: number
+  entries: IBrainCatalogCollectionScreeningEntry[]
+}
+
 export interface IBrainCatalogResponse {
   sourceCatalog: string
   discoverySources: IBrainCatalogSource[]
   verifiedAt: string
   entries: IBrainCatalogEntry[]
+  collectionScreening: IBrainCatalogCollectionScreening
   activationPolicy: string
 }

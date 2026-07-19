@@ -11,7 +11,9 @@ have no role in a local-first personal operations system.
 An entry is added to the authenticated HAI brain catalog only when it has a
 clear control-plane role and a bounded activation path. A catalog profile is
 never an installed dependency, a grant of credentials, or permission to run
-code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
+code. The source catalog and the complete 102-category decision record are
+recorded at `GET /api/v1/brain-catalog/`; the back office renders the latter
+only in its expandable collection-coverage section.
 
 ## Shortlisted projects
 
@@ -26,6 +28,10 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | Playwright | Testing Tools | Integrated, opt-in | Read-only local browser verification | Named local routes, origin allowlist, no secret capture, no interaction API, and approval gates. |
 | Wasmtime | WebAssembly Runtime | Integrated, opt-in | Bounded WASI helper execution | Reviewed content-addressed modules only; no inherited network, filesystem, environment, or arguments; strict resource caps and approval gate. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
+| Langfuse | LLM DevTools | Candidate | Self-hosted LLM trace and evaluation service | Trace redaction, retention, service credentials, data-egress controls, and health checks require an adapter review. |
+| Promptfoo | LLM DevTools | Candidate | Local prompt and routing evaluation | Test-data redaction, provider credentials, workspace containment, and no-write validation require an adapter review. |
+| Airbyte | Data Integration | Candidate | Read-first source ingestion bridge | One connector at a time, with least-privilege scope, cursor, retention, local storage, audit, pause, and revoke review. |
+| Odoo | Business Management | Candidate | Read-first business-system bridge | A named instance and resource allowlist are required; any customer, financial, or write action remains independently approval-gated. |
 | Cline | LLM DevTools | Candidate | Review-first interactive coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | OpenCode | Model Context Protocol (MCP) Client | Candidate | Review-first terminal coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | Continue, OpenHands, CrewAI, Aider | AI Agent Frameworks / LLM DevTools / MCP | Candidate | Reviewed coding and orchestration profiles | Existing catalog controls apply; no generic agent-execution endpoint. |

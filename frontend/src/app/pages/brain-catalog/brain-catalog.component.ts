@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { IBrainCatalogEntry, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
+import { BrainCatalogCollectionDisposition, IBrainCatalogEntry, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { PursuitService } from '../../services/pursuit.service'
 
@@ -128,5 +128,19 @@ export class BrainCatalogComponent implements OnInit {
 
   statusLabel(status: string): string {
     return status.replace(/_/g, ' ')
+  }
+
+  collectionDispositionColor(disposition: BrainCatalogCollectionDisposition): string {
+    if (disposition === 'represented_in_catalog') return 'green'
+    if (disposition === 'review_candidate') return 'blue'
+    if (disposition === 'reference_only') return 'gold'
+    return 'default'
+  }
+
+  collectionDispositionLabel(disposition: BrainCatalogCollectionDisposition): string {
+    if (disposition === 'represented_in_catalog') return 'represented'
+    if (disposition === 'review_candidate') return 'review candidate'
+    if (disposition === 'reference_only') return 'reference only'
+    return 'not adopted'
   }
 }

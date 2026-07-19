@@ -3,7 +3,7 @@
     <div>
       <p class="brain-catalog-page__eyebrow">Back-office capability registry</p>
       <h1>Brain catalog</h1>
-      <p>Only reviewed adapters can become operational. A listing never installs software, grants access, bypasses approval, or claim that an external runtime is configured.</p>
+      <p>Only reviewed adapters can become operational. A listing never installs software, grants access, bypasses approval, or claims that an external runtime is configured.</p>
     </div>
     <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
       <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh
@@ -14,6 +14,7 @@
     <div><strong>{{ integrated.length }}</strong><span>Integrated profiles</span></div>
     <div><strong>{{ candidates.length }}</strong><span>Needs an adapter review</span></div>
     <div><strong>{{ held.length }}</strong><span>Held or reference only</span></div>
+    <div><strong>{{ catalog.collectionScreening.total }}</strong><span>OSS Insight collections screened</span></div>
   </div>
 
   <section class="brain-catalog-page__layout">
@@ -98,6 +99,28 @@
         <span><strong>{{ entry.name }}</strong><small>{{ entry.rationale }}</small></span>
         <nz-tag [nzColor]="statusColor(entry.status)">{{ statusLabel(entry.status) }}</nz-tag>
       </button>
+    </div>
+  </hai-progressive-section>
+
+  <hai-progressive-section moduleId="brain-catalog" sectionId="oss-insight-screening" title="OSS Insight collection coverage" summary="The complete discovery pass is visible here. A collection is evidence for review, never a permission to install its repositories.">
+    <div class="brain-catalog-page__screening-summary">
+      <span><strong>{{ catalog.collectionScreening.represented }}</strong> represented</span>
+      <span><strong>{{ catalog.collectionScreening.candidates }}</strong> review candidates</span>
+      <span><strong>{{ catalog.collectionScreening.reference }}</strong> references</span>
+      <span><strong>{{ catalog.collectionScreening.deferred }}</strong> not adopted</span>
+    </div>
+    <div class="brain-catalog-page__screening-list">
+      <article *ngFor="let entry of catalog.collectionScreening.entries">
+        <div>
+          <strong>{{ entry.collection }}</strong>
+          <small>{{ entry.rationale }}</small>
+          <span *ngIf="entry.relatedEntryIds?.length">Related HAI profiles: {{ entry.relatedEntryIds?.join(', ') }}</span>
+        </div>
+        <div>
+          <nz-tag [nzColor]="collectionDispositionColor(entry.disposition)">{{ collectionDispositionLabel(entry.disposition) }}</nz-tag>
+          <a [href]="entry.sourceUrl" target="_blank" rel="noopener noreferrer">Source page {{ entry.page }}</a>
+        </div>
+      </article>
     </div>
   </hai-progressive-section>
 
