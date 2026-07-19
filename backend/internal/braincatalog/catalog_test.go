@@ -18,13 +18,18 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "pydantic-ai", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "evidently", "livekit-agents", "mistral-rs", "ragflow"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "pydantic-ai", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "evidently", "livekit-agents", "mistral-rs", "ragflow", "serena"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
 	}
 	if entry, ok := EntryByID("ag2"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval {
 		t.Fatalf("AG2 must remain a gated compatibility profile: %#v", entry)
+	}
+	for _, id := range []string{"ufo", "goose"} {
+		if entry, ok := EntryByID(id); !ok || entry.Status != StatusReferenceOnly || !entry.RequiresApproval || len(entry.ControlMappings) == 0 {
+			t.Fatalf("%s must remain a non-active high-risk reference: %#v", id, entry)
+		}
 	}
 	if entry, ok := EntryByID("localai"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval {
 		t.Fatalf("LocalAI must report its integrated, approval-gated local provider profile: %#v", entry)

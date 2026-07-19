@@ -100,6 +100,37 @@ func TestRecommendReviewedHighPriorityCandidatesWithoutClaimingActivation(t *tes
 	}
 }
 
+func TestRecommendSemanticCodeContextWithoutEnablingHostAutomation(t *testing.T) {
+	recommendations := Recommend("coding", "Use Serena semantic code retrieval and language server diagnostics for a cross-file impact review")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	if recommendation, ok := ids["serena"]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
+		t.Fatalf("Serena must remain a review-first code-context candidate: %#v", recommendations)
+	}
+
+	for _, expected := range []string{"ufo", "goose"} {
+		found := false
+		request := "Compare Microsoft UFO Windows UI automation"
+		if expected == "goose" {
+			request = "Compare the Goose agent MCP workflow"
+		}
+		for _, recommendation := range Recommend("operations", request) {
+			if recommendation.ID != expected {
+				continue
+			}
+			found = true
+			if recommendation.Status != StatusReferenceOnly || recommendation.Role != "reference or review only" || !recommendation.RequiresApproval {
+				t.Fatalf("high-risk general agent reference must not become active: %#v", recommendation)
+			}
+		}
+		if !found {
+			t.Fatalf("expected %s reference recommendation", expected)
+		}
+	}
+}
+
 func hasRecommendationID(recommendations []CapabilityRecommendation, id string) bool {
 	for _, recommendation := range recommendations {
 		if recommendation.ID == id {

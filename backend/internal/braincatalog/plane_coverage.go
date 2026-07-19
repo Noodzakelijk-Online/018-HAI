@@ -52,7 +52,7 @@ var capabilityPlaneOrder = []CapabilityPlane{
 var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	PlaneThinking: {
 		name: "Thinking and planning", description: "Local reasoning, model routing, research, and deterministic planning proposals.",
-		entryIDs: []string{"ag2", "anythingllm", "autogen", "autogpt", "crewai", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "microsoft-agent-framework", "mistral-rs", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
+		entryIDs: []string{"ag2", "anythingllm", "autogen", "autogpt", "crewai", "goose", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "microsoft-agent-framework", "mistral-rs", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
 	},
 	PlaneMemory: {
 		name: "Memory and knowledge", description: "Source-linked retrieval, workspace context, and durable knowledge patterns.",
@@ -68,7 +68,7 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneExecution: {
 		name: "Controlled execution", description: "Scoped browser, MCP, workspace, CLI, and WASI execution patterns behind HAI controls.",
-		entryIDs: []string{"a2a", "ag2", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "google-genai-toolbox", "livekit-agents", "mcp-inspector", "mcp-servers", "metagpt", "microsoft-agent-framework", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "swe-agent", "tabby", "taskweaver", "wasmtime"},
+		entryIDs: []string{"a2a", "ag2", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "goose", "google-genai-toolbox", "livekit-agents", "mcp-inspector", "mcp-servers", "metagpt", "microsoft-agent-framework", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "serena", "swe-agent", "tabby", "taskweaver", "ufo", "wasmtime"},
 	},
 	PlaneVerification: {
 		name: "Verification and safety", description: "Evaluation, redaction, guardrails, code review, and adversarial testing before completion or action.",

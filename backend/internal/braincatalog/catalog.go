@@ -914,6 +914,45 @@ var entries = []Entry{
 		},
 	},
 	{
+		ID: "serena", Name: "Serena", UpstreamURL: "https://github.com/oraios/serena", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10106/repos/", SourceCollection: "Coding Agents",
+		Status: StatusCandidate, Category: "read-only semantic code context", IntegrationMode: "reviewed local MCP code-context bridge",
+		Capabilities: []string{"symbol-level code retrieval", "reference lookup", "language-server diagnostics", "semantic repository context"}, RecommendedFor: []string{"large repository inspection", "source-grounded code planning", "cross-file impact review", "semantic code retrieval"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review one local MCP service for one named repository root, with a read-only symbol and diagnostic tool allowlist, a fixed language-server set, bounded response sizes, workspace isolation, audit events, and an immediate disconnect path. Editing, shell commands, Serena memory writes, JetBrains integration, external-project lookup, and automatic language-server installation remain disabled. Any later write path must use HAI's separate controlled runtime and approval flow.",
+		Rationale:  "Serena can reduce code-context cost and improve repository inspection through symbol-aware retrieval without becoming HAI's coding agent or execution authority. Its editing and shell features are deliberately outside this candidate's scope.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official repository reviewed on 2026-07-20: active main branch, MIT, latest v1.6.0 released 2026-07-16. It provides MCP-based retrieval, editing, refactoring, diagnostics, and optional memory; no Serena process, language server, repository mount, or MCP endpoint is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "symbol retrieval and diagnostics", HAIControl: "repository source links and code-review evidence", Boundary: "retrieved source context is read-only evidence, not an approved code change"},
+			{SourcePattern: "symbolic editing, shell, and memory tools", HAIControl: "controlled runtime executor and HAI memory plane", Boundary: "those upstream tools remain disabled and cannot inherit workspace, secret, or host authority"},
+		},
+	},
+	{
+		ID: "ufo", Name: "Microsoft UFO", UpstreamURL: "https://github.com/microsoft/UFO", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10113/repos/", SourceCollection: "AI Browser Agents",
+		Status: StatusReferenceOnly, Category: "Windows and multi-device agent architecture", IntegrationMode: "high-risk host-automation architecture reference",
+		Capabilities: []string{"Windows UI automation", "device capability matching", "DAG orchestration", "execution recovery patterns"}, RecommendedFor: []string{"Windows automation safety research", "device capability registry design", "controlled execution architecture"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install or connect UFO as an HAI runtime. Revisit only after a separate Windows execution safety review defines an isolated user session, visible operator control, per-application allowlist, no-secret boundary, screen-capture retention policy, deterministic rollback, emergency stop, and per-action approval. Multi-device registration, GUI clicking, Win32/UIA/COM access, API keys, and model routing are all out of scope for this reference profile.",
+		Rationale:  "UFO documents useful capability-matching and recovery patterns, but its Windows desktop and multi-device execution scope would bypass HAI's current controlled-runtime safety boundary if adopted directly.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official repository reviewed on 2026-07-20: active main branch; UFO2 exposes Windows UIA, Win32, and WinCOM control, while UFO3 adds multi-device orchestration and requires explicit LLM configuration. No UFO process, device agent, screen capture, UI automation, or provider credential is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "device capability matching and DAG orchestration", HAIControl: "HAI runtime registry and workflow state", Boundary: "HAI does not auto-register devices or dispatch work to a host agent"},
+			{SourcePattern: "Windows GUI and native-control automation", HAIControl: "approval-gated controlled runtime", Boundary: "no UIA, Win32, WinCOM, screenshot, or click authority is inherited"},
+		},
+	},
+	{
+		ID: "goose", Name: "Goose", UpstreamURL: "https://github.com/aaif-goose/goose", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10106/repos/", SourceCollection: "Coding Agents",
+		Status: StatusReferenceOnly, Category: "general-purpose local agent architecture", IntegrationMode: "second-control-plane reference",
+		Capabilities: []string{"desktop and CLI agent patterns", "MCP extension patterns", "provider compatibility", "workflow recipes"}, RecommendedFor: []string{"local agent boundary research", "MCP extension review", "provider interoperability comparison"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not embed, install, or run Goose from HAI. Its provider, extension, desktop, CLI, API, recipe, filesystem, and execution surfaces are a separate general-purpose agent control plane. Revisit only for a narrow, fixed-schema interoperability case that preserves HAI-owned provider policy, tool allowlists, approvals, audit events, workspace limits, and emergency stop.",
+		Rationale:  "Goose is an active extensible local agent with broad provider and MCP support, but its general-purpose execution model overlaps HAI's planner, runtime registry, router, and governance layers. It is valuable as a comparison source, not a runtime dependency.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official repository reviewed on 2026-07-20: active main branch, Apache-2.0, latest v1.43.0 released 2026-07-14; it provides a Windows desktop app, CLI, API, provider connections, and MCP extensions. No Goose binary, extension, provider account, workspace, or API is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "provider and MCP extension ecosystem", HAIControl: "HAI provider router and reviewed runtime registry", Boundary: "no provider key, extension, or tool trust is inherited"},
+			{SourcePattern: "desktop, CLI, API, and workflow execution", HAIControl: "HAI workflow engine and approval queue", Boundary: "a general-purpose upstream agent cannot create a parallel execution path"},
+		},
+	},
+	{
 		ID: "minio", Name: "MinIO", UpstreamURL: "https://github.com/minio/minio", SourceCatalogURL: "https://ossinsight.io/collections/distributed-file-storage", SourceCollection: "Distributed File Storage",
 		Status: StatusExcluded, Category: "object storage", IntegrationMode: "not adopted",
 		Capabilities: []string{"S3-compatible object storage", "local artifact storage"}, RecommendedFor: []string{"storage architecture reference"},
@@ -955,6 +994,9 @@ func Recommend(taskType, request string) []Recommendation {
 	ids := []string{}
 	if containsAny(text, "code", "coding", "repository", "repo", "pull request", "test", "build", "bug", "commit") {
 		ids = append(ids, "continue", "cline", "opencode", "aider", "openhands", "qodo-pr-agent", "swe-agent")
+	}
+	if containsAny(text, "serena", "semantic code", "symbol retrieval", "symbolic code", "cross-file impact", "language server diagnostics") {
+		ids = append(ids, "serena")
 	}
 	if containsAny(text, "plan", "research", "workflow", "delegate", "multi-agent", "orchestr") {
 		ids = append(ids, "crewai")
@@ -1024,6 +1066,12 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "browser agent", "browser-use", "browser use", "web research", "browse website") {
 		ids = append(ids, "browser-use", "playwright")
+	}
+	if containsAny(text, "microsoft ufo", "ufo windows", "windows ui automation", "desktop agentos", "multi-device agent") {
+		ids = append(ids, "ufo")
+	}
+	if containsAny(text, "aaif goose", "goose agent", "goose mcp", "goose workflow") {
+		ids = append(ids, "goose")
 	}
 	if containsAny(text, "guardrail", "prompt injection", "llm safety", "red team", "red-team", "jailbreak", "safety evaluation") {
 		ids = append(ids, "nemo-guardrails", "garak", "promptfoo")
