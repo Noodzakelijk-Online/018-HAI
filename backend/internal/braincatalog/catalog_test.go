@@ -38,6 +38,11 @@ func TestOSSInsightCollectionScreeningCoversEveryCollection(t *testing.T) {
 		if entry.Collection == "" || entry.SourceURL == "" || entry.Rationale == "" || seen[entry.Collection] {
 			t.Fatalf("invalid or duplicate collection screen: %#v", entry)
 		}
+		for _, id := range entry.RelatedEntryIDs {
+			if _, ok := EntryByID(id); !ok {
+				t.Fatalf("collection %q references catalog profile %q that is not registered", entry.Collection, id)
+			}
+		}
 		seen[entry.Collection] = true
 	}
 	for _, collection := range []string{"ai-gateways", "Data Integration", "Business Management", "Search Engine", "WebAssembly Runtime", "MCP Servers", "LLM Inference Engines", "AI Agent Memory", "AI Red Teaming", "Agent Harness"} {
