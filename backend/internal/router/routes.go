@@ -20,6 +20,7 @@ import (
 	"automation-hub-backend/internal/browserverify"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
+	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
@@ -70,8 +71,14 @@ func initializeRoutes(router *gin.Engine) error {
 	v1.Use(backendAPIKeyMiddleware())
 	v1.Use(identityMiddleware())
 	{
-		automationService := automation.DefaultService()
 		runtimeRegistry := agentruntime.DefaultRegistry()
+		// The automation executor and runtime-control routes must share one
+		// registry so an approved task can be cancelled by its actual owner.
+		automationService := automation.NewServiceWithRuntimeRegistry(
+			automation.DefaultRepository(),
+			*events.DefaultPublisher(),
+			runtimeRegistry,
+		)
 		runtimeHandler := agentruntime.NewHandler(runtimeRegistry)
 		initializeAgentRuntimeRoutes(v1, runtimeHandler)
 		initializeBrainCatalogRoutes(v1, braincatalog.NewHandler())
