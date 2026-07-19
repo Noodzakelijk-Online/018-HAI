@@ -631,7 +631,7 @@ func readinessGates(policy llm.Policy) []ReadinessGate {
 			Name:     "Live LLM provider configured",
 			Status:   statusForBool(liveProviderConfigured(policy), "configured", "not_configured"),
 			Evidence: liveProviderEvidence(policy),
-			Next:     "Connect Ollama, LM Studio, or a configured free OpenAI-compatible endpoint and run provider smoke tests.",
+			Next:     "Connect a loopback Ollama, LM Studio, llama.cpp, LocalAI, or vLLM endpoint, or a configured free OpenAI-compatible endpoint, then run provider smoke tests.",
 		},
 		{
 			Name:     "Real account connectors",

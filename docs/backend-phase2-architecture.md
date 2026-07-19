@@ -161,7 +161,7 @@ flowchart TD
     Nvidia --> TRT[Native ONNX TensorRT RTX EP if supported]
     NPU --> EP[QNN / OpenVINO / VitisAI EP]
     LowVRAM --> Llama[llama.cpp / GGUF Quantized Model]
-    WinNative --> Ollama[Ollama / LM Studio]
+    WinNative --> Ollama[Ollama / LM Studio / LocalAI / vLLM]
 
     WinML --> Router[HAI Model Router]
     WSL --> Router

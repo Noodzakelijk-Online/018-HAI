@@ -1299,7 +1299,7 @@ func (a *openClawAdapter) capabilities() []string {
 		"multi-channel inbox and outbound routing: WhatsApp, Telegram, Slack, Discord, Google Chat, Signal, iMessage, IRC, Microsoft Teams, Matrix, Feishu, LINE, Mattermost, Nextcloud Talk, Nostr, Synology Chat, Tlon, Twitch, Zalo, WeChat, QQ, and WebChat",
 		"multi-agent session routing with isolated agents, workspaces, and sessions",
 		"skills, ClawHub packages, plugin SDK, and app SDK surfaces",
-		"local/free/cloud model provider routing including Ollama, LM Studio, OpenAI-compatible endpoints, OpenRouter, OpenAI, Anthropic, Gemini, and Codex provider paths",
+		"local/free/cloud model provider routing including Ollama, LM Studio, llama.cpp, LocalAI, vLLM, OpenAI-compatible endpoints, OpenRouter, OpenAI, Anthropic, Gemini, and Codex provider paths",
 		"tools for browser, canvas, nodes, cron, sessions, Discord and Slack actions",
 		"Live Canvas and A2UI surfaces",
 		"voice wake and talk mode surfaces",
