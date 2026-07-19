@@ -23,7 +23,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | Temporal | Workflow Scheduler | Integrated, opt-in | Durable governed follow-up checks | One local worker runs a named proposal-only workflow; HAI owns approvals and completion. |
 | Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
 | MCP Inspector | Model Context Protocol (MCP) Client | Integrated profile | Local-only MCP preflight | HAI-owned initialize + tools/list review of configured local Streamable HTTP servers; no process spawn or tool execution. |
-| Playwright | Testing Tools | Candidate | Browser workflow verification | Named flows, origin allowlist, no secret capture, and approval gates. |
+| Playwright | Testing Tools | Integrated, opt-in | Read-only local browser verification | Named local routes, origin allowlist, no secret capture, no interaction API, and approval gates. |
 | Wasmtime | WebAssembly Runtime | Candidate | Bounded WASI helper execution | Reviewed content-addressed modules, no inherited network, explicit capabilities. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
 | Continue, OpenHands, CrewAI, Aider | AI Agent Frameworks / LLM DevTools / MCP | Candidate | Reviewed coding and orchestration profiles | Existing catalog controls apply; no generic agent-execution endpoint. |

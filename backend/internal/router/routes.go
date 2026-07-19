@@ -17,6 +17,7 @@ import (
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
 	"automation-hub-backend/internal/braincatalog"
+	"automation-hub-backend/internal/browserverify"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/featureflags"
@@ -75,6 +76,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeBrainCatalogRoutes(v1, braincatalog.NewHandler())
 		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
 		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
+		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
@@ -548,6 +550,19 @@ func initializePlanningOptimizerRoutes(apiVersion *gin.RouterGroup, handler *pla
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
 		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
+	}
+}
+
+func initializeBrowserVerificationRoutes(apiVersion *gin.RouterGroup, handler *browserverify.Handler) {
+	routes := apiVersion.Group("/browser-verification")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.GET("/profiles", requirePermission(rbac.PermRead), handler.Profiles)
+		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
+		// A browser check is read-only but still approval-gated: it may expose an
+		// application route's current state, so it is never an autonomous scan.
+		routes.POST("/profiles/:id/run", requirePermission(rbac.PermApprove), handler.Run)
 	}
 }
 

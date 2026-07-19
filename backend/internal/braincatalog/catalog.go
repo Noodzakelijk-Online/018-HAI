@@ -265,7 +265,7 @@ var entries = []Entry{
 	},
 	{
 		ID: "playwright", Name: "Playwright", UpstreamURL: "https://github.com/microsoft/playwright", SourceCatalogURL: "https://ossinsight.io/collections/testing-tools", SourceCollection: "Testing Tools",
-		Status: StatusCandidate, Category: "controlled browser verification", IntegrationMode: "reviewed local browser-test adapter",
+		Status: StatusIntegrated, Category: "controlled browser verification", IntegrationMode: "opt-in named local read-only verification worker",
 		Capabilities: []string{"browser automation", "deterministic web verification", "trace artifacts", "cross-browser testing"}, RecommendedFor: []string{"web workflow verification", "regression checks", "approved browser tasks"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Use only through a reviewed adapter with named approved flows, origin allowlists, no secret capture, bounded downloads, and trace retention controls. A browser test cannot send, publish, purchase, or change accounts without the normal HAI approval gate.",

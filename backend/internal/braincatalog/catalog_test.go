@@ -21,11 +21,14 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
-	for _, id := range []string{"playwright", "wasmtime"} {
+	for _, id := range []string{"wasmtime"} {
 		entry, ok := EntryByID(id)
 		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
 		}
+	}
+	if entry, ok := EntryByID("playwright"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("Playwright must report its integrated-but-approval-gated local verification profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("temporal"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("Temporal must report its integrated-but-approval-gated local durability profile: %#v", entry)
@@ -115,11 +118,14 @@ func TestRecommendNewCandidatesNeverClaimsExecution(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"playwright", "wasmtime"} {
+	for _, id := range []string{"wasmtime"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || recommendation.Role != "optional capability" {
 			t.Fatalf("missing non-executable %s recommendation: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["playwright"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" || !recommendation.RequiresApproval {
+		t.Fatalf("Playwright must surface as an integrated approval-gated verification profile: %#v", recommendations)
 	}
 	if recommendation, ok := ids["ortools"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" {
 		t.Fatalf("OR-Tools must surface as an integrated proposal-only profile: %#v", recommendations)

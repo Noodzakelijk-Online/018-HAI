@@ -31,7 +31,7 @@ role in one of these planes:
 | Monitoring Tool | Prometheus | Integrated profile | Enable a token-protected local metrics endpoint; configure a separate local collector when needed. |
 | Model Context Protocol Client | MCP Inspector | Integrated profile | HAI-owned, local-only Streamable HTTP preflight lists tools before a separately reviewed adapter activation. |
 | ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
-| Testing Tools | Playwright | Candidate | Verify named, allowlisted browser flows; it cannot bypass approval gates. |
+| Testing Tools | Playwright | Integrated, opt-in | Verify named, allowlisted local routes without clicks, forms, downloads, retained state, or external origins. |
 | WebAssembly Runtime | Wasmtime | Candidate | Run reviewed capability-limited WASI helper modules only. |
 | Optimization Solvers | OR-Tools | Integrated profile | Optional internal CP-SAT schedule proposals with bounded inputs and no apply capability. |
 | Monitoring Tool | Grafana | Reference only | Revisit only after real Prometheus data needs advanced visualization. |
@@ -124,3 +124,13 @@ proposals through the existing claim-aware workflow service. It cannot execute
 tools or external actions, and it cannot approve or complete work. The exact
 setup, route surface, and isolation boundary are documented in
 [Temporal durability](temporal-durability.md).
+
+## Implemented Playwright verification boundary
+
+HAI now has an opt-in `verification` Compose profile backed by a local
+Playwright worker. The only callable operation is a named, read-only check of a
+configured local URL. The HAI API supplies no arbitrary URL or browser action;
+the worker blocks requests and redirects outside its local origin allowlist,
+does not retain state, and returns only a sanitized path, title, and bounded
+pass/fail summary. Each run is approval-gated and owner-scoped. It is useful for
+confirming a route is reachable, not for using an account or automating a site.
