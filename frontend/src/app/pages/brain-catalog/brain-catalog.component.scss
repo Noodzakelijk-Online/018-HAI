@@ -1,0 +1,41 @@
+:host { display: block; }
+
+.brain-catalog-page { color: var(--hai-text); margin: 0 auto; max-width: 1180px; padding: 28px; }
+.brain-catalog-page--loading { min-height: 320px; display: grid; place-items: center; }
+.brain-catalog-page__header { align-items: flex-start; display: flex; gap: 24px; justify-content: space-between; margin-bottom: 24px; }
+.brain-catalog-page__header h1, .brain-catalog-page__header h2, .brain-catalog-page__header p { margin: 0; }
+.brain-catalog-page__header h1 { font-size: 27px; line-height: 1.2; }
+.brain-catalog-page__header > div > p:last-child { color: var(--hai-text-muted); line-height: 1.55; margin-top: 8px; max-width: 680px; }
+.brain-catalog-page__eyebrow { color: var(--hai-action); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 7px !important; }
+.brain-catalog-page__metrics { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; }
+.brain-catalog-page__metrics > div { background: var(--hai-surface); border: 1px solid var(--hai-border); border-radius: 8px; min-height: 84px; padding: 14px; }
+.brain-catalog-page__metrics strong, .brain-catalog-page__metrics span { display: block; }
+.brain-catalog-page__metrics strong { color: var(--hai-action); font-size: 28px; line-height: 1; }
+.brain-catalog-page__metrics span { color: var(--hai-text-muted); font-size: 12px; margin-top: 8px; }
+.brain-catalog-page__layout { display: grid; gap: 14px; grid-template-columns: minmax(280px, .75fr) minmax(0, 1.25fr); margin-bottom: 14px; }
+.brain-catalog-page__list, .brain-catalog-page__inspector { background: var(--hai-surface); border: 1px solid var(--hai-border); border-radius: 8px; }
+.brain-catalog-page__section-heading { border-bottom: 1px solid var(--hai-border); padding: 14px; }
+.brain-catalog-page__section-heading h2 { font-size: 15px; }
+.brain-catalog-page__section-heading p, .brain-catalog-page__empty { color: var(--hai-text-muted); font-size: 12px; margin: 5px 0 0; }
+.brain-catalog-page__empty { padding: 14px; }
+.catalog-entry { align-items: center; background: transparent; border: 0; border-bottom: 1px solid var(--hai-border); color: var(--hai-text); cursor: pointer; display: flex; gap: 12px; justify-content: space-between; min-height: 70px; padding: 10px 14px; text-align: left; width: 100%; }
+.catalog-entry:last-child { border-bottom: 0; }
+.catalog-entry:hover, .catalog-entry:focus-visible, .catalog-entry--selected { background: var(--hai-surface-hover); outline: 2px solid transparent; }
+.catalog-entry span { min-width: 0; }
+.catalog-entry strong, .catalog-entry small { display: block; }
+.catalog-entry strong { font-size: 14px; }
+.catalog-entry small { color: var(--hai-text-muted); font-size: 12px; line-height: 1.4; margin-top: 4px; overflow-wrap: anywhere; }
+.brain-catalog-page__inspector { margin: 0; min-width: 0; }
+.brain-catalog-page__inspector-status { align-items: center; color: var(--hai-text-muted); display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; margin-bottom: 14px; }
+.brain-catalog-page__rationale { line-height: 1.55; margin: 0 0 16px; }
+.brain-catalog-page__activation { background: var(--hai-surface-muted); border: 1px solid var(--hai-border); border-radius: 6px; display: grid; gap: 5px; line-height: 1.45; padding: 12px; }
+.brain-catalog-page__activation span { color: var(--hai-text-muted); }
+.brain-catalog-page__capabilities { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
+.brain-catalog-page__inspector a, .brain-catalog-page__provenance a { color: var(--hai-action); }
+hai-progressive-section { display: block; margin-top: 14px; }
+.brain-catalog-page__advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.brain-catalog-page__advanced-grid .catalog-entry { border: 1px solid var(--hai-border); }
+.brain-catalog-page__provenance { background: var(--hai-surface); border: 1px solid var(--hai-border); border-radius: 8px; margin-top: 14px; padding: 14px; }
+.brain-catalog-page__provenance summary { cursor: pointer; font-weight: 700; }
+.brain-catalog-page__provenance p, .brain-catalog-page__provenance ul { color: var(--hai-text-muted); line-height: 1.5; }
+@media (max-width: 780px) { .brain-catalog-page { padding: 18px; } .brain-catalog-page__header, .brain-catalog-page__layout { grid-template-columns: 1fr; display: grid; } .brain-catalog-page__metrics { grid-template-columns: 1fr; } .brain-catalog-page__advanced-grid { grid-template-columns: 1fr; } }

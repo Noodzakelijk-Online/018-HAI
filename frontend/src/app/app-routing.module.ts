@@ -175,6 +175,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "brain-catalog",
+    loadChildren: () =>
+      import("./pages/brain-catalog/brain-catalog.module").then(
+        (m) => m.BrainCatalogModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: '',
     component: AppShellComponent,
     children: [

@@ -1094,6 +1094,7 @@ body.hai-theme-light {
 .hai-progressive-section__summary small { color: var(--hai-text-muted); font-size: 12px; margin-top: 3px; }
 .hai-progressive-section__content { border-top: 1px solid var(--hai-border); padding: 14px; }
 
+body:not(.hai-view-advanced) .hai-progressive-section--advanced { display: none; }
 body.hai-view-advanced .hai-progressive-section--advanced { display: block; }
 
 @media (max-width: 1080px) {

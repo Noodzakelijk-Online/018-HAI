@@ -1,0 +1,74 @@
+<section class="brain-catalog-page" *ngIf="catalog as catalog; else loadingState">
+  <header class="brain-catalog-page__header">
+    <div>
+      <p class="brain-catalog-page__eyebrow">Back-office capability registry</p>
+      <h1>Brain catalog</h1>
+      <p>Only reviewed adapters can become operational. A listing never installs software, grants access, or bypasses approval.</p>
+    </div>
+    <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
+      <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh
+    </button>
+  </header>
+
+  <div class="brain-catalog-page__metrics" aria-label="Capability catalog summary">
+    <div><strong>{{ integrated.length }}</strong><span>Integrated profiles</span></div>
+    <div><strong>{{ candidates.length }}</strong><span>Needs an adapter review</span></div>
+    <div><strong>{{ held.length }}</strong><span>Held or reference only</span></div>
+  </div>
+
+  <section class="brain-catalog-page__layout">
+    <div class="brain-catalog-page__list">
+      <div class="brain-catalog-page__section-heading">
+        <div><h2>Available through HAI</h2><p>Configured locally, then still approval- and health-gated.</p></div>
+      </div>
+      <button type="button" class="catalog-entry" *ngFor="let entry of integrated" (click)="select(entry)" [class.catalog-entry--selected]="selected?.id === entry.id">
+        <span><strong>{{ entry.name }}</strong><small>{{ entry.category }}</small></span>
+        <nz-tag [nzColor]="statusColor(entry.status)">{{ statusLabel(entry.status) }}</nz-tag>
+      </button>
+      <div class="brain-catalog-page__empty" *ngIf="!integrated.length">No integration profiles are registered.</div>
+    </div>
+
+    <nz-card class="brain-catalog-page__inspector" *ngIf="selected as entry" [nzTitle]="entry.name">
+      <div class="brain-catalog-page__inspector-status">
+        <nz-tag [nzColor]="statusColor(entry.status)">{{ statusLabel(entry.status) }}</nz-tag>
+        <span>{{ entry.localFirstCompatible ? 'Local-first compatible' : 'External or remote capability' }}</span>
+        <span *ngIf="entry.requiresApproval">Approval required</span>
+      </div>
+      <p class="brain-catalog-page__rationale">{{ entry.rationale }}</p>
+      <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
+      <div class="brain-catalog-page__capabilities" *ngIf="entry.capabilities.length">
+        <nz-tag *ngFor="let capability of entry.capabilities">{{ capability }}</nz-tag>
+      </div>
+      <a [href]="entry.upstreamUrl" target="_blank" rel="noopener noreferrer">Open upstream project <i nz-icon nzType="export" nzTheme="outline"></i></a>
+    </nz-card>
+  </section>
+
+  <hai-progressive-section moduleId="brain-catalog" sectionId="candidates" title="Candidate capability reviews" summary="Projects that need a concrete adapter, health check, audit path, and rollback design before activation.">
+    <div class="brain-catalog-page__advanced-grid">
+      <button type="button" class="catalog-entry" *ngFor="let entry of candidates" (click)="select(entry)">
+        <span><strong>{{ entry.name }}</strong><small>{{ entry.activation }}</small></span>
+        <nz-tag [nzColor]="statusColor(entry.status)">{{ statusLabel(entry.status) }}</nz-tag>
+      </button>
+    </div>
+  </hai-progressive-section>
+
+  <hai-progressive-section moduleId="brain-catalog" sectionId="held" title="Held, reference, and license-review projects" summary="Useful patterns remain visible, but HAI will not create a second control plane or import code without an explicit decision.">
+    <div class="brain-catalog-page__advanced-grid">
+      <button type="button" class="catalog-entry" *ngFor="let entry of held" (click)="select(entry)">
+        <span><strong>{{ entry.name }}</strong><small>{{ entry.rationale }}</small></span>
+        <nz-tag [nzColor]="statusColor(entry.status)">{{ statusLabel(entry.status) }}</nz-tag>
+      </button>
+    </div>
+  </hai-progressive-section>
+
+  <details class="advanced-section brain-catalog-page__provenance">
+    <summary>Discovery and verification record</summary>
+    <p>{{ catalog.activationPolicy }}</p>
+    <p>Last catalog review: {{ catalog.verifiedAt }}</p>
+    <ul><li *ngFor="let source of catalog.discoverySources"><a [href]="source.url" target="_blank" rel="noopener noreferrer">{{ source.name }}</a> - {{ source.scope }}</li></ul>
+  </details>
+</section>
+
+<ng-template #loadingState>
+  <section class="brain-catalog-page brain-catalog-page--loading"><nz-spin nzTip="Loading capability catalog..."></nz-spin></section>
+</ng-template>
