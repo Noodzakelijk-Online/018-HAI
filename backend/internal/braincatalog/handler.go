@@ -45,6 +45,7 @@ func (h *Handler) List(c *gin.Context) {
 		"discoverySources":    DiscoverySources(),
 		"verifiedAt":          verifiedAt,
 		"entries":             Entries(),
+		"planeCoverage":       CapabilityPlaneCoverageReport(),
 		"collectionScreening": OSSInsightScreening(),
 		"activationPolicy":    "Catalog discovery is read-only. HAI never installs, enables, or executes a listed project without a reviewed adapter and the existing approval gates.",
 	})

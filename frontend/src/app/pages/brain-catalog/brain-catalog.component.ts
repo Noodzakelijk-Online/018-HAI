@@ -75,6 +75,11 @@ export class BrainCatalogComponent implements OnInit {
     this.upstreamReview = undefined
   }
 
+  selectById(id: string): void {
+    const entry = this.catalog?.entries.find((candidate) => candidate.id === id)
+    if (entry) this.select(entry)
+  }
+
   revalidate(entry: IBrainCatalogEntry): void {
     if (this.revalidatingId) return
     this.revalidatingId = entry.id

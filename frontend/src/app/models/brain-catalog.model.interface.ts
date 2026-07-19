@@ -140,11 +140,28 @@ export interface IBrainCatalogCollectionScreening {
   entries: IBrainCatalogCollectionScreeningEntry[]
 }
 
+export interface IBrainCatalogPlaneEntry {
+  id: string
+  name: string
+  status: BrainCatalogStatus
+}
+
+export interface IBrainCatalogPlaneCoverage {
+  plane: string
+  name: string
+  description: string
+  integrated: number
+  candidates: number
+  held: number
+  entries: IBrainCatalogPlaneEntry[]
+}
+
 export interface IBrainCatalogResponse {
   sourceCatalog: string
   discoverySources: IBrainCatalogSource[]
   verifiedAt: string
   entries: IBrainCatalogEntry[]
+  planeCoverage: IBrainCatalogPlaneCoverage[]
   collectionScreening: IBrainCatalogCollectionScreening
   activationPolicy: string
 }

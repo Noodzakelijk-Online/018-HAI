@@ -105,6 +105,35 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	}
 }
 
+func TestCapabilityPlaneCoverageClassifiesEveryCatalogEntry(t *testing.T) {
+	coverage := CapabilityPlaneCoverageReport()
+	if len(coverage) != len(capabilityPlaneOrder) {
+		t.Fatalf("planes = %d, want %d", len(coverage), len(capabilityPlaneOrder))
+	}
+	classified := map[string]bool{}
+	for _, plane := range coverage {
+		if plane.Name == "" || plane.Description == "" || len(plane.Entries) == 0 {
+			t.Fatalf("plane lacks transparent coverage: %#v", plane)
+		}
+		seen := map[string]bool{}
+		for _, entry := range plane.Entries {
+			if seen[entry.ID] {
+				t.Fatalf("plane %s repeats %s", plane.Plane, entry.ID)
+			}
+			if _, ok := EntryByID(entry.ID); !ok {
+				t.Fatalf("plane %s references missing catalog entry %s", plane.Plane, entry.ID)
+			}
+			seen[entry.ID] = true
+			classified[entry.ID] = true
+		}
+	}
+	for _, entry := range Entries() {
+		if !classified[entry.ID] {
+			t.Fatalf("catalog entry %s has no capability-plane classification", entry.ID)
+		}
+	}
+}
+
 func TestRecommendAutoGenCompatibilityIsExplicitAndGated(t *testing.T) {
 	recommendations := Recommend("migration", "Migrate an AutoGen AgentChat workflow with MCP Workbench")
 	for _, recommendation := range recommendations {

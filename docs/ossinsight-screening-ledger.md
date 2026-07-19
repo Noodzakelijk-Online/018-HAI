@@ -215,3 +215,18 @@ inspectable and does not represent an unlogged model inference or an upstream
 search. Specific terms written by the operator rank above generic or expanded
 terms, preventing a broad phrase such as "local model" from displacing an
 explicit objective such as "benchmark".
+
+## HAI capability planes
+
+The authenticated back office maps every reviewed catalog entry to one or more
+HAI-owned planes: thinking and planning, memory and knowledge, source intake,
+operations, controlled execution, verification and safety, governance and
+boundaries, or observability. The map is deliberately architectural rather
+than an installation inventory. It shows where a project may contribute after
+review, while its catalog status still determines whether it is integrated,
+review-first, held, reference-only, or excluded.
+
+The plane mapping has a test that rejects an unclassified catalog entry or a
+plane reference to a missing entry. This keeps future OSS Insight additions
+visible in an operational layer instead of turning the catalog into an
+unstructured list of repositories.

@@ -17,6 +17,18 @@
     <div><strong>{{ catalog.collectionScreening.total }}</strong><span>OSS Insight collections screened</span></div>
   </div>
 
+  <hai-progressive-section moduleId="brain-catalog" sectionId="capability-planes" title="HAI capability map" summary="See where reviewed projects can strengthen HAI. A plane shows architectural fit, not a configured or approved runtime.">
+    <div class="brain-catalog-page__plane-grid">
+      <article class="brain-catalog-page__plane" *ngFor="let plane of catalog.planeCoverage">
+        <div><strong>{{ plane.name }}</strong><span>{{ plane.description }}</span></div>
+        <small>{{ plane.integrated }} integrated, {{ plane.candidates }} review-first, {{ plane.held }} held or reference</small>
+        <div class="brain-catalog-page__plane-entries">
+          <button type="button" *ngFor="let entry of plane.entries" (click)="selectById(entry.id)">{{ entry.name }}</button>
+        </div>
+      </article>
+    </div>
+  </hai-progressive-section>
+
   <section class="brain-catalog-page__layout">
     <div class="brain-catalog-page__list">
       <div class="brain-catalog-page__section-heading">
