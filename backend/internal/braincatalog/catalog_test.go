@@ -154,12 +154,12 @@ func TestRecommendCodingNeverClaimsExecution(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"continue", "aider", "openhands"} {
+	for _, id := range []string{"continue", "cline", "aider", "openhands"} {
 		if _, ok := ids[id]; !ok {
 			t.Fatalf("missing %s recommendation: %#v", id, recommendations)
 		}
 	}
-	if !ids["aider"].RequiresApproval || !ids["openhands"].RequiresApproval {
+	if !ids["cline"].RequiresApproval || !ids["aider"].RequiresApproval || !ids["openhands"].RequiresApproval {
 		t.Fatalf("write-capable agent candidates must require approval: %#v", recommendations)
 	}
 }

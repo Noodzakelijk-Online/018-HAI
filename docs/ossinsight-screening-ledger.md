@@ -26,6 +26,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | Playwright | Testing Tools | Integrated, opt-in | Read-only local browser verification | Named local routes, origin allowlist, no secret capture, no interaction API, and approval gates. |
 | Wasmtime | WebAssembly Runtime | Integrated, opt-in | Bounded WASI helper execution | Reviewed content-addressed modules only; no inherited network, filesystem, environment, or arguments; strict resource caps and approval gate. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
+| Cline | LLM DevTools | Candidate | Review-first interactive coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | Continue, OpenHands, CrewAI, Aider | AI Agent Frameworks / LLM DevTools / MCP | Candidate | Reviewed coding and orchestration profiles | Existing catalog controls apply; no generic agent-execution endpoint. |
 | AutoGen | AI Agent Frameworks | Compatibility only | Migration and protocol translation | Dedicated bridge and approval required; no new foundation work. |
 | Activepieces | Zapier Alternatives | Reference only | Connector and workflow-pattern research | No second automation control plane by default. |
@@ -39,9 +40,9 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 
 On 2026-07-19, the GitHub repository API was checked for the active profiles
 and highest-value candidates: LiteLLM, llama.cpp, pgvector, Temporal,
-Prometheus, MCP Inspector, Playwright, Wasmtime, OR-Tools, Continue,
+Prometheus, MCP Inspector, Playwright, Wasmtime, OR-Tools, Continue, Cline,
 OpenHands, CrewAI, Aider, AutoGen, AutoGPT, Mem0, OpenMetadata, and n8n. All
-18 repositories reported `archived=false` at that time. This is a maintenance
+19 repositories reported `archived=false` at that time. This is a maintenance
 signal, not an adoption grant: HAI still requires the per-profile configuration,
 health, approval, audit, rollback, license, and data-egress gates described
 above.

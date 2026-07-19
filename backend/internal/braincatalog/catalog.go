@@ -96,6 +96,15 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository and release activity checked on 2026-07-19.",
 	},
 	{
+		ID: "cline", Name: "Cline", UpstreamURL: "https://github.com/cline/cline", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
+		Status: StatusCandidate, Category: "interactive coding agent", IntegrationMode: "operator-configured editor extension or local bridge",
+		Capabilities: []string{"interactive coding assistance", "tool-mediated workspace work", "MCP-aware development workflows"}, RecommendedFor: []string{"coding", "repository review", "developer-controlled task execution"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Keep Cline outside HAI until a reviewed, workspace-confined adapter exists. Any proposed bridge must use an explicit model provider, tool and network allowlists, a review-first change flow, and HAI approval before write-capable work.",
+		Rationale:  "Active Apache-2.0 LLM-devtool project with relevant developer workflows, but its tool-mediated workspace access is high-risk and must not inherit authority from a catalog recommendation.",
+		VerifiedAt: verifiedAt, VerificationNote: "GitHub repository and Apache-2.0 licence metadata checked on 2026-07-19.",
+	},
+	{
 		ID: "openhands", Name: "OpenHands", UpstreamURL: "https://github.com/OpenHands/OpenHands", SourceCatalogURL: sourceCatalogURL,
 		Status: StatusCandidate, Category: "sandboxed development agent", IntegrationMode: "operator-configured container or service adapter",
 		Capabilities: []string{"coding agent", "sandboxed workspace", "skills", "MCP integration"}, RecommendedFor: []string{"coding", "repository work", "sandboxed task execution"},
@@ -367,7 +376,7 @@ func Recommend(taskType, request string) []Recommendation {
 	text := strings.ToLower(taskType + " " + request)
 	ids := []string{}
 	if containsAny(text, "code", "coding", "repository", "repo", "pull request", "test", "build", "bug", "commit") {
-		ids = append(ids, "continue", "aider", "openhands")
+		ids = append(ids, "continue", "cline", "aider", "openhands")
 	}
 	if containsAny(text, "plan", "research", "workflow", "delegate", "multi-agent", "orchestr") {
 		ids = append(ids, "crewai")

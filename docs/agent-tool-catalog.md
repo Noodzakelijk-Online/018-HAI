@@ -15,6 +15,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | Project | HAI disposition | Intended role | Why |
 | --- | --- | --- | --- |
 | [Continue](https://github.com/continuedev/continue) | Candidate | Source-controlled coding checks and review | Active Apache-2.0 project with a focused review/CI surface. Requires a check-only adapter before HAI uses it. |
+| [Cline](https://github.com/cline/cline) | Candidate | Review-first interactive coding assistance | Active Apache-2.0 LLM-devtool. Any HAI bridge needs a confined workspace, explicit model provider, tool/network allowlists, and approval before write-capable work. |
 | [OpenHands](https://github.com/OpenHands/OpenHands) | Candidate | Isolated development-agent runtime | Active project, but workspace and tool access are high-risk. It requires a local container, workspace/network allowlists, and an approval-gated adapter. |
 | [CrewAI](https://github.com/crewAIInc/crewAI) | Candidate | Planning and multi-agent orchestration patterns | Active MIT framework. HAI retains the policy, audit, verification, and execution gates. |
 | [Aider](https://github.com/Aider-AI/aider) | Candidate | Review-first coding assistance | Available Apache-2.0 coding tool. Any write-capable use needs a confined workspace and explicit approval. |
@@ -28,7 +29,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [Prometheus](https://github.com/prometheus/prometheus) | Integrated profile | Token-protected HTTP metrics export | Opt-in exporter with no raw-data labels; a local collector remains separately configured. |
 | [Grafana](https://github.com/grafana/grafana) | Reference only | Optional advanced metrics visualization | Deferred until real Prometheus metrics justify a second dashboard. |
 | [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Integrated profile | Local-only pre-activation MCP inspection | HAI performs only a bounded Streamable HTTP handshake and tool inventory for configured local endpoints; it never spawns a process or calls a tool. |
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | Candidate | Local GGUF model inference | Loopback-only model server through HAI's existing local-provider, provenance, and health policy. |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | Integrated, opt-in | Local GGUF model inference | Loopback-only model server through HAI's existing local-provider, provenance, live-probe, and approval policy. |
 | [Playwright](https://github.com/microsoft/playwright) | Integrated, opt-in | Read-only local browser verification | Named allowlisted local routes only; no clicks, forms, downloads, retained state, public origins, sending, publishing, purchasing, or account changes. |
 | [Wasmtime](https://github.com/bytecodealliance/wasmtime) | Integrated, opt-in | Bounded local WASI helper runtime | Reviewed modules only, with no inherited network and explicit resource/capability limits; every run remains approval-gated. |
 | [OR-Tools](https://github.com/google/or-tools) | Integrated profile | Internal deterministic CP-SAT schedule proposals | Opt-in `optimization` Compose profile accepts bounded opaque jobs and returns an audited proposal only; it has no workflow, calendar, filesystem, tool, or external-network apply endpoint. |
