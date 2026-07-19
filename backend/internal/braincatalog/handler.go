@@ -2,9 +2,14 @@ package braincatalog
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+type discoveryReviewRequest struct {
+	Repository string `json:"repository"`
+}
 
 // Handler exposes the transparent catalog. It deliberately has no enable or
 // install endpoint: activation belongs to a reviewed runtime adapter.
@@ -101,4 +106,40 @@ func (h *Handler) DiscoverRepositories(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, report)
+}
+
+// RevalidateDiscovery verifies GitHub metadata for one repository that was
+// returned by the source-controlled discovery report. It rejects arbitrary
+// repository names, does not alter the catalog, and cannot activate code.
+func (h *Handler) RevalidateDiscovery(c *gin.Context) {
+	if h.repositoryScout == nil || h.reviewer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "discovery metadata revalidation is unavailable"})
+		return
+	}
+	var request discoveryReviewRequest
+	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.Repository) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repository is required"})
+		return
+	}
+	report, err := h.repositoryScout.DiscoverRepositories()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "could not verify the OSS Insight discovery report"})
+		return
+	}
+	discovery, ok := discoveryByRepository(report, request.Repository)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "repository is not in the current OSS Insight discovery report"})
+		return
+	}
+	entry, err := entryForDiscovery(discovery)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "discovered repository is not a valid GitHub repository path"})
+		return
+	}
+	review, err := h.reviewer.Review(entry)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "could not retrieve discovered repository metadata"})
+		return
+	}
+	c.JSON(http.StatusOK, review)
 }

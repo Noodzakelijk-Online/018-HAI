@@ -127,8 +127,8 @@
     </div>
     <div class="brain-catalog-page__discovery-list" *ngIf="ossInsightDiscovery?.discoveries?.length">
       <article *ngFor="let discovery of ossInsightDiscovery?.discoveries">
-        <div><strong>{{ discovery.repository }}</strong><small>{{ discovery.collection }}</small><span>{{ discovery.rationale }}</span></div>
-        <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository">Review</button></div>
+        <div><strong>{{ discovery.repository }}</strong><small>{{ discovery.collection }}</small><span>{{ discovery.rationale }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}.</small></div>
+        <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository || !discoveryReviews[discovery.repository]">Review</button></div>
       </article>
     </div>
     <div class="brain-catalog-page__screening-summary">

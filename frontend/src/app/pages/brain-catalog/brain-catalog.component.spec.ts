@@ -21,7 +21,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
   }
 
   function createComponent() {
-    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories') }
+    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
@@ -118,6 +118,18 @@ describe('BrainCatalogComponent adapter reviews', () => {
     }))
     expect(notification.success).toHaveBeenCalledWith('Discovery review created', 'owner/new-mcp remains unconfigured. HAI created a manual review record.')
     expect(router.navigate).toHaveBeenCalledWith(['/pursuits'], { queryParams: { selected: 'pursuit-discovery-1' } })
+  })
+
+  it('verifies source-discovered repository metadata before a manual review', () => {
+    const { component, notification } = createComponent()
+    const catalogService = (component as any).service
+    catalogService.revalidateOSSInsightDiscovery.and.returnValue(of({ id: 'ossinsight-owner-new-mcp', name: 'owner/new-mcp', upstreamUrl: 'https://github.com/owner/new-mcp', available: true, archived: false, license: 'MIT', message: 'metadata only', disposition: 'candidate' }))
+
+    component.verifyDiscovery({ collection: 'MCP Servers', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
+
+    expect(catalogService.revalidateOSSInsightDiscovery).toHaveBeenCalledWith('owner/new-mcp')
+    expect(component.discoveryReviews['owner/new-mcp'].license).toBe('MIT')
+    expect(notification.success).toHaveBeenCalled()
   })
 
   it('shows discovery results without changing runtime state', () => {

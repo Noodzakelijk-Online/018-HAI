@@ -22,4 +22,8 @@ export class BrainCatalogService {
   discoverOSSInsightRepositories(): Observable<IBrainCatalogOSSInsightDiscoveryReport> {
     return this.http.post<IBrainCatalogOSSInsightDiscoveryReport>('/api/v1/brain-catalog/ossinsight/discover', {})
   }
+
+  revalidateOSSInsightDiscovery(repository: string): Observable<IBrainCatalogUpstreamReview> {
+    return this.http.post<IBrainCatalogUpstreamReview>('/api/v1/brain-catalog/ossinsight/discoveries/revalidate', { repository })
+  }
 }

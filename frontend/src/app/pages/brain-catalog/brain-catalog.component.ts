@@ -17,12 +17,14 @@ export class BrainCatalogComponent implements OnInit {
   loadFailed = false
   reviewingCandidateId = ''
   reviewingDiscoveryRepository = ''
+  verifyingDiscoveryRepository = ''
   revalidatingId = ''
   checkingOSSInsight = false
   discoveringOSSInsight = false
   upstreamReview?: IBrainCatalogUpstreamReview
   ossInsightReview?: IBrainCatalogOSSInsightReview
   ossInsightDiscovery?: IBrainCatalogOSSInsightDiscoveryReport
+  discoveryReviews: Record<string, IBrainCatalogUpstreamReview> = {}
 
   constructor(
     private service: BrainCatalogService,
@@ -114,11 +116,28 @@ export class BrainCatalogComponent implements OnInit {
       next: (report) => {
         this.discoveringOSSInsight = false
         this.ossInsightDiscovery = report
+        this.discoveryReviews = {}
         this.notification.success('Candidate discovery complete', `${report.discoveries?.length ?? 0} unreviewed repositories were found. No catalog entry, credential, or runtime state changed.`)
       },
       error: () => {
         this.discoveringOSSInsight = false
         this.notification.error('Candidate discovery unavailable', 'HAI could not inspect the reviewed OSS Insight categories. No catalog decision or runtime state changed.')
+      },
+    })
+  }
+
+  verifyDiscovery(discovery: IBrainCatalogOSSInsightDiscovery): void {
+    if (this.verifyingDiscoveryRepository) return
+    this.verifyingDiscoveryRepository = discovery.repository
+    this.service.revalidateOSSInsightDiscovery(discovery.repository).subscribe({
+      next: (review) => {
+        this.verifyingDiscoveryRepository = ''
+        this.discoveryReviews = { ...this.discoveryReviews, [discovery.repository]: review }
+        this.notification.success('Candidate metadata verified', `${discovery.repository} remains unconfigured. Review the metadata before creating a manual adapter review.`)
+      },
+      error: () => {
+        this.verifyingDiscoveryRepository = ''
+        this.notification.error('Candidate metadata unavailable', 'HAI could not verify this source-discovered repository. It was not added to the catalog or activated.')
       },
     })
   }
