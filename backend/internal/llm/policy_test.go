@@ -200,6 +200,25 @@ func TestRouteBlocksRemoteLlamaCPPProviderEndpoint(t *testing.T) {
 	t.Fatalf("expected llama.cpp local-only boundary, got %#v", decision.Skipped)
 }
 
+func TestRouteBlocksRemoteLiteLLMGatewayEndpoint(t *testing.T) {
+	policy := testPolicyWithoutEndpoints()
+	liteLLMIndex := providerIndex(t, policy, "litellm")
+	policy.Providers[liteLLMIndex].Enabled = true
+	policy.Providers[liteLLMIndex].EndpointURL = "https://gateway.example.test"
+	service := &Service{policy: annotatePolicyReadiness(policy)}
+
+	decision, err := service.Route(RouteRequest{Task: "Draft an operational plan"})
+	if err != nil {
+		t.Fatalf("Route returned error: %v", err)
+	}
+	for _, skipped := range decision.Skipped {
+		if skipped.ProviderID == "litellm" && skipped.Reason == "LiteLLM gateway endpoint must use localhost, loopback, or host.docker.internal" {
+			return
+		}
+	}
+	t.Fatalf("expected LiteLLM local-only boundary, got %#v", decision.Skipped)
+}
+
 func TestLocalModelsAllowedPolicyIsEnforced(t *testing.T) {
 	policy := testPolicyWithLocalEndpoints()
 	policy.LocalModelsAllowed = false
@@ -662,6 +681,91 @@ func TestLlamaCPPProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing
 		t.Fatalf("Generate: %v", err)
 	}
 	if result.Status != "completed" || result.Output != "local llama.cpp draft" {
+		t.Fatalf("generation result = %#v", result)
+	}
+}
+
+func TestLiteLLMGatewayUsesVirtualKeyAndRequiresGenerationApproval(t *testing.T) {
+	t.Setenv("LITELLM_API_KEY", "gateway-secret")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer gateway-secret" {
+			t.Fatalf("authorization = %q", got)
+		}
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"id": "local-qwen"}}})
+		case "/v1/chat/completions":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"content": "reviewed local gateway draft"}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	liteLLMIndex := providerIndex(t, policy, "litellm")
+	policy.Providers[liteLLMIndex].Enabled = true
+	policy.Providers[liteLLMIndex].EndpointURL = server.URL
+	policy.Providers[liteLLMIndex].Models[0].ID = "local-qwen"
+	service := &Service{policy: policy}
+
+	var probe ProviderProbeResult
+	for _, result := range service.ProbeProviders() {
+		if result.ProviderID == "litellm" {
+			probe = result
+			break
+		}
+	}
+	if probe.Status != "live" || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want live LiteLLM gateway with one model", probe)
+	}
+
+	decision := &RouteDecision{SelectedProviderID: "litellm", SelectedModelID: "local-qwen", SelectedModelName: "Configured LiteLLM local model alias", Tier: TierLocal}
+	blocked, err := service.Generate(GenerateRequest{Task: "Draft a local answer", RouteDecision: decision})
+	if err != nil {
+		t.Fatalf("Generate blocked: %v", err)
+	}
+	if blocked.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked before manual approval", blocked.Status)
+	}
+
+	completed, err := service.Generate(GenerateRequest{Task: "Draft a local answer", RouteDecision: decision, AllowPaidApproved: true})
+	if err != nil {
+		t.Fatalf("Generate approved: %v", err)
+	}
+	if completed.Status != "completed" || completed.Output != "reviewed local gateway draft" {
+		t.Fatalf("generation result = %#v", completed)
+	}
+}
+
+func TestLiteLLMGatewayGenerationRequiresLiveProbe(t *testing.T) {
+	t.Setenv("LITELLM_API_KEY", "gateway-secret")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer gateway-secret" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	liteLLMIndex := providerIndex(t, policy, "litellm")
+	policy.Providers[liteLLMIndex].Enabled = true
+	policy.Providers[liteLLMIndex].EndpointURL = server.URL
+	service := &Service{policy: policy}
+
+	result, err := service.Generate(GenerateRequest{
+		Task:              "Draft a local answer",
+		AllowPaidApproved: true,
+		RouteDecision:     &RouteDecision{SelectedProviderID: "litellm", SelectedModelID: "local-model", SelectedModelName: "Configured LiteLLM local model alias", Tier: TierLocal},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "skipped" || !strings.Contains(result.Reason, "live authenticated /v1/models probe") {
 		t.Fatalf("generation result = %#v", result)
 	}
 }

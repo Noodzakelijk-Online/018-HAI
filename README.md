@@ -450,6 +450,14 @@ catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
 other configured provider models. Provider status must be read as configuration
 and probe history, not as a live-service guarantee.
 
+LiteLLM is also available as an optional local gateway profile. It needs
+`LITELLM_ENABLED=true`, `LITELLM_BASE_URL`, `LITELLM_MODEL_ID`, and a separate
+`LITELLM_API_KEY`. HAI only accepts a loopback or `host.docker.internal`
+gateway, probes `/v1/models` with the virtual key, and requires manual approval
+before generation. A reachable gateway is not evidence that its upstream model
+is free, so HAI retains the EUR 0 paid policy and records the gateway as
+approval-gated.
+
 ### Metrics
 
 Prometheus telemetry is disabled by default. To enable it for a local collector,

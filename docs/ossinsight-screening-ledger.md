@@ -17,7 +17,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 
 | Project | Collection | Disposition | HAI role | Activation boundary |
 | --- | --- | --- | --- | --- |
-| LiteLLM | ai-gateways | Candidate | Local provider gateway | Local proxy only; existing EUR 0 policy stays authoritative. |
+| LiteLLM | ai-gateways | Integrated profile | Keyed local provider gateway | Loopback-only profile; manual approval required because proxy upstream billing is not inferable. |
 | llama.cpp | ChatGPT Alternatives | Candidate | Local GGUF inference | Loopback endpoint, model provenance, and health review required. |
 | pgvector | Vector Database & Vector Store | Candidate | Semantic retrieval in existing Postgres | Reversible migration and retention/backfill review required. |
 | Temporal | Workflow Scheduler | Candidate | Durable retries and follow-ups | One named local worker at a time; HAI owns approvals. |

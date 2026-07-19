@@ -25,7 +25,7 @@ role in one of these planes:
 
 | Collection | Candidate | Disposition | First safe increment |
 | --- | --- | --- | --- |
-| ai-gateways | LiteLLM | Candidate | Add an optional local proxy profile with paid providers disabled, then run a scoped health probe. |
+| ai-gateways | LiteLLM | Integrated profile | Enable a keyed loopback gateway profile; HAI requires manual approval because proxy billing cannot be inferred. |
 | Vector Database & Vector Store | pgvector | Candidate | Add a reversible Postgres extension migration and local embedding backfill plan. |
 | Workflow Scheduler | Temporal | Candidate | Run one named local durable workflow through a narrow Go worker. |
 | Monitoring Tool | Prometheus | Integrated profile | Enable a token-protected local metrics endpoint; configure a separate local collector when needed. |
@@ -80,3 +80,14 @@ counts and latency using route templates rather than raw paths. The exporter
 does not emit source text, prompts, identities, record IDs, or credentials as
 labels. A Prometheus collector is still separately configured and local by
 default.
+
+## Implemented LiteLLM boundary
+
+LiteLLM is an optional, operator-installed local gateway profile in both HAI
+model back-office registries. Set `LITELLM_ENABLED=true`,
+`LITELLM_BASE_URL`, `LITELLM_MODEL_ID`, and a separate `LITELLM_API_KEY`.
+HAI accepts only `localhost`, loopback, or `host.docker.internal`, probes
+`/v1/models` with the virtual key, and sends the key only to that configured
+gateway. HAI does not infer the gateway's upstream providers or billing from a
+successful probe: each LiteLLM generation remains approval-gated and the EUR 0
+policy remains authoritative.

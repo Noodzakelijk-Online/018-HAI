@@ -13,9 +13,11 @@ import (
 // custom) configured from env. It is not_configured unless a valid base URL is
 // set, is never active without a successful probe, and never executes actions.
 type remoteProvider struct {
+	enabled    bool
 	id         string
 	name       string
 	baseURL    string
+	apiKeyEnv  string
 	probePath  string
 	genPath    string
 	modelID    string
@@ -27,6 +29,7 @@ type remoteProvider struct {
 
 func newRemoteProvider(id, name, baseURLEnv, modelID string, arch ArchitectureFamily, lanes []RoutingLane) *remoteProvider {
 	p := &remoteProvider{
+		enabled:    true,
 		id:         id,
 		name:       name,
 		baseURL:    strings.TrimSpace(os.Getenv(baseURLEnv)),
@@ -41,6 +44,23 @@ func newRemoteProvider(id, name, baseURLEnv, modelID string, arch ArchitectureFa
 		p.configErr = baseURLEnv + " not set"
 	} else if err := validateEndpointURL(p.baseURL); err != nil {
 		p.configErr = err.Error()
+	}
+	return p
+}
+
+// newGuardedLocalGatewayProvider registers an operator-hosted gateway without
+// making it a cloud bypass. It needs an explicit enable flag, a loopback-only
+// endpoint, and a separate gateway key before it can even be probed.
+func newGuardedLocalGatewayProvider(id, name, enabledEnv, baseURLEnv, modelID, apiKeyEnv string, arch ArchitectureFamily, lanes []RoutingLane) *remoteProvider {
+	p := newLocalRemoteProvider(id, name, baseURLEnv, modelID, arch, lanes)
+	p.enabled = strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true")
+	p.apiKeyEnv = apiKeyEnv
+	if !p.enabled {
+		p.configErr = enabledEnv + " is false or missing"
+		return p
+	}
+	if p.configErr == "" && strings.TrimSpace(os.Getenv(apiKeyEnv)) == "" {
+		p.configErr = apiKeyEnv + " not set"
 	}
 	return p
 }
@@ -64,7 +84,14 @@ func envOrDefault(name, fallback string) string {
 
 func (p *remoteProvider) ID() string          { return p.id }
 func (p *remoteProvider) DisplayName() string { return p.name }
-func (p *remoteProvider) configured() bool    { return p.baseURL != "" && p.configErr == "" }
+func (p *remoteProvider) configured() bool    { return p.enabled && p.baseURL != "" && p.configErr == "" }
+
+func (p *remoteProvider) bearerToken() string {
+	if p.apiKeyEnv == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(p.apiKeyEnv))
+}
 
 func (p *remoteProvider) status() ProviderStatus {
 	if !p.configured() {
@@ -98,7 +125,7 @@ func (p *remoteProvider) Probe(ctx context.Context, now time.Time) ProbeResult {
 	if !p.configured() {
 		return ProbeResult{ProviderID: p.id, Status: ProviderNotConfigured, Detail: p.configErr, CheckedAt: now}
 	}
-	return probeModelsEndpoint(ctx, p.httpClient, p.id, p.baseURL, p.probePath, now)
+	return probeModelsEndpointWithBearer(ctx, p.httpClient, p.id, p.baseURL, p.probePath, p.bearerToken(), now)
 }
 
 func (p *remoteProvider) Generate(ctx context.Context, req InferenceRequest, now time.Time) (InferenceResult, error) {
@@ -109,7 +136,7 @@ func (p *remoteProvider) Generate(ctx context.Context, req InferenceRequest, now
 	if probe.Status != ProviderActive {
 		return InferenceResult{ProviderID: p.id, OK: false, Error: probe.Detail}, fmt.Errorf("%s: not active: %s", p.id, probe.Detail)
 	}
-	return chatCompletion(ctx, p.httpClient, p.id, p.modelID, p.baseURL, p.genPath, req)
+	return chatCompletionWithBearer(ctx, p.httpClient, p.id, p.modelID, p.baseURL, p.genPath, p.bearerToken(), req)
 }
 
 // Registry holds all configured providers and their profiles (§10.17).
@@ -120,7 +147,7 @@ type Registry struct {
 // NewRegistryFromEnv assembles the initial provider set:
 //   - test-fast-triage, test-verifier (always active, deterministic, local)
 //   - dspark (env, not_configured by default)
-//   - ollama, lm-studio, llama.cpp, custom-openai-compatible (env, not_configured by default)
+//   - ollama, lm-studio, llama.cpp, LiteLLM, custom-openai-compatible (env, not_configured by default)
 func NewRegistryFromEnv() *Registry {
 	return &Registry{providers: []Provider{
 		&testFastTriageProvider{},
@@ -129,6 +156,7 @@ func NewRegistryFromEnv() *Registry {
 		newRemoteProvider("ollama", "Ollama (local OpenAI-compatible)", "OLLAMA_BASE_URL", "ollama-default", ArchOllamaUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newRemoteProvider("lm-studio", "LM Studio (local OpenAI-compatible)", "LM_STUDIO_BASE_URL", "lm-studio-default", ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("llama-cpp", "llama.cpp (local OpenAI-compatible)", "LLAMA_CPP_BASE_URL", envOrDefault("LLAMA_CPP_MODEL_ID", "local-model"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
+		newGuardedLocalGatewayProvider("litellm", "LiteLLM (local-only gateway)", "LITELLM_ENABLED", "LITELLM_BASE_URL", envOrDefault("LITELLM_MODEL_ID", "local-model"), "LITELLM_API_KEY", ArchOpenAICompatibleUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newRemoteProvider("custom-openai-compatible", "Custom OpenAI-compatible", "CUSTOM_OPENAI_BASE_URL", "custom-default", ArchOpenAICompatibleUnknown, []RoutingLane{LaneDrafting, LaneParallelBatch}),
 	}}
 }

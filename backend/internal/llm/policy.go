@@ -501,6 +501,23 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			LoggedAt:         time.Now().UTC(),
 		}, nil
 	}
+	if provider.ID == "litellm" {
+		probe := probeProvider(provider, s.policy)
+		if !probe.Live {
+			return &GenerationResult{
+				ProviderID:       provider.ID,
+				ModelID:          model.ID,
+				ModelName:        model.Name,
+				Tier:             model.Tier,
+				Status:           "skipped",
+				Reason:           "LiteLLM gateway must pass a live authenticated /v1/models probe before generation: " + probe.Reason,
+				EstimatedCostEUR: model.EstimatedCostEUR,
+				DurationMs:       time.Since(started).Milliseconds(),
+				FallbackPath:     fallbackLabels(decision.FallbackPath),
+				LoggedAt:         time.Now().UTC(),
+			}, nil
+		}
+	}
 
 	output, err := s.callProvider(context.Background(), provider, model, endpoint, request)
 	if err != nil {
@@ -1190,8 +1207,14 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
 	}
-	if provider.ID == "llama-cpp" && !isLocalModelHost(host) {
-		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "llama.cpp endpoint must use localhost, loopback, or host.docker.internal"}
+	if (provider.ID == "llama-cpp" || provider.ID == "litellm") && !isLocalModelHost(host) {
+		name := "local provider"
+		if provider.ID == "llama-cpp" {
+			name = "llama.cpp"
+		} else if provider.ID == "litellm" {
+			name = "LiteLLM gateway"
+		}
+		return providerReadiness{configured: false, status: "blocked_endpoint", reason: name + " endpoint must use localhost, loopback, or host.docker.internal"}
 	}
 	if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
 		return providerReadiness{configured: false, status: "missing_api_key", reason: "required API key environment variable " + provider.APIKeyEnv + " is not set"}
@@ -1290,6 +1313,12 @@ func defaultPolicy() Policy {
 	if llamaCPPModelID == "" {
 		llamaCPPModelID = "local-model"
 	}
+	liteLLMEnabled := envEnabled("LITELLM_ENABLED")
+	liteLLMEndpoint := strings.TrimSpace(os.Getenv("LITELLM_BASE_URL"))
+	liteLLMModelID := strings.TrimSpace(os.Getenv("LITELLM_MODEL_ID"))
+	if liteLLMModelID == "" {
+		liteLLMModelID = "local-model"
+	}
 	odysseusEndpoint := strings.TrimSpace(os.Getenv("ODYSSEUS_BASE_URL"))
 	odysseusAPIKeyEnv := ""
 	if strings.TrimSpace(os.Getenv("ODYSSEUS_API_TOKEN")) != "" {
@@ -1373,6 +1402,19 @@ func defaultPolicy() Policy {
 				QuotaRemaining: -1,
 				Models: []Model{
 					{ID: llamaCPPModelID, Name: "Configured llama.cpp GGUF model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "litellm",
+				Name:           "LiteLLM local gateway",
+				Enabled:        liteLLMEnabled,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    liteLLMEndpoint,
+				APIKeyEnv:      "LITELLM_API_KEY",
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: liteLLMModelID, Name: "Configured LiteLLM local model alias", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", RequiresApproval: true, Enabled: true},
 				},
 			},
 			{

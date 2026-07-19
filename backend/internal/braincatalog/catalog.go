@@ -166,11 +166,11 @@ var entries = []Entry{
 	},
 	{
 		ID: "litellm", Name: "LiteLLM", UpstreamURL: "https://github.com/BerriAI/litellm", SourceCatalogURL: "https://ossinsight.io/collections/ai-gateways", SourceCollection: "ai-gateways",
-		Status: StatusCandidate, Category: "self-hosted LLM gateway", IntegrationMode: "operator-hosted local proxy adapter",
+		Status: StatusIntegrated, Category: "self-hosted LLM gateway", IntegrationMode: "operator-hosted loopback-only gateway profile",
 		Capabilities: []string{"OpenAI-compatible provider gateway", "local and cloud provider routing", "quota and spend telemetry", "model fallback"}, RecommendedFor: []string{"provider normalization", "local-first model routing", "quota observability"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Run LiteLLM only as an operator-configured local proxy. Configure local endpoints first, keep paid providers disabled, and bind HAI to an allowlisted OpenAI-compatible endpoint after a health and budget-policy review.",
-		Rationale:  "Its self-hosted proxy can normalize heterogeneous model endpoints, but it must not replace HAI's EUR 0 budget, approval, logging, or model-selection policy.",
+		Activation: "Set LITELLM_ENABLED=true, a separate LITELLM_API_KEY, LITELLM_MODEL_ID, and a loopback or host.docker.internal LITELLM_BASE_URL. HAI probes /v1/models with the key, rejects remote endpoints, and requires manual approval for generation.",
+		Rationale:  "HAI now has a guarded local LiteLLM profile, but the proxy's upstream billing cannot be inferred from its endpoint. HAI therefore retains its EUR 0 policy, approval, audit, and model-selection controls rather than trusting the gateway.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight ai-gateways listing and upstream self-hosted proxy documentation checked on 2026-07-19.",
 	},
 	{

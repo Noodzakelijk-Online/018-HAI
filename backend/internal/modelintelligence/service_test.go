@@ -27,7 +27,7 @@ func TestRegistryTruthfulProviderStates(t *testing.T) {
 	if byID[ProviderTestFastTriage].Status != ProviderActive {
 		t.Fatalf("test-fast-triage must be active, got %s", byID[ProviderTestFastTriage].Status)
 	}
-	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "custom-openai-compatible"} {
+	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "litellm", "custom-openai-compatible"} {
 		if byID[id].Status != ProviderNotConfigured {
 			t.Fatalf("%s must be not_configured without env config, got %s", id, byID[id].Status)
 		}
@@ -66,6 +66,45 @@ func TestLlamaCPPRegistryRequiresLocalEndpointAndUsesConfiguredModel(t *testing.
 	probe := provider.Probe(context.Background(), time.Now().UTC())
 	if probe.Status != ProviderActive || probe.ModelsSeen != 1 {
 		t.Fatalf("probe = %#v, want active llama.cpp provider", probe)
+	}
+}
+
+func TestLiteLLMRegistryRequiresExplicitLocalAuthenticatedGateway(t *testing.T) {
+	t.Setenv("LITELLM_ENABLED", "true")
+	t.Setenv("LITELLM_BASE_URL", "https://models.example.test")
+	t.Setenv("LITELLM_MODEL_ID", "local-qwen")
+	t.Setenv("LITELLM_API_KEY", "gateway-secret")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("litellm")
+	if !ok {
+		t.Fatal("LiteLLM provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote LiteLLM endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer gateway-secret" {
+			t.Fatalf("authorization = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"local-qwen"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("LITELLM_BASE_URL", server.URL)
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("litellm")
+	if !ok {
+		t.Fatal("LiteLLM provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "local-qwen" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured local-qwen", profile)
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active LiteLLM provider", probe)
 	}
 }
 

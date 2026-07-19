@@ -67,10 +67,17 @@ func validateLocalEndpointURL(raw string) error {
 // probeModelsEndpoint performs a truthful GET against an OpenAI-compatible
 // /models path and maps the result onto a ProviderStatus.
 func probeModelsEndpoint(ctx context.Context, client *http.Client, providerID, baseURL, probePath string, now time.Time) ProbeResult {
+	return probeModelsEndpointWithBearer(ctx, client, providerID, baseURL, probePath, "", now)
+}
+
+func probeModelsEndpointWithBearer(ctx context.Context, client *http.Client, providerID, baseURL, probePath, bearerToken string, now time.Time) ProbeResult {
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+probePath, nil)
 	if err != nil {
 		return ProbeResult{ProviderID: providerID, Status: ProviderFailed, Detail: err.Error(), CheckedAt: now}
+	}
+	if strings.TrimSpace(bearerToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -91,6 +98,10 @@ func probeModelsEndpoint(ctx context.Context, client *http.Client, providerID, b
 // chatCompletion performs a bounded OpenAI-compatible chat completion and
 // returns the assistant text plus telemetry.
 func chatCompletion(ctx context.Context, client *http.Client, providerID, modelID, baseURL, genPath string, req InferenceRequest) (InferenceResult, error) {
+	return chatCompletionWithBearer(ctx, client, providerID, modelID, baseURL, genPath, "", req)
+}
+
+func chatCompletionWithBearer(ctx context.Context, client *http.Client, providerID, modelID, baseURL, genPath, bearerToken string, req InferenceRequest) (InferenceResult, error) {
 	payload := map[string]any{
 		"model":      modelID,
 		"messages":   []map[string]string{{"role": "user", "content": req.Prompt}},
@@ -103,6 +114,9 @@ func chatCompletion(ctx context.Context, client *http.Client, providerID, modelI
 		return InferenceResult{ProviderID: providerID, OK: false, Error: err.Error()}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(bearerToken) != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return InferenceResult{ProviderID: providerID, OK: false, Error: err.Error()}, err
