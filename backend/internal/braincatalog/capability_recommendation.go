@@ -11,9 +11,14 @@ const maxCapabilityRecommendations = 6
 
 type CapabilityRecommendation struct {
 	Recommendation
-	Score    int      `json:"score"`
-	Reasons  []string `json:"reasons"`
-	NextStep string   `json:"nextStep"`
+	UpstreamURL      string   `json:"upstreamUrl"`
+	SourceCatalogURL string   `json:"sourceCatalogUrl"`
+	SourceCollection string   `json:"sourceCollection,omitempty"`
+	VerifiedAt       string   `json:"verifiedAt"`
+	VerificationNote string   `json:"verificationNote"`
+	Score            int      `json:"score"`
+	Reasons          []string `json:"reasons"`
+	NextStep         string   `json:"nextStep"`
 }
 
 type CapabilityRecommendationResponse struct {
@@ -66,7 +71,8 @@ func recommendationForEntry(entry Entry, tokens []string) CapabilityRecommendati
 	recommendation := CapabilityRecommendation{Recommendation: Recommendation{
 		ID: entry.ID, Name: entry.Name, Status: entry.Status, Role: entry.Category, Rationale: entry.Rationale,
 		RequiresApproval: entry.RequiresApproval, Activation: entry.Activation, ControlMappings: append([]ControlMapping(nil), entry.ControlMappings...),
-	}}
+	}, UpstreamURL: entry.UpstreamURL, SourceCatalogURL: entry.SourceCatalogURL, SourceCollection: entry.SourceCollection,
+		VerifiedAt: entry.VerifiedAt, VerificationNote: entry.VerificationNote}
 	for _, token := range tokens {
 		if matchesCapabilityText(token, entry.Name) || matchesCapabilityText(token, entry.Category) {
 			recommendation.Score += 5

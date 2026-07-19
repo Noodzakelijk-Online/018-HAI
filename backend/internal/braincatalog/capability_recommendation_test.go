@@ -21,6 +21,9 @@ func TestRecommendForNeedRanksReviewedCatalogWithoutHeldProjects(t *testing.T) {
 		if recommendation.NextStep == "" || recommendation.Score <= 0 {
 			t.Fatalf("recommendation lacks an actionable review boundary: %#v", recommendation)
 		}
+		if recommendation.UpstreamURL == "" || recommendation.SourceCatalogURL == "" || recommendation.VerifiedAt == "" || recommendation.VerificationNote == "" {
+			t.Fatalf("recommendation lacks reviewed provenance: %#v", recommendation)
+		}
 	}
 	if !foundEvaluation {
 		t.Fatalf("expected local evaluation candidate: %#v", response.Recommendations)

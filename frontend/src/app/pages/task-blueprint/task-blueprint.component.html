@@ -479,8 +479,13 @@
               <strong>{{ option.name }}</strong>
               <small>{{ option.role }} - {{ option.status }}</small>
               <small>{{ option.reasons.join('; ') }}</small>
+              <small *ngIf="option.sourceCollection">Reviewed {{ option.verifiedAt }} from {{ option.sourceCollection }}.</small>
             </div>
-            <span>{{ option.nextStep }}</span>
+            <div>
+              <span>{{ option.nextStep }}</span>
+              <a *ngIf="option.upstreamUrl" [href]="option.upstreamUrl" target="_blank" rel="noopener noreferrer">Inspect upstream</a>
+              <a *ngIf="option.sourceCatalogUrl" [href]="option.sourceCatalogUrl" target="_blank" rel="noopener noreferrer">Inspect source</a>
+            </div>
           </div>
         </article>
       </section>

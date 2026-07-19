@@ -644,6 +644,12 @@ textarea {
   line-height: 1.4;
 }
 
+.task-capability-option a {
+  color: var(--primary);
+  font-size: 12px;
+  width: fit-content;
+}
+
 .inspector-card dl {
   display: grid;
   gap: 8px;

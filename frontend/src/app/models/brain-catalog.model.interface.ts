@@ -92,6 +92,11 @@ export interface IBrainCatalogCapabilityRecommendation {
   rationale: string
   requiresApproval: boolean
   activation: string
+  upstreamUrl: string
+  sourceCatalogUrl: string
+  sourceCollection?: string
+  verifiedAt: string
+  verificationNote: string
   score: number
   reasons: string[]
   nextStep: string

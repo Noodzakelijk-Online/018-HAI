@@ -201,3 +201,8 @@ matches remain skipped until an adapter has been reviewed and configured;
 compatibility profiles remain blocked behind an explicit bridge and approval;
 and integrated profiles remain skipped until local configuration and live
 health evidence are present.
+
+Every ranked match carries the reviewed upstream URL, its OSS Insight source
+record, source collection, verification date, and verification note. The
+operator can therefore inspect the evidence from either the Brain Catalog or a
+task plan before starting any separate adapter review.

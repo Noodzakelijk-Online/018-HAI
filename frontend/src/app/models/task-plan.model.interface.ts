@@ -130,6 +130,11 @@ export interface ICatalogRecommendation {
   rationale: string;
   requiresApproval: boolean;
   activation: string;
+  upstreamUrl?: string;
+  sourceCatalogUrl?: string;
+  sourceCollection?: string;
+  verifiedAt?: string;
+  verificationNote?: string;
 }
 
 export interface ICapabilityRecommendation extends ICatalogRecommendation {
