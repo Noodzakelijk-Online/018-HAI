@@ -58,6 +58,20 @@
         <div *ngIf="entry.sourceCollection"><dt>OSS Insight collection</dt><dd>{{ entry.sourceCollection }}</dd></div>
       </dl>
       <p class="brain-catalog-page__verification-note">{{ entry.verificationNote }}</p>
+      <div class="brain-catalog-page__upstream-review">
+        <div>
+          <strong>Upstream metadata</strong>
+          <span>Checks public GitHub metadata for this fixed catalog entry. It never downloads code or changes HAI's adoption decision.</span>
+        </div>
+        <button nz-button nzType="default" (click)="revalidate(entry)" [nzLoading]="revalidatingId === entry.id" [disabled]="!!revalidatingId">
+          Recheck upstream
+        </button>
+      </div>
+      <div class="brain-catalog-page__upstream-result" *ngIf="upstreamReview as review" [class.brain-catalog-page__upstream-result--warning]="review.archived || !review.available">
+        <strong>{{ review.available ? (review.archived ? 'Archived upstream' : 'Upstream available') : 'Upstream unavailable' }}</strong>
+        <span>{{ review.message }}</span>
+        <small>Checked {{ review.checkedAt }}<ng-container *ngIf="review.license"> · {{ review.license }}</ng-container><ng-container *ngIf="review.defaultBranch"> · {{ review.defaultBranch }}</ng-container></small>
+      </div>
       <div class="brain-catalog-page__control-mappings" *ngIf="entry.controlMappings?.length">
         <strong>HAI control mapping</strong>
         <div *ngFor="let mapping of entry.controlMappings"><span>{{ mapping.sourcePattern }}</span><i nz-icon nzType="arrow-right" nzTheme="outline"></i><span>{{ mapping.haiControl }}</span><small>{{ mapping.boundary }}</small></div>

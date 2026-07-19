@@ -32,6 +32,20 @@ export interface IBrainCatalogEntry {
   controlMappings?: IBrainCatalogControlMapping[]
 }
 
+export interface IBrainCatalogUpstreamReview {
+  id: string
+  name: string
+  upstreamUrl: string
+  checkedAt: string
+  available: boolean
+  archived: boolean
+  license?: string
+  defaultBranch?: string
+  pushedAt?: string
+  message: string
+  disposition: BrainCatalogStatus
+}
+
 export interface IBrainCatalogSource {
   name: string
   url: string

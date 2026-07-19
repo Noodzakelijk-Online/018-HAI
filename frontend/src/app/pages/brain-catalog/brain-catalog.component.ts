@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { IBrainCatalogEntry, IBrainCatalogResponse } from '../../models/brain-catalog.model.interface'
+import { IBrainCatalogEntry, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { PursuitService } from '../../services/pursuit.service'
 
@@ -16,6 +16,8 @@ export class BrainCatalogComponent implements OnInit {
   loading = false
   loadFailed = false
   reviewingCandidateId = ''
+  revalidatingId = ''
+  upstreamReview?: IBrainCatalogUpstreamReview
 
   constructor(
     private service: BrainCatalogService,
@@ -59,7 +61,27 @@ export class BrainCatalogComponent implements OnInit {
     )
   }
 
-  select(entry: IBrainCatalogEntry): void { this.selected = entry }
+  select(entry: IBrainCatalogEntry): void {
+    this.selected = entry
+    this.upstreamReview = undefined
+  }
+
+  revalidate(entry: IBrainCatalogEntry): void {
+    if (this.revalidatingId) return
+    this.revalidatingId = entry.id
+    this.upstreamReview = undefined
+    this.service.revalidate(entry.id).subscribe({
+      next: (review) => {
+        this.revalidatingId = ''
+        this.upstreamReview = review
+        this.notification.success('Upstream rechecked', `${entry.name} was checked without changing its HAI activation state.`)
+      },
+      error: () => {
+        this.revalidatingId = ''
+        this.notification.error('Upstream recheck unavailable', 'HAI could not retrieve public GitHub metadata. No catalog decision or runtime state changed.')
+      },
+    })
+  }
 
   canStartReview(entry: IBrainCatalogEntry): boolean {
     return entry.status === 'candidate' || entry.status === 'compatibility_only'

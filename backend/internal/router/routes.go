@@ -245,6 +245,7 @@ func initializeBrainCatalogRoutes(apiVersion *gin.RouterGroup, handler *braincat
 	{
 		routes.GET("/", requirePermission(rbac.PermRead), handler.List)
 		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
+		routes.POST("/:id/revalidate", requirePermission(rbac.PermAdmin), handler.Revalidate)
 	}
 }
 

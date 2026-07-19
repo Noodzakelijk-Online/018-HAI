@@ -21,12 +21,12 @@ describe('BrainCatalogComponent adapter reviews', () => {
   }
 
   function createComponent() {
-    const catalogService = {} as any
+    const catalogService = { revalidate: jasmine.createSpy('revalidate') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
     return {
-      component: new BrainCatalogComponent(catalogService, pursuitService as any, notification, router as any),
+      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, notification, router as any),
       pursuitService,
       notification,
       router,
@@ -64,5 +64,23 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     expect(component.reviewingCandidateId).toBe('')
     expect(notification.error).toHaveBeenCalledWith('Could not create adapter review', 'No project was installed, configured, or activated. Try again after checking the local pursuit service.')
+  })
+
+  it('shows an upstream recheck without changing the catalog entry', () => {
+    const { component, notification } = createComponent()
+    const catalogService = (component as any).service
+    catalogService.revalidate.and.returnValue(of({
+      id: 'cline',
+      available: true,
+      archived: false,
+      license: 'Apache-2.0',
+      message: 'metadata only',
+    }))
+
+    component.revalidate(candidate as any)
+
+    expect(catalogService.revalidate).toHaveBeenCalledWith('cline')
+    expect(component.upstreamReview?.license).toBe('Apache-2.0')
+    expect(notification.success).toHaveBeenCalledWith('Upstream rechecked', 'Cline was checked without changing its HAI activation state.')
   })
 })
