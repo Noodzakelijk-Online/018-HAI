@@ -12,6 +12,7 @@ export class BrainCatalogComponent implements OnInit {
   catalog?: IBrainCatalogResponse
   selected?: IBrainCatalogEntry
   loading = false
+  loadFailed = false
 
   constructor(private service: BrainCatalogService, private notification: NzNotificationService) {}
 
@@ -19,6 +20,7 @@ export class BrainCatalogComponent implements OnInit {
 
   refresh(): void {
     this.loading = true
+    this.loadFailed = false
     this.service.overview().subscribe({
       next: (catalog) => {
         this.catalog = catalog
@@ -27,6 +29,7 @@ export class BrainCatalogComponent implements OnInit {
       },
       error: () => {
         this.loading = false
+        this.loadFailed = true
         this.notification.error('Catalog unavailable', 'HAI could not load the reviewed capability catalog.')
       },
     })

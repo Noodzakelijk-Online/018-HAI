@@ -87,5 +87,16 @@
 </section>
 
 <ng-template #loadingState>
-  <section class="brain-catalog-page brain-catalog-page--loading"><nz-spin nzTip="Loading capability catalog..."></nz-spin></section>
+  <section class="brain-catalog-page brain-catalog-page--loading" *ngIf="!loadFailed; else unavailableState"><nz-spin nzTip="Loading capability catalog..."></nz-spin></section>
+</ng-template>
+
+<ng-template #unavailableState>
+  <section class="brain-catalog-page brain-catalog-page--loading">
+    <div class="brain-catalog-page__unavailable" role="alert">
+      <i nz-icon nzType="warning" nzTheme="outline"></i>
+      <h1>Catalog unavailable</h1>
+      <p>The capability registry could not be loaded. No runtime state or approval decision has changed.</p>
+      <button nz-button nzType="primary" (click)="refresh()" [nzLoading]="loading"><i nz-icon nzType="reload" nzTheme="outline"></i> Try again</button>
+    </div>
+  </section>
 </ng-template>

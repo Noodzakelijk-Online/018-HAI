@@ -2,6 +2,10 @@
 
 .brain-catalog-page { color: var(--hai-text); margin: 0 auto; max-width: 1180px; padding: 28px; }
 .brain-catalog-page--loading { min-height: 320px; display: grid; place-items: center; }
+.brain-catalog-page__unavailable { align-items: center; background: var(--hai-surface); border: 1px solid var(--hai-border); border-radius: 8px; display: grid; gap: 10px; max-width: 460px; padding: 28px; text-align: center; }
+.brain-catalog-page__unavailable > i { color: var(--hai-warning); font-size: 28px; }
+.brain-catalog-page__unavailable h1, .brain-catalog-page__unavailable p { margin: 0; }
+.brain-catalog-page__unavailable p { color: var(--hai-text-muted); line-height: 1.5; }
 .brain-catalog-page__header { align-items: flex-start; display: flex; gap: 24px; justify-content: space-between; margin-bottom: 24px; }
 .brain-catalog-page__header h1, .brain-catalog-page__header h2, .brain-catalog-page__header p { margin: 0; }
 .brain-catalog-page__header h1 { font-size: 27px; line-height: 1.2; }
