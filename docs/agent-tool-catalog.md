@@ -6,6 +6,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 
 - The catalog is read-only at `GET /api/v1/brain-catalog/`.
 - Listing a project never downloads, installs, enables, or executes it.
+- The back-office **Start review** action creates a normal, owner-scoped HAI pursuit with the catalog provenance and adapter-review gates; it does not activate the project.
 - Task planning can recommend a project capability, but does not select it as an executable tool.
 - A project becomes executable only after a dedicated adapter has been reviewed, configured, health-checked, and routed through HAI's existing approval and audit controls.
 - HAI remains the policy owner: an external framework cannot bypass the local-first policy, paid budget, source controls, folder allowlist, emergency stop, or approval queue.

@@ -36,6 +36,9 @@
 .brain-catalog-page__profile-state span, .brain-catalog-page__verification-note { color: var(--hai-text-muted); }
 .brain-catalog-page__activation { background: var(--hai-surface-muted); border: 1px solid var(--hai-border); border-radius: 6px; display: grid; gap: 5px; line-height: 1.45; padding: 12px; }
 .brain-catalog-page__activation span { color: var(--hai-text-muted); }
+.brain-catalog-page__review-action { align-items: center; border-bottom: 1px solid var(--hai-border); display: flex; gap: 14px; justify-content: space-between; margin-top: 14px; padding: 0 0 14px; }
+.brain-catalog-page__review-action div { display: grid; gap: 4px; }
+.brain-catalog-page__review-action span { color: var(--hai-text-muted); font-size: 12px; line-height: 1.4; }
 .brain-catalog-page__capabilities { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
 .brain-catalog-page__inspector a, .brain-catalog-page__provenance a { color: var(--hai-action); }
 .brain-catalog-page__provenance-summary { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 16px 0 0; }
@@ -53,4 +56,4 @@ hai-progressive-section { display: block; margin-top: 14px; }
 .brain-catalog-page__provenance { background: var(--hai-surface); border: 1px solid var(--hai-border); border-radius: 8px; margin-top: 14px; padding: 14px; }
 .brain-catalog-page__provenance summary { cursor: pointer; font-weight: 700; }
 .brain-catalog-page__provenance p, .brain-catalog-page__provenance ul { color: var(--hai-text-muted); line-height: 1.5; }
-@media (max-width: 780px) { .brain-catalog-page { padding: 18px; } .brain-catalog-page__header, .brain-catalog-page__layout { grid-template-columns: 1fr; display: grid; } .brain-catalog-page__metrics, .brain-catalog-page__provenance-summary { grid-template-columns: 1fr; } .brain-catalog-page__advanced-grid { grid-template-columns: 1fr; } }
+@media (max-width: 780px) { .brain-catalog-page { padding: 18px; } .brain-catalog-page__header, .brain-catalog-page__layout { grid-template-columns: 1fr; display: grid; } .brain-catalog-page__metrics, .brain-catalog-page__provenance-summary { grid-template-columns: 1fr; } .brain-catalog-page__advanced-grid { grid-template-columns: 1fr; } .brain-catalog-page__review-action { align-items: stretch; flex-direction: column; } .brain-catalog-page__review-action button { width: 100%; } }

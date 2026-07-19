@@ -1,7 +1,9 @@
 import { Component, OnInit } from '@angular/core'
+import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IBrainCatalogEntry, IBrainCatalogResponse } from '../../models/brain-catalog.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
+import { PursuitService } from '../../services/pursuit.service'
 
 @Component({
   selector: 'app-brain-catalog',
@@ -13,8 +15,14 @@ export class BrainCatalogComponent implements OnInit {
   selected?: IBrainCatalogEntry
   loading = false
   loadFailed = false
+  reviewingCandidateId = ''
 
-  constructor(private service: BrainCatalogService, private notification: NzNotificationService) {}
+  constructor(
+    private service: BrainCatalogService,
+    private pursuitService: PursuitService,
+    private notification: NzNotificationService,
+    private router: Router,
+  ) {}
 
   ngOnInit(): void { this.refresh() }
 
@@ -52,6 +60,42 @@ export class BrainCatalogComponent implements OnInit {
   }
 
   select(entry: IBrainCatalogEntry): void { this.selected = entry }
+
+  canStartReview(entry: IBrainCatalogEntry): boolean {
+    return entry.status === 'candidate' || entry.status === 'compatibility_only'
+  }
+
+  startAdapterReview(entry: IBrainCatalogEntry): void {
+    if (!this.canStartReview(entry) || this.reviewingCandidateId) return
+    this.reviewingCandidateId = entry.id
+    const riskLevel = entry.requiresApproval ? 'high' : 'medium'
+    this.pursuitService.create({
+      title: `Review ${entry.name} adapter boundary`,
+      description: `Review the HAI adapter proposal for ${entry.name}. Upstream: ${entry.upstreamUrl}. Discovery source: ${entry.sourceCatalogUrl}. HAI must not install, enable, or execute ${entry.name} during this review.`,
+      whyItMatters: entry.rationale,
+      projectKey: '018-HAI',
+      domain: 'software',
+      desiredOutcome: `A documented go/no-go decision for a narrow ${entry.name} adapter, including local configuration, health checks, audit records, rollback, and approval boundaries.`,
+      currentStateSummary: `Catalog candidate recorded as ${entry.status.replace(/_/g, ' ')}. No HAI adapter is configured or live.`,
+      status: 'waiting',
+      priorityScore: entry.requiresApproval ? 70 : 55,
+      riskLevel,
+      autonomyLevel: 'manual',
+      sourceOfCreation: `brain_catalog:${entry.id}`,
+      nextRecommendedAction: 'Review license, deployment model, workspace and network boundaries, allowed tools, health probe, audit trail, rollback, and the no-op validation path before implementation.',
+      completionDefinition: 'A human-approved adapter design and validation plan exists, or the candidate is explicitly rejected. No third-party software is installed or activated by creating this pursuit.',
+    }).subscribe({
+      next: (pursuit) => {
+        this.reviewingCandidateId = ''
+        this.notification.success('Adapter review created', `${entry.name} remains disabled. HAI created a review record instead of activating the project.`)
+        this.router.navigate(['/pursuits'], { queryParams: { selected: pursuit.id } })
+      },
+      error: () => {
+        this.reviewingCandidateId = ''
+        this.notification.error('Could not create adapter review', 'No project was installed, configured, or activated. Try again after checking the local pursuit service.')
+      },
+    })
+  }
 
   statusColor(status: string): string {
     if (status === 'integrated_profile') return 'green'

@@ -40,6 +40,15 @@
         <span>Registered in HAI. Configuration and live readiness are checked by the relevant runtime or provider screen.</span>
       </div>
       <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
+      <div class="brain-catalog-page__review-action" *ngIf="canStartReview(entry)">
+        <div>
+          <strong>Adapter review</strong>
+          <span>Creates a controlled HAI pursuit. It does not install, configure, or run this project.</span>
+        </div>
+        <button nz-button nzType="primary" (click)="startAdapterReview(entry)" [nzLoading]="reviewingCandidateId === entry.id" [disabled]="!!reviewingCandidateId">
+          Start review
+        </button>
+      </div>
       <div class="brain-catalog-page__capabilities" *ngIf="entry.capabilities.length">
         <nz-tag *ngFor="let capability of entry.capabilities">{{ capability }}</nz-tag>
       </div>
