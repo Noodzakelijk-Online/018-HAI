@@ -76,6 +76,19 @@ func TestGetHandlerReturnsNotFoundForUnknownEntry(t *testing.T) {
 	}
 }
 
+func TestAdoptionPlanHandlerReturnsReadOnlyImplementationQueue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewHandler()
+	router.GET("/adoption-plan", handler.AdoptionPlan)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/adoption-plan", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items"`) || !strings.Contains(response.Body.String(), `"cloudquery"`) || !strings.Contains(response.Body.String(), "does not install") {
+		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestRevalidateHandlerReturnsBoundedReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

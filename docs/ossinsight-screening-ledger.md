@@ -220,6 +220,21 @@ record, source collection, verification date, and verification note. The
 operator can therefore inspect the evidence from either the Brain Catalog or a
 task plan before starting any separate adapter review.
 
+## Adoption roadmap
+
+`GET /api/v1/brain-catalog/adoption-plan` returns the read-only implementation
+queue for integrated profiles, review-first candidates, and compatibility
+bridges. It ranks work using local-first suitability and HAI capability-plane
+coverage so an unserved plane is visible before another overlapping tool is
+considered. Held, excluded, licence-review, and reference-only entries are not
+included.
+
+The endpoint never calls an upstream, installs a package, creates credentials,
+changes provider or runtime configuration, approves work, or executes a tool.
+Each item repeats its required gates and its recommended next review action;
+the existing catalog inspector remains the path to inspect provenance and open
+a manual adapter-review pursuit.
+
 The matching vocabulary applies a small deterministic expansion for common
 operational terms, for example `LLM` to `model` and `inference`, or `PII` to
 `sensitive` and `redaction`. Singular and plural variants are normalized. The

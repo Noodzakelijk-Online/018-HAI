@@ -52,6 +52,13 @@ func (h *Handler) List(c *gin.Context) {
 	})
 }
 
+// AdoptionPlan exposes the reviewed implementation queue. It is derived only
+// from HAI's local catalog and plane coverage, so it needs no upstream request
+// and cannot install, configure, or activate any project.
+func (h *Handler) AdoptionPlan(c *gin.Context) {
+	c.JSON(http.StatusOK, AdoptionPlanReport())
+}
+
 func (h *Handler) Get(c *gin.Context) {
 	entry, ok := EntryByID(c.Param("id"))
 	if !ok {

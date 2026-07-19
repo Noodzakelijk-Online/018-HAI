@@ -21,7 +21,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
   }
 
   function createComponent() {
-    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), discoverReviewableOSSInsightRepositories: jasmine.createSpy('discoverReviewableOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
+    const catalogService = { adoptionPlan: jasmine.createSpy('adoptionPlan'), revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), discoverReviewableOSSInsightRepositories: jasmine.createSpy('discoverReviewableOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
@@ -54,6 +54,28 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const { component, pursuitService } = createComponent()
     component.startAdapterReview({ ...candidate, status: 'excluded' } as any)
     expect(pursuitService.create).not.toHaveBeenCalled()
+  })
+
+  it('loads the read-only implementation roadmap without activating a project', () => {
+    const { component, notification } = createComponent()
+    const catalogService = (component as any).service
+    catalogService.adoptionPlan.and.returnValue(of({ items: [{ id: 'cloudquery', name: 'CloudQuery', priority: 88 }], message: 'does not install or execute' }))
+
+    component.loadAdoptionPlan()
+
+    expect(catalogService.adoptionPlan).toHaveBeenCalled()
+    expect(component.adoptionPlan?.items[0].id).toBe('cloudquery')
+    expect(notification.error).not.toHaveBeenCalled()
+  })
+
+  it('routes a roadmap candidate through the existing manual adapter review flow', () => {
+    const { component, pursuitService } = createComponent()
+    component.catalog = { entries: [candidate] } as any
+    pursuitService.create.and.returnValue(of({ id: 'pursuit-roadmap-1' }))
+
+    component.startRoadmapReview('cline')
+
+    expect(pursuitService.create).toHaveBeenCalledWith(jasmine.objectContaining({ sourceOfCreation: 'brain_catalog:cline' }))
   })
 
   it('keeps the candidate disabled after a create failure', () => {
@@ -107,7 +129,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const { component, pursuitService, notification, router } = createComponent()
     pursuitService.create.and.returnValue(of({ id: 'pursuit-discovery-1' }))
 
-    component.queueDiscoveryReview({ collection: 'MCP Servers', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
+    component.queueDiscoveryReview({ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
 
     expect(pursuitService.create).toHaveBeenCalledWith(jasmine.objectContaining({
       title: 'Screen owner/new-mcp for a HAI adapter',
@@ -125,7 +147,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const catalogService = (component as any).service
     catalogService.revalidateOSSInsightDiscovery.and.returnValue(of({ id: 'ossinsight-owner-new-mcp', name: 'owner/new-mcp', upstreamUrl: 'https://github.com/owner/new-mcp', available: true, archived: false, license: 'MIT', message: 'metadata only', disposition: 'candidate', readiness: 'review_now', readinessReason: 'review safely' }))
 
-    component.verifyDiscovery({ collection: 'MCP Servers', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
+    component.verifyDiscovery({ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
 
     expect(catalogService.revalidateOSSInsightDiscovery).toHaveBeenCalledWith('owner/new-mcp', 'candidate')
     expect(component.discoveryReviews['owner/new-mcp'].license).toBe('MIT')

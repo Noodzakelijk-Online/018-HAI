@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http'
 import { Injectable } from '@angular/core'
 import { Observable } from 'rxjs'
-import { IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../models/brain-catalog.model.interface'
+import { IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../models/brain-catalog.model.interface'
 
 @Injectable({ providedIn: 'root' })
 export class BrainCatalogService {
@@ -9,6 +9,10 @@ export class BrainCatalogService {
 
   overview(): Observable<IBrainCatalogResponse> {
     return this.http.get<IBrainCatalogResponse>('/api/v1/brain-catalog/')
+  }
+
+  adoptionPlan(): Observable<IBrainCatalogAdoptionPlan> {
+    return this.http.get<IBrainCatalogAdoptionPlan>('/api/v1/brain-catalog/adoption-plan')
   }
 
   revalidate(id: string): Observable<IBrainCatalogUpstreamReview> {

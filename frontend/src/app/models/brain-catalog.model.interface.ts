@@ -114,6 +114,31 @@ export interface IBrainCatalogCapabilityRecommendationResponse {
   message: string
 }
 
+export interface IBrainCatalogAdoptionPlanItem {
+  id: string
+  name: string
+  status: BrainCatalogStatus
+  category: string
+  planes: string[]
+  priority: number
+  priorityReason: string
+  integrationMode: string
+  localFirst: boolean
+  requiresApproval: boolean
+  activation: string
+  requiredGates: string[]
+  upstreamUrl: string
+  sourceCatalogUrl: string
+  sourceCollection?: string
+  verificationNote: string
+  recommendedAction: string
+}
+
+export interface IBrainCatalogAdoptionPlan {
+  items: IBrainCatalogAdoptionPlanItem[]
+  message: string
+}
+
 export interface IBrainCatalogSource {
   name: string
   url: string

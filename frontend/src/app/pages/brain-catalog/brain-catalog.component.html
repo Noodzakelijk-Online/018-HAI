@@ -29,6 +29,27 @@
     </div>
   </hai-progressive-section>
 
+  <hai-progressive-section moduleId="brain-catalog" sectionId="implementation-roadmap" title="Implementation roadmap" summary="Ranked, read-only integration work across HAI's capability planes. Load it when you want the complete back-office queue.">
+    <div class="brain-catalog-page__source-review" *ngIf="!adoptionPlan">
+      <div>
+        <strong>Review the complete queue</strong>
+        <span>Ranking favors local-first capability gaps. It does not install, configure, approve, or execute an upstream project.</span>
+      </div>
+      <button nz-button nzType="default" (click)="loadAdoptionPlan()" [nzLoading]="loadingAdoptionPlan" [disabled]="loadingAdoptionPlan">
+        Load roadmap
+      </button>
+    </div>
+    <ng-container *ngIf="adoptionPlan as plan">
+      <div class="brain-catalog-page__source-result"><strong>{{ plan.items.length }} implementation paths</strong><span>{{ plan.message }}</span></div>
+      <div class="brain-catalog-page__recommendations">
+        <article *ngFor="let item of plan.items">
+          <div><strong>{{ item.name }}</strong><small>Priority {{ item.priority }} - {{ item.category }}<ng-container *ngIf="item.sourceCollection"> - {{ item.sourceCollection }}</ng-container></small><span>{{ item.priorityReason }}</span><span>{{ item.recommendedAction }}</span><small>Gates: {{ item.requiredGates.join('; ') }}</small></div>
+          <div><nz-tag [nzColor]="statusColor(item.status)">{{ statusLabel(item.status) }}</nz-tag><small>{{ item.planes.join(', ') }}</small><button nz-button nzType="default" (click)="selectById(item.id)">Inspect profile</button><button *ngIf="item.status === 'candidate' || item.status === 'compatibility_only'" nz-button nzType="primary" (click)="startRoadmapReview(item.id)" [nzLoading]="reviewingCandidateId === item.id" [disabled]="!!reviewingCandidateId">Start review</button></div>
+        </article>
+      </div>
+    </ng-container>
+  </hai-progressive-section>
+
   <section class="brain-catalog-page__layout">
     <div class="brain-catalog-page__list">
       <div class="brain-catalog-page__section-heading">

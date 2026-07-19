@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { BrainCatalogCollectionDisposition, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
+import { BrainCatalogCollectionDisposition, IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { PursuitService } from '../../services/pursuit.service'
 
@@ -21,10 +21,12 @@ export class BrainCatalogComponent implements OnInit {
   revalidatingId = ''
   checkingOSSInsight = false
   discoveringOSSInsight = false
+  loadingAdoptionPlan = false
   recommendingCapabilities = false
   upstreamReview?: IBrainCatalogUpstreamReview
   ossInsightReview?: IBrainCatalogOSSInsightReview
   ossInsightDiscovery?: IBrainCatalogOSSInsightDiscoveryReport
+  adoptionPlan?: IBrainCatalogAdoptionPlan
   capabilityRecommendation?: IBrainCatalogCapabilityRecommendationResponse
   discoveryReviews: Record<string, IBrainCatalogUpstreamReview> = {}
 
@@ -78,6 +80,26 @@ export class BrainCatalogComponent implements OnInit {
   selectById(id: string): void {
     const entry = this.catalog?.entries.find((candidate) => candidate.id === id)
     if (entry) this.select(entry)
+  }
+
+  startRoadmapReview(id: string): void {
+    const entry = this.catalog?.entries.find((candidate) => candidate.id === id)
+    if (entry) this.startAdapterReview(entry)
+  }
+
+  loadAdoptionPlan(): void {
+    if (this.loadingAdoptionPlan || this.adoptionPlan) return
+    this.loadingAdoptionPlan = true
+    this.service.adoptionPlan().subscribe({
+      next: (plan) => {
+        this.loadingAdoptionPlan = false
+        this.adoptionPlan = plan
+      },
+      error: () => {
+        this.loadingAdoptionPlan = false
+        this.notification.error('Implementation roadmap unavailable', 'HAI could not load the read-only adoption queue. No catalog, runtime, or approval state changed.')
+      },
+    })
   }
 
   revalidate(entry: IBrainCatalogEntry): void {
