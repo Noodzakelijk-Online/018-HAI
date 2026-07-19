@@ -1207,12 +1207,14 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
 	}
-	if (provider.ID == "llama-cpp" || provider.ID == "localai" || provider.ID == "litellm") && !isLocalModelHost(host) {
+	if (provider.ID == "llama-cpp" || provider.ID == "localai" || provider.ID == "vllm" || provider.ID == "litellm") && !isLocalModelHost(host) {
 		name := "local provider"
 		if provider.ID == "llama-cpp" {
 			name = "llama.cpp"
 		} else if provider.ID == "localai" {
 			name = "LocalAI"
+		} else if provider.ID == "vllm" {
+			name = "vLLM"
 		} else if provider.ID == "litellm" {
 			name = "LiteLLM gateway"
 		}
@@ -1320,6 +1322,11 @@ func defaultPolicy() Policy {
 	if localAIModelID == "" {
 		localAIModelID = "localai-default"
 	}
+	vLLMEndpoint := strings.TrimSpace(os.Getenv("VLLM_BASE_URL"))
+	vLLMModelID := strings.TrimSpace(os.Getenv("VLLM_MODEL_ID"))
+	if vLLMModelID == "" {
+		vLLMModelID = "vllm-default"
+	}
 	liteLLMEnabled := envEnabled("LITELLM_ENABLED")
 	liteLLMEndpoint := strings.TrimSpace(os.Getenv("LITELLM_BASE_URL"))
 	liteLLMModelID := strings.TrimSpace(os.Getenv("LITELLM_MODEL_ID"))
@@ -1421,6 +1428,18 @@ func defaultPolicy() Policy {
 				QuotaRemaining: -1,
 				Models: []Model{
 					{ID: localAIModelID, Name: "Configured LocalAI local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "vllm",
+				Name:           "vLLM local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    vLLMEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: vLLMModelID, Name: "Configured vLLM local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
 				},
 			},
 			{

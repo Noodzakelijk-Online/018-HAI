@@ -71,6 +71,14 @@ case. A configured value alone is not enough: HAI marks it usable only after a
 live `/v1/models` probe, retains the EUR 0 paid budget, and continues to apply
 the router's existing validation, fallback, audit, and approval controls.
 
+`LocalAI` and `vLLM` use the same separate, first-class profile pattern. Set
+`LOCALAI_BASE_URL` / `LOCALAI_MODEL_ID` or `VLLM_BASE_URL` / `VLLM_MODEL_ID`
+to point at an operator-installed endpoint. Both profiles reject non-local
+endpoints, stay inactive until `/v1/models` succeeds, use the bounded
+OpenAI-compatible completion contract, and remain subject to HAI's EUR 0,
+local-first, validation, audit, and approval policy. HAI neither installs the
+servers nor downloads or selects their models.
+
 ## Implemented metrics boundary
 
 HAI now includes an opt-in Prometheus exposition endpoint. Set

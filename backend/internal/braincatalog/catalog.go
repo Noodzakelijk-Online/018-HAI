@@ -286,12 +286,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "vllm", Name: "vLLM", UpstreamURL: "https://github.com/vllm-project/vllm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
-		Status: StatusCandidate, Category: "local high-throughput model inference", IntegrationMode: "reviewed local OpenAI-compatible provider",
+		Status: StatusIntegrated, Category: "local high-throughput model inference", IntegrationMode: "integrated loopback OpenAI-compatible provider profile",
 		Capabilities: []string{"local model serving", "OpenAI-compatible API", "batched inference", "model capability discovery"}, RecommendedFor: []string{"local reasoning", "larger local models", "high-volume extraction"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review a loopback-only deployment with explicit GPU, model, quantization, context-window, retention, and resource limits. Reuse HAI's existing OpenAI-compatible provider probe and EUR 0 routing policy; HAI cannot select, send data to, or start vLLM until an operator configures and verifies the endpoint.",
-		Rationale:  "vLLM is a capable local inference candidate where Ollama or llama.cpp cannot meet a measured throughput or model-serving need. It is not enabled by the catalog and does not replace HAI's model, budget, or approval policy.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines repository list and GitHub metadata checked on 2026-07-19; no vLLM endpoint is configured by HAI.",
+		Rationale:  "HAI now implements a distinct vLLM provider profile for a measured local throughput or serving need while preserving explicit configuration, loopback-only reachability, live probing, and the existing model, budget, and approval policy.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence. HAI implements only the provider profile; no vLLM endpoint or model is configured by HAI.",
 	},
 	{
 		ID: "deepeval", Name: "DeepEval", UpstreamURL: "https://github.com/confident-ai/deepeval", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",

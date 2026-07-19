@@ -218,6 +218,24 @@ func TestRouteBlocksRemoteLocalAIProviderEndpoint(t *testing.T) {
 	t.Fatalf("expected LocalAI local-only boundary, got %#v", decision.Skipped)
 }
 
+func TestRouteBlocksRemoteVLLMProviderEndpoint(t *testing.T) {
+	policy := testPolicyWithoutEndpoints()
+	vllmIndex := providerIndex(t, policy, "vllm")
+	policy.Providers[vllmIndex].EndpointURL = "https://models.example.test"
+	service := &Service{policy: annotatePolicyReadiness(policy)}
+
+	decision, err := service.Route(RouteRequest{Task: "Plan a local offline workflow"})
+	if err != nil {
+		t.Fatalf("Route returned error: %v", err)
+	}
+	for _, skipped := range decision.Skipped {
+		if skipped.ProviderID == "vllm" && skipped.Reason == "vLLM endpoint must use localhost, loopback, or host.docker.internal" {
+			return
+		}
+	}
+	t.Fatalf("expected vLLM local-only boundary, got %#v", decision.Skipped)
+}
+
 func TestRouteBlocksRemoteLiteLLMGatewayEndpoint(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
 	liteLLMIndex := providerIndex(t, policy, "litellm")
@@ -753,6 +771,60 @@ func TestLocalAIProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.
 		t.Fatalf("Generate: %v", err)
 	}
 	if result.Status != "completed" || result.Output != "local LocalAI draft" {
+		t.Fatalf("generation result = %#v", result)
+	}
+}
+
+func TestVLLMProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"id": "qwen-vllm"}}})
+		case "/v1/chat/completions":
+			var request map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if request["model"] != "qwen-vllm" {
+				t.Fatalf("model = %v, want qwen-vllm", request["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"content": "local vLLM draft"}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	vllmIndex := providerIndex(t, policy, "vllm")
+	policy.Providers[vllmIndex].EndpointURL = server.URL
+	policy.Providers[vllmIndex].Models[0].ID = "qwen-vllm"
+	service := &Service{policy: policy}
+
+	var probe ProviderProbeResult
+	for _, result := range service.ProbeProviders() {
+		if result.ProviderID == "vllm" {
+			probe = result
+			break
+		}
+	}
+	if probe.Status != "live" || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want live vLLM provider with one model", probe)
+	}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Draft a local answer",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "vllm",
+			SelectedModelID:    "qwen-vllm",
+			SelectedModelName:  "Configured vLLM local model",
+			Tier:               TierLocal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "completed" || result.Output != "local vLLM draft" {
 		t.Fatalf("generation result = %#v", result)
 	}
 }

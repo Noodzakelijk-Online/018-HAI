@@ -27,7 +27,7 @@ func TestRegistryTruthfulProviderStates(t *testing.T) {
 	if byID[ProviderTestFastTriage].Status != ProviderActive {
 		t.Fatalf("test-fast-triage must be active, got %s", byID[ProviderTestFastTriage].Status)
 	}
-	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "localai", "litellm", "custom-openai-compatible"} {
+	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "litellm", "custom-openai-compatible"} {
 		if byID[id].Status != ProviderNotConfigured {
 			t.Fatalf("%s must be not_configured without env config, got %s", id, byID[id].Status)
 		}
@@ -65,6 +65,40 @@ func TestLocalAIRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testin
 	}
 	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
 		t.Fatalf("probe = %#v, want active LocalAI provider", probe)
+	}
+}
+
+func TestVLLMRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testing.T) {
+	t.Setenv("VLLM_BASE_URL", "https://models.example.test")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("vllm")
+	if !ok {
+		t.Fatal("vLLM provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote vLLM endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-vllm"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("VLLM_BASE_URL", server.URL)
+	t.Setenv("VLLM_MODEL_ID", "qwen-vllm")
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("vllm")
+	if !ok {
+		t.Fatal("vLLM provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "qwen-vllm" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured qwen-vllm", profile)
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active vLLM provider", probe)
 	}
 }
 
