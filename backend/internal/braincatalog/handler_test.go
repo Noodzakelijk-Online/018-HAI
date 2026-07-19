@@ -23,6 +23,15 @@ func (f fakeCollectionReviewer) ReviewCollections() (OSSInsightCollectionReview,
 	return f.review, f.err
 }
 
+type fakeRepositoryScout struct {
+	report OSSInsightRepositoryDiscoveryReport
+	err    error
+}
+
+func (f fakeRepositoryScout) DiscoverRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
+	return f.report, f.err
+}
+
 func (f fakeUpstreamReviewer) Review(entry Entry) (UpstreamReview, error) {
 	if f.review.ID == "" {
 		f.review.ID = entry.ID
@@ -84,6 +93,23 @@ func TestRevalidateCollectionsHandlerReportsDriftWithoutMutatingCatalog(t *testi
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ossinsight/revalidate", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"newCollections":["Future capability"]`) || !strings.Contains(response.Body.String(), "drift only") {
+		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDiscoverRepositoriesHandlerReportsUnreviewedCandidates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewHandlerWithReviewersAndScout(
+		fakeUpstreamReviewer{},
+		fakeCollectionReviewer{},
+		fakeRepositoryScout{report: OSSInsightRepositoryDiscoveryReport{Available: true, CollectionsScreened: 138, Discoveries: []OSSInsightRepositoryDiscovery{{Repository: "owner/new-agent"}}, Message: "did not add catalog entries"}},
+	)
+	router.POST("/ossinsight/discover", handler.DiscoverRepositories)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ossinsight/discover", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "owner/new-agent") || !strings.Contains(response.Body.String(), "did not add catalog entries") {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 	}
 }

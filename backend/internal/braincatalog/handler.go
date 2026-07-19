@@ -11,18 +11,23 @@ import (
 type Handler struct {
 	reviewer           UpstreamReviewer
 	collectionReviewer OSSInsightCollectionReviewer
+	repositoryScout    OSSInsightRepositoryScout
 }
 
 func NewHandler() *Handler {
-	return NewHandlerWithReviewers(NewUpstreamReviewer(nil), NewOSSInsightCollectionReviewer(nil))
+	return NewHandlerWithReviewersAndScout(NewUpstreamReviewer(nil), NewOSSInsightCollectionReviewer(nil), NewOSSInsightRepositoryScout(nil))
 }
 
 func NewHandlerWithReviewer(reviewer UpstreamReviewer) *Handler {
-	return NewHandlerWithReviewers(reviewer, NewOSSInsightCollectionReviewer(nil))
+	return NewHandlerWithReviewersAndScout(reviewer, NewOSSInsightCollectionReviewer(nil), NewOSSInsightRepositoryScout(nil))
 }
 
 func NewHandlerWithReviewers(reviewer UpstreamReviewer, collectionReviewer OSSInsightCollectionReviewer) *Handler {
-	return &Handler{reviewer: reviewer, collectionReviewer: collectionReviewer}
+	return NewHandlerWithReviewersAndScout(reviewer, collectionReviewer, NewOSSInsightRepositoryScout(nil))
+}
+
+func NewHandlerWithReviewersAndScout(reviewer UpstreamReviewer, collectionReviewer OSSInsightCollectionReviewer, repositoryScout OSSInsightRepositoryScout) *Handler {
+	return &Handler{reviewer: reviewer, collectionReviewer: collectionReviewer, repositoryScout: repositoryScout}
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -80,4 +85,20 @@ func (h *Handler) RevalidateCollections(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, review)
+}
+
+// DiscoverRepositories reads repository names only from pre-screened candidate
+// collections. It cannot add a catalog entry, create credentials, or execute
+// a discovered project; the owner must initiate a separate review.
+func (h *Handler) DiscoverRepositories(c *gin.Context) {
+	if h.repositoryScout == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OSS Insight repository discovery is unavailable"})
+		return
+	}
+	report, err := h.repositoryScout.DiscoverRepositories()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "could not discover OSS Insight repositories"})
+		return
+	}
+	c.JSON(http.StatusOK, report)
 }

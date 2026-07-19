@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { BrainCatalogCollectionDisposition, IBrainCatalogEntry, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
+import { BrainCatalogCollectionDisposition, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { PursuitService } from '../../services/pursuit.service'
 
@@ -16,10 +16,13 @@ export class BrainCatalogComponent implements OnInit {
   loading = false
   loadFailed = false
   reviewingCandidateId = ''
+  reviewingDiscoveryRepository = ''
   revalidatingId = ''
-	checkingOSSInsight = false
+  checkingOSSInsight = false
+  discoveringOSSInsight = false
   upstreamReview?: IBrainCatalogUpstreamReview
-	ossInsightReview?: IBrainCatalogOSSInsightReview
+  ossInsightReview?: IBrainCatalogOSSInsightReview
+  ossInsightDiscovery?: IBrainCatalogOSSInsightDiscoveryReport
 
   constructor(
     private service: BrainCatalogService,
@@ -99,6 +102,54 @@ export class BrainCatalogComponent implements OnInit {
       error: () => {
         this.checkingOSSInsight = false
         this.notification.error('OSS Insight check unavailable', 'HAI could not retrieve the public collection list. No catalog decision or runtime state changed.')
+      },
+    })
+  }
+
+  discoverOSSInsightRepositories(): void {
+    if (this.discoveringOSSInsight) return
+    this.discoveringOSSInsight = true
+    this.ossInsightDiscovery = undefined
+    this.service.discoverOSSInsightRepositories().subscribe({
+      next: (report) => {
+        this.discoveringOSSInsight = false
+        this.ossInsightDiscovery = report
+        this.notification.success('Candidate discovery complete', `${report.discoveries?.length ?? 0} unreviewed repositories were found. No catalog entry, credential, or runtime state changed.`)
+      },
+      error: () => {
+        this.discoveringOSSInsight = false
+        this.notification.error('Candidate discovery unavailable', 'HAI could not inspect the reviewed OSS Insight categories. No catalog decision or runtime state changed.')
+      },
+    })
+  }
+
+  queueDiscoveryReview(discovery: IBrainCatalogOSSInsightDiscovery): void {
+    if (this.reviewingDiscoveryRepository) return
+    this.reviewingDiscoveryRepository = discovery.repository
+    this.pursuitService.create({
+      title: `Screen ${discovery.repository} for a HAI adapter`,
+      description: `Review discovered repository ${discovery.repository} from OSS Insight collection ${discovery.collection}. Source: ${discovery.sourceUrl}. This discovery record does not install, configure, credential, or execute the project.`,
+      whyItMatters: discovery.rationale,
+      projectKey: '018-HAI',
+      domain: 'software',
+      desiredOutcome: `A documented go/no-go decision for a narrow ${discovery.repository} adapter, including provenance, licence, maintenance, local deployment, data egress, health, audit, rollback, and approval boundaries.`,
+      currentStateSummary: 'Repository was discovered from an already screened OSS Insight candidate category. It is not yet a HAI catalog profile and has no configured runtime.',
+      status: 'waiting',
+      priorityScore: 60,
+      riskLevel: 'high',
+      autonomyLevel: 'manual',
+      sourceOfCreation: `ossinsight_discovery:${discovery.repository}`,
+      nextRecommendedAction: 'Verify the fixed upstream repository metadata and licence, then define a local-only adapter and no-op validation plan before considering implementation.',
+      completionDefinition: 'A human-approved acceptance or rejection record exists. Creating this pursuit must not install, enable, credential, or execute the discovered repository.',
+    }).subscribe({
+      next: (pursuit) => {
+        this.reviewingDiscoveryRepository = ''
+        this.notification.success('Discovery review created', `${discovery.repository} remains unconfigured. HAI created a manual review record.`)
+        this.router.navigate(['/pursuits'], { queryParams: { selected: pursuit.id } })
+      },
+      error: () => {
+        this.reviewingDiscoveryRepository = ''
+        this.notification.error('Could not create discovery review', 'No repository was added to the catalog or activated. Check the local pursuit service and try again.')
       },
     })
   }

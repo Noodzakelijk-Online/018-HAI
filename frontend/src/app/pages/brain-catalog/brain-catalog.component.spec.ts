@@ -21,7 +21,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
   }
 
   function createComponent() {
-	const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections') }
+    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
@@ -102,4 +102,43 @@ describe('BrainCatalogComponent adapter reviews', () => {
 	  expect(component.ossInsightReview?.newCollections).toEqual(['Future capability'])
 	  expect(notification.success).toHaveBeenCalledWith('OSS Insight checked', 'Collection drift needs catalog review. No project was installed or activated.')
 	})
+
+  it('creates a manual discovery review without adding a catalog profile', () => {
+    const { component, pursuitService, notification, router } = createComponent()
+    pursuitService.create.and.returnValue(of({ id: 'pursuit-discovery-1' }))
+
+    component.queueDiscoveryReview({ collection: 'MCP Servers', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
+
+    expect(pursuitService.create).toHaveBeenCalledWith(jasmine.objectContaining({
+      title: 'Screen owner/new-mcp for a HAI adapter',
+      status: 'waiting',
+      autonomyLevel: 'manual',
+      riskLevel: 'high',
+      sourceOfCreation: 'ossinsight_discovery:owner/new-mcp',
+    }))
+    expect(notification.success).toHaveBeenCalledWith('Discovery review created', 'owner/new-mcp remains unconfigured. HAI created a manual review record.')
+    expect(router.navigate).toHaveBeenCalledWith(['/pursuits'], { queryParams: { selected: 'pursuit-discovery-1' } })
+  })
+
+  it('shows discovery results without changing runtime state', () => {
+    const { component, notification } = createComponent()
+    const catalogService = (component as any).service
+    catalogService.discoverOSSInsightRepositories.and.returnValue(of({
+      available: true,
+      collectionsScreened: 138,
+      candidateCollections: 12,
+      collectionsChecked: 12,
+      repositoriesChecked: 50,
+      knownProfileHits: 8,
+      discoveries: [{ collection: 'MCP Servers', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' }],
+      discoveriesTruncated: false,
+      message: 'did not add catalog entries',
+    }))
+
+    component.discoverOSSInsightRepositories()
+
+    expect(catalogService.discoverOSSInsightRepositories).toHaveBeenCalled()
+    expect(component.ossInsightDiscovery?.discoveries?.[0].repository).toBe('owner/new-mcp')
+    expect(notification.success).toHaveBeenCalledWith('Candidate discovery complete', '1 unreviewed repositories were found. No catalog entry, credential, or runtime state changed.')
+  })
 })

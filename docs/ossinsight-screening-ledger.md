@@ -140,3 +140,20 @@ a separate project-level review.
 ## Re-screen triggers
 
 Revisit an entry when its license or maintenance changes, a real HAI metric demonstrates a capability gap, or a proposed adapter has a complete safety and rollback design. Re-run this collection-level screen whenever the public API collection count or repository rankings change, before treating newly surfaced OSS Insight projects as adoption candidates.
+
+## Bounded discovery queue
+
+The Brain Catalog's admin-only OSS Insight discovery action first reads the
+complete public collection index and compares it with HAI's 138-category
+screening snapshot. It then reads repository names only from categories already
+classified as `review_candidate`; deferred and unrelated categories are not
+queried. The result removes already catalogued upstream repositories, caps the
+returned shortlist, and exposes source links, collection rationale, missing
+categories, and unavailable category reads.
+
+Discovery is deliberately non-mutating. It does not clone code, download
+packages, add a catalog record, create credentials, configure a runtime, call a
+tool, or execute a repository. An owner can only turn one discovery into a
+manual HAI pursuit. That pursuit requires separate upstream, licence, local
+deployment, health, audit, rollback, data-egress, and approval review before an
+adapter can be implemented.

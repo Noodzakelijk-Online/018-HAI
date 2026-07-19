@@ -57,6 +57,29 @@ export interface IBrainCatalogOSSInsightReview {
   message: string
 }
 
+export interface IBrainCatalogOSSInsightDiscovery {
+  collection: string
+  repository: string
+  sourceUrl: string
+  rationale: string
+}
+
+export interface IBrainCatalogOSSInsightDiscoveryReport {
+  checkedAt: string
+  sourceUrl: string
+  available: boolean
+  collectionsScreened: number
+  candidateCollections: number
+  collectionsChecked: number
+  repositoriesChecked: number
+  knownProfileHits: number
+  discoveries?: IBrainCatalogOSSInsightDiscovery[]
+  missingCollections?: string[]
+  unavailableCollections?: string[]
+  discoveriesTruncated: boolean
+  message: string
+}
+
 export interface IBrainCatalogSource {
   name: string
   url: string
