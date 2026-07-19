@@ -2,6 +2,8 @@ package modelintelligence
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -25,10 +27,45 @@ func TestRegistryTruthfulProviderStates(t *testing.T) {
 	if byID[ProviderTestFastTriage].Status != ProviderActive {
 		t.Fatalf("test-fast-triage must be active, got %s", byID[ProviderTestFastTriage].Status)
 	}
-	for _, id := range []string{"dspark", "ollama", "lm-studio", "custom-openai-compatible"} {
+	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "custom-openai-compatible"} {
 		if byID[id].Status != ProviderNotConfigured {
 			t.Fatalf("%s must be not_configured without env config, got %s", id, byID[id].Status)
 		}
+	}
+}
+
+func TestLlamaCPPRegistryRequiresLocalEndpointAndUsesConfiguredModel(t *testing.T) {
+	t.Setenv("LLAMA_CPP_BASE_URL", "https://models.example.test")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("llama-cpp")
+	if !ok {
+		t.Fatal("llama.cpp provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote llama.cpp endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen3-gguf"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("LLAMA_CPP_BASE_URL", server.URL)
+	t.Setenv("LLAMA_CPP_MODEL_ID", "qwen3-gguf")
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("llama-cpp")
+	if !ok {
+		t.Fatal("llama.cpp provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "qwen3-gguf" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured qwen3-gguf", profile)
+	}
+	probe := provider.Probe(context.Background(), time.Now().UTC())
+	if probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active llama.cpp provider", probe)
 	}
 }
 

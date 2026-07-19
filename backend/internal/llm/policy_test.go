@@ -182,6 +182,24 @@ func TestRouteBlocksLinkLocalProviderEndpointByDefault(t *testing.T) {
 	}
 }
 
+func TestRouteBlocksRemoteLlamaCPPProviderEndpoint(t *testing.T) {
+	policy := testPolicyWithoutEndpoints()
+	llamaIndex := providerIndex(t, policy, "llama-cpp")
+	policy.Providers[llamaIndex].EndpointURL = "https://models.example.test"
+	service := &Service{policy: annotatePolicyReadiness(policy)}
+
+	decision, err := service.Route(RouteRequest{Task: "Plan a local offline workflow"})
+	if err != nil {
+		t.Fatalf("Route returned error: %v", err)
+	}
+	for _, skipped := range decision.Skipped {
+		if skipped.ProviderID == "llama-cpp" && skipped.Reason == "llama.cpp endpoint must use localhost, loopback, or host.docker.internal" {
+			return
+		}
+	}
+	t.Fatalf("expected llama.cpp local-only boundary, got %#v", decision.Skipped)
+}
+
 func TestLocalModelsAllowedPolicyIsEnforced(t *testing.T) {
 	policy := testPolicyWithLocalEndpoints()
 	policy.LocalModelsAllowed = false
@@ -591,6 +609,60 @@ func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 	}
 	if result.Output != "local chat draft" {
 		t.Fatalf("output = %q, want local chat draft", result.Output)
+	}
+}
+
+func TestLlamaCPPProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"id": "qwen3-gguf"}}})
+		case "/v1/chat/completions":
+			var request map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if request["model"] != "qwen3-gguf" {
+				t.Fatalf("model = %v, want qwen3-gguf", request["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"content": "local llama.cpp draft"}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	llamaIndex := providerIndex(t, policy, "llama-cpp")
+	policy.Providers[llamaIndex].EndpointURL = server.URL
+	policy.Providers[llamaIndex].Models[0].ID = "qwen3-gguf"
+	service := &Service{policy: policy}
+
+	var probe ProviderProbeResult
+	for _, result := range service.ProbeProviders() {
+		if result.ProviderID == "llama-cpp" {
+			probe = result
+			break
+		}
+	}
+	if probe.Status != "live" || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want live llama.cpp provider with one model", probe)
+	}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Draft a local answer",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "llama-cpp",
+			SelectedModelID:    "qwen3-gguf",
+			SelectedModelName:  "Configured llama.cpp GGUF model",
+			Tier:               TierLocal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "completed" || result.Output != "local llama.cpp draft" {
+		t.Fatalf("generation result = %#v", result)
 	}
 }
 

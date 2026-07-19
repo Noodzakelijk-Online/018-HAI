@@ -46,6 +46,24 @@ func validateEndpointURL(raw string) error {
 	return nil
 }
 
+// validateLocalEndpointURL narrows an OpenAI-compatible endpoint to the
+// local machine. host.docker.internal is accepted so the Docker backend can
+// reach a server deliberately bound on the Windows host.
+func validateLocalEndpointURL(raw string) error {
+	if err := validateEndpointURL(raw); err != nil {
+		return err
+	}
+	u, _ := url.Parse(raw)
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(u.Hostname())), ".")
+	if host == "localhost" || host == "host.docker.internal" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("local provider endpoint must use localhost, loopback, or host.docker.internal")
+}
+
 // probeModelsEndpoint performs a truthful GET against an OpenAI-compatible
 // /models path and maps the result onto a ProviderStatus.
 func probeModelsEndpoint(ctx context.Context, client *http.Client, providerID, baseURL, probePath string, now time.Time) ProbeResult {

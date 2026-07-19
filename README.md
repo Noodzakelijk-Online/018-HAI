@@ -441,8 +441,11 @@ validation, fallback history, quotas, and the daily budget. Paid calls are
 disabled by default with a EUR 0 budget; request JSON cannot self-approve paid
 or approval-required use.
 
-Supported configuration families include Ollama, llama.cpp/LM Studio or other
-OpenAI-compatible local servers, and configured free/freemium providers. Model
+Supported configuration families include Ollama, a first-class local
+`llama.cpp` server, LM Studio, other configured OpenAI-compatible local
+servers, and configured free/freemium providers. `LLAMA_CPP_BASE_URL` accepts
+only `localhost`, loopback, or `host.docker.internal`; configure
+`LLAMA_CPP_MODEL_ID` for the model loaded by `llama-server`. Model
 catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
 other configured provider models. Provider status must be read as configuration
 and probe history, not as a live-service guarantee.

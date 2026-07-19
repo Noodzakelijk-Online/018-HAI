@@ -13,6 +13,7 @@ type Status string
 
 const (
 	StatusCandidate     Status = "candidate"
+	StatusIntegrated    Status = "integrated_profile"
 	StatusCompatibility Status = "compatibility_only"
 	StatusReferenceOnly Status = "reference_only"
 	StatusExcluded      Status = "excluded"
@@ -255,11 +256,11 @@ var entries = []Entry{
 	},
 	{
 		ID: "llama-cpp", Name: "llama.cpp", UpstreamURL: "https://github.com/ggml-org/llama.cpp", SourceCatalogURL: "https://ossinsight.io/collections/chatgpt-alternatives", SourceCollection: "ChatGPT Alternatives",
-		Status: StatusCandidate, Category: "local model inference", IntegrationMode: "operator-configured loopback OpenAI-compatible model server",
+		Status: StatusIntegrated, Category: "local model inference", IntegrationMode: "operator-configured loopback OpenAI-compatible model server",
 		Capabilities: []string{"local GGUF inference", "OpenAI-compatible server", "CPU and GPU deployment", "offline model serving"}, RecommendedFor: []string{"local-first LLM routing", "low-VRAM inference", "offline fallback"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Install and start llama.cpp outside HAI on a loopback-only endpoint, record model provenance and hardware limits, then add the endpoint through the existing local-provider configuration and health-check path. Do not expose the server to a network by default.",
-		Rationale:  "HAI already supports llama.cpp configuration. This profile makes the implementation source, local-boundary, and model-provenance requirements explicit without introducing a second routing policy.",
+		Activation: "Install and start llama.cpp outside HAI on a loopback-only endpoint, record model provenance and hardware limits, then set LLAMA_CPP_BASE_URL and LLAMA_CPP_MODEL_ID. HAI rejects non-local endpoints and requires a live /v1/models probe before routing or generation.",
+		Rationale:  "HAI now owns a first-class, local-only llama.cpp provider profile in both model services. The upstream server remains operator-installed and is not active until its configured endpoint passes a live probe.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight ChatGPT Alternatives listing plus upstream MIT license and current release activity checked on 2026-07-19.",
 	},
 	{
@@ -438,6 +439,8 @@ func Recommend(taskType, request string) []Recommendation {
 		role := "optional capability"
 		if entry.Status == StatusCompatibility {
 			role = "legacy compatibility only"
+		} else if entry.Status == StatusIntegrated {
+			role = "integrated profile; operator configuration and live probe required"
 		} else if entry.Status != StatusCandidate {
 			role = "reference or review only"
 		}

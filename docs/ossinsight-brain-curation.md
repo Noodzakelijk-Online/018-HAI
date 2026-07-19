@@ -30,7 +30,7 @@ role in one of these planes:
 | Workflow Scheduler | Temporal | Candidate | Run one named local durable workflow through a narrow Go worker. |
 | Monitoring Tool | Prometheus | Candidate | Expose minimal authenticated metrics and local scrape configuration. |
 | Model Context Protocol Client | MCP Inspector | Candidate | Use it only to test an allowlisted MCP server before adapter activation. |
-| ChatGPT Alternatives | llama.cpp | Candidate | Add only a loopback local model server through HAI's existing local-provider policy and health check. |
+| ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
 | Testing Tools | Playwright | Candidate | Verify named, allowlisted browser flows; it cannot bypass approval gates. |
 | WebAssembly Runtime | Wasmtime | Candidate | Run reviewed capability-limited WASI helper modules only. |
 | Optimization Solvers | OR-Tools | Candidate | Return deterministic planning proposals with constraints and assumptions. |
@@ -60,3 +60,13 @@ specific adapter is present and reviewed.
 
 The complete category pass, candidate shortlist, and exclusion rationale are in
 [the OSS Insight screening ledger](ossinsight-screening-ledger.md).
+
+## Implemented local inference boundary
+
+`llama.cpp` is now a first-class local provider in both HAI model back-office
+registries. Set `LLAMA_CPP_BASE_URL` and, when needed,
+`LLAMA_CPP_MODEL_ID` to enable it. The endpoint may only use `localhost`, a
+loopback IP, or `host.docker.internal` for the Windows-host/Docker deployment
+case. A configured value alone is not enough: HAI marks it usable only after a
+live `/v1/models` probe, retains the EUR 0 paid budget, and continues to apply
+the router's existing validation, fallback, audit, and approval controls.

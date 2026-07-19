@@ -45,6 +45,23 @@ func newRemoteProvider(id, name, baseURLEnv, modelID string, arch ArchitectureFa
 	return p
 }
 
+func newLocalRemoteProvider(id, name, baseURLEnv, modelID string, arch ArchitectureFamily, lanes []RoutingLane) *remoteProvider {
+	p := newRemoteProvider(id, name, baseURLEnv, modelID, arch, lanes)
+	if p.baseURL != "" {
+		if err := validateLocalEndpointURL(p.baseURL); err != nil {
+			p.configErr = err.Error()
+		}
+	}
+	return p
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
 func (p *remoteProvider) ID() string          { return p.id }
 func (p *remoteProvider) DisplayName() string { return p.name }
 func (p *remoteProvider) configured() bool    { return p.baseURL != "" && p.configErr == "" }
@@ -103,7 +120,7 @@ type Registry struct {
 // NewRegistryFromEnv assembles the initial provider set:
 //   - test-fast-triage, test-verifier (always active, deterministic, local)
 //   - dspark (env, not_configured by default)
-//   - ollama, lm-studio, custom-openai-compatible (env, not_configured by default)
+//   - ollama, lm-studio, llama.cpp, custom-openai-compatible (env, not_configured by default)
 func NewRegistryFromEnv() *Registry {
 	return &Registry{providers: []Provider{
 		&testFastTriageProvider{},
@@ -111,6 +128,7 @@ func NewRegistryFromEnv() *Registry {
 		NewDSparkProvider(DSparkConfigFromEnv()),
 		newRemoteProvider("ollama", "Ollama (local OpenAI-compatible)", "OLLAMA_BASE_URL", "ollama-default", ArchOllamaUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newRemoteProvider("lm-studio", "LM Studio (local OpenAI-compatible)", "LM_STUDIO_BASE_URL", "lm-studio-default", ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
+		newLocalRemoteProvider("llama-cpp", "llama.cpp (local OpenAI-compatible)", "LLAMA_CPP_BASE_URL", envOrDefault("LLAMA_CPP_MODEL_ID", "local-model"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newRemoteProvider("custom-openai-compatible", "Custom OpenAI-compatible", "CUSTOM_OPENAI_BASE_URL", "custom-default", ArchOpenAICompatibleUnknown, []RoutingLane{LaneDrafting, LaneParallelBatch}),
 	}}
 }

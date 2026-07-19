@@ -21,11 +21,14 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
-	for _, id := range []string{"litellm", "pgvector", "temporal", "prometheus", "mcp-inspector", "llama-cpp", "playwright", "wasmtime", "ortools"} {
+	for _, id := range []string{"litellm", "pgvector", "temporal", "prometheus", "mcp-inspector", "playwright", "wasmtime", "ortools"} {
 		entry, ok := EntryByID(id)
 		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
 		}
+	}
+	if entry, ok := EntryByID("llama-cpp"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("llama.cpp must report its integrated-but-not-active local provider profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
@@ -93,13 +96,16 @@ func TestRecommendNewCandidatesNeverClaimsExecution(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"llama-cpp", "playwright", "wasmtime", "ortools"} {
+	for _, id := range []string{"playwright", "wasmtime", "ortools"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || recommendation.Role != "optional capability" {
 			t.Fatalf("missing non-executable %s recommendation: %#v", id, recommendations)
 		}
 	}
-	if !ids["llama-cpp"].RequiresApproval || !ids["playwright"].RequiresApproval || !ids["wasmtime"].RequiresApproval {
+	if recommendation, ok := ids["llama-cpp"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" || !recommendation.RequiresApproval {
+		t.Fatalf("llama.cpp must surface as an integrated profile with its activation gate: %#v", recommendations)
+	}
+	if !ids["playwright"].RequiresApproval || !ids["wasmtime"].RequiresApproval {
 		t.Fatalf("local inference configuration and executable adapters must remain gated: %#v", recommendations)
 	}
 }

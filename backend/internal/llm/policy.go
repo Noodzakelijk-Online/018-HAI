@@ -1190,6 +1190,9 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
 	}
+	if provider.ID == "llama-cpp" && !isLocalModelHost(host) {
+		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "llama.cpp endpoint must use localhost, loopback, or host.docker.internal"}
+	}
 	if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
 		return providerReadiness{configured: false, status: "missing_api_key", reason: "required API key environment variable " + provider.APIKeyEnv + " is not set"}
 	}
@@ -1211,6 +1214,18 @@ func unsafeEndpointHost(host string) bool {
 		return false
 	}
 	return ip.IsUnspecified() || ip.IsLinkLocalUnicast()
+}
+
+// isLocalModelHost allows a local server on the host OS when HAI itself runs
+// in Docker. It intentionally rejects LAN and public endpoints for llama.cpp:
+// this provider is the explicit local/offline route, not a cloud gateway.
+func isLocalModelHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "localhost" || host == "host.docker.internal" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func noRedirectHTTPClient() *http.Client {
@@ -1270,6 +1285,11 @@ func normalizeProbePolicy(policy Policy) Policy {
 func defaultPolicy() Policy {
 	ollamaEndpoint := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
 	lmStudioEndpoint := strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
+	llamaCPPEndpoint := strings.TrimSpace(os.Getenv("LLAMA_CPP_BASE_URL"))
+	llamaCPPModelID := strings.TrimSpace(os.Getenv("LLAMA_CPP_MODEL_ID"))
+	if llamaCPPModelID == "" {
+		llamaCPPModelID = "local-model"
+	}
 	odysseusEndpoint := strings.TrimSpace(os.Getenv("ODYSSEUS_BASE_URL"))
 	odysseusAPIKeyEnv := ""
 	if strings.TrimSpace(os.Getenv("ODYSSEUS_API_TOKEN")) != "" {
@@ -1341,6 +1361,18 @@ func defaultPolicy() Policy {
 					{ID: "openai-compatible-local", Name: "OpenAI-compatible local endpoint", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
 					{ID: "local-small", Name: "Configured small local model", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
 					{ID: "local-best", Name: "Configured best local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "llama-cpp",
+				Name:           "llama.cpp local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    llamaCPPEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: llamaCPPModelID, Name: "Configured llama.cpp GGUF model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
 				},
 			},
 			{
