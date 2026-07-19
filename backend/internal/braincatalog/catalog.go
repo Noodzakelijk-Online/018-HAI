@@ -175,12 +175,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "pgvector", Name: "pgvector", UpstreamURL: "https://github.com/pgvector/pgvector", SourceCatalogURL: "https://ossinsight.io/collections/vector-database--vector-store", SourceCollection: "Vector Database & Vector Store",
-		Status: StatusCandidate, Category: "local semantic retrieval", IntegrationMode: "reviewed PostgreSQL extension and migration",
+		Status: StatusIntegrated, Category: "local semantic retrieval", IntegrationMode: "opt-in local pgvector retrieval adapter",
 		Capabilities: []string{"vector similarity search", "embedding storage in PostgreSQL", "hybrid memory retrieval"}, RecommendedFor: []string{"semantic memory", "connected-source retrieval", "local evidence search"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Use a Postgres image that includes the extension, add a reversible reviewed migration, and backfill embeddings only after a local embedding model and retention policy are configured.",
-		Rationale:  "HAI already uses PostgreSQL, so pgvector can extend existing local data ownership without introducing a second knowledge-store service.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Vector Database & Vector Store listing and upstream repository checked on 2026-07-19.",
+		Activation: "Set HAI_SEMANTIC_RETRIEVAL_ENABLED=true, a loopback/host.docker.internal HAI_EMBEDDING_BASE_URL, and HAI_EMBEDDING_MODEL. HAI creates the extension/table, indexes only cached source extractions, and falls back to keyword search whenever local semantic retrieval is unavailable.",
+		Rationale:  "HAI now uses pgvector in its existing local PostgreSQL ownership boundary, without introducing a second memory store or a cloud embedding dependency. Owner, project, archive, and sensitivity filters remain in the SQL retrieval query.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Vector Database & Vector Store listing plus upstream pgvector 0.8.5 PostgreSQL 17 image and exact-search documentation checked on 2026-07-19.",
 	},
 	{
 		ID: "temporal", Name: "Temporal", UpstreamURL: "https://github.com/temporalio/temporal", SourceCatalogURL: "https://ossinsight.io/collections/workflow-scheduler", SourceCollection: "Workflow Scheduler",

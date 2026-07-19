@@ -34,6 +34,7 @@ import (
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/rbac"
 	"automation-hub-backend/internal/runtimelab"
+	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/verification"
@@ -89,7 +90,8 @@ func initializeRoutes(router *gin.Engine) error {
 		workflowRunner := workflowtask.NewDeferredRunner()
 		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner, memoryService)
 		pursuitService := pursuit.NewService(pursuit.DefaultRepository(), workflowService)
-		sourceService := source.NewServiceWithWorkflowAndPursuitLinker(source.DefaultRepository(), memoryService, workflowService, pursuitService)
+		semanticService := semantic.NewServiceFromEnv()
+		sourceService := source.NewServiceWithWorkflowPursuitAndSemantic(source.DefaultRepository(), memoryService, workflowService, pursuitService, semanticService)
 		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService, pursuitService)
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
 		taskService := task.NewServiceWithEnginesAndPursuitAttempts(

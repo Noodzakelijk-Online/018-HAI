@@ -4,7 +4,9 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/workflow"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -812,6 +814,34 @@ func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
 	}
 }
 
+func TestSearchUsesSemanticResultsWithoutLoadingEveryExtraction(t *testing.T) {
+	sourceID := uuid.New()
+	extraction := models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Text: "Semantic evidence from a local source"}
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"})
+	if _, err := repo.SaveExtraction(&extraction); err != nil {
+		t.Fatalf("SaveExtraction: %v", err)
+	}
+	semanticService := &fakeSemanticService{matches: []semantic.Match{{Extraction: extraction, Similarity: 0.92}}}
+	service := NewServiceWithWorkflowPursuitAndSemantic(repo, nil, nil, nil, semanticService)
+
+	result, err := service.Search(SearchRequest{OwnerIdentity: "alice", Query: "local source", Limit: 5})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.UsedContext) != 1 || result.UsedContext[0].Score != 0.92 {
+		t.Fatalf("semantic search result = %#v", result)
+	}
+	if !strings.Contains(result.Explanation, "pgvector") {
+		t.Fatalf("semantic retrieval explanation missing: %q", result.Explanation)
+	}
+	if len(repo.lastExtractionSourceIDs) != 0 {
+		t.Fatalf("semantic search should not preload all extractions: %#v", repo.lastExtractionSourceIDs)
+	}
+	if semanticService.request.OwnerIdentity != "alice" || semanticService.request.Query != "local source" {
+		t.Fatalf("semantic search request = %#v", semanticService.request)
+	}
+}
+
 func TestOwnerScopedSourceWritesOwnerScopedMemory(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
@@ -1561,6 +1591,22 @@ type fakeSourceRepo struct {
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
+}
+
+type fakeSemanticService struct {
+	matches []semantic.Match
+	err     error
+	request semantic.SearchRequest
+}
+
+func (s *fakeSemanticService) Enabled() bool  { return true }
+func (s *fakeSemanticService) Reason() string { return "test semantic service" }
+func (s *fakeSemanticService) Index(context.Context, *models.SourceExtraction) error {
+	return nil
+}
+func (s *fakeSemanticService) Search(_ context.Context, request semantic.SearchRequest) ([]semantic.Match, error) {
+	s.request = request
+	return s.matches, s.err
 }
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {

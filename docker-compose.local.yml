@@ -120,6 +120,12 @@ services:
       LITELLM_BASE_URL: ${LITELLM_BASE_URL}
       LITELLM_MODEL_ID: ${LITELLM_MODEL_ID}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      HAI_SEMANTIC_RETRIEVAL_ENABLED: ${HAI_SEMANTIC_RETRIEVAL_ENABLED}
+      HAI_EMBEDDING_BASE_URL: ${HAI_EMBEDDING_BASE_URL}
+      HAI_EMBEDDING_MODEL: ${HAI_EMBEDDING_MODEL}
+      HAI_EMBEDDING_API_KEY: ${HAI_EMBEDDING_API_KEY:-}
+      HAI_EMBEDDING_INPUT_LIMIT: ${HAI_EMBEDDING_INPUT_LIMIT}
+      HAI_EMBEDDING_TIMEOUT_SECONDS: ${HAI_EMBEDDING_TIMEOUT_SECONDS}
       ODYSSEUS_BASE_URL: ${ODYSSEUS_BASE_URL}
       ODYSSEUS_API_TOKEN: ${ODYSSEUS_API_TOKEN}
       AGENT_RUNTIME_ALLOWED_HOSTS: ${AGENT_RUNTIME_ALLOWED_HOSTS}
@@ -388,7 +394,9 @@ services:
       - idp-network
 
   postgres-automation:
-    image: postgres:17-alpine
+    # Pinned upstream pgvector Postgres 17 image. Existing data stays in the
+    # named volume; take a backup before changing a live database image.
+    image: pgvector/pgvector:0.8.5-pg17-bookworm
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped

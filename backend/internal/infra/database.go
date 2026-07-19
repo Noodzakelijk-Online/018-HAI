@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"os"
+	"strings"
 )
 
 func NewPostgresDatabase(user, password, dbName, dbHost string, dbPort int) (*gorm.DB, error) {
@@ -38,6 +40,14 @@ func RunMigrations(db *gorm.DB) error {
 	// uuid_generate_v4() is used as the default for primary keys.
 	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`).Error; err != nil {
 		return err
+	}
+	// pgvector is opt-in. Normal Postgres deployments remain usable when no
+	// local embedding endpoint has been reviewed; an enabled deployment fails
+	// early if its database image does not contain the extension.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("HAI_SEMANTIC_RETRIEVAL_ENABLED")), "true") {
+		if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS vector`).Error; err != nil {
+			return fmt.Errorf("enable pgvector extension: %w", err)
+		}
 	}
 	if err := db.AutoMigrate(
 		&models.Automation{},

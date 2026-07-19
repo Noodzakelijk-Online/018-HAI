@@ -91,3 +91,14 @@ HAI accepts only `localhost`, loopback, or `host.docker.internal`, probes
 gateway. HAI does not infer the gateway's upstream providers or billing from a
 successful probe: each LiteLLM generation remains approval-gated and the EUR 0
 policy remains authoritative.
+
+## Implemented pgvector boundary
+
+HAI now has an opt-in local semantic retrieval path using pgvector inside its
+existing automation database. Set `HAI_SEMANTIC_RETRIEVAL_ENABLED=true` with a
+loopback or `host.docker.internal` OpenAI-compatible embedding endpoint and a
+named model. HAI indexes only already-ingested source extractions, keeps their
+source ownership and sensitivity filters in the database query, and uses the
+existing keyword search when the semantic path is disabled, empty, or
+unavailable. It never sends source text to an arbitrary cloud URL and does not
+create embeddings until the operator enables the feature.

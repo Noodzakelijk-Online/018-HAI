@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/safety"
+	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/workflow"
 	"bytes"
 	"context"
@@ -160,6 +161,7 @@ type service struct {
 	memoryService   memory.Service
 	workflowService workflow.Service
 	pursuitLinker   pursuitAutoLinker
+	semanticService semantic.Service
 	syncMu          sync.Mutex
 	activeSyncs     map[uuid.UUID]bool
 }
@@ -195,7 +197,14 @@ func NewServiceWithWorkflow(repo Repository, memoryService memory.Service, workf
 }
 
 func NewServiceWithWorkflowAndPursuitLinker(repo Repository, memoryService memory.Service, workflowService workflow.Service, pursuitLinker pursuitAutoLinker) Service {
-	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService, pursuitLinker: pursuitLinker, activeSyncs: map[uuid.UUID]bool{}}
+	return NewServiceWithWorkflowPursuitAndSemantic(repo, memoryService, workflowService, pursuitLinker, nil)
+}
+
+// NewServiceWithWorkflowPursuitAndSemantic keeps semantic search optional. A
+// missing or unhealthy local embedding server never removes source ingestion or
+// the provenance-preserving keyword search path.
+func NewServiceWithWorkflowPursuitAndSemantic(repo Repository, memoryService memory.Service, workflowService workflow.Service, pursuitLinker pursuitAutoLinker, semanticService semantic.Service) Service {
+	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService, pursuitLinker: pursuitLinker, semanticService: semanticService, activeSyncs: map[uuid.UUID]bool{}}
 }
 
 func DefaultService() Service {
@@ -711,6 +720,25 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	visibleSourceIDs, err := s.visibleSourceIDs(request.OwnerIdentity)
 	if err != nil {
 		return nil, err
+	}
+	if s.semanticService != nil && s.semanticService.Enabled() {
+		matches, semanticErr := s.semanticService.Search(context.Background(), semantic.SearchRequest{
+			OwnerIdentity: request.OwnerIdentity, Query: request.Query, ProjectKey: request.ProjectKey,
+			Limit: limit, IncludeSensitive: request.IncludeSensitive,
+		})
+		if semanticErr == nil && len(matches) > 0 {
+			ranked := make([]RankedExtraction, 0, len(matches))
+			for _, match := range matches {
+				ranked = append(ranked, RankedExtraction{
+					Extraction: match.Extraction, Score: match.Similarity,
+					Explanation: "local pgvector cosine similarity; source ownership and sensitivity filters applied",
+				})
+			}
+			return &SearchResult{Query: request.Query, ProjectKey: request.ProjectKey, UsedContext: ranked,
+				Explanation: fmt.Sprintf("Retrieved %d source-backed records through local pgvector semantic retrieval; owner, project, archive, and sensitivity filters were enforced in the database query.", len(ranked))}, nil
+		}
+		// A semantic failure falls back to the existing bounded keyword search.
+		// It is deliberately not attached to an arbitrary source audit record.
 	}
 	extractions, err := s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), strings.TrimSpace(request.ProjectKey), false)
 	if err != nil {
@@ -1586,7 +1614,20 @@ func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	if err := s.repo.DeletePendingVectorIndex(extraction.ID); err != nil {
 		return err
 	}
-	return nil
+	if s.semanticService == nil || !s.semanticService.Enabled() {
+		return nil
+	}
+	if err := s.semanticService.Index(context.Background(), extraction); err != nil {
+		// Semantic indexing is optional enrichment. Preserve the extracted record
+		// and keyword index, then expose the degraded state in the source audit.
+		s.audit(extraction.SourceID, "semantic.index_failed", "local semantic index was not updated: "+compact(err.Error(), 240))
+		return nil
+	}
+	_, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
+		SourceID: extraction.SourceID, ExtractionID: extraction.ID, ProjectKey: extraction.ProjectKey,
+		IndexType: "pgvector", VectorRef: "pgvector:local-embedding",
+	})
+	return err
 }
 
 func (s *service) beginSync(sourceID uuid.UUID) bool {

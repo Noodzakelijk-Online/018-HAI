@@ -19,7 +19,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | --- | --- | --- | --- | --- |
 | LiteLLM | ai-gateways | Integrated profile | Keyed local provider gateway | Loopback-only profile; manual approval required because proxy upstream billing is not inferable. |
 | llama.cpp | ChatGPT Alternatives | Candidate | Local GGUF inference | Loopback endpoint, model provenance, and health review required. |
-| pgvector | Vector Database & Vector Store | Candidate | Semantic retrieval in existing Postgres | Reversible migration and retention/backfill review required. |
+| pgvector | Vector Database & Vector Store | Integrated, opt-in | Local semantic retrieval in existing Postgres | Pinned Postgres 17 pgvector image; local-only embedding endpoint; owner-scoped SQL query; keyword fallback. |
 | Temporal | Workflow Scheduler | Candidate | Durable retries and follow-ups | One named local worker at a time; HAI owns approvals. |
 | Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
 | MCP Inspector | Model Context Protocol (MCP) Client | Candidate | Pre-activation MCP inspection | Operator-only inspection of allowlisted servers. |
