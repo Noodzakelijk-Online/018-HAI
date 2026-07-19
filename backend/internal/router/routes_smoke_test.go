@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/mcppreflight"
 
 	"github.com/gin-gonic/gin"
 )
@@ -338,6 +339,48 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		if hit != tc.want {
 			t.Fatalf("%s %s -> handler %q, want %q", tc.method, tc.path, hit, tc.want)
 		}
+	}
+}
+
+func TestMCPPreflightRoutesRequireOwnerAndAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := mcppreflight.NewService(mcppreflight.Config{
+		Enabled: false,
+		Servers: []mcppreflight.Server{{ID: "local", URL: "http://127.0.0.1:3000/mcp"}},
+	})
+
+	unauthenticated := gin.New()
+	initializeMCPPreflightRoutes(unauthenticated.Group("/api/v1"), mcppreflight.NewHandler(service))
+	response := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/mcp-preflight/overview", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("overview without an owner must be unauthorized, got %d", response.Code)
+	}
+
+	operator := gin.New()
+	operator.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "operator@example.test")
+		c.Set(contextRoleKey, "operator")
+		c.Next()
+	})
+	initializeMCPPreflightRoutes(operator.Group("/api/v1"), mcppreflight.NewHandler(service))
+	response = httptest.NewRecorder()
+	operator.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/mcp-preflight/local/run", nil))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("operator must not run a preflight, got %d", response.Code)
+	}
+
+	owner := gin.New()
+	owner.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "owner@example.test")
+		c.Set(contextRoleKey, "owner")
+		c.Next()
+	})
+	initializeMCPPreflightRoutes(owner.Group("/api/v1"), mcppreflight.NewHandler(service))
+	response = httptest.NewRecorder()
+	owner.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/mcp-preflight/local/run", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("owner must receive the truthful disabled status, got %d", response.Code)
 	}
 }
 

@@ -21,7 +21,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
-	for _, id := range []string{"temporal", "mcp-inspector", "playwright", "wasmtime", "ortools"} {
+	for _, id := range []string{"temporal", "playwright", "wasmtime", "ortools"} {
 		entry, ok := EntryByID(id)
 		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
@@ -29,6 +29,9 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	}
 	if entry, ok := EntryByID("pgvector"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("pgvector must report its integrated-but-opt-in local retrieval profile: %#v", entry)
+	}
+	if entry, ok := EntryByID("mcp-inspector"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("MCP Inspector must report the integrated-but-admin-gated local preflight profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("llama-cpp"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("llama.cpp must report its integrated-but-not-active local provider profile: %#v", entry)

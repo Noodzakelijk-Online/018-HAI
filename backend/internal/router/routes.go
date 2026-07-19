@@ -25,6 +25,7 @@ import (
 	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
+	"automation-hub-backend/internal/mcppreflight"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
 	"automation-hub-backend/internal/modelintelligence"
@@ -70,6 +71,7 @@ func initializeRoutes(router *gin.Engine) error {
 		runtimeHandler := agentruntime.NewHandler(runtimeRegistry)
 		initializeAgentRuntimeRoutes(v1, runtimeHandler)
 		initializeBrainCatalogRoutes(v1, braincatalog.NewHandler())
+		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
@@ -514,11 +516,21 @@ func initializeOpsControlRoutes(apiVersion *gin.RouterGroup, handler *opscontrol
 
 func initializeRuntimeLabRoutes(apiVersion *gin.RouterGroup, handler *runtimelab.Handler) {
 	rl := apiVersion.Group("/runtime-lab")
+	rl.Use(requireAuthenticatedOwner())
 	{
-		rl.GET("/overview", handler.Overview)
-		rl.POST("/:runtimeId/probe", handler.Probe)
-		rl.POST("/:runtimeId/self-test", handler.SelfTest)
-		rl.GET("/:runtimeId/attempts", handler.Attempts)
+		rl.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		rl.POST("/:runtimeId/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		rl.POST("/:runtimeId/self-test", requirePermission(rbac.PermApprove), handler.SelfTest)
+		rl.GET("/:runtimeId/attempts", requirePermission(rbac.PermRead), handler.Attempts)
+	}
+}
+
+func initializeMCPPreflightRoutes(apiVersion *gin.RouterGroup, handler *mcppreflight.Handler) {
+	routes := apiVersion.Group("/mcp-preflight")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		routes.POST("/:serverId/run", requirePermission(rbac.PermAdmin), handler.Run)
 	}
 }
 

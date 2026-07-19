@@ -26,10 +26,10 @@ role in one of these planes:
 | Collection | Candidate | Disposition | First safe increment |
 | --- | --- | --- | --- |
 | ai-gateways | LiteLLM | Integrated profile | Enable a keyed loopback gateway profile; HAI requires manual approval because proxy billing cannot be inferred. |
-| Vector Database & Vector Store | pgvector | Candidate | Add a reversible Postgres extension migration and local embedding backfill plan. |
+| Vector Database & Vector Store | pgvector | Integrated profile | Opt-in `vector` extension plus local embeddings; keyword retrieval remains the fallback. |
 | Workflow Scheduler | Temporal | Candidate | Run one named local durable workflow through a narrow Go worker. |
 | Monitoring Tool | Prometheus | Integrated profile | Enable a token-protected local metrics endpoint; configure a separate local collector when needed. |
-| Model Context Protocol Client | MCP Inspector | Candidate | Use it only to test an allowlisted MCP server before adapter activation. |
+| Model Context Protocol Client | MCP Inspector | Integrated profile | HAI-owned, local-only Streamable HTTP preflight lists tools before a separately reviewed adapter activation. |
 | ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
 | Testing Tools | Playwright | Candidate | Verify named, allowlisted browser flows; it cannot bypass approval gates. |
 | WebAssembly Runtime | Wasmtime | Candidate | Run reviewed capability-limited WASI helper modules only. |

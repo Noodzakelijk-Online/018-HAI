@@ -23,11 +23,11 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [AutoGen](https://github.com/microsoft/autogen) | Compatibility only | Existing AutoGen workload migration, structured agent-event translation, and guarded MCP compatibility | The official project is maintenance mode. HAI does not install or execute AutoGen code, and a reviewed bridge plus approval is required. |
 | [MetaGPT](https://github.com/FoundationAgents/MetaGPT) | Excluded | Architecture reference only | Still available, but its release and substantive push activity were older than the active candidates at curation time. |
 | [LiteLLM](https://github.com/BerriAI/litellm) | Integrated profile | Keyed loopback provider-gateway normalization | Requires explicit enablement, a local endpoint, model alias, virtual key, probe, and manual generation approval; HAI's EUR 0 policy remains authoritative. |
-| [pgvector](https://github.com/pgvector/pgvector) | Candidate | Local semantic retrieval inside HAI Postgres | Requires a reversible extension migration, local embeddings, retention policy, and backfill review. |
+| [pgvector](https://github.com/pgvector/pgvector) | Integrated profile | Local semantic retrieval inside HAI Postgres | Opt-in `vector` extension plus local embeddings; keyword retrieval remains the truthful fallback. |
 | [Temporal](https://github.com/temporalio/temporal) | Candidate | Durable retries, follow-ups, and long-running work | Requires a local service plus narrow Go worker. HAI retains all approval and completion gates. |
 | [Prometheus](https://github.com/prometheus/prometheus) | Integrated profile | Token-protected HTTP metrics export | Opt-in exporter with no raw-data labels; a local collector remains separately configured. |
 | [Grafana](https://github.com/grafana/grafana) | Reference only | Optional advanced metrics visualization | Deferred until real Prometheus metrics justify a second dashboard. |
-| [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Candidate | Pre-activation MCP server inspection | Operator-only test tool for allowlisted MCP servers; never execution approval. |
+| [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Integrated profile | Local-only pre-activation MCP inspection | HAI performs only a bounded Streamable HTTP handshake and tool inventory for configured local endpoints; it never spawns a process or calls a tool. |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | Candidate | Local GGUF model inference | Loopback-only model server through HAI's existing local-provider, provenance, and health policy. |
 | [Playwright](https://github.com/microsoft/playwright) | Candidate | Controlled browser verification | Named allowlisted flows only; it cannot send, publish, purchase, or change accounts without approval. |
 | [Wasmtime](https://github.com/bytecodealliance/wasmtime) | Candidate | Bounded local WASI helper runtime | Reviewed modules only, with no inherited network and explicit resource/capability limits. |
@@ -72,6 +72,27 @@ boundary explicit.
 4. Aider: a review-first adapter that produces a patch proposal and validation evidence before any write is permitted.
 
 Do not add a generic `run arbitrary agent` endpoint. That would collapse the safety boundary this catalog exists to preserve.
+
+## MCP preflight profile
+
+The built-in preflight mirrors the useful review stage of MCP Inspector without
+embedding its broad proxy/process-launch capability. Enable it only for a
+reviewed local Streamable HTTP server:
+
+```dotenv
+HAI_MCP_PREFLIGHT_ENABLED=true
+HAI_MCP_PREFLIGHT_SERVERS=local-docs=http://host.docker.internal:3001/mcp
+HAI_MCP_PREFLIGHT_TIMEOUT_SECONDS=5
+```
+
+`GET /api/v1/mcp-preflight/overview` reports configuration and the most recent
+operator check. `POST /api/v1/mcp-preflight/local-docs/run` is admin-only and
+performs `initialize`, `notifications/initialized`, and `tools/list`. It
+accepts only `localhost`, loopback IPs, and `host.docker.internal`; rejects
+URL credentials, query strings, external hosts, redirects, response bodies
+over 1 MiB, and non-JSON responses. It returns a bounded tool name inventory
+only. It does not execute a listed tool, retain schemas/descriptions, expose
+headers, accept bearer tokens, or enable an HAI runtime.
 
 ## OSS Insight curation scope
 

@@ -211,12 +211,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "mcp-inspector", Name: "MCP Inspector", UpstreamURL: "https://github.com/modelcontextprotocol/inspector", SourceCatalogURL: "https://ossinsight.io/collections/model-context-protocol-mcp-client", SourceCollection: "Model Context Protocol (MCP) Client",
-		Status: StatusCandidate, Category: "MCP pre-activation validation", IntegrationMode: "operator-only local inspection tool",
-		Capabilities: []string{"MCP server inspection", "tool schema validation", "manual connection testing"}, RecommendedFor: []string{"MCP adapter review", "tool allowlist verification", "runtime health diagnostics"},
+		Status: StatusIntegrated, Category: "MCP pre-activation validation", IntegrationMode: "HAI-owned local-only Streamable HTTP preflight",
+		Capabilities: []string{"MCP handshake", "bounded tool inventory", "manual connection testing"}, RecommendedFor: []string{"MCP adapter review", "tool allowlist verification", "runtime health diagnostics"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Use only in a reviewed local test environment to inspect an allowlisted MCP server before an HAI runtime adapter is enabled. Never treat a successful inspection as execution approval.",
-		Rationale:  "Its official role is MCP server testing, which maps directly to HAI's pre-activation safety gate without granting it production execution authority.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP client listing and upstream MIT-licensed release activity checked on 2026-07-19.",
+		Activation: "Set HAI_MCP_PREFLIGHT_ENABLED=true and configure reviewed localhost, loopback, or host.docker.internal Streamable HTTP endpoints. An admin may run initialize plus tools/list; HAI never starts a process, accepts credentials, or calls a tool.",
+		Rationale:  "The upstream Inspector is a capable developer tool, but its proxy can start processes and connect broadly. HAI adopts only the useful pre-activation protocol check behind a tighter local-only boundary.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP client listing and upstream Inspector architecture/security guidance checked on 2026-07-19.",
 	},
 	{
 		ID: "langchain", Name: "LangChain", UpstreamURL: "https://github.com/langchain-ai/langchain", SourceCatalogURL: "https://ossinsight.io/collections/ai-agent-frameworks", SourceCollection: "AI Agent Frameworks and GraphRAG",

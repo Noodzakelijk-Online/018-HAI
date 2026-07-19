@@ -22,7 +22,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | pgvector | Vector Database & Vector Store | Integrated, opt-in | Local semantic retrieval in existing Postgres | Pinned Postgres 17 pgvector image; local-only embedding endpoint; owner-scoped SQL query; keyword fallback. |
 | Temporal | Workflow Scheduler | Candidate | Durable retries and follow-ups | One named local worker at a time; HAI owns approvals. |
 | Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
-| MCP Inspector | Model Context Protocol (MCP) Client | Candidate | Pre-activation MCP inspection | Operator-only inspection of allowlisted servers. |
+| MCP Inspector | Model Context Protocol (MCP) Client | Integrated profile | Local-only MCP preflight | HAI-owned initialize + tools/list review of configured local Streamable HTTP servers; no process spawn or tool execution. |
 | Playwright | Testing Tools | Candidate | Browser workflow verification | Named flows, origin allowlist, no secret capture, and approval gates. |
 | Wasmtime | WebAssembly Runtime | Candidate | Bounded WASI helper execution | Reviewed content-addressed modules, no inherited network, explicit capabilities. |
 | OR-Tools | Optimization Solvers | Candidate | Deterministic planning proposals | Returns evidence-backed suggestions only; applying changes stays gated. |
