@@ -92,11 +92,14 @@ func TestRecommendReviewedHighPriorityCandidatesWithoutClaimingActivation(t *tes
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"evidently", "mistral-rs", "ragflow", "livekit-agents"} {
+	for _, id := range []string{"evidently", "ragflow", "livekit-agents"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
 			t.Fatalf("%s must remain a reviewed, approval-gated candidate: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["mistral-rs"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("mistral.rs must remain integrated but configuration- and approval-gated: %#v", recommendations)
 	}
 }
 

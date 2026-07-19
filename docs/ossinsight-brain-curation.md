@@ -54,7 +54,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | --- | --- | --- | --- |
 | Evidently | Verification and observability | Candidate | Local redacted evaluation runner; report-only output and no default egress. |
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
-| mistral.rs | Thinking and local inference | Candidate | Loopback server, approved model and licence, resource limit, and disabled upstream agentic tools. |
+| mistral.rs | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, approved model and resource configuration, live probe, and disabled upstream agentic tools. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
 | RAGFlow | Memory and source intake | Candidate, local bridge implemented | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, disabled code executor, and fixed-dataset local retrieval configuration. |
 
@@ -104,6 +104,17 @@ endpoints, stay inactive until `/v1/models` succeeds, use the bounded
 OpenAI-compatible completion contract, and remain subject to HAI's EUR 0,
 local-first, validation, audit, and approval policy. HAI neither installs the
 servers nor downloads or selects their models.
+
+## Implemented mistral.rs boundary
+
+HAI now includes an opt-in `mistral-rs` local provider profile. Set
+`MISTRAL_RS_BASE_URL` and `MISTRAL_RS_MODEL_ID` after starting an
+operator-reviewed loopback or `host.docker.internal` server. HAI rejects LAN
+and public endpoints, requires a live `/v1/models` probe, and invokes only
+`/v1/chat/completions` for approved local generation through the existing EUR
+0 routing, fallback, audit, and approval policy. It never starts
+`mistralrs`, downloads a model, or calls its UI, agent, shell, web, file, MCP,
+Skills, or code-execution APIs.
 
 ## Implemented metrics boundary
 

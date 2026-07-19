@@ -442,12 +442,16 @@ disabled by default with a EUR 0 budget; request JSON cannot self-approve paid
 or approval-required use.
 
 Supported configuration families include Ollama, a first-class local
-`llama.cpp` server, LocalAI, vLLM, LM Studio, other configured OpenAI-compatible
-local servers, and configured free/freemium providers. `LLAMA_CPP_BASE_URL`
-`OLLAMA_BASE_URL`, `LM_STUDIO_BASE_URL`, `LOCALAI_BASE_URL`, and `VLLM_BASE_URL` accept only `localhost`, loopback, or
+`llama.cpp` server, LocalAI, vLLM, `mistral.rs`, LM Studio, other configured
+OpenAI-compatible local servers, and configured free/freemium providers.
+`LLAMA_CPP_BASE_URL`, `OLLAMA_BASE_URL`, `LM_STUDIO_BASE_URL`,
+`LOCALAI_BASE_URL`, `VLLM_BASE_URL`, and `MISTRAL_RS_BASE_URL` accept only `localhost`, loopback, or
 `host.docker.internal`; configure the matching `*_MODEL_ID` for the
-operator-installed model server. HAI does not install LocalAI or vLLM, and
-does not download models. Model
+operator-installed model server. HAI does not install LocalAI, vLLM, or
+`mistral.rs`, and does not download models. HAI calls a configured
+`mistral.rs` server only through `/v1/models` and `/v1/chat/completions`; its
+upstream agent, shell, web, file, MCP, Skills, UI, and code-execution features
+stay outside HAI. Model
 catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
 other configured provider models. Provider status must be read as configuration
 and probe history, not as a live-service guarantee.

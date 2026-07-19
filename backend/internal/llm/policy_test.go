@@ -857,6 +857,60 @@ func TestVLLMProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) 
 	}
 }
 
+func TestMistralRSProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"id": "qwen-mistralrs"}}})
+		case "/v1/chat/completions":
+			var request map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if request["model"] != "qwen-mistralrs" {
+				t.Fatalf("model = %v, want qwen-mistralrs", request["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"content": "local mistral.rs draft"}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	provider := providerIndex(t, policy, "mistral-rs")
+	policy.Providers[provider].EndpointURL = server.URL
+	policy.Providers[provider].Models[0].ID = "qwen-mistralrs"
+	service := &Service{policy: policy}
+
+	var probe ProviderProbeResult
+	for _, result := range service.ProbeProviders() {
+		if result.ProviderID == "mistral-rs" {
+			probe = result
+			break
+		}
+	}
+	if probe.Status != "live" || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want live mistral.rs provider with one model", probe)
+	}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Draft a local answer",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "mistral-rs",
+			SelectedModelID:    "qwen-mistralrs",
+			SelectedModelName:  "Configured mistral.rs local model",
+			Tier:               TierLocal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "completed" || result.Output != "local mistral.rs draft" {
+		t.Fatalf("generation result = %#v", result)
+	}
+}
+
 func TestLiteLLMGatewayUsesVirtualKeyAndRequiresGenerationApproval(t *testing.T) {
 	t.Setenv("LITELLM_API_KEY", "gateway-secret")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

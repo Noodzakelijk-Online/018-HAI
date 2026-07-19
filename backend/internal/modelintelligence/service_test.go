@@ -27,7 +27,7 @@ func TestRegistryTruthfulProviderStates(t *testing.T) {
 	if byID[ProviderTestFastTriage].Status != ProviderActive {
 		t.Fatalf("test-fast-triage must be active, got %s", byID[ProviderTestFastTriage].Status)
 	}
-	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "litellm", "custom-openai-compatible"} {
+	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "mistral-rs", "litellm", "custom-openai-compatible"} {
 		if byID[id].Status != ProviderNotConfigured {
 			t.Fatalf("%s must be not_configured without env config, got %s", id, byID[id].Status)
 		}
@@ -44,6 +44,7 @@ func TestNamedLocalProviderProfilesRejectRemoteEndpoints(t *testing.T) {
 		{providerID: "llama-cpp", envName: "LLAMA_CPP_BASE_URL"},
 		{providerID: "localai", envName: "LOCALAI_BASE_URL"},
 		{providerID: "vllm", envName: "VLLM_BASE_URL"},
+		{providerID: "mistral-rs", envName: "MISTRAL_RS_BASE_URL"},
 	} {
 		t.Run(providerConfig.providerID, func(t *testing.T) {
 			t.Setenv(providerConfig.envName, "https://models.example.test")
@@ -123,6 +124,40 @@ func TestVLLMRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testing.T
 	}
 	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
 		t.Fatalf("probe = %#v, want active vLLM provider", probe)
+	}
+}
+
+func TestMistralRSRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testing.T) {
+	t.Setenv("MISTRAL_RS_BASE_URL", "https://models.example.test")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("mistral-rs")
+	if !ok {
+		t.Fatal("mistral.rs provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote mistral.rs endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-mistralrs"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("MISTRAL_RS_BASE_URL", server.URL)
+	t.Setenv("MISTRAL_RS_MODEL_ID", "qwen-mistralrs")
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("mistral-rs")
+	if !ok {
+		t.Fatal("mistral.rs provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "qwen-mistralrs" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured qwen-mistralrs", profile)
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active mistral.rs provider", probe)
 	}
 }
 

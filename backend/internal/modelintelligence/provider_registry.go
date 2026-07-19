@@ -147,7 +147,7 @@ type Registry struct {
 // NewRegistryFromEnv assembles the initial provider set:
 //   - test-fast-triage, test-verifier (always active, deterministic, local)
 //   - dspark (env, not_configured by default)
-//   - ollama, lm-studio, llama.cpp, LocalAI, vLLM, LiteLLM, custom-openai-compatible (env, not_configured by default)
+//   - ollama, lm-studio, llama.cpp, LocalAI, vLLM, mistral.rs, LiteLLM, custom-openai-compatible (env, not_configured by default)
 func NewRegistryFromEnv() *Registry {
 	return &Registry{providers: []Provider{
 		&testFastTriageProvider{},
@@ -158,6 +158,7 @@ func NewRegistryFromEnv() *Registry {
 		newLocalRemoteProvider("llama-cpp", "llama.cpp (local OpenAI-compatible)", "LLAMA_CPP_BASE_URL", envOrDefault("LLAMA_CPP_MODEL_ID", "local-model"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("localai", "LocalAI (loopback OpenAI-compatible)", "LOCALAI_BASE_URL", envOrDefault("LOCALAI_MODEL_ID", "localai-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("vllm", "vLLM (loopback OpenAI-compatible)", "VLLM_BASE_URL", envOrDefault("VLLM_MODEL_ID", "vllm-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting, LaneParallelBatch}),
+		newLocalRemoteProvider("mistral-rs", "mistral.rs (loopback OpenAI-compatible)", "MISTRAL_RS_BASE_URL", envOrDefault("MISTRAL_RS_MODEL_ID", "mistralrs-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newGuardedLocalGatewayProvider("litellm", "LiteLLM (local-only gateway)", "LITELLM_ENABLED", "LITELLM_BASE_URL", envOrDefault("LITELLM_MODEL_ID", "local-model"), "LITELLM_API_KEY", ArchOpenAICompatibleUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newRemoteProvider("custom-openai-compatible", "Custom OpenAI-compatible", "CUSTOM_OPENAI_BASE_URL", "custom-default", ArchOpenAICompatibleUnknown, []RoutingLane{LaneDrafting, LaneParallelBatch}),
 	}}

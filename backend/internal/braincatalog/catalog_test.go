@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "pydantic-ai", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "evidently", "livekit-agents", "mistral-rs", "ragflow", "serena"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "pydantic-ai", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "evidently", "livekit-agents", "ragflow", "serena"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -36,6 +36,9 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	}
 	if entry, ok := EntryByID("vllm"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval {
 		t.Fatalf("vLLM must report its integrated, approval-gated local provider profile: %#v", entry)
+	}
+	if entry, ok := EntryByID("mistral-rs"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("mistral.rs must report its integrated, approval-gated local provider profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("a2a"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval {
 		t.Fatalf("A2A must remain a review-first compatibility profile: %#v", entry)

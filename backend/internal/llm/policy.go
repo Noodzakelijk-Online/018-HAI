@@ -1218,7 +1218,7 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 
 func isLoopbackOnlyProvider(providerID string) bool {
 	switch providerID {
-	case "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "litellm":
+	case "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "mistral-rs", "litellm":
 		return true
 	default:
 		return false
@@ -1237,6 +1237,8 @@ func localProviderDisplayName(providerID string) string {
 		return "LocalAI"
 	case "vllm":
 		return "vLLM"
+	case "mistral-rs":
+		return "mistral.rs"
 	case "litellm":
 		return "LiteLLM gateway"
 	default:
@@ -1344,6 +1346,11 @@ func defaultPolicy() Policy {
 	vLLMModelID := strings.TrimSpace(os.Getenv("VLLM_MODEL_ID"))
 	if vLLMModelID == "" {
 		vLLMModelID = "vllm-default"
+	}
+	mistralRSEndpoint := strings.TrimSpace(os.Getenv("MISTRAL_RS_BASE_URL"))
+	mistralRSModelID := strings.TrimSpace(os.Getenv("MISTRAL_RS_MODEL_ID"))
+	if mistralRSModelID == "" {
+		mistralRSModelID = "mistralrs-default"
 	}
 	liteLLMEnabled := envEnabled("LITELLM_ENABLED")
 	liteLLMEndpoint := strings.TrimSpace(os.Getenv("LITELLM_BASE_URL"))
@@ -1458,6 +1465,18 @@ func defaultPolicy() Policy {
 				QuotaRemaining: -1,
 				Models: []Model{
 					{ID: vLLMModelID, Name: "Configured vLLM local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "mistral-rs",
+				Name:           "mistral.rs local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    mistralRSEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: mistralRSModelID, Name: "Configured mistral.rs local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
 				},
 			},
 			{
