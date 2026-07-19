@@ -16,6 +16,7 @@ import (
 	"automation-hub-backend/internal/assistant"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
+	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/featureflags"
@@ -67,6 +68,7 @@ func initializeRoutes(router *gin.Engine) error {
 		runtimeRegistry := agentruntime.DefaultRegistry()
 		runtimeHandler := agentruntime.NewHandler(runtimeRegistry)
 		initializeAgentRuntimeRoutes(v1, runtimeHandler)
+		initializeBrainCatalogRoutes(v1, braincatalog.NewHandler())
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
@@ -213,6 +215,15 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 		routes.PATCH("/openclaw/ecosystem", requirePermission(rbac.PermAdmin), handler.SetOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/refresh", requirePermission(rbac.PermAdmin), handler.RefreshOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/upload", requirePermission(rbac.PermAdmin), handler.UploadOpenClawEcosystem)
+	}
+}
+
+func initializeBrainCatalogRoutes(apiVersion *gin.RouterGroup, handler *braincatalog.Handler) {
+	routes := apiVersion.Group("/brain-catalog")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/", requirePermission(rbac.PermRead), handler.List)
+		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
 	}
 }
 

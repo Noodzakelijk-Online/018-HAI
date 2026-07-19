@@ -64,7 +64,7 @@ for the canonical-stack decision.
 | Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, and read-only GitHub sync. | Gmail, Calendar, Drive, Trello, WhatsApp, and browser accounts are export/local-folder paths, not live OAuth or browser connectors. |
 | LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
 | Verification | Source-grounded answers, claim/evidence status, schema/deterministic validation, review routing, and verification-gated task completion. | Model confidence alone never authorizes a factual claim or consequential action. |
-| Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, and emergency stop. | Script/Docker control and external runtimes are disabled until explicitly configured; high-risk actions need approval. |
+| Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, and emergency stop. A curated external agent catalog also informs task planning. | Script/Docker control and external runtimes are disabled until explicitly configured; high-risk actions need approval. The catalog cannot install, enable, or execute a third-party project. |
 | Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. |
 | Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile commands, CI, Compose validation, and local smoke coverage. | Schedulers are in-process, single-node workers, not a distributed or HA worker platform. |
 
@@ -86,6 +86,7 @@ No configured provider, runtime, dashboard state, or generated answer upgrades i
 | Intake safety | New source, assistant, and ambient input is matched to an active pursuit or becomes a non-executable candidate. An approval-capable user must accept a candidate before its first governed workflow is created. |
 | External accounts | Local/export ingestion and read-only GitHub sync are available. Live Gmail, Drive, Calendar, Trello, WhatsApp, browser, and similar account connectors are not implemented. |
 | Models and runtimes | Local/free-first routing and guarded adapter surfaces exist. No provider or runtime is live-proven until its scoped probe, approved task, audit, and verification evidence exist. |
+| External agent catalog | Candidate capabilities from the E2B awesome-list are curated into task planning and a read-only API. Continue, OpenHands, CrewAI, and Aider are candidates; E2B is reference-only; AutoGPT requires licensing review; AutoGen and MetaGPT are excluded for new integrations. | A catalog entry is not an installed dependency or executable runtime. See [the catalog decision record](docs/agent-tool-catalog.md). |
 | Production readiness | Not claimed. Clean-machine deployment, signed-in browser coverage, two-real-account isolation, and bounded real-provider/runtime exercises remain release gates. |
 
 ### Verification Snapshot
@@ -417,6 +418,7 @@ areas are:
 
 - `/automation`: registered automations, launch/stop, health checks, and diagnostics.
 - `/agent-runtimes`: runtime inventory, health, skill discovery, controlled stop, and OpenClaw ecosystem inspection.
+- `/brain-catalog`: authenticated, read-only agent-project curation and activation boundaries; it has no install or enable operation.
 - `/llm`: policy, probes, routing, generation, and redacted decision history.
 - `/memory` and `/memory-engine`: compact memory, encrypted conversation import, search, and insights.
 - `/sources`: source registry, connectors, sync, extraction management, search, and audit records.

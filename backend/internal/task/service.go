@@ -11,6 +11,7 @@ import (
 	"automation-hub-backend/internal/actionresolver"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomygate"
+	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
@@ -75,10 +76,11 @@ type ExecutionPlan struct {
 }
 
 type ToolRouteDecision struct {
-	SelectedTools []string `json:"selectedTools"`
-	SkippedTools  []string `json:"skippedTools"`
-	BlockedTools  []string `json:"blockedTools"`
-	Reason        string   `json:"reason"`
+	SelectedTools          []string                      `json:"selectedTools"`
+	SkippedTools           []string                      `json:"skippedTools"`
+	BlockedTools           []string                      `json:"blockedTools"`
+	CatalogRecommendations []braincatalog.Recommendation `json:"catalogRecommendations,omitempty"`
+	Reason                 string                        `json:"reason"`
 }
 
 type TaskStep struct {
@@ -601,7 +603,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 		return nil, err
 	}
 
-	toolDecision := routeTools(intake)
+	toolDecision := routeTools(intake, request.Request)
 	minimalityDecision := decideMinimality(request, intake)
 	risk := assessRisk(intake, request)
 	steps := buildTaskSteps(intake, toolDecision, risk, minimalityDecision)
@@ -1446,7 +1448,7 @@ func buildExecutionPlan(intake IntakeAnalysis) ExecutionPlan {
 	}
 }
 
-func routeTools(intake IntakeAnalysis) ToolRouteDecision {
+func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
 	selected := []string{"memory.retrieve", "llm.route", "validator.criteria"}
 	skipped := []string{}
 	blocked := []string{}
@@ -1475,11 +1477,25 @@ func routeTools(intake IntakeAnalysis) ToolRouteDecision {
 		reasons = append(reasons, "high-risk tools blocked until human approval")
 	}
 
+	catalogRecommendations := braincatalog.Recommend(intake.TaskType, request)
+	if len(catalogRecommendations) > 0 {
+		reasons = append(reasons, "external agent capabilities are recommendations only until a reviewed adapter is configured")
+		for _, recommendation := range catalogRecommendations {
+			switch recommendation.Status {
+			case braincatalog.StatusCandidate:
+				skipped = append(skipped, "agent-catalog."+recommendation.ID+": operator-configured adapter required")
+			default:
+				blocked = append(blocked, "agent-catalog."+recommendation.ID+": "+string(recommendation.Status))
+			}
+		}
+	}
+
 	return ToolRouteDecision{
-		SelectedTools: uniqueStrings(selected),
-		SkippedTools:  uniqueStrings(skipped),
-		BlockedTools:  uniqueStrings(blocked),
-		Reason:        strings.Join(reasons, "; "),
+		SelectedTools:          uniqueStrings(selected),
+		SkippedTools:           uniqueStrings(skipped),
+		BlockedTools:           uniqueStrings(blocked),
+		CatalogRecommendations: catalogRecommendations,
+		Reason:                 strings.Join(reasons, "; "),
 	}
 }
 

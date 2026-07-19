@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
@@ -48,6 +49,30 @@ func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 	if len(plan.ToolDecision.SelectedTools) == 0 {
 		t.Fatalf("expected tool routing decision")
 	}
+	if !hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "continue") || !hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "openhands") {
+		t.Fatalf("coding plan must surface governed agent-catalog capabilities: %#v", plan.ToolDecision.CatalogRecommendations)
+	}
+	if !containsToolDecisionItem(plan.ToolDecision.SkippedTools, "agent-catalog.continue: operator-configured adapter required") {
+		t.Fatalf("candidate must not be treated as configured or executable: %#v", plan.ToolDecision)
+	}
+}
+
+func hasCatalogRecommendation(recommendations []braincatalog.Recommendation, id string) bool {
+	for _, recommendation := range recommendations {
+		if recommendation.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func containsToolDecisionItem(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAnalyzeIntakeDoesNotRequireRuntimeForAPIExplanation(t *testing.T) {
