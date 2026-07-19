@@ -276,13 +276,13 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight RAG Frameworks repository list and GitHub metadata checked on 2026-07-19; Haystack is not installed or connected.",
 	},
 	{
-		ID: "fastmcp", Name: "FastMCP", UpstreamURL: "https://github.com/jlowin/fastmcp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		ID: "fastmcp", Name: "FastMCP", UpstreamURL: "https://github.com/PrefectHQ/fastmcp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
 		Status: StatusCandidate, Category: "MCP tool-server authoring", IntegrationMode: "reviewed local MCP service adapter",
 		Capabilities: []string{"MCP server authoring", "tool schemas", "resource and prompt exposure"}, RecommendedFor: []string{"narrow local tool adapters", "MCP capability design", "controlled tool publication"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review one named loopback service with a fixed tool list, input schemas, owner, health probe, and audit contract. HAI must preflight it through the existing MCP path before a separate tool-execution adapter can be considered; FastMCP never receives implicit filesystem, process, network, or credential access.",
 		Rationale:  "FastMCP is a maintained MCP-server implementation candidate for narrow HAI-owned tools. It complements HAI's existing preflight capability without importing an unbounded tool registry or process launcher.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19; no FastMCP service is installed or configured by HAI.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP listing and canonical PrefectHQ repository redirect, Apache-2.0 license, security policy, and July 2026 release activity checked on 2026-07-19; no FastMCP service is installed or configured by HAI.",
 	},
 	{
 		ID: "vllm", Name: "vLLM", UpstreamURL: "https://github.com/vllm-project/vllm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",

@@ -16,9 +16,9 @@ func TestOSSInsightRepositoryScoutOnlyQueriesCandidateCollectionEndpoints(t *tes
 		switch req.URL.String() {
 		case ossInsightCollectionsURL:
 		case "https://api.ossinsight.io/v1/collections/10105/repos/":
-			body = `{"data":{"rows":[{"repo_name":"github/github-mcp-server"},{"repo_name":"owner/new-mcp"}]}}`
+			body = `{"data":{"rows":[{"repo_name":"github/github-mcp-server"},{"repo_name":"owner/new-mcp"}],"result":{"limit":50}}}`
 		case "https://api.ossinsight.io/v1/collections/10136/repos/":
-			body = `{"data":{"rows":[{"repo_name":"qodo-ai/pr-agent"},{"repo_name":"owner/new-review"}]}}`
+			body = `{"data":{"rows":[{"repo_name":"qodo-ai/pr-agent"},{"repo_name":"owner/new-review"}],"result":{"limit":50}}}`
 		default:
 			t.Fatalf("unexpected source request: %s", req.URL)
 		}
@@ -36,6 +36,9 @@ func TestOSSInsightRepositoryScoutOnlyQueriesCandidateCollectionEndpoints(t *tes
 	}
 	if len(report.Discoveries) != 2 || report.Discoveries[0].Repository != "owner/new-mcp" || report.Discoveries[1].Repository != "owner/new-review" {
 		t.Fatalf("unexpected discoveries: %#v", report.Discoveries)
+	}
+	if report.MaximumDiscoveries < 800 || report.SourceQueryLimit != 50 || report.CollectionsAtQueryLimit != 0 {
+		t.Fatalf("discovery capacity and source-query context must be explicit: %#v", report)
 	}
 	for _, url := range requested {
 		if strings.Contains(url, "/10030/") {
@@ -59,9 +62,9 @@ func TestOSSInsightRepositoryScoutReviewableScopeQueriesRepresentedCategoriesSep
 		switch req.URL.String() {
 		case ossInsightCollectionsURL:
 		case "https://api.ossinsight.io/v1/collections/10105/repos/":
-			body = `{"data":{"rows":[{"repo_name":"owner/new-mcp"}]}}`
+			body = `{"data":{"rows":[{"repo_name":"owner/new-mcp"}],"result":{"limit":50}}}`
 		case "https://api.ossinsight.io/v1/collections/10109/repos/":
-			body = `{"data":{"rows":[{"repo_name":"owner/new-inference"}]}}`
+			body = `{"data":{"rows":[{"repo_name":"owner/new-inference"}],"result":{"limit":50}}}`
 		default:
 			t.Fatalf("unexpected source request: %s", req.URL)
 		}
