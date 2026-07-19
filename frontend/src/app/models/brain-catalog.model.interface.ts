@@ -98,12 +98,14 @@ export interface IBrainCatalogCapabilityRecommendation {
   verifiedAt: string
   verificationNote: string
   score: number
+  matchedTerms: string[]
   reasons: string[]
   nextStep: string
 }
 
 export interface IBrainCatalogCapabilityRecommendationResponse {
   need: string
+  expandedTerms: string[]
   recommendations: IBrainCatalogCapabilityRecommendation[]
   message: string
 }

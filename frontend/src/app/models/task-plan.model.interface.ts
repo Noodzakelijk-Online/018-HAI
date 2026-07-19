@@ -139,6 +139,7 @@ export interface ICatalogRecommendation {
 
 export interface ICapabilityRecommendation extends ICatalogRecommendation {
   score: number;
+  matchedTerms: string[];
   reasons: string[];
   nextStep: string;
 }

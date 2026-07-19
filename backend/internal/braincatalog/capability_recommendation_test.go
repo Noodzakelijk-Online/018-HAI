@@ -35,3 +35,39 @@ func TestRecommendForNeedRequiresSpecificTerms(t *testing.T) {
 		t.Fatal("expected vague need to be rejected")
 	}
 }
+
+func TestRecommendForNeedExpandsCommonOperationalTermsTransparently(t *testing.T) {
+	response, err := RecommendForNeed("benchmark local LLM models and protect PII")
+	if err != nil {
+		t.Fatalf("RecommendForNeed() error = %v", err)
+	}
+	for _, expected := range []string{"model", "inference", "sensitive", "redaction"} {
+		found := false
+		for _, term := range response.ExpandedTerms {
+			if term == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing expanded term %q: %#v", expected, response.ExpandedTerms)
+		}
+	}
+	if !hasRecommendationID(response.Recommendations, "lm-eval-harness") || !hasRecommendationID(response.Recommendations, "presidio") {
+		t.Fatalf("expected local evaluation and redaction candidates: %#v", response.Recommendations)
+	}
+	for _, recommendation := range response.Recommendations {
+		if len(recommendation.MatchedTerms) == 0 {
+			t.Fatalf("recommendation lacks traceable matched terms: %#v", recommendation)
+		}
+	}
+}
+
+func hasRecommendationID(recommendations []CapabilityRecommendation, id string) bool {
+	for _, recommendation := range recommendations {
+		if recommendation.ID == id {
+			return true
+		}
+	}
+	return false
+}

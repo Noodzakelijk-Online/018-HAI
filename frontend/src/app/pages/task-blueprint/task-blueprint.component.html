@@ -478,6 +478,7 @@
             <div>
               <strong>{{ option.name }}</strong>
               <small>{{ option.role }} - {{ option.status }}</small>
+              <small>Direct matches: {{ option.matchedTerms.join(', ') }}</small>
               <small>{{ option.reasons.join('; ') }}</small>
               <small *ngIf="option.sourceCollection">Reviewed {{ option.verifiedAt }} from {{ option.sourceCollection }}.</small>
             </div>

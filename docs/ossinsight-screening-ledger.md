@@ -206,3 +206,12 @@ Every ranked match carries the reviewed upstream URL, its OSS Insight source
 record, source collection, verification date, and verification note. The
 operator can therefore inspect the evidence from either the Brain Catalog or a
 task plan before starting any separate adapter review.
+
+The matching vocabulary applies a small deterministic expansion for common
+operational terms, for example `LLM` to `model` and `inference`, or `PII` to
+`sensitive` and `redaction`. Singular and plural variants are normalized. The
+expanded terms are returned to the operator, so this matching aid is
+inspectable and does not represent an unlogged model inference or an upstream
+search. Specific terms written by the operator rank above generic or expanded
+terms, preventing a broad phrase such as "local model" from displacing an
+explicit objective such as "benchmark".
