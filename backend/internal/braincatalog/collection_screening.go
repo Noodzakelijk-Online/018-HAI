@@ -42,6 +42,25 @@ var ossInsightCollectionPages = [][]string{
 	{"Web3", "Finance", "Cross Platform GUI Tool", "Remote Desktop Tool", "Testing Tools", "WebAssembly Runtime", "Distributed File Storage", "Programming Language", "Javascript Charting", "CICD", "React Framework", "APM Tool"},
 	{"Chaos Engineering", "Search Engine", "Text Editor", "Javascript Game Engine", "Game Engine", "Headless CMS", "Artificial Intelligence", "Github Alternative", "Graph Database", "Time Series Database", "Business Intelligence", "Javascript Framework"},
 	{"Web Framework", "Low Code Development Tool", "Google Analytics Alternative", "CSS Framework", "Open Source Database", "Static Site Generator"},
+	{"MCP Servers", "Coding Agents", "Vibe Coding Tools", "RAG Frameworks", "LLM Inference Engines", "LLM Fine-Tuning Tools", "AI Image Generation", "AI Coding Assistants", "AI Browser Agents", "AI Agent Memory", "LLM Gateway & Proxy", "AI Safety & Alignment"},
+	{"Vector Databases", "Multimodal AI", "AI Evaluation & Testing", "Model Compression", "AI Video Generation", "AI Workflow Orchestration", "Agent Skills & AGENTS.md", "AI Infrastructure", "Edge AI", "AI Governance", "Google ADK", "Neuro-Symbolic AI"},
+	{"AI FinOps", "Synthetic Data", "AI Quantitative Finance", "AI Agent Marketplace", "Knowledge Graphs for AI", "AI Observability", "AI Code Review", "Agent Sandboxing", "AI Red Teaming", "A2A Protocol", "Google ADK Python", "Agent Harness"},
+}
+
+// OSS Insight's public collection API contains newer AI-specific collections
+// that are not yet visible in its 102-category web grid. These IDs make the
+// provenance link point at the documented repository-list API instead of an
+// inaccurate page number in the older web pagination.
+var ossInsightCollectionIDs = map[string]string{
+	"MCP Servers": "10105", "Coding Agents": "10106", "Vibe Coding Tools": "10107", "RAG Frameworks": "10108",
+	"LLM Inference Engines": "10109", "LLM Fine-Tuning Tools": "10110", "AI Image Generation": "10111", "AI Coding Assistants": "10112",
+	"AI Browser Agents": "10113", "AI Agent Memory": "10114", "LLM Gateway & Proxy": "10115", "AI Safety & Alignment": "10116",
+	"Vector Databases": "10117", "Multimodal AI": "10118", "AI Evaluation & Testing": "10119", "Model Compression": "10121",
+	"AI Video Generation": "10122", "AI Workflow Orchestration": "10123", "Agent Skills & AGENTS.md": "10124", "AI Infrastructure": "10125",
+	"Edge AI": "10126", "AI Governance": "10127", "Google ADK": "10128", "Neuro-Symbolic AI": "10129",
+	"AI FinOps": "10130", "Synthetic Data": "10131", "AI Quantitative Finance": "10132", "AI Agent Marketplace": "10133",
+	"Knowledge Graphs for AI": "10134", "AI Observability": "10135", "AI Code Review": "10136", "Agent Sandboxing": "10137",
+	"AI Red Teaming": "10138", "A2A Protocol": "10139", "Google ADK Python": "10140", "Agent Harness": "10141",
 }
 
 var ossInsightCollectionDecisions = map[string]collectionDecision{
@@ -69,13 +88,49 @@ var ossInsightCollectionDecisions = map[string]collectionDecision{
 	"Distributed File Storage":             {CollectionDeferred, []string{"minio"}, "No storage platform is adopted. The previous MinIO candidate remains excluded under its recorded upstream and licence review."},
 	"Low Code Development Tool":            {CollectionDeferred, []string{"n8n"}, "Low-code platforms overlap HAI's workflow authority and remain held behind licensing and architecture review."},
 	"Open Source Database":                 {CollectionDeferred, []string{"pgvector", "qdrant"}, "HAI retains its existing Postgres base; a database migration requires a demonstrated reliability or scale case."},
+	"MCP Servers":                          {CollectionRepresented, []string{"mcp-inspector", "playwright-mcp"}, "MCP server discovery is limited to preflight and allowlist review; a catalog record never launches a server or calls a tool."},
+	"Coding Agents":                        {CollectionCandidate, []string{"opencode", "cline", "aider", "openhands"}, "Write-capable coding agents remain workspace-confined, review-first candidates with explicit model, tool, and network boundaries."},
+	"Vibe Coding Tools":                    {CollectionReference, []string{"cline", "opencode"}, "HAI retains its governed task and change-verification path instead of adopting a separate application-building control plane."},
+	"RAG Frameworks":                       {CollectionReference, []string{"langchain", "llamaindex", "mem0", "letta"}, "HAI keeps one source-linked memory plane; framework patterns can inform a reviewed adapter but do not create a second memory authority."},
+	"LLM Inference Engines":                {CollectionRepresented, []string{"ollama", "llama-cpp"}, "Local inference is already routed through HAI's provider policy and live-probe gates; model servers remain operator-installed."},
+	"LLM Fine-Tuning Tools":                {CollectionDeferred, nil, "Training and fine-tuning add compute, model provenance, evaluation, and data-governance obligations that are outside HAI's current execution plane."},
+	"AI Image Generation":                  {CollectionReference, []string{"comfyui"}, "Image generation is a potential approved artifact workflow, not an autonomous public-publishing capability."},
+	"AI Coding Assistants":                 {CollectionCandidate, []string{"tabby", "continue"}, "Coding assistance requires a repository-specific, review-first adapter; no assistant receives implicit source or write access."},
+	"AI Browser Agents":                    {CollectionCandidate, []string{"browser-use", "playwright"}, "Browser autonomy is high-risk. HAI uses an allowlisted, approval-gated verification path and treats agentic browsing as a separate adapter review."},
+	"AI Agent Memory":                      {CollectionReference, []string{"mem0", "letta"}, "Useful memory patterns are retained, while HAI keeps its editable, source-linked local memory plane as the only active authority."},
+	"LLM Gateway & Proxy":                  {CollectionRepresented, []string{"litellm"}, "Provider normalization stays behind HAI's local-first routing, paid-budget, and approval controls."},
+	"AI Safety & Alignment":                {CollectionCandidate, []string{"nemo-guardrails", "llm-guard", "garak"}, "Safety tools may strengthen validation and redaction, but require a data-handling and false-positive review before they influence actions."},
+	"Vector Databases":                     {CollectionRepresented, []string{"pgvector", "qdrant"}, "HAI prefers its existing Postgres retrieval boundary and holds alternate vector services as references until scale evidence justifies them."},
+	"Multimodal AI":                        {CollectionCandidate, []string{"whisper-cpp"}, "Local speech transcription can enrich approved intake, but audio capture, retention, and source attribution must be reviewed first."},
+	"AI Evaluation & Testing":              {CollectionCandidate, []string{"promptfoo", "langfuse", "garak"}, "Evaluation tools are candidates for controlled regression and safety checks; test prompts and provider credentials remain sensitive."},
+	"Model Compression":                    {CollectionReference, []string{"llama-cpp"}, "Model quantization is treated as an operator model-provenance concern, not an autonomous optimization action."},
+	"AI Video Generation":                  {CollectionDeferred, nil, "Video generation is not part of the current command and execution plane and would require separate resource and publication controls."},
+	"AI Workflow Orchestration":            {CollectionRepresented, []string{"temporal", "n8n"}, "HAI uses a bounded Temporal worker; broader low-code workflow platforms remain separately governed references."},
+	"Agent Skills & AGENTS.md":             {CollectionReference, []string{"opencode", "mcp-inspector"}, "Skill manifests can inform scoped procedures, but HAI owns task policy, tool allowlists, and execution approval."},
+	"AI Infrastructure":                    {CollectionReference, []string{"litellm", "prometheus"}, "Infrastructure patterns are useful only when they preserve HAI's small local control plane and do not introduce unreviewed cloud spend."},
+	"Edge AI":                              {CollectionRepresented, []string{"ollama", "llama-cpp"}, "Local model serving remains the preferred path; hardware selection and model provenance require an explicit operator configuration."},
+	"AI Governance":                        {CollectionReference, []string{"nemo-guardrails", "llm-guard"}, "Governance frameworks can inform policy checks but do not replace HAI's approvals, audit records, or deterministic controls."},
+	"Google ADK":                           {CollectionReference, []string{"a2a"}, "Google ADK is retained only as an interoperability reference; HAI does not create a second agent runtime foundation."},
+	"Neuro-Symbolic AI":                    {CollectionDeferred, nil, "No demonstrated HAI capability gap justifies adopting a research-oriented reasoning stack at this time."},
+	"AI FinOps":                            {CollectionRepresented, []string{"litellm", "langfuse"}, "HAI's EUR 0 paid default and local-first router remain authoritative; external telemetry must not approve spend."},
+	"Synthetic Data":                       {CollectionDeferred, nil, "Synthetic-data generation is not adopted until a concrete test-data need, privacy review, and retention plan exist."},
+	"AI Quantitative Finance":              {CollectionDeferred, nil, "Financial modeling and trading frameworks are intentionally outside autonomous execution and require a separate regulated-use review."},
+	"AI Agent Marketplace":                 {CollectionReference, []string{"autogen", "crewai"}, "Marketplace projects are discovery material only; HAI will not import third-party agents or their implicit permissions."},
+	"Knowledge Graphs for AI":              {CollectionReference, []string{"cognee", "llamaindex"}, "Knowledge-graph patterns are held until a measured retrieval gap justifies a source-linked, reviewable addition to local memory."},
+	"AI Observability":                     {CollectionCandidate, []string{"langfuse"}, "Trace and evaluation observability is a strong candidate, subject to local hosting, redaction, retention, and egress review."},
+	"AI Code Review":                       {CollectionCandidate, []string{"continue", "promptfoo"}, "Code review integrations remain proposal-only until repository scope, test commands, and write boundaries are explicitly approved."},
+	"Agent Sandboxing":                     {CollectionReference, []string{"e2b", "daytona"}, "Sandbox platforms are useful design references, but external or broad execution environments remain outside HAI's local execution boundary."},
+	"AI Red Teaming":                       {CollectionCandidate, []string{"promptfoo", "garak"}, "Safety testing is valuable but must use redacted fixtures, provider restrictions, and a no-write evaluation boundary."},
+	"A2A Protocol":                         {CollectionCandidate, []string{"a2a", "autogen"}, "Agent-to-agent interoperability needs a narrow, signed task envelope; discovery does not authorize remote peers or tools."},
+	"Google ADK Python":                    {CollectionReference, []string{"a2a"}, "The SDK is retained as protocol reference only while HAI preserves its own planner, policy, and execution control plane."},
+	"Agent Harness":                        {CollectionCandidate, []string{"autogen", "crewai", "letta"}, "Harness patterns are candidates for HAI-native adapters only; no external agent may self-authorize tools, providers, or side effects."},
 }
 
 const defaultCollectionRationale = "No direct HAI adoption: this category is outside the current local-first control plane, already covered by the stack, or needs a demonstrated product gap before project-level review."
 
-// CollectionScreenings returns a copy of the complete 102-category screen.
+// CollectionScreenings returns a copy of the complete 138-category API snapshot.
 func CollectionScreenings() []CollectionScreening {
-	result := make([]CollectionScreening, 0, 102)
+	result := make([]CollectionScreening, 0, 138)
 	for pageIndex, collections := range ossInsightCollectionPages {
 		page := pageIndex + 1
 		for _, collection := range collections {
@@ -83,10 +138,14 @@ func CollectionScreenings() []CollectionScreening {
 			if !ok {
 				decision = collectionDecision{disposition: CollectionDeferred, rationale: defaultCollectionRationale}
 			}
+			sourceURL := "https://ossinsight.io/collections?page=" + strconv.Itoa(page)
+			if collectionID := ossInsightCollectionIDs[collection]; collectionID != "" {
+				sourceURL = "https://api.ossinsight.io/v1/collections/" + collectionID + "/repos/"
+			}
 			result = append(result, CollectionScreening{
 				Collection: collection, Page: page, Disposition: decision.disposition,
 				RelatedEntryIDs: append([]string(nil), decision.entries...), Rationale: decision.rationale,
-				SourceURL: "https://ossinsight.io/collections?page=" + strconv.Itoa(page),
+				SourceURL: sourceURL,
 			})
 		}
 	}

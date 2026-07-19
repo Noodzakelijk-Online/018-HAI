@@ -104,6 +104,96 @@ func DiscoverySources() []CatalogSource {
 
 var entries = []Entry{
 	{
+		ID: "ollama", Name: "Ollama", UpstreamURL: "https://github.com/ollama/ollama", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
+		Status: StatusIntegrated, Category: "local model inference", IntegrationMode: "operator-configured loopback Ollama provider",
+		Capabilities: []string{"local model discovery", "local generation", "model tags probe", "local-first routing"}, RecommendedFor: []string{"local reasoning", "classification", "extraction", "drafting"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Set a loopback-only OLLAMA_BASE_URL and run HAI's persisted provider probe. HAI selects only a live local model under the EUR 0 policy and still requires the task's existing approval gate before consequential generation or execution.",
+		Rationale:  "HAI already has a real local Ollama provider, tag probe, readiness persistence, and local-first route selection. The catalog makes that implemented boundary visible without installing Ollama or selecting a model automatically.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines repository list and HAI's existing local-provider implementation checked on 2026-07-19.",
+	},
+	{
+		ID: "browser-use", Name: "browser-use", UpstreamURL: "https://github.com/browser-use/browser-use", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10113/repos/", SourceCollection: "AI Browser Agents",
+		Status: StatusCandidate, Category: "agentic browser execution", IntegrationMode: "reviewed local browser adapter",
+		Capabilities: []string{"browser task planning", "tool-mediated browsing", "structured browser outcomes"}, RecommendedFor: []string{"browser workflow design", "approved research", "read-only verification"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local, named browser profile with origin, download, upload, credential, and action allowlists. Start with read-only verification; sending, posting, account changes, purchases, uploads, and destructive actions require separate HAI approvals.",
+		Rationale:  "A relevant browser-agent candidate, but browser autonomy can cause irreversible external effects. HAI retains its current controlled browser verification path until a narrow adapter proves safe.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Browser Agents repository list checked on 2026-07-19; no browser-use runtime is installed or configured by HAI.",
+	},
+	{
+		ID: "nemo-guardrails", Name: "NVIDIA NeMo Guardrails", UpstreamURL: "https://github.com/NVIDIA-NeMo/Guardrails", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
+		Status: StatusCandidate, Category: "LLM interaction guardrails", IntegrationMode: "operator-hosted validation adapter",
+		Capabilities: []string{"input controls", "output controls", "topic and policy rails"}, RecommendedFor: []string{"draft validation", "high-risk output review", "policy testing"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Complete a local adapter review covering policy ownership, false-positive handling, data redaction, model routing, audit events, and fail-closed behavior. Guardrails may flag work but cannot approve or execute it.",
+		Rationale:  "A useful defense-in-depth candidate for LLM interaction validation. It must complement, never replace, HAI's deterministic risk policy and human approvals.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Safety & Alignment repository list checked on 2026-07-19; no NeMo Guardrails service is configured by HAI.",
+	},
+	{
+		ID: "garak", Name: "garak", UpstreamURL: "https://github.com/NVIDIA/garak", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10138/repos/", SourceCollection: "AI Red Teaming",
+		Status: StatusCandidate, Category: "LLM vulnerability testing", IntegrationMode: "contained, no-write evaluation runner",
+		Capabilities: []string{"probe suites", "model safety testing", "evaluation reports"}, RecommendedFor: []string{"provider validation", "prompt safety review", "pre-release checks"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Run only against explicitly configured local test providers with redacted fixtures, a time limit, no production credentials, and retained audit results. A failed probe creates review work; it cannot mutate policy or runtime configuration.",
+		Rationale:  "A strong red-team candidate that can give HAI evidence before enabling a model or agent profile, provided evaluation inputs and execution remain contained.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Red Teaming repository list checked on 2026-07-19; no garak runner is configured by HAI.",
+	},
+	{
+		ID: "whisper-cpp", Name: "whisper.cpp", UpstreamURL: "https://github.com/ggml-org/whisper.cpp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10118/repos/", SourceCollection: "Multimodal AI",
+		Status: StatusCandidate, Category: "local speech transcription", IntegrationMode: "operator-configured local intake adapter",
+		Capabilities: []string{"offline transcription", "audio-to-text extraction", "local model execution"}, RecommendedFor: []string{"voice-note intake", "meeting evidence", "accessibility transcription"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review local audio folders, consent, retention, model provenance, language handling, transcript confidence, and source links. HAI stores transcripts only through its existing source and memory verification path.",
+		Rationale:  "Local speech-to-text can broaden safe intake without transmitting audio to a cloud service, but it requires explicit consent and evidence-quality controls.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Multimodal AI repository list checked on 2026-07-19; no whisper.cpp binary or audio connector is configured by HAI.",
+	},
+	{
+		ID: "a2a", Name: "A2A Protocol", UpstreamURL: "https://github.com/a2aproject/A2A", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10139/repos/", SourceCollection: "A2A Protocol",
+		Status: StatusCompatibility, Category: "agent interoperability", IntegrationMode: "reviewed protocol bridge",
+		Capabilities: []string{"agent task envelopes", "capability discovery patterns", "interoperability"}, RecommendedFor: []string{"external agent review", "protocol translation", "multi-agent interoperability"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Implement only a narrow local bridge with a fixed task schema, authenticated named peers, no implicit capability negotiation, and HAI-owned tool, budget, approval, and audit decisions.",
+		Rationale:  "A2A can inform interoperability, but it must not become an unbounded remote-agent trust channel or a replacement for HAI's controlled runtime registry.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight A2A Protocol repository list checked on 2026-07-19; no A2A peer or transport is configured by HAI.",
+	},
+	{
+		ID: "tabby", Name: "Tabby", UpstreamURL: "https://github.com/TabbyML/tabby", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10112/repos/", SourceCollection: "AI Coding Assistants",
+		Status: StatusCandidate, Category: "self-hosted coding assistance", IntegrationMode: "operator-hosted editor-assistance adapter",
+		Capabilities: []string{"self-hosted completion", "code context", "local model integration"}, RecommendedFor: []string{"developer assistance", "local coding experiments"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local deployment, workspace scope, model provider, telemetry, repository privacy, and read-only-first integration. HAI will not grant editor, terminal, or Git write authority by catalog entry.",
+		Rationale:  "A self-hosted coding-assistance candidate that can support local development workflows while preserving HAI's review and execution boundaries.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Coding Assistants repository list checked on 2026-07-19; no Tabby service is configured by HAI.",
+	},
+	{
+		ID: "letta", Name: "Letta", UpstreamURL: "https://github.com/letta-ai/letta", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10114/repos/", SourceCollection: "AI Agent Memory",
+		Status: StatusReferenceOnly, Category: "agent memory patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"agent memory", "stateful context", "memory tooling"}, RecommendedFor: []string{"memory design", "retrieval experiments"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not introduce a second memory store. Port only a measured, source-linked memory capability through HAI's existing local records, review, export, and deletion controls.",
+		Rationale:  "Letta provides useful memory-system patterns, but HAI must keep one editable, provenance-aware memory authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Agent Memory repository list checked on 2026-07-19; Letta is not installed or connected.",
+	},
+	{
+		ID: "comfyui", Name: "ComfyUI", UpstreamURL: "https://github.com/comfyanonymous/ComfyUI", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10111/repos/", SourceCollection: "AI Image Generation",
+		Status: StatusReferenceOnly, Category: "local image generation workflows", IntegrationMode: "optional reviewed artifact service",
+		Capabilities: []string{"node-based image workflows", "local asset generation"}, RecommendedFor: []string{"approved visual artifacts", "image workflow design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Keep disabled unless an approved artifact workflow defines model provenance, content controls, local storage, GPU limits, and a human publication gate.",
+		Rationale:  "A capable local visual-artifact reference, but it does not expand HAI's core decision or execution authority by itself.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Image Generation repository list checked on 2026-07-19; no ComfyUI service is configured by HAI.",
+	},
+	{
+		ID: "daytona", Name: "Daytona", UpstreamURL: "https://github.com/daytonaio/daytona", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10137/repos/", SourceCollection: "Agent Sandboxing",
+		Status: StatusReferenceOnly, Category: "agent sandboxing patterns", IntegrationMode: "sandbox architecture reference",
+		Capabilities: []string{"isolated workspaces", "execution sandboxing", "workspace lifecycle"}, RecommendedFor: []string{"runtime isolation design", "sandbox review"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Do not enable by default. Any future sandbox must prove local deployment, workspace isolation, network policy, credential handling, cost controls, and audit coverage before a HAI adapter is considered.",
+		Rationale:  "Useful sandbox architecture reference, but it must not weaken HAI's local-first execution boundary or introduce an unreviewed control plane.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Agent Sandboxing repository list checked on 2026-07-19; no Daytona environment is configured by HAI.",
+	},
+	{
 		ID: "langfuse", Name: "Langfuse", UpstreamURL: "https://github.com/langfuse/langfuse", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
 		Status: StatusCandidate, Category: "self-hosted LLM observability", IntegrationMode: "operator-hosted trace and evaluation service adapter",
 		Capabilities: []string{"LLM traces", "prompt versions", "evaluations", "datasets"}, RecommendedFor: []string{"model routing audit", "prompt evaluation", "agent trace review"},
@@ -461,8 +551,8 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "provider", "model gateway", "quota", "token cost", "model routing", "litellm") {
 		ids = append(ids, "litellm")
 	}
-	if containsAny(text, "local model", "local inference", "gguf", "llama.cpp", "llama cpp", "offline model") {
-		ids = append(ids, "llama-cpp")
+	if containsAny(text, "local model", "local inference", "gguf", "llama.cpp", "llama cpp", "offline model", "ollama") {
+		ids = append(ids, "ollama", "llama-cpp")
 	}
 	if containsAny(text, "semantic memory", "embedding", "vector search", "pgvector") {
 		ids = append(ids, "pgvector")
@@ -478,6 +568,27 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "browser verification", "browser test", "browser flow", "web flow", "playwright", "ui regression") {
 		ids = append(ids, "playwright")
+	}
+	if containsAny(text, "browser agent", "browser-use", "browser use", "web research", "browse website") {
+		ids = append(ids, "browser-use", "playwright")
+	}
+	if containsAny(text, "guardrail", "prompt injection", "llm safety", "red team", "red-team", "jailbreak", "safety evaluation") {
+		ids = append(ids, "nemo-guardrails", "garak", "promptfoo")
+	}
+	if containsAny(text, "voice note", "audio", "transcribe", "transcription", "speech to text", "speech-to-text") {
+		ids = append(ids, "whisper-cpp")
+	}
+	if containsAny(text, "agent to agent", "agent-to-agent", "a2a protocol", "a2a") {
+		ids = append(ids, "a2a")
+	}
+	if containsAny(text, "tabby", "self-hosted coding assistant", "code completion") {
+		ids = append(ids, "tabby")
+	}
+	if containsAny(text, "letta", "agent memory") {
+		ids = append(ids, "letta")
+	}
+	if containsAny(text, "comfyui", "image generation", "generate image") {
+		ids = append(ids, "comfyui")
 	}
 	if containsAny(text, "wasm", "webassembly", "wasi", "bounded helper") {
 		ids = append(ids, "wasmtime")
@@ -498,6 +609,9 @@ func Recommend(taskType, request string) []Recommendation {
 		if containsAny(text, "data lineage", "openmetadata", "open metadata") {
 			ids = append(ids, "openmetadata")
 		}
+	}
+	if containsAny(text, "daytona", "managed sandbox", "workspace sandbox") {
+		ids = append(ids, "daytona")
 	}
 	if containsAny(text, "graphrag", "knowledge graph", "entity linking", "langchain", "llamaindex", "llama index", "cognee") {
 		ids = append(ids, "langchain", "llamaindex", "cognee")

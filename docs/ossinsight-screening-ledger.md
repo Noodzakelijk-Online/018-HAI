@@ -2,8 +2,11 @@
 
 ## Scope and decision rule
 
-This is the complete collection-level screening pass over the 102 OSS Insight
-collections visible on 2026-07-19. It is deliberately not a bulk-import list:
+This is the complete collection-level screening pass over the 138 collections
+returned by the OSS Insight public API on 2026-07-19. The website grid still
+reported 102 categories on that date, so the authenticated HAI catalog keeps
+the API-only AI collection provenance separately instead of silently treating
+the older website pagination as complete. It is deliberately not a bulk-import list:
 the collections contain hundreds of repositories, many of which overlap with
 HAI, introduce a second control plane, require a separate security review, or
 have no role in a local-first personal operations system.
@@ -11,7 +14,7 @@ have no role in a local-first personal operations system.
 An entry is added to the authenticated HAI brain catalog only when it has a
 clear control-plane role and a bounded activation path. A catalog profile is
 never an installed dependency, a grant of credentials, or permission to run
-code. The source catalog and the complete 102-category decision record are
+code. The source catalog and the complete 138-category decision record are
 recorded at `GET /api/v1/brain-catalog/`; the back office renders the latter
 only in its expandable collection-coverage section.
 
@@ -28,16 +31,23 @@ only in its expandable collection-coverage section.
 | Playwright | Testing Tools | Integrated, opt-in | Read-only local browser verification | Named local routes, origin allowlist, no secret capture, no interaction API, and approval gates. |
 | Wasmtime | WebAssembly Runtime | Integrated, opt-in | Bounded WASI helper execution | Reviewed content-addressed modules only; no inherited network, filesystem, environment, or arguments; strict resource caps and approval gate. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
+| Ollama | LLM Inference Engines | Integrated, opt-in | Local model routing and live probe | Existing loopback provider, model-tag probe, persisted readiness, EUR 0 policy, and task approval gates remain authoritative. |
 | Langfuse | LLM DevTools | Candidate | Self-hosted LLM trace and evaluation service | Trace redaction, retention, service credentials, data-egress controls, and health checks require an adapter review. |
 | Promptfoo | LLM DevTools | Candidate | Local prompt and routing evaluation | Test-data redaction, provider credentials, workspace containment, and no-write validation require an adapter review. |
 | Airbyte | Data Integration | Candidate | Read-first source ingestion bridge | One connector at a time, with least-privilege scope, cursor, retention, local storage, audit, pause, and revoke review. |
 | Odoo | Business Management | Candidate | Read-first business-system bridge | A named instance and resource allowlist are required; any customer, financial, or write action remains independently approval-gated. |
+| browser-use | AI Browser Agents | Candidate | Reviewed browser-agent adapter | Named browser profile, origin/download/upload/credential allowlists, read-only-first validation, and separate high-risk action approvals are required. |
+| NVIDIA NeMo Guardrails, garak | AI Safety & Alignment / AI Red Teaming | Candidate | Local guardrail and safety-evaluation adapters | Policy ownership, redacted fixtures, false-positive review, audit records, and no-write evaluation boundaries are mandatory. |
+| whisper.cpp | Multimodal AI | Candidate | Local speech-to-text intake | Consent, local source folders, retention, transcript confidence, and source-linked verification are required. |
+| A2A Protocol | A2A Protocol | Compatibility only | Narrow protocol bridge | Authenticated named peers, fixed task schema, and HAI-owned tools, budget, approvals, and audit decisions are required. |
+| Tabby | AI Coding Assistants | Candidate | Self-hosted coding assistance | Local deployment, model/privacy review, workspace scope, and read-only-first review are required. |
 | Cline | LLM DevTools | Candidate | Review-first interactive coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | OpenCode | Model Context Protocol (MCP) Client | Candidate | Review-first terminal coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | Continue, OpenHands, CrewAI, Aider | AI Agent Frameworks / LLM DevTools / MCP | Candidate | Reviewed coding and orchestration profiles | Existing catalog controls apply; no generic agent-execution endpoint. |
 | AutoGen | AI Agent Frameworks | Compatibility only | Migration and protocol translation | Dedicated bridge and approval required; no new foundation work. |
 | Activepieces | Zapier Alternatives | Reference only | Connector and workflow-pattern research | No second automation control plane by default. |
 | Mem0 | LLM Tools | Reference only | Memory-consolidation reference | HAI remains the sole memory/provenance authority. |
+| Letta, ComfyUI, Daytona | Agent Memory / Image Generation / Agent Sandboxing | Reference only | Design and workflow references | HAI does not create a second memory authority, autonomous publication workflow, or broad execution sandbox without an explicit architecture decision. |
 | OpenMetadata | Open Source Data Catalogs | Reference only | Data lineage and governance reference | Too large for current local-first source registry. |
 | LangChain, LlamaIndex, Cognee, Qdrant, Grafana | Agent / GraphRAG / Vector / Monitoring | Reference only | Pattern or future scale option | Revisit only after a measured native gap. |
 | n8n | Zapier Alternatives | License review | Workflow-platform comparison | Sustainable Use License and architecture overlap need a decision first. |
@@ -60,6 +70,14 @@ could not be reliably represented as an SPDX field. HAI treats that result as
 licence. In particular, it does not relax the existing AutoGPT and n8n licence
 review states.
 
+The 2026-07-19 follow-up check covered Ollama, browser-use, NVIDIA NeMo
+Guardrails, garak, whisper.cpp, A2A, Tabby, Letta, ComfyUI, and Daytona. All
+ten reported `archived=false`. The check confirmed MIT metadata for Ollama,
+browser-use, and whisper.cpp; Apache-2.0 for garak, A2A, and Letta; GPL-3.0
+for ComfyUI; and `NOASSERTION` for NeMo Guardrails, Tabby, and Daytona. HAI
+therefore keeps every new runtime-capable project review-first, and holds the
+licence-sensitive or external-sandbox candidates as references.
+
 ## Complete collection screen
 
 Each listed collection was classified by its suitability for HAI's thinking,
@@ -79,6 +97,9 @@ a separate project-level review.
 | 7 | Web3; Finance; Cross Platform GUI Tool; Remote Desktop Tool; Testing Tools; WebAssembly Runtime; Distributed File Storage; Programming Language; Javascript Charting; CICD; React Framework; APM Tool | Added Playwright and Wasmtime. Remote desktop, Web3, finance, and CI/CD execution are deliberately out of scope; MinIO is excluded; APM remains Prometheus-first. |
 | 8 | Chaos Engineering; Search Engine; Text Editor; Javascript Game Engine; Game Engine; Headless CMS; Artificial Intelligence; Github Alternative; Graph Database; Time Series Database; Business Intelligence; Javascript Framework | No direct adoption. Search/graph/time-series options stay deferred behind pgvector/Prometheus; AI libraries require a concrete model-serving or evaluation gap; development/UI ecosystems do not replace HAI's stack. |
 | 9 | Web Framework; Low Code Development Tool; Google Analytics Alternative; CSS Framework; Open Source Database; Static Site Generator | No direct adoption. Low-code offerings overlap with HAI workflow ownership; analytics/CSS/framework/database alternatives cannot be introduced without a measured migration case. |
+| API-only AI snapshot A | MCP Servers; Coding Agents; Vibe Coding Tools; RAG Frameworks; LLM Inference Engines; LLM Fine-Tuning Tools; AI Image Generation; AI Coding Assistants; AI Browser Agents; AI Agent Memory; LLM Gateway & Proxy; AI Safety & Alignment | Added local inference, coding, browser, safety, and memory dispositions. Fine-tuning and unbounded image-generation workflows are not adopted. |
+| API-only AI snapshot B | Vector Databases; Multimodal AI; AI Evaluation & Testing; Model Compression; AI Video Generation; AI Workflow Orchestration; Agent Skills & AGENTS.md; AI Infrastructure; Edge AI; AI Governance; Google ADK; Neuro-Symbolic AI | Added local transcription, evaluation, and protocol references. HAI retains one retrieval, workflow, policy, and control plane. |
+| API-only AI snapshot C | AI FinOps; Synthetic Data; AI Quantitative Finance; AI Agent Marketplace; Knowledge Graphs for AI; AI Observability; AI Code Review; Agent Sandboxing; AI Red Teaming; A2A Protocol; Google ADK Python; Agent Harness | Added FinOps, observability, code-review, sandbox, red-team, and interoperability decisions. Finance, marketplaces, and uncontrolled remote peers are not adopted. |
 
 ## Adoption gates
 
@@ -90,4 +111,4 @@ a separate project-level review.
 
 ## Re-screen triggers
 
-Revisit an entry when its license or maintenance changes, a real HAI metric demonstrates a capability gap, or a proposed adapter has a complete safety and rollback design. Re-run this collection-level screen before treating newly added OSS Insight categories as adoption candidates.
+Revisit an entry when its license or maintenance changes, a real HAI metric demonstrates a capability gap, or a proposed adapter has a complete safety and rollback design. Re-run this collection-level screen whenever the public API collection count or repository rankings change, before treating newly surfaced OSS Insight projects as adoption candidates.

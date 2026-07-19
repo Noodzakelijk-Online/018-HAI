@@ -18,17 +18,20 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"langfuse", "promptfoo", "airbyte", "odoo"} {
+	for _, id := range []string{"langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
+	}
+	if entry, ok := EntryByID("a2a"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval {
+		t.Fatalf("A2A must remain a review-first compatibility profile: %#v", entry)
 	}
 }
 
 func TestOSSInsightCollectionScreeningCoversEveryCollection(t *testing.T) {
 	screening := OSSInsightScreening()
-	if screening.Total != 102 || len(screening.Entries) != 102 {
-		t.Fatalf("screening coverage = %d/%d, want 102", screening.Total, len(screening.Entries))
+	if screening.Total != 138 || len(screening.Entries) != 138 {
+		t.Fatalf("screening coverage = %d/%d, want 138 from the OSS Insight public API snapshot", screening.Total, len(screening.Entries))
 	}
 	seen := map[string]bool{}
 	for _, entry := range screening.Entries {
@@ -37,7 +40,7 @@ func TestOSSInsightCollectionScreeningCoversEveryCollection(t *testing.T) {
 		}
 		seen[entry.Collection] = true
 	}
-	for _, collection := range []string{"ai-gateways", "Data Integration", "Business Management", "Search Engine", "WebAssembly Runtime"} {
+	for _, collection := range []string{"ai-gateways", "Data Integration", "Business Management", "Search Engine", "WebAssembly Runtime", "MCP Servers", "LLM Inference Engines", "AI Agent Memory", "AI Red Teaming", "Agent Harness"} {
 		if !seen[collection] {
 			t.Fatalf("missing required collection screen: %s", collection)
 		}
@@ -66,6 +69,9 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	if entry, ok := EntryByID("llama-cpp"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("llama.cpp must report its integrated-but-not-active local provider profile: %#v", entry)
 	}
+	if entry, ok := EntryByID("ollama"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("Ollama must report HAI's implemented local provider profile: %#v", entry)
+	}
 	if entry, ok := EntryByID("prometheus"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible {
 		t.Fatalf("Prometheus must report its integrated-but-opt-in metrics profile: %#v", entry)
 	}
@@ -78,7 +84,7 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
 	}
-	for _, id := range []string{"activepieces", "mem0", "openmetadata"} {
+	for _, id := range []string{"activepieces", "mem0", "letta", "comfyui", "daytona", "openmetadata"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusReferenceOnly {
 			t.Fatalf("%s must remain a reference rather than a parallel control plane: %#v", id, entry)
 		}
@@ -202,4 +208,23 @@ func TestRecommendExternalSandboxIsReferenceOnly(t *testing.T) {
 		}
 	}
 	t.Fatalf("sandbox work must surface E2B as a reference: %#v", recommendations)
+}
+
+func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
+	recommendations := Recommend("operations", "Use Ollama for a local model, transcribe a voice note, run a browser agent safety evaluation, and exchange an A2A task envelope")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	if recommendation, ok := ids["ollama"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
+		t.Fatalf("Ollama must surface as HAI's existing approval-gated local provider profile: %#v", recommendations)
+	}
+	for _, id := range []string{"browser-use", "nemo-guardrails", "garak", "whisper-cpp"} {
+		if recommendation, ok := ids[id]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
+			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
+		}
+	}
+	if recommendation, ok := ids["a2a"]; !ok || recommendation.Status != StatusCompatibility || !recommendation.RequiresApproval {
+		t.Fatalf("A2A must remain a gated compatibility recommendation: %#v", recommendations)
+	}
 }
