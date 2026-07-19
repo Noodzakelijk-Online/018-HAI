@@ -157,3 +157,24 @@ tool, or execute a repository. An owner can only turn one discovery into a
 manual HAI pursuit. That pursuit requires separate upstream, licence, local
 deployment, health, audit, rollback, data-egress, and approval review before an
 adapter can be implemented.
+
+## Metadata readiness assessment
+
+When an owner rechecks a fixed catalog entry or a repository returned by the
+bounded discovery queue, HAI reports a readiness state alongside the raw GitHub
+metadata. The state is a review-ordering aid, not a change to the catalog and
+never an authorisation to install or run code:
+
+| Readiness | Meaning |
+| --- | --- |
+| `review_now` | The upstream is available, not archived, and reports a licence that does not trigger HAI's current licence-hold rules. A human may start a narrow adapter review. |
+| `license_review` | The project is already held for licensing, reports no SPDX licence / `NOASSERTION`, or reports a licence requiring an explicit architecture and legal review. |
+| `archived` | The upstream reports `archived=true`; active adoption work must stop unless a human records an exception. |
+| `upstream_unavailable` | GitHub did not confirm the fixed repository. HAI cannot prioritize an adapter review from missing metadata. |
+| `reference_only` / `not_adopted` | The existing collection/catalog disposition remains authoritative. Metadata does not reopen a reference-only or excluded project. |
+| `profile_review` | An integrated HAI profile still needs its own local configuration and live readiness check. |
+
+Every readiness response repeats the required adapter gates: owner approval,
+local deployment and data-egress design, health/audit/rollback/no-op validation,
+and existing approval policy for consequential actions. These gates remain in
+force even for `review_now` candidates.

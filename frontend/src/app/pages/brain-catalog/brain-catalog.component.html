@@ -71,6 +71,8 @@
       <div class="brain-catalog-page__upstream-result" *ngIf="upstreamReview as review" [class.brain-catalog-page__upstream-result--warning]="review.archived || !review.available">
         <strong>{{ review.available ? (review.archived ? 'Archived upstream' : 'Upstream available') : 'Upstream unavailable' }}</strong>
         <span>{{ review.message }}</span>
+        <small><strong>Readiness: {{ readinessLabel(review.readiness) }}</strong> - {{ review.readinessReason }}</small>
+        <small *ngIf="review.requiredGates?.length">Required before activation: {{ review.requiredGates?.join('; ') }}.</small>
         <small>Checked {{ review.checkedAt }}<ng-container *ngIf="review.license"> · {{ review.license }}</ng-container><ng-container *ngIf="review.defaultBranch"> · {{ review.defaultBranch }}</ng-container></small>
       </div>
       <div class="brain-catalog-page__control-mappings" *ngIf="entry.controlMappings?.length">
@@ -127,7 +129,7 @@
     </div>
     <div class="brain-catalog-page__discovery-list" *ngIf="ossInsightDiscovery?.discoveries?.length">
       <article *ngFor="let discovery of ossInsightDiscovery?.discoveries">
-        <div><strong>{{ discovery.repository }}</strong><small>{{ discovery.collection }}</small><span>{{ discovery.rationale }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}.</small></div>
+        <div><strong>{{ discovery.repository }}</strong><small>{{ discovery.collection }}</small><span>{{ discovery.rationale }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
         <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository || !discoveryReviews[discovery.repository]">Review</button></div>
       </article>
     </div>

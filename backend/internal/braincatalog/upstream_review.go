@@ -57,6 +57,7 @@ func (r *githubUpstreamReviewer) Review(entry Entry) (UpstreamReview, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		review.Message = "GitHub did not find the configured upstream repository. HAI has not changed its catalog disposition."
+		applyReadinessAssessment(entry, &review)
 		return review, nil
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -88,6 +89,7 @@ func (r *githubUpstreamReviewer) Review(entry Entry) (UpstreamReview, error) {
 	} else {
 		review.Message = "GitHub metadata was retrieved. This recheck does not install, enable, approve, or execute the project."
 	}
+	applyReadinessAssessment(entry, &review)
 	return review, nil
 }
 

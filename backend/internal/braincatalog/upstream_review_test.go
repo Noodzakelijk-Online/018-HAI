@@ -31,11 +31,31 @@ func TestUpstreamReviewerUsesFixedGitHubMetadataRequest(t *testing.T) {
 	if requestedURL != "https://api.github.com/repos/anomalyco/opencode" {
 		t.Fatalf("unexpected metadata URL: %s", requestedURL)
 	}
-	if !review.Available || review.Archived || review.License != "MIT" || review.DefaultBranch != "main" || review.Disposition != StatusCandidate {
+	if !review.Available || review.Archived || review.License != "MIT" || review.DefaultBranch != "main" || review.Disposition != StatusCandidate || review.Readiness != readinessReviewNow {
 		t.Fatalf("unexpected review: %#v", review)
 	}
 	if !strings.Contains(review.Message, "does not install") {
 		t.Fatalf("review must preserve activation boundary: %#v", review)
+	}
+}
+
+func TestReadinessAssessmentHoldsArchivedAndLicenseUnclearProjects(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		entry     Entry
+		review    UpstreamReview
+		readiness string
+	}{
+		{name: "archived", entry: Entry{Status: StatusCandidate}, review: UpstreamReview{Available: true, Archived: true, License: "MIT"}, readiness: readinessArchived},
+		{name: "no assertion", entry: Entry{Status: StatusCandidate}, review: UpstreamReview{Available: true, License: "NOASSERTION"}, readiness: readinessLicenseReview},
+		{name: "excluded", entry: Entry{Status: StatusExcluded}, review: UpstreamReview{Available: true, License: "MIT"}, readiness: readinessNotAdopted},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			applyReadinessAssessment(test.entry, &test.review)
+			if test.review.Readiness != test.readiness || len(test.review.RequiredGates) == 0 {
+				t.Fatalf("assessment = %#v", test.review)
+			}
+		})
 	}
 }
 

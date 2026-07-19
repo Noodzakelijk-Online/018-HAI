@@ -220,6 +220,10 @@ export class BrainCatalogComponent implements OnInit {
     return status.replace(/_/g, ' ')
   }
 
+  readinessLabel(readiness: string): string {
+    return readiness.replace(/_/g, ' ')
+  }
+
   collectionDispositionColor(disposition: BrainCatalogCollectionDisposition): string {
     if (disposition === 'represented_in_catalog') return 'green'
     if (disposition === 'review_candidate') return 'blue'

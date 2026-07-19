@@ -44,6 +44,9 @@ export interface IBrainCatalogUpstreamReview {
   pushedAt?: string
   message: string
   disposition: BrainCatalogStatus
+  readiness: string
+  readinessReason: string
+  requiredGates?: string[]
 }
 
 export interface IBrainCatalogOSSInsightReview {

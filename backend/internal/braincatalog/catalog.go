@@ -68,17 +68,20 @@ type Recommendation struct {
 // It deliberately does not change HAI's adoption status: an upstream being
 // available is neither an approval nor proof that its adapter is safe.
 type UpstreamReview struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	UpstreamURL   string `json:"upstreamUrl"`
-	CheckedAt     string `json:"checkedAt"`
-	Available     bool   `json:"available"`
-	Archived      bool   `json:"archived"`
-	License       string `json:"license,omitempty"`
-	DefaultBranch string `json:"defaultBranch,omitempty"`
-	PushedAt      string `json:"pushedAt,omitempty"`
-	Message       string `json:"message"`
-	Disposition   Status `json:"disposition"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	UpstreamURL     string   `json:"upstreamUrl"`
+	CheckedAt       string   `json:"checkedAt"`
+	Available       bool     `json:"available"`
+	Archived        bool     `json:"archived"`
+	License         string   `json:"license,omitempty"`
+	DefaultBranch   string   `json:"defaultBranch,omitempty"`
+	PushedAt        string   `json:"pushedAt,omitempty"`
+	Message         string   `json:"message"`
+	Disposition     Status   `json:"disposition"`
+	Readiness       string   `json:"readiness"`
+	ReadinessReason string   `json:"readinessReason"`
+	RequiredGates   []string `json:"requiredGates,omitempty"`
 }
 
 const sourceCatalogURL = "https://github.com/e2b-dev/awesome-ai-agents"
