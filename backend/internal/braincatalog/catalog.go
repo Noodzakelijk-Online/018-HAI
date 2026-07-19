@@ -222,13 +222,13 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Agent Sandboxing and Agent Harness repository lists and GitHub metadata checked on 2026-07-19: archived=true, MIT licence; excluded from activation.",
 	},
 	{
-		ID: "presidio", Name: "Microsoft Presidio", UpstreamURL: "https://github.com/microsoft/presidio", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
+		ID: "presidio", Name: "Presidio", UpstreamURL: "https://github.com/data-privacy-stack/presidio", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
 		Status: StatusCandidate, Category: "sensitive-data detection and redaction", IntegrationMode: "contained local redaction adapter",
 		Capabilities: []string{"PII detection", "redaction", "masking", "anonymisation"}, RecommendedFor: []string{"secret redaction", "source-import privacy checks", "safe audit previews"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review a local-only pipeline with explicit entity recognisers, confidence thresholds, false-positive handling, source retention, and audit events. Redaction can create a review item, but it cannot delete source records, change approval status, or conceal original evidence from an authorised owner.",
 		Rationale:  "Presidio is a maintained candidate for strengthening HAI's existing redaction boundary across source ingestion, logs, and evaluation fixtures without introducing a second data authority.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Safety & Alignment repository list and GitHub metadata checked on 2026-07-19; no Presidio service is installed or configured by HAI.",
+		VerifiedAt: "2026-07-20", VerificationNote: "OSS Insight AI Safety & Alignment listing and the current data-privacy-stack/presidio upstream were checked on 2026-07-20. The project has moved from the Microsoft GitHub namespace, is MIT licensed, and explicitly warns that automated detection is not complete; no Presidio service is installed or configured by HAI.",
 	},
 	{
 		ID: "guardrails-ai", Name: "Guardrails AI", UpstreamURL: "https://github.com/guardrails-ai/guardrails", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
