@@ -66,6 +66,26 @@ func TestRecommendForNeedExpandsCommonOperationalTermsTransparently(t *testing.T
 	}
 }
 
+func TestRecommendRecordsMicrosoftAgentFrameworkAsCandidateNotRuntime(t *testing.T) {
+	recommendations := Recommend("agent migration", "Migrate an AutoGen successor workflow to Microsoft Agent Framework with human approval")
+	found := false
+	for _, recommendation := range recommendations {
+		if recommendation.ID != "microsoft-agent-framework" {
+			continue
+		}
+		found = true
+		if recommendation.Status != StatusCandidate {
+			t.Fatalf("Microsoft Agent Framework must remain a reviewed candidate: %#v", recommendation)
+		}
+		if !recommendation.RequiresApproval {
+			t.Fatalf("Microsoft Agent Framework must require approval: %#v", recommendation)
+		}
+	}
+	if !found {
+		t.Fatalf("expected Microsoft Agent Framework recommendation: %#v", recommendations)
+	}
+}
+
 func hasRecommendationID(recommendations []CapabilityRecommendation, id string) bool {
 	for _, recommendation := range recommendations {
 		if recommendation.ID == id {

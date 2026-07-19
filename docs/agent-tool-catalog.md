@@ -26,6 +26,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [E2B](https://github.com/e2b-dev/E2B) | Reference only | External sandbox design | Its hosted execution model is not local-first and can involve external credentials/billing. Disabled unless separately approved. |
 | [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) | License review | Workflow platform reference | The repository is active but includes differently licensed areas. HAI does not vendor or integrate it until a per-directory license review is complete. |
 | [AutoGen](https://github.com/microsoft/autogen) | Compatibility only | Existing AutoGen workload migration, structured agent-event translation, and guarded MCP compatibility | The official project is maintenance mode. HAI does not install or execute AutoGen code, and a reviewed bridge plus approval is required. |
+| [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) | Candidate | Successor workflow-orchestration and interoperability patterns | The official AutoGen successor is active and MIT licensed. HAI may review one local fixed-schema bridge, but retains policy, routing, approval, audit, and completion ownership. |
 | [MetaGPT](https://github.com/FoundationAgents/MetaGPT) | Excluded | Architecture reference only | Still available, but its release and substantive push activity were older than the active candidates at curation time. |
 | [LiteLLM](https://github.com/BerriAI/litellm) | Integrated profile | Keyed loopback provider-gateway normalization | Requires explicit enablement, a local endpoint, model alias, virtual key, probe, and manual generation approval; HAI's EUR 0 policy remains authoritative. |
 | [pgvector](https://github.com/pgvector/pgvector) | Integrated profile | Local semantic retrieval inside HAI Postgres | Opt-in `vector` extension plus local embeddings; keyword retrieval remains the truthful fallback. |
@@ -69,6 +70,19 @@ This is deliberately a protocol and control mapping, not an AutoGen SDK
 integration. The upstream project warns that MCP servers must be trusted
 because they may execute commands or expose sensitive data; HAI keeps that
 boundary explicit.
+
+## Microsoft Agent Framework candidate
+
+Microsoft now positions Agent Framework as AutoGen's successor. HAI records it
+as a candidate for a future local, fixed-schema orchestration bridge, not as a
+second control plane. Its useful patterns are checkpointing, human-in-the-loop
+workflow steps, provider-neutral middleware, and A2A/MCP interoperability.
+
+Any activation must be locally hosted, name explicit peers and allowed tools,
+emit HAI-owned audit events, and hand every protected action back to HAI's
+approval and verification layers. Cloud Foundry hosting, credential discovery,
+framework-owned provider routing, and automatic peer/tool discovery are out of
+scope for this profile.
 
 ## Next adapter work
 

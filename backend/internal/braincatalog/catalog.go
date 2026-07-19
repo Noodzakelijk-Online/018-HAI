@@ -516,6 +516,22 @@ var entries = []Entry{
 		},
 	},
 	{
+		ID: "microsoft-agent-framework", Name: "Microsoft Agent Framework", UpstreamURL: "https://github.com/microsoft/agent-framework", SourceCatalogURL: "https://github.com/microsoft/autogen",
+		SourceCollection: "Official AutoGen successor",
+		Status:           StatusCandidate, Category: "multi-agent workflow orchestration", IntegrationMode: "operator-hosted bridge with HAI-owned task boundary",
+		Capabilities: []string{"durable agent workflows", "human-in-the-loop orchestration", "checkpointing patterns", "A2A and MCP interoperability"}, RecommendedFor: []string{"AutoGen migration", "reviewed multi-agent workflow", "agent interoperability planning"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a narrow, local operator-hosted bridge for one fixed task schema. HAI keeps provider routing, approval, budget, source controls, audit records, emergency stop, and completion verification; no framework-owned tool execution, cloud hosting, or implicit peer discovery is permitted.",
+		Rationale:  "Microsoft positions Agent Framework as AutoGen's successor with workflow, human-in-the-loop, observability, and interoperability patterns. It is a stronger future migration target than new AutoGen code, but it remains an external framework that must not replace HAI's control plane.",
+		VerifiedAt: verifiedAt, VerificationNote: "Official AutoGen maintenance notice and Microsoft Agent Framework repository, MIT license, and July 2026 release activity checked on 2026-07-19.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "workflow checkpointing and restart", HAIControl: "workflow state machine, durable follow-up records, and verified completion", Boundary: "HAI owns state transitions and does not trust upstream completion signals"},
+			{SourcePattern: "human-in-the-loop orchestration", HAIControl: "approval queue and autonomy policy", Boundary: "a framework callback cannot approve or execute a protected action"},
+			{SourcePattern: "A2A and MCP interoperability", HAIControl: "reviewed adapters with named peers and local MCP preflight", Boundary: "no implicit peer discovery, process launch, or tool activation"},
+			{SourcePattern: "provider middleware", HAIControl: "local-first LLM router with EUR 0 paid default", Boundary: "framework provider settings cannot bypass HAI routing or budget policy"},
+		},
+	},
+	{
 		ID: "metagpt", Name: "MetaGPT", UpstreamURL: "https://github.com/FoundationAgents/MetaGPT", SourceCatalogURL: sourceCatalogURL,
 		Status: StatusExcluded, Category: "multi-agent software workflow", IntegrationMode: "reference only",
 		Capabilities: []string{"role-based software workflow"}, RecommendedFor: []string{"architecture reference"},
@@ -885,6 +901,9 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "autogen", "agentchat", "magentic", "mcp workbench", "autogen migration") {
 		ids = append(ids, "autogen")
+	}
+	if containsAny(text, "microsoft agent framework", "agent framework", "autogen successor", "agent framework migration") {
+		ids = append(ids, "microsoft-agent-framework")
 	}
 	if containsAny(text, "provider", "model gateway", "quota", "token cost", "model routing", "litellm") {
 		ids = append(ids, "litellm")

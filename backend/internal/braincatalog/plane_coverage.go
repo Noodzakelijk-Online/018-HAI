@@ -52,7 +52,7 @@ var capabilityPlaneOrder = []CapabilityPlane{
 var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	PlaneThinking: {
 		name: "Thinking and planning", description: "Local reasoning, model routing, research, and deterministic planning proposals.",
-		entryIDs: []string{"anythingllm", "autogen", "autogpt", "crewai", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
+		entryIDs: []string{"anythingllm", "autogen", "autogpt", "crewai", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "microsoft-agent-framework", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
 	},
 	PlaneMemory: {
 		name: "Memory and knowledge", description: "Source-linked retrieval, workspace context, and durable knowledge patterns.",
@@ -68,7 +68,7 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneExecution: {
 		name: "Controlled execution", description: "Scoped browser, MCP, workspace, CLI, and WASI execution patterns behind HAI controls.",
-		entryIDs: []string{"a2a", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "google-genai-toolbox", "mcp-inspector", "mcp-servers", "metagpt", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "swe-agent", "tabby", "taskweaver", "wasmtime"},
+		entryIDs: []string{"a2a", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "google-genai-toolbox", "mcp-inspector", "mcp-servers", "metagpt", "microsoft-agent-framework", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "swe-agent", "tabby", "taskweaver", "wasmtime"},
 	},
 	PlaneVerification: {
 		name: "Verification and safety", description: "Evaluation, redaction, guardrails, code review, and adversarial testing before completion or action.",
@@ -76,7 +76,7 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneGovernance: {
 		name: "Governance and boundaries", description: "Approval, protocol, policy, and data-boundary patterns that remain HAI-owned.",
-		entryIDs: []string{"a2a", "autogen", "fastmcp", "guardrails-ai", "llm-guard", "mcp-inspector", "mcp-servers", "openmetadata", "presidio", "pydantic-ai"},
+		entryIDs: []string{"a2a", "autogen", "fastmcp", "guardrails-ai", "llm-guard", "mcp-inspector", "mcp-servers", "microsoft-agent-framework", "openmetadata", "presidio", "pydantic-ai"},
 	},
 	PlaneObservability: {
 		name: "Observability", description: "Local metrics, traces, evaluations, and diagnostics for inspectable agent behavior.",
