@@ -23,8 +23,12 @@ export class BrainCatalogService {
     return this.http.post<IBrainCatalogOSSInsightDiscoveryReport>('/api/v1/brain-catalog/ossinsight/discover', {})
   }
 
-  revalidateOSSInsightDiscovery(repository: string): Observable<IBrainCatalogUpstreamReview> {
-    return this.http.post<IBrainCatalogUpstreamReview>('/api/v1/brain-catalog/ossinsight/discoveries/revalidate', { repository })
+  discoverReviewableOSSInsightRepositories(): Observable<IBrainCatalogOSSInsightDiscoveryReport> {
+    return this.http.post<IBrainCatalogOSSInsightDiscoveryReport>('/api/v1/brain-catalog/ossinsight/discover/reviewable', {})
+  }
+
+  revalidateOSSInsightDiscovery(repository: string, scope: 'candidate' | 'reviewable' = 'candidate'): Observable<IBrainCatalogUpstreamReview> {
+    return this.http.post<IBrainCatalogUpstreamReview>('/api/v1/brain-catalog/ossinsight/discoveries/revalidate', { repository, scope })
   }
 
   recommendCapabilities(need: string): Observable<IBrainCatalogCapabilityRecommendationResponse> {

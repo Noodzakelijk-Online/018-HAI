@@ -145,11 +145,20 @@ Revisit an entry when its license or maintenance changes, a real HAI metric demo
 
 The Brain Catalog's admin-only OSS Insight discovery action first reads the
 complete public collection index and compares it with HAI's 138-category
-screening snapshot. It then reads repository names only from categories already
-classified as `review_candidate`; deferred and unrelated categories are not
-queried. The result removes already catalogued upstream repositories, caps the
-returned shortlist, and exposes source links, collection rationale, missing
-categories, and unavailable category reads.
+screening snapshot. It provides two deliberately bounded repository-name scans:
+
+1. `candidate` reads only categories classified as `review_candidate`.
+2. `reviewable` reads those categories plus `represented_in_catalog` categories,
+   so HAI can surface complementary or replacement upstreams for capabilities
+   it already profiles.
+
+Neither scan queries `reference_only` or `not_adopted` categories. The result
+removes already catalogued upstream repositories, caps the returned shortlist,
+records each discovery's collection disposition, keeps separate short-lived
+caches for the two scopes, and exposes source links, collection rationale,
+missing categories, and unavailable category reads. The complete remote pass
+has one total deadline, so a slow source cannot become an unbounded dashboard
+operation.
 
 Discovery is deliberately non-mutating. It does not clone code, download
 packages, add a catalog record, create credentials, configure a runtime, call a
@@ -157,6 +166,10 @@ tool, or execute a repository. An owner can only turn one discovery into a
 manual HAI pursuit. That pursuit requires separate upstream, licence, local
 deployment, health, audit, rollback, data-egress, and approval review before an
 adapter can be implemented.
+
+The discovery revalidation endpoint accepts the same source scope and rejects
+any repository that is absent from that fresh scoped report. This prevents the
+metadata checker from being repurposed as an arbitrary GitHub request proxy.
 
 ## Metadata readiness assessment
 

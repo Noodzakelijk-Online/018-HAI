@@ -248,6 +248,7 @@ func initializeBrainCatalogRoutes(apiVersion *gin.RouterGroup, handler *braincat
 		routes.GET("/", requirePermission(rbac.PermRead), handler.List)
 		routes.POST("/ossinsight/revalidate", requirePermission(rbac.PermAdmin), handler.RevalidateCollections)
 		routes.POST("/ossinsight/discover", requirePermission(rbac.PermAdmin), handler.DiscoverRepositories)
+		routes.POST("/ossinsight/discover/reviewable", requirePermission(rbac.PermAdmin), handler.DiscoverReviewableRepositories)
 		routes.POST("/ossinsight/discoveries/revalidate", requirePermission(rbac.PermAdmin), handler.RevalidateDiscovery)
 		routes.POST("/recommend", requirePermission(rbac.PermRead), handler.RecommendCapabilities)
 		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)

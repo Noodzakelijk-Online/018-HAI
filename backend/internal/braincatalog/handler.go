@@ -8,7 +8,8 @@ import (
 )
 
 type discoveryReviewRequest struct {
-	Repository string `json:"repository"`
+	Repository string                   `json:"repository"`
+	Scope      OSSInsightDiscoveryScope `json:"scope"`
 }
 
 type capabilityRecommendationRequest struct {
@@ -113,6 +114,23 @@ func (h *Handler) DiscoverRepositories(c *gin.Context) {
 	c.JSON(http.StatusOK, report)
 }
 
+// DiscoverReviewableRepositories extends source intake to categories that HAI
+// already represents as well as categories awaiting adapter review. This helps
+// identify replacement or complementary upstreams without making any catalog,
+// runtime, credential, or execution change.
+func (h *Handler) DiscoverReviewableRepositories(c *gin.Context) {
+	if h.repositoryScout == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OSS Insight repository discovery is unavailable"})
+		return
+	}
+	report, err := h.repositoryScout.DiscoverReviewableRepositories()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "could not discover OSS Insight reviewable repositories"})
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
 // RevalidateDiscovery verifies GitHub metadata for one repository that was
 // returned by the source-controlled discovery report. It rejects arbitrary
 // repository names, does not alter the catalog, and cannot activate code.
@@ -126,7 +144,7 @@ func (h *Handler) RevalidateDiscovery(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "repository is required"})
 		return
 	}
-	report, err := h.repositoryScout.DiscoverRepositories()
+	report, err := h.repositoryScout.DiscoverRepositoriesFor(request.Scope)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "could not verify the OSS Insight discovery report"})
 		return

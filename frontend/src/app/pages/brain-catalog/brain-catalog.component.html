@@ -146,20 +146,23 @@
 	  <small *ngIf="review.missingExpected?.length">Missing from live list: {{ review.missingExpected?.join(', ') }}</small>
 	</div>
     <div class="brain-catalog-page__source-review">
-      <div><strong>Candidate repository discovery</strong><span>Reads repository names only from categories HAI already marked for adapter review. New repositories remain unreviewed.</span></div>
-      <button nz-button nzType="default" (click)="discoverOSSInsightRepositories()" [nzLoading]="discoveringOSSInsight" [disabled]="discoveringOSSInsight"><i nz-icon nzType="search" nzTheme="outline"></i> Scan candidate repos</button>
+      <div><strong>Repository discovery</strong><span>Candidate scan reads categories awaiting an adapter. Relevant scan also reads categories HAI already represents, so complementary or replacement options can be reviewed. Both scans only return names and source records.</span></div>
+      <div>
+        <button nz-button nzType="default" (click)="discoverOSSInsightRepositories()" [nzLoading]="discoveringOSSInsight" [disabled]="discoveringOSSInsight"><i nz-icon nzType="search" nzTheme="outline"></i> Scan candidates</button>
+        <button nz-button nzType="primary" (click)="discoverReviewableOSSInsightRepositories()" [nzLoading]="discoveringOSSInsight" [disabled]="discoveringOSSInsight"><i nz-icon nzType="search" nzTheme="outline"></i> Scan relevant categories</button>
+      </div>
     </div>
     <div class="brain-catalog-page__source-result" *ngIf="ossInsightDiscovery as report" [class.brain-catalog-page__source-result--warning]="!!report.unavailableCollections?.length || !!report.missingCollections?.length">
       <strong>{{ report.discoveries?.length ?? 0 }} unreviewed / {{ report.repositoriesChecked }} repository names</strong>
       <span>{{ report.message }}</span>
-      <small>{{ report.collectionsChecked }} of {{ report.candidateCollections }} candidate collections checked; {{ report.knownProfileHits }} known profiles skipped.<ng-container *ngIf="report.cached"> Reused the recent read-only result.</ng-container></small>
+      <small>{{ report.collectionsChecked }} of {{ report.eligibleCollections }} {{ report.scope === 'reviewable' ? 'relevant' : 'candidate' }} collections checked; {{ report.knownProfileHits }} known profiles skipped.<ng-container *ngIf="report.cached"> Reused the recent read-only result.</ng-container></small>
       <small *ngIf="report.discoveriesTruncated">Results were capped to keep the back office responsive.</small>
       <small *ngIf="report.unavailableCollections?.length">Unavailable: {{ report.unavailableCollections?.join(', ') }}</small>
       <small *ngIf="report.missingCollections?.length">Missing from source: {{ report.missingCollections?.join(', ') }}</small>
     </div>
     <div class="brain-catalog-page__discovery-list" *ngIf="ossInsightDiscovery?.discoveries?.length">
       <article *ngFor="let discovery of ossInsightDiscovery?.discoveries">
-        <div><strong>{{ discovery.repository }}</strong><small>{{ discovery.collection }}</small><span>{{ discovery.rationale }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
+        <div><strong>{{ discovery.repository }}</strong><small>{{ discovery.collection }} - {{ collectionDispositionLabel(discovery.disposition) }}</small><span>{{ discovery.rationale }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
         <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository || !discoveryReviews[discovery.repository]">Review</button></div>
       </article>
     </div>

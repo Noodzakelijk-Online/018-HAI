@@ -133,10 +133,28 @@ export class BrainCatalogComponent implements OnInit {
     })
   }
 
+  discoverReviewableOSSInsightRepositories(): void {
+    if (this.discoveringOSSInsight) return
+    this.discoveringOSSInsight = true
+    this.ossInsightDiscovery = undefined
+    this.service.discoverReviewableOSSInsightRepositories().subscribe({
+      next: (report) => {
+        this.discoveringOSSInsight = false
+        this.ossInsightDiscovery = report
+        this.discoveryReviews = {}
+        this.notification.success('Relevant discovery complete', `${report.discoveries?.length ?? 0} unreviewed repositories were found across candidate and represented categories. No catalog entry, credential, or runtime state changed.`)
+      },
+      error: () => {
+        this.discoveringOSSInsight = false
+        this.notification.error('Relevant discovery unavailable', 'HAI could not inspect the reviewed OSS Insight categories. No catalog decision or runtime state changed.')
+      },
+    })
+  }
+
   verifyDiscovery(discovery: IBrainCatalogOSSInsightDiscovery): void {
     if (this.verifyingDiscoveryRepository) return
     this.verifyingDiscoveryRepository = discovery.repository
-    this.service.revalidateOSSInsightDiscovery(discovery.repository).subscribe({
+    this.service.revalidateOSSInsightDiscovery(discovery.repository, this.ossInsightDiscovery?.scope ?? 'candidate').subscribe({
       next: (review) => {
         this.verifyingDiscoveryRepository = ''
         this.discoveryReviews = { ...this.discoveryReviews, [discovery.repository]: review }

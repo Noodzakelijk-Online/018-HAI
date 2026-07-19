@@ -32,6 +32,14 @@ func (f fakeRepositoryScout) DiscoverRepositories() (OSSInsightRepositoryDiscove
 	return f.report, f.err
 }
 
+func (f fakeRepositoryScout) DiscoverReviewableRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
+	return f.report, f.err
+}
+
+func (f fakeRepositoryScout) DiscoverRepositoriesFor(_ OSSInsightDiscoveryScope) (OSSInsightRepositoryDiscoveryReport, error) {
+	return f.report, f.err
+}
+
 func (f fakeUpstreamReviewer) Review(entry Entry) (UpstreamReview, error) {
 	if f.review.ID == "" {
 		f.review.ID = entry.ID
@@ -110,6 +118,23 @@ func TestDiscoverRepositoriesHandlerReportsUnreviewedCandidates(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ossinsight/discover", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "owner/new-agent") || !strings.Contains(response.Body.String(), "did not add catalog entries") {
+		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDiscoverReviewableRepositoriesHandlerReportsRepresentedAndCandidateScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewHandlerWithReviewersAndScout(
+		fakeUpstreamReviewer{},
+		fakeCollectionReviewer{},
+		fakeRepositoryScout{report: OSSInsightRepositoryDiscoveryReport{Available: true, Scope: OSSInsightReviewableScope, EligibleCollections: 20, Discoveries: []OSSInsightRepositoryDiscovery{{Repository: "owner/new-provider", Disposition: CollectionRepresented}}, Message: "did not add catalog entries"}},
+	)
+	router.POST("/ossinsight/discover/reviewable", handler.DiscoverReviewableRepositories)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ossinsight/discover/reviewable", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"scope":"reviewable"`) || !strings.Contains(response.Body.String(), `"disposition":"represented_in_catalog"`) {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 	}
 }

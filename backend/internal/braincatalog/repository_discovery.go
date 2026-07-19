@@ -1,6 +1,7 @@
 package braincatalog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,20 +17,33 @@ const (
 	maxOSSInsightRepositoryBytes = 128 << 10
 	maxOSSInsightDiscoveries     = 120
 	ossInsightDiscoveryCacheTTL  = 5 * time.Minute
+	ossInsightDiscoveryTimeout   = 30 * time.Second
+)
+
+// OSSInsightDiscoveryScope controls the already-screened collections from
+// which repository names can be read. It is not an installation scope.
+type OSSInsightDiscoveryScope string
+
+const (
+	OSSInsightCandidateScope  OSSInsightDiscoveryScope = "candidate"
+	OSSInsightReviewableScope OSSInsightDiscoveryScope = "reviewable"
 )
 
 // OSSInsightRepositoryScout reads repository names only from collections HAI
-// has already classified as operational candidates. It cannot install, run, or
-// add a project to HAI's catalog.
+// has already classified as candidates or represented operational capability.
+// It cannot install, run, or add a project to HAI's catalog.
 type OSSInsightRepositoryScout interface {
 	DiscoverRepositories() (OSSInsightRepositoryDiscoveryReport, error)
+	DiscoverReviewableRepositories() (OSSInsightRepositoryDiscoveryReport, error)
+	DiscoverRepositoriesFor(OSSInsightDiscoveryScope) (OSSInsightRepositoryDiscoveryReport, error)
 }
 
 type OSSInsightRepositoryDiscovery struct {
-	Collection string `json:"collection"`
-	Repository string `json:"repository"`
-	SourceURL  string `json:"sourceUrl"`
-	Rationale  string `json:"rationale"`
+	Collection  string                `json:"collection"`
+	Disposition CollectionDisposition `json:"disposition"`
+	Repository  string                `json:"repository"`
+	SourceURL   string                `json:"sourceUrl"`
+	Rationale   string                `json:"rationale"`
 }
 
 type OSSInsightRepositoryDiscoveryReport struct {
@@ -37,8 +51,11 @@ type OSSInsightRepositoryDiscoveryReport struct {
 	SourceURL              string                          `json:"sourceUrl"`
 	Available              bool                            `json:"available"`
 	Cached                 bool                            `json:"cached"`
+	Scope                  OSSInsightDiscoveryScope        `json:"scope"`
 	CollectionsScreened    int                             `json:"collectionsScreened"`
 	CandidateCollections   int                             `json:"candidateCollections"`
+	ReviewableCollections  int                             `json:"reviewableCollections"`
+	EligibleCollections    int                             `json:"eligibleCollections"`
 	CollectionsChecked     int                             `json:"collectionsChecked"`
 	RepositoriesChecked    int                             `json:"repositoriesChecked"`
 	KnownProfileHits       int                             `json:"knownProfileHits"`
@@ -50,11 +67,15 @@ type OSSInsightRepositoryDiscoveryReport struct {
 }
 
 type ossInsightRepositoryScout struct {
-	client       *http.Client
-	now          func() time.Time
-	cacheMu      sync.Mutex
-	cachedReport OSSInsightRepositoryDiscoveryReport
-	cacheExpires time.Time
+	client  *http.Client
+	now     func() time.Time
+	cacheMu sync.Mutex
+	cache   map[OSSInsightDiscoveryScope]ossInsightDiscoveryCache
+}
+
+type ossInsightDiscoveryCache struct {
+	report  OSSInsightRepositoryDiscoveryReport
+	expires time.Time
 }
 
 func NewOSSInsightRepositoryScout(client *http.Client) OSSInsightRepositoryScout {
@@ -66,43 +87,61 @@ func NewOSSInsightRepositoryScout(client *http.Client) OSSInsightRepositoryScout
 			},
 		}
 	}
-	return &ossInsightRepositoryScout{client: client, now: time.Now}
+	return &ossInsightRepositoryScout{client: client, now: time.Now, cache: map[OSSInsightDiscoveryScope]ossInsightDiscoveryCache{}}
 }
 
 func (s *ossInsightRepositoryScout) DiscoverRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
+	return s.DiscoverRepositoriesFor(OSSInsightCandidateScope)
+}
+
+func (s *ossInsightRepositoryScout) DiscoverReviewableRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
+	return s.DiscoverRepositoriesFor(OSSInsightReviewableScope)
+}
+
+func (s *ossInsightRepositoryScout) DiscoverRepositoriesFor(scope OSSInsightDiscoveryScope) (OSSInsightRepositoryDiscoveryReport, error) {
+	scope, err := normalizedDiscoveryScope(scope)
+	if err != nil {
+		return OSSInsightRepositoryDiscoveryReport{}, err
+	}
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	if s.cacheExpires.After(s.now()) {
-		report := s.cachedReport
+	if cached, ok := s.cache[scope]; ok && cached.expires.After(s.now()) {
+		report := cached.report
 		report.Cached = true
 		return report, nil
 	}
-	report, err := s.discoverRepositories()
+	ctx, cancel := context.WithTimeout(context.Background(), ossInsightDiscoveryTimeout)
+	defer cancel()
+	report, err := s.discoverRepositories(ctx, scope)
 	if err == nil {
-		s.cachedReport = report
-		s.cacheExpires = s.now().Add(ossInsightDiscoveryCacheTTL)
+		s.cache[scope] = ossInsightDiscoveryCache{report: report, expires: s.now().Add(ossInsightDiscoveryCacheTTL)}
 	}
 	return report, err
 }
 
-func (s *ossInsightRepositoryScout) discoverRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
+func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, scope OSSInsightDiscoveryScope) (OSSInsightRepositoryDiscoveryReport, error) {
 	report := OSSInsightRepositoryDiscoveryReport{
 		CheckedAt:           s.now().UTC().Format(time.RFC3339),
 		SourceURL:           ossInsightCollectionsURL,
+		Scope:               scope,
 		CollectionsScreened: len(CollectionScreenings()),
 	}
-	live, err := s.liveCollections()
+	live, err := s.liveCollections(ctx)
 	if err != nil {
 		return report, err
 	}
 	candidates := candidateCollectionDecisions()
+	reviewable := reviewableCollectionDecisions()
 	report.CandidateCollections = len(candidates)
+	report.ReviewableCollections = len(reviewable)
+	decisions := repositoryDiscoveryDecisions(scope)
+	report.EligibleCollections = len(decisions)
 	known := catalogRepositories()
 	liveNames := map[string]bool{}
 
 	for _, collection := range live {
 		liveNames[collection.Name] = true
-		decision, ok := candidates[collection.Name]
+		decision, ok := decisions[collection.Name]
 		if !ok {
 			continue
 		}
@@ -110,7 +149,7 @@ func (s *ossInsightRepositoryScout) discoverRepositories() (OSSInsightRepository
 			report.UnavailableCollections = append(report.UnavailableCollections, collection.Name)
 			continue
 		}
-		repositories, err := s.collectionRepositories(collection.ID)
+		repositories, err := s.collectionRepositories(ctx, collection.ID)
 		if err != nil {
 			report.UnavailableCollections = append(report.UnavailableCollections, collection.Name)
 			continue
@@ -131,14 +170,15 @@ func (s *ossInsightRepositoryScout) discoverRepositories() (OSSInsightRepository
 				continue
 			}
 			report.Discoveries = append(report.Discoveries, OSSInsightRepositoryDiscovery{
-				Collection: collection.Name,
-				Repository: repository,
-				SourceURL:  ossInsightCollectionRepositoriesURL(collection.ID),
-				Rationale:  decision.rationale,
+				Collection:  collection.Name,
+				Disposition: decision.disposition,
+				Repository:  repository,
+				SourceURL:   ossInsightCollectionRepositoriesURL(collection.ID),
+				Rationale:   decision.rationale,
 			})
 		}
 	}
-	for name := range candidates {
+	for name := range decisions {
 		if !liveNames[name] {
 			report.MissingCollections = append(report.MissingCollections, name)
 		}
@@ -147,9 +187,13 @@ func (s *ossInsightRepositoryScout) discoverRepositories() (OSSInsightRepository
 	sort.Strings(report.UnavailableCollections)
 	report.Available = report.CollectionsChecked > 0
 	if !report.Available {
-		return report, fmt.Errorf("OSS Insight candidate collection repositories were unavailable")
+		return report, fmt.Errorf("OSS Insight repository collections were unavailable")
 	}
-	report.Message = "HAI checked the full collection index and read repository names only from pre-screened candidate categories. Discoveries remain unreviewed: this scan did not add catalog entries, install software, create credentials, or execute a project."
+	if scope == OSSInsightReviewableScope {
+		report.Message = "HAI classified the complete collection index and read repository names only from candidate and already-represented operational categories. Discoveries remain unreviewed: this scan did not add catalog entries, install software, create credentials, or execute a project."
+	} else {
+		report.Message = "HAI classified the complete collection index and read repository names only from pre-screened candidate categories. Discoveries remain unreviewed: this scan did not add catalog entries, install software, create credentials, or execute a project."
+	}
 	return report, nil
 }
 
@@ -158,8 +202,8 @@ type ossInsightCollection struct {
 	Name string
 }
 
-func (s *ossInsightRepositoryScout) liveCollections() ([]ossInsightCollection, error) {
-	req, err := http.NewRequest(http.MethodGet, ossInsightCollectionsURL, nil)
+func (s *ossInsightRepositoryScout) liveCollections(ctx context.Context) ([]ossInsightCollection, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ossInsightCollectionsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not prepare OSS Insight collection request")
 	}
@@ -198,8 +242,8 @@ func (s *ossInsightRepositoryScout) liveCollections() ([]ossInsightCollection, e
 	return result, nil
 }
 
-func (s *ossInsightRepositoryScout) collectionRepositories(id string) ([]string, error) {
-	req, err := http.NewRequest(http.MethodGet, ossInsightCollectionRepositoriesURL(id), nil)
+func (s *ossInsightRepositoryScout) collectionRepositories(ctx context.Context, id string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ossInsightCollectionRepositoriesURL(id), nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not prepare OSS Insight repository request")
 	}
@@ -240,6 +284,34 @@ func candidateCollectionDecisions() map[string]collectionDecision {
 		}
 	}
 	return decisions
+}
+
+func reviewableCollectionDecisions() map[string]collectionDecision {
+	decisions := map[string]collectionDecision{}
+	for _, screening := range CollectionScreenings() {
+		if screening.Disposition == CollectionCandidate || screening.Disposition == CollectionRepresented {
+			decisions[screening.Collection] = collectionDecision{disposition: screening.Disposition, rationale: screening.Rationale}
+		}
+	}
+	return decisions
+}
+
+func repositoryDiscoveryDecisions(scope OSSInsightDiscoveryScope) map[string]collectionDecision {
+	if scope == OSSInsightReviewableScope {
+		return reviewableCollectionDecisions()
+	}
+	return candidateCollectionDecisions()
+}
+
+func normalizedDiscoveryScope(scope OSSInsightDiscoveryScope) (OSSInsightDiscoveryScope, error) {
+	switch OSSInsightDiscoveryScope(strings.ToLower(strings.TrimSpace(string(scope)))) {
+	case "", OSSInsightCandidateScope:
+		return OSSInsightCandidateScope, nil
+	case OSSInsightReviewableScope:
+		return OSSInsightReviewableScope, nil
+	default:
+		return "", fmt.Errorf("unsupported OSS Insight discovery scope")
+	}
 }
 
 func catalogRepositories() map[string]bool {

@@ -18,6 +18,14 @@ func (s discoveryScoutStub) DiscoverRepositories() (OSSInsightRepositoryDiscover
 	return s.report, s.err
 }
 
+func (s discoveryScoutStub) DiscoverReviewableRepositories() (OSSInsightRepositoryDiscoveryReport, error) {
+	return s.report, s.err
+}
+
+func (s discoveryScoutStub) DiscoverRepositoriesFor(_ OSSInsightDiscoveryScope) (OSSInsightRepositoryDiscoveryReport, error) {
+	return s.report, s.err
+}
+
 type discoveryReviewerStub struct {
 	entry Entry
 }

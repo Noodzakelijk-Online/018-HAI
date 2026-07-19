@@ -62,6 +62,7 @@ export interface IBrainCatalogOSSInsightReview {
 
 export interface IBrainCatalogOSSInsightDiscovery {
   collection: string
+  disposition: BrainCatalogCollectionDisposition
   repository: string
   sourceUrl: string
   rationale: string
@@ -72,8 +73,11 @@ export interface IBrainCatalogOSSInsightDiscoveryReport {
   sourceUrl: string
   available: boolean
   cached: boolean
+  scope: 'candidate' | 'reviewable'
   collectionsScreened: number
   candidateCollections: number
+  reviewableCollections: number
+  eligibleCollections: number
   collectionsChecked: number
   repositoriesChecked: number
   knownProfileHits: number

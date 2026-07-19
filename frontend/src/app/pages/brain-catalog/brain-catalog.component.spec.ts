@@ -21,7 +21,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
   }
 
   function createComponent() {
-    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
+    const catalogService = { revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), discoverReviewableOSSInsightRepositories: jasmine.createSpy('discoverReviewableOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
@@ -127,7 +127,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     component.verifyDiscovery({ collection: 'MCP Servers', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
 
-    expect(catalogService.revalidateOSSInsightDiscovery).toHaveBeenCalledWith('owner/new-mcp')
+    expect(catalogService.revalidateOSSInsightDiscovery).toHaveBeenCalledWith('owner/new-mcp', 'candidate')
     expect(component.discoveryReviews['owner/new-mcp'].license).toBe('MIT')
     expect(notification.success).toHaveBeenCalled()
   })
@@ -164,5 +164,31 @@ describe('BrainCatalogComponent adapter reviews', () => {
     expect(catalogService.discoverOSSInsightRepositories).toHaveBeenCalled()
     expect(component.ossInsightDiscovery?.discoveries?.[0].repository).toBe('owner/new-mcp')
     expect(notification.success).toHaveBeenCalledWith('Candidate discovery complete', '1 unreviewed repositories were found. No catalog entry, credential, or runtime state changed.')
+  })
+
+  it('can scan represented capability categories without activating an upstream', () => {
+    const { component, notification } = createComponent()
+    const catalogService = (component as any).service
+    catalogService.discoverReviewableOSSInsightRepositories.and.returnValue(of({
+      available: true,
+      cached: false,
+      scope: 'reviewable',
+      collectionsScreened: 138,
+      candidateCollections: 12,
+      reviewableCollections: 25,
+      eligibleCollections: 25,
+      collectionsChecked: 25,
+      repositoriesChecked: 90,
+      knownProfileHits: 8,
+      discoveries: [{ collection: 'LLM Inference Engines', disposition: 'represented_in_catalog', repository: 'owner/new-inference', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' }],
+      discoveriesTruncated: false,
+      message: 'did not add catalog entries',
+    }))
+
+    component.discoverReviewableOSSInsightRepositories()
+
+    expect(catalogService.discoverReviewableOSSInsightRepositories).toHaveBeenCalled()
+    expect(component.ossInsightDiscovery?.scope).toBe('reviewable')
+    expect(notification.success).toHaveBeenCalledWith('Relevant discovery complete', '1 unreviewed repositories were found across candidate and represented categories. No catalog entry, credential, or runtime state changed.')
   })
 })
