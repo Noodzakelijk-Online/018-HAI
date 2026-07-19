@@ -104,6 +104,33 @@ func DiscoverySources() []CatalogSource {
 
 var entries = []Entry{
 	{
+		ID: "fastmcp", Name: "FastMCP", UpstreamURL: "https://github.com/jlowin/fastmcp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		Status: StatusCandidate, Category: "MCP tool-server authoring", IntegrationMode: "reviewed local MCP service adapter",
+		Capabilities: []string{"MCP server authoring", "tool schemas", "resource and prompt exposure"}, RecommendedFor: []string{"narrow local tool adapters", "MCP capability design", "controlled tool publication"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review one named loopback service with a fixed tool list, input schemas, owner, health probe, and audit contract. HAI must preflight it through the existing MCP path before a separate tool-execution adapter can be considered; FastMCP never receives implicit filesystem, process, network, or credential access.",
+		Rationale:  "FastMCP is a maintained MCP-server implementation candidate for narrow HAI-owned tools. It complements HAI's existing preflight capability without importing an unbounded tool registry or process launcher.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19; no FastMCP service is installed or configured by HAI.",
+	},
+	{
+		ID: "vllm", Name: "vLLM", UpstreamURL: "https://github.com/vllm-project/vllm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
+		Status: StatusCandidate, Category: "local high-throughput model inference", IntegrationMode: "reviewed local OpenAI-compatible provider",
+		Capabilities: []string{"local model serving", "OpenAI-compatible API", "batched inference", "model capability discovery"}, RecommendedFor: []string{"local reasoning", "larger local models", "high-volume extraction"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a loopback-only deployment with explicit GPU, model, quantization, context-window, retention, and resource limits. Reuse HAI's existing OpenAI-compatible provider probe and EUR 0 routing policy; HAI cannot select, send data to, or start vLLM until an operator configures and verifies the endpoint.",
+		Rationale:  "vLLM is a capable local inference candidate where Ollama or llama.cpp cannot meet a measured throughput or model-serving need. It is not enabled by the catalog and does not replace HAI's model, budget, or approval policy.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines repository list and GitHub metadata checked on 2026-07-19; no vLLM endpoint is configured by HAI.",
+	},
+	{
+		ID: "deepeval", Name: "DeepEval", UpstreamURL: "https://github.com/confident-ai/deepeval", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",
+		Status: StatusCandidate, Category: "LLM quality evaluation", IntegrationMode: "contained, no-write local evaluation adapter",
+		Capabilities: []string{"test cases", "quality metrics", "regression checks", "evaluation reports"}, RecommendedFor: []string{"retrieval evaluation", "grounded-answer checks", "model-routing regression"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Run only a reviewed local evaluation suite with redacted fixtures, an explicit provider allowlist, bounded time and cost, and retained result artifacts. A score may create a review item but cannot mark a task verified, alter a model route, or enable a provider on its own.",
+		Rationale:  "DeepEval adds a distinct evaluation-oriented path beside Promptfoo and garak. HAI can use it for evidence about quality changes while keeping verification, provider policy, and completion decisions in HAI.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Evaluation & Testing repository list and GitHub metadata checked on 2026-07-19; no DeepEval runner is configured by HAI.",
+	},
+	{
 		ID: "ollama", Name: "Ollama", UpstreamURL: "https://github.com/ollama/ollama", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
 		Status: StatusIntegrated, Category: "local model inference", IntegrationMode: "operator-configured loopback Ollama provider",
 		Capabilities: []string{"local model discovery", "local generation", "model tags probe", "local-first routing"}, RecommendedFor: []string{"local reasoning", "classification", "extraction", "drafting"},
@@ -554,6 +581,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "local model", "local inference", "gguf", "llama.cpp", "llama cpp", "offline model", "ollama") {
 		ids = append(ids, "ollama", "llama-cpp")
 	}
+	if containsAny(text, "vllm", "high throughput", "batched inference", "serve a model") {
+		ids = append(ids, "vllm")
+	}
 	if containsAny(text, "semantic memory", "embedding", "vector search", "pgvector") {
 		ids = append(ids, "pgvector")
 	}
@@ -566,6 +596,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "mcp inspect", "mcp health", "mcp server", "mcp inspector") {
 		ids = append(ids, "mcp-inspector")
 	}
+	if containsAny(text, "mcp server", "create a tool server", "publish a tool", "fastmcp") {
+		ids = append(ids, "fastmcp")
+	}
 	if containsAny(text, "browser verification", "browser test", "browser flow", "web flow", "playwright", "ui regression") {
 		ids = append(ids, "playwright")
 	}
@@ -574,6 +607,9 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "guardrail", "prompt injection", "llm safety", "red team", "red-team", "jailbreak", "safety evaluation") {
 		ids = append(ids, "nemo-guardrails", "garak", "promptfoo")
+	}
+	if containsAny(text, "evaluate", "evaluation", "quality regression", "retrieval evaluation", "deepeval") {
+		ids = append(ids, "deepeval")
 	}
 	if containsAny(text, "voice note", "audio", "transcribe", "transcription", "speech to text", "speech-to-text") {
 		ids = append(ids, "whisper-cpp")

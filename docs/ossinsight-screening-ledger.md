@@ -32,6 +32,9 @@ only in its expandable collection-coverage section.
 | Wasmtime | WebAssembly Runtime | Integrated, opt-in | Bounded WASI helper execution | Reviewed content-addressed modules only; no inherited network, filesystem, environment, or arguments; strict resource caps and approval gate. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
 | Ollama | LLM Inference Engines | Integrated, opt-in | Local model routing and live probe | Existing loopback provider, model-tag probe, persisted readiness, EUR 0 policy, and task approval gates remain authoritative. |
+| FastMCP | MCP Servers | Candidate | Narrow local MCP service authoring | A fixed loopback service, bounded tool list, preflight, audit contract, and separate execution review are required. |
+| vLLM | LLM Inference Engines | Candidate | Local high-throughput model serving | A loopback endpoint, explicit GPU/model limits, existing HAI provider probe, and EUR 0 routing policy are required. |
+| DeepEval | AI Evaluation & Testing | Candidate | Local LLM quality evaluation | Redacted fixtures, provider allowlists, bounded runs, and no-write result handling are required. |
 | Langfuse | LLM DevTools | Candidate | Self-hosted LLM trace and evaluation service | Trace redaction, retention, service credentials, data-egress controls, and health checks require an adapter review. |
 | Promptfoo | LLM DevTools | Candidate | Local prompt and routing evaluation | Test-data redaction, provider credentials, workspace containment, and no-write validation require an adapter review. |
 | Airbyte | Data Integration | Candidate | Read-first source ingestion bridge | One connector at a time, with least-privilege scope, cursor, retention, local storage, audit, pause, and revoke review. |
@@ -71,11 +74,13 @@ licence. In particular, it does not relax the existing AutoGPT and n8n licence
 review states.
 
 The 2026-07-19 follow-up check covered Ollama, browser-use, NVIDIA NeMo
-Guardrails, garak, whisper.cpp, A2A, Tabby, Letta, ComfyUI, and Daytona. All
-ten reported `archived=false`. The check confirmed MIT metadata for Ollama,
-browser-use, and whisper.cpp; Apache-2.0 for garak, A2A, and Letta; GPL-3.0
-for ComfyUI; and `NOASSERTION` for NeMo Guardrails, Tabby, and Daytona. HAI
-therefore keeps every new runtime-capable project review-first, and holds the
+Guardrails, garak, whisper.cpp, A2A, Tabby, Letta, ComfyUI, Daytona, FastMCP,
+vLLM, and DeepEval. All 13 reported `archived=false`. The check confirmed
+Apache-2.0 metadata for FastMCP, vLLM, DeepEval, garak, A2A, and Letta; MIT for
+Ollama, browser-use, and whisper.cpp; GPL-3.0 for ComfyUI; and `NOASSERTION`
+for NeMo Guardrails, Tabby, and Daytona. A separate metadata check found the
+LLM Guard project archived, so it is not admitted as a profile. HAI therefore
+keeps every new runtime-capable project review-first, and holds the
 licence-sensitive or external-sandbox candidates as references.
 
 ## Complete collection screen
@@ -97,8 +102,8 @@ a separate project-level review.
 | 7 | Web3; Finance; Cross Platform GUI Tool; Remote Desktop Tool; Testing Tools; WebAssembly Runtime; Distributed File Storage; Programming Language; Javascript Charting; CICD; React Framework; APM Tool | Added Playwright and Wasmtime. Remote desktop, Web3, finance, and CI/CD execution are deliberately out of scope; MinIO is excluded; APM remains Prometheus-first. |
 | 8 | Chaos Engineering; Search Engine; Text Editor; Javascript Game Engine; Game Engine; Headless CMS; Artificial Intelligence; Github Alternative; Graph Database; Time Series Database; Business Intelligence; Javascript Framework | No direct adoption. Search/graph/time-series options stay deferred behind pgvector/Prometheus; AI libraries require a concrete model-serving or evaluation gap; development/UI ecosystems do not replace HAI's stack. |
 | 9 | Web Framework; Low Code Development Tool; Google Analytics Alternative; CSS Framework; Open Source Database; Static Site Generator | No direct adoption. Low-code offerings overlap with HAI workflow ownership; analytics/CSS/framework/database alternatives cannot be introduced without a measured migration case. |
-| API-only AI snapshot A | MCP Servers; Coding Agents; Vibe Coding Tools; RAG Frameworks; LLM Inference Engines; LLM Fine-Tuning Tools; AI Image Generation; AI Coding Assistants; AI Browser Agents; AI Agent Memory; LLM Gateway & Proxy; AI Safety & Alignment | Added local inference, coding, browser, safety, and memory dispositions. Fine-tuning and unbounded image-generation workflows are not adopted. |
-| API-only AI snapshot B | Vector Databases; Multimodal AI; AI Evaluation & Testing; Model Compression; AI Video Generation; AI Workflow Orchestration; Agent Skills & AGENTS.md; AI Infrastructure; Edge AI; AI Governance; Google ADK; Neuro-Symbolic AI | Added local transcription, evaluation, and protocol references. HAI retains one retrieval, workflow, policy, and control plane. |
+| API-only AI snapshot A | MCP Servers; Coding Agents; Vibe Coding Tools; RAG Frameworks; LLM Inference Engines; LLM Fine-Tuning Tools; AI Image Generation; AI Coding Assistants; AI Browser Agents; AI Agent Memory; LLM Gateway & Proxy; AI Safety & Alignment | Added FastMCP review, local inference, coding, browser, safety, and memory dispositions. Fine-tuning and unbounded image-generation workflows are not adopted. |
+| API-only AI snapshot B | Vector Databases; Multimodal AI; AI Evaluation & Testing; Model Compression; AI Video Generation; AI Workflow Orchestration; Agent Skills & AGENTS.md; AI Infrastructure; Edge AI; AI Governance; Google ADK; Neuro-Symbolic AI | Added local transcription, DeepEval review, and protocol references. HAI retains one retrieval, workflow, policy, and control plane. |
 | API-only AI snapshot C | AI FinOps; Synthetic Data; AI Quantitative Finance; AI Agent Marketplace; Knowledge Graphs for AI; AI Observability; AI Code Review; Agent Sandboxing; AI Red Teaming; A2A Protocol; Google ADK Python; Agent Harness | Added FinOps, observability, code-review, sandbox, red-team, and interoperability decisions. Finance, marketplaces, and uncontrolled remote peers are not adopted. |
 
 ## Adoption gates

@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby"} {
+	for _, id := range []string{"fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -226,5 +226,19 @@ func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
 	}
 	if recommendation, ok := ids["a2a"]; !ok || recommendation.Status != StatusCompatibility || !recommendation.RequiresApproval {
 		t.Fatalf("A2A must remain a gated compatibility recommendation: %#v", recommendations)
+	}
+}
+
+func TestRecommendAdditionalOSSInsightCandidatesStayReviewFirst(t *testing.T) {
+	recommendations := Recommend("operations", "Design a FastMCP tool server, serve a local model with vLLM, and evaluate grounded retrieval quality")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"fastmcp", "vllm", "deepeval"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
+			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
+		}
 	}
 }
