@@ -107,6 +107,7 @@ func RunMigrations(db *gorm.DB) error {
 		&models.OptimizationProposalRun{},
 		&models.TemporalWorkflowRun{},
 		&models.BrowserVerificationRun{},
+		&models.WASIRun{},
 	); err != nil {
 		return err
 	}

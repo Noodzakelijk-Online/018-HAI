@@ -24,7 +24,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
 | MCP Inspector | Model Context Protocol (MCP) Client | Integrated profile | Local-only MCP preflight | HAI-owned initialize + tools/list review of configured local Streamable HTTP servers; no process spawn or tool execution. |
 | Playwright | Testing Tools | Integrated, opt-in | Read-only local browser verification | Named local routes, origin allowlist, no secret capture, no interaction API, and approval gates. |
-| Wasmtime | WebAssembly Runtime | Candidate | Bounded WASI helper execution | Reviewed content-addressed modules, no inherited network, explicit capabilities. |
+| Wasmtime | WebAssembly Runtime | Integrated, opt-in | Bounded WASI helper execution | Reviewed content-addressed modules only; no inherited network, filesystem, environment, or arguments; strict resource caps and approval gate. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
 | Continue, OpenHands, CrewAI, Aider | AI Agent Frameworks / LLM DevTools / MCP | Candidate | Reviewed coding and orchestration profiles | Existing catalog controls apply; no generic agent-execution endpoint. |
 | AutoGen | AI Agent Frameworks | Compatibility only | Migration and protocol translation | Dedicated bridge and approval required; no new foundation work. |
@@ -38,8 +38,8 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 ## Complete collection screen
 
 Each listed collection was classified by its suitability for HAI's thinking,
-memory, operations, execution, verification, or governance planes. “No direct
-adoption” means the collection is either out of scope, already covered by the
+memory, operations, execution, verification, or governance planes. "No direct
+adoption" means the collection is either out of scope, already covered by the
 existing stack, too broad to introduce without a demonstrated gap, or requires
 a separate project-level review.
 

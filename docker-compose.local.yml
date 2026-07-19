@@ -139,6 +139,10 @@ services:
       HAI_PLAYWRIGHT_RUNNER_URL: ${HAI_PLAYWRIGHT_RUNNER_URL}
       HAI_PLAYWRIGHT_RUNNER_TOKEN: ${HAI_PLAYWRIGHT_RUNNER_TOKEN:-}
       HAI_PLAYWRIGHT_PROFILES: ${HAI_PLAYWRIGHT_PROFILES}
+      HAI_WASI_ENABLED: ${HAI_WASI_ENABLED}
+      HAI_WASI_RUNNER_URL: ${HAI_WASI_RUNNER_URL}
+      HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
+      HAI_WASI_MODULES: ${HAI_WASI_MODULES}
       ODYSSEUS_BASE_URL: ${ODYSSEUS_BASE_URL}
       ODYSSEUS_API_TOKEN: ${ODYSSEUS_API_TOKEN}
       AGENT_RUNTIME_ALLOWED_HOSTS: ${AGENT_RUNTIME_ALLOWED_HOSTS}
@@ -432,6 +436,32 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    networks:
+      - service-hub
+
+  wasi-runner:
+    build:
+      context: ./services/wasi-runner
+    profiles: ["wasi"]
+    restart: unless-stopped
+    environment:
+      HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
+    volumes:
+      - ./wasi-modules:/modules:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     networks:
       - service-hub
 

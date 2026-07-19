@@ -42,6 +42,7 @@ import (
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/temporalbridge"
 	"automation-hub-backend/internal/verification"
+	"automation-hub-backend/internal/wasiexec"
 	"automation-hub-backend/internal/workflow"
 	"automation-hub-backend/internal/workflowtask"
 
@@ -77,6 +78,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
 		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
+		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
@@ -563,6 +565,17 @@ func initializeBrowserVerificationRoutes(apiVersion *gin.RouterGroup, handler *b
 		// A browser check is read-only but still approval-gated: it may expose an
 		// application route's current state, so it is never an autonomous scan.
 		routes.POST("/profiles/:id/run", requirePermission(rbac.PermApprove), handler.Run)
+	}
+}
+
+func initializeWASIRoutes(apiVersion *gin.RouterGroup, handler *wasiexec.Handler) {
+	routes := apiVersion.Group("/wasi")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.GET("/modules", requirePermission(rbac.PermRead), handler.Modules)
+		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
+		routes.POST("/modules/:id/run", requirePermission(rbac.PermApprove), handler.Run)
 	}
 }
 

@@ -274,10 +274,10 @@ var entries = []Entry{
 	},
 	{
 		ID: "wasmtime", Name: "Wasmtime", UpstreamURL: "https://github.com/bytecodealliance/wasmtime", SourceCatalogURL: "https://ossinsight.io/collections/webassembly-runtime", SourceCollection: "WebAssembly Runtime",
-		Status: StatusCandidate, Category: "bounded local WASM execution", IntegrationMode: "reviewed WASI module adapter",
+		Status: StatusIntegrated, Category: "bounded local WASM execution", IntegrationMode: "opt-in content-addressed local WASI runner",
 		Capabilities: []string{"WASM runtime", "WASI capability controls", "resource limits", "portable local execution"}, RecommendedFor: []string{"deterministic transforms", "untrusted plugin experiments", "bounded local helpers"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Add only reviewed, content-addressed WASI modules through a dedicated adapter with no inherited network, explicit read-only preopens, CPU, memory, and wall-time limits. Do not represent a raw Wasmtime process as a generic sandbox or safe execution approval.",
+		Activation: "Enable the wasi Compose profile only after adding reviewed .wasm modules and their SHA-256 hashes to HAI_WASI_MODULES. The runner has no inherited network, preopened directories, environment, or arguments and is capped at 256 MiB, 0.5 CPU, and five seconds. Each run remains approval-gated.",
 		Rationale:  "Wasmtime is a maintained Apache-2.0 runtime with Windows distributions and configurable resource controls, but sandboxing still depends on HAI's explicit capability policy and adapter implementation.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight WebAssembly Runtime listing and upstream Apache-2.0/current release documentation checked on 2026-07-19.",
 	},
