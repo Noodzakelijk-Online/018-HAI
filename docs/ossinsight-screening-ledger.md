@@ -35,6 +35,10 @@ only in its expandable collection-coverage section.
 | FastMCP | MCP Servers | Candidate | Narrow local MCP service authoring | A fixed loopback service, bounded tool list, preflight, audit contract, and separate execution review are required. |
 | vLLM | LLM Inference Engines | Candidate | Local high-throughput model serving | A loopback endpoint, explicit GPU/model limits, existing HAI provider probe, and EUR 0 routing policy are required. |
 | DeepEval | AI Evaluation & Testing | Candidate | Local LLM quality evaluation | Redacted fixtures, provider allowlists, bounded runs, and no-write result handling are required. |
+| Microsoft Presidio | AI Safety & Alignment | Candidate | Local sensitive-data detection and redaction | Explicit recognisers, confidence thresholds, false-positive review, source retention, and audit events are required; redaction cannot delete or hide authorised source evidence. |
+| Guardrails AI | AI Safety & Alignment | Candidate | Structured-output validation | A local validator allowlist, redacted fixtures, bounded retries, egress policy, and fail-closed review mapping are required; it cannot approve actions or execute tools. |
+| LM Evaluation Harness | AI Evaluation & Testing | Candidate | Local model benchmark runner | Named local models, benchmark licence/provenance, resource limits, result retention, and a no-production-data rule are required; scores cannot alter routing automatically. |
+| OpenLLMetry | AI Observability | Candidate | Local LLM trace instrumentation | Local collector ownership, attribute allowlists, secret/prompt redaction, retention, sampling, export disablement, and health checks are required; telemetry cannot approve execution or spend. |
 | Langfuse | LLM DevTools | Candidate | Self-hosted LLM trace and evaluation service | Trace redaction, retention, service credentials, data-egress controls, and health checks require an adapter review. |
 | Promptfoo | LLM DevTools | Candidate | Local prompt and routing evaluation | Test-data redaction, provider credentials, workspace containment, and no-write validation require an adapter review. |
 | Airbyte | Data Integration | Candidate | Read-first source ingestion bridge | One connector at a time, with least-privilege scope, cursor, retention, local storage, audit, pause, and revoke review. |
@@ -52,7 +56,7 @@ only in its expandable collection-coverage section.
 | Mem0 | LLM Tools | Reference only | Memory-consolidation reference | HAI remains the sole memory/provenance authority. |
 | Letta, ComfyUI, Daytona | Agent Memory / Image Generation / Agent Sandboxing | Reference only | Design and workflow references | HAI does not create a second memory authority, autonomous publication workflow, or broad execution sandbox without an explicit architecture decision. |
 | OpenMetadata | Open Source Data Catalogs | Reference only | Data lineage and governance reference | Too large for current local-first source registry. |
-| LangChain, LlamaIndex, Cognee, Qdrant, Grafana | Agent / GraphRAG / Vector / Monitoring | Reference only | Pattern or future scale option | Revisit only after a measured native gap. |
+| LangChain, LlamaIndex, Cognee, Microsoft GraphRAG, Haystack, Qdrant, Grafana | Agent / GraphRAG / Vector / Monitoring | Reference only | Pattern or future scale option | Revisit only after a measured native gap; HAI keeps one source-linked memory and retrieval authority. |
 | n8n | Zapier Alternatives | License review | Workflow-platform comparison | Sustainable Use License and architecture overlap need a decision first. |
 | MinIO | Distributed File Storage | Excluded | Storage reference only | Archived upstream and AGPLv3 do not meet the current adoption bar. |
 
@@ -75,7 +79,9 @@ review states.
 
 The 2026-07-19 follow-up check covered Ollama, browser-use, NVIDIA NeMo
 Guardrails, garak, whisper.cpp, A2A, Tabby, Letta, ComfyUI, Daytona, FastMCP,
-vLLM, and DeepEval. All 13 reported `archived=false`. The check confirmed
+vLLM, DeepEval, Microsoft Presidio, Guardrails AI, LM Evaluation Harness,
+OpenLLMetry, Microsoft GraphRAG, and Haystack. All 19 reported `archived=false`.
+The check confirmed
 Apache-2.0 metadata for FastMCP, vLLM, DeepEval, garak, A2A, and Letta; MIT for
 Ollama, browser-use, and whisper.cpp; GPL-3.0 for ComfyUI; and `NOASSERTION`
 for NeMo Guardrails, Tabby, and Daytona. A separate metadata check found the

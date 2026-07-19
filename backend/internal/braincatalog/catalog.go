@@ -104,6 +104,60 @@ func DiscoverySources() []CatalogSource {
 
 var entries = []Entry{
 	{
+		ID: "presidio", Name: "Microsoft Presidio", UpstreamURL: "https://github.com/microsoft/presidio", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
+		Status: StatusCandidate, Category: "sensitive-data detection and redaction", IntegrationMode: "contained local redaction adapter",
+		Capabilities: []string{"PII detection", "redaction", "masking", "anonymisation"}, RecommendedFor: []string{"secret redaction", "source-import privacy checks", "safe audit previews"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local-only pipeline with explicit entity recognisers, confidence thresholds, false-positive handling, source retention, and audit events. Redaction can create a review item, but it cannot delete source records, change approval status, or conceal original evidence from an authorised owner.",
+		Rationale:  "Presidio is a maintained candidate for strengthening HAI's existing redaction boundary across source ingestion, logs, and evaluation fixtures without introducing a second data authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Safety & Alignment repository list and GitHub metadata checked on 2026-07-19; no Presidio service is installed or configured by HAI.",
+	},
+	{
+		ID: "guardrails-ai", Name: "Guardrails AI", UpstreamURL: "https://github.com/guardrails-ai/guardrails", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
+		Status: StatusCandidate, Category: "structured-output validation", IntegrationMode: "contained no-write validation adapter",
+		Capabilities: []string{"schema validation", "output validators", "retry signals", "structured extraction checks"}, RecommendedFor: []string{"structured extraction", "planning validation", "grounded-output review"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a local validator allowlist, redacted test fixtures, bounded retries, provider egress policy, and fail-closed result mapping. A validator may mark output uncertain or request review; it can never approve an action, change policy, or execute a tool.",
+		Rationale:  "Guardrails AI complements HAI's deterministic schemas and verification statuses with a reviewable validation layer rather than replacing the safety policy or human approval gate.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Safety & Alignment repository list and GitHub metadata checked on 2026-07-19; no Guardrails AI runtime is installed or configured by HAI.",
+	},
+	{
+		ID: "lm-eval-harness", Name: "LM Evaluation Harness", UpstreamURL: "https://github.com/EleutherAI/lm-evaluation-harness", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",
+		Status: StatusCandidate, Category: "offline model evaluation", IntegrationMode: "contained local benchmark runner",
+		Capabilities: []string{"benchmark suites", "few-shot evaluation", "repeatable model comparison", "result artifacts"}, RecommendedFor: []string{"local model comparison", "routing regression", "capability baselines"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review named local models, benchmark licences, fixture provenance, hardware limits, result retention, and a no-production-data rule. Results can inform an operator review but cannot select a model, spend budget, or change HAI routing automatically.",
+		Rationale:  "LM Evaluation Harness adds reproducible local model evidence where HAI needs to compare capability rather than assume the cheapest provider is sufficient.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Evaluation & Testing repository list and GitHub metadata checked on 2026-07-19; no LM Evaluation Harness runner is configured by HAI.",
+	},
+	{
+		ID: "openllmetry", Name: "OpenLLMetry", UpstreamURL: "https://github.com/traceloop/openllmetry", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusCandidate, Category: "LLM trace instrumentation", IntegrationMode: "reviewed local telemetry bridge",
+		Capabilities: []string{"OpenTelemetry traces", "model-call instrumentation", "latency metrics", "cost and token signals"}, RecommendedFor: []string{"routing observability", "evaluation traces", "failure analysis"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review local collector ownership, attribute allowlist, secret and prompt redaction, retention, sampling, export disablement, and health checks. Telemetry is observational only: it cannot grant provider access, alter budgets, or approve execution.",
+		Rationale:  "OpenLLMetry can make model and tool decisions inspectable through HAI's existing audit and budget controls while avoiding an unreviewed external telemetry destination.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Observability repository list and GitHub metadata checked on 2026-07-19; no OpenLLMetry instrumentation or collector is configured by HAI.",
+	},
+	{
+		ID: "graphrag", Name: "Microsoft GraphRAG", UpstreamURL: "https://github.com/microsoft/graphrag", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10134/repos/", SourceCollection: "Knowledge Graphs for AI",
+		Status: StatusReferenceOnly, Category: "graph-based retrieval patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"entity graph extraction", "community summaries", "graph retrieval"}, RecommendedFor: []string{"retrieval-gap analysis", "case timeline research", "entity-linking design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not introduce a second index or memory authority. Revisit only after a measured source-linked retrieval gap and an approved design for extraction provenance, graph updates, deletion, export, and rollback.",
+		Rationale:  "GraphRAG offers useful retrieval and evidence-linking patterns, but HAI keeps the existing source-linked memory plane authoritative until a demonstrated gap justifies a bounded adapter.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Knowledge Graphs for AI repository list and GitHub metadata checked on 2026-07-19; Microsoft GraphRAG is not installed or connected.",
+	},
+	{
+		ID: "haystack", Name: "Haystack", UpstreamURL: "https://github.com/deepset-ai/haystack", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10108/repos/", SourceCollection: "RAG Frameworks",
+		Status: StatusReferenceOnly, Category: "retrieval pipeline patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"document pipelines", "retrieval components", "evaluation patterns", "agent pipeline design"}, RecommendedFor: []string{"source-ingestion design", "retrieval-gap analysis", "document-processing review"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not create a parallel retrieval or memory system. Revisit only for a measured document-processing gap with a source, retention, evaluation, and rollback design that remains inside HAI's local provenance controls.",
+		Rationale:  "Haystack provides mature retrieval-pipeline patterns, but HAI must preserve one controlled source, memory, verification, and execution plane.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight RAG Frameworks repository list and GitHub metadata checked on 2026-07-19; Haystack is not installed or connected.",
+	},
+	{
 		ID: "fastmcp", Name: "FastMCP", UpstreamURL: "https://github.com/jlowin/fastmcp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
 		Status: StatusCandidate, Category: "MCP tool-server authoring", IntegrationMode: "reviewed local MCP service adapter",
 		Capabilities: []string{"MCP server authoring", "tool schemas", "resource and prompt exposure"}, RecommendedFor: []string{"narrow local tool adapters", "MCP capability design", "controlled tool publication"},
@@ -608,8 +662,20 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "guardrail", "prompt injection", "llm safety", "red team", "red-team", "jailbreak", "safety evaluation") {
 		ids = append(ids, "nemo-guardrails", "garak", "promptfoo")
 	}
+	if containsAny(text, "pii", "personal data", "sensitive data", "secret redaction", "redact", "redaction", "anonymize", "anonymise", "presidio") {
+		ids = append(ids, "presidio")
+	}
+	if containsAny(text, "schema validation", "structured output validation", "validate structured output", "output validator", "guardrails ai", "guardrails-ai") {
+		ids = append(ids, "guardrails-ai")
+	}
 	if containsAny(text, "evaluate", "evaluation", "quality regression", "retrieval evaluation", "deepeval") {
 		ids = append(ids, "deepeval")
+	}
+	if containsAny(text, "model benchmark", "benchmark model", "benchmark a local model", "offline model evaluation", "lm evaluation", "lm-eval", "lm evaluation harness") {
+		ids = append(ids, "lm-eval-harness")
+	}
+	if containsAny(text, "trace instrumentation", "trace telemetry", "open telemetry", "opentelemetry", "openllmetry", "model traces") {
+		ids = append(ids, "openllmetry")
 	}
 	if containsAny(text, "voice note", "audio", "transcribe", "transcription", "speech to text", "speech-to-text") {
 		ids = append(ids, "whisper-cpp")
@@ -649,8 +715,8 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "daytona", "managed sandbox", "workspace sandbox") {
 		ids = append(ids, "daytona")
 	}
-	if containsAny(text, "graphrag", "knowledge graph", "entity linking", "langchain", "llamaindex", "llama index", "cognee") {
-		ids = append(ids, "langchain", "llamaindex", "cognee")
+	if containsAny(text, "graphrag", "knowledge graph", "entity linking", "langchain", "llamaindex", "llama index", "cognee", "haystack", "document pipeline") {
+		ids = append(ids, "langchain", "llamaindex", "cognee", "graphrag", "haystack")
 	}
 	if containsAny(text, "qdrant", "dedicated vector database") {
 		ids = append(ids, "qdrant")

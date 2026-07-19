@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -239,6 +239,34 @@ func TestRecommendAdditionalOSSInsightCandidatesStayReviewFirst(t *testing.T) {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
+		}
+	}
+}
+
+func TestRecommendSafetyEvaluationAndTelemetryCandidatesStayReviewFirst(t *testing.T) {
+	recommendations := Recommend("operations", "Redact PII before audit export, validate structured output, benchmark a local model, and add OpenTelemetry traces")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
+			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
+		}
+	}
+}
+
+func TestRecommendRetrievalReferencesNeverClaimActivation(t *testing.T) {
+	recommendations := Recommend("research", "Compare Haystack and Microsoft GraphRAG for a document pipeline and knowledge graph")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"haystack", "graphrag"} {
+		recommendation, ok := ids[id]
+		if !ok || recommendation.Status != StatusReferenceOnly || recommendation.Role != "reference or review only" {
+			t.Fatalf("%s must remain a non-activating reference: %#v", id, recommendations)
 		}
 	}
 }
