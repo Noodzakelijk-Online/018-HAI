@@ -42,11 +42,17 @@ type OSSInsightRepositoryScout interface {
 }
 
 type OSSInsightRepositoryDiscovery struct {
-	Collection  string                `json:"collection"`
-	Disposition CollectionDisposition `json:"disposition"`
-	Repository  string                `json:"repository"`
-	SourceURL   string                `json:"sourceUrl"`
-	Rationale   string                `json:"rationale"`
+	Collection         string                `json:"collection"`
+	Disposition        CollectionDisposition `json:"disposition"`
+	Repository         string                `json:"repository"`
+	SourceURL          string                `json:"sourceUrl"`
+	Rationale          string                `json:"rationale"`
+	ReviewTrack        string                `json:"reviewTrack"`
+	Priority           int                   `json:"priority"`
+	Risk               string                `json:"risk"`
+	ReviewReason       string                `json:"reviewReason"`
+	RelatedCollections []string              `json:"relatedCollections,omitempty"`
+	RelatedSourceURLs  []string              `json:"relatedSourceUrls,omitempty"`
 }
 
 type OSSInsightRepositoryDiscoveryReport struct {
@@ -61,6 +67,7 @@ type OSSInsightRepositoryDiscoveryReport struct {
 	EligibleCollections     int                             `json:"eligibleCollections"`
 	CollectionsChecked      int                             `json:"collectionsChecked"`
 	RepositoriesChecked     int                             `json:"repositoriesChecked"`
+	DuplicateSourceHits     int                             `json:"duplicateSourceHits"`
 	MaximumDiscoveries      int                             `json:"maximumDiscoveries"`
 	SourceQueryLimit        int                             `json:"sourceQueryLimit,omitempty"`
 	CollectionsAtQueryLimit int                             `json:"collectionsAtQueryLimit,omitempty"`
@@ -145,6 +152,7 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 	report.EligibleCollections = len(decisions)
 	known := catalogRepositories()
 	liveNames := map[string]bool{}
+	discoveryIndex := map[string]int{}
 
 	for _, collection := range live {
 		liveNames[collection.Name] = true
@@ -178,17 +186,19 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 				report.KnownProfileHits++
 				continue
 			}
+			item := newDiscovery(collection, decision, repository)
+			key := strings.ToLower(item.Repository)
+			if existingIndex, found := discoveryIndex[key]; found {
+				report.DuplicateSourceHits++
+				report.Discoveries[existingIndex] = mergeDiscovery(report.Discoveries[existingIndex], item)
+				continue
+			}
 			if len(report.Discoveries) >= maxOSSInsightDiscoveries {
 				report.DiscoveriesTruncated = true
 				continue
 			}
-			report.Discoveries = append(report.Discoveries, OSSInsightRepositoryDiscovery{
-				Collection:  collection.Name,
-				Disposition: decision.disposition,
-				Repository:  repository,
-				SourceURL:   ossInsightCollectionRepositoriesURL(collection.ID),
-				Rationale:   decision.rationale,
-			})
+			discoveryIndex[key] = len(report.Discoveries)
+			report.Discoveries = append(report.Discoveries, item)
 		}
 	}
 	for name := range decisions {
@@ -198,6 +208,12 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 	}
 	sort.Strings(report.MissingCollections)
 	sort.Strings(report.UnavailableCollections)
+	sort.Slice(report.Discoveries, func(i, j int) bool {
+		if report.Discoveries[i].Priority != report.Discoveries[j].Priority {
+			return report.Discoveries[i].Priority > report.Discoveries[j].Priority
+		}
+		return report.Discoveries[i].Repository < report.Discoveries[j].Repository
+	})
 	report.Available = report.CollectionsChecked > 0
 	if !report.Available {
 		return report, fmt.Errorf("OSS Insight repository collections were unavailable")
@@ -208,6 +224,76 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 		report.Message = "HAI classified the complete collection index and read every repository row returned by OSS Insight for pre-screened candidate categories. The source endpoint is a ranked collection response, not a complete GitHub inventory; discoveries remain unreviewed and this scan did not add catalog entries, install software, create credentials, or execute a project."
 	}
 	return report, nil
+}
+
+func newDiscovery(collection ossInsightCollection, decision collectionDecision, repository string) OSSInsightRepositoryDiscovery {
+	track, priority, risk, reason := discoveryReviewProfile(collection.Name, decision.disposition)
+	sourceURL := ossInsightCollectionRepositoriesURL(collection.ID)
+	return OSSInsightRepositoryDiscovery{
+		Collection:         collection.Name,
+		Disposition:        decision.disposition,
+		Repository:         repository,
+		SourceURL:          sourceURL,
+		Rationale:          decision.rationale,
+		ReviewTrack:        track,
+		Priority:           priority,
+		Risk:               risk,
+		ReviewReason:       reason,
+		RelatedCollections: []string{collection.Name},
+		RelatedSourceURLs:  []string{sourceURL},
+	}
+}
+
+// discoveryReviewProfile ranks a category-level review path. It is not a
+// claim about a discovered project's quality, security, license, or runtime
+// readiness; those require the separate fixed-upstream metadata review.
+func discoveryReviewProfile(collection string, disposition CollectionDisposition) (track string, priority int, risk string, reason string) {
+	switch collection {
+	case "AI Safety & Alignment", "AI Evaluation & Testing", "AI Red Teaming":
+		return "verification", 90, "medium", "Can improve validation and redaction, but must remain no-write and use redacted fixtures."
+	case "AI Observability", "Monitoring Tool":
+		return "observability", 82, "medium", "Could improve traceability or metrics, subject to local hosting, retention, and redaction review."
+	case "LLM Inference Engines", "LLM Gateway & Proxy", "ai-gateways", "Edge AI":
+		return "local inference", 80, "medium", "Could strengthen local-first model serving or routing, subject to a loopback and EUR 0 policy review."
+	case "Data Integration", "Business Management", "RAG Frameworks", "Multimodal AI":
+		return "source intake", 76, "high", "May access connected information; requires explicit scope, retention, deletion, and source-provenance controls."
+	case "MCP Servers", "Model Context Protocol (MCP) Client", "AI Browser Agents", "Coding Agents", "AI Coding Assistants", "AI Code Review":
+		return "controlled execution", 72, "high", "May expose tools, browser, filesystem, or repository changes; requires a named local adapter and approval boundary."
+	case "AI Agent Frameworks", "AI Workflow Orchestration", "Agent Harness", "A2A Protocol":
+		return "orchestration", 68, "high", "Could overlap HAI orchestration; review only a narrow fixed-schema bridge that preserves HAI policy ownership."
+	default:
+		if disposition == CollectionRepresented {
+			return "replacement review", 60, "medium", "Could complement an existing HAI profile; compare it against the current adapter before adding infrastructure."
+		}
+		return "capability review", 55, "medium", "Requires fixed-upstream metadata, license, local deployment, and no-op adapter review before any adoption decision."
+	}
+}
+
+func mergeDiscovery(existing, incoming OSSInsightRepositoryDiscovery) OSSInsightRepositoryDiscovery {
+	existing.RelatedCollections = appendUnique(existing.RelatedCollections, incoming.RelatedCollections...)
+	existing.RelatedSourceURLs = appendUnique(existing.RelatedSourceURLs, incoming.RelatedSourceURLs...)
+	if incoming.Priority > existing.Priority {
+		incoming.RelatedCollections = existing.RelatedCollections
+		incoming.RelatedSourceURLs = existing.RelatedSourceURLs
+		return incoming
+	}
+	return existing
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	for _, addition := range additions {
+		found := false
+		for _, value := range values {
+			if value == addition {
+				found = true
+				break
+			}
+		}
+		if !found {
+			values = append(values, addition)
+		}
+	}
+	return values
 }
 
 type ossInsightCollection struct {

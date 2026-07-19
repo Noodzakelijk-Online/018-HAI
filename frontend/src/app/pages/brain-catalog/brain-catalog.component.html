@@ -174,19 +174,21 @@
       </div>
     </div>
     <div class="brain-catalog-page__source-result" *ngIf="ossInsightDiscovery as report" [class.brain-catalog-page__source-result--warning]="!!report.unavailableCollections?.length || !!report.missingCollections?.length">
-      <strong>{{ report.discoveries?.length ?? 0 }} unreviewed / {{ report.repositoriesChecked }} repository names</strong>
+      <strong>{{ report.discoveries?.length ?? 0 }} ranked review candidates / {{ report.repositoriesChecked }} repository names</strong>
       <span>{{ report.message }}</span>
-      <small>{{ report.collectionsChecked }} of {{ report.eligibleCollections }} {{ report.scope === 'reviewable' ? 'relevant' : 'candidate' }} collections checked; {{ report.knownProfileHits }} known profiles skipped.<ng-container *ngIf="report.cached"> Reused the recent read-only result.</ng-container></small>
-      <small *ngIf="report.discoveriesTruncated">Results were capped to keep the back office responsive.</small>
+      <small>{{ report.collectionsChecked }} of {{ report.eligibleCollections }} {{ report.scope === 'reviewable' ? 'relevant' : 'candidate' }} collections checked; {{ report.knownProfileHits }} known profiles skipped; {{ report.duplicateSourceHits }} cross-category source matches merged.<ng-container *ngIf="report.cached"> Reused the recent read-only result.</ng-container></small>
+      <small *ngIf="report.sourceQueryLimit">OSS Insight query limit: {{ report.sourceQueryLimit }} rows per collection response. This is a ranked source list, not a complete GitHub inventory.</small>
+      <small *ngIf="report.discoveriesTruncated">Results exceeded the current {{ report.maximumDiscoveries }}-item review capacity.</small>
       <small *ngIf="report.unavailableCollections?.length">Unavailable: {{ report.unavailableCollections?.join(', ') }}</small>
       <small *ngIf="report.missingCollections?.length">Missing from source: {{ report.missingCollections?.join(', ') }}</small>
     </div>
-    <div class="brain-catalog-page__discovery-list" *ngIf="ossInsightDiscovery?.discoveries?.length">
-      <article *ngFor="let discovery of ossInsightDiscovery?.discoveries">
-        <div><strong>{{ discovery.repository }}</strong><small>{{ discovery.collection }} - {{ collectionDispositionLabel(discovery.disposition) }}</small><span>{{ discovery.rationale }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
+    <div class="brain-catalog-page__discovery-list" *ngIf="visibleDiscoveries.length">
+      <article *ngFor="let discovery of visibleDiscoveries">
+        <div><strong>{{ discovery.repository }}</strong><small>Priority {{ discovery.priority }} - {{ discovery.reviewTrack }} - {{ discovery.risk }} risk</small><small>{{ discovery.collection }} - {{ collectionDispositionLabel(discovery.disposition) }}<ng-container *ngIf="(discovery.relatedCollections?.length ?? 0) > 1"> + {{ (discovery.relatedCollections?.length ?? 0) - 1 }} related source categories</ng-container></small><span>{{ discovery.reviewReason }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
         <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository || !discoveryReviews[discovery.repository]">Review</button></div>
       </article>
     </div>
+    <button nz-button nzType="default" *ngIf="(ossInsightDiscovery?.discoveries?.length ?? 0) > discoveryDisplayLimit" (click)="showMoreDiscoveries()">Show 30 more review candidates</button>
     <div class="brain-catalog-page__screening-summary">
       <span><strong>{{ catalog.collectionScreening.represented }}</strong> represented</span>
       <span><strong>{{ catalog.collectionScreening.candidates }}</strong> review candidates</span>

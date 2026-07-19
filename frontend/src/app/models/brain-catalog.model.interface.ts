@@ -66,6 +66,12 @@ export interface IBrainCatalogOSSInsightDiscovery {
   repository: string
   sourceUrl: string
   rationale: string
+  reviewTrack: string
+  priority: number
+  risk: 'low' | 'medium' | 'high'
+  reviewReason: string
+  relatedCollections?: string[]
+  relatedSourceUrls?: string[]
 }
 
 export interface IBrainCatalogOSSInsightDiscoveryReport {
@@ -80,6 +86,10 @@ export interface IBrainCatalogOSSInsightDiscoveryReport {
   eligibleCollections: number
   collectionsChecked: number
   repositoriesChecked: number
+  duplicateSourceHits: number
+  maximumDiscoveries: number
+  sourceQueryLimit?: number
+  collectionsAtQueryLimit?: number
   knownProfileHits: number
   discoveries?: IBrainCatalogOSSInsightDiscovery[]
   missingCollections?: string[]

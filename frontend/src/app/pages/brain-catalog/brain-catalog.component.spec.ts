@@ -129,7 +129,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const { component, pursuitService, notification, router } = createComponent()
     pursuitService.create.and.returnValue(of({ id: 'pursuit-discovery-1' }))
 
-    component.queueDiscoveryReview({ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
+    component.queueDiscoveryReview({ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.', reviewTrack: 'controlled execution', priority: 72, risk: 'high', reviewReason: 'Review locally.' })
 
     expect(pursuitService.create).toHaveBeenCalledWith(jasmine.objectContaining({
       title: 'Screen owner/new-mcp for a HAI adapter',
@@ -147,7 +147,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const catalogService = (component as any).service
     catalogService.revalidateOSSInsightDiscovery.and.returnValue(of({ id: 'ossinsight-owner-new-mcp', name: 'owner/new-mcp', upstreamUrl: 'https://github.com/owner/new-mcp', available: true, archived: false, license: 'MIT', message: 'metadata only', disposition: 'candidate', readiness: 'review_now', readinessReason: 'review safely' }))
 
-    component.verifyDiscovery({ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' })
+    component.verifyDiscovery({ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.', reviewTrack: 'controlled execution', priority: 72, risk: 'high', reviewReason: 'Review locally.' })
 
     expect(catalogService.revalidateOSSInsightDiscovery).toHaveBeenCalledWith('owner/new-mcp', 'candidate')
     expect(component.discoveryReviews['owner/new-mcp'].license).toBe('MIT')
@@ -175,8 +175,10 @@ describe('BrainCatalogComponent adapter reviews', () => {
       candidateCollections: 12,
       collectionsChecked: 12,
       repositoriesChecked: 50,
+      duplicateSourceHits: 0,
+      maximumDiscoveries: 800,
       knownProfileHits: 8,
-      discoveries: [{ collection: 'MCP Servers', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' }],
+      discoveries: [{ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.', reviewTrack: 'controlled execution', priority: 72, risk: 'high', reviewReason: 'Review locally.', relatedCollections: ['MCP Servers'], relatedSourceUrls: ['https://api.ossinsight.io/example'] }],
       discoveriesTruncated: false,
       message: 'did not add catalog entries',
     }))
@@ -201,8 +203,10 @@ describe('BrainCatalogComponent adapter reviews', () => {
       eligibleCollections: 25,
       collectionsChecked: 25,
       repositoriesChecked: 90,
+      duplicateSourceHits: 0,
+      maximumDiscoveries: 800,
       knownProfileHits: 8,
-      discoveries: [{ collection: 'LLM Inference Engines', disposition: 'represented_in_catalog', repository: 'owner/new-inference', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.' }],
+      discoveries: [{ collection: 'LLM Inference Engines', disposition: 'represented_in_catalog', repository: 'owner/new-inference', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.', reviewTrack: 'local inference', priority: 80, risk: 'medium', reviewReason: 'Review loopback limits.', relatedCollections: ['LLM Inference Engines'], relatedSourceUrls: ['https://api.ossinsight.io/example'] }],
       discoveriesTruncated: false,
       message: 'did not add catalog entries',
     }))

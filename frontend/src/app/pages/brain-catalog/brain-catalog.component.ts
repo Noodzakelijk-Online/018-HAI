@@ -23,6 +23,7 @@ export class BrainCatalogComponent implements OnInit {
   discoveringOSSInsight = false
   loadingAdoptionPlan = false
   recommendingCapabilities = false
+  discoveryDisplayLimit = 30
   upstreamReview?: IBrainCatalogUpstreamReview
   ossInsightReview?: IBrainCatalogOSSInsightReview
   ossInsightDiscovery?: IBrainCatalogOSSInsightDiscoveryReport
@@ -146,6 +147,7 @@ export class BrainCatalogComponent implements OnInit {
         this.discoveringOSSInsight = false
         this.ossInsightDiscovery = report
         this.discoveryReviews = {}
+        this.discoveryDisplayLimit = 30
         this.notification.success('Candidate discovery complete', `${report.discoveries?.length ?? 0} unreviewed repositories were found. No catalog entry, credential, or runtime state changed.`)
       },
       error: () => {
@@ -164,6 +166,7 @@ export class BrainCatalogComponent implements OnInit {
         this.discoveringOSSInsight = false
         this.ossInsightDiscovery = report
         this.discoveryReviews = {}
+        this.discoveryDisplayLimit = 30
         this.notification.success('Relevant discovery complete', `${report.discoveries?.length ?? 0} unreviewed repositories were found across candidate and represented categories. No catalog entry, credential, or runtime state changed.`)
       },
       error: () => {
@@ -243,6 +246,15 @@ export class BrainCatalogComponent implements OnInit {
 
   canStartReview(entry: IBrainCatalogEntry): boolean {
     return entry.status === 'candidate' || entry.status === 'compatibility_only'
+  }
+
+  get visibleDiscoveries(): IBrainCatalogOSSInsightDiscovery[] {
+    return (this.ossInsightDiscovery?.discoveries ?? []).slice(0, this.discoveryDisplayLimit)
+  }
+
+  showMoreDiscoveries(): void {
+    const available = this.ossInsightDiscovery?.discoveries?.length ?? 0
+    this.discoveryDisplayLimit = Math.min(available, this.discoveryDisplayLimit + 30)
   }
 
   startAdapterReview(entry: IBrainCatalogEntry): void {

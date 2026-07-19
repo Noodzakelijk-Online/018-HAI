@@ -80,8 +80,8 @@ func TestOSSInsightRepositoryScoutReviewableScopeQueriesRepresentedCategoriesSep
 	if !report.Available || report.Scope != OSSInsightReviewableScope || report.EligibleCollections <= report.CandidateCollections || report.CollectionsChecked != 2 || len(report.Discoveries) != 2 {
 		t.Fatalf("unexpected reviewable report: %#v", report)
 	}
-	if report.Discoveries[1].Repository != "owner/new-inference" || report.Discoveries[1].Disposition != CollectionRepresented {
-		t.Fatalf("represented discovery must keep its collection disposition: %#v", report.Discoveries)
+	if report.Discoveries[0].Repository != "owner/new-inference" || report.Discoveries[0].Disposition != CollectionRepresented || report.Discoveries[0].Priority <= report.Discoveries[1].Priority {
+		t.Fatalf("priority-ranked represented discovery must keep its collection disposition: %#v", report.Discoveries)
 	}
 	for _, url := range requested {
 		if strings.Contains(url, "/10030/") {
@@ -99,5 +99,24 @@ func TestOSSInsightRepositoryScoutRejectsUnknownScope(t *testing.T) {
 	scout := NewOSSInsightRepositoryScout(&http.Client{}).(*ossInsightRepositoryScout)
 	if _, err := scout.DiscoverRepositoriesFor("all"); err == nil {
 		t.Fatal("unknown repository discovery scope must be rejected")
+	}
+}
+
+func TestMergeDiscoveryPreservesSourceProvenanceAndStrongerTrack(t *testing.T) {
+	existing := OSSInsightRepositoryDiscovery{
+		Collection: "AI Agent Frameworks", Repository: "owner/shared", ReviewTrack: "orchestration", Priority: 68,
+		RelatedCollections: []string{"AI Agent Frameworks"}, RelatedSourceURLs: []string{"https://source/frameworks"},
+	}
+	incoming := OSSInsightRepositoryDiscovery{
+		Collection: "MCP Servers", Repository: "owner/shared", ReviewTrack: "controlled execution", Priority: 72,
+		RelatedCollections: []string{"MCP Servers"}, RelatedSourceURLs: []string{"https://source/mcp"},
+	}
+
+	merged := mergeDiscovery(existing, incoming)
+	if merged.Collection != "MCP Servers" || merged.ReviewTrack != "controlled execution" || merged.Priority != 72 {
+		t.Fatalf("stronger review track must become primary: %#v", merged)
+	}
+	if len(merged.RelatedCollections) != 2 || len(merged.RelatedSourceURLs) != 2 {
+		t.Fatalf("all discovery provenance must be preserved: %#v", merged)
 	}
 }
