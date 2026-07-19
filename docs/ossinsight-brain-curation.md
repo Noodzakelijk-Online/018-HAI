@@ -32,7 +32,7 @@ role in one of these planes:
 | Model Context Protocol Client | MCP Inspector | Integrated profile | HAI-owned, local-only Streamable HTTP preflight lists tools before a separately reviewed adapter activation. |
 | ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
 | Testing Tools | Playwright | Integrated, opt-in | Verify named, allowlisted local routes without clicks, forms, downloads, retained state, or external origins. |
-| WebAssembly Runtime | Wasmtime | Candidate | Run reviewed capability-limited WASI helper modules only. |
+| WebAssembly Runtime | Wasmtime | Integrated, opt-in | Run reviewed capability-limited WASI helper modules only through HAI's approval-gated manifest runner. |
 | Optimization Solvers | OR-Tools | Integrated profile | Optional internal CP-SAT schedule proposals with bounded inputs and no apply capability. |
 | Monitoring Tool | Grafana | Reference only | Revisit only after real Prometheus data needs advanced visualization. |
 | GraphRAG | LangChain, LlamaIndex, Cognee | Reference only | Revisit only for a measured retrieval or graph-provenance gap. |

@@ -18,7 +18,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | Project | Collection | Disposition | HAI role | Activation boundary |
 | --- | --- | --- | --- | --- |
 | LiteLLM | ai-gateways | Integrated profile | Keyed local provider gateway | Loopback-only profile; manual approval required because proxy upstream billing is not inferable. |
-| llama.cpp | ChatGPT Alternatives | Candidate | Local GGUF inference | Loopback endpoint, model provenance, and health review required. |
+| llama.cpp | ChatGPT Alternatives | Integrated, opt-in | Local GGUF inference | Loopback endpoint, model provenance, and live health review required before HAI can route or generate. |
 | pgvector | Vector Database & Vector Store | Integrated, opt-in | Local semantic retrieval in existing Postgres | Pinned Postgres 17 pgvector image; local-only embedding endpoint; owner-scoped SQL query; keyword fallback. |
 | Temporal | Workflow Scheduler | Integrated, opt-in | Durable governed follow-up checks | One local worker runs a named proposal-only workflow; HAI owns approvals and completion. |
 | Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
@@ -34,6 +34,23 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | LangChain, LlamaIndex, Cognee, Qdrant, Grafana | Agent / GraphRAG / Vector / Monitoring | Reference only | Pattern or future scale option | Revisit only after a measured native gap. |
 | n8n | Zapier Alternatives | License review | Workflow-platform comparison | Sustainable Use License and architecture overlap need a decision first. |
 | MinIO | Distributed File Storage | Excluded | Storage reference only | Archived upstream and AGPLv3 do not meet the current adoption bar. |
+
+## Upstream verification snapshot
+
+On 2026-07-19, the GitHub repository API was checked for the active profiles
+and highest-value candidates: LiteLLM, llama.cpp, pgvector, Temporal,
+Prometheus, MCP Inspector, Playwright, Wasmtime, OR-Tools, Continue,
+OpenHands, CrewAI, Aider, AutoGen, AutoGPT, Mem0, OpenMetadata, and n8n. All
+18 repositories reported `archived=false` at that time. This is a maintenance
+signal, not an adoption grant: HAI still requires the per-profile configuration,
+health, approval, audit, rollback, license, and data-egress gates described
+above.
+
+GitHub's API reported `NOASSERTION` for several repositories where a licence
+could not be reliably represented as an SPDX field. HAI treats that result as
+"review the upstream licence files" rather than assuming an open-source
+licence. In particular, it does not relax the existing AutoGPT and n8n licence
+review states.
 
 ## Complete collection screen
 

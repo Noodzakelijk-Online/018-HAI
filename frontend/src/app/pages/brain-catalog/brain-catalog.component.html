@@ -3,7 +3,7 @@
     <div>
       <p class="brain-catalog-page__eyebrow">Back-office capability registry</p>
       <h1>Brain catalog</h1>
-      <p>Only reviewed adapters can become operational. A listing never installs software, grants access, or bypasses approval.</p>
+      <p>Only reviewed adapters can become operational. A listing never installs software, grants access, bypasses approval, or claim that an external runtime is configured.</p>
     </div>
     <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
       <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh
@@ -19,7 +19,7 @@
   <section class="brain-catalog-page__layout">
     <div class="brain-catalog-page__list">
       <div class="brain-catalog-page__section-heading">
-        <div><h2>Available through HAI</h2><p>Configured locally, then still approval- and health-gated.</p></div>
+        <div><h2>Integrated HAI profiles</h2><p>HAI has the adapter and policy boundary. Each profile still needs local configuration and a live health check.</p></div>
       </div>
       <button type="button" class="catalog-entry" *ngFor="let entry of integrated" (click)="select(entry)" [class.catalog-entry--selected]="selected?.id === entry.id">
         <span><strong>{{ entry.name }}</strong><small>{{ entry.category }}</small></span>
@@ -35,11 +35,28 @@
         <span *ngIf="entry.requiresApproval">Approval required</span>
       </div>
       <p class="brain-catalog-page__rationale">{{ entry.rationale }}</p>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.status === 'integrated_profile'">
+        <strong>Profile state</strong>
+        <span>Registered in HAI. Configuration and live readiness are checked by the relevant runtime or provider screen.</span>
+      </div>
       <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
       <div class="brain-catalog-page__capabilities" *ngIf="entry.capabilities.length">
         <nz-tag *ngFor="let capability of entry.capabilities">{{ capability }}</nz-tag>
       </div>
-      <a [href]="entry.upstreamUrl" target="_blank" rel="noopener noreferrer">Open upstream project <i nz-icon nzType="export" nzTheme="outline"></i></a>
+      <dl class="brain-catalog-page__provenance-summary">
+        <div><dt>Integration mode</dt><dd>{{ entry.integrationMode }}</dd></div>
+        <div><dt>Reviewed</dt><dd>{{ entry.verifiedAt }}</dd></div>
+        <div *ngIf="entry.sourceCollection"><dt>OSS Insight collection</dt><dd>{{ entry.sourceCollection }}</dd></div>
+      </dl>
+      <p class="brain-catalog-page__verification-note">{{ entry.verificationNote }}</p>
+      <div class="brain-catalog-page__control-mappings" *ngIf="entry.controlMappings?.length">
+        <strong>HAI control mapping</strong>
+        <div *ngFor="let mapping of entry.controlMappings"><span>{{ mapping.sourcePattern }}</span><i nz-icon nzType="arrow-right" nzTheme="outline"></i><span>{{ mapping.haiControl }}</span><small>{{ mapping.boundary }}</small></div>
+      </div>
+      <div class="brain-catalog-page__links">
+        <a [href]="entry.upstreamUrl" target="_blank" rel="noopener noreferrer">Open upstream project <i nz-icon nzType="export" nzTheme="outline"></i></a>
+        <a [href]="entry.sourceCatalogUrl" target="_blank" rel="noopener noreferrer">Open source record <i nz-icon nzType="export" nzTheme="outline"></i></a>
+      </div>
     </nz-card>
   </section>
 
