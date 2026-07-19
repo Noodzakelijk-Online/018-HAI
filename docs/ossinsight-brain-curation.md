@@ -28,7 +28,7 @@ role in one of these planes:
 | ai-gateways | LiteLLM | Candidate | Add an optional local proxy profile with paid providers disabled, then run a scoped health probe. |
 | Vector Database & Vector Store | pgvector | Candidate | Add a reversible Postgres extension migration and local embedding backfill plan. |
 | Workflow Scheduler | Temporal | Candidate | Run one named local durable workflow through a narrow Go worker. |
-| Monitoring Tool | Prometheus | Candidate | Expose minimal authenticated metrics and local scrape configuration. |
+| Monitoring Tool | Prometheus | Integrated profile | Enable a token-protected local metrics endpoint; configure a separate local collector when needed. |
 | Model Context Protocol Client | MCP Inspector | Candidate | Use it only to test an allowlisted MCP server before adapter activation. |
 | ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
 | Testing Tools | Playwright | Candidate | Verify named, allowlisted browser flows; it cannot bypass approval gates. |
@@ -70,3 +70,13 @@ loopback IP, or `host.docker.internal` for the Windows-host/Docker deployment
 case. A configured value alone is not enough: HAI marks it usable only after a
 live `/v1/models` probe, retains the EUR 0 paid budget, and continues to apply
 the router's existing validation, fallback, audit, and approval controls.
+
+## Implemented metrics boundary
+
+HAI now includes an opt-in Prometheus exposition endpoint. Set
+`HAI_PROMETHEUS_ENABLED=true` and a separate `HAI_PROMETHEUS_TOKEN`; only then
+does `/metrics` exist. It requires a bearer token and exports HTTP request
+counts and latency using route templates rather than raw paths. The exporter
+does not emit source text, prompts, identities, record IDs, or credentials as
+labels. A Prometheus collector is still separately configured and local by
+default.

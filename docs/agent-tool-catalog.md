@@ -25,7 +25,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [LiteLLM](https://github.com/BerriAI/litellm) | Candidate | Local provider-gateway normalization | Must remain behind HAI's local-first routing, EUR 0 paid policy, endpoint allowlist, and approval review. |
 | [pgvector](https://github.com/pgvector/pgvector) | Candidate | Local semantic retrieval inside HAI Postgres | Requires a reversible extension migration, local embeddings, retention policy, and backfill review. |
 | [Temporal](https://github.com/temporalio/temporal) | Candidate | Durable retries, follow-ups, and long-running work | Requires a local service plus narrow Go worker. HAI retains all approval and completion gates. |
-| [Prometheus](https://github.com/prometheus/prometheus) | Candidate | Source-backed service and queue metrics | Requires local scrape configuration; it does not replace HAI's action-oriented system status. |
+| [Prometheus](https://github.com/prometheus/prometheus) | Integrated profile | Token-protected HTTP metrics export | Opt-in exporter with no raw-data labels; a local collector remains separately configured. |
 | [Grafana](https://github.com/grafana/grafana) | Reference only | Optional advanced metrics visualization | Deferred until real Prometheus metrics justify a second dashboard. |
 | [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Candidate | Pre-activation MCP server inspection | Operator-only test tool for allowlisted MCP servers; never execution approval. |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | Candidate | Local GGUF model inference | Loopback-only model server through HAI's existing local-provider, provenance, and health policy. |

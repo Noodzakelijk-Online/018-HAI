@@ -193,11 +193,11 @@ var entries = []Entry{
 	},
 	{
 		ID: "prometheus", Name: "Prometheus", UpstreamURL: "https://github.com/prometheus/prometheus", SourceCatalogURL: "https://ossinsight.io/collections/monitoring-tool", SourceCollection: "Monitoring Tool",
-		Status: StatusCandidate, Category: "operational observability", IntegrationMode: "operator-hosted metrics collector",
+		Status: StatusIntegrated, Category: "operational observability", IntegrationMode: "opt-in authenticated Prometheus exposition endpoint",
 		Capabilities: []string{"service metrics", "health alert rules", "time-series queries", "local monitoring"}, RecommendedFor: []string{"runtime health", "queue metrics", "budget and throughput monitoring"},
 		RequiresApproval: false, LocalFirstCompatible: true,
-		Activation: "Expose a minimal authenticated metrics surface, configure local scrape targets and retention, and use HAI's system-status page for action context rather than replacing it with an external dashboard.",
-		Rationale:  "Prometheus can provide source-backed runtime health and alerting, while HAI retains its user-facing operational interpretation and safety actions.",
+		Activation: "Set HAI_PROMETHEUS_ENABLED=true and a separate HAI_PROMETHEUS_TOKEN, then configure a local collector to scrape /metrics with a bearer token. The exporter has no source-content labels and is disabled unless explicitly enabled.",
+		Rationale:  "HAI now exposes a small authenticated Prometheus surface for HTTP request counts and latency. A collector remains operator-configured; Prometheus does not replace HAI's action-oriented system-status view.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Monitoring Tool listing and upstream Apache-2.0 release activity checked on 2026-07-19.",
 	},
 	{

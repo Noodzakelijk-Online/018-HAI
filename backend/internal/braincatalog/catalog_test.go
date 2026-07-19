@@ -21,7 +21,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
-	for _, id := range []string{"litellm", "pgvector", "temporal", "prometheus", "mcp-inspector", "playwright", "wasmtime", "ortools"} {
+	for _, id := range []string{"litellm", "pgvector", "temporal", "mcp-inspector", "playwright", "wasmtime", "ortools"} {
 		entry, ok := EntryByID(id)
 		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
@@ -29,6 +29,9 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	}
 	if entry, ok := EntryByID("llama-cpp"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("llama.cpp must report its integrated-but-not-active local provider profile: %#v", entry)
+	}
+	if entry, ok := EntryByID("prometheus"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible {
+		t.Fatalf("Prometheus must report its integrated-but-opt-in metrics profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
@@ -80,13 +83,16 @@ func TestRecommendOperationalCapabilitiesPreservesReviewGates(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"temporal", "prometheus", "litellm"} {
+	for _, id := range []string{"temporal", "litellm"} {
 		if recommendation, ok := ids[id]; !ok || recommendation.Status != StatusCandidate {
 			t.Fatalf("missing governed %s recommendation: %#v", id, recommendations)
 		}
 	}
 	if !ids["temporal"].RequiresApproval || !ids["litellm"].RequiresApproval {
 		t.Fatalf("durable execution and gateway candidates need explicit review: %#v", recommendations)
+	}
+	if recommendation, ok := ids["prometheus"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("Prometheus must surface as an integrated profile with collector configuration still required: %#v", recommendations)
 	}
 }
 

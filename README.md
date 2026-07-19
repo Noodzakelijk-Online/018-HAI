@@ -450,6 +450,15 @@ catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
 other configured provider models. Provider status must be read as configuration
 and probe history, not as a live-service guarantee.
 
+### Metrics
+
+Prometheus telemetry is disabled by default. To enable it for a local collector,
+set `HAI_PROMETHEUS_ENABLED=true` and a distinct `HAI_PROMETHEUS_TOKEN`; HAI
+then exposes a bearer-token-protected `/metrics` endpoint. The exporter records
+only matched-route request counts and latency, never source content, prompts,
+identities, record IDs, or credentials as labels. A Prometheus server and its
+retention policy remain operator-managed.
+
 ### Agent runtimes
 
 Hermes, Odysseus, and OpenClaw are optional controlled adapters. HAI can inspect

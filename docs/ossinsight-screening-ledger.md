@@ -21,7 +21,7 @@ code. The source catalog is recorded at `GET /api/v1/brain-catalog/`.
 | llama.cpp | ChatGPT Alternatives | Candidate | Local GGUF inference | Loopback endpoint, model provenance, and health review required. |
 | pgvector | Vector Database & Vector Store | Candidate | Semantic retrieval in existing Postgres | Reversible migration and retention/backfill review required. |
 | Temporal | Workflow Scheduler | Candidate | Durable retries and follow-ups | One named local worker at a time; HAI owns approvals. |
-| Prometheus | Monitoring Tool | Candidate | Source-backed health metrics | Authenticated local metrics and retention configuration required. |
+| Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
 | MCP Inspector | Model Context Protocol (MCP) Client | Candidate | Pre-activation MCP inspection | Operator-only inspection of allowlisted servers. |
 | Playwright | Testing Tools | Candidate | Browser workflow verification | Named flows, origin allowlist, no secret capture, and approval gates. |
 | Wasmtime | WebAssembly Runtime | Candidate | Bounded WASI helper execution | Reviewed content-addressed modules, no inherited network, explicit capabilities. |
