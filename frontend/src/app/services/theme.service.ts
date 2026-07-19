@@ -8,7 +8,7 @@ export type ThemeMode = 'light' | 'dark'
 export class ThemeService {
   private readonly storageKey = 'hai-theme-mode'
   private readonly legacyStorageKey = 'hai-control-center-theme'
-  private currentMode: ThemeMode = 'light'
+  private currentMode: ThemeMode = 'dark'
 
   constructor() {
     this.currentMode = this.load()
@@ -35,7 +35,7 @@ export class ThemeService {
   }
 
   icon(): string {
-    return this.currentMode === 'dark' ? 'moon' : 'bulb'
+    return this.currentMode === 'dark' ? 'eye-invisible' : 'bulb'
   }
 
   private load(): ThemeMode {
@@ -43,9 +43,9 @@ export class ThemeService {
       const saved =
         window.localStorage.getItem(this.storageKey) ||
         window.localStorage.getItem(this.legacyStorageKey)
-      return saved === 'dark' ? 'dark' : 'light'
+      return saved === 'light' ? 'light' : 'dark'
     } catch {
-      return 'light'
+      return 'dark'
     }
   }
 

@@ -426,11 +426,11 @@
               <button type="button" *ngIf="!memory.archived" nz-button nzType="default" (click)="archive(memory)">Archive</button>
               <button type="button" *ngIf="memory.archived" nz-button nzType="default" (click)="restore(memory)">Restore</button>
             </div>
-            <details>
+            <details class="advanced-section">
               <summary>Full content</summary>
               <p>{{ memory.content }}</p>
             </details>
-            <details class="danger-zone">
+            <details class="advanced-section danger-zone">
               <summary>Danger zone</summary>
               <p>Delete only when the record is wrong, private data should be removed, or it must never be used again.</p>
               <button type="button" nz-button nzDanger nzType="default" (click)="delete(memory)">Delete permanently</button>

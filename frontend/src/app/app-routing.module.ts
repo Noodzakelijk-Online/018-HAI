@@ -2,14 +2,9 @@ import { NgModule } from "@angular/core";
 import { RouterModule, Routes } from "@angular/router";
 import { authGuard } from "./services/auth/guards/auth.guard";
 import { RedirectIfLoggedGuard } from "./services/auth/guards/login.guard";
+import { AppShellComponent } from './control-room/app-shell.component';
 
-const routes: Routes = [
-  {
-    path: "login",
-    loadChildren: () =>
-      import("./pages/login/login.module").then((m) => m.LoginModule),
-    canActivate: [RedirectIfLoggedGuard],
-  },
+const authenticatedRoutes: Routes = [
   {
     path: "home",
     loadChildren: () =>
@@ -139,14 +134,6 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
-    path: "onboarding",
-    loadChildren: () =>
-      import("./pages/onboarding/onboarding.module").then(
-        (m) => m.OnboardingModule
-      ),
-    canActivate: [authGuard],
-  },
-  {
     path: "exceptions",
     loadChildren: () =>
       import("./pages/exceptions/exceptions.module").then(
@@ -170,13 +157,32 @@ const routes: Routes = [
       ),
     canActivate: [authGuard],
   },
-  // {
-  //   path: 'home',
-  //   loadChildren: () =>
-  //     import('./pages/home/home.module').then((m) => m.HomeModule),
-  // },
-  { path: "", redirectTo: "/control-center", pathMatch: "full" },
-  { path: "**", redirectTo: "/control-center" },
+]
+
+const routes: Routes = [
+  {
+    path: "login",
+    loadChildren: () =>
+      import("./pages/login/login.module").then((m) => m.LoginModule),
+    canActivate: [RedirectIfLoggedGuard],
+  },
+  {
+    path: "onboarding",
+    loadChildren: () =>
+      import("./pages/onboarding/onboarding.module").then(
+        (m) => m.OnboardingModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: '',
+    component: AppShellComponent,
+    children: [
+      ...authenticatedRoutes,
+      { path: "", redirectTo: "control-center", pathMatch: "full" },
+      { path: "**", redirectTo: "control-center" },
+    ],
+  },
 ];
 
 @NgModule({

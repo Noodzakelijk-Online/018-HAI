@@ -1,0 +1,9 @@
+<section class="hai-progressive-section" [class.hai-progressive-section--open]="open" [class.hai-progressive-section--advanced]="advancedOnly">
+  <button type="button" class="hai-progressive-section__summary" [attr.aria-expanded]="open" (click)="toggle()">
+    <span><strong>{{ title }}</strong><small *ngIf="summary">{{ summary }}</small></span>
+    <i nz-icon [nzType]="open ? 'up' : 'down'" nzTheme="outline"></i>
+  </button>
+  <div class="hai-progressive-section__content" *ngIf="open">
+    <ng-content></ng-content>
+  </div>
+</section>

@@ -482,12 +482,12 @@
               <button type="button" *ngIf="source.enabled" nz-button nzType="default" (click)="pause(source)">Pause</button>
               <button type="button" *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzType="default" (click)="resume(source)">Resume</button>
             </div>
-            <details>
+            <details class="advanced-section">
               <summary>Permissions and filters</summary>
               <p><strong>Permissions:</strong> {{ sourcePermissions(source).join(', ') || 'not specified' }}</p>
               <p><strong>Excluded:</strong> {{ sourceExcludePatterns(source).join(', ') || 'none' }}</p>
             </details>
-            <details class="danger-zone">
+            <details class="advanced-section danger-zone">
               <summary>Danger zone</summary>
               <p>Revoking stops future sync and keeps the action in the audit log.</p>
               <button type="button" nz-button nzDanger nzType="default" (click)="revoke(source)">Revoke source</button>

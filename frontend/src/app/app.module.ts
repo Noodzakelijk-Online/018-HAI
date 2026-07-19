@@ -11,6 +11,7 @@ import {BrowserAnimationsModule} from '@angular/platform-browser/animations';
 import {AUTH_SERVICE_TOKEN} from './services/auth/auth.service.token';
 import {AuthService} from './services/auth/auth.service';
 import {ChunkLoadRecoveryHandler} from './services/chunk-load-recovery.handler';
+import {ControlRoomModule} from './control-room/control-room.module';
 
 registerLocaleData(en);
 
@@ -22,7 +23,8 @@ registerLocaleData(en);
         BrowserModule,
         AppRoutingModule,
         HttpClientModule,
-        BrowserAnimationsModule
+        BrowserAnimationsModule,
+        ControlRoomModule,
     ],
     providers: [
         {provide: NZ_I18N, useValue: en_US},
