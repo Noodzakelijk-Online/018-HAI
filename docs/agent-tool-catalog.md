@@ -1,6 +1,6 @@
 # Curated Agent Tool Catalog
 
-HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agents) as a discovery source, not an installation source. An awesome-list is not a security review, a stable API contract, or permission to run third-party code on Robert's device.
+HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agents) and [OSS Insight Collections](https://ossinsight.io/collections) as discovery sources, not installation sources. A ranking or awesome-list is not a security review, a stable API contract, or permission to run third-party code on Robert's device.
 
 ## Operating rule
 
@@ -22,6 +22,16 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) | License review | Workflow platform reference | The repository is active but includes differently licensed areas. HAI does not vendor or integrate it until a per-directory license review is complete. |
 | [AutoGen](https://github.com/microsoft/autogen) | Compatibility only | Existing AutoGen workload migration, structured agent-event translation, and guarded MCP compatibility | The official project is maintenance mode. HAI does not install or execute AutoGen code, and a reviewed bridge plus approval is required. |
 | [MetaGPT](https://github.com/FoundationAgents/MetaGPT) | Excluded | Architecture reference only | Still available, but its release and substantive push activity were older than the active candidates at curation time. |
+| [LiteLLM](https://github.com/BerriAI/litellm) | Candidate | Local provider-gateway normalization | Must remain behind HAI's local-first routing, EUR 0 paid policy, endpoint allowlist, and approval review. |
+| [pgvector](https://github.com/pgvector/pgvector) | Candidate | Local semantic retrieval inside HAI Postgres | Requires a reversible extension migration, local embeddings, retention policy, and backfill review. |
+| [Temporal](https://github.com/temporalio/temporal) | Candidate | Durable retries, follow-ups, and long-running work | Requires a local service plus narrow Go worker. HAI retains all approval and completion gates. |
+| [Prometheus](https://github.com/prometheus/prometheus) | Candidate | Source-backed service and queue metrics | Requires local scrape configuration; it does not replace HAI's action-oriented system status. |
+| [Grafana](https://github.com/grafana/grafana) | Reference only | Optional advanced metrics visualization | Deferred until real Prometheus metrics justify a second dashboard. |
+| [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Candidate | Pre-activation MCP server inspection | Operator-only test tool for allowlisted MCP servers; never execution approval. |
+| [LangChain](https://github.com/langchain-ai/langchain) | Reference only | Retrieval and tool-orchestration patterns | HAI will not add a parallel agent stack without a documented gap. |
+| [LlamaIndex](https://github.com/run-llama/llama_index) | Reference only | Connected-source and retrieval patterns | Deferred while HAI's native extraction, search, and pgvector path mature. |
+| [Cognee](https://github.com/topoteretes/cognee) | Reference only | Evidence-graph and entity-linking patterns | Deferred until a graph-query need, provenance model, and retention plan are proven. |
+| [Qdrant](https://github.com/qdrant/qdrant) | Reference only | Future dedicated vector-store option | Deferred to avoid a second vector store before pgvector has a measured limit. |
 
 The API includes the source URL, verification date, activation requirements, safety disposition, and task recommendation rationale for every entry. This lets the frontend show the difference between a capable project, a configured integration, and an executable runtime.
 
@@ -53,3 +63,13 @@ boundary explicit.
 4. Aider: a review-first adapter that produces a patch proposal and validation evidence before any write is permitted.
 
 Do not add a generic `run arbitrary agent` endpoint. That would collapse the safety boundary this catalog exists to preserve.
+
+## OSS Insight curation scope
+
+OSS Insight currently indexes more than one hundred repository collections.
+HAI reviewed the collections that map to its real control planes: AI agent
+frameworks, AI gateways, MCP clients, GraphRAG, vector stores, workflow
+schedulers, LLM developer tools, and monitoring. The resulting entries are
+recorded in the authenticated read-only API together with their exact source
+collection. This is a curation snapshot, not a claim that all repositories in
+the database are suitable, installed, or safe to run.

@@ -20,6 +20,21 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	}
 }
 
+func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
+	for _, id := range []string{"litellm", "pgvector", "temporal", "prometheus", "mcp-inspector"} {
+		entry, ok := EntryByID(id)
+		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
+			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
+		}
+	}
+	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
+		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
+	}
+	if sources := DiscoverySources(); len(sources) < 2 || sources[1].Name != "OSS Insight" {
+		t.Fatalf("OSS Insight source is missing: %#v", sources)
+	}
+}
+
 func TestRecommendAutoGenCompatibilityIsExplicitAndGated(t *testing.T) {
 	recommendations := Recommend("migration", "Migrate an AutoGen AgentChat workflow with MCP Workbench")
 	for _, recommendation := range recommendations {
@@ -42,6 +57,22 @@ func TestRecommendCodingDoesNotSelectAutoGenByDefault(t *testing.T) {
 		if recommendation.ID == "autogen" {
 			t.Fatalf("generic coding must not default to legacy AutoGen: %#v", recommendation)
 		}
+	}
+}
+
+func TestRecommendOperationalCapabilitiesPreservesReviewGates(t *testing.T) {
+	recommendations := Recommend("operations", "Set up a durable follow-up retry workflow with metrics and a local model gateway")
+	ids := map[string]Recommendation{}
+	for _, recommendation := range recommendations {
+		ids[recommendation.ID] = recommendation
+	}
+	for _, id := range []string{"temporal", "prometheus", "litellm"} {
+		if recommendation, ok := ids[id]; !ok || recommendation.Status != StatusCandidate {
+			t.Fatalf("missing governed %s recommendation: %#v", id, recommendations)
+		}
+	}
+	if !ids["temporal"].RequiresApproval || !ids["litellm"].RequiresApproval {
+		t.Fatalf("durable execution and gateway candidates need explicit review: %#v", recommendations)
 	}
 }
 

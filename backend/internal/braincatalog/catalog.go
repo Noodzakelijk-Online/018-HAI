@@ -35,6 +35,7 @@ type Entry struct {
 	Name                 string           `json:"name"`
 	UpstreamURL          string           `json:"upstreamUrl"`
 	SourceCatalogURL     string           `json:"sourceCatalogUrl"`
+	SourceCollection     string           `json:"sourceCollection,omitempty"`
 	Status               Status           `json:"status"`
 	Category             string           `json:"category"`
 	IntegrationMode      string           `json:"integrationMode"`
@@ -64,6 +65,24 @@ type Recommendation struct {
 
 const sourceCatalogURL = "https://github.com/e2b-dev/awesome-ai-agents"
 const verifiedAt = "2026-07-19"
+
+var discoverySources = []CatalogSource{
+	{Name: "Awesome AI Agents", URL: sourceCatalogURL, Scope: "external agent projects"},
+	{Name: "OSS Insight", URL: "https://ossinsight.io/collections", Scope: "curated repository collections"},
+}
+
+// CatalogSource records a discovery index. Discovery records are evidence for
+// curation, not an installation, endorsement, or runtime trust decision.
+type CatalogSource struct {
+	Name  string `json:"name"`
+	URL   string `json:"url"`
+	Scope string `json:"scope"`
+}
+
+// DiscoverySources returns a copy so API callers cannot modify the registry.
+func DiscoverySources() []CatalogSource {
+	return append([]CatalogSource(nil), discoverySources...)
+}
 
 var entries = []Entry{
 	{
@@ -144,6 +163,96 @@ var entries = []Entry{
 		Rationale:  "The repository remains available but its latest release and substantive push activity are materially older than the active candidates.",
 		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository activity checked on 2026-07-19.",
 	},
+	{
+		ID: "litellm", Name: "LiteLLM", UpstreamURL: "https://github.com/BerriAI/litellm", SourceCatalogURL: "https://ossinsight.io/collections/ai-gateways", SourceCollection: "ai-gateways",
+		Status: StatusCandidate, Category: "self-hosted LLM gateway", IntegrationMode: "operator-hosted local proxy adapter",
+		Capabilities: []string{"OpenAI-compatible provider gateway", "local and cloud provider routing", "quota and spend telemetry", "model fallback"}, RecommendedFor: []string{"provider normalization", "local-first model routing", "quota observability"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Run LiteLLM only as an operator-configured local proxy. Configure local endpoints first, keep paid providers disabled, and bind HAI to an allowlisted OpenAI-compatible endpoint after a health and budget-policy review.",
+		Rationale:  "Its self-hosted proxy can normalize heterogeneous model endpoints, but it must not replace HAI's EUR 0 budget, approval, logging, or model-selection policy.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight ai-gateways listing and upstream self-hosted proxy documentation checked on 2026-07-19.",
+	},
+	{
+		ID: "pgvector", Name: "pgvector", UpstreamURL: "https://github.com/pgvector/pgvector", SourceCatalogURL: "https://ossinsight.io/collections/vector-database--vector-store", SourceCollection: "Vector Database & Vector Store",
+		Status: StatusCandidate, Category: "local semantic retrieval", IntegrationMode: "reviewed PostgreSQL extension and migration",
+		Capabilities: []string{"vector similarity search", "embedding storage in PostgreSQL", "hybrid memory retrieval"}, RecommendedFor: []string{"semantic memory", "connected-source retrieval", "local evidence search"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Use a Postgres image that includes the extension, add a reversible reviewed migration, and backfill embeddings only after a local embedding model and retention policy are configured.",
+		Rationale:  "HAI already uses PostgreSQL, so pgvector can extend existing local data ownership without introducing a second knowledge-store service.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Vector Database & Vector Store listing and upstream repository checked on 2026-07-19.",
+	},
+	{
+		ID: "temporal", Name: "Temporal", UpstreamURL: "https://github.com/temporalio/temporal", SourceCatalogURL: "https://ossinsight.io/collections/workflow-scheduler", SourceCollection: "Workflow Scheduler",
+		Status: StatusCandidate, Category: "durable workflow execution", IntegrationMode: "operator-hosted local service and reviewed Go worker",
+		Capabilities: []string{"durable workflow state", "retry handling", "scheduled work", "worker visibility"}, RecommendedFor: []string{"follow-ups", "long-running workflows", "bounded retries"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Add a separately reviewed local Temporal service and a narrow Go worker for one named HAI workflow. Keep HAI's approval and completion policy authoritative over every activity.",
+		Rationale:  "Temporal is a current Go-based durable-execution platform that can improve recovery for long-lived work, but it is infrastructure rather than an autonomous decision-maker.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Workflow Scheduler listing and upstream MIT-licensed release activity checked on 2026-07-19.",
+	},
+	{
+		ID: "prometheus", Name: "Prometheus", UpstreamURL: "https://github.com/prometheus/prometheus", SourceCatalogURL: "https://ossinsight.io/collections/monitoring-tool", SourceCollection: "Monitoring Tool",
+		Status: StatusCandidate, Category: "operational observability", IntegrationMode: "operator-hosted metrics collector",
+		Capabilities: []string{"service metrics", "health alert rules", "time-series queries", "local monitoring"}, RecommendedFor: []string{"runtime health", "queue metrics", "budget and throughput monitoring"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Expose a minimal authenticated metrics surface, configure local scrape targets and retention, and use HAI's system-status page for action context rather than replacing it with an external dashboard.",
+		Rationale:  "Prometheus can provide source-backed runtime health and alerting, while HAI retains its user-facing operational interpretation and safety actions.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Monitoring Tool listing and upstream Apache-2.0 release activity checked on 2026-07-19.",
+	},
+	{
+		ID: "grafana", Name: "Grafana", UpstreamURL: "https://github.com/grafana/grafana", SourceCatalogURL: "https://ossinsight.io/collections/monitoring-tool", SourceCollection: "Monitoring Tool",
+		Status: StatusReferenceOnly, Category: "observability visualization", IntegrationMode: "optional local dashboard",
+		Capabilities: []string{"metrics visualization", "alerts", "operational dashboards"}, RecommendedFor: []string{"advanced observability", "operator diagnostics"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Do not add Grafana until Prometheus metrics exist and the HAI system-status views cannot meet an identified advanced-observability need.",
+		Rationale:  "Grafana is capable but would duplicate HAI's control-room surface unless it is justified by real metrics and advanced operator needs.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Monitoring Tool listing checked on 2026-07-19.",
+	},
+	{
+		ID: "mcp-inspector", Name: "MCP Inspector", UpstreamURL: "https://github.com/modelcontextprotocol/inspector", SourceCatalogURL: "https://ossinsight.io/collections/model-context-protocol-mcp-client", SourceCollection: "Model Context Protocol (MCP) Client",
+		Status: StatusCandidate, Category: "MCP pre-activation validation", IntegrationMode: "operator-only local inspection tool",
+		Capabilities: []string{"MCP server inspection", "tool schema validation", "manual connection testing"}, RecommendedFor: []string{"MCP adapter review", "tool allowlist verification", "runtime health diagnostics"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Use only in a reviewed local test environment to inspect an allowlisted MCP server before an HAI runtime adapter is enabled. Never treat a successful inspection as execution approval.",
+		Rationale:  "Its official role is MCP server testing, which maps directly to HAI's pre-activation safety gate without granting it production execution authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP client listing and upstream MIT-licensed release activity checked on 2026-07-19.",
+	},
+	{
+		ID: "langchain", Name: "LangChain", UpstreamURL: "https://github.com/langchain-ai/langchain", SourceCatalogURL: "https://ossinsight.io/collections/ai-agent-frameworks", SourceCollection: "AI Agent Frameworks and GraphRAG",
+		Status: StatusReferenceOnly, Category: "reasoning and retrieval patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"tool calling patterns", "retrieval chains", "agent orchestration"}, RecommendedFor: []string{"adapter design", "retrieval design"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Do not add as a parallel agent stack. Port only a justified capability through HAI-native Go interfaces after a concrete gap is documented.",
+		Rationale:  "It is a broad ecosystem, but importing it would duplicate HAI planning, routing, memory, and tool controls without a clear operational gain.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Agent Frameworks and GraphRAG listings checked on 2026-07-19.",
+	},
+	{
+		ID: "llamaindex", Name: "LlamaIndex", UpstreamURL: "https://github.com/run-llama/llama_index", SourceCatalogURL: "https://ossinsight.io/collections/graphrag---knowledge-graph-based-rag", SourceCollection: "GraphRAG - Knowledge Graph based RAG",
+		Status: StatusReferenceOnly, Category: "retrieval and indexing patterns", IntegrationMode: "architecture reference",
+		Capabilities: []string{"document indexing", "retrieval pipelines", "source-grounded context"}, RecommendedFor: []string{"connected-source ingestion", "retrieval evaluation"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Keep as a reference until a source-retrieval gap cannot be met by HAI's native extraction, full-text, and planned pgvector path.",
+		Rationale:  "Its retrieval patterns are useful, but another primary indexing framework would create duplicate memory ownership and harder provenance controls.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight GraphRAG listing checked on 2026-07-19.",
+	},
+	{
+		ID: "cognee", Name: "Cognee", UpstreamURL: "https://github.com/topoteretes/cognee", SourceCatalogURL: "https://ossinsight.io/collections/graphrag---knowledge-graph-based-rag", SourceCollection: "GraphRAG - Knowledge Graph based RAG",
+		Status: StatusReferenceOnly, Category: "knowledge graph memory", IntegrationMode: "architecture reference",
+		Capabilities: []string{"knowledge graph enrichment", "semantic memory", "entity relationships"}, RecommendedFor: []string{"evidence graph design", "entity linking"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "Use only as a design reference until HAI has a verified graph-query need, source provenance model, and retention plan.",
+		Rationale:  "Graph memory may help later, but adding a second knowledge system before the current memory and source layers are fully operational would increase inconsistency risk.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight GraphRAG listing checked on 2026-07-19.",
+	},
+	{
+		ID: "qdrant", Name: "Qdrant", UpstreamURL: "https://github.com/qdrant/qdrant", SourceCatalogURL: "https://ossinsight.io/collections/vector-database--vector-store", SourceCollection: "Vector Database & Vector Store",
+		Status: StatusReferenceOnly, Category: "dedicated vector database", IntegrationMode: "alternative local service",
+		Capabilities: []string{"vector search", "collection management", "payload filtering"}, RecommendedFor: []string{"future high-volume semantic retrieval"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not add unless pgvector has a measured scale or capability limit. Any migration requires a provenance-preserving export, retention plan, and rollback evidence.",
+		Rationale:  "Qdrant is a credible dedicated option, but is intentionally deferred to avoid two active vector stores before HAI has a demonstrated need.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Vector Database & Vector Store listing checked on 2026-07-19.",
+	},
 }
 
 // Entries returns a deep copy so callers cannot mutate the registry.
@@ -186,6 +295,27 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "autogen", "agentchat", "magentic", "mcp workbench", "autogen migration") {
 		ids = append(ids, "autogen")
+	}
+	if containsAny(text, "provider", "model gateway", "quota", "token cost", "model routing", "litellm") {
+		ids = append(ids, "litellm")
+	}
+	if containsAny(text, "semantic memory", "embedding", "vector search", "pgvector") {
+		ids = append(ids, "pgvector")
+	}
+	if containsAny(text, "durable workflow", "scheduled", "follow-up", "follow up", "retry", "temporal") {
+		ids = append(ids, "temporal")
+	}
+	if containsAny(text, "observability", "monitoring", "metrics", "prometheus") {
+		ids = append(ids, "prometheus")
+	}
+	if containsAny(text, "mcp inspect", "mcp health", "mcp server", "mcp inspector") {
+		ids = append(ids, "mcp-inspector")
+	}
+	if containsAny(text, "graphrag", "knowledge graph", "entity linking", "langchain", "llamaindex", "llama index", "cognee") {
+		ids = append(ids, "langchain", "llamaindex", "cognee")
+	}
+	if containsAny(text, "qdrant", "dedicated vector database") {
+		ids = append(ids, "qdrant")
 	}
 	seen := map[string]bool{}
 	out := []Recommendation{}
