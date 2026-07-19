@@ -57,6 +57,24 @@ func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 	}
 }
 
+func TestPlanGatesAutoGenCompatibilityBehindBridgeAndApproval(t *testing.T) {
+	mem := &fakeMemoryService{}
+	service := NewService(mem, newTaskTestLLMService(t))
+
+	plan, err := service.Plan(IntakeRequest{
+		Request: "Migrate an AutoGen AgentChat workflow with MCP Workbench into HAI",
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "autogen") {
+		t.Fatalf("AutoGen migration must surface its compatibility profile: %#v", plan.ToolDecision)
+	}
+	if !containsToolDecisionItem(plan.ToolDecision.BlockedTools, "agent-catalog.autogen: compatibility bridge and approval required") {
+		t.Fatalf("AutoGen compatibility must not become an executable tool: %#v", plan.ToolDecision)
+	}
+}
+
 func hasCatalogRecommendation(recommendations []braincatalog.Recommendation, id string) bool {
 	for _, recommendation := range recommendations {
 		if recommendation.ID == id {

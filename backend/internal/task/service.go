@@ -1484,6 +1484,8 @@ func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
 			switch recommendation.Status {
 			case braincatalog.StatusCandidate:
 				skipped = append(skipped, "agent-catalog."+recommendation.ID+": operator-configured adapter required")
+			case braincatalog.StatusCompatibility:
+				blocked = append(blocked, "agent-catalog."+recommendation.ID+": compatibility bridge and approval required")
 			default:
 				blocked = append(blocked, "agent-catalog."+recommendation.ID+": "+string(recommendation.Status))
 			}

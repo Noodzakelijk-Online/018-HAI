@@ -13,41 +13,53 @@ type Status string
 
 const (
 	StatusCandidate     Status = "candidate"
+	StatusCompatibility Status = "compatibility_only"
 	StatusReferenceOnly Status = "reference_only"
 	StatusExcluded      Status = "excluded"
 	StatusLicenseReview Status = "license_review"
 )
 
+// ControlMapping records how an upstream pattern is translated into an
+// HAI-owned control. A recommendation therefore never delegates safety,
+// policy, or execution authority to a third-party project.
+type ControlMapping struct {
+	SourcePattern string `json:"sourcePattern"`
+	HAIControl    string `json:"haiControl"`
+	Boundary      string `json:"boundary"`
+}
+
 // Entry is a transparent, source-backed integration decision. Verification is
 // a curation snapshot rather than a claim that a runtime has been installed.
 type Entry struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name"`
-	UpstreamURL          string   `json:"upstreamUrl"`
-	SourceCatalogURL     string   `json:"sourceCatalogUrl"`
-	Status               Status   `json:"status"`
-	Category             string   `json:"category"`
-	IntegrationMode      string   `json:"integrationMode"`
-	Capabilities         []string `json:"capabilities"`
-	RecommendedFor       []string `json:"recommendedFor"`
-	RequiresApproval     bool     `json:"requiresApproval"`
-	LocalFirstCompatible bool     `json:"localFirstCompatible"`
-	Activation           string   `json:"activation"`
-	Rationale            string   `json:"rationale"`
-	VerifiedAt           string   `json:"verifiedAt"`
-	VerificationNote     string   `json:"verificationNote"`
+	ID                   string           `json:"id"`
+	Name                 string           `json:"name"`
+	UpstreamURL          string           `json:"upstreamUrl"`
+	SourceCatalogURL     string           `json:"sourceCatalogUrl"`
+	Status               Status           `json:"status"`
+	Category             string           `json:"category"`
+	IntegrationMode      string           `json:"integrationMode"`
+	Capabilities         []string         `json:"capabilities"`
+	RecommendedFor       []string         `json:"recommendedFor"`
+	RequiresApproval     bool             `json:"requiresApproval"`
+	LocalFirstCompatible bool             `json:"localFirstCompatible"`
+	Activation           string           `json:"activation"`
+	Rationale            string           `json:"rationale"`
+	VerifiedAt           string           `json:"verifiedAt"`
+	VerificationNote     string           `json:"verificationNote"`
+	ControlMappings      []ControlMapping `json:"controlMappings,omitempty"`
 }
 
 // Recommendation makes a candidate visible to the planner without claiming it
 // is installed or selected for execution.
 type Recommendation struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Status           Status `json:"status"`
-	Role             string `json:"role"`
-	Rationale        string `json:"rationale"`
-	RequiresApproval bool   `json:"requiresApproval"`
-	Activation       string `json:"activation"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	Status           Status           `json:"status"`
+	Role             string           `json:"role"`
+	Rationale        string           `json:"rationale"`
+	RequiresApproval bool             `json:"requiresApproval"`
+	Activation       string           `json:"activation"`
+	ControlMappings  []ControlMapping `json:"controlMappings,omitempty"`
 }
 
 const sourceCatalogURL = "https://github.com/e2b-dev/awesome-ai-agents"
@@ -110,12 +122,18 @@ var entries = []Entry{
 	},
 	{
 		ID: "autogen", Name: "AutoGen", UpstreamURL: "https://github.com/microsoft/autogen", SourceCatalogURL: sourceCatalogURL,
-		Status: StatusExcluded, Category: "multi-agent framework", IntegrationMode: "migration/reference only",
-		Capabilities: []string{"message-passing agents", "teams", "MCP workbench"}, RecommendedFor: []string{"architecture reference"},
-		RequiresApproval: false, LocalFirstCompatible: true,
-		Activation: "Do not start new HAI functionality on AutoGen. Evaluate its documented successor separately if a Microsoft ecosystem integration becomes necessary.",
-		Rationale:  "The official project describes AutoGen as maintenance mode and directs new users to its successor, so it is not a foundation for new HAI capability.",
-		VerifiedAt: verifiedAt, VerificationNote: "Official upstream maintenance notice checked on 2026-07-19.",
+		Status: StatusCompatibility, Category: "legacy multi-agent compatibility", IntegrationMode: "operator-hosted bridge or protocol translation",
+		Capabilities: []string{"event-driven agent messaging", "team and delegation patterns", "MCP workbench compatibility", "structured task events"}, RecommendedFor: []string{"existing AutoGen workloads", "MCP compatibility", "migration planning"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Use only behind a dedicated operator-hosted bridge with a narrow task schema. HAI does not install or execute AutoGen project code. New capability must use a HAI-native adapter or undergo a separate successor-framework review.",
+		Rationale:  "AutoGen is maintenance mode but documents useful interoperability patterns. HAI maps those patterns into its native task, workflow, approval, and audit pipeline rather than using AutoGen as a new execution foundation.",
+		VerifiedAt: verifiedAt, VerificationNote: "Official maintenance notice and MCP trusted-server warning checked on 2026-07-19.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "event-driven agent messages", HAIControl: "task events, workflow state, and immutable audit records", Boundary: "HAI owns task lifecycle and completion decisions"},
+			{SourcePattern: "agent teams and delegation", HAIControl: "planner recommendations and approval-gated workflow assignments", Boundary: "no AutoGen agent can self-authorize an action"},
+			{SourcePattern: "MCP Workbench", HAIControl: "agent runtime registry with trusted-server, tool, folder, and network allowlists", Boundary: "MCP tools require a reviewed adapter and the existing risk gate"},
+			{SourcePattern: "code execution", HAIControl: "controlled runtime executor with workspace and approval constraints", Boundary: "no generic executor is exposed through this catalog"},
+		},
 	},
 	{
 		ID: "metagpt", Name: "MetaGPT", UpstreamURL: "https://github.com/FoundationAgents/MetaGPT", SourceCatalogURL: sourceCatalogURL,
@@ -134,6 +152,7 @@ func Entries() []Entry {
 	for _, entry := range entries {
 		entry.Capabilities = append([]string(nil), entry.Capabilities...)
 		entry.RecommendedFor = append([]string(nil), entry.RecommendedFor...)
+		entry.ControlMappings = append([]ControlMapping(nil), entry.ControlMappings...)
 		out = append(out, entry)
 	}
 	return out
@@ -144,6 +163,7 @@ func EntryByID(id string) (Entry, bool) {
 		if entry.ID == strings.ToLower(strings.TrimSpace(id)) {
 			entry.Capabilities = append([]string(nil), entry.Capabilities...)
 			entry.RecommendedFor = append([]string(nil), entry.RecommendedFor...)
+			entry.ControlMappings = append([]ControlMapping(nil), entry.ControlMappings...)
 			return entry, true
 		}
 	}
@@ -164,6 +184,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "sandbox", "isolate", "untrusted code") {
 		ids = append(ids, "e2b")
 	}
+	if containsAny(text, "autogen", "agentchat", "magentic", "mcp workbench", "autogen migration") {
+		ids = append(ids, "autogen")
+	}
 	seen := map[string]bool{}
 	out := []Recommendation{}
 	for _, id := range ids {
@@ -176,12 +199,15 @@ func Recommend(taskType, request string) []Recommendation {
 			continue
 		}
 		role := "optional capability"
-		if entry.Status != StatusCandidate {
+		if entry.Status == StatusCompatibility {
+			role = "legacy compatibility only"
+		} else if entry.Status != StatusCandidate {
 			role = "reference or review only"
 		}
 		out = append(out, Recommendation{
 			ID: id, Name: entry.Name, Status: entry.Status, Role: role,
 			Rationale: entry.Rationale, RequiresApproval: entry.RequiresApproval, Activation: entry.Activation,
+			ControlMappings: append([]ControlMapping(nil), entry.ControlMappings...),
 		})
 	}
 	return out

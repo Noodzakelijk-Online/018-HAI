@@ -20,10 +20,30 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [Aider](https://github.com/Aider-AI/aider) | Candidate | Review-first coding assistance | Available Apache-2.0 coding tool. Any write-capable use needs a confined workspace and explicit approval. |
 | [E2B](https://github.com/e2b-dev/E2B) | Reference only | External sandbox design | Its hosted execution model is not local-first and can involve external credentials/billing. Disabled unless separately approved. |
 | [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) | License review | Workflow platform reference | The repository is active but includes differently licensed areas. HAI does not vendor or integrate it until a per-directory license review is complete. |
-| [AutoGen](https://github.com/microsoft/autogen) | Excluded | Architecture reference only | The official project labels it maintenance mode and directs new projects to a successor. |
+| [AutoGen](https://github.com/microsoft/autogen) | Compatibility only | Existing AutoGen workload migration, structured agent-event translation, and guarded MCP compatibility | The official project is maintenance mode. HAI does not install or execute AutoGen code, and a reviewed bridge plus approval is required. |
 | [MetaGPT](https://github.com/FoundationAgents/MetaGPT) | Excluded | Architecture reference only | Still available, but its release and substantive push activity were older than the active candidates at curation time. |
 
 The API includes the source URL, verification date, activation requirements, safety disposition, and task recommendation rationale for every entry. This lets the frontend show the difference between a capable project, a configured integration, and an executable runtime.
+
+## AutoGen compatibility profile
+
+AutoGen is not HAI's execution foundation and is never selected for generic
+coding or autonomous work. Its compatibility profile is limited to existing
+AutoGen assets that need a controlled migration or interoperability plan.
+
+The profile translates useful documented patterns into HAI-owned controls:
+
+| AutoGen pattern | HAI control | Hard boundary |
+| --- | --- | --- |
+| Event-driven agent messages | Task events, workflow state, and audit records | HAI owns lifecycle and completion decisions. |
+| Agent teams and delegation | Planner recommendations and approval-gated assignments | No upstream agent can self-authorize an action. |
+| MCP Workbench | Trusted-only runtime registry with tool, folder, and network allowlists | A reviewed adapter and risk gate are required. |
+| Code execution | Controlled runtime executor | The catalog exposes no generic executor. |
+
+This is deliberately a protocol and control mapping, not an AutoGen SDK
+integration. The upstream project warns that MCP servers must be trusted
+because they may execute commands or expose sensitive data; HAI keeps that
+boundary explicit.
 
 ## Next adapter work
 

@@ -12,11 +12,36 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 			t.Fatalf("entry lacks provenance or activation boundary: %#v", entry)
 		}
 	}
-	if entry, ok := EntryByID("autogen"); !ok || entry.Status != StatusExcluded {
-		t.Fatalf("AutoGen must remain excluded for new work: %#v", entry)
+	if entry, ok := EntryByID("autogen"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval || len(entry.ControlMappings) == 0 {
+		t.Fatalf("AutoGen must remain a gated compatibility profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
+	}
+}
+
+func TestRecommendAutoGenCompatibilityIsExplicitAndGated(t *testing.T) {
+	recommendations := Recommend("migration", "Migrate an AutoGen AgentChat workflow with MCP Workbench")
+	for _, recommendation := range recommendations {
+		if recommendation.ID != "autogen" {
+			continue
+		}
+		if recommendation.Status != StatusCompatibility || recommendation.Role != "legacy compatibility only" || !recommendation.RequiresApproval {
+			t.Fatalf("AutoGen recommendation is not safely gated: %#v", recommendation)
+		}
+		if len(recommendation.ControlMappings) < 4 {
+			t.Fatalf("AutoGen must explain its HAI control mappings: %#v", recommendation)
+		}
+		return
+	}
+	t.Fatalf("AutoGen migration should surface the compatibility profile: %#v", recommendations)
+}
+
+func TestRecommendCodingDoesNotSelectAutoGenByDefault(t *testing.T) {
+	for _, recommendation := range Recommend("coding", "Fix this repository and run tests") {
+		if recommendation.ID == "autogen" {
+			t.Fatalf("generic coding must not default to legacy AutoGen: %#v", recommendation)
+		}
 	}
 }
 
