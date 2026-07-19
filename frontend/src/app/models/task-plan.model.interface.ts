@@ -140,6 +140,9 @@ export interface ICatalogRecommendation {
 export interface ICapabilityRecommendation extends ICatalogRecommendation {
   score: number;
   matchedTerms: string[];
+  roadmapPriority: number;
+  roadmapReason: string;
+  capabilityPlanes: string[];
   reasons: string[];
   nextStep: string;
 }

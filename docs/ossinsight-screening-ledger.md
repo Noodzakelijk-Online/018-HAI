@@ -235,6 +235,13 @@ Each item repeats its required gates and its recommended next review action;
 the existing catalog inspector remains the path to inspect provenance and open
 a manual adapter-review pursuit.
 
+Task planning uses the same roadmap as context. A requested capability is
+ranked by direct task relevance first; roadmap priority breaks ties and carries
+the capability-plane and gate rationale into the plan. This does not select,
+configure, or execute an external tool. The task router continues to mark
+catalog candidates as unavailable until their separate adapter review is
+approved and a live adapter reports healthy.
+
 The matching vocabulary applies a small deterministic expansion for common
 operational terms, for example `LLM` to `model` and `inference`, or `PII` to
 `sensitive` and `redaction`. Singular and plural variants are normalized. The

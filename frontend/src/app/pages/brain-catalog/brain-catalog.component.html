@@ -140,7 +140,7 @@
     </div>
     <div class="brain-catalog-page__recommendations" *ngIf="capabilityRecommendation?.recommendations?.length">
       <article *ngFor="let recommendation of capabilityRecommendation?.recommendations">
-        <div><strong>{{ recommendation.name }}</strong><small>{{ recommendation.role }} - score {{ recommendation.score }}</small><span>{{ recommendation.nextStep }}</span><small>Reviewed {{ recommendation.verifiedAt }}<ng-container *ngIf="recommendation.sourceCollection"> from {{ recommendation.sourceCollection }}</ng-container>.</small></div>
+        <div><strong>{{ recommendation.name }}</strong><small>{{ recommendation.role }} - score {{ recommendation.score }}<ng-container *ngIf="recommendation.roadmapPriority"> - roadmap priority {{ recommendation.roadmapPriority }}</ng-container></small><span>{{ recommendation.nextStep }}</span><small *ngIf="recommendation.roadmapReason">{{ recommendation.roadmapReason }}</small><small>Reviewed {{ recommendation.verifiedAt }}<ng-container *ngIf="recommendation.sourceCollection"> from {{ recommendation.sourceCollection }}</ng-container>.</small></div>
         <div><nz-tag [nzColor]="statusColor(recommendation.status)">{{ statusLabel(recommendation.status) }}</nz-tag><small>Direct matches: {{ recommendation.matchedTerms.join(', ') }}</small><small>{{ recommendation.reasons.join('; ') }}</small><a [href]="recommendation.upstreamUrl" target="_blank" rel="noopener noreferrer">Upstream</a><a [href]="recommendation.sourceCatalogUrl" target="_blank" rel="noopener noreferrer">Source record</a></div>
       </article>
     </div>

@@ -16,15 +16,18 @@ type capabilityTerm struct {
 
 type CapabilityRecommendation struct {
 	Recommendation
-	UpstreamURL      string   `json:"upstreamUrl"`
-	SourceCatalogURL string   `json:"sourceCatalogUrl"`
-	SourceCollection string   `json:"sourceCollection,omitempty"`
-	VerifiedAt       string   `json:"verifiedAt"`
-	VerificationNote string   `json:"verificationNote"`
-	Score            int      `json:"score"`
-	MatchedTerms     []string `json:"matchedTerms"`
-	Reasons          []string `json:"reasons"`
-	NextStep         string   `json:"nextStep"`
+	UpstreamURL      string            `json:"upstreamUrl"`
+	SourceCatalogURL string            `json:"sourceCatalogUrl"`
+	SourceCollection string            `json:"sourceCollection,omitempty"`
+	VerifiedAt       string            `json:"verifiedAt"`
+	VerificationNote string            `json:"verificationNote"`
+	Score            int               `json:"score"`
+	MatchedTerms     []string          `json:"matchedTerms"`
+	Reasons          []string          `json:"reasons"`
+	NextStep         string            `json:"nextStep"`
+	RoadmapPriority  int               `json:"roadmapPriority"`
+	RoadmapReason    string            `json:"roadmapReason"`
+	CapabilityPlanes []CapabilityPlane `json:"capabilityPlanes"`
 }
 
 type CapabilityRecommendationResponse struct {
@@ -44,11 +47,15 @@ func RecommendForNeed(need string) (CapabilityRecommendationResponse, error) {
 		return CapabilityRecommendationResponse{}, fmt.Errorf("describe a capability need using at least one specific word")
 	}
 	response := CapabilityRecommendationResponse{Need: need, ExpandedTerms: capabilityTermValues(terms)}
+	roadmapByID := map[string]AdoptionPlanItem{}
+	for _, item := range AdoptionPlanReport().Items {
+		roadmapByID[item.ID] = item
+	}
 	for _, entry := range Entries() {
 		if entry.Status == StatusExcluded || entry.Status == StatusReferenceOnly || entry.Status == StatusLicenseReview {
 			continue
 		}
-		recommendation := recommendationForEntry(entry, terms)
+		recommendation := recommendationForEntry(entry, terms, roadmapByID[entry.ID])
 		if recommendation.Score > 0 {
 			response.Recommendations = append(response.Recommendations, recommendation)
 		}
@@ -57,6 +64,9 @@ func RecommendForNeed(need string) (CapabilityRecommendationResponse, error) {
 		left, right := response.Recommendations[i], response.Recommendations[j]
 		if left.Score != right.Score {
 			return left.Score > right.Score
+		}
+		if left.RoadmapPriority != right.RoadmapPriority {
+			return left.RoadmapPriority > right.RoadmapPriority
 		}
 		if left.Status != right.Status {
 			return left.Status == StatusIntegrated
@@ -67,17 +77,19 @@ func RecommendForNeed(need string) (CapabilityRecommendationResponse, error) {
 	if len(response.Recommendations) == 0 {
 		response.Message = "No reviewed HAI profile or review-first candidate matched this need. HAI did not search, install, or activate external projects."
 	} else {
-		response.Message = "Results are ranked from HAI's reviewed catalog. A recommendation is planning context only: profile configuration, adapter review, and existing approval gates remain required."
+		response.Message = "Results are ranked by task relevance, then HAI's reviewed roadmap priority. A recommendation is planning context only: profile configuration, adapter review, and existing approval gates remain required."
 	}
 	return response, nil
 }
 
-func recommendationForEntry(entry Entry, terms []capabilityTerm) CapabilityRecommendation {
+func recommendationForEntry(entry Entry, terms []capabilityTerm, roadmap AdoptionPlanItem) CapabilityRecommendation {
 	recommendation := CapabilityRecommendation{Recommendation: Recommendation{
 		ID: entry.ID, Name: entry.Name, Status: entry.Status, Role: entry.Category, Rationale: entry.Rationale,
 		RequiresApproval: entry.RequiresApproval, Activation: entry.Activation, ControlMappings: append([]ControlMapping(nil), entry.ControlMappings...),
 	}, UpstreamURL: entry.UpstreamURL, SourceCatalogURL: entry.SourceCatalogURL, SourceCollection: entry.SourceCollection,
-		VerifiedAt: entry.VerifiedAt, VerificationNote: entry.VerificationNote}
+		VerifiedAt: entry.VerifiedAt, VerificationNote: entry.VerificationNote,
+		RoadmapPriority: roadmap.Priority, RoadmapReason: roadmap.PriorityReason,
+		CapabilityPlanes: append([]CapabilityPlane(nil), roadmap.Planes...)}
 	for _, term := range terms {
 		token := term.Value
 		weight := capabilityTermWeight(term)
@@ -103,6 +115,9 @@ func recommendationForEntry(entry Entry, terms []capabilityTerm) CapabilityRecom
 	}
 	if recommendation.Score == 0 {
 		return recommendation
+	}
+	if recommendation.RoadmapPriority > 0 && recommendation.RoadmapReason != "" {
+		recommendation.Reasons = append(recommendation.Reasons, fmt.Sprintf("roadmap priority %d: %s", recommendation.RoadmapPriority, recommendation.RoadmapReason))
 	}
 	switch entry.Status {
 	case StatusIntegrated:

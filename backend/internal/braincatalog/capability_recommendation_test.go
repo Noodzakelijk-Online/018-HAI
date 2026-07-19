@@ -10,6 +10,9 @@ func TestRecommendForNeedRanksReviewedCatalogWithoutHeldProjects(t *testing.T) {
 	if len(response.Recommendations) == 0 {
 		t.Fatal("expected reviewed capability matches")
 	}
+	if response.Recommendations[0].RoadmapPriority == 0 || response.Recommendations[0].RoadmapReason == "" || len(response.Recommendations[0].CapabilityPlanes) == 0 {
+		t.Fatalf("recommendations must carry the reviewed implementation context: %#v", response.Recommendations[0])
+	}
 	foundEvaluation := false
 	for _, recommendation := range response.Recommendations {
 		if recommendation.Status == StatusExcluded || recommendation.Status == StatusReferenceOnly || recommendation.Status == StatusLicenseReview {

@@ -105,6 +105,9 @@ export interface IBrainCatalogCapabilityRecommendation {
   matchedTerms: string[]
   reasons: string[]
   nextStep: string
+  roadmapPriority: number
+  roadmapReason: string
+  capabilityPlanes: string[]
 }
 
 export interface IBrainCatalogCapabilityRecommendationResponse {
