@@ -39,6 +39,7 @@ import (
 	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
+	"automation-hub-backend/internal/temporalbridge"
 	"automation-hub-backend/internal/verification"
 	"automation-hub-backend/internal/workflow"
 	"automation-hub-backend/internal/workflowtask"
@@ -93,6 +94,9 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
 		workflowRunner := workflowtask.NewDeferredRunner()
 		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner, memoryService)
+		temporalService := temporalbridge.NewServiceFromEnv(workflowService)
+		temporalService.StartWorkerEventually(context.Background())
+		initializeTemporalRoutes(v1, temporalbridge.NewHandler(temporalService))
 		pursuitService := pursuit.NewService(pursuit.DefaultRepository(), workflowService)
 		semanticService := semantic.NewServiceFromEnv()
 		sourceService := source.NewServiceWithWorkflowPursuitAndSemantic(source.DefaultRepository(), memoryService, workflowService, pursuitService, semanticService)
@@ -544,6 +548,19 @@ func initializePlanningOptimizerRoutes(apiVersion *gin.RouterGroup, handler *pla
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
 		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
+	}
+}
+
+func initializeTemporalRoutes(apiVersion *gin.RouterGroup, handler *temporalbridge.Handler) {
+	routes := apiVersion.Group("/temporal")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.GET("/follow-up-runs", requirePermission(rbac.PermRead), handler.Runs)
+		// A worker start only connects to a local, validated Temporal endpoint and
+		// registers the proposal-only workflow. Scheduling it remains approval-gated.
+		routes.POST("/worker/start", requirePermission(rbac.PermAdmin), handler.StartWorker)
+		routes.POST("/follow-up-runs", requirePermission(rbac.PermApprove), handler.ScheduleFollowUp)
 	}
 }
 

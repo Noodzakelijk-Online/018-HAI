@@ -27,7 +27,7 @@ role in one of these planes:
 | --- | --- | --- | --- |
 | ai-gateways | LiteLLM | Integrated profile | Enable a keyed loopback gateway profile; HAI requires manual approval because proxy billing cannot be inferred. |
 | Vector Database & Vector Store | pgvector | Integrated profile | Opt-in `vector` extension plus local embeddings; keyword retrieval remains the fallback. |
-| Workflow Scheduler | Temporal | Candidate | Run one named local durable workflow through a narrow Go worker. |
+| Workflow Scheduler | Temporal | Integrated, opt-in | Run one local durable, proposal-only follow-up workflow through a narrow Go worker. |
 | Monitoring Tool | Prometheus | Integrated profile | Enable a token-protected local metrics endpoint; configure a separate local collector when needed. |
 | Model Context Protocol Client | MCP Inspector | Integrated profile | HAI-owned, local-only Streamable HTTP preflight lists tools before a separately reviewed adapter activation. |
 | ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
@@ -113,3 +113,14 @@ owner-scoped proposal audit record. The service has no capability to apply a
 proposal, call a tool, access sources, read files, or change a calendar or
 workflow. Any implementation of a chosen proposal must use HAI's separate
 approval and verification paths.
+
+## Implemented Temporal durability boundary
+
+HAI now has an opt-in local Temporal profile for one named, owner-scoped
+workflow: a governed check of due open loops. It stores only an opaque HAI run
+ID, scheduled time, and bounded limit in Temporal; ownership and all workflow
+context remain in HAI's database. The activity may create HAI follow-up
+proposals through the existing claim-aware workflow service. It cannot execute
+tools or external actions, and it cannot approve or complete work. The exact
+setup, route surface, and isolation boundary are documented in
+[Temporal durability](temporal-durability.md).

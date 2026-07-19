@@ -184,11 +184,11 @@ var entries = []Entry{
 	},
 	{
 		ID: "temporal", Name: "Temporal", UpstreamURL: "https://github.com/temporalio/temporal", SourceCatalogURL: "https://ossinsight.io/collections/workflow-scheduler", SourceCollection: "Workflow Scheduler",
-		Status: StatusCandidate, Category: "durable workflow execution", IntegrationMode: "operator-hosted local service and reviewed Go worker",
+		Status: StatusIntegrated, Category: "durable workflow execution", IntegrationMode: "opt-in local service and narrow governed Go worker",
 		Capabilities: []string{"durable workflow state", "retry handling", "scheduled work", "worker visibility"}, RecommendedFor: []string{"follow-ups", "long-running workflows", "bounded retries"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Add a separately reviewed local Temporal service and a narrow Go worker for one named HAI workflow. Keep HAI's approval and completion policy authoritative over every activity.",
-		Rationale:  "Temporal is a current Go-based durable-execution platform that can improve recovery for long-lived work, but it is infrastructure rather than an autonomous decision-maker.",
+		Activation: "Enable the local durability Compose profile and HAI_TEMPORAL_ENABLED. The one registered worker can only run governed follow-up proposal checks; HAI remains authoritative for approval and completion decisions.",
+		Rationale:  "Temporal is wired as a local restart-safe scheduling layer for one HAI-owned workflow. It is infrastructure, not an autonomous decision-maker or policy bypass.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Workflow Scheduler listing and upstream MIT-licensed release activity checked on 2026-07-19.",
 	},
 	{

@@ -86,7 +86,7 @@ No configured provider, runtime, dashboard state, or generated answer upgrades i
 | Intake safety | New source, assistant, and ambient input is matched to an active pursuit or becomes a non-executable candidate. An approval-capable user must accept a candidate before its first governed workflow is created. |
 | External accounts | Local/export ingestion and read-only GitHub sync are available. Live Gmail, Drive, Calendar, Trello, WhatsApp, browser, and similar account connectors are not implemented. |
 | Models and runtimes | Local/free-first routing and guarded adapter surfaces exist. No provider or runtime is live-proven until its scoped probe, approved task, audit, and verification evidence exist. |
-| External capability catalog | Candidate capabilities from Awesome AI Agents and OSS Insight Collections are curated into task planning and a read-only API. Candidates include local model inference/gateway, Postgres semantic retrieval, durable workflow, metrics, bounded browser/WASM verification, deterministic planning, and reviewed agent profiles. | A catalog entry is not an installed dependency or executable runtime. See [the catalog decision record](docs/agent-tool-catalog.md), [OSS Insight curation](docs/ossinsight-brain-curation.md), and the [102-collection screening ledger](docs/ossinsight-screening-ledger.md). |
+| External capability catalog | Candidate capabilities from Awesome AI Agents and OSS Insight Collections are curated into task planning and a read-only API. Integrated opt-in capabilities include local model inference/gateway, Postgres semantic retrieval, durable follow-up proposals, metrics, and deterministic planning; browser/WASM verification and broader agent profiles remain candidates. | A catalog entry is not an installed dependency or executable runtime. See [the catalog decision record](docs/agent-tool-catalog.md), [OSS Insight curation](docs/ossinsight-brain-curation.md), and the [102-collection screening ledger](docs/ossinsight-screening-ledger.md). |
 | Production readiness | Not claimed. Clean-machine deployment, signed-in browser coverage, two-real-account isolation, and bounded real-provider/runtime exercises remain release gates. |
 
 ### Verification Snapshot
@@ -475,6 +475,13 @@ internal solver. It records the returned schedule proposal and deferred work
 as an owner-scoped audit entry. The service cannot write workflows or calendar
 events, access files or sources, call tools, or reach external services; a
 separate reviewed action must apply any accepted proposal.
+
+Optional durable follow-up handling uses the local Temporal `durability`
+Compose profile. Set `HAI_TEMPORAL_ENABLED=true` and run
+`docker compose --profile durability up --build`. The registered worker stores
+an owner-scoped HAI run ledger and can call only HAI's existing due-open-loop
+proposal path. It cannot send, publish, access external accounts, execute tools,
+or resolve approvals. See [the Temporal durability boundary](docs/temporal-durability.md).
 
 ### Metrics
 

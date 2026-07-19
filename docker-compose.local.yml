@@ -131,6 +131,10 @@ services:
       HAI_PLANNING_OPTIMIZER_ENABLED: ${HAI_PLANNING_OPTIMIZER_ENABLED}
       HAI_PLANNING_OPTIMIZER_BASE_URL: ${HAI_PLANNING_OPTIMIZER_BASE_URL}
       HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS: ${HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS}
+      HAI_TEMPORAL_ENABLED: ${HAI_TEMPORAL_ENABLED}
+      HAI_TEMPORAL_ADDRESS: ${HAI_TEMPORAL_ADDRESS}
+      HAI_TEMPORAL_NAMESPACE: ${HAI_TEMPORAL_NAMESPACE}
+      HAI_TEMPORAL_TASK_QUEUE: ${HAI_TEMPORAL_TASK_QUEUE}
       ODYSSEUS_BASE_URL: ${ODYSSEUS_BASE_URL}
       ODYSSEUS_API_TOKEN: ${ODYSSEUS_API_TOKEN}
       AGENT_RUNTIME_ALLOWED_HOSTS: ${AGENT_RUNTIME_ALLOWED_HOSTS}
@@ -403,6 +407,103 @@ services:
     networks:
       - service-hub
 
+  # Optional, internal-only durable orchestration. It is intentionally split
+  # from HAI's primary Postgres instance and is enabled only with
+  # `--profile durability`. No Temporal port is exposed to the host.
+  temporal-postgres:
+    image: postgres:17-alpine
+    profiles: ["durability"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+      POSTGRES_DB: temporal
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - service-hub
+
+  temporal-schema:
+    image: temporalio/admin-tools:1.31.2
+    profiles: ["durability"]
+    restart: "no"
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    environment:
+      DB_PORT: 5432
+      POSTGRES_SEEDS: temporal-postgres
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+      SQL_PASSWORD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+    volumes:
+      - ./services/temporal/setup-postgres.sh:/scripts/setup-postgres.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/setup-postgres.sh"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - service-hub
+
+  temporal:
+    image: temporalio/server:1.31.2
+    profiles: ["durability"]
+    restart: unless-stopped
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+      POSTGRES_SEEDS: temporal-postgres
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    expose:
+      - "7233"
+    volumes:
+      - ./services/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - service-hub
+
+  temporal-namespace:
+    image: temporalio/admin-tools:1.31.2
+    profiles: ["durability"]
+    restart: "no"
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      DEFAULT_NAMESPACE: ${HAI_TEMPORAL_NAMESPACE:-default}
+    volumes:
+      - ./services/temporal/create-namespace.sh:/scripts/create-namespace.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/create-namespace.sh"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - service-hub
+
   postgres-idp:
     image: postgres:17-alpine
     container_name: 018-hai-postgres-idp
@@ -551,3 +652,5 @@ volumes:
     name: 018-hai-postgres-idp-data
   postgres-automation-data:
     name: 018-hai-postgres-automation-data
+  temporal-postgres-data:
+    name: 018-hai-temporal-postgres-data

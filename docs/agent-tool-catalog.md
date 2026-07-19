@@ -24,7 +24,7 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 | [MetaGPT](https://github.com/FoundationAgents/MetaGPT) | Excluded | Architecture reference only | Still available, but its release and substantive push activity were older than the active candidates at curation time. |
 | [LiteLLM](https://github.com/BerriAI/litellm) | Integrated profile | Keyed loopback provider-gateway normalization | Requires explicit enablement, a local endpoint, model alias, virtual key, probe, and manual generation approval; HAI's EUR 0 policy remains authoritative. |
 | [pgvector](https://github.com/pgvector/pgvector) | Integrated profile | Local semantic retrieval inside HAI Postgres | Opt-in `vector` extension plus local embeddings; keyword retrieval remains the truthful fallback. |
-| [Temporal](https://github.com/temporalio/temporal) | Candidate | Durable retries, follow-ups, and long-running work | Requires a local service plus narrow Go worker. HAI retains all approval and completion gates. |
+| [Temporal](https://github.com/temporalio/temporal) | Integrated, opt-in | Durable governed follow-up checks | Local-only service plus one narrow Go worker. It creates HAI proposals only; HAI retains all approval and completion gates. |
 | [Prometheus](https://github.com/prometheus/prometheus) | Integrated profile | Token-protected HTTP metrics export | Opt-in exporter with no raw-data labels; a local collector remains separately configured. |
 | [Grafana](https://github.com/grafana/grafana) | Reference only | Optional advanced metrics visualization | Deferred until real Prometheus metrics justify a second dashboard. |
 | [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | Integrated profile | Local-only pre-activation MCP inspection | HAI performs only a bounded Streamable HTTP handshake and tool inventory for configured local endpoints; it never spawns a process or calls a tool. |
@@ -112,6 +112,21 @@ durations/priorities/windows, overlapping output, and incomplete job
 accounting. It persists only the request digest and bounded proposal result.
 No route applies a proposal to a workflow, task, calendar, source, file, tool,
 or external account.
+
+## Temporal durability profile
+
+The optional `durability` Compose profile provisions a private local Temporal
+server and separate PostgreSQL volume. HAI's only registered Temporal workflow
+is an owner-scoped due-open-loop check that calls the existing HAI proposal
+service. Its payload carries an opaque HAI run ID rather than owner identity or
+source content. It cannot invoke a connector, runtime, browser, script, or
+external action, and it does not alter HAI approval or completion state.
+
+The owner-scoped routes are `GET /api/v1/temporal/status`,
+`GET /api/v1/temporal/follow-up-runs`, admin-only
+`POST /api/v1/temporal/worker/start`, and approval-gated
+`POST /api/v1/temporal/follow-up-runs`. See
+[Temporal durability](temporal-durability.md) for the full controls.
 
 ## OSS Insight curation scope
 

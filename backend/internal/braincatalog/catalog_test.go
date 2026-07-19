@@ -21,11 +21,14 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
-	for _, id := range []string{"temporal", "playwright", "wasmtime"} {
+	for _, id := range []string{"playwright", "wasmtime"} {
 		entry, ok := EntryByID(id)
 		if !ok || entry.Status != StatusCandidate || entry.SourceCollection == "" || entry.SourceCatalogURL == "" || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must be a source-backed local candidate: %#v", id, entry)
 		}
+	}
+	if entry, ok := EntryByID("temporal"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("Temporal must report its integrated-but-approval-gated local durability profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("pgvector"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("pgvector must report its integrated-but-opt-in local retrieval profile: %#v", entry)
@@ -95,13 +98,8 @@ func TestRecommendOperationalCapabilitiesPreservesReviewGates(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"temporal"} {
-		if recommendation, ok := ids[id]; !ok || recommendation.Status != StatusCandidate {
-			t.Fatalf("missing governed %s recommendation: %#v", id, recommendations)
-		}
-	}
-	if !ids["temporal"].RequiresApproval {
-		t.Fatalf("durable execution candidates need explicit review: %#v", recommendations)
+	if recommendation, ok := ids["temporal"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" || !recommendation.RequiresApproval {
+		t.Fatalf("Temporal must surface as an integrated profile with its durability gate: %#v", recommendations)
 	}
 	if recommendation, ok := ids["litellm"]; !ok || recommendation.Status != StatusIntegrated || recommendation.Role != "integrated profile; operator configuration and live probe required" || !recommendation.RequiresApproval {
 		t.Fatalf("LiteLLM must surface as an integrated profile with its approval gate: %#v", recommendations)
