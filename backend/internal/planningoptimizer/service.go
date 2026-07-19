@@ -25,11 +25,12 @@ import (
 )
 
 const (
-	enabledEnv  = "HAI_PLANNING_OPTIMIZER_ENABLED"
-	baseURLEnv  = "HAI_PLANNING_OPTIMIZER_BASE_URL"
-	timeoutEnv  = "HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS"
-	maxJobs     = 100
-	maxBodySize = 1 << 20
+	enabledEnv    = "HAI_PLANNING_OPTIMIZER_ENABLED"
+	baseURLEnv    = "HAI_PLANNING_OPTIMIZER_BASE_URL"
+	timeoutEnv    = "HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS"
+	maxJobs       = 100
+	maxBodySize   = 1 << 20
+	maxHealthSize = 8 << 10
 )
 
 var (
@@ -92,6 +93,16 @@ type Status struct {
 	Scope       string `json:"scope"`
 }
 
+// ProbeResult is a bounded health observation. It contains no job data and
+// never starts a solve; it exists so the back office can distinguish configured
+// from actually reachable local planning infrastructure.
+type ProbeResult struct {
+	Configured bool   `json:"configured"`
+	Healthy    bool   `json:"healthy"`
+	Solver     string `json:"solver,omitempty"`
+	Detail     string `json:"detail"`
+}
+
 type config struct {
 	enabled bool
 	baseURL string
@@ -152,6 +163,38 @@ func (s *service) Status() Status {
 		ConfigError: s.configErr,
 		Scope:       "Local OR-Tools scheduling proposals only. HAI never applies a proposal to workflows, calendars, or external systems.",
 	}
+}
+
+func (s *service) Probe(ctx context.Context) (ProbeResult, error) {
+	if !s.config.enabled || s.configErr != "" {
+		return ProbeResult{Configured: false, Detail: "planning optimizer is not configured; no health request was made"}, ErrNotConfigured
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.config.baseURL+"/healthz", nil)
+	if err != nil {
+		return ProbeResult{Configured: true, Detail: "local OR-Tools health request could not be created"}, ErrUnavailable
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "HAI-PlanningOptimizer/1.0")
+	response, err := s.client.Do(req)
+	if err != nil {
+		return ProbeResult{Configured: true, Detail: "local OR-Tools service was unavailable"}, ErrUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ProbeResult{Configured: true, Detail: fmt.Sprintf("local OR-Tools service returned HTTP %d", response.StatusCode)}, ErrUnavailable
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxHealthSize+1))
+	if err != nil || len(data) > maxHealthSize {
+		return ProbeResult{Configured: true, Detail: "local OR-Tools service returned an unusable health response"}, ErrUnavailable
+	}
+	var body struct {
+		Status string `json:"status"`
+		Solver string `json:"solver"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil || body.Status != "ok" || len(body.Solver) == 0 || len(body.Solver) > 160 {
+		return ProbeResult{Configured: true, Detail: "local OR-Tools service returned an invalid health response"}, ErrUnavailable
+	}
+	return ProbeResult{Configured: true, Healthy: true, Solver: body.Solver, Detail: "local OR-Tools proposal service is reachable"}, nil
 }
 
 func (s *service) Propose(ctx context.Context, ownerIdentity string, request Request) (*Run, error) {

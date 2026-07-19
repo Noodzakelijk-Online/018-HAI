@@ -437,6 +437,24 @@ func TestPlanningOptimizerRoutesRequireOwnerAndWritePermission(t *testing.T) {
 	if response.Code != http.StatusConflict {
 		t.Fatalf("operator must receive the truthful disabled status, got %d: %s", response.Code, response.Body.String())
 	}
+	response = httptest.NewRecorder()
+	operator.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/planning-optimizer/probe", nil))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("operator must not run an optimizer probe, got %d", response.Code)
+	}
+
+	owner := gin.New()
+	owner.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "owner@example.test")
+		c.Set(contextRoleKey, "owner")
+		c.Next()
+	})
+	initializePlanningOptimizerRoutes(owner.Group("/api/v1"), planningoptimizer.NewHandler(service))
+	response = httptest.NewRecorder()
+	owner.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/planning-optimizer/probe", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("owner must receive truthful disabled probe state, got %d", response.Code)
+	}
 }
 
 func TestBackendAPIKeyMiddlewareDisabledWithoutKey(t *testing.T) {

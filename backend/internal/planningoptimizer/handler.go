@@ -17,6 +17,19 @@ func NewHandler(service *service) *Handler { return &Handler{service: service} }
 
 func (h *Handler) Status(c *gin.Context) { c.JSON(http.StatusOK, h.service.Status()) }
 
+func (h *Handler) Probe(c *gin.Context) {
+	result, err := h.service.Probe(c.Request.Context())
+	if errors.Is(err, ErrNotConfigured) {
+		c.JSON(http.StatusConflict, result)
+		return
+	}
+	if errors.Is(err, ErrUnavailable) {
+		c.JSON(http.StatusServiceUnavailable, result)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *Handler) Propose(c *gin.Context) {
 	var request Request
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)

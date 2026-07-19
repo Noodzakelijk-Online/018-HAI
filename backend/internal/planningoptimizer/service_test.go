@@ -60,6 +60,21 @@ func TestOptimizerFailsClosedForExternalOrDisabledService(t *testing.T) {
 	}
 }
 
+func TestProbeReadsOnlyBoundedLocalHealth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/healthz" || r.Header.Get("Authorization") != "" {
+			t.Fatalf("unexpected health request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","solver":"or-tools-cp-sat 9.15.6755"}`))
+	}))
+	defer server.Close()
+	result, err := NewService(&memoryRepository{}, true, server.URL, 0).Probe(context.Background())
+	if err != nil || !result.Configured || !result.Healthy || result.Solver == "" {
+		t.Fatalf("unexpected local solver health: %#v %v", result, err)
+	}
+}
+
 func TestRequestValidationRejectsUnsafeIdentifiersAndWindows(t *testing.T) {
 	if err := validateRequest(Request{DayStartMinute: 540, DayEndMinute: 600, Jobs: []Job{{ID: "email@example.test", DurationMinutes: 60, Priority: 50}}}); err == nil {
 		t.Fatalf("non-opaque ID must be rejected")

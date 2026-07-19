@@ -97,9 +97,10 @@ headers, accept bearer tokens, or enable an HAI runtime.
 ## OR-Tools planning profile
 
 The optional `optimization` Compose profile runs a private OR-Tools CP-SAT
-service without a host port. HAI exposes only three owner-scoped routes:
+service without a host port. HAI exposes the following owner-scoped routes:
 
 - `GET /api/v1/planning-optimizer/status`
+- `POST /api/v1/planning-optimizer/probe` (admin-only, read-only health check)
 - `GET /api/v1/planning-optimizer/runs`
 - `POST /api/v1/planning-optimizer/proposals`
 
