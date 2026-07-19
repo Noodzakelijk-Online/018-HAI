@@ -200,6 +200,34 @@ func TestRouteBlocksRemoteLlamaCPPProviderEndpoint(t *testing.T) {
 	t.Fatalf("expected llama.cpp local-only boundary, got %#v", decision.Skipped)
 }
 
+func TestRouteBlocksRemoteNamedLocalProviderEndpoints(t *testing.T) {
+	for _, providerConfig := range []struct {
+		providerID  string
+		displayName string
+	}{
+		{providerID: "ollama", displayName: "Ollama"},
+		{providerID: "lm-studio", displayName: "LM Studio"},
+	} {
+		t.Run(providerConfig.providerID, func(t *testing.T) {
+			policy := testPolicyWithoutEndpoints()
+			providerIndex := providerIndex(t, policy, providerConfig.providerID)
+			policy.Providers[providerIndex].EndpointURL = "https://models.example.test"
+			service := &Service{policy: annotatePolicyReadiness(policy)}
+
+			decision, err := service.Route(RouteRequest{Task: "Plan a local offline workflow"})
+			if err != nil {
+				t.Fatalf("Route returned error: %v", err)
+			}
+			for _, skipped := range decision.Skipped {
+				if skipped.ProviderID == providerConfig.providerID && skipped.Reason == providerConfig.displayName+" endpoint must use localhost, loopback, or host.docker.internal" {
+					return
+				}
+			}
+			t.Fatalf("expected %s local-only boundary, got %#v", providerConfig.providerID, decision.Skipped)
+		})
+	}
+}
+
 func TestRouteBlocksRemoteLocalAIProviderEndpoint(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
 	localAIIndex := providerIndex(t, policy, "localai")

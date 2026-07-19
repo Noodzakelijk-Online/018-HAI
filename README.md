@@ -444,7 +444,7 @@ or approval-required use.
 Supported configuration families include Ollama, a first-class local
 `llama.cpp` server, LocalAI, vLLM, LM Studio, other configured OpenAI-compatible
 local servers, and configured free/freemium providers. `LLAMA_CPP_BASE_URL`
-`LOCALAI_BASE_URL`, and `VLLM_BASE_URL` accept only `localhost`, loopback, or
+`OLLAMA_BASE_URL`, `LM_STUDIO_BASE_URL`, `LOCALAI_BASE_URL`, and `VLLM_BASE_URL` accept only `localhost`, loopback, or
 `host.docker.internal`; configure the matching `*_MODEL_ID` for the
 operator-installed model server. HAI does not install LocalAI or vLLM, and
 does not download models. Model

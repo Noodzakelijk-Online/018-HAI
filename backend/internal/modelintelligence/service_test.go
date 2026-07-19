@@ -34,6 +34,30 @@ func TestRegistryTruthfulProviderStates(t *testing.T) {
 	}
 }
 
+func TestNamedLocalProviderProfilesRejectRemoteEndpoints(t *testing.T) {
+	for _, providerConfig := range []struct {
+		providerID string
+		envName    string
+	}{
+		{providerID: "ollama", envName: "OLLAMA_BASE_URL"},
+		{providerID: "lm-studio", envName: "LM_STUDIO_BASE_URL"},
+		{providerID: "llama-cpp", envName: "LLAMA_CPP_BASE_URL"},
+		{providerID: "localai", envName: "LOCALAI_BASE_URL"},
+		{providerID: "vllm", envName: "VLLM_BASE_URL"},
+	} {
+		t.Run(providerConfig.providerID, func(t *testing.T) {
+			t.Setenv(providerConfig.envName, "https://models.example.test")
+			provider, ok := NewRegistryFromEnv().Provider(providerConfig.providerID)
+			if !ok {
+				t.Fatalf("%s provider is not registered", providerConfig.providerID)
+			}
+			if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+				t.Fatalf("remote endpoint must stay unconfigured, got %#v", probe)
+			}
+		})
+	}
+}
+
 func TestLocalAIRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testing.T) {
 	t.Setenv("LOCALAI_BASE_URL", "https://models.example.test")
 	registry := NewRegistryFromEnv()

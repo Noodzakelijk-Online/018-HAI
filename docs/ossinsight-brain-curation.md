@@ -71,7 +71,8 @@ case. A configured value alone is not enough: HAI marks it usable only after a
 live `/v1/models` probe, retains the EUR 0 paid budget, and continues to apply
 the router's existing validation, fallback, audit, and approval controls.
 
-`LocalAI` and `vLLM` use the same separate, first-class profile pattern. Set
+`Ollama`, `LM Studio`, `LocalAI`, and `vLLM` use separate, first-class profile
+patterns. Set
 `LOCALAI_BASE_URL` / `LOCALAI_MODEL_ID` or `VLLM_BASE_URL` / `VLLM_MODEL_ID`
 to point at an operator-installed endpoint. Both profiles reject non-local
 endpoints, stay inactive until `/v1/models` succeeds, use the bounded

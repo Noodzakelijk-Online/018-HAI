@@ -1207,23 +1207,41 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
 	}
-	if (provider.ID == "llama-cpp" || provider.ID == "localai" || provider.ID == "vllm" || provider.ID == "litellm") && !isLocalModelHost(host) {
-		name := "local provider"
-		if provider.ID == "llama-cpp" {
-			name = "llama.cpp"
-		} else if provider.ID == "localai" {
-			name = "LocalAI"
-		} else if provider.ID == "vllm" {
-			name = "vLLM"
-		} else if provider.ID == "litellm" {
-			name = "LiteLLM gateway"
-		}
-		return providerReadiness{configured: false, status: "blocked_endpoint", reason: name + " endpoint must use localhost, loopback, or host.docker.internal"}
+	if isLoopbackOnlyProvider(provider.ID) && !isLocalModelHost(host) {
+		return providerReadiness{configured: false, status: "blocked_endpoint", reason: localProviderDisplayName(provider.ID) + " endpoint must use localhost, loopback, or host.docker.internal"}
 	}
 	if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
 		return providerReadiness{configured: false, status: "missing_api_key", reason: "required API key environment variable " + provider.APIKeyEnv + " is not set"}
 	}
 	return providerReadiness{configured: true, status: "configured", reason: "provider endpoint and required credentials are configured"}
+}
+
+func isLoopbackOnlyProvider(providerID string) bool {
+	switch providerID {
+	case "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "litellm":
+		return true
+	default:
+		return false
+	}
+}
+
+func localProviderDisplayName(providerID string) string {
+	switch providerID {
+	case "ollama":
+		return "Ollama"
+	case "lm-studio":
+		return "LM Studio"
+	case "llama-cpp":
+		return "llama.cpp"
+	case "localai":
+		return "LocalAI"
+	case "vllm":
+		return "vLLM"
+	case "litellm":
+		return "LiteLLM gateway"
+	default:
+		return "local provider"
+	}
 }
 
 func generationStatusForReadiness(status string) string {

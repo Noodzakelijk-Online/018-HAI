@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// remoteProvider is a generic OpenAI-compatible provider (ollama, lm-studio,
-// custom) configured from env. It is not_configured unless a valid base URL is
+// remoteProvider is a generic OpenAI-compatible provider configured from env.
+// It is not_configured unless a valid base URL is
 // set, is never active without a successful probe, and never executes actions.
 type remoteProvider struct {
 	enabled    bool
@@ -153,8 +153,8 @@ func NewRegistryFromEnv() *Registry {
 		&testFastTriageProvider{},
 		&testVerifierProvider{},
 		NewDSparkProvider(DSparkConfigFromEnv()),
-		newRemoteProvider("ollama", "Ollama (local OpenAI-compatible)", "OLLAMA_BASE_URL", "ollama-default", ArchOllamaUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
-		newRemoteProvider("lm-studio", "LM Studio (local OpenAI-compatible)", "LM_STUDIO_BASE_URL", "lm-studio-default", ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
+		newLocalRemoteProvider("ollama", "Ollama (loopback local server)", "OLLAMA_BASE_URL", "ollama-default", ArchOllamaUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
+		newLocalRemoteProvider("lm-studio", "LM Studio (loopback local server)", "LM_STUDIO_BASE_URL", "lm-studio-default", ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("llama-cpp", "llama.cpp (local OpenAI-compatible)", "LLAMA_CPP_BASE_URL", envOrDefault("LLAMA_CPP_MODEL_ID", "local-model"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("localai", "LocalAI (loopback OpenAI-compatible)", "LOCALAI_BASE_URL", envOrDefault("LOCALAI_MODEL_ID", "localai-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("vllm", "vLLM (loopback OpenAI-compatible)", "VLLM_BASE_URL", envOrDefault("VLLM_MODEL_ID", "vllm-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting, LaneParallelBatch}),
