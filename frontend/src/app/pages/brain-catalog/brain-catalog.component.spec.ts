@@ -23,11 +23,13 @@ describe('BrainCatalogComponent adapter reviews', () => {
   function createComponent() {
     const catalogService = { adoptionPlan: jasmine.createSpy('adoptionPlan'), revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), discoverReviewableOSSInsightRepositories: jasmine.createSpy('discoverReviewableOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
     const pursuitService = { create: jasmine.createSpy('create') }
+    const ragflowService = { status: jasmine.createSpy('status') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
     return {
-      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, notification, router as any),
+      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, notification, router as any),
       pursuitService,
+      ragflowService,
       notification,
       router,
     }
@@ -163,6 +165,16 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     expect(catalogService.recommendCapabilities).toHaveBeenCalledWith('local model evaluation')
     expect(component.capabilityRecommendation?.recommendations[0].id).toBe('lm-eval-harness')
+  })
+
+  it('reads RAGFlow bridge state only when the RAGFlow candidate is selected', () => {
+    const { component, ragflowService } = createComponent()
+    ragflowService.status.and.returnValue(of({ enabled: false, configured: false, provider: 'RAGFlow', datasetCount: 0, capabilities: [], restrictions: ['no ingestion'], scope: 'candidate evidence only' }))
+
+    component.select({ ...candidate, id: 'ragflow', name: 'RAGFlow' } as any)
+
+    expect(ragflowService.status).toHaveBeenCalled()
+    expect(component.ragflowStatus?.configured).toBeFalse()
   })
 
   it('shows discovery results without changing runtime state', () => {

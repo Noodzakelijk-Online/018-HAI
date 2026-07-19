@@ -73,6 +73,19 @@
         <strong>Profile state</strong>
         <span>Registered in HAI. Configuration and live readiness are checked by the relevant runtime or provider screen.</span>
       </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'ragflow'">
+        <strong>Local bridge state</strong>
+        <span *ngIf="loadingRAGFlowStatus">Checking the configured local bridge.</span>
+        <ng-container *ngIf="ragflowStatus as status">
+          <span>{{ status.configured ? 'Configured for fixed-dataset candidate-evidence retrieval.' : 'Not configured. HAI cannot contact or query RAGFlow.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>{{ status.datasetCount }} approved dataset{{ status.datasetCount === 1 ? '' : 's' }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="ragflowStatusUnavailable">The local bridge status could not be read. No RAGFlow action was started.</span>
+      </div>
       <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
       <div class="brain-catalog-page__review-action" *ngIf="canStartReview(entry)">
         <div>

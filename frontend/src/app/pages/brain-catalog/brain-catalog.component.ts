@@ -2,8 +2,10 @@ import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { BrainCatalogCollectionDisposition, IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
+import { IRAGFlowStatus } from '../../models/ragflow.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { PursuitService } from '../../services/pursuit.service'
+import { RAGFlowService } from '../../services/ragflow.service'
 
 @Component({
   selector: 'app-brain-catalog',
@@ -30,10 +32,14 @@ export class BrainCatalogComponent implements OnInit {
   adoptionPlan?: IBrainCatalogAdoptionPlan
   capabilityRecommendation?: IBrainCatalogCapabilityRecommendationResponse
   discoveryReviews: Record<string, IBrainCatalogUpstreamReview> = {}
+  ragflowStatus?: IRAGFlowStatus
+  loadingRAGFlowStatus = false
+  ragflowStatusUnavailable = false
 
   constructor(
     private service: BrainCatalogService,
     private pursuitService: PursuitService,
+    private ragflowService: RAGFlowService,
     private notification: NzNotificationService,
     private router: Router,
   ) {}
@@ -46,7 +52,7 @@ export class BrainCatalogComponent implements OnInit {
     this.service.overview().subscribe({
       next: (catalog) => {
         this.catalog = catalog
-        this.selected = this.integrated[0] ?? catalog.entries[0]
+        this.select(this.integrated[0] ?? catalog.entries[0])
         this.loading = false
       },
       error: () => {
@@ -76,6 +82,24 @@ export class BrainCatalogComponent implements OnInit {
   select(entry: IBrainCatalogEntry): void {
     this.selected = entry
     this.upstreamReview = undefined
+    this.ragflowStatus = undefined
+    this.ragflowStatusUnavailable = false
+    if (entry.id === 'ragflow') this.loadRAGFlowStatus()
+  }
+
+  loadRAGFlowStatus(): void {
+    if (this.loadingRAGFlowStatus) return
+    this.loadingRAGFlowStatus = true
+    this.ragflowService.status().subscribe({
+      next: (status) => {
+        this.loadingRAGFlowStatus = false
+        this.ragflowStatus = status
+      },
+      error: () => {
+        this.loadingRAGFlowStatus = false
+        this.ragflowStatusUnavailable = true
+      },
+    })
   }
 
   selectById(id: string): void {
