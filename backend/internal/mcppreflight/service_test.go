@@ -43,10 +43,13 @@ func TestPreflightUsesHandshakeAndNeverCallsTool(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "test", URL: server.URL}}})
+	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "test", CatalogID: "mcp-inspector", URL: server.URL}}})
 	result, found := svc.Preflight(context.Background(), "test")
 	if !found || result.Status != "ready" || result.ToolCount != 2 || result.ProtocolVersion != protocolVersion {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+	if result.CatalogID != "mcp-inspector" || result.CatalogName != "MCP Inspector" {
+		t.Fatalf("preflight result must preserve reviewed catalog provenance: %#v", result)
 	}
 	if strings.Join(methods, ",") != "initialize,notifications/initialized,tools/list" {
 		t.Fatalf("unexpected protocol methods: %v", methods)
@@ -63,19 +66,41 @@ func TestPreflightUsesHandshakeAndNeverCallsTool(t *testing.T) {
 }
 
 func TestPreflightIsFailClosedForDisabledOrUnsafeConfig(t *testing.T) {
-	disabled := NewService(Config{Enabled: false, Servers: []Server{{ID: "local", URL: "http://127.0.0.1:3000/mcp"}}})
+	disabled := NewService(Config{Enabled: false, Servers: []Server{{ID: "local", CatalogID: "mcp-inspector", URL: "http://127.0.0.1:3000/mcp"}}})
 	result, found := disabled.Preflight(context.Background(), "local")
 	if !found || result.Status != "disabled" {
 		t.Fatalf("disabled service must not run, got %#v", result)
 	}
 
-	unsafe := NewService(Config{Enabled: true, Servers: []Server{{ID: "remote", URL: "https://example.com/mcp"}}})
+	unsafe := NewService(Config{Enabled: true, Servers: []Server{{ID: "remote", CatalogID: "mcp-inspector", URL: "https://example.com/mcp"}}})
 	if unsafe.Overview().ConfigError == "" {
 		t.Fatalf("non-local endpoint must be rejected")
 	}
 	result, found = unsafe.Preflight(context.Background(), "remote")
 	if !found || result.Status != "blocked" {
 		t.Fatalf("invalid config must be blocked, got %#v", result)
+	}
+}
+
+func TestPreflightRequiresAnEligibleMCPCatalogProfile(t *testing.T) {
+	for _, server := range []Server{
+		{ID: "missing-profile", URL: "http://127.0.0.1:3000/mcp"},
+		{ID: "unknown-profile", CatalogID: "not-a-profile", URL: "http://127.0.0.1:3000/mcp"},
+		{ID: "non-mcp-profile", CatalogID: "cloudquery", URL: "http://127.0.0.1:3000/mcp"},
+	} {
+		svc := NewService(Config{Enabled: true, Servers: []Server{server}})
+		if svc.Overview().ConfigError == "" {
+			t.Fatalf("server %#v must be rejected without a reviewed MCP profile", server)
+		}
+		result, found := svc.Preflight(context.Background(), server.ID)
+		if !found || result.Status != "blocked" {
+			t.Fatalf("invalid server must fail closed: %#v", result)
+		}
+	}
+
+	servers := parseServers("github@github-mcp-server=http://127.0.0.1:3000/mcp")
+	if len(servers) != 1 || servers[0].ID != "github" || servers[0].CatalogID != "github-mcp-server" {
+		t.Fatalf("profile-aware server parsing failed: %#v", servers)
 	}
 }
 

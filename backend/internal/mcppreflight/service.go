@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"automation-hub-backend/internal/braincatalog"
 )
 
 const (
@@ -38,8 +40,9 @@ var serverIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 // Server is a reviewed MCP endpoint. It intentionally has no auth fields:
 // secrets belong in a dedicated adapter after review, never in a listing tool.
 type Server struct {
-	ID  string `json:"id"`
-	URL string `json:"url"`
+	ID        string `json:"id"`
+	CatalogID string `json:"catalogId"`
+	URL       string `json:"url"`
 }
 
 // Config controls the optional local-only preflight service.
@@ -62,6 +65,8 @@ type Tool struct {
 type Result struct {
 	ID              string    `json:"id"`
 	ServerID        string    `json:"serverId"`
+	CatalogID       string    `json:"catalogId,omitempty"`
+	CatalogName     string    `json:"catalogName,omitempty"`
 	URL             string    `json:"url,omitempty"`
 	Status          string    `json:"status"`
 	Detail          string    `json:"detail"`
@@ -76,6 +81,8 @@ type Result struct {
 // ServerStatus is safe to show in an authenticated operator view.
 type ServerStatus struct {
 	ID          string  `json:"id"`
+	CatalogID   string  `json:"catalogId,omitempty"`
+	CatalogName string  `json:"catalogName,omitempty"`
 	URL         string  `json:"url,omitempty"`
 	Configured  bool    `json:"configured"`
 	LastAttempt *Result `json:"lastAttempt,omitempty"`
@@ -132,7 +139,7 @@ func NewService(config Config) *Service {
 
 // NewServiceFromEnv builds an optional service. The server format is a
 // semicolon-separated list, for example:
-// HAI_MCP_PREFLIGHT_SERVERS=local-docs=http://host.docker.internal:3001/mcp
+// HAI_MCP_PREFLIGHT_SERVERS=local-docs@mcp-inspector=http://host.docker.internal:3001/mcp
 func NewServiceFromEnv() *Service {
 	timeout := 5 * time.Second
 	if raw := strings.TrimSpace(os.Getenv(timeoutEnv)); raw != "" {
@@ -153,7 +160,7 @@ func (s *Service) Overview() Overview {
 	defer s.mu.Unlock()
 	servers := make([]ServerStatus, 0, len(s.config.Servers))
 	for _, server := range s.config.Servers {
-		item := ServerStatus{ID: server.ID, URL: server.URL, Configured: s.config.Enabled && s.configErr == ""}
+		item := ServerStatus{ID: server.ID, CatalogID: server.CatalogID, CatalogName: catalogName(server.CatalogID), URL: server.URL, Configured: s.config.Enabled && s.configErr == ""}
 		if attempt, ok := s.last[server.ID]; ok {
 			copy := attempt
 			item.LastAttempt = &copy
@@ -178,9 +185,11 @@ func (s *Service) Preflight(ctx context.Context, serverID string) (Result, bool)
 	}
 	start := time.Now()
 	result := Result{
-		ServerID:  server.ID,
-		URL:       server.URL,
-		CheckedAt: s.now().UTC(),
+		ServerID:    server.ID,
+		CatalogID:   server.CatalogID,
+		CatalogName: catalogName(server.CatalogID),
+		URL:         server.URL,
+		CheckedAt:   s.now().UTC(),
 	}
 	if !s.config.Enabled {
 		result.Status = "disabled"
@@ -425,12 +434,17 @@ func parseServers(raw string) []Server {
 		if part == "" {
 			continue
 		}
-		id, endpoint, ok := strings.Cut(part, "=")
+		profile, endpoint, ok := strings.Cut(part, "=")
 		if !ok {
 			servers = append(servers, Server{ID: part})
 			continue
 		}
-		servers = append(servers, Server{ID: strings.TrimSpace(id), URL: strings.TrimSpace(endpoint)})
+		id, catalogID, hasCatalogID := strings.Cut(strings.TrimSpace(profile), "@")
+		server := Server{ID: strings.TrimSpace(id), URL: strings.TrimSpace(endpoint)}
+		if hasCatalogID {
+			server.CatalogID = strings.TrimSpace(catalogID)
+		}
+		servers = append(servers, server)
 	}
 	return servers
 }
@@ -448,11 +462,40 @@ func validateConfig(config Config) string {
 			return "server ids must be unique"
 		}
 		seen[server.ID] = true
+		if err := validateCatalogProfile(server.CatalogID); err != nil {
+			return "server " + server.ID + ": " + err.Error()
+		}
 		if err := validateLocalURL(server.URL); err != nil {
 			return "server " + server.ID + ": " + err.Error()
 		}
 	}
 	return ""
+}
+
+func validateCatalogProfile(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("catalog profile is required")
+	}
+	entry, ok := braincatalog.EntryByID(id)
+	if !ok {
+		return fmt.Errorf("catalog profile is not reviewed")
+	}
+	if entry.Status != braincatalog.StatusIntegrated && entry.Status != braincatalog.StatusCandidate && entry.Status != braincatalog.StatusCompatibility {
+		return fmt.Errorf("catalog profile is not eligible for MCP preflight")
+	}
+	if entry.SourceCollection != "MCP Servers" && entry.ID != "mcp-inspector" {
+		return fmt.Errorf("catalog profile is not an MCP capability")
+	}
+	return nil
+}
+
+func catalogName(id string) string {
+	entry, ok := braincatalog.EntryByID(strings.TrimSpace(id))
+	if !ok {
+		return ""
+	}
+	return entry.Name
 }
 
 func validateLocalURL(raw string) error {

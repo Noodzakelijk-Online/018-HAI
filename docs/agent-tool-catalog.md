@@ -88,14 +88,15 @@ reviewed local Streamable HTTP server:
 
 ```dotenv
 HAI_MCP_PREFLIGHT_ENABLED=true
-HAI_MCP_PREFLIGHT_SERVERS=local-docs=http://host.docker.internal:3001/mcp
+HAI_MCP_PREFLIGHT_SERVERS=local-docs@mcp-inspector=http://host.docker.internal:3001/mcp
 HAI_MCP_PREFLIGHT_TIMEOUT_SECONDS=5
 ```
 
 `GET /api/v1/mcp-preflight/overview` reports configuration and the most recent
 operator check. `POST /api/v1/mcp-preflight/local-docs/run` is admin-only and
 performs `initialize`, `notifications/initialized`, and `tools/list`. It
-accepts only `localhost`, loopback IPs, and `host.docker.internal`; rejects
+requires each endpoint to name an eligible reviewed Brain Catalog MCP profile,
+then accepts only `localhost`, loopback IPs, and `host.docker.internal`; rejects
 URL credentials, query strings, external hosts, redirects, response bodies
 over 1 MiB, and non-JSON responses. It returns a bounded tool name inventory
 only. It does not execute a listed tool, retain schemas/descriptions, expose
