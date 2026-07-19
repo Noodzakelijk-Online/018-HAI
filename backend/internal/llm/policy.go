@@ -1207,10 +1207,12 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
 	}
-	if (provider.ID == "llama-cpp" || provider.ID == "litellm") && !isLocalModelHost(host) {
+	if (provider.ID == "llama-cpp" || provider.ID == "localai" || provider.ID == "litellm") && !isLocalModelHost(host) {
 		name := "local provider"
 		if provider.ID == "llama-cpp" {
 			name = "llama.cpp"
+		} else if provider.ID == "localai" {
+			name = "LocalAI"
 		} else if provider.ID == "litellm" {
 			name = "LiteLLM gateway"
 		}
@@ -1313,6 +1315,11 @@ func defaultPolicy() Policy {
 	if llamaCPPModelID == "" {
 		llamaCPPModelID = "local-model"
 	}
+	localAIEndpoint := strings.TrimSpace(os.Getenv("LOCALAI_BASE_URL"))
+	localAIModelID := strings.TrimSpace(os.Getenv("LOCALAI_MODEL_ID"))
+	if localAIModelID == "" {
+		localAIModelID = "localai-default"
+	}
 	liteLLMEnabled := envEnabled("LITELLM_ENABLED")
 	liteLLMEndpoint := strings.TrimSpace(os.Getenv("LITELLM_BASE_URL"))
 	liteLLMModelID := strings.TrimSpace(os.Getenv("LITELLM_MODEL_ID"))
@@ -1402,6 +1409,18 @@ func defaultPolicy() Policy {
 				QuotaRemaining: -1,
 				Models: []Model{
 					{ID: llamaCPPModelID, Name: "Configured llama.cpp GGUF model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "localai",
+				Name:           "LocalAI local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    localAIEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: localAIModelID, Name: "Configured LocalAI local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
 				},
 			},
 			{

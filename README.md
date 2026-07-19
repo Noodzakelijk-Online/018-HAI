@@ -442,10 +442,12 @@ disabled by default with a EUR 0 budget; request JSON cannot self-approve paid
 or approval-required use.
 
 Supported configuration families include Ollama, a first-class local
-`llama.cpp` server, LM Studio, other configured OpenAI-compatible local
-servers, and configured free/freemium providers. `LLAMA_CPP_BASE_URL` accepts
-only `localhost`, loopback, or `host.docker.internal`; configure
-`LLAMA_CPP_MODEL_ID` for the model loaded by `llama-server`. Model
+`llama.cpp` server, LocalAI, LM Studio, other configured OpenAI-compatible
+local servers, and configured free/freemium providers. `LLAMA_CPP_BASE_URL`
+and `LOCALAI_BASE_URL` accept only `localhost`, loopback, or
+`host.docker.internal`; configure `LLAMA_CPP_MODEL_ID` or `LOCALAI_MODEL_ID`
+for the operator-installed model server. HAI does not install LocalAI or
+download models. Model
 catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
 other configured provider models. Provider status must be read as configuration
 and probe history, not as a live-service guarantee.

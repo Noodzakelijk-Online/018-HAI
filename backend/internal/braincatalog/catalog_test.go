@@ -18,10 +18,13 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "pydantic-ai", "localai", "cloudquery", "opik", "deepteam", "openspec", "pipecat"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "vllm", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "whisper-cpp", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "pydantic-ai", "cloudquery", "opik", "deepteam", "openspec", "pipecat"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
+	}
+	if entry, ok := EntryByID("localai"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval {
+		t.Fatalf("LocalAI must report its integrated, approval-gated local provider profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("a2a"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval {
 		t.Fatalf("A2A must remain a review-first compatibility profile: %#v", entry)
@@ -373,11 +376,14 @@ func TestRecommendLiveGapCandidatesStayReviewFirst(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"pydantic-ai", "localai", "cloudquery", "pipecat", "deepteam"} {
+	for _, id := range []string{"pydantic-ai", "cloudquery", "pipecat", "deepteam"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first live-gap candidate: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["localai"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("LocalAI must surface as an integrated, configuration-gated provider profile: %#v", recommendations)
 	}
 }
 

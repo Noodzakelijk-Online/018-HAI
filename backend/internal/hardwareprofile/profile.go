@@ -70,7 +70,7 @@ func Detect(ownerUserID, workspaceID string, now time.Time) HardwareProfile {
 
 // SelectServingStack chooses a serving stack from the profile using the §18
 // selection rules. It prefers native Windows ONNX, then WSL2+CUDA, then
-// TensorRT-RTX, then llama.cpp for low-VRAM, then Ollama/LM Studio; DirectML is
+// TensorRT-RTX, then llama.cpp for low-VRAM, then Ollama/LM Studio/LocalAI; DirectML is
 // treated as legacy fallback; cloud only as a last resort. Unknown hardware
 // yields onnx_runtime_cpu — never an invented accelerator path.
 func (p HardwareProfile) SelectServingStack() ServingStack {
@@ -101,6 +101,8 @@ func (p HardwareProfile) SelectServingStack() ServingStack {
 		return StackOllama
 	case has(EPLMStudio):
 		return StackLMStudio
+	case has(EPLocalAI):
+		return StackLocalAI
 	case has(EPOnnxDirectML):
 		return StackDirectMLLegacy // legacy fallback, not first choice
 	case has(EPOnnxCPU):

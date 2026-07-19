@@ -200,6 +200,24 @@ func TestRouteBlocksRemoteLlamaCPPProviderEndpoint(t *testing.T) {
 	t.Fatalf("expected llama.cpp local-only boundary, got %#v", decision.Skipped)
 }
 
+func TestRouteBlocksRemoteLocalAIProviderEndpoint(t *testing.T) {
+	policy := testPolicyWithoutEndpoints()
+	localAIIndex := providerIndex(t, policy, "localai")
+	policy.Providers[localAIIndex].EndpointURL = "https://models.example.test"
+	service := &Service{policy: annotatePolicyReadiness(policy)}
+
+	decision, err := service.Route(RouteRequest{Task: "Plan a local offline workflow"})
+	if err != nil {
+		t.Fatalf("Route returned error: %v", err)
+	}
+	for _, skipped := range decision.Skipped {
+		if skipped.ProviderID == "localai" && skipped.Reason == "LocalAI endpoint must use localhost, loopback, or host.docker.internal" {
+			return
+		}
+	}
+	t.Fatalf("expected LocalAI local-only boundary, got %#v", decision.Skipped)
+}
+
 func TestRouteBlocksRemoteLiteLLMGatewayEndpoint(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
 	liteLLMIndex := providerIndex(t, policy, "litellm")
@@ -681,6 +699,60 @@ func TestLlamaCPPProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing
 		t.Fatalf("Generate: %v", err)
 	}
 	if result.Status != "completed" || result.Output != "local llama.cpp draft" {
+		t.Fatalf("generation result = %#v", result)
+	}
+}
+
+func TestLocalAIProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"id": "qwen-localai"}}})
+		case "/v1/chat/completions":
+			var request map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if request["model"] != "qwen-localai" {
+				t.Fatalf("model = %v, want qwen-localai", request["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"content": "local LocalAI draft"}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	localAIIndex := providerIndex(t, policy, "localai")
+	policy.Providers[localAIIndex].EndpointURL = server.URL
+	policy.Providers[localAIIndex].Models[0].ID = "qwen-localai"
+	service := &Service{policy: policy}
+
+	var probe ProviderProbeResult
+	for _, result := range service.ProbeProviders() {
+		if result.ProviderID == "localai" {
+			probe = result
+			break
+		}
+	}
+	if probe.Status != "live" || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want live LocalAI provider with one model", probe)
+	}
+
+	result, err := service.Generate(GenerateRequest{
+		Task: "Draft a local answer",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "localai",
+			SelectedModelID:    "qwen-localai",
+			SelectedModelName:  "Configured LocalAI local model",
+			Tier:               TierLocal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "completed" || result.Output != "local LocalAI draft" {
 		t.Fatalf("generation result = %#v", result)
 	}
 }

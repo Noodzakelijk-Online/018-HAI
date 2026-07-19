@@ -710,12 +710,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "localai", Name: "LocalAI", UpstreamURL: "https://github.com/mudler/LocalAI", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
-		Status: StatusCandidate, Category: "local multimodal OpenAI-compatible inference", IntegrationMode: "reviewed loopback provider candidate",
+		Status: StatusIntegrated, Category: "local multimodal OpenAI-compatible inference", IntegrationMode: "integrated loopback OpenAI-compatible provider profile",
 		Capabilities: []string{"local OpenAI-compatible API", "local model hosting", "multimodal serving", "CPU-capable inference"}, RecommendedFor: []string{"local model fallback", "OpenAI-compatible local endpoint", "offline multimodal preparation"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review a loopback-only LocalAI endpoint with explicit model provenance, resource limits, model allowlists, no public bind, provider health checks, and HAI's existing EUR 0 budget policy. HAI must not auto-download models, expose the endpoint, or route sensitive data before configuration review.",
-		Rationale:  "LocalAI can fill a measured local serving gap behind HAI's existing local-first provider policy, but it remains a candidate because Ollama and llama.cpp are the current profiles and a second model server needs operational evidence.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines listing and GitHub metadata checked on 2026-07-19: active master branch, MIT licence; no LocalAI service or model is installed or configured by HAI.",
+		Rationale:  "HAI now implements the LocalAI provider contract alongside Ollama and llama.cpp while preserving explicit configuration, loopback-only reachability, a live probe, and local-first routing policy.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines listing and GitHub metadata checked on 2026-07-19: active master branch, MIT licence. HAI implements only the provider profile; no LocalAI service or model is installed or configured by HAI.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "OpenAI-compatible server", HAIControl: "LLM router provider policy and loopback probe", Boundary: "the server cannot enable paid fallback or public egress"},
 			{SourcePattern: "model catalogue", HAIControl: "operator-approved model provenance", Boundary: "HAI never downloads or selects a model implicitly"},
