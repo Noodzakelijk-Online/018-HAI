@@ -3,6 +3,8 @@ package automation
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -301,6 +303,7 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	}
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, script))
 
 	id := uuid.New()
 	repo := newFakeAutomationRepo(&models.Automation{
@@ -334,6 +337,7 @@ func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
 	}
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, script))
 	t.Setenv("SECRET_TOKEN", "must-not-leak")
 
 	id := uuid.New()
@@ -368,6 +372,7 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 	}
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, script))
 
 	id := uuid.New()
 	repo := newFakeAutomationRepo(&models.Automation{
@@ -423,6 +428,30 @@ func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
 	}
 	if !result.RequiresApproval {
 		t.Fatalf("expected disabled script execution to require approval")
+	}
+}
+
+func TestLaunchBlocksScriptWithMismatchedHashPin(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "launch.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho script-ok\n"), 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", "launch.sh="+strings.Repeat("0", 64))
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID: id, Name: "Pinned Script", URLPath: "pinned-script", Host: "localhost", Port: 8080,
+		LaunchType: "script", LaunchTarget: "launch.sh",
+	})
+	result, err := NewService(repo, events.Publisher{}).Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" || !strings.Contains(result.Message, "SHA-256 does not match") {
+		t.Fatalf("mismatched pin result = %#v", result)
 	}
 }
 
@@ -872,6 +901,16 @@ func containsString(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func scriptPin(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	sum := sha256.Sum256(contents)
+	return filepath.Base(path) + "=" + hex.EncodeToString(sum[:])
 }
 
 func newFakeAutomationRepo(automation *models.Automation) *fakeAutomationRepo {
