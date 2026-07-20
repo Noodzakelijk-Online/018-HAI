@@ -31,3 +31,16 @@ func TestHandlerDoesNotAcceptArbitrarySafetySuiteParameters(t *testing.T) {
 		t.Fatalf("run endpoint must reject caller-supplied run payloads: %d", recorder.Code)
 	}
 }
+
+func TestHandlerRejectsChunkedCallerBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/run", NewHandler(stubService{}).Run)
+	request := httptest.NewRequest(http.MethodPost, "/run", strings.NewReader(`{"model":"must-not-be-accepted"}`))
+	request.ContentLength = -1
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("chunked body response=%d want=%d", response.Code, http.StatusBadRequest)
+	}
+}

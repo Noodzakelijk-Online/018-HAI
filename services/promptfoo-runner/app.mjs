@@ -102,7 +102,15 @@ function spawnPromptfoo(args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const child = spawn('promptfoo', args, {
       stdio: ['ignore', 'ignore', 'ignore'],
-      env: { ...process.env, PROMPTFOO_DISABLE_TELEMETRY: 'true', PROMPTFOO_DISABLE_UPDATE_CHECK: 'true' },
+      env: {
+        ...process.env,
+        // The fixed suite may contact only its configured local model server.
+        // Never let inherited proxy variables turn that request into egress.
+        HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '',
+        http_proxy: '', https_proxy: '', all_proxy: '',
+        NO_PROXY: '*', no_proxy: '*',
+        PROMPTFOO_DISABLE_TELEMETRY: 'true', PROMPTFOO_DISABLE_UPDATE_CHECK: 'true',
+      },
     });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');

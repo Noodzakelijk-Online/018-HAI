@@ -6,6 +6,7 @@ package promptfoo
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -142,10 +143,13 @@ func (s *service) Probe(ctx context.Context) (*ProbeResult, error) {
 	}
 	defer response.Body.Close()
 	var body struct {
-		Status string `json:"status"`
-		Engine string `json:"engine"`
+		Status     string `json:"status"`
+		Engine     string `json:"engine"`
+		Configured bool   `json:"configured"`
+		Suite      string `json:"suite"`
+		ModelID    string `json:"modelId"`
 	}
-	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 4097)).Decode(&body) != nil || body.Status != "ok" || !validEngine(body.Engine) {
+	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 4097)).Decode(&body) != nil || body.Status != "ok" || !body.Configured || body.Suite != suiteName || !validEngine(body.Engine) || !validModelID(body.ModelID) {
 		return nil, fmt.Errorf("local Promptfoo safety runner did not pass health probe")
 	}
 	return &ProbeResult{Reachable: true, Engine: body.Engine, CheckedAt: s.now().UTC(), Scope: "Endpoint reachability only. It does not run a safety evaluation or alter model routing."}, nil
@@ -188,7 +192,12 @@ func (s *service) endpoint(path string) url.URL {
 }
 
 func validResult(result Result) bool {
-	return result.Status == "completed" && validEngine(result.Engine) && result.Suite == suiteName && validModelID(result.ModelID) && result.CaseCount == 6 && result.PassedCount >= 0 && result.FailedCount >= 0 && result.PassedCount+result.FailedCount == result.CaseCount && result.Score >= 0 && result.Score <= 1 && result.DurationMS >= 0 && result.DurationMS <= 300000 && len(result.ResultDigest) == 64
+	return result.Status == "completed" && validEngine(result.Engine) && result.Suite == suiteName && validModelID(result.ModelID) && result.CaseCount == 6 && result.PassedCount >= 0 && result.FailedCount >= 0 && result.PassedCount+result.FailedCount == result.CaseCount && result.Score >= 0 && result.Score <= 1 && result.DurationMS >= 0 && result.DurationMS <= 300000 && validDigest(result.ResultDigest)
+}
+
+func validDigest(value string) bool {
+	_, err := hex.DecodeString(value)
+	return len(value) == 64 && err == nil
 }
 
 func validEngine(value string) bool {

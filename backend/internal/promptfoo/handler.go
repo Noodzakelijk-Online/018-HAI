@@ -2,6 +2,7 @@ package promptfoo
 
 import (
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,10 @@ func (h *Handler) Probe(c *gin.Context) {
 }
 
 func (h *Handler) Run(c *gin.Context) {
-	if c.Request.ContentLength > 0 {
+	// Content-Length may be absent for chunked requests. Consume at most one
+	// byte so callers cannot smuggle a body past the fixed-suite boundary.
+	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 1))
+	if err != nil || len(body) != 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "local Promptfoo safety evaluation runs the configured fixed suite and accepts no caller-provided model, provider, prompt, endpoint, or data"})
 		return
 	}

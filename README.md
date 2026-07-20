@@ -603,6 +603,10 @@ retains no raw generations or result rows, runs without a public-facing port,
 and cannot change routing, budgets, policy, verification, memory, workflows,
 approvals, or execution. Passing results are bounded regression evidence, not
 proof that a model is safe or capable in real-world use.
+The runner health probe is considered ready only when its fixed suite and one
+local model are configured. It clears inherited proxy settings before spawning
+Promptfoo and runs as an unprivileged container user; it still does not prove
+the local model endpoint, the six fixtures, or any real-world task is safe.
 
 Optional local speech-to-text uses the `local-transcription` Compose profile.
 Set `HAI_WHISPER_CPP_ENABLED=true`, manually place a reviewed whisper.cpp GGML
