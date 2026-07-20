@@ -102,6 +102,9 @@ func TestPreflightRequiresAnEligibleMCPCatalogProfile(t *testing.T) {
 	if len(servers) != 1 || servers[0].ID != "github" || servers[0].CatalogID != "github-mcp-server" {
 		t.Fatalf("profile-aware server parsing failed: %#v", servers)
 	}
+	if svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "serena", CatalogID: "serena", URL: "http://127.0.0.1:3000/mcp"}}}); svc.Overview().ConfigError != "" {
+		t.Fatalf("reviewed read-only Serena MCP profile must be preflight eligible: %q", svc.Overview().ConfigError)
+	}
 }
 
 func TestValidateLocalURLRejectsCredentialsAndNonLocalHosts(t *testing.T) {
@@ -119,6 +122,24 @@ func TestValidateLocalURLRejectsCredentialsAndNonLocalHosts(t *testing.T) {
 	for _, raw := range []string{"http://localhost:8080/mcp", "http://127.0.0.1:8080/mcp", "http://host.docker.internal:8080/mcp"} {
 		if err := validateLocalURL(raw); err != nil {
 			t.Fatalf("%q should be allowed: %v", raw, err)
+		}
+	}
+}
+
+func TestPreflightFailsClosedForProtocolDowngradeOrMismatchedResponseID(t *testing.T) {
+	for _, reply := range []string{
+		`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}`,
+		`{"jsonrpc":"2.0","id":99,"result":{"protocolVersion":"2025-06-18"}}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(reply))
+		}))
+		svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "test", CatalogID: "mcp-inspector", URL: server.URL}}})
+		result, found := svc.Preflight(context.Background(), "test")
+		server.Close()
+		if !found || result.Status != "failed" || !strings.Contains(result.Detail, "initialize") {
+			t.Fatalf("preflight must reject reply %s, got %#v", reply, result)
 		}
 	}
 }

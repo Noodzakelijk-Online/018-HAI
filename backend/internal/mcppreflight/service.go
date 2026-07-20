@@ -19,6 +19,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,14 @@ const (
 )
 
 var serverIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+
+var preflightCatalogIDs = map[string]bool{
+	"mcp-inspector":        true,
+	"github-mcp-server":    true,
+	"playwright-mcp":       true,
+	"google-genai-toolbox": true,
+	"serena":               true,
+}
 
 // Server is a reviewed MCP endpoint. It intentionally has no auth fields:
 // secrets belong in a dedicated adapter after review, never in a listing tool.
@@ -216,8 +225,10 @@ func (s *Service) Preflight(ctx context.Context, serverID string) (Result, bool)
 		return s.record(result, start), true
 	}
 	result.ProtocolVersion = protocolFromResult(init.Result)
-	if result.ProtocolVersion == "" {
-		result.ProtocolVersion = protocolVersion
+	if result.ProtocolVersion != protocolVersion {
+		result.Status = "failed"
+		result.Detail = "initialize returned an unsupported MCP protocol version"
+		return s.record(result, start), true
 	}
 	if err := s.notifyInitialized(ctx, server, sessionID, result.ProtocolVersion); err != nil {
 		result.Status = "failed"
@@ -266,6 +277,7 @@ func (s *Service) record(result Result, start time.Time) Result {
 
 type rpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
 	Result  json.RawMessage `json:"result"`
 	Error   *rpcError       `json:"error"`
 }
@@ -302,6 +314,9 @@ func (s *Service) rpc(ctx context.Context, server Server, method string, id int,
 	decoded, err := decodeResponse(response.Body)
 	if err != nil {
 		return rpcResponse{}, "", err
+	}
+	if !matchesRequestID(decoded.ID, id) {
+		return rpcResponse{}, "", fmt.Errorf("response id does not match request")
 	}
 	if decoded.Error != nil {
 		return rpcResponse{}, "", fmt.Errorf("MCP error %d", decoded.Error.Code)
@@ -367,6 +382,10 @@ func protocolFromResult(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(result.ProtocolVersion)
+}
+
+func matchesRequestID(raw json.RawMessage, expected int) bool {
+	return strings.TrimSpace(string(raw)) == strconv.Itoa(expected)
 }
 
 func boundedTools(raw json.RawMessage) ([]Tool, int, bool, error) {
@@ -484,7 +503,7 @@ func validateCatalogProfile(id string) error {
 	if entry.Status != braincatalog.StatusIntegrated && entry.Status != braincatalog.StatusCandidate && entry.Status != braincatalog.StatusCompatibility {
 		return fmt.Errorf("catalog profile is not eligible for MCP preflight")
 	}
-	if entry.SourceCollection != "MCP Servers" && entry.ID != "mcp-inspector" {
+	if !preflightCatalogIDs[entry.ID] {
 		return fmt.Errorf("catalog profile is not an MCP capability")
 	}
 	return nil
