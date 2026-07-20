@@ -102,9 +102,11 @@ than making them selectable capabilities.
 
 AnythingLLM was separately confirmed in the same OSS Insight RAG Frameworks
 repository list. Its GitHub metadata reported `archived=false`, an active
-`master` branch, and MIT on 2026-07-19. It is a review-first local workspace
-and RAG adapter candidate, not a parallel HAI memory, source, verification, or
-execution authority; no AnythingLLM deployment or connector was installed.
+`master` branch, and MIT on 2026-07-19. On 2026-07-20, HAI added a
+disabled-by-default local vector-search bridge for a fixed workspace allowlist.
+It remains neither a parallel HAI memory/source/verification authority nor an
+AnythingLLM deployment: no HAI process installs or starts it, and the bridge
+cannot call chat, history, agent, tool, attachment, or mutation endpoints.
 
 On 2026-07-20, the current FastMCP upstream was checked directly at
 `jlowin/fastmcp`: the current package was 3.4.4 and the repository carries an

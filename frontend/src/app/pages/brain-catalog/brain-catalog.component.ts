@@ -3,6 +3,7 @@ import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { BrainCatalogCollectionDisposition, IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { IRAGFlowStatus } from '../../models/ragflow.model.interface'
+import { IAnythingLLMStatus } from '../../models/anythingllm.model.interface'
 import { IPresidioStatus } from '../../models/presidio.model.interface'
 import { ILangfuseExportResult, ILangfuseProbeResult, ILangfuseStatus } from '../../models/langfuse.model.interface'
 import { ISerenaStatus } from '../../models/serena.model.interface'
@@ -11,6 +12,7 @@ import { LangfuseService } from '../../services/langfuse.service'
 import { PresidioService } from '../../services/presidio.service'
 import { PursuitService } from '../../services/pursuit.service'
 import { RAGFlowService } from '../../services/ragflow.service'
+import { AnythingLLMService } from '../../services/anythingllm.service'
 import { SerenaService } from '../../services/serena.service'
 
 @Component({
@@ -41,6 +43,9 @@ export class BrainCatalogComponent implements OnInit {
   ragflowStatus?: IRAGFlowStatus
   loadingRAGFlowStatus = false
   ragflowStatusUnavailable = false
+  anythingLLMStatus?: IAnythingLLMStatus
+  loadingAnythingLLMStatus = false
+  anythingLLMStatusUnavailable = false
   presidioStatus?: IPresidioStatus
   loadingPresidioStatus = false
   presidioStatusUnavailable = false
@@ -59,6 +64,7 @@ export class BrainCatalogComponent implements OnInit {
     private service: BrainCatalogService,
     private pursuitService: PursuitService,
     private ragflowService: RAGFlowService,
+    private anythingLLMService: AnythingLLMService,
     private presidioService: PresidioService,
     private langfuseService: LangfuseService,
     private serenaService: SerenaService,
@@ -106,6 +112,8 @@ export class BrainCatalogComponent implements OnInit {
     this.upstreamReview = undefined
     this.ragflowStatus = undefined
     this.ragflowStatusUnavailable = false
+    this.anythingLLMStatus = undefined
+    this.anythingLLMStatusUnavailable = false
     this.presidioStatus = undefined
     this.presidioStatusUnavailable = false
     this.langfuseStatus = undefined
@@ -115,6 +123,7 @@ export class BrainCatalogComponent implements OnInit {
     this.serenaStatus = undefined
     this.serenaStatusUnavailable = false
     if (entry.id === 'ragflow') this.loadRAGFlowStatus()
+    if (entry.id === 'anythingllm') this.loadAnythingLLMStatus()
     if (entry.id === 'presidio') this.loadPresidioStatus()
     if (entry.id === 'langfuse') this.loadLangfuseStatus()
     if (entry.id === 'serena') this.loadSerenaStatus()
@@ -131,6 +140,21 @@ export class BrainCatalogComponent implements OnInit {
       error: () => {
         this.loadingRAGFlowStatus = false
         this.ragflowStatusUnavailable = true
+      },
+    })
+  }
+
+  loadAnythingLLMStatus(): void {
+    if (this.loadingAnythingLLMStatus) return
+    this.loadingAnythingLLMStatus = true
+    this.anythingLLMService.status().subscribe({
+      next: (status) => {
+        this.loadingAnythingLLMStatus = false
+        this.anythingLLMStatus = status
+      },
+      error: () => {
+        this.loadingAnythingLLMStatus = false
+        this.anythingLLMStatusUnavailable = true
       },
     })
   }

@@ -108,15 +108,16 @@ func DiscoverySources() []CatalogSource {
 var entries = []Entry{
 	{
 		ID: "anythingllm", Name: "AnythingLLM", UpstreamURL: "https://github.com/Mintplex-Labs/anything-llm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10108/repos/", SourceCollection: "RAG Frameworks",
-		Status: StatusCandidate, Category: "local RAG workspace adapter", IntegrationMode: "reviewed local workspace bridge",
+		Status: StatusIntegrated, Category: "local RAG workspace evidence adapter", IntegrationMode: "bounded local vector-search bridge",
 		Capabilities: []string{"document workspaces", "RAG retrieval", "agent workspace patterns", "local-model connections"}, RecommendedFor: []string{"approved document workspaces", "RAG adapter evaluation", "local research preparation"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review one local workspace deployment with source-folder and connector allowlists, local-model endpoints, document retention and deletion controls, import provenance, role boundaries, audit export, and a no-external-action default. AnythingLLM may prepare retrieved context or draft output, but it cannot become HAI's memory authority, modify source records, send content, or execute tools without separate HAI approval.",
-		Rationale:  "AnythingLLM is a maintained, local-first workspace/RAG candidate that can complement HAI's source-grounded research flow when a demonstrated workspace need exists, while HAI keeps project memory, verification, provider policy, and approvals authoritative.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight RAG Frameworks repository list and GitHub metadata checked on 2026-07-19: active master branch, MIT licence; no AnythingLLM workspace, connector, model, or agent is installed or configured by HAI.",
+		Activation: "Configure one operator-managed local endpoint, a dedicated API key, fixed workspace slugs, and explicit local-embedding confirmation. HAI calls only workspace vector search; it cannot open chat, send attachments, read history, ingest/delete documents, change settings, or execute AnythingLLM agents/tools. Returned chunks remain unverified candidate evidence.",
+		Rationale:  "AnythingLLM can complement HAI's source-grounded research flow with bounded retrieval from curated local workspaces, while HAI keeps project memory, verification, provider policy, and approvals authoritative.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official upstream API source reviewed on 2026-07-20: the authenticated workspace vector-search endpoint returns chunk text and metadata without using chat/history endpoints. HAI implements only this disabled-by-default, allowlisted local bridge. No AnythingLLM workspace, connector, model, or agent is installed or configured by HAI.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "document workspace", HAIControl: "source registry, provenance links, and memory review", Boundary: "imports do not become HAI memory facts without source support or confirmation"},
 			{SourcePattern: "workspace agent", HAIControl: "task planner and approval-gated runtime adapters", Boundary: "no workspace agent can self-authorize tools or external effects"},
+			{SourcePattern: "workspace vector search", HAIControl: "grounded answer candidate-evidence selection", Boundary: "only explicitly configured local workspaces are queried; no chat, history, attachment, or mutation routes are called"},
 		},
 	},
 	{

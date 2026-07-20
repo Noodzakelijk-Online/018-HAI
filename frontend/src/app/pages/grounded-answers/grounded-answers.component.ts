@@ -8,6 +8,8 @@ import {
 } from '../../models/verification.model.interface';
 import { IResearchProbe, IResearchResult, IResearchStatus } from '../../models/research.model.interface';
 import { IRAGFlowResult, IRAGFlowStatus } from '../../models/ragflow.model.interface';
+import { IAnythingLLMResult, IAnythingLLMStatus } from '../../models/anythingllm.model.interface';
+import { AnythingLLMService } from '../../services/anythingllm.service';
 import { RAGFlowService } from '../../services/ragflow.service';
 import { ResearchService } from '../../services/research.service';
 import { VERIFICATION_SERVICE_TOKEN } from '../../services/verification/verification.service.token';
@@ -32,6 +34,10 @@ export class GroundedAnswersComponent implements OnInit {
   ragflowStatus?: IRAGFlowStatus;
   ragflowResults: IRAGFlowResult[] = [];
   selectedRAGFlowCandidate?: IRAGFlowResult;
+  anythingLLMLoading = false;
+  anythingLLMStatus?: IAnythingLLMStatus;
+  anythingLLMResults: IAnythingLLMResult[] = [];
+  selectedAnythingLLMCandidate?: IAnythingLLMResult;
 
   answerForm: FormGroup = this.fb.group({
     question: ['What did connected sources say about source-grounded task context?', [Validators.required]],
@@ -53,6 +59,7 @@ export class GroundedAnswersComponent implements OnInit {
     private verificationService: IVerificationService,
     private researchService: ResearchService,
     private ragflowService: RAGFlowService,
+    private anythingLLMService: AnythingLLMService,
     private notification: NzNotificationService,
     private route: ActivatedRoute,
     private router: Router
@@ -68,6 +75,7 @@ export class GroundedAnswersComponent implements OnInit {
     this.loadRuns();
     this.loadResearchStatus();
     this.loadRAGFlowStatus();
+    this.loadAnythingLLMStatus();
   }
 
   answer(): void {
@@ -89,9 +97,11 @@ export class GroundedAnswersComponent implements OnInit {
               {
                 sourceType: this.selectedRAGFlowCandidate
                   ? 'ragflow_candidate_evidence'
-                  : this.selectedResearchCandidate
-                    ? 'local_research'
-                    : 'manual',
+                  : this.selectedAnythingLLMCandidate
+                    ? 'anythingllm_candidate_evidence'
+                    : this.selectedResearchCandidate
+                      ? 'local_research'
+                      : 'manual',
                 sourceLabel: this.answerForm.value.evidenceLabel,
                 sourceUri: this.answerForm.value.evidenceUri,
                 snippet,
@@ -173,6 +183,7 @@ export class GroundedAnswersComponent implements OnInit {
   useResearchResult(result: IResearchResult): void {
     this.selectedResearchCandidate = result;
     this.selectedRAGFlowCandidate = undefined;
+    this.selectedAnythingLLMCandidate = undefined;
     this.answerForm.patchValue({
       evidenceLabel: result.title || 'Local research candidate',
       evidenceUri: result.sourceUri,
@@ -211,6 +222,7 @@ export class GroundedAnswersComponent implements OnInit {
   useRAGFlowResult(result: IRAGFlowResult): void {
     this.selectedRAGFlowCandidate = result;
     this.selectedResearchCandidate = undefined;
+    this.selectedAnythingLLMCandidate = undefined;
     this.answerForm.patchValue({
       evidenceLabel: result.documentName || `RAGFlow document ${result.documentId || 'candidate'}`,
       evidenceUri: this.ragflowEvidenceURI(result),
@@ -224,6 +236,50 @@ export class GroundedAnswersComponent implements OnInit {
   private ragflowEvidenceURI(result: IRAGFlowResult): string {
     const segment = (value?: string) => encodeURIComponent(value || 'unknown');
     return `ragflow://dataset/${segment(result.datasetId)}/document/${segment(result.documentId)}/chunk/${segment(result.chunkId)}`;
+  }
+
+  loadAnythingLLMStatus(): void {
+    this.anythingLLMService.status().subscribe({
+      next: (status) => (this.anythingLLMStatus = status),
+      error: () => (this.anythingLLMStatus = undefined),
+    });
+  }
+
+  searchAnythingLLM(workspaceSlug: string): void {
+    const query = String(this.answerForm.value.question || '').trim();
+    if (!query || !workspaceSlug || this.anythingLLMLoading) return;
+    this.anythingLLMLoading = true;
+    this.anythingLLMResults = [];
+    this.anythingLLMService.retrieve(query, workspaceSlug).subscribe({
+      next: (response) => {
+        this.anythingLLMLoading = false;
+        this.anythingLLMResults = response.results || [];
+      },
+      error: () => {
+        this.anythingLLMLoading = false;
+        this.notification.warning('Local AnythingLLM unavailable', 'Configure an approved local workspace allowlist and confirm local embeddings before retrieving candidate evidence. No evidence was added.');
+        this.loadAnythingLLMStatus();
+      },
+    });
+  }
+
+  useAnythingLLMResult(result: IAnythingLLMResult): void {
+    this.selectedAnythingLLMCandidate = result;
+    this.selectedRAGFlowCandidate = undefined;
+    this.selectedResearchCandidate = undefined;
+    this.answerForm.patchValue({
+      evidenceLabel: result.title || `AnythingLLM workspace ${result.workspaceSlug}`,
+      evidenceUri: this.anythingLLMEvidenceURI(result),
+      evidenceSnippet: result.content,
+      official: false,
+      primary: false,
+    });
+    this.notification.info('Candidate selected', 'This local AnythingLLM chunk is unverified candidate evidence. It cannot update memory or trigger actions by itself.');
+  }
+
+  private anythingLLMEvidenceURI(result: IAnythingLLMResult): string {
+    const segment = (value?: string) => encodeURIComponent(value || 'unknown');
+    return `anythingllm://workspace/${segment(result.workspaceSlug)}/chunk/${segment(result.chunkId)}`;
   }
 
   loadDetails(run: IVerificationRun): void {

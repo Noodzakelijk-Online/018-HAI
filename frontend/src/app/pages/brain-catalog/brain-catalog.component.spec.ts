@@ -24,15 +24,17 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const catalogService = { adoptionPlan: jasmine.createSpy('adoptionPlan'), revalidate: jasmine.createSpy('revalidate'), revalidateOSSInsightCollections: jasmine.createSpy('revalidateOSSInsightCollections'), discoverOSSInsightRepositories: jasmine.createSpy('discoverOSSInsightRepositories'), discoverReviewableOSSInsightRepositories: jasmine.createSpy('discoverReviewableOSSInsightRepositories'), revalidateOSSInsightDiscovery: jasmine.createSpy('revalidateOSSInsightDiscovery'), recommendCapabilities: jasmine.createSpy('recommendCapabilities') }
     const pursuitService = { create: jasmine.createSpy('create') }
     const ragflowService = { status: jasmine.createSpy('status') }
+    const anythingLLMService = { status: jasmine.createSpy('status') }
     const presidioService = { status: jasmine.createSpy('status') }
 		const langfuseService = { status: jasmine.createSpy('status'), probe: jasmine.createSpy('probe'), exportOperationalSnapshot: jasmine.createSpy('exportOperationalSnapshot') }
     const serenaService = { status: jasmine.createSpy('status') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
     return {
-      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, presidioService as any, langfuseService as any, serenaService as any, notification, router as any),
+      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, anythingLLMService as any, presidioService as any, langfuseService as any, serenaService as any, notification, router as any),
       pursuitService,
       ragflowService,
+      anythingLLMService,
       presidioService,
 			langfuseService,
       serenaService,
@@ -181,6 +183,16 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     expect(ragflowService.status).toHaveBeenCalled()
     expect(component.ragflowStatus?.configured).toBeFalse()
+  })
+
+  it('reads AnythingLLM bridge state only when the AnythingLLM profile is selected', () => {
+    const { component, anythingLLMService } = createComponent()
+    anythingLLMService.status.and.returnValue(of({ enabled: false, configured: false, provider: 'AnythingLLM', workspaceCount: 0, workspaceSlugs: [], localEmbeddingsConfirmed: false, capabilities: [], restrictions: ['no chat'], scope: 'candidate evidence only' }))
+
+    component.select({ ...candidate, id: 'anythingllm', name: 'AnythingLLM', status: 'integrated_profile' } as any)
+
+    expect(anythingLLMService.status).toHaveBeenCalled()
+    expect(component.anythingLLMStatus?.configured).toBeFalse()
   })
 
   it('reads Presidio bridge state only when the Presidio candidate is selected', () => {

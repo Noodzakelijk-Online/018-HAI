@@ -86,6 +86,20 @@
         </ng-container>
         <span *ngIf="ragflowStatusUnavailable">The local bridge status could not be read. No RAGFlow action was started.</span>
       </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'anythingllm'">
+        <strong>Local bridge state</strong>
+        <span *ngIf="loadingAnythingLLMStatus">Checking the configured local bridge.</span>
+        <ng-container *ngIf="anythingLLMStatus as status">
+          <span>{{ status.configured ? 'Configured for fixed-workspace candidate-evidence retrieval.' : 'Not configured. HAI cannot contact or query AnythingLLM.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>{{ status.workspaceCount }} approved workspace{{ status.workspaceCount === 1 ? '' : 's' }}.</small>
+          <small>Local embeddings {{ status.localEmbeddingsConfirmed ? 'confirmed by the operator' : 'not confirmed' }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="anythingLLMStatusUnavailable">The local bridge status could not be read. No AnythingLLM action was started.</span>
+      </div>
       <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'serena'">
         <strong>Local bridge state</strong>
         <span *ngIf="loadingSerenaStatus">Checking the configured local bridge.</span>

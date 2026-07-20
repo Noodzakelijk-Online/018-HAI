@@ -504,6 +504,17 @@ permissions, provenance, or evidence quality. Keep RAGFlow's optional agent
 and code-executor features disabled and complete the capacity, retention, and
 provenance review described in the catalog before enabling this bridge.
 
+Optional AnythingLLM retrieval is also separate and operator-managed. Set
+`HAI_ANYTHINGLLM_ENABLED=true`, a loopback, `host.docker.internal`,
+`anythingllm`, or private-network `HAI_ANYTHINGLLM_BASE_URL`, a local API key,
+the comma-separated `HAI_ANYTHINGLLM_WORKSPACE_SLUGS` that HAI may query, and
+`HAI_ANYTHINGLLM_LOCAL_EMBEDDINGS_CONFIRMED=true` only after checking those
+workspaces use local embeddings. The bridge calls only the upstream workspace
+vector-search endpoint and exposes candidate chunks in **Grounded Answers**.
+It never opens chat, sends attachments, reads history, ingests/deletes files,
+changes workspace settings, or calls AnythingLLM agents/tools. Results are not
+HAI memory, facts, or execution authority.
+
 Optional Serena semantic code context is a separate, owner-started local MCP
 service. Start Serena in Streamable HTTP mode with one explicit project, then
 set `HAI_SERENA_ENABLED=true`, a loopback or

@@ -14,6 +14,7 @@ import (
 	"automation-hub-backend/internal/agentcycle"
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
+	"automation-hub-backend/internal/anythingllm"
 	"automation-hub-backend/internal/assistant"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
@@ -101,6 +102,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
 		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
 		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
+		initializeAnythingLLMRoutes(v1, anythingllm.NewHandler(anythingllm.DefaultService()))
 		initializeSerenaRoutes(v1, serena.NewHandler(serena.DefaultService()))
 		initializePresidioRoutes(v1, presidio.NewHandler(presidio.DefaultService()))
 		initializeEvidentlyRoutes(v1, evidently.NewHandler(evidently.DefaultService()))
@@ -481,6 +483,16 @@ func initializeResearchRoutes(apiVersion *gin.RouterGroup, handler *research.Han
 
 func initializeRAGFlowRoutes(apiVersion *gin.RouterGroup, handler *ragflow.Handler) {
 	routes := apiVersion.Group("/ragflow")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/retrieve", requirePermission(rbac.PermWrite), handler.Retrieve)
+	}
+}
+
+func initializeAnythingLLMRoutes(apiVersion *gin.RouterGroup, handler *anythingllm.Handler) {
+	routes := apiVersion.Group("/anythingllm")
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)

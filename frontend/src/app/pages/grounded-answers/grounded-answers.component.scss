@@ -49,6 +49,23 @@
   margin-top: 12px;
 }
 
+.research-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  select {
+    background: var(--hai-surface, #fff);
+    border: 1px solid var(--hai-border, #e5e7eb);
+    border-radius: 4px;
+    color: var(--hai-text, #101828);
+    min-height: 32px;
+    min-width: 220px;
+    padding: 0 8px;
+  }
+}
+
 .research-result {
   align-items: flex-start;
   border-top: 1px solid var(--hai-border, #e5e7eb);

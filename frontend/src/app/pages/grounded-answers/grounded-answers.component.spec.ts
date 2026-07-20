@@ -8,6 +8,7 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     const verificationService = jasmine.createSpyObj('IVerificationService', ['answer', 'runs', 'runDetails'])
     const researchService = jasmine.createSpyObj('ResearchService', ['status', 'probe', 'search'])
     const ragflowService = jasmine.createSpyObj('RAGFlowService', ['status', 'retrieve'])
+    const anythingLLMService = jasmine.createSpyObj('AnythingLLMService', ['status', 'retrieve'])
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'warning', 'info'])
     const route = { snapshot: { queryParamMap: convertToParamMap({}) } }
     const router = jasmine.createSpyObj('Router', ['navigate'])
@@ -16,12 +17,14 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     researchService.status.and.returnValue(of({ configured: false, provider: 'SearXNG', scope: 'disabled' }))
     researchService.probe.and.returnValue(of({ reachable: true, checkedAt: '2026-07-20T12:00:00Z', scope: 'endpoint only' }))
     ragflowService.status.and.returnValue(of({ enabled: true, configured: true, provider: 'RAGFlow', datasetCount: 1, capabilities: [], restrictions: [], scope: 'candidate evidence only' }))
+    anythingLLMService.status.and.returnValue(of({ enabled: true, configured: true, provider: 'AnythingLLM', workspaceCount: 1, workspaceSlugs: ['legal-workspace'], localEmbeddingsConfirmed: true, capabilities: [], restrictions: [], scope: 'candidate evidence only' }))
 
     return {
-      component: new GroundedAnswersComponent(new FormBuilder(), verificationService, researchService, ragflowService, notification, route as any, router),
+      component: new GroundedAnswersComponent(new FormBuilder(), verificationService, researchService, ragflowService, anythingLLMService, notification, route as any, router),
       verificationService,
       researchService,
       ragflowService,
+      anythingLLMService,
       notification,
     }
   }
@@ -59,6 +62,28 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     }))
   })
 
+  it('attaches a selected AnythingLLM chunk as unverified candidate evidence', () => {
+    const { component, verificationService } = createComponent()
+    component.useAnythingLLMResult({
+      chunkId: 'chunk 1',
+      workspaceSlug: 'legal-workspace',
+      title: 'Letter.pdf',
+      content: 'The hearing is scheduled for 9 September.',
+    })
+
+    component.answer()
+
+    expect(verificationService.answer).toHaveBeenCalledWith(jasmine.objectContaining({
+      externalEvidence: [jasmine.objectContaining({
+        sourceType: 'anythingllm_candidate_evidence',
+        sourceUri: 'anythingllm://workspace/legal-workspace/chunk/chunk%201',
+        snippet: 'The hearing is scheduled for 9 September.',
+        official: false,
+        primary: false,
+      })],
+    }))
+  })
+
   it('does not retain a RAGFlow selection after an explicit public-source selection', () => {
     const { component, verificationService } = createComponent()
     component.useRAGFlowResult({ chunkId: 'chunk-1', datasetId: 'documents', content: 'Local candidate.' })
@@ -69,6 +94,16 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     expect(verificationService.answer).toHaveBeenCalledWith(jasmine.objectContaining({
       externalEvidence: [jasmine.objectContaining({ sourceType: 'local_research' })],
     }))
+  })
+
+  it('reads AnythingLLM configuration without retrieving evidence', () => {
+    const { component, anythingLLMService } = createComponent()
+
+    component.ngOnInit()
+
+    expect(anythingLLMService.status).toHaveBeenCalled()
+    expect(anythingLLMService.retrieve).not.toHaveBeenCalled()
+    expect(component.anythingLLMStatus?.configured).toBeTrue()
   })
 
   it('probes the configured local SearXNG endpoint without searching for evidence', () => {

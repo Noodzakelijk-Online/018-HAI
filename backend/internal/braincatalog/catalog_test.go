@@ -18,12 +18,12 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "livekit-agents"} {
+	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "livekit-agents"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "evidently", "ragflow", "serena", "odoo"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "evidently", "ragflow", "anythingllm", "serena", "odoo"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must expose its implemented local profile without claiming that it is configured: %#v", id, entry)
 		}
@@ -311,18 +311,18 @@ func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
 	}
 }
 
-func TestRecommendAnythingLLMWorkspaceStaysReviewFirst(t *testing.T) {
+func TestRecommendAnythingLLMWorkspaceUsesTheRecordedLocalEvidenceBoundary(t *testing.T) {
 	recommendations := Recommend("research", "Create a local RAG workspace in AnythingLLM for approved document research")
 	for _, recommendation := range recommendations {
 		if recommendation.ID != "anythingllm" {
 			continue
 		}
-		if recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
-			t.Fatalf("AnythingLLM must remain a review-first candidate: %#v", recommendation)
+		if recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+			t.Fatalf("AnythingLLM must surface as a guarded local evidence profile: %#v", recommendation)
 		}
 		return
 	}
-	t.Fatalf("AnythingLLM workspace request should surface the local workspace candidate: %#v", recommendations)
+	t.Fatalf("AnythingLLM workspace request should surface the local workspace profile: %#v", recommendations)
 }
 
 func TestRecommendAdditionalOSSInsightProfilesKeepTheirRecordedBoundaries(t *testing.T) {
