@@ -488,12 +488,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "openhands", Name: "OpenHands", UpstreamURL: "https://github.com/OpenHands/OpenHands", RepositoryAliases: []string{"All-Hands-AI/OpenHands"}, SourceCatalogURL: sourceCatalogURL,
-		Status: StatusCandidate, Category: "sandboxed development agent", IntegrationMode: "operator-configured container or service adapter",
-		Capabilities: []string{"coding agent", "sandboxed workspace", "skills", "MCP integration"}, RecommendedFor: []string{"coding", "repository work", "sandboxed task execution"},
+		Status: StatusIntegrated, Category: "external coding-agent readiness adapter", IntegrationMode: "integrated health-only endpoint adapter",
+		Capabilities: []string{"configured endpoint health probe", "coding-agent setup requirements", "operator-reviewed deployment boundary"}, RecommendedFor: []string{"coding-agent readiness review", "isolated workspace planning", "operator-controlled runtime health"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Run OpenHands in an isolated local container, define a workspace and network allowlist, then complete a real approval-gated adapter review.",
-		Rationale:  "Actively released development-agent project, but it can modify workspaces and invoke tools, so HAI keeps it disabled pending a specific adapter and operator verification.",
-		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository and release activity checked on 2026-07-19.",
+		Activation: "Set OPENHANDS_BASE_URL and an explicit RUNTIME_LAB_ALLOWED_HOSTS entry for an operator-managed health route, then use Runtime Lab to probe it. This adapter only verifies configured endpoint reachability. HAI cannot start OpenHands agents, select a backend/model, read or mount a workspace, call tools, create automations, or execute a task through it.",
+		Rationale:  "The health-only adapter provides an auditable readiness boundary for an operator-managed OpenHands deployment while HAI keeps workspace scope, network access, task transport, execution, verification, and approval authority.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official OpenHands repository reviewed on 2026-07-20: the project has moved from All-Hands-AI/OpenHands and documents Agent Canvas/Agent Server deployment with explicit warnings that unsandboxed installation can expose the host filesystem. HAI implements only a disabled-by-default, allowlisted GET health probe; no OpenHands service, workspace, agent, model, tool, credential, or automation is configured by HAI.",
 	},
 	{
 		ID: "crewai", Name: "CrewAI", UpstreamURL: "https://github.com/crewAIInc/crewAI", SourceCatalogURL: sourceCatalogURL,

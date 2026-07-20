@@ -761,12 +761,15 @@ retention policy remain operator-managed.
 
 ### Agent runtimes
 
-Hermes, Odysseus, and OpenClaw are optional controlled adapters. HAI can inspect
-their configured capabilities and run a bounded approved task only after the
-operator installs the upstream runtime, configures scoped credentials/workspace
-state, enables the adapter, and validates it. HAI does not bundle these tools,
-send messages through them, control browsers, create cron jobs, or bypass their
-or HAI's security boundaries.
+Hermes, Odysseus, OpenClaw, and OpenHands are optional controlled runtime
+profiles. Runtime Lab can perform an allowlisted health probe for a configured
+endpoint; that probe is not task execution or a trust grant. HAI cannot start
+an OpenHands agent, access its workspace, call tools, or create automations
+through the health-only profile. Any bounded approved task still requires an
+operator-installed upstream runtime, scoped credentials/workspace state, a
+reviewed task transport, and separate execution verification. HAI does not
+bundle these tools, send messages through them, control browsers, create cron
+jobs, or bypass their or HAI's security boundaries.
 
 API, script, and Docker adapters have the same default posture: disabled until
 explicitly allowlisted and configured. The emergency stop blocks runtime
