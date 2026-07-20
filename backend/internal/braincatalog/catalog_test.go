@@ -18,12 +18,12 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "swe-agent", "openlit", "opik", "deepteam", "pipecat", "livekit-agents"} {
+	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "swe-agent", "openlit", "opik", "pipecat", "livekit-agents"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "evidently", "ragflow", "anythingllm", "serena", "odoo", "cloudquery", "openspec"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "deepteam", "evidently", "ragflow", "anythingllm", "serena", "odoo", "cloudquery", "openspec"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must expose its implemented local profile without claiming that it is configured: %#v", id, entry)
 		}
@@ -422,11 +422,14 @@ func TestRecommendLiveGapProfilesKeepTheirRecordedBoundaries(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"pipecat", "deepteam"} {
+	for _, id := range []string{"pipecat"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first live-gap candidate: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["deepteam"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("DeepTeam must surface as an integrated, configuration-gated synthetic safety profile: %#v", recommendations)
 	}
 	if recommendation, ok := ids["cloudquery"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
 		t.Fatalf("CloudQuery must surface as an integrated, configuration-gated local summary profile: %#v", recommendations)

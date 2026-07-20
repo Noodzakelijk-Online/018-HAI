@@ -201,6 +201,9 @@ services:
       HAI_PROMPTFOO_ENABLED: ${HAI_PROMPTFOO_ENABLED:-false}
       HAI_PROMPTFOO_BASE_URL: ${HAI_PROMPTFOO_BASE_URL:-http://promptfoo-runner:8080}
       HAI_PROMPTFOO_TIMEOUT_SECONDS: ${HAI_PROMPTFOO_TIMEOUT_SECONDS:-130}
+      HAI_DEEPTEAM_ENABLED: ${HAI_DEEPTEAM_ENABLED:-false}
+      HAI_DEEPTEAM_BASE_URL: ${HAI_DEEPTEAM_BASE_URL:-http://deepteam-runner:8080}
+      HAI_DEEPTEAM_TIMEOUT_SECONDS: ${HAI_DEEPTEAM_TIMEOUT_SECONDS:-180}
       HAI_WHISPER_CPP_ENABLED: ${HAI_WHISPER_CPP_ENABLED:-false}
       HAI_WHISPER_CPP_BASE_URL: ${HAI_WHISPER_CPP_BASE_URL:-http://whispercpp-runner:8080}
       HAI_WHISPER_CPP_TIMEOUT_SECONDS: ${HAI_WHISPER_CPP_TIMEOUT_SECONDS:-300}
@@ -386,6 +389,7 @@ services:
       - guardrails-internal
       - lm-eval-internal
       - promptfoo-internal
+      - deepteam-internal
       - whispercpp-internal
       - pydantic-ai-internal
       - fastmcp-internal
@@ -677,6 +681,45 @@ services:
       start_period: 30s
     networks:
       - promptfoo-internal
+
+  deepteam-runner:
+    build:
+      context: ./services/deepteam-runner
+    profiles: ["deepteam-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_DEEPTEAM_MODEL_ID: ${HAI_DEEPTEAM_MODEL_ID:-}
+      HAI_DEEPTEAM_MODEL_BASE_URL: ${HAI_DEEPTEAM_MODEL_BASE_URL:-}
+      HAI_DEEPTEAM_MODEL_API_KEY: ${HAI_DEEPTEAM_MODEL_API_KEY:-}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    mem_limit: 768m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - deepteam-internal
 
   whispercpp-runner:
     build:
@@ -991,6 +1034,10 @@ networks:
     internal: true
   promptfoo-internal:
     name: 018-hai-promptfoo-internal
+    driver: bridge
+    internal: true
+  deepteam-internal:
+    name: 018-hai-deepteam-internal
     driver: bridge
     internal: true
   whispercpp-internal:

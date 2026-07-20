@@ -779,15 +779,15 @@ var entries = []Entry{
 	},
 	{
 		ID: "deepteam", Name: "DeepTeam", UpstreamURL: "https://github.com/confident-ai/deepteam", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10138/repos/", SourceCollection: "AI Red Teaming",
-		Status: StatusCandidate, Category: "contained AI red-team evaluation", IntegrationMode: "reviewed no-write local evaluation adapter",
-		Capabilities: []string{"agent red teaming", "attack scenario generation", "safety evaluation", "reporting patterns"}, RecommendedFor: []string{"redacted safety regression", "prompt-injection evaluation", "agent policy tests"},
+		Status: StatusIntegrated, Category: "local synthetic agentic safety regression", IntegrationMode: "integrated opt-in isolated local evaluation runner",
+		Capabilities: []string{"agentic vulnerability simulation", "prompt-leakage regression", "excessive-agency regression", "aggregate safety evidence"}, RecommendedFor: []string{"local model safety regression", "synthetic refusal-boundary review", "agentic safety harness review"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review an isolated test-only runner with approved synthetic or redacted fixtures, local or explicitly approved providers, strict rate and cost limits, no external target actions, and report-only output. It cannot access connected accounts, real secrets, or execute discovered attack paths.",
-		Rationale:  "DeepTeam is a maintained Apache-2.0 candidate for repeatable safety regression testing that can strengthen HAI's verification plane without granting a test harness any operational authority.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Red Teaming listing and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no DeepTeam dependency or evaluation job is installed by HAI.",
+		Activation: "Set a reviewed local OpenAI-compatible model endpoint and start the `deepteam-evaluation` Compose profile. HAI runs exactly one shipped synthetic target with two fixed vulnerability types and one bounded attack method. It cannot inspect HAI, target a real agent, accept user test data, call a runtime, use a cloud model, persist raw cases, upload an assessment, or change HAI policy. Any real-system red-team plan needs a separately approved, redacted, isolated evaluation design.",
+		Rationale:  "The integration provides a narrow local regression harness for agentic safety patterns while HAI retains all production workflow, data, provider, verification, approval, runtime, and audit authority.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official DeepTeam repository and package metadata reviewed on 2026-07-20: Apache-2.0, deepteam 1.0.7 supports local model callbacks, vulnerability/attack selection, and optional assessment upload. HAI pins 1.0.7 in an opt-in internal runner, calls RedTeamer with upload disabled, clears proxy settings, and returns fixed-suite aggregate metadata only. No real HAI target, account, source, runtime, model route, or action is configured.",
 		ControlMappings: []ControlMapping{
-			{SourcePattern: "red-team scenario", HAIControl: "synthetic fixture and provider policy", Boundary: "tests cannot use connected sources or real accounts"},
-			{SourcePattern: "safety report", HAIControl: "verification review queue", Boundary: "a finding creates review work, not an autonomous remediation"},
+			{SourcePattern: "agentic attack simulation and risk score", HAIControl: "verification and safety review evidence", Boundary: "synthetic aggregate evidence cannot mark production work verified or alter a routing, policy, approval, or execution decision"},
+			{SourcePattern: "assessment upload and generated attacks", HAIControl: "local runner containment and source privacy boundary", Boundary: "upstream assessment upload is disabled; raw attacks and generations are not returned, persisted, or exported"},
 		},
 	},
 	{

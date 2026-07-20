@@ -656,6 +656,21 @@ local model are configured. It clears inherited proxy settings before spawning
 Promptfoo and runs as an unprivileged container user; it still does not prove
 the local model endpoint, the six fixtures, or any real-world task is safe.
 
+Optional DeepTeam agentic-safety evidence uses the isolated
+`deepteam-evaluation` Compose profile. Set `HAI_DEEPTEAM_ENABLED=true`,
+configure `HAI_DEEPTEAM_MODEL_ID` and `HAI_DEEPTEAM_MODEL_BASE_URL` for one
+operator-reviewed local OpenAI-compatible endpoint, then run
+`docker compose --profile deepteam-evaluation up --build`. HAI can invoke only
+a fixed synthetic target with two bounded vulnerability categories
+(instruction leakage and excessive autonomy) and one prompt-injection method.
+It returns aggregate score, count, duration, and digest metadata only. It does
+not inspect or call a HAI workflow, runtime, source, account, secret, action,
+or connected model route, and it retains or exports no raw attacks, model
+generations, or case rows. The runner prevents DeepTeam assessment upload,
+clears inherited proxy settings, runs unprivileged without a public port, and
+can reach only its configured local model endpoint. A passing result is
+synthetic regression evidence, not a safety claim about production HAI.
+
 Optional local Langfuse observability uses an operator-hosted Langfuse instance,
 not Langfuse Cloud. Set `HAI_LANGFUSE_ENABLED=true`, a loopback,
 `host.docker.internal`, `langfuse`, `langfuse-web`, or private-network
