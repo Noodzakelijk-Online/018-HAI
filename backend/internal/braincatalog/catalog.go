@@ -223,16 +223,16 @@ var entries = []Entry{
 	},
 	{
 		ID: "presidio", Name: "Presidio", UpstreamURL: "https://github.com/data-privacy-stack/presidio", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
-		Status: StatusCandidate, Category: "sensitive-data detection and redaction", IntegrationMode: "contained local redaction adapter",
+		Status: StatusIntegrated, Category: "sensitive-data detection and redaction", IntegrationMode: "integrated opt-in local redaction adapter",
 		Capabilities: []string{"PII detection", "redaction", "masking", "anonymisation"}, RecommendedFor: []string{"secret redaction", "source-import privacy checks", "safe audit previews"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "HAI ships a disabled-by-default local Analyzer bridge for bounded, manually submitted text and explicit language/entity allowlists. Before enabling it, review false positives, local model/language coverage, source retention, and capacity. The bridge returns metadata only; it cannot anonymize, delete source records, change approval status, or conceal original evidence from an authorised owner.",
-		Rationale:  "Presidio is a maintained candidate for strengthening HAI's existing deterministic privacy boundary with a local PII-detection second pass without introducing a second data authority.",
+		Rationale:  "HAI now exposes Presidio through a bounded local PII-detection bridge that strengthens its deterministic privacy boundary without introducing a second data authority.",
 		VerifiedAt: "2026-07-20", VerificationNote: "OSS Insight AI Safety & Alignment listing and the current data-privacy-stack/presidio upstream were checked on 2026-07-20. The project has moved from the Microsoft GitHub namespace, is MIT licensed, and explicitly warns that automated detection is not complete. HAI has a disabled local Analyzer bridge but does not install or configure a Presidio service.",
 	},
 	{
 		ID: "guardrails-ai", Name: "Guardrails AI", UpstreamURL: "https://github.com/guardrails-ai/guardrails", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
-		Status: StatusCandidate, Category: "structured-output validation", IntegrationMode: "opt-in internal fixed-schema validation bridge",
+		Status: StatusIntegrated, Category: "structured-output validation", IntegrationMode: "integrated opt-in internal fixed-schema validation bridge",
 		Capabilities: []string{"schema validation", "output validators", "retry signals", "structured extraction checks"}, RecommendedFor: []string{"structured extraction", "planning validation", "grounded-output review"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "HAI ships a disabled internal runner that validates one bounded redacted action_proposal JSON contract through Guardrails AI's Pydantic schema path. Enable it only with the local validation profile; no Hub validator download, LLM call, retry, persistence, execution, policy change, or approval is available.",
@@ -241,7 +241,7 @@ var entries = []Entry{
 	},
 	{
 		ID: "lm-eval-harness", Name: "LM Evaluation Harness", UpstreamURL: "https://github.com/EleutherAI/lm-evaluation-harness", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",
-		Status: StatusCandidate, Category: "offline model evaluation", IntegrationMode: "opt-in internal fixed-suite local benchmark runner",
+		Status: StatusIntegrated, Category: "offline model evaluation", IntegrationMode: "integrated opt-in internal fixed-suite local benchmark runner",
 		Capabilities: []string{"benchmark suites", "few-shot evaluation", "repeatable model comparison", "result artifacts"}, RecommendedFor: []string{"local model comparison", "routing regression", "capability baselines"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "HAI ships a disabled local runner for one preconfigured local OpenAI-compatible model and a six-case synthetic suite. Enable the model-evaluation profile only after reviewing the named local endpoint, fixture provenance, resource limits, and no-production-data rule. Results can inform an operator review but cannot select a model, spend budget, or change HAI routing automatically.",
@@ -412,7 +412,7 @@ var entries = []Entry{
 	},
 	{
 		ID: "promptfoo", Name: "Promptfoo", UpstreamURL: "https://github.com/promptfoo/promptfoo", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
-		Status: StatusCandidate, Category: "LLM safety regression", IntegrationMode: "opt-in internal fixed-suite local evaluation bridge",
+		Status: StatusIntegrated, Category: "LLM safety regression", IntegrationMode: "integrated opt-in internal fixed-suite local evaluation bridge",
 		Capabilities: []string{"prompt regression testing", "provider comparison", "synthetic high-risk action regression"}, RecommendedFor: []string{"local model safety regression", "prompt-injection regression checks", "evaluation design"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Enable only the contained `safety-evaluation` profile after reviewing one local OpenAI-compatible endpoint and its model provenance. HAI invokes a fixed six-case synthetic suite; it accepts no caller-provided provider, model, endpoint, prompt, command, source, or data. Review aggregate evidence before any separate routing or policy decision.",
@@ -862,7 +862,7 @@ var entries = []Entry{
 	},
 	{
 		ID: "evidently", Name: "Evidently", UpstreamURL: "https://github.com/evidentlyai/evidently", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
-		Status: StatusCandidate, Category: "local AI quality evaluation and monitoring", IntegrationMode: "opt-in internal report-only evaluation bridge",
+		Status: StatusIntegrated, Category: "local AI quality evaluation and monitoring", IntegrationMode: "integrated opt-in internal report-only evaluation bridge",
 		Capabilities: []string{"LLM evaluation", "RAG evaluation", "data-quality checks", "drift detection", "pass/fail test suites"}, RecommendedFor: []string{"source-grounded answer regression", "retrieval evaluation", "routing quality review", "input-quality monitoring"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "HAI includes a disabled internal report runner. Enable only the local evaluation Compose profile after reviewing synthetic/redacted fixture provenance, capacity, retention, and result review. The bridge rejects detected personal data and secrets, returns metadata only, and cannot mark an answer verified, change routing or policy, enable a provider, or execute an action.",
@@ -914,7 +914,7 @@ var entries = []Entry{
 	},
 	{
 		ID: "ragflow", Name: "RAGFlow", UpstreamURL: "https://github.com/infiniflow/ragflow", SourceCatalogURL: "https://github.com/infiniflow/ragflow", SourceCollection: "user-provided RAG candidate",
-		Status: StatusCandidate, Category: "source-linked document retrieval and parsing", IntegrationMode: "reviewed, local document-ingestion and retrieval bridge",
+		Status: StatusIntegrated, Category: "source-linked document retrieval and parsing", IntegrationMode: "integrated opt-in local document retrieval bridge",
 		Capabilities: []string{"document parsing", "retrieval and reranking", "grounded citations", "chunk inspection", "multimodal document intake"}, RecommendedFor: []string{"document-heavy research", "evidence-linked retrieval evaluation", "complex PDF and office-document parsing"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "First measure a real document parsing or retrieval gap against HAI's existing source-ingestion path. Then review a separately deployed local instance with a named source-folder allowlist, explicit connector scopes, local model endpoints, retention/deletion/export controls, citation and chunk provenance, CPU/RAM/disk limits, and every code-execution feature disabled. Imported text remains an external retrieval index: it cannot become HAI memory, create facts, send data, or call tools without HAI verification and approval.",

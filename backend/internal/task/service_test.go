@@ -112,8 +112,8 @@ func TestPlanAddsReviewedCapabilityMatchesWithoutActivatingThem(t *testing.T) {
 	if !hasCapabilityRecommendation(plan.ToolDecision.CapabilityRecommendations, "lm-eval-harness") {
 		t.Fatalf("expected ranked local evaluation recommendation: %#v", plan.ToolDecision.CapabilityRecommendations)
 	}
-	if !containsToolDecisionItem(plan.ToolDecision.SkippedTools, "agent-catalog.lm-eval-harness: operator-configured adapter required") {
-		t.Fatalf("candidate recommendation must remain unavailable: %#v", plan.ToolDecision)
+	if !containsToolDecisionItem(plan.ToolDecision.SkippedTools, "agent-catalog.lm-eval-harness: integrated profile requires local configuration and live health") {
+		t.Fatalf("integrated profile must remain unavailable until its local runner is configured and healthy: %#v", plan.ToolDecision)
 	}
 	for _, selected := range plan.ToolDecision.SelectedTools {
 		if strings.HasPrefix(selected, "agent-catalog.") {

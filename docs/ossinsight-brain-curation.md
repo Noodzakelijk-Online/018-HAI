@@ -52,14 +52,14 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 
 | Project | Plane | Disposition | Required first gate |
 | --- | --- | --- | --- |
-| Evidently | Verification and observability | Candidate, local bridge implemented | Opt-in internal report runner for bounded synthetic/redacted fixtures; metadata-only output and no default egress. |
-| Guardrails AI | Verification and safety | Candidate, local bridge implemented | Opt-in internal fixed-schema action-proposal validator; metadata-only output, no model call, Hub download, persistence, approval, or execution. |
-| LM Evaluation Harness | Model evaluation | Candidate, local bridge implemented | Opt-in fixed six-case synthetic local suite against one preconfigured local OpenAI-compatible model; aggregate metadata only and manual review required. |
+| Evidently | Verification and observability | Integrated, opt-in | Internal report runner for bounded synthetic/redacted fixtures; metadata-only output and no default egress. |
+| Guardrails AI | Verification and safety | Integrated, opt-in | Internal fixed-schema action-proposal validator; metadata-only output, no model call, Hub download, persistence, approval, or execution. |
+| LM Evaluation Harness | Model evaluation | Integrated, opt-in | Fixed six-case synthetic local suite against one preconfigured local OpenAI-compatible model; aggregate metadata only and manual review required. |
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
 | mistral.rs | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, approved model and resource configuration, live probe, and disabled upstream agentic tools. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
-| RAGFlow | Memory and source intake | Candidate, local bridge implemented | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, disabled code executor, and fixed-dataset local retrieval configuration. |
-| Promptfoo | Model safety regression | Candidate, local bridge implemented | One reviewed local model endpoint, fixed synthetic suite, no external providers or telemetry, no production data, aggregate-only report, and human review before any routing or policy decision. |
+| RAGFlow | Memory and source intake | Integrated, opt-in | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, disabled code executor, and fixed-dataset local retrieval configuration. |
+| Promptfoo | Model safety regression | Integrated, opt-in | One reviewed local model endpoint, fixed synthetic suite, no external providers or telemetry, no production data, aggregate-only report, and human review before any routing or policy decision. |
 
 RAGFlow is deliberately not presented as HAI memory. Its parsed chunks and
 citations are candidate evidence that must pass HAI's source-grounding,

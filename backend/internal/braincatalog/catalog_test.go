@@ -18,9 +18,14 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "deepeval", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "evidently", "livekit-agents", "ragflow", "serena"} {
+	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "livekit-agents", "serena"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
+		}
+	}
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "evidently", "ragflow"} {
+		if entry, ok := EntryByID(id); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
+			t.Fatalf("%s must expose its implemented local profile without claiming that it is configured: %#v", id, entry)
 		}
 	}
 	if entry, ok := EntryByID("langfuse"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
@@ -383,11 +388,14 @@ func TestRecommendSafetyEvaluationAndTelemetryCandidatesStayReviewFirst(t *testi
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness"} {
 		recommendation, ok := ids[id]
-		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
-			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
+		if !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+			t.Fatalf("%s must remain an integrated but configuration-gated profile: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["openllmetry"]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
+		t.Fatalf("OpenLLMetry must remain a review-first candidate: %#v", recommendations)
 	}
 }
 
