@@ -536,12 +536,14 @@ disabled by default. Set `HAI_A2A_BRIDGE_ENABLED=true`,
 `HAI_A2A_BRIDGE_URL` such as `http://127.0.0.1/api/v1/a2a`. A reviewed local
 peer can then retrieve the capability card at
 `http://127.0.0.1/.well-known/agent-card.json` and make authenticated
-JSON-RPC `tasks/send` calls. HAI accepts a short text request and returns one
-non-executable planning draft only. It cannot create a task, refresh sources,
-persist an attempt, request approval, execute tools, invoke an agent, expose
-source or memory context, or discover peers. A returned A2A task means only
-the planning response is complete; it is not a HAI workflow or completion
-signal.
+JSON-RPC `SendMessage` calls with `A2A-Version: 1.0`. HAI accepts only one
+standalone `ROLE_USER` text message with a `messageId` and returns one
+non-executable planning proposal artifact. This is a deliberately restricted
+A2A 1.0-shaped profile, not a full A2A task-lifecycle server: it cannot create
+or persist a HAI task, poll a bridge task, refresh sources, request approval,
+execute tools, invoke an agent, expose source or memory context, or discover
+peers. A returned A2A task means only the planning response is complete; it is
+not a HAI workflow or completion signal.
 
 Optional Presidio analysis is a separate, operator-managed local deployment.
 Set `HAI_PRESIDIO_ENABLED=true`, a loopback, `host.docker.internal`, `presidio`,

@@ -47,23 +47,28 @@ type Status struct {
 }
 
 type AgentCard struct {
-	ProtocolVersion      string                `json:"protocolVersion"`
 	Name                 string                `json:"name"`
 	Description          string                `json:"description"`
-	URL                  string                `json:"url"`
+	SupportedInterfaces  []AgentInterface      `json:"supportedInterfaces"`
 	Version              string                `json:"version"`
 	Capabilities         AgentCapabilities     `json:"capabilities"`
 	DefaultInputModes    []string              `json:"defaultInputModes"`
 	DefaultOutputModes   []string              `json:"defaultOutputModes"`
 	Skills               []AgentSkill          `json:"skills"`
 	SecuritySchemes      map[string]any        `json:"securitySchemes"`
-	SecurityRequirements []map[string][]string `json:"security"`
+	SecurityRequirements []map[string][]string `json:"securityRequirements"`
+}
+
+type AgentInterface struct {
+	URL             string `json:"url"`
+	ProtocolBinding string `json:"protocolBinding"`
+	ProtocolVersion string `json:"protocolVersion"`
 }
 
 type AgentCapabilities struct {
-	Streaming              bool `json:"streaming"`
-	PushNotifications      bool `json:"pushNotifications"`
-	StateTransitionHistory bool `json:"stateTransitionHistory"`
+	Streaming         bool `json:"streaming"`
+	PushNotifications bool `json:"pushNotifications"`
+	ExtendedAgentCard bool `json:"extendedAgentCard"`
 }
 
 type AgentSkill struct {
@@ -143,15 +148,15 @@ func (s *Service) Status() Status {
 		ConfigError: s.err,
 		Capabilities: []string{
 			"authenticated non-executable planning drafts",
-			"A2A Agent Card capability advertisement",
+			"A2A 1.0-shaped Agent Card and SendMessage envelope",
 			"one configured local peer token and owner scope",
 		},
 		Restrictions: []string{
 			"no workflow, task, source, memory, approval, policy, or runtime mutation",
 			"no source evidence, memory records, credentials, raw audit records, files, or tool inventory exposure",
-			"no streaming, push notifications, peer discovery, remote URL, or external-agent invocation",
+			"no streaming, task polling, push notifications, peer discovery, remote URL, or external-agent invocation",
 		},
-		Scope: "A configured local peer can request a bounded planning draft for one configured owner. HAI retains the authoritative workflow, approval, execution, source, memory, verification, and audit paths.",
+		Scope: "A configured local peer can request a bounded SendMessage planning draft for one configured owner. This limited endpoint is not a full A2A task-lifecycle server; HAI retains the authoritative workflow, approval, execution, source, memory, verification, and audit paths.",
 	}
 }
 
@@ -167,12 +172,13 @@ func (s *Service) AgentCard() (*AgentCard, error) {
 		return nil, ErrUnavailable
 	}
 	return &AgentCard{
-		ProtocolVersion:    "1.0",
-		Name:               "HAI controlled planning",
-		Description:        "Local, token-authenticated planning drafts only. This agent cannot execute, approve, mutate, or disclose HAI internals.",
-		URL:                s.config.URL,
-		Version:            "1.0.0",
-		Capabilities:       AgentCapabilities{Streaming: false, PushNotifications: false, StateTransitionHistory: false},
+		Name:        "HAI controlled planning",
+		Description: "Local, token-authenticated SendMessage planning drafts only. This limited bridge cannot execute, approve, mutate, or disclose HAI internals.",
+		SupportedInterfaces: []AgentInterface{{
+			URL: s.config.URL, ProtocolBinding: "JSONRPC", ProtocolVersion: "1.0",
+		}},
+		Version:            "1.0.1",
+		Capabilities:       AgentCapabilities{Streaming: false, PushNotifications: false, ExtendedAgentCard: false},
 		DefaultInputModes:  []string{"text/plain"},
 		DefaultOutputModes: []string{"application/json"},
 		Skills: []AgentSkill{{
@@ -182,7 +188,7 @@ func (s *Service) AgentCard() (*AgentCard, error) {
 			Examples:    []string{"Plan how to prepare a source-backed response without sending it."},
 		}},
 		SecuritySchemes: map[string]any{
-			"haiLocalBearer": map[string]string{"type": "http", "scheme": "bearer", "description": "Configured local A2A bridge token."},
+			"haiLocalBearer": map[string]any{"httpAuthSecurityScheme": map[string]string{"scheme": "Bearer", "description": "Configured local A2A bridge token."}},
 		},
 		SecurityRequirements: []map[string][]string{{"haiLocalBearer": {}}},
 	}, nil

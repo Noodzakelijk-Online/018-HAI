@@ -1,6 +1,7 @@
 package a2abridge
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,7 +61,7 @@ func TestStatusRejectsExternalEndpointAndWrongToken(t *testing.T) {
 	}
 }
 
-func TestHandlerProvidesCardAndTokenBoundedTaskSend(t *testing.T) {
+func TestHandlerProvidesCardAndTokenBoundedSendMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewHandler(configuredService(&previewStub{}))
 	router := gin.New()
@@ -69,24 +70,64 @@ func TestHandlerProvidesCardAndTokenBoundedTaskSend(t *testing.T) {
 
 	card := httptest.NewRecorder()
 	router.ServeHTTP(card, httptest.NewRequest(http.MethodGet, "/.well-known/agent-card.json", nil))
-	if card.Code != http.StatusOK || !strings.Contains(card.Body.String(), "hai_controlled_planning") || !strings.Contains(card.Body.String(), "http://127.0.0.1/api/v1/a2a") {
+	if card.Code != http.StatusOK || !strings.Contains(card.Body.String(), "hai_controlled_planning") || !strings.Contains(card.Body.String(), "supportedInterfaces") || !strings.Contains(card.Body.String(), "http://127.0.0.1/api/v1/a2a") {
 		t.Fatalf("agent card = %d %s", card.Code, card.Body.String())
 	}
+	var cardPayload map[string]any
+	if json.Unmarshal(card.Body.Bytes(), &cardPayload) != nil || cardPayload["url"] != nil || cardPayload["protocolVersion"] != nil {
+		t.Fatalf("agent card retains legacy top-level interface fields: %s", card.Body.String())
+	}
+	if cache := card.Header().Get("Cache-Control"); cache == "" || card.Header().Get("ETag") == "" {
+		t.Fatalf("agent card caching headers = %q / %q", cache, card.Header().Get("ETag"))
+	}
 
-	body := `{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"message":{"role":"user","parts":[{"kind":"text","text":"Plan a source-backed response"}]}}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"message-1","role":"ROLE_USER","parts":[{"text":"Plan a source-backed response","mediaType":"text/plain"}]}}}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/a2a", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+testBridgeToken)
+	request.Header.Set("A2A-Version", "1.0")
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "hai-controlled-planning-proposal") || strings.Contains(response.Body.String(), "sourceContext") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "hai-controlled-planning-proposal") || !strings.Contains(response.Body.String(), "TASK_STATE_COMPLETED") || strings.Contains(response.Body.String(), "sourceContext") {
 		t.Fatalf("task response = %d %s", response.Code, response.Body.String())
 	}
 
 	denied := httptest.NewRecorder()
 	deniedRequest := httptest.NewRequest(http.MethodPost, "/api/v1/a2a", strings.NewReader(body))
 	deniedRequest.Header.Set("Authorization", "Bearer not-the-token")
+	deniedRequest.Header.Set("A2A-Version", "1.0")
+	deniedRequest.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(denied, deniedRequest)
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf("invalid token status = %d", denied.Code)
+	}
+}
+
+func TestHandlerRejectsOldShapesAndUnsupportedA2AVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(configuredService(&previewStub{}))
+	router := gin.New()
+	router.POST("/api/v1/a2a", handler.Send)
+
+	oldShape := `{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"message":{"role":"user","parts":[{"kind":"text","text":"old"}]}}}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/a2a", strings.NewReader(oldShape))
+	request.Header.Set("Authorization", "Bearer "+testBridgeToken)
+	request.Header.Set("A2A-Version", "1.0")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "only SendMessage") {
+		t.Fatalf("old shape response = %d %s", response.Code, response.Body.String())
+	}
+
+	unsupportedVersion := `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"message-1","role":"ROLE_USER","parts":[{"text":"test"}]}}}`
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/a2a", strings.NewReader(unsupportedVersion))
+	request.Header.Set("Authorization", "Bearer "+testBridgeToken)
+	request.Header.Set("A2A-Version", "0.3")
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "-32009") {
+		t.Fatalf("version response = %d %s", response.Code, response.Body.String())
 	}
 }
