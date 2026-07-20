@@ -49,8 +49,8 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("fastmcp"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("FastMCP must report its integrated, approval-gated local read-only bridge: %#v", entry)
 	}
-	if entry, ok := EntryByID("a2a"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval {
-		t.Fatalf("A2A must remain a review-first compatibility profile: %#v", entry)
+	if entry, ok := EntryByID("a2a"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("A2A must report its integrated, approval-gated local planning bridge: %#v", entry)
 	}
 }
 
@@ -298,8 +298,8 @@ func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
 	if recommendation, ok := ids["whisper-cpp"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
 		t.Fatalf("whisper.cpp must surface as HAI's approval-gated local transcription profile: %#v", recommendations)
 	}
-	if recommendation, ok := ids["a2a"]; !ok || recommendation.Status != StatusCompatibility || !recommendation.RequiresApproval {
-		t.Fatalf("A2A must remain a gated compatibility recommendation: %#v", recommendations)
+	if recommendation, ok := ids["a2a"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
+		t.Fatalf("A2A must surface as a gated local planning bridge: %#v", recommendations)
 	}
 }
 

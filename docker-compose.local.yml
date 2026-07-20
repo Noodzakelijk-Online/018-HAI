@@ -170,6 +170,13 @@ services:
       HAI_FASTMCP_BRIDGE_ENABLED: ${HAI_FASTMCP_BRIDGE_ENABLED:-false}
       HAI_FASTMCP_BRIDGE_TOKEN: ${HAI_FASTMCP_BRIDGE_TOKEN:-}
       HAI_FASTMCP_BRIDGE_OWNER_ID: ${HAI_FASTMCP_BRIDGE_OWNER_ID:-}
+      # Local A2A planning protocol subset. This token protects the direct
+      # JSON-RPC endpoint; no browser session or generic backend API key is
+      # accepted, and the endpoint can only return a planning draft.
+      HAI_A2A_BRIDGE_ENABLED: ${HAI_A2A_BRIDGE_ENABLED:-false}
+      HAI_A2A_BRIDGE_TOKEN: ${HAI_A2A_BRIDGE_TOKEN:-}
+      HAI_A2A_BRIDGE_OWNER_ID: ${HAI_A2A_BRIDGE_OWNER_ID:-}
+      HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1/api/v1/a2a}
       HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
       HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
       HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}

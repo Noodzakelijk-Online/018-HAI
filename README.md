@@ -529,6 +529,20 @@ sources, retrieve evidence, write memory, alter policy, access files or
 processes, or return secrets. Do not add this authenticated bridge to
 `HAI_MCP_PREFLIGHT_SERVERS`, which intentionally has no credential support.
 
+Optional Agent2Agent (A2A) planning is built into the backend and remains
+disabled by default. Set `HAI_A2A_BRIDGE_ENABLED=true`,
+`HAI_A2A_BRIDGE_OWNER_ID`, a distinct local-only 32+ character
+`HAI_A2A_BRIDGE_TOKEN`, and a loopback or private
+`HAI_A2A_BRIDGE_URL` such as `http://127.0.0.1/api/v1/a2a`. A reviewed local
+peer can then retrieve the capability card at
+`http://127.0.0.1/.well-known/agent-card.json` and make authenticated
+JSON-RPC `tasks/send` calls. HAI accepts a short text request and returns one
+non-executable planning draft only. It cannot create a task, refresh sources,
+persist an attempt, request approval, execute tools, invoke an agent, expose
+source or memory context, or discover peers. A returned A2A task means only
+the planning response is complete; it is not a HAI workflow or completion
+signal.
+
 Optional Presidio analysis is a separate, operator-managed local deployment.
 Set `HAI_PRESIDIO_ENABLED=true`, a loopback, `host.docker.internal`, `presidio`,
 or private-network `HAI_PRESIDIO_BASE_URL`, the configured language, and the

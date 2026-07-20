@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"automation-hub-backend/docs"
+	"automation-hub-backend/internal/a2abridge"
 	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/agentcycle"
 	"automation-hub-backend/internal/agentruntime"
@@ -141,6 +142,10 @@ func initializeRoutes(router *gin.Engine) error {
 			task.NewAutomationToolExecutor(automationService),
 			pursuitService,
 		)
+		planningPreview, _ := taskService.(task.PreviewService)
+		a2aBridgeHandler := a2abridge.NewHandler(a2abridge.NewServiceFromEnv(planningPreview))
+		initializeA2ABridgeStatusRoutes(v1, a2aBridgeHandler)
+		initializeA2ABridgeRoutes(router, relativePathV1, a2aBridgeHandler)
 		workflowRunner.Set(workflowtask.NewRunner(taskService))
 		source.StartScheduler(context.Background(), sourceService)
 		workflow.StartScheduler(context.Background(), workflowService)
@@ -659,6 +664,24 @@ func initializeMCPPreflightRoutes(apiVersion *gin.RouterGroup, handler *mcpprefl
 		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
 		routes.POST("/:serverId/run", requirePermission(rbac.PermAdmin), handler.Run)
 	}
+}
+
+// initializeA2ABridgeStatusRoutes stays inside HAI's normal authenticated
+// owner API. It exposes configuration only, never peer tokens or task input.
+func initializeA2ABridgeStatusRoutes(apiVersion *gin.RouterGroup, handler *a2abridge.Handler) {
+	routes := apiVersion.Group("/a2a")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+	}
+}
+
+// initializeA2ABridgeRoutes implements a small local A2A compatibility
+// boundary. The Agent Card carries no user context, and the JSON-RPC endpoint
+// requires a separate bridge token rather than browser identity or API keys.
+func initializeA2ABridgeRoutes(router *gin.Engine, relativePathV1 string, handler *a2abridge.Handler) {
+	router.GET("/.well-known/agent-card.json", handler.AgentCard)
+	router.POST(relativePathV1+"/a2a", handler.Send)
 }
 
 // initializeMCPBridgeStatusRoutes is part of the normal owner-authenticated

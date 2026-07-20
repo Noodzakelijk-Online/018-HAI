@@ -269,6 +269,14 @@ type OwnerScopedService interface {
 	ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
 }
 
+// PreviewService is the side-effect-free planning boundary used by reviewed
+// local interoperability adapters. A preview may read owner-scoped context but
+// must not refresh sources, persist task attempts, create review items, or
+// execute work.
+type PreviewService interface {
+	Preview(request IntakeRequest) (*CompletionPlan, error)
+}
+
 type service struct {
 	memoryService       memory.Service
 	sourceService       source.Service
@@ -342,7 +350,7 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
-	plan, err := s.buildPlan(request, false)
+	plan, err := s.buildPlan(request, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -353,6 +361,20 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	return plan, nil
 }
 
+// Preview returns a planning draft without adding task logs, refreshing a
+// connector, persisting a pursuit attempt, queueing approval, or executing an
+// action. It is deliberately separate from Plan so an external protocol peer
+// can never turn a request into durable operational work by accident.
+func (s *service) Preview(request IntakeRequest) (*CompletionPlan, error) {
+	if err := s.validatePursuitAttemptRequest(request); err != nil {
+		return nil, err
+	}
+	request.ExecuteAllowed = false
+	request.HumanApproved = false
+	request.ApprovalNote = ""
+	return s.buildPlan(request, false, false)
+}
+
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
@@ -360,7 +382,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	if safety.EmergencyStopActive() {
 		request.ExecuteAllowed = false
 		request.HumanApproved = false
-		plan, err := s.buildPlan(request, false)
+		plan, err := s.buildPlan(request, false, true)
 		if err != nil {
 			return nil, err
 		}
@@ -387,7 +409,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		s.addLog(*plan)
 		return plan, nil
 	}
-	plan, err := s.buildPlan(request, true)
+	plan, err := s.buildPlan(request, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -582,9 +604,15 @@ func planLaunchEventID(plan *CompletionPlan) string {
 	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.LaunchEventID)
 }
 
-func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
+func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh bool) (*CompletionPlan, error) {
 	intake := analyzeIntake(request)
-	sourceRefresh, sourceRefreshExplanation := s.refreshSourcesForTask(request, intake)
+	var sourceRefresh *source.ScheduledSyncRun
+	var sourceRefreshExplanation string
+	if allowSourceRefresh {
+		sourceRefresh, sourceRefreshExplanation = s.refreshSourcesForTask(request, intake)
+	} else {
+		sourceRefreshExplanation = "Source refresh is disabled for this planning preview."
+	}
 	contextResult, err := memory.RetrieveForOwner(s.memoryService, request.OwnerIdentity, memory.RetrieveRequest{
 		Query:      request.Request,
 		ProjectKey: request.ProjectKey,

@@ -46,7 +46,7 @@ only in its expandable collection-coverage section.
 | browser-use | AI Browser Agents | Candidate | Reviewed browser-agent adapter | Named browser profile, origin/download/upload/credential allowlists, read-only-first validation, and separate high-risk action approvals are required. |
 | NVIDIA NeMo Guardrails, garak | AI Safety & Alignment / AI Red Teaming | Candidate | Local guardrail and safety-evaluation adapters | Policy ownership, redacted fixtures, false-positive review, audit records, and no-write evaluation boundaries are mandatory. |
 | whisper.cpp | Multimodal AI | Candidate, local bridge implemented | Local speech-to-text intake | The opt-in local-transcription runner reads only an explicit owner-selected subfolder with a manually provisioned local model, produces source-linked uncertain transcripts, and has no microphone, cloud upload, automatic scan, raw-audio retention, or action path. |
-| A2A Protocol | A2A Protocol | Compatibility only | Narrow protocol bridge | Authenticated named peers, fixed task schema, and HAI-owned tools, budget, approvals, and audit decisions are required. |
+| A2A Protocol | A2A Protocol | Integrated, opt-in | Local controlled-planning bridge | The local Agent Card and authenticated `tasks/send` subset produce a bounded side-effect-free planning draft for one named owner. There is no peer discovery, remote peer, source refresh, task persistence, approval, execution, streaming, file/data input, or HAI context disclosure. |
 | Tabby | AI Coding Assistants | Candidate | Self-hosted coding assistance | Local deployment, model/privacy review, workspace scope, and read-only-first review are required. |
 | Cline | LLM DevTools | Candidate | Review-first interactive coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | OpenCode | Model Context Protocol (MCP) Client | Candidate | Review-first terminal coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
@@ -114,6 +114,13 @@ review found CloudQuery maintained, but its current public upstream did not
 contain a GitHub source plugin. HAI does not claim an installed CloudQuery
 GitHub connector and retains it as a future connector candidate pending a
 separately verified source implementation.
+
+The same 2026-07-20 review confirmed the current A2A project at
+`a2aproject/A2A`, hosted by the Linux Foundation and Apache-2.0 licensed. HAI
+implements only a local, bearer-authenticated `tasks/send` planning subset and
+a minimal Agent Card; it does not use peer discovery, remote agents, streaming,
+push notifications, attachments, or the protocol as a path around HAI's
+workflow, approval, execution, verification, or audit controls.
 
 ## Complete collection screen
 

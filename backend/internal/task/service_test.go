@@ -166,6 +166,30 @@ func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	}
 }
 
+func TestPreviewDoesNotRefreshSourcesOrPersistTaskLog(t *testing.T) {
+	mem := &fakeMemoryService{}
+	src := &fakeTaskSourceService{}
+	service := NewService(mem, newTaskTestLLMService(t), src)
+	preview, ok := service.(PreviewService)
+	if !ok {
+		t.Fatal("task service does not implement the side-effect-free preview boundary")
+	}
+
+	plan, err := preview.Preview(IntakeRequest{Request: "Summarize source context for a planning draft", ProjectKey: "018-HAI"})
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if plan.ContextPlan.SourceRefresh != nil || plan.ContextPlan.SourceRefreshExplanation != "Source refresh is disabled for this planning preview." {
+		t.Fatalf("preview unexpectedly scheduled source refresh: %#v", plan.ContextPlan)
+	}
+	if src.refreshCalls != 0 || len(service.Logs()) != 0 {
+		t.Fatalf("preview must not refresh sources or persist a task log: refresh=%d logs=%#v", src.refreshCalls, service.Logs())
+	}
+	if src.searchCalls != 1 {
+		t.Fatalf("preview should still read already-indexed source context: search=%d", src.searchCalls)
+	}
+}
+
 func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.T) {
 	mem := &fakeMemoryService{}
 	src := &fakeTaskSourceService{}

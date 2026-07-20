@@ -349,12 +349,17 @@ var entries = []Entry{
 	},
 	{
 		ID: "a2a", Name: "A2A Protocol", UpstreamURL: "https://github.com/a2aproject/A2A", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10139/repos/", SourceCollection: "A2A Protocol",
-		Status: StatusCompatibility, Category: "agent interoperability", IntegrationMode: "reviewed protocol bridge",
-		Capabilities: []string{"agent task envelopes", "capability discovery patterns", "interoperability"}, RecommendedFor: []string{"external agent review", "protocol translation", "multi-agent interoperability"},
+		Status: StatusIntegrated, Category: "agent interoperability", IntegrationMode: "integrated local controlled-planning bridge",
+		Capabilities: []string{"authenticated task envelopes", "local Agent Card capability advertisement", "non-executable planning drafts"}, RecommendedFor: []string{"reviewed local peer planning", "protocol translation", "multi-agent interoperability"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Implement only a narrow local bridge with a fixed task schema, authenticated named peers, no implicit capability negotiation, and HAI-owned tool, budget, approval, and audit decisions.",
-		Rationale:  "A2A can inform interoperability, but it must not become an unbounded remote-agent trust channel or a replacement for HAI's controlled runtime registry.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight A2A Protocol repository list checked on 2026-07-19; no A2A peer or transport is configured by HAI.",
+		Activation: "Enable only with `HAI_A2A_BRIDGE_ENABLED=true`, a named owner, a separate 32+ character local peer token, and a loopback/private `HAI_A2A_BRIDGE_URL`. HAI implements only `tasks/send` for bounded planning drafts; no peer discovery, streaming, push, file/data parts, task persistence, source refresh, approval, or execution is available.",
+		Rationale:  "The local A2A subset gives a reviewed peer a useful planning interface while HAI retains all workflow, source, memory, provider, approval, execution, verification, and audit authority. It is intentionally not a remote-agent trust channel or runtime registry.",
+		VerifiedAt: "2026-07-20", VerificationNote: "OSS Insight A2A Protocol listing and current Linux Foundation a2aproject/A2A upstream were reviewed on 2026-07-20. HAI implements a small JSON-RPC `tasks/send` subset plus a local Agent Card, with an explicit bearer token and no dependency on an unstable broad agent runtime.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "Agent Card discovery", HAIControl: "local-only fixed Agent Card with bearer authentication", Boundary: "no automatic peer discovery, tool discovery, or credential negotiation"},
+			{SourcePattern: "agent task envelope", HAIControl: "side-effect-free HAI planning preview", Boundary: "the bridge cannot create tasks, refresh sources, persist attempts, request approval, execute tools, or return HAI context"},
+			{SourcePattern: "agent collaboration", HAIControl: "HAI workflow, approval, verification, and audit systems", Boundary: "peer output cannot become an action or completion signal"},
+		},
 	},
 	{
 		ID: "tabby", Name: "Tabby", UpstreamURL: "https://github.com/TabbyML/tabby", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10112/repos/", SourceCollection: "AI Coding Assistants",
