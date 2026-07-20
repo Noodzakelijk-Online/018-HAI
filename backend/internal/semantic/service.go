@@ -45,6 +45,21 @@ type Match struct {
 	Similarity float64
 }
 
+// MemorySearchRequest keeps HAI's editable context-memory retrieval inside the
+// same local embedding boundary as source extraction retrieval. Owner and
+// project filtering are enforced in the database query before a match returns.
+type MemorySearchRequest struct {
+	OwnerIdentity string
+	Query         string
+	ProjectKey    string
+	Limit         int
+}
+
+type MemoryMatch struct {
+	Memory     models.ContextMemory
+	Similarity float64
+}
+
 // Service can be disabled. Callers retain keyword retrieval when a local
 // embedding service has not been configured or is not reachable.
 type Service interface {
@@ -52,6 +67,9 @@ type Service interface {
 	Reason() string
 	Index(context.Context, *models.SourceExtraction) error
 	Search(context.Context, SearchRequest) ([]Match, error)
+	IndexMemory(context.Context, *models.ContextMemory) error
+	DeleteMemory(context.Context, uuid.UUID) error
+	SearchMemory(context.Context, MemorySearchRequest) ([]MemoryMatch, error)
 }
 
 type Config struct {
@@ -71,6 +89,15 @@ func (s disabledService) Index(context.Context, *models.SourceExtraction) error 
 	return fmt.Errorf("semantic retrieval is disabled: %s", s.reason)
 }
 func (s disabledService) Search(context.Context, SearchRequest) ([]Match, error) {
+	return nil, fmt.Errorf("semantic retrieval is disabled: %s", s.reason)
+}
+func (s disabledService) IndexMemory(context.Context, *models.ContextMemory) error {
+	return fmt.Errorf("semantic retrieval is disabled: %s", s.reason)
+}
+func (s disabledService) DeleteMemory(context.Context, uuid.UUID) error {
+	return fmt.Errorf("semantic retrieval is disabled: %s", s.reason)
+}
+func (s disabledService) SearchMemory(context.Context, MemorySearchRequest) ([]MemoryMatch, error) {
 	return nil, fmt.Errorf("semantic retrieval is disabled: %s", s.reason)
 }
 
@@ -164,6 +191,22 @@ func ensureSchema(db *gorm.DB) error {
 	}
 	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_semantic_embeddings_source_model ON semantic_embeddings (source_id, model_id)`).Error; err != nil {
 		return fmt.Errorf("semantic: create embedding lookup index: %w", err)
+	}
+	if err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS semantic_memory_embeddings (
+			memory_id UUID PRIMARY KEY REFERENCES context_memories(id) ON DELETE CASCADE,
+			owner_identity VARCHAR(255) NOT NULL DEFAULT '',
+			project_key VARCHAR(255) NOT NULL DEFAULT '',
+			model_id VARCHAR(255) NOT NULL,
+			content_hash VARCHAR(64) NOT NULL,
+			embedding vector NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`).Error; err != nil {
+		return fmt.Errorf("semantic: create memory embedding table: %w", err)
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_semantic_memory_embeddings_scope ON semantic_memory_embeddings (owner_identity, project_key, model_id)`).Error; err != nil {
+		return fmt.Errorf("semantic: create memory embedding lookup index: %w", err)
 	}
 	return nil
 }
@@ -259,6 +302,104 @@ func (s *service) Search(ctx context.Context, request SearchRequest) ([]Match, e
 	return matches, nil
 }
 
+func (s *service) IndexMemory(ctx context.Context, memory *models.ContextMemory) error {
+	if memory == nil || memory.ID == uuid.Nil {
+		return fmt.Errorf("semantic: memory ID is required")
+	}
+	if memory.Archived {
+		return s.DeleteMemory(ctx, memory.ID)
+	}
+	text := memoryEmbeddingText(memory)
+	if text == "" {
+		return fmt.Errorf("semantic: memory has no indexable text")
+	}
+	vector, err := s.embed(ctx, text)
+	if err != nil {
+		return err
+	}
+	contentHash := strings.TrimSpace(memory.ContentHash)
+	if contentHash == "" {
+		sum := sha256.Sum256([]byte(text))
+		contentHash = hex.EncodeToString(sum[:])
+	}
+	return s.db.WithContext(ctx).Exec(`
+		INSERT INTO semantic_memory_embeddings (memory_id, owner_identity, project_key, model_id, content_hash, embedding, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?::vector, NOW(), NOW())
+		ON CONFLICT (memory_id) DO UPDATE SET
+			owner_identity = EXCLUDED.owner_identity, project_key = EXCLUDED.project_key,
+			model_id = EXCLUDED.model_id, content_hash = EXCLUDED.content_hash,
+			embedding = EXCLUDED.embedding, updated_at = NOW()`,
+		memory.ID, strings.TrimSpace(memory.OwnerIdentity), strings.TrimSpace(memory.ProjectKey), s.config.Model, contentHash, vectorLiteral(vector)).Error
+}
+
+func (s *service) DeleteMemory(ctx context.Context, memoryID uuid.UUID) error {
+	if memoryID == uuid.Nil {
+		return fmt.Errorf("semantic: memory ID is required")
+	}
+	return s.db.WithContext(ctx).Exec(`DELETE FROM semantic_memory_embeddings WHERE memory_id = ?`, memoryID).Error
+}
+
+func (s *service) SearchMemory(ctx context.Context, request MemorySearchRequest) ([]MemoryMatch, error) {
+	if strings.TrimSpace(request.Query) == "" {
+		return []MemoryMatch{}, nil
+	}
+	limit := request.Limit
+	if limit <= 0 || limit > 20 {
+		limit = 8
+	}
+	vector, err := s.embed(ctx, request.Query)
+	if err != nil {
+		return nil, err
+	}
+	query := `
+		SELECT cm.id AS memory_id, 1 - (emb.embedding <=> ?::vector) AS similarity
+		FROM semantic_memory_embeddings emb
+		JOIN context_memories cm ON cm.id = emb.memory_id
+		WHERE emb.model_id = ? AND cm.archived = FALSE`
+	args := []any{vectorLiteral(vector), s.config.Model}
+	if projectKey := strings.TrimSpace(request.ProjectKey); projectKey != "" {
+		query += ` AND (cm.project_key = ? OR cm.project_key = '' OR cm.project_key IS NULL)`
+		args = append(args, projectKey)
+	}
+	if owner := strings.TrimSpace(request.OwnerIdentity); owner != "" {
+		query += ` AND (cm.owner_identity = ? OR cm.owner_identity = '' OR cm.owner_identity IS NULL)`
+		args = append(args, owner)
+	}
+	query += ` ORDER BY emb.embedding <=> ?::vector ASC LIMIT ?`
+	args = append(args, vectorLiteral(vector), limit)
+
+	type row struct {
+		MemoryID   uuid.UUID `gorm:"column:memory_id"`
+		Similarity float64   `gorm:"column:similarity"`
+	}
+	var rows []row
+	if err := s.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("semantic: query memory embeddings: %w", err)
+	}
+	if len(rows) == 0 {
+		return []MemoryMatch{}, nil
+	}
+	ids := make([]uuid.UUID, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.MemoryID)
+	}
+	var memories []models.ContextMemory
+	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Find(&memories).Error; err != nil {
+		return nil, fmt.Errorf("semantic: load memory results: %w", err)
+	}
+	byID := make(map[uuid.UUID]models.ContextMemory, len(memories))
+	for _, memory := range memories {
+		byID[memory.ID] = memory
+	}
+	matches := make([]MemoryMatch, 0, len(rows))
+	for _, row := range rows {
+		if memory, ok := byID[row.MemoryID]; ok {
+			matches = append(matches, MemoryMatch{Memory: memory, Similarity: round(row.Similarity, 3)})
+		}
+	}
+	return matches, nil
+}
+
 func (s *service) embed(ctx context.Context, input string) ([]float64, error) {
 	payload, err := json.Marshal(map[string]any{"model": s.config.Model, "input": trimRunes(strings.TrimSpace(input), s.config.InputLimit)})
 	if err != nil {
@@ -301,6 +442,13 @@ func (s *service) embed(ctx context.Context, input string) ([]float64, error) {
 
 func embeddingText(extraction *models.SourceExtraction) string {
 	return strings.TrimSpace(strings.Join([]string{extraction.Text, extraction.Summary, extraction.Entities, extraction.Tasks, extraction.Decisions}, "\n"))
+}
+
+func memoryEmbeddingText(memory *models.ContextMemory) string {
+	if memory == nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join([]string{memory.Content, memory.Summary, memory.Tags}, "\n"))
 }
 
 func vectorLiteral(values []float64) string {

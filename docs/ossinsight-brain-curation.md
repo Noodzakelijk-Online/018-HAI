@@ -186,11 +186,12 @@ policy remains authoritative.
 HAI now has an opt-in local semantic retrieval path using pgvector inside its
 existing automation database. Set `HAI_SEMANTIC_RETRIEVAL_ENABLED=true` with a
 loopback or `host.docker.internal` OpenAI-compatible embedding endpoint and a
-named model. HAI indexes only already-ingested source extractions, keeps their
-source ownership and sensitivity filters in the database query, and uses the
-existing keyword search when the semantic path is disabled, empty, or
-unavailable. It never sends source text to an arbitrary cloud URL and does not
-create embeddings until the operator enables the feature.
+named model. HAI indexes already-ingested source extractions and editable
+context memories as they are created or updated, keeping source ownership/sensitivity and memory
+owner/project/archive filters in their respective database queries. Both paths
+use their existing keyword search when the semantic path is disabled, empty, or
+unavailable. It never sends source or memory text to an arbitrary cloud URL and
+does not create embeddings until the operator enables the feature.
 
 ## Implemented OR-Tools boundary
 

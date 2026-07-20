@@ -2,6 +2,8 @@ package memory
 
 import (
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/semantic"
+	"context"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -80,11 +82,20 @@ type OwnerScopedService interface {
 }
 
 type service struct {
-	repo Repository
+	repo            Repository
+	semanticService semantic.Service
 }
 
 func NewService(repo Repository) Service {
-	return &service{repo: repo}
+	return NewServiceWithSemantic(repo, nil)
+}
+
+// NewServiceWithSemantic adds optional local vector enrichment without
+// changing HAI's single editable context-memory authority. When the local
+// embedding endpoint is disabled or unavailable, keyword retrieval remains
+// the complete fallback path.
+func NewServiceWithSemantic(repo Repository, semanticService semantic.Service) Service {
+	return &service{repo: repo, semanticService: semanticService}
 }
 
 func DefaultService() Service {
@@ -137,7 +148,9 @@ func (s *service) createForOwner(ownerIdentity string, request CreateRequest) (*
 
 	if ownerIdentity == "" {
 		if existing, err := s.repo.FindByHash(projectKey, kind, contentHash); err == nil {
-			return s.mergeExact(existing, request)
+			saved, err := s.mergeExact(existing, request)
+			s.indexMemory(saved)
+			return saved, err
 		} else if err != nil && !isNotFound(err) {
 			return nil, err
 		}
@@ -153,11 +166,15 @@ func (s *service) createForOwner(ownerIdentity string, request CreateRequest) (*
 		}
 		if candidate.Kind == kind && candidate.ContentHash == contentHash {
 			copyCandidate := candidate
-			return s.mergeExact(&copyCandidate, request)
+			saved, err := s.mergeExact(&copyCandidate, request)
+			s.indexMemory(saved)
+			return saved, err
 		}
 		if candidate.Kind == kind && similarity(candidate.Content, content) >= 0.78 {
 			copyCandidate := candidate
-			return s.mergeSimilar(&copyCandidate, request)
+			saved, err := s.mergeSimilar(&copyCandidate, request)
+			s.indexMemory(saved)
+			return saved, err
 		}
 	}
 
@@ -173,7 +190,9 @@ func (s *service) createForOwner(ownerIdentity string, request CreateRequest) (*
 		SourceLabel:   strings.TrimSpace(request.SourceLabel),
 		ContentHash:   contentHash,
 	}
-	return s.repo.Create(memory)
+	saved, err := s.repo.Create(memory)
+	s.indexMemory(saved)
+	return saved, err
 }
 
 func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request UpdateRequest) (*models.ContextMemory, error) {
@@ -223,7 +242,9 @@ func (s *service) update(memory *models.ContextMemory, request UpdateRequest) (*
 		memory.Archived = *request.Archived
 	}
 	memory.ContentHash = hashContent(memory.ProjectKey, memory.Kind, memory.Content)
-	return s.repo.Update(memory)
+	saved, err := s.repo.Update(memory)
+	s.indexMemory(saved)
+	return saved, err
 }
 
 func (s *service) FindAll(projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
@@ -259,7 +280,9 @@ func (s *service) Archive(id uuid.UUID, archived bool) (*models.ContextMemory, e
 		return nil, err
 	}
 	memory.Archived = archived
-	return s.repo.Update(memory)
+	saved, err := s.repo.Update(memory)
+	s.indexMemory(saved)
+	return saved, err
 }
 
 func (s *service) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
@@ -268,18 +291,28 @@ func (s *service) ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived b
 		return nil, err
 	}
 	memory.Archived = archived
-	return s.repo.Update(memory)
+	saved, err := s.repo.Update(memory)
+	s.indexMemory(saved)
+	return saved, err
 }
 
 func (s *service) Delete(id uuid.UUID) error {
-	return s.repo.Delete(id)
+	err := s.repo.Delete(id)
+	if err == nil {
+		s.deleteMemoryIndex(id)
+	}
+	return err
 }
 
 func (s *service) DeleteForOwner(ownerIdentity string, id uuid.UUID) error {
 	if _, err := s.writeableMemoryForOwner(ownerIdentity, id); err != nil {
 		return err
 	}
-	return s.repo.Delete(id)
+	err := s.repo.Delete(id)
+	if err == nil {
+		s.deleteMemoryIndex(id)
+	}
+	return err
 }
 
 func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
@@ -310,10 +343,11 @@ func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest
 		}
 		candidates = append(candidates, memory)
 	}
+	semanticScores, semanticState := s.semanticScores(ownerIdentity, request)
 
 	ranked := make([]RankedMemory, 0, len(candidates))
 	for _, memory := range candidates {
-		score, explanation := scoreMemory(memory, request)
+		score, explanation := scoreMemory(memory, request, semanticScores[memory.ID])
 		if score <= 0.12 {
 			continue
 		}
@@ -342,11 +376,15 @@ func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest
 		}
 	}
 
+	explanation := fmt.Sprintf("Retrieved %d relevant memories from %d visible candidates; project-scoped retrieval also considered visible global memories and did not load unrelated project or other-owner memories.", len(ranked), len(candidates))
+	if semanticState != "" {
+		explanation += " " + semanticState
+	}
 	return &RetrieveResult{
 		Query:       request.Query,
 		ProjectKey:  projectKey,
 		UsedContext: ranked,
-		Explanation: fmt.Sprintf("Retrieved %d relevant memories from %d visible candidates; project-scoped retrieval also considered visible global memories and did not load unrelated project or other-owner memories.", len(ranked), len(candidates)),
+		Explanation: explanation,
 	}, nil
 }
 
@@ -419,10 +457,14 @@ func (s *service) mergeSimilar(existing *models.ContextMemory, request CreateReq
 	return s.repo.Update(existing)
 }
 
-func scoreMemory(memory models.ContextMemory, request RetrieveRequest) (float64, string) {
+func scoreMemory(memory models.ContextMemory, request RetrieveRequest, semanticSimilarity float64) (float64, string) {
 	queryTokens := tokenSet(request.Query)
 	memoryTokens := tokenSet(memory.Content + " " + memory.Summary + " " + memory.Tags)
 	relevance := overlapScore(queryTokens, memoryTokens)
+	semanticRelevance := math.Max(0, math.Min(1, semanticSimilarity))
+	if relevance == 0 && semanticRelevance == 0 {
+		return 0, "no lexical or semantic relevance"
+	}
 	projectMatch := 0.0
 	if request.ProjectKey != "" && request.ProjectKey == memory.ProjectKey {
 		projectMatch = 0.2
@@ -430,16 +472,58 @@ func scoreMemory(memory models.ContextMemory, request RetrieveRequest) (float64,
 	recency := recencyScore(memory.UpdatedAt)
 	confidence := normalizeConfidence(memory.Confidence) * 0.25
 	score := relevance*0.45 + confidence + recency*0.10 + projectMatch
+	if semanticRelevance > 0 {
+		score = math.Max(score, semanticRelevance*0.45+confidence+recency*0.10+projectMatch)
+	}
 
 	parts := []string{
 		fmt.Sprintf("relevance %.2f", relevance),
 		fmt.Sprintf("confidence %.2f", memory.Confidence),
 		fmt.Sprintf("recency %.2f", recency),
 	}
+	if semanticRelevance > 0 {
+		parts = append(parts, fmt.Sprintf("local semantic similarity %.2f", semanticRelevance))
+	}
 	if projectMatch > 0 {
 		parts = append(parts, "same project")
 	}
 	return score, strings.Join(parts, ", ")
+}
+
+func (s *service) indexMemory(memory *models.ContextMemory) {
+	if memory == nil || s.semanticService == nil || !s.semanticService.Enabled() {
+		return
+	}
+	// Indexing is optional enrichment. The saved context memory remains the
+	// authority and keyword retrieval continues if its local index is offline.
+	_ = s.semanticService.IndexMemory(context.Background(), memory)
+}
+
+func (s *service) deleteMemoryIndex(id uuid.UUID) {
+	if id == uuid.Nil || s.semanticService == nil || !s.semanticService.Enabled() {
+		return
+	}
+	_ = s.semanticService.DeleteMemory(context.Background(), id)
+}
+
+func (s *service) semanticScores(ownerIdentity string, request RetrieveRequest) (map[uuid.UUID]float64, string) {
+	if s.semanticService == nil || !s.semanticService.Enabled() {
+		return map[uuid.UUID]float64{}, ""
+	}
+	matches, err := s.semanticService.SearchMemory(context.Background(), semantic.MemorySearchRequest{
+		OwnerIdentity: ownerIdentity,
+		Query:         request.Query,
+		ProjectKey:    request.ProjectKey,
+		Limit:         request.Limit,
+	})
+	if err != nil {
+		return map[uuid.UUID]float64{}, "Local semantic memory enrichment was unavailable; keyword ranking was used."
+	}
+	scores := make(map[uuid.UUID]float64, len(matches))
+	for _, match := range matches {
+		scores[match.Memory.ID] = match.Similarity
+	}
+	return scores, fmt.Sprintf("Local pgvector semantic enrichment evaluated %d eligible memory matches after owner and project filtering.", len(matches))
 }
 
 func hashContent(projectKey, kind, content string) string {

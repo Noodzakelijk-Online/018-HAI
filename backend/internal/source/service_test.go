@@ -1808,6 +1808,11 @@ func (s *fakeSemanticService) Search(_ context.Context, request semantic.SearchR
 	s.request = request
 	return s.matches, s.err
 }
+func (s *fakeSemanticService) IndexMemory(context.Context, *models.ContextMemory) error { return nil }
+func (s *fakeSemanticService) DeleteMemory(context.Context, uuid.UUID) error            { return nil }
+func (s *fakeSemanticService) SearchMemory(context.Context, semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error) {
+	return nil, nil
+}
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
 	repo := &fakeSourceRepo{

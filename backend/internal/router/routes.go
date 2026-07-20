@@ -134,7 +134,8 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		llmHandler := llm.NewHandler(llmService)
 		initializeLLMRoutes(v1, llmHandler)
-		memoryService := memory.DefaultService()
+		semanticService := semantic.NewServiceFromEnv()
+		memoryService := memory.NewServiceWithSemantic(memory.DefaultRepository(), semanticService)
 		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
 		workflowRunner := workflowtask.NewDeferredRunner()
 		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner, memoryService)
@@ -142,7 +143,6 @@ func initializeRoutes(router *gin.Engine) error {
 		temporalService.StartWorkerEventually(context.Background())
 		initializeTemporalRoutes(v1, temporalbridge.NewHandler(temporalService))
 		pursuitService := pursuit.NewService(pursuit.DefaultRepository(), workflowService)
-		semanticService := semantic.NewServiceFromEnv()
 		sourceService := source.NewServiceWithWorkflowPursuitAndSemantic(source.DefaultRepository(), memoryService, workflowService, pursuitService, semanticService)
 		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService, pursuitService)
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))

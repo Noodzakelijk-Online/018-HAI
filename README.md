@@ -468,10 +468,12 @@ Optional local semantic retrieval uses pgvector in the existing automation
 Postgres database. Set `HAI_SEMANTIC_RETRIEVAL_ENABLED=true`,
 `HAI_EMBEDDING_BASE_URL`, and `HAI_EMBEDDING_MODEL` only after a local embedding
 server is running. HAI accepts only loopback or `host.docker.internal`
-endpoints, filters owner/project/archive/sensitivity in the vector query, and
-falls back to provenance-preserving keyword search when vectors are not
-available. The Compose database image is pinned to pgvector's Postgres 17
-build; back up a live local volume before changing its database image.
+endpoints. Source retrieval filters owner/project/archive/sensitivity; editable
+context-memory retrieval filters owner/project/archive and uses the same local
+embedding boundary. Both paths fall back to their existing keyword retrieval
+when vectors are unavailable. The Compose database image is pinned to
+pgvector's Postgres 17 build; back up a live local volume before changing its
+database image.
 
 Optional public-source discovery uses an operator-managed local SearXNG
 instance. Set `HAI_SEARXNG_ENABLED=true` and a loopback,

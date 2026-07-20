@@ -24,7 +24,7 @@ only in its expandable collection-coverage section.
 | --- | --- | --- | --- | --- |
 | LiteLLM | ai-gateways | Integrated profile | Keyed local provider gateway | Loopback-only profile; manual approval required because proxy upstream billing is not inferable. |
 | llama.cpp | ChatGPT Alternatives | Integrated, opt-in | Local GGUF inference | Loopback endpoint, model provenance, and live health review required before HAI can route or generate. |
-| pgvector | Vector Database & Vector Store | Integrated, opt-in | Local semantic retrieval in existing Postgres | Pinned Postgres 17 pgvector image; local-only embedding endpoint; owner-scoped SQL query; keyword fallback. |
+| pgvector | Vector Database & Vector Store | Integrated, opt-in | Local semantic retrieval in existing Postgres | Pinned Postgres 17 pgvector image; local-only embedding endpoint; source sensitivity and memory owner/project SQL filters; keyword fallback. |
 | Temporal | Workflow Scheduler | Integrated, opt-in | Durable governed follow-up checks | One local worker runs a named proposal-only workflow; HAI owns approvals and completion. |
 | Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
 | MCP Inspector | Model Context Protocol (MCP) Client | Integrated profile | Local-only MCP preflight | HAI-owned initialize + tools/list review of configured local Streamable HTTP servers; no process spawn or tool execution. |
