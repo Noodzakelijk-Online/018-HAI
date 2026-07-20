@@ -51,6 +51,7 @@ import (
 	"automation-hub-backend/internal/temporalbridge"
 	"automation-hub-backend/internal/verification"
 	"automation-hub-backend/internal/wasiexec"
+	"automation-hub-backend/internal/whispercpp"
 	"automation-hub-backend/internal/workflow"
 	"automation-hub-backend/internal/workflowtask"
 
@@ -99,6 +100,8 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
 		initializeLMEvalRoutes(v1, lmeval.NewHandler(lmeval.DefaultService()))
 		initializePromptfooRoutes(v1, promptfoo.NewHandler(promptfoo.DefaultService()))
+		whisperService := whispercpp.DefaultService()
+		initializeWhisperCPPRoutes(v1, whispercpp.NewHandler(whisperService))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -138,7 +141,7 @@ func initializeRoutes(router *gin.Engine) error {
 		workflowRunner.Set(workflowtask.NewRunner(taskService))
 		source.StartScheduler(context.Background(), sourceService)
 		workflow.StartScheduler(context.Background(), workflowService)
-		initializeSourceRoutes(v1, source.NewHandler(sourceService))
+		initializeSourceRoutes(v1, source.NewHandler(sourceService, whisperService))
 		initializeWorkflowRoutes(v1, workflow.NewHandlerWithPursuitIntakeRouter(workflowService, pursuitService))
 		initializePursuitRoutes(v1, pursuit.NewHandler(pursuitService))
 		memoryEngineSecret := config.AppConfig.MemoryEngineKey
@@ -401,6 +404,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.DELETE("/extractions/:id", requirePermission(rbac.PermWrite), sourceHandler.DeleteExtraction)
 		sourceRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), sourceHandler.UpdateSource)
 		sourceRoutes.POST("/:id/sync", requirePermission(rbac.PermWrite), sourceHandler.Sync)
+		sourceRoutes.POST("/:id/transcribe", requirePermission(rbac.PermWrite), sourceHandler.Transcribe)
 		sourceRoutes.POST("/:id/reindex", requirePermission(rbac.PermWrite), sourceHandler.Reindex)
 		sourceRoutes.POST("/:id/pause", requirePermission(rbac.PermWrite), sourceHandler.Pause)
 		sourceRoutes.POST("/:id/resume", requirePermission(rbac.PermWrite), sourceHandler.Resume)
@@ -415,6 +419,15 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 	{
 		sourceOAuth.GET("/oauth/google/start", requirePermission(rbac.PermWrite), sourceHandler.StartGoogleOAuth)
 		sourceOAuth.GET("/oauth/google/callback", requirePermission(rbac.PermRead), sourceHandler.GoogleOAuthCallback)
+	}
+}
+
+func initializeWhisperCPPRoutes(apiVersion *gin.RouterGroup, handler *whispercpp.Handler) {
+	routes := apiVersion.Group("/whispercpp")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermWrite), handler.Probe)
 	}
 }
 

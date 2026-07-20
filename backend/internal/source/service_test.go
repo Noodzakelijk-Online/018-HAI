@@ -81,6 +81,28 @@ func TestSyncLocalFolderExtractsReadableFilesWithProvenance(t *testing.T) {
 	}
 }
 
+func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "whisper-audio",
+		Name:         "Owner voice notes",
+		Category:     "audio",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+		SyncTarget:   "voice-notes",
+	})
+
+	_, err := NewService(repo, nil).Sync(sourceID, ImportRequest{Mode: ModeManualImport, Items: []ImportItem{{ExternalID: "forged", Title: "Forged transcript", Content: "This must not be accepted."}}})
+	if err == nil || !strings.Contains(err.Error(), "controlled transcription route") {
+		t.Fatalf("Sync error = %v, want controlled transcription route error", err)
+	}
+	if due, reason := scheduledSourceDue(*repo.sources[sourceID], time.Now().UTC()); due || !strings.Contains(reason, "operator-triggered") {
+		t.Fatalf("scheduledSourceDue = %v, %q; whisper audio must never be scheduled", due, reason)
+	}
+}
+
 func TestSyncWhatsAppExportParsesChatWindowsAndGatesReview(t *testing.T) {
 	root := t.TempDir()
 	export := strings.Join([]string{
@@ -393,6 +415,7 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 		"project-board":   AdapterLocalOnly,
 		"local-folder":    AdapterLocalOnly,
 		"whatsapp-export": AdapterLocalOnly,
+		"whisper-audio":   AdapterLocalOnly,
 		"odoo-herp":       AdapterModeled,
 	}
 	seen := map[string]bool{}

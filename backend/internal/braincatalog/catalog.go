@@ -340,12 +340,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "whisper-cpp", Name: "whisper.cpp", UpstreamURL: "https://github.com/ggml-org/whisper.cpp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10118/repos/", SourceCollection: "Multimodal AI",
-		Status: StatusCandidate, Category: "local speech transcription", IntegrationMode: "operator-configured local intake adapter",
+		Status: StatusIntegrated, Category: "local speech transcription", IntegrationMode: "operator-configured local intake adapter",
 		Capabilities: []string{"offline transcription", "audio-to-text extraction", "local model execution"}, RecommendedFor: []string{"voice-note intake", "meeting evidence", "accessibility transcription"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review local audio folders, consent, retention, model provenance, language handling, transcript confidence, and source links. HAI stores transcripts only through its existing source and memory verification path.",
+		Activation: "Enable the local-transcription Compose profile, place one reviewed GGML model in the local model folder, then create an owner-scoped local-only whisper-audio source with an explicit subfolder. HAI stores returned transcripts only through its existing source and memory verification path.",
 		Rationale:  "Local speech-to-text can broaden safe intake without transmitting audio to a cloud service, but it requires explicit consent and evidence-quality controls.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Multimodal AI repository list checked on 2026-07-19; no whisper.cpp binary or audio connector is configured by HAI.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Multimodal AI repository list checked on 2026-07-19; HAI includes a disabled-by-default local whisper.cpp runner that reads only an explicit selected folder and returns transcript metadata through the source review path.",
 	},
 	{
 		ID: "a2a", Name: "A2A Protocol", UpstreamURL: "https://github.com/a2aproject/A2A", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10139/repos/", SourceCollection: "A2A Protocol",

@@ -167,6 +167,9 @@ services:
       HAI_PROMPTFOO_ENABLED: ${HAI_PROMPTFOO_ENABLED:-false}
       HAI_PROMPTFOO_BASE_URL: ${HAI_PROMPTFOO_BASE_URL:-http://promptfoo-runner:8080}
       HAI_PROMPTFOO_TIMEOUT_SECONDS: ${HAI_PROMPTFOO_TIMEOUT_SECONDS:-130}
+      HAI_WHISPER_CPP_ENABLED: ${HAI_WHISPER_CPP_ENABLED:-false}
+      HAI_WHISPER_CPP_BASE_URL: ${HAI_WHISPER_CPP_BASE_URL:-http://whispercpp-runner:8080}
+      HAI_WHISPER_CPP_TIMEOUT_SECONDS: ${HAI_WHISPER_CPP_TIMEOUT_SECONDS:-300}
       HAI_WASI_ENABLED: ${HAI_WASI_ENABLED}
       HAI_WASI_RUNNER_URL: ${HAI_WASI_RUNNER_URL}
       HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
@@ -348,6 +351,7 @@ services:
       - guardrails-internal
       - lm-eval-internal
       - promptfoo-internal
+      - whispercpp-internal
 
   frontend:
     build:
@@ -575,6 +579,40 @@ services:
       start_period: 30s
     networks:
       - promptfoo-internal
+
+  whispercpp-runner:
+    build:
+      context: ./services/whispercpp-runner
+    profiles: ["local-transcription"]
+    restart: unless-stopped
+    environment:
+      WHISPER_CPP_MODEL_FILE: ${WHISPER_CPP_MODEL_FILE:-}
+      WHISPER_CPP_LANGUAGE: ${WHISPER_CPP_LANGUAGE:-auto}
+      WHISPER_CPP_FILE_LIMIT: ${WHISPER_CPP_FILE_LIMIT:-25}
+      WHISPER_CPP_MAX_AUDIO_BYTES: ${WHISPER_CPP_MAX_AUDIO_BYTES:-67108864}
+      WHISPER_CPP_TIMEOUT_SECONDS: ${WHISPER_CPP_TIMEOUT_SECONDS:-180}
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=768m
+    volumes:
+      - ./connected-sources:/intake:ro
+      - ./whisper-models:/models:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - whispercpp-internal
 
   wasi-runner:
     build:
@@ -855,6 +893,10 @@ networks:
     internal: true
   promptfoo-internal:
     name: 018-hai-promptfoo-internal
+    driver: bridge
+    internal: true
+  whispercpp-internal:
+    name: 018-hai-whispercpp-internal
     driver: bridge
     internal: true
 

@@ -555,6 +555,19 @@ and cannot change routing, budgets, policy, verification, memory, workflows,
 approvals, or execution. Passing results are bounded regression evidence, not
 proof that a model is safe or capable in real-world use.
 
+Optional local speech-to-text uses the `local-transcription` Compose profile.
+Set `HAI_WHISPER_CPP_ENABLED=true`, manually place a reviewed whisper.cpp GGML
+model under `./whisper-models`, set `WHISPER_CPP_MODEL_FILE` to its filename,
+then run `docker compose --profile local-transcription up --build`. Create an
+owner-scoped, `localOnly: true` `whisper-audio` source with an explicit
+subfolder under `./connected-sources` and use its Transcribe action. HAI sends
+no audio from the browser and accepts no caller-selected path, model, or
+language. The read-only internal runner transcribes at most 25 bounded local
+files, returns text only, and HAI records that text as uncertain, source-linked
+evidence. It never records a microphone, uploads cloud audio, runs on a
+schedule, retains raw audio, verifies a claim, or executes an action. Review
+the original media before relying on any transcript for a consequential fact.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job

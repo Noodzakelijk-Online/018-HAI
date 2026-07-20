@@ -15,6 +15,28 @@ HAI uses [e2b-dev/awesome-ai-agents](https://github.com/e2b-dev/awesome-ai-agent
 - A project becomes executable only after a dedicated adapter has been reviewed, configured, health-checked, and routed through HAI's existing approval and audit controls.
 - HAI remains the policy owner: an external framework cannot bypass the local-first policy, paid budget, source controls, folder allowlist, emergency stop, or approval queue.
 
+### whisper.cpp local transcription
+
+The opt-in `local-transcription` Compose profile builds one pinned local
+`whisper.cpp` runner. It is disabled unless `HAI_WHISPER_CPP_ENABLED=true`, the
+runner profile is started, and a reviewed GGML model is manually placed under
+`./whisper-models`. HAI does not download a model or start a microphone.
+
+Create an owner-scoped `whisper-audio` connected source with `localOnly: true`
+and an explicit subfolder of `./connected-sources`, for example
+`voice-notes/2026-07`. `POST /api/v1/sources/:id/transcribe` accepts no body:
+it can inspect only that registered subfolder, with its model, language, file,
+size, and timeout limits set by the local operator. The internal runner mounts
+the intake and model folders read-only, has no published host port, no network
+attachment beyond its internal bridge, and returns text plus bounded model
+metadata only. HAI turns that text into normal, owner-scoped, uncertain source
+extractions with `audio://` provenance. Existing source correction, archive,
+deletion, audit, workflow, and approval paths then apply.
+
+This is not ambient recording, audio uploading, speech-driven action execution,
+or evidence verification. A transcript may be wrong; it must be reviewed
+against the original audio before it supports a consequential claim or action.
+
 ## Curation snapshot: 2026-07-20
 
 | Project | HAI disposition | Intended role | Why |

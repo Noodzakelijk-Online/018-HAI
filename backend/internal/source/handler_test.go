@@ -3,14 +3,32 @@ package source
 import (
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/whispercpp"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+type sourceTranscriberStub struct {
+	transcripts []whispercpp.Transcript
+	err         error
+	folder      string
+}
+
+func (s *sourceTranscriberStub) Status() whispercpp.Status { return whispercpp.Status{} }
+func (s *sourceTranscriberStub) Probe(context.Context) (*whispercpp.ProbeResult, error) {
+	return &whispercpp.ProbeResult{Reachable: true}, nil
+}
+func (s *sourceTranscriberStub) Transcribe(_ context.Context, folder string) ([]whispercpp.Transcript, error) {
+	s.folder = folder
+	return s.transcripts, s.err
+}
 
 func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -161,5 +179,64 @@ func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T)
 	}
 	if storedExtraction.Archived {
 		t.Fatalf("ownerless extraction was archived: %#v", storedExtraction)
+	}
+}
+
+func TestHandlerTranscribesOnlyAnOwnedExplicitAudioSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "whisper-audio", Name: "Meeting notes", Category: "audio",
+		Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "voice-notes/2026-07", DefaultProjectKey: "Robert-life-os",
+	})
+	stub := &sourceTranscriberStub{transcripts: []whispercpp.Transcript{{Path: "voice-notes/2026-07/meeting.m4a", Text: "Follow up with the lawyer.", ModelID: "ggml-base.en.bin", Language: "en"}}}
+	handler := NewHandler(NewService(repo, nil), stub)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/transcribe", handler.Transcribe)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/transcribe", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("transcribe status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if stub.folder != "voice-notes/2026-07" {
+		t.Fatalf("folder = %q", stub.folder)
+	}
+	if len(repo.rawItems) != 1 {
+		t.Fatalf("raw items = %#v", repo.rawItems)
+	}
+	var raw *models.SourceRawItem
+	for _, item := range repo.rawItems {
+		raw = item
+	}
+	if raw == nil || raw.SourceURI == "" || raw.ItemType != "audio_transcript" {
+		t.Fatalf("raw item = %#v", raw)
+	}
+	if !strings.HasPrefix(raw.SourceURI, "audio://selected-source/") {
+		t.Fatalf("source uri = %q", raw.SourceURI)
+	}
+}
+
+func TestHandlerTranscriptionRejectsCallerPayloadAndNonAudioSources(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Files", Category: "local_folder", Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "notes"})
+	handler := NewHandler(NewService(repo, nil), &sourceTranscriberStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/transcribe", handler.Transcribe)
+
+	payloadResponse := httptest.NewRecorder()
+	router.ServeHTTP(payloadResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/transcribe", strings.NewReader(`{"path":"anywhere"}`)))
+	if payloadResponse.Code != http.StatusBadRequest {
+		t.Fatalf("payload status = %d, body=%s", payloadResponse.Code, payloadResponse.Body.String())
+	}
+
+	nonAudioResponse := httptest.NewRecorder()
+	nonAudioRequest := httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/transcribe", nil)
+	router.ServeHTTP(nonAudioResponse, nonAudioRequest)
+	if nonAudioResponse.Code != http.StatusBadRequest {
+		t.Fatalf("non-audio status = %d, body=%s", nonAudioResponse.Code, nonAudioResponse.Body.String())
 	}
 }

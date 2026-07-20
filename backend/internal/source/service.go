@@ -80,9 +80,12 @@ type ImportRequest struct {
 	Mode       string       `json:"mode,omitempty"`
 	Items      []ImportItem `json:"items"`
 	FolderPath string       `json:"folderPath,omitempty"`
-	ProjectKey string       `json:"projectKey,omitempty"`
-	Limit      int          `json:"limit,omitempty"`
-	MaxBytes   int64        `json:"maxBytes,omitempty"`
+	// controlledTranscription is deliberately package-private. Only the
+	// server-side whisper handler can mark runner output as audio-derived.
+	controlledTranscription bool
+	ProjectKey              string `json:"projectKey,omitempty"`
+	Limit                   int    `json:"limit,omitempty"`
+	MaxBytes                int64  `json:"maxBytes,omitempty"`
 }
 
 type SyncResult struct {
@@ -362,6 +365,9 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
+	}
+	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
+		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")
 	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) && len(request.Items) == 0 {
 		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
@@ -1705,6 +1711,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "manual and scheduled ingestion of an allowlisted local folder"},
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
+		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 	}
 }
@@ -1735,7 +1742,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "odoo-herp"
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp"
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
@@ -1770,7 +1777,7 @@ func minimalPermissions(category string, requested []string) []string {
 	if len(requested) == 0 {
 		return []string{"metadata:read", category + ":read"}
 	}
-	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "herp:read": true, "odoo:read": true}
+	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
 	result := []string{}
 	for _, value := range requested {
 		value = strings.TrimSpace(value)
@@ -1809,6 +1816,9 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 }
 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
+	if source.ConnectorKey == "whisper-audio" {
+		return false, "whisper-audio transcription is operator-triggered only"
+	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
 	}

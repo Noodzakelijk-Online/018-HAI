@@ -477,7 +477,7 @@
               </div>
             </dl>
             <div class="inspector-actions">
-              <button type="button" nz-button nzType="default" (click)="syncSource(source)" [disabled]="!syncButtonVisible(source)" [nzLoading]="syncing">Sync</button>
+              <button type="button" nz-button nzType="default" (click)="syncSource(source)" [disabled]="!syncButtonVisible(source)" [nzLoading]="syncing" [title]="source.connectorKey === 'whisper-audio' ? 'Transcribe the source’s explicit local audio folder. HAI never records a microphone or accepts uploaded audio.' : 'Run an incremental sync for this source'">{{ source.connectorKey === 'whisper-audio' ? 'Transcribe' : 'Sync' }}</button>
               <button type="button" nz-button nzType="default" (click)="reindex(source)">Re-index</button>
               <button type="button" *ngIf="source.enabled" nz-button nzType="default" (click)="pause(source)">Pause</button>
               <button type="button" *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzType="default" (click)="resume(source)">Resume</button>
