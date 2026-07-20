@@ -50,3 +50,12 @@ export interface IMemoryExport {
   format: string;
   memories: IContextMemory[];
 }
+
+export interface ISemanticMemoryReindexResult {
+  enabled: boolean;
+  attempted: number;
+  indexed: number;
+  failed: number;
+  deferred: number;
+  explanation: string;
+}
