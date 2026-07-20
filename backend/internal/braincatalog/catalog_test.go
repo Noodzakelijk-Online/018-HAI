@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "opik", "deepteam", "pipecat", "livekit-agents"} {
+	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "swe-agent", "openlit", "opik", "deepteam", "pipecat", "livekit-agents"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -137,7 +137,7 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	if entry, ok := EntryByID("llm-guard"); !ok || entry.Status != StatusExcluded {
 		t.Fatalf("archived LLM Guard must remain excluded: %#v", entry)
 	}
-	for _, id := range []string{"openai-evals", "omniparser", "mcp-servers"} {
+	for _, id := range []string{"openai-evals", "omniparser", "mcp-servers", "qodo-pr-agent"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusLicenseReview {
 			t.Fatalf("%s must remain held for licence review: %#v", id, entry)
 		}
@@ -351,11 +351,14 @@ func TestRecommendNewControlledMCPAndCodeCandidatesStayReviewFirst(t *testing.T)
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"github-mcp-server", "playwright-mcp", "qodo-pr-agent", "swe-agent"} {
+	for _, id := range []string{"github-mcp-server", "playwright-mcp", "swe-agent"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["qodo-pr-agent"]; !ok || recommendation.Status != StatusLicenseReview || recommendation.Role != "reference or review only" {
+		t.Fatalf("qodo-pr-agent must remain held for licence review: %#v", recommendations)
 	}
 }
 

@@ -299,6 +299,7 @@ high-ranking collection.
 | Repository | Capability gap | Decision | Boundary |
 | --- | --- | --- | --- |
 | `pydantic/pydantic-ai` | Typed planning and schema-constrained output | Integrated, opt-in local proposal runner | `pydantic-ai-slim[openai]` 2.13.0 runs only behind a fixed local schema, loopback-model allowlist, bounded request/response limits, and no-tool/no-persistence boundary. HAI retains schemas, validation, provider policy, audit, and approvals. |
+| `qodo-ai/pr-agent` -> `The-PR-Agent/pr-agent` | Pull-request review patterns | Licence review | The repository redirects to a community-maintained legacy AGPL-3.0 project with CLI, Action, and webhook publishing paths. HAI installs nothing; any use requires explicit licence, model-egress, repository-scope, redaction, retention, and no-publish review. |
 | `mudler/LocalAI` | Alternative local OpenAI-compatible model serving | Review-first candidate | Loopback only, approved model provenance, no automatic model download or paid routing. |
 | `cloudquery/cloudquery` | Read-first incremental source inventory | Integrated, opt-in local summary reader | Fixed local JSONL summary path only, bounded completed rows and incremental cursoring; CloudQuery credentials/configuration, raw source data, destinations, and process execution remain outside HAI. |
 | `comet-ml/opik` | Local trace and evaluation evidence | Review-first candidate | Redacted local traces, retention/export controls, no audit-authority replacement. |

@@ -157,12 +157,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "qodo-pr-agent", Name: "Qodo PR-Agent", UpstreamURL: "https://github.com/qodo-ai/pr-agent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
-		Status: StatusCandidate, Category: "repository-review automation", IntegrationMode: "reviewed read-only pull-request analysis adapter",
+		Status: StatusLicenseReview, Category: "legacy AGPL pull-request review framework", IntegrationMode: "licence-review reference",
 		Capabilities: []string{"pull-request analysis", "change summaries", "review suggestions", "test-gap detection"}, RecommendedFor: []string{"developer quality gates", "pull-request triage", "review preparation"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a read-only repository scope, an operator-selected local or approved model, prompt and diff redaction, result retention, and a no-comment/no-merge default. Any remote model egress, issue comment, review submission, label change, or merge remains a separate HAI approval.",
-		Rationale:  "Qodo PR-Agent is a maintained candidate for making code-review work more inspectable, but it must remain a proposal generator under HAI's source, test, and approval gates.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Code Review repository list and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no Qodo PR-Agent integration is installed or authorised by HAI.",
+		Activation: "Do not install or connect this upstream. Its repository now redirects to the community-maintained legacy The-PR-Agent/pr-agent project under AGPL-3.0. Any future use requires a separate licence, maintenance, local-model, repository-scope, diff-redaction, retention, and no-publish/no-merge review.",
+		Rationale:  "The project retains useful pull-request review patterns, but its legacy maintenance status, AGPL-3.0 licence, and CLI/Action/webhook publication paths make it unsuitable for direct adoption without an explicit legal and operational review.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Upstream checked on 2026-07-20: qodo-ai/pr-agent redirects to The-PR-Agent/pr-agent, whose README identifies it as a community-maintained legacy project under AGPL-3.0. Its documented CLI, Action, and webhook paths can publish review output. HAI has no dependency, runner, credentials, repository access, or integration for it.",
 	},
 	{
 		ID: "swe-agent", Name: "SWE-agent", UpstreamURL: "https://github.com/SWE-agent/SWE-agent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
