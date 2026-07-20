@@ -109,6 +109,7 @@ none is installed, configured, or executable through HAI.
 | [Goose](https://github.com/aaif-goose/goose) | Reference only | General-purpose local-agent and MCP interoperability patterns | Its historic `block/goose` slug now redirects here. Its desktop, CLI, API, provider, extension, and execution surfaces would create a second control plane, so it is not embedded, installed, or run by HAI. |
 | [SWE-agent](https://github.com/SWE-agent/SWE-agent) | Reference only | Superseded coding-agent architecture | Its own upstream now recommends mini-SWE-agent. HAI will not add a legacy code-worker, repository mount, provider credential, or agent loop from SWE-agent. |
 | [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) | Candidate | Minimal disposable-worktree coding worker | It is the maintained successor and remains review-first: any future run must use a pinned release, a copied disposable worktree, no host shell/Docker socket/secrets/accounts, deny-by-default network, strict resource caps, and return only a reviewed diff plus selected test summary. It cannot commit, push, or open a pull request. |
+| [OpenCode (opencode-ai legacy)](https://github.com/opencode-ai/opencode) | Excluded | Archived same-name terminal agent | This is a distinct archived project, not an alias for HAI's active `anomalyco/opencode` candidate. It cannot inherit that profile's review status or receive a workspace, model provider, MCP server, credential, or runtime adapter. |
 
 ### RAGFlow capacity gate
 

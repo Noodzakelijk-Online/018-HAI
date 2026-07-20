@@ -52,6 +52,7 @@ only in its expandable collection-coverage section.
 | Tabby | AI Coding Assistants | Candidate | Self-hosted coding assistance | Local deployment, model/privacy review, workspace scope, and read-only-first review are required. |
 | Cline | LLM DevTools | Candidate | Review-first interactive coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | OpenCode | Model Context Protocol (MCP) Client | Candidate | Review-first terminal coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
+| OpenCode (opencode-ai legacy) | Model Context Protocol (MCP) Client | Excluded | Archived same-name terminal agent | This distinct archived upstream cannot inherit the active anomalyco/opencode candidate's review status, workspace, provider, credential, MCP, or runtime permissions. |
 | Continue, OpenHands, CrewAI, Aider | AI Agent Frameworks / LLM DevTools / MCP | Candidate | Reviewed coding and orchestration profiles | Existing catalog controls apply; no generic agent-execution endpoint. |
 | AutoGen | AI Agent Frameworks | Compatibility only | Migration and protocol translation | Dedicated bridge and approval required; no new foundation work. |
 | Activepieces | Zapier Alternatives | Reference only | Connector and workflow-pattern research | No second automation control plane by default. |

@@ -65,7 +65,7 @@ var ossInsightCollectionIDs = map[string]string{
 
 var ossInsightCollectionDecisions = map[string]collectionDecision{
 	"ai-gateways":                          {CollectionRepresented, []string{"litellm"}, "A local-first provider gateway profile is already registered; every configured upstream still needs its own budget and approval review."},
-	"Model Context Protocol (MCP) Client":  {CollectionRepresented, []string{"mcp-inspector", "opencode"}, "HAI has a local preflight profile and a separate review-first terminal-agent candidate; no MCP tool is enabled by discovery."},
+	"Model Context Protocol (MCP) Client":  {CollectionRepresented, []string{"mcp-inspector", "opencode", "opencode-ai-legacy"}, "HAI has a local preflight profile and a separate review-first terminal-agent candidate; the distinct archived opencode-ai project is excluded. No MCP tool is enabled by discovery."},
 	"AI Agent Frameworks":                  {CollectionCandidate, []string{"continue", "openhands", "crewai", "autogen", "ag2", "pydantic-ai"}, "OpenHands has an integrated health-only readiness adapter; broader agent-framework execution remains review-first, and HAI retains policy, audit, and final execution authority."},
 	"GraphRAG - Knowledge Graph based RAG": {CollectionReference, []string{"langchain", "llamaindex", "cognee", "graphrag"}, "Useful retrieval patterns, but HAI keeps a single source-linked memory plane until a measured graph-retrieval gap exists."},
 	"Vector Database & Vector Store":       {CollectionRepresented, []string{"pgvector", "qdrant"}, "The local Postgres pgvector profile is preferred; a second active vector database is held as a reference."},

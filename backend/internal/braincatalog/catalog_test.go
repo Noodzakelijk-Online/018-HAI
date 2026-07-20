@@ -18,6 +18,9 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
+	if entry, ok := EntryByID("opencode-ai-legacy"); !ok || entry.Status != StatusExcluded || !entry.RequiresApproval {
+		t.Fatalf("the archived opencode-ai project must remain excluded: %#v", entry)
+	}
 	for _, id := range []string{"openllmetry", "browser-use", "nemo-guardrails", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "mini-swe-agent", "openlit", "opik", "pipecat", "livekit-agents"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)

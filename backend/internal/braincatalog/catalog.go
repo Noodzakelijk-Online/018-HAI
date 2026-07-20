@@ -500,6 +500,18 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "GitHub repository metadata checked on 2026-07-19; the upstream repository reports an active anomalyco/opencode project and MIT licence.",
 	},
 	{
+		ID: "opencode-ai-legacy", Name: "OpenCode (opencode-ai legacy)", UpstreamURL: "https://github.com/opencode-ai/opencode", SourceCatalogURL: "https://ossinsight.io/collections/model-context-protocol-mcp-client", SourceCollection: "Model Context Protocol (MCP) Client",
+		Status: StatusExcluded, Category: "archived terminal coding agent", IntegrationMode: "excluded upstream",
+		Capabilities: []string{"terminal coding assistance", "repository editing", "agent configuration"}, RecommendedFor: []string{"historical comparison only"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install or connect this project. It is a distinct archived repository, not an alias or predecessor of anomalyco/opencode. It cannot receive a workspace, model provider, credential, MCP server, or runtime adapter through HAI.",
+		Rationale:  "The archived opencode-ai repository shares a name with HAI's active OpenCode candidate but is not the same upstream. Recording it separately prevents a deceptive name match from becoming a false readiness signal or duplicated discovery candidate.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official GitHub repository reviewed on 2026-07-20: opencode-ai/opencode is archived by its owner as of 2025-09-18. It is a distinct Go implementation from the active MIT anomalyco/opencode project. HAI has no dependency, CLI, workspace, provider credential, MCP server, or runtime adapter configured for it.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "terminal agent and repository editing", HAIControl: "catalog identity review and controlled runtime policy", Boundary: "an archived same-name upstream cannot inherit another project's review status or execution path"},
+		},
+	},
+	{
 		ID: "openhands", Name: "OpenHands", UpstreamURL: "https://github.com/OpenHands/OpenHands", RepositoryAliases: []string{"All-Hands-AI/OpenHands"}, SourceCatalogURL: sourceCatalogURL,
 		Status: StatusIntegrated, Category: "external coding-agent readiness adapter", IntegrationMode: "integrated health-only endpoint adapter",
 		Capabilities: []string{"configured endpoint health probe", "coding-agent setup requirements", "operator-reviewed deployment boundary"}, RecommendedFor: []string{"coding-agent readiness review", "isolated workspace planning", "operator-controlled runtime health"},

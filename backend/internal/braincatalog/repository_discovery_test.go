@@ -116,8 +116,8 @@ func TestCatalogRepositoriesIncludesOnlyExplicitReviewedAliases(t *testing.T) {
 			t.Fatalf("reviewed upstream alias %q must suppress a duplicate discovery", repository)
 		}
 	}
-	if known["opencode-ai/opencode"] {
-		t.Fatal("an unreviewed similarly named repository must remain discoverable")
+	if !known["opencode-ai/opencode"] {
+		t.Fatal("the explicitly reviewed archived same-name repository must not remain a viable discovery candidate")
 	}
 }
 
