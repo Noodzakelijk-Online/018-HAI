@@ -310,6 +310,20 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must be empty")
 		}
 	}
+	if connectorKey == openSpecArtifactConnectorKey {
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("OpenSpec artifacts must use the code_spec category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("OpenSpec artifacts are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("OpenSpec artifacts require a selected project folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
+		}
+	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
 	}
@@ -359,6 +373,19 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 		}
 		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
 			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must remain empty")
+		}
+	}
+	if source.ConnectorKey == openSpecArtifactConnectorKey {
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("OpenSpec artifacts are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil {
+			if strings.TrimSpace(*request.SyncTarget) == "" {
+				return nil, fmt.Errorf("OpenSpec artifacts require a selected project folder")
+			}
+			if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), *request.SyncTarget); err != nil {
+				return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
+			}
 		}
 	}
 	if strings.TrimSpace(request.Name) != "" {
@@ -428,6 +455,19 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		if len(request.Items) != 0 {
 			return nil, fmt.Errorf("CloudQuery sync summaries must be read from the configured local summary file; manual items are not accepted")
 		}
+	}
+	if source.ConnectorKey == openSpecArtifactConnectorKey {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) == "" {
+			return nil, fmt.Errorf("OpenSpec artifacts must remain local-only with a selected project folder")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("OpenSpec artifacts must be read from the selected project folder; manual items are not accepted")
+		}
+		if requested := strings.TrimSpace(request.FolderPath); requested != "" && requested != strings.TrimSpace(source.SyncTarget) {
+			return nil, fmt.Errorf("OpenSpec sync must use its registered project folder")
+		}
+		request.FolderPath = source.SyncTarget
+		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
 	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) && len(request.Items) == 0 {
 		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
@@ -539,6 +579,19 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			return nil, err
 		}
 		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == openSpecArtifactConnectorKey {
+		items, err = s.openSpecArtifactItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
 		items, err = s.whatsAppExportItems(source, request)
@@ -1803,6 +1856,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
 		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
+		{ConnectorKey: openSpecArtifactConnectorKey, Name: "OpenSpec change artifacts (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only proposal.md, design.md, tasks.md, and specs Markdown below a selected local openspec/changes folder; never installs or runs OpenSpec, edits a repository, or authorizes code changes"},
 	}
 }
 
@@ -1832,7 +1886,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == openSpecArtifactConnectorKey
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {

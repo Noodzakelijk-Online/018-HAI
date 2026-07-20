@@ -63,6 +63,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | Serena | Coding-context retrieval | Integrated, opt-in | One owner-started loopback MCP endpoint pinned to a single project, a stable HAI project label, MCP handshake/tool inventory probe, and HAI's fixed `find_symbol` allowlist with source-body and hover data disabled. |
 | Odoo | Business-system source ingestion | Integrated, opt-in | One operator-owned JSON-2 endpoint, read-only API key, optional database, and fixed HAI model/field allowlist. HAI uses only bounded `search_read`; all writes, payments, accounting changes, and generic RPC calls remain unavailable. |
 | CloudQuery | Source-intake sync health | Integrated, opt-in | One local, operator-produced `cloudquery sync --summary-location` JSONL file under an explicit read-only mount. HAI does not run CloudQuery, inspect its configuration/credentials, or access source/destination records; it converts only bounded completed summary rows into provenance-linked review signals. |
+| OpenSpec | Spec-driven software planning | Integrated, opt-in | One selected local project folder. HAI reads only active `openspec/changes` proposal/design/tasks/spec Markdown as reviewable planning bundles; it does not run OpenSpec, scan repository code, write files, or authorize coding execution. |
 
 RAGFlow is deliberately not presented as HAI memory. Its parsed chunks and
 citations are candidate evidence that must pass HAI's source-grounding,

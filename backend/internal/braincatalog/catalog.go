@@ -792,15 +792,15 @@ var entries = []Entry{
 	},
 	{
 		ID: "openspec", Name: "OpenSpec", UpstreamURL: "https://github.com/Fission-AI/OpenSpec", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10112/repos/", SourceCollection: "AI Coding Assistants",
-		Status: StatusCandidate, Category: "spec-driven coding workflow", IntegrationMode: "reviewed repository-local planning adapter",
-		Capabilities: []string{"change specifications", "acceptance criteria", "implementation plans", "coding workflow structure"}, RecommendedFor: []string{"software task planning", "acceptance criteria", "reviewable coding proposals"},
+		Status: StatusIntegrated, Category: "local read-only spec-driven planning intake", IntegrationMode: "integrated local OpenSpec change-artifact reader",
+		Capabilities: []string{"change specifications", "acceptance criteria", "implementation plans", "reviewable task bundles"}, RecommendedFor: []string{"software task planning", "acceptance criteria", "reviewable coding proposals"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a repository-local, read-only specification generator that writes no files until an owner approves a proposed change scope, tests, rollback, and workspace boundary. Generated specifications are planning artifacts and cannot authorize code edits, commits, branches, or pulls.",
-		Rationale:  "OpenSpec provides a maintained, lightweight spec-first pattern that can improve HAI coding-task clarity without introducing another coding agent, source authority, or execution path.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Coding Assistants listing and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no OpenSpec package, repository hook, or filesystem writer is installed by HAI.",
+		Activation: "Create a local-only `openspec-artifacts` connected source for one selected project folder under CONNECTED_SOURCE_LOCAL_ROOT. HAI reads only active Markdown artifacts below `openspec/changes` (proposal, design, tasks, and specs) and groups them into one source-linked planning bundle per change. It does not install or run OpenSpec, inspect code outside that tree, write a repository, or authorize code edits, commits, branches, pulls, or runtime execution.",
+		Rationale:  "HAI can use reviewable spec artifacts to improve task criteria and context without introducing another coding agent, source authority, or execution path.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Coding Assistants listing and OpenSpec upstream README checked on 2026-07-20: active main branch, MIT licence, artifact-guided proposal/design/tasks/spec workflow. HAI implements only a disabled-until-connected local artifact reader; no OpenSpec package, command, repository hook, or filesystem writer is installed or invoked by HAI.",
 		ControlMappings: []ControlMapping{
-			{SourcePattern: "change specification", HAIControl: "task success criteria and review queue", Boundary: "a specification is not permission to edit code"},
-			{SourcePattern: "repository workflow", HAIControl: "workspace allowlist and approval policy", Boundary: "no commit, pull request, or network action is implicit"},
+			{SourcePattern: "OpenSpec change artifacts", HAIControl: "selected-folder allowlist, source provenance, task criteria, and review queue", Boundary: "HAI reads no code outside active openspec/changes artifacts and the artifacts are not permission to edit code"},
+			{SourcePattern: "repository workflow", HAIControl: "workspace allowlist and approval policy", Boundary: "no OpenSpec command, commit, pull request, runtime execution, or network action is implicit"},
 		},
 	},
 	{

@@ -210,6 +210,76 @@ func TestCloudQuerySummaryRejectsIncompleteAndMalformedRecords(t *testing.T) {
 	}
 }
 
+func TestSyncOpenSpecArtifactsReadsOnlyChangePlanningFiles(t *testing.T) {
+	root := t.TempDir()
+	project := root + "/project"
+	change := project + "/openspec/changes/add-local-routing"
+	if err := os.MkdirAll(change+"/specs", 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	writeTestFile(t, change+"/proposal.md", "# Proposal\nThe router must select local models first.\n")
+	writeTestFile(t, change+"/design.md", "# Design\nUse an allowlisted local endpoint.\n")
+	writeTestFile(t, change+"/tasks.md", "# Tasks\n- [ ] Add the local routing policy.\n")
+	writeTestFile(t, change+"/specs/routing.md", "## ADDED Requirements\n### Requirement: Local routing\nThe system SHALL prefer local models.\n")
+	writeTestFile(t, project+"/main.go", "package ignored\n// code outside OpenSpec must not be read\n")
+	if err := os.MkdirAll(project+"/openspec/changes/archive/old-change", 0755); err != nil {
+		t.Fatalf("MkdirAll archive: %v", err)
+	}
+	writeTestFile(t, project+"/openspec/changes/archive/old-change/proposal.md", "Archived change must not be imported.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      openSpecArtifactConnectorKey,
+		Name:              "Project OpenSpec",
+		Category:          "code_spec",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		SyncTarget:        "project",
+		DefaultProjectKey: "018-HAI",
+	})
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeManualImport})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 || result.Job.ItemsAdded != 1 || len(result.Extractions) != 1 {
+		t.Fatalf("unexpected OpenSpec sync result: %#v", result)
+	}
+	extraction := result.Extractions[0]
+	if extraction.ContentType != "openspec_change" || extraction.ProjectKey != "018-HAI" || !strings.Contains(extraction.Text, "ADDED Requirements") {
+		t.Fatalf("OpenSpec extraction = %#v", extraction)
+	}
+	if strings.Contains(extraction.Text, "code outside OpenSpec") || strings.Contains(extraction.Text, "Archived change") {
+		t.Fatalf("OpenSpec connector read out-of-scope files: %q", extraction.Text)
+	}
+	if !repo.hasAudit("source.openspec_artifacts_read") || !repo.hasAudit("source.synced") {
+		t.Fatalf("expected OpenSpec source audits")
+	}
+}
+
+func TestSyncOpenSpecArtifactsRejectsManualAndFolderOverride(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: openSpecArtifactConnectorKey,
+		Name:         "OpenSpec",
+		Category:     "code_spec",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+		SyncTarget:   "approved-project",
+	})
+	service := NewService(repo, nil)
+	if _, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{ExternalID: "forged", Content: "forged planning artifact"}}}); err == nil || !strings.Contains(err.Error(), "manual items") {
+		t.Fatalf("manual OpenSpec import error = %v, want rejection", err)
+	}
+	if _, err := service.Sync(sourceID, ImportRequest{FolderPath: "another-project"}); err == nil || !strings.Contains(err.Error(), "registered project folder") {
+		t.Fatalf("OpenSpec folder override error = %v, want rejection", err)
+	}
+}
+
 func TestSyncWhatsAppExportParsesChatWindowsAndGatesReview(t *testing.T) {
 	root := t.TempDir()
 	export := strings.Join([]string{

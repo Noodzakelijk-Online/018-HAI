@@ -527,6 +527,18 @@ CloudQuery, reads its configuration or credentials, accesses raw source or
 destination data, or treats a reported summary as verified fact or execution
 authority.
 
+Optional OpenSpec planning intake uses the existing selected local connected-
+source folder boundary; it requires no OpenSpec service, API key, or new HAI
+environment variable. In **Connected Sources**, create the local-only
+`openspec-artifacts` source and select one project folder below
+`CONNECTED_SOURCE_LOCAL_ROOT`. On sync, HAI reads only active Markdown files
+below that folder's `openspec/changes` tree: `proposal.md`, `design.md`,
+`tasks.md`, and Markdown under `specs/`. It groups those files into one
+source-linked planning bundle per change and skips archived changes, symlinks,
+and all repository code outside that tree. HAI never installs or invokes
+OpenSpec, writes a repository, creates a branch or pull request, or treats a
+plan as authority to execute code changes.
+
 Optional Serena semantic code context is a separate, owner-started local MCP
 service. Start Serena in Streamable HTTP mode with one explicit project, then
 set `HAI_SERENA_ENABLED=true`, a loopback or

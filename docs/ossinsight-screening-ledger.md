@@ -303,7 +303,7 @@ high-ranking collection.
 | `cloudquery/cloudquery` | Read-first incremental source inventory | Integrated, opt-in local summary reader | Fixed local JSONL summary path only, bounded completed rows and incremental cursoring; CloudQuery credentials/configuration, raw source data, destinations, and process execution remain outside HAI. |
 | `comet-ml/opik` | Local trace and evaluation evidence | Review-first candidate | Redacted local traces, retention/export controls, no audit-authority replacement. |
 | `confident-ai/deepteam` | No-write agent red-team regression | Review-first candidate | Synthetic or redacted fixtures only; never connected accounts or real attack targets. |
-| `Fission-AI/OpenSpec` | Spec-first coding plans | Review-first candidate | Read-only planning artifact; no implicit edit, commit, branch, or pull request. |
+| `Fission-AI/OpenSpec` | Spec-first coding plans | Integrated, opt-in local artifact reader | Selected local `openspec/changes` artifacts only; groups proposal/design/tasks/spec Markdown into reviewable source bundles and never invokes OpenSpec, reads repository code outside that tree, or edits/commits/branches/opens pulls. |
 | `pipecat-ai/pipecat` | Consentful local voice or multimodal intake | Review-first candidate | Opt-in capture, provenance, pause, retention, and no action from speech without HAI approval. |
 | `protectai/llm-guard` | LLM security filtering | Excluded | GitHub metadata reports the upstream as archived. |
 | `openai/evals` | LLM evaluation framework | Licence review | GitHub metadata reports `NOASSERTION`; provider and dependency review is also required. |
