@@ -90,6 +90,19 @@ func TestOSSInsightCollectionScreeningCoversEveryCollection(t *testing.T) {
 	if screening.Represented == 0 || screening.Candidates == 0 || screening.Deferred == 0 {
 		t.Fatalf("screening summary must make every outcome visible: %#v", screening)
 	}
+	businessManagementFound := false
+	for _, entry := range screening.Entries {
+		if entry.Collection != "Business Management" {
+			continue
+		}
+		businessManagementFound = true
+		if entry.Disposition != CollectionRepresented {
+			t.Fatalf("Business Management must reflect the integrated read-only Odoo adapter: %#v", entry)
+		}
+	}
+	if !businessManagementFound {
+		t.Fatal("Business Management must remain in the OSS Insight screening")
+	}
 }
 
 func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
