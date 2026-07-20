@@ -22,17 +22,20 @@ const (
 	maxQueryLength         = 512
 	maxResults             = 10
 	maxResponseBytes int64 = 1 << 20
+	maxHealthBytes   int64 = 64 << 10
 )
 
 var ErrNotConfigured = errors.New("local research is not configured")
 
 type Status struct {
-	Enabled     bool   `json:"enabled"`
-	Configured  bool   `json:"configured"`
-	Provider    string `json:"provider"`
-	Endpoint    string `json:"endpoint,omitempty"`
-	ConfigError string `json:"configError,omitempty"`
-	Scope       string `json:"scope"`
+	Enabled      bool     `json:"enabled"`
+	Configured   bool     `json:"configured"`
+	Provider     string   `json:"provider"`
+	Endpoint     string   `json:"endpoint,omitempty"`
+	ConfigError  string   `json:"configError,omitempty"`
+	Capabilities []string `json:"capabilities"`
+	Restrictions []string `json:"restrictions"`
+	Scope        string   `json:"scope"`
 }
 
 type Request struct {
@@ -54,8 +57,18 @@ type Response struct {
 	Scope   string   `json:"scope"`
 }
 
+// ProbeResult is deliberately only an endpoint reachability signal. It does
+// not establish that the configured engines, JSON output, or returned sources
+// are safe or suitable for a particular task.
+type ProbeResult struct {
+	Reachable bool      `json:"reachable"`
+	CheckedAt time.Time `json:"checkedAt"`
+	Scope     string    `json:"scope"`
+}
+
 type Service interface {
 	Status() Status
+	Probe(context.Context) (*ProbeResult, error)
 	Search(context.Context, Request) (*Response, error)
 }
 
@@ -83,12 +96,49 @@ func NewService(enabled bool, rawBaseURL string, client *http.Client) Service {
 }
 
 func (s *service) Status() Status {
-	status := Status{Enabled: s.enabled, Configured: s.enabled && s.configErr == "", Provider: "SearXNG", ConfigError: s.configErr,
-		Scope: "Operator-configured local SearXNG discovery only. HAI sends a bounded query to the local instance, returns source candidates, does not fetch result pages, and never treats search snippets as verified evidence."}
+	status := Status{
+		Enabled:      s.enabled,
+		Configured:   s.enabled && s.configErr == "",
+		Provider:     "SearXNG",
+		ConfigError:  s.configErr,
+		Capabilities: []string{"bounded local source discovery", "local endpoint reachability probe"},
+		Restrictions: []string{"no public endpoint", "no page fetching", "no cookie or credential forwarding", "no automatic evidence, memory, workflow, or action updates"},
+		Scope:        "Operator-configured local SearXNG discovery only. HAI sends a bounded query to the local instance, returns source candidates, does not fetch result pages, and never treats search snippets as verified evidence.",
+	}
 	if s.baseURL != nil {
 		status.Endpoint = s.baseURL.String()
 	}
 	return status
+}
+
+func (s *service) Probe(ctx context.Context) (*ProbeResult, error) {
+	if !s.enabled || s.configErr != "" || s.baseURL == nil {
+		return nil, ErrNotConfigured
+	}
+	endpoint := *s.baseURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/healthz"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not create local research health request")
+	}
+	request.Header.Set("Accept", "text/plain, application/json")
+	request.Header.Set("User-Agent", "HAI-LocalResearch/1.0")
+	response, err := s.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("local research service is unavailable")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("local research service did not pass health probe")
+	}
+	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, maxHealthBytes)); err != nil {
+		return nil, fmt.Errorf("could not read local research health response")
+	}
+	return &ProbeResult{
+		Reachable: true,
+		CheckedAt: time.Now().UTC(),
+		Scope:     "Endpoint reachability only. This does not verify JSON output, search-engine policy, external upstream behavior, result provenance, or evidence quality.",
+	}, nil
 }
 
 func (s *service) Search(ctx context.Context, request Request) (*Response, error) {
@@ -169,10 +219,22 @@ func parseLocalBaseURL(raw string) (*url.URL, string) {
 
 func validQuery(raw string) (string, error) {
 	query := strings.TrimSpace(raw)
-	if query == "" || len(query) > maxQueryLength || strings.ContainsAny(query, "\r\n") {
+	if query == "" || len(query) > maxQueryLength || strings.ContainsAny(query, "\r\n") || containsExternalBang(query) {
 		return "", fmt.Errorf("research query is required, single-line, and limited to %d characters", maxQueryLength)
 	}
 	return query, nil
+}
+
+// SearXNG documents !! as an external bang / automatic redirect. HAI never
+// follows redirects, but rejecting it also prevents the configured local
+// instance from being asked to construct a direct external-search redirect.
+func containsExternalBang(query string) bool {
+	for _, token := range strings.Fields(query) {
+		if strings.HasPrefix(token, "!!") {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedSourceURL(raw string) (string, bool) {

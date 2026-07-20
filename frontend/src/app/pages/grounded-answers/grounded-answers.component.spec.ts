@@ -6,7 +6,7 @@ import { GroundedAnswersComponent } from './grounded-answers.component'
 describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
   function createComponent() {
     const verificationService = jasmine.createSpyObj('IVerificationService', ['answer', 'runs', 'runDetails'])
-    const researchService = jasmine.createSpyObj('ResearchService', ['status', 'search'])
+    const researchService = jasmine.createSpyObj('ResearchService', ['status', 'probe', 'search'])
     const ragflowService = jasmine.createSpyObj('RAGFlowService', ['status', 'retrieve'])
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'warning', 'info'])
     const route = { snapshot: { queryParamMap: convertToParamMap({}) } }
@@ -14,6 +14,7 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     verificationService.runs.and.returnValue(of([]))
     verificationService.answer.and.returnValue(of({ run: { id: 'run-1', status: 'source_supported' }, claims: [], evidence: [], unsupportedClaims: [], researchQuestions: [], logs: [] }))
     researchService.status.and.returnValue(of({ configured: false, provider: 'SearXNG', scope: 'disabled' }))
+    researchService.probe.and.returnValue(of({ reachable: true, checkedAt: '2026-07-20T12:00:00Z', scope: 'endpoint only' }))
     ragflowService.status.and.returnValue(of({ enabled: true, configured: true, provider: 'RAGFlow', datasetCount: 1, capabilities: [], restrictions: [], scope: 'candidate evidence only' }))
 
     return {
@@ -68,5 +69,16 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     expect(verificationService.answer).toHaveBeenCalledWith(jasmine.objectContaining({
       externalEvidence: [jasmine.objectContaining({ sourceType: 'local_research' })],
     }))
+  })
+
+  it('probes the configured local SearXNG endpoint without searching for evidence', () => {
+    const { component, researchService } = createComponent()
+    component.researchStatus = { enabled: true, configured: true, provider: 'SearXNG', scope: 'local discovery only' }
+
+    component.probeResearch()
+
+    expect(researchService.probe).toHaveBeenCalled()
+    expect(researchService.search).not.toHaveBeenCalled()
+    expect(component.researchProbe?.reachable).toBeTrue()
   })
 })

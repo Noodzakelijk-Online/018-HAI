@@ -4,6 +4,14 @@ export interface IResearchStatus {
   provider: string;
   endpoint?: string;
   configError?: string;
+  capabilities?: string[];
+  restrictions?: string[];
+  scope: string;
+}
+
+export interface IResearchProbe {
+  reachable: boolean;
+  checkedAt: string;
   scope: string;
 }
 

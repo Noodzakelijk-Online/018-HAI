@@ -6,7 +6,7 @@ import {
   IVerificationResult,
   IVerificationRun,
 } from '../../models/verification.model.interface';
-import { IResearchResult, IResearchStatus } from '../../models/research.model.interface';
+import { IResearchProbe, IResearchResult, IResearchStatus } from '../../models/research.model.interface';
 import { IRAGFlowResult, IRAGFlowStatus } from '../../models/ragflow.model.interface';
 import { RAGFlowService } from '../../services/ragflow.service';
 import { ResearchService } from '../../services/research.service';
@@ -23,7 +23,9 @@ export class GroundedAnswersComponent implements OnInit {
   runs: IVerificationRun[] = [];
   loading = false;
   researchLoading = false;
+  researchProbeLoading = false;
   researchStatus?: IResearchStatus;
+  researchProbe?: IResearchProbe;
   researchResults: IResearchResult[] = [];
   selectedResearchCandidate?: IResearchResult;
   ragflowLoading = false;
@@ -130,6 +132,23 @@ export class GroundedAnswersComponent implements OnInit {
     this.researchService.status().subscribe({
       next: (status) => (this.researchStatus = status),
       error: () => (this.researchStatus = undefined),
+    });
+  }
+
+  probeResearch(): void {
+    if (!this.researchStatus?.configured || this.researchProbeLoading) return;
+    this.researchProbeLoading = true;
+    this.researchService.probe().subscribe({
+      next: (probe) => {
+        this.researchProbeLoading = false;
+        this.researchProbe = probe;
+        this.notification.success('Local SearXNG reachable', 'Endpoint health passed. Search result provenance and verification are still required.');
+      },
+      error: () => {
+        this.researchProbeLoading = false;
+        this.researchProbe = undefined;
+        this.notification.warning('Local SearXNG unavailable', 'The configured endpoint did not pass its health probe. No source candidates were added.');
+      },
     });
   }
 

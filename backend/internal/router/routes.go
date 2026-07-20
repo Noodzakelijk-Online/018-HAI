@@ -470,6 +470,7 @@ func initializeResearchRoutes(apiVersion *gin.RouterGroup, handler *research.Han
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.POST("/search", requirePermission(rbac.PermWrite), handler.Search)
 	}
 }

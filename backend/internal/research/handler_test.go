@@ -12,12 +12,15 @@ import (
 )
 
 type fakeService struct {
-	status Status
-	result *Response
-	err    error
+	status      Status
+	result      *Response
+	err         error
+	probeResult *ProbeResult
+	probeErr    error
 }
 
 func (f fakeService) Status() Status                                     { return f.status }
+func (f fakeService) Probe(context.Context) (*ProbeResult, error)        { return f.probeResult, f.probeErr }
 func (f fakeService) Search(context.Context, Request) (*Response, error) { return f.result, f.err }
 
 func TestHandlerDoesNotLeakLocalResearchErrors(t *testing.T) {
@@ -39,5 +42,16 @@ func TestHandlerReturnsNotConfiguredSeparately(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/search", strings.NewReader(`{"query":"test"}`)))
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "not configured") {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestProbeDoesNotLeakLocalResearchErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/probe", NewHandler(fakeService{probeErr: errors.New("secret internal error")}).Probe)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/probe", nil))
+	if response.Code != http.StatusBadGateway || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("unexpected error response: %d %s", response.Code, response.Body.String())
 	}
 }

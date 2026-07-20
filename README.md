@@ -483,6 +483,9 @@ turn snippets into verified evidence. An operator must explicitly select a
 candidate, after which the normal grounded-answer claim checks remain
 authoritative. The SearXNG source is AGPL-3.0; operate it as a separate local
 service and review its license and search-engine configuration before enabling.
+An admin can use `POST /api/v1/research/probe` to check only the configured
+local `/healthz` endpoint. This does not prove SearXNG JSON output, configured
+search-engine behavior, upstream privacy, result provenance, or evidence quality.
 
 Optional RAGFlow retrieval is a separate, operator-managed local deployment.
 Set `HAI_RAGFLOW_ENABLED=true`, a loopback, `host.docker.internal`, `ragflow`,

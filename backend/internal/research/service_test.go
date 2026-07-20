@@ -41,6 +41,43 @@ func TestLocalConfigRejectsRemoteOrCredentialedEndpoints(t *testing.T) {
 	}
 }
 
+func TestProbeUsesOnlyLocalHealthEndpointWithoutQueryOrCredentials(t *testing.T) {
+	client := &http.Client{Transport: roundTripper(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.String() != "http://127.0.0.1:8080/healthz" {
+			t.Fatalf("unexpected probe request: %s %s", request.Method, request.URL)
+		}
+		if request.Header.Get("Authorization") != "" || request.URL.RawQuery != "" {
+			t.Fatalf("probe leaked credentials or query data: %#v", request)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("OK"))}, nil
+	})}
+	service := NewService(true, "http://127.0.0.1:8080", client)
+	result, err := service.Probe(context.Background())
+	if err != nil || !result.Reachable || !strings.Contains(result.Scope, "does not verify JSON output") {
+		t.Fatalf("Probe result=%#v err=%v", result, err)
+	}
+}
+
+func TestProbeRejectsUnhealthyHTTPStatus(t *testing.T) {
+	client := &http.Client{Transport: roundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})}
+	service := NewService(true, "http://127.0.0.1:8080", client)
+	if result, err := service.Probe(context.Background()); err == nil || result != nil {
+		t.Fatalf("Probe result=%#v err=%v, want health failure", result, err)
+	}
+}
+
+func TestSearchRejectsSearXNGExternalBangRedirectSyntax(t *testing.T) {
+	service := NewService(true, "http://127.0.0.1:8080", &http.Client{Transport: roundTripper(func(*http.Request) (*http.Response, error) {
+		t.Fatal("external bang query must not reach SearXNG")
+		return nil, nil
+	})})
+	if _, err := service.Search(context.Background(), Request{Query: "!! example external search"}); err == nil {
+		t.Fatal("external bang query was accepted")
+	}
+}
+
 func TestSearchIsDisabledByDefault(t *testing.T) {
 	service := NewService(false, "", nil)
 	if _, err := service.Search(context.Background(), Request{Query: "anything"}); err != ErrNotConfigured {
