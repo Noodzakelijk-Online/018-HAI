@@ -473,7 +473,10 @@ context-memory retrieval filters owner/project/archive and uses the same local
 embedding boundary. Both paths fall back to their existing keyword retrieval
 when vectors are unavailable. The Compose database image is pinned to
 pgvector's Postgres 17 build; back up a live local volume before changing its
-database image.
+database image. After enabling the feature, an authenticated user may
+explicitly backfill up to 100 visible memories per request through
+`POST /api/v1/memory/semantic/reindex`; this does not run automatically or
+cross owner boundaries.
 
 Optional public-source discovery uses an operator-managed local SearXNG
 instance. Set `HAI_SEARXNG_ENABLED=true` and a loopback,

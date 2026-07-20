@@ -167,10 +167,53 @@ func TestRetrieveFallsBackToKeywordMemoryWhenSemanticSearchFails(t *testing.T) {
 	}
 }
 
+func TestReindexSemanticOnlyIndexesVisibleOwnerMemories(t *testing.T) {
+	repo := newFakeRepository()
+	semanticSpy := &semanticMemoryStub{}
+	service := NewServiceWithSemantic(repo, semanticSpy)
+	scoped := service.(OwnerScopedService)
+	_, _ = scoped.CreateForOwner("alice", CreateRequest{ProjectKey: "vivare", Kind: "project", Content: "Alice legal case memory"})
+	_, _ = scoped.CreateForOwner("bob", CreateRequest{ProjectKey: "vivare", Kind: "project", Content: "Bob private case memory"})
+	_, _ = service.Create(CreateRequest{Kind: "preference", Content: "Global local-first preference"})
+	semanticSpy.indexedMemoryIDs = nil
+
+	reindexer, ok := service.(SemanticReindexService)
+	if !ok {
+		t.Fatal("native memory service does not implement SemanticReindexService")
+	}
+	result, err := reindexer.ReindexSemanticForOwner("alice", 10)
+	if err != nil {
+		t.Fatalf("ReindexSemanticForOwner: %v", err)
+	}
+	if !result.Enabled || result.Attempted != 2 || result.Indexed != 2 || result.Failed != 0 || len(semanticSpy.indexedMemoryIDs) != 2 {
+		t.Fatalf("semantic reindex result = %#v indexed=%#v", result, semanticSpy.indexedMemoryIDs)
+	}
+
+	for _, id := range semanticSpy.indexedMemoryIDs {
+		memory, err := repo.FindByID(id)
+		if err != nil || memory.OwnerIdentity == "bob" {
+			t.Fatalf("reindex crossed owner boundary: id=%s memory=%#v err=%v", id, memory, err)
+		}
+	}
+}
+
+func TestReindexSemanticDoesNothingWhenLocalEmbeddingIsDisabled(t *testing.T) {
+	service := NewService(newFakeRepository())
+	reindexer := service.(SemanticReindexService)
+	result, err := reindexer.ReindexSemanticForOwner("alice", 10)
+	if err != nil {
+		t.Fatalf("ReindexSemanticForOwner: %v", err)
+	}
+	if result.Enabled || result.Attempted != 0 || !strings.Contains(result.Explanation, "disabled") {
+		t.Fatalf("disabled semantic reindex result = %#v", result)
+	}
+}
+
 type semanticMemoryStub struct {
-	matches   []semantic.MemoryMatch
-	requests  []semantic.MemorySearchRequest
-	searchErr error
+	matches          []semantic.MemoryMatch
+	requests         []semantic.MemorySearchRequest
+	indexedMemoryIDs []uuid.UUID
+	searchErr        error
 }
 
 var _ semantic.Service = (*semanticMemoryStub)(nil)
@@ -181,8 +224,13 @@ func (s *semanticMemoryStub) Index(context.Context, *models.SourceExtraction) er
 func (s *semanticMemoryStub) Search(context.Context, semantic.SearchRequest) ([]semantic.Match, error) {
 	return nil, nil
 }
-func (s *semanticMemoryStub) IndexMemory(context.Context, *models.ContextMemory) error { return nil }
-func (s *semanticMemoryStub) DeleteMemory(context.Context, uuid.UUID) error            { return nil }
+func (s *semanticMemoryStub) IndexMemory(_ context.Context, memory *models.ContextMemory) error {
+	if memory != nil {
+		s.indexedMemoryIDs = append(s.indexedMemoryIDs, memory.ID)
+	}
+	return nil
+}
+func (s *semanticMemoryStub) DeleteMemory(context.Context, uuid.UUID) error { return nil }
 func (s *semanticMemoryStub) SearchMemory(_ context.Context, request semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error) {
 	s.requests = append(s.requests, request)
 	if s.searchErr != nil {

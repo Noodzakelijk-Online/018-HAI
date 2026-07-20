@@ -385,6 +385,7 @@ func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.H
 		memoryRoutes.GET("/query", requirePermission(rbac.PermRead), memoryHandler.Query)
 		memoryRoutes.POST("/", requirePermission(rbac.PermWrite), memoryHandler.Create)
 		memoryRoutes.POST("/retrieve", requirePermission(rbac.PermRead), memoryHandler.Retrieve)
+		memoryRoutes.POST("/semantic/reindex", requirePermission(rbac.PermWrite), memoryHandler.ReindexSemantic)
 		memoryRoutes.GET("/export", requirePermission(rbac.PermRead), memoryHandler.Export)
 		memoryRoutes.GET("/:id", requirePermission(rbac.PermRead), memoryHandler.Get)
 		memoryRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), memoryHandler.Update)

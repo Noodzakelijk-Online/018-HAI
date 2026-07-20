@@ -58,6 +58,15 @@ type RetrieveResult struct {
 	Explanation string         `json:"explanation"`
 }
 
+type SemanticReindexResult struct {
+	Enabled     bool   `json:"enabled"`
+	Attempted   int    `json:"attempted"`
+	Indexed     int    `json:"indexed"`
+	Failed      int    `json:"failed"`
+	Deferred    int    `json:"deferred"`
+	Explanation string `json:"explanation"`
+}
+
 type Service interface {
 	Create(request CreateRequest) (*models.ContextMemory, error)
 	Update(id uuid.UUID, request UpdateRequest) (*models.ContextMemory, error)
@@ -79,6 +88,13 @@ type OwnerScopedService interface {
 	ArchiveForOwner(ownerIdentity string, id uuid.UUID, archived bool) (*models.ContextMemory, error)
 	DeleteForOwner(ownerIdentity string, id uuid.UUID) error
 	RetrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error)
+}
+
+// SemanticReindexService is intentionally separate from Service so existing
+// workers and test doubles do not gain a bulk local-embedding capability by
+// accident. HTTP access remains authenticated and write-authorized.
+type SemanticReindexService interface {
+	ReindexSemanticForOwner(ownerIdentity string, limit int) (*SemanticReindexResult, error)
 }
 
 type service struct {
@@ -321,6 +337,42 @@ func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
 
 func (s *service) RetrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
 	return s.retrieveForOwner(ownerIdentity, request)
+}
+
+func (s *service) ReindexSemanticForOwner(ownerIdentity string, limit int) (*SemanticReindexResult, error) {
+	if s.semanticService == nil || !s.semanticService.Enabled() {
+		return &SemanticReindexResult{
+			Enabled:     false,
+			Explanation: "Local semantic retrieval is disabled; no context memories were sent for embedding.",
+		}, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	memories, err := s.repo.FindAll("", false)
+	if err != nil {
+		return nil, err
+	}
+	visible := filterReadableMemories(memories, ownerIdentity)
+	result := &SemanticReindexResult{Enabled: true}
+	for index, item := range visible {
+		if index >= limit {
+			result.Deferred = len(visible) - index
+			break
+		}
+		result.Attempted++
+		copyItem := item
+		if err := s.semanticService.IndexMemory(context.Background(), &copyItem); err != nil {
+			result.Failed++
+			continue
+		}
+		result.Indexed++
+	}
+	result.Explanation = fmt.Sprintf("Attempted local semantic indexing for %d visible context memories; %d succeeded and %d failed. Owner and project retrieval filters still apply when matches are used.", result.Attempted, result.Indexed, result.Failed)
+	if result.Deferred > 0 {
+		result.Explanation += fmt.Sprintf(" %d additional visible memories were deferred by the 100-record safety limit; run another explicit backfill after reviewing local embedding capacity.", result.Deferred)
+	}
+	return result, nil
 }
 
 func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
