@@ -110,6 +110,7 @@ func TestCatalogRepositoriesIncludesOnlyExplicitReviewedAliases(t *testing.T) {
 		"paul-gauthier/aider",
 		"microsoft/presidio",
 		"codium-ai/pr-agent",
+		"block/goose",
 	} {
 		if !known[repository] {
 			t.Fatalf("reviewed upstream alias %q must suppress a duplicate discovery", repository)

@@ -80,7 +80,7 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneObservability: {
 		name: "Observability", description: "Local metrics, traces, evaluations, and diagnostics for inspectable agent behavior.",
-		entryIDs: []string{"evidently", "grafana", "langfuse", "openlit", "openllmetry", "opik", "phoenix", "prometheus"},
+		entryIDs: []string{"evidently", "grafana", "langfuse", "openlit", "openllmetry", "opik", "phoenix", "prometheus", "whylogs"},
 	},
 }
 

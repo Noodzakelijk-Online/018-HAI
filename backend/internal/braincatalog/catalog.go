@@ -892,6 +892,19 @@ var entries = []Entry{
 		},
 	},
 	{
+		ID: "whylogs", Name: "Whylogs", UpstreamURL: "https://github.com/whylabs/whylogs", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusReferenceOnly, Category: "data-quality profiling patterns", IntegrationMode: "freshness-held architecture reference",
+		Capabilities: []string{"compact data profiles", "data constraints", "drift detection", "mergeable summaries"}, RecommendedFor: []string{"source-quality design", "local data-quality review", "profile-retention patterns"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install or connect Whylogs. Revisit only if a measured source-quality gap remains after HAI's bounded Evidently path, and only with a local-only profile store, an explicit source allowlist, retention/deletion policy, no external writer, disabled anonymous analytics, and a privacy review. Profiles remain diagnostic evidence and cannot verify facts, alter routing, update memory, or authorize actions.",
+		Rationale:  "Whylogs supplies useful compact, mergeable profiling and constraint patterns, but its most recent public package release predates HAI's current maintenance bar and its scope overlaps the existing report-only Evidently evaluation bridge.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official upstream and package registry reviewed on 2026-07-20: Apache-2.0, mainline branch, latest PyPI release whylogs 1.6.4 on 2024-12-03. The upstream documents anonymous environment analytics enabled by default and an opt-out. HAI has no Whylogs dependency, profile, source access, service, or telemetry export configured.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "dataset profile or constraint", HAIControl: "source-quality verification evidence and review queue", Boundary: "profile output cannot establish source authority or completion automatically"},
+			{SourcePattern: "usage analytics or external writer", HAIControl: "local telemetry and egress policy", Boundary: "no analytics, profile upload, or external destination is configured by HAI"},
+		},
+	},
+	{
 		ID: "livekit-agents", Name: "LiveKit Agents", UpstreamURL: "https://github.com/livekit/agents", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10118/repos/", SourceCollection: "Multimodal AI",
 		Status: StatusCandidate, Category: "opt-in realtime voice and multimodal intake", IntegrationMode: "reviewed, operator-hosted realtime intake bridge",
 		Capabilities: []string{"realtime voice sessions", "multimodal conversation", "MCP tool compatibility", "agent testing", "job scheduling"}, RecommendedFor: []string{"opt-in voice assistant", "accessibility intake", "real-time local interaction prototypes"},
@@ -971,7 +984,7 @@ var entries = []Entry{
 		},
 	},
 	{
-		ID: "goose", Name: "Goose", UpstreamURL: "https://github.com/aaif-goose/goose", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10106/repos/", SourceCollection: "Coding Agents",
+		ID: "goose", Name: "Goose", UpstreamURL: "https://github.com/aaif-goose/goose", RepositoryAliases: []string{"block/goose"}, SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10106/repos/", SourceCollection: "Coding Agents",
 		Status: StatusReferenceOnly, Category: "general-purpose local agent architecture", IntegrationMode: "second-control-plane reference",
 		Capabilities: []string{"desktop and CLI agent patterns", "MCP extension patterns", "provider compatibility", "workflow recipes"}, RecommendedFor: []string{"local agent boundary research", "MCP extension review", "provider interoperability comparison"},
 		RequiresApproval: true, LocalFirstCompatible: true,

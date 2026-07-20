@@ -53,6 +53,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | Project | Plane | Disposition | Required first gate |
 | --- | --- | --- | --- |
 | Evidently | Verification and observability | Integrated, opt-in | Internal report runner for bounded synthetic/redacted fixtures; metadata-only output and no default egress. |
+| Whylogs | Source-quality profiling | Reference only | Compact profile and constraint patterns only; the 2024 latest package release, overlap with Evidently, and default anonymous analytics require a measured gap and separate freshness/privacy review before any local adoption. |
 | Guardrails AI | Verification and safety | Integrated, opt-in | Internal fixed-schema action-proposal validator; metadata-only output, no model call, Hub download, persistence, approval, or execution. |
 | LM Evaluation Harness | Model evaluation | Integrated, opt-in | Fixed six-case synthetic local suite against one preconfigured local OpenAI-compatible model; aggregate metadata only and manual review required. |
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |

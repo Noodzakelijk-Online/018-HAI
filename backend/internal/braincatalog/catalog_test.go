@@ -161,6 +161,9 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	if entry, ok := EntryByID("agentbench"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("AgentBench must remain a reference-only evaluation pattern: %#v", entry)
 	}
+	if entry, ok := EntryByID("whylogs"); !ok || entry.Status != StatusReferenceOnly || !entry.RequiresApproval || !entry.LocalFirstCompatible || len(entry.ControlMappings) != 2 {
+		t.Fatalf("Whylogs must remain a local-only freshness-held profiling reference: %#v", entry)
+	}
 	if sources := DiscoverySources(); len(sources) < 2 || sources[1].Name != "OSS Insight" {
 		t.Fatalf("OSS Insight source is missing: %#v", sources)
 	}
