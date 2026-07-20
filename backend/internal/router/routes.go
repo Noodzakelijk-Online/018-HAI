@@ -21,6 +21,7 @@ import (
 	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/browserverify"
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/deepeval"
 	"automation-hub-backend/internal/deepteam"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/events"
@@ -111,6 +112,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
 		initializeLMEvalRoutes(v1, lmeval.NewHandler(lmeval.DefaultService()))
 		initializePromptfooRoutes(v1, promptfoo.NewHandler(promptfoo.DefaultService()))
+		initializeDeepEvalRoutes(v1, deepeval.NewHandler(deepeval.DefaultService()))
 		initializeDeepTeamRoutes(v1, deepteam.NewHandler(deepteam.DefaultService()))
 		initializeGarakRoutes(v1, garak.NewHandler(garak.DefaultService()))
 		initializeLangfuseRoutes(v1, langfuse.NewHandler(langfuse.DefaultService()))
@@ -560,6 +562,16 @@ func initializeLMEvalRoutes(apiVersion *gin.RouterGroup, handler *lmeval.Handler
 
 func initializePromptfooRoutes(apiVersion *gin.RouterGroup, handler *promptfoo.Handler) {
 	routes := apiVersion.Group("/promptfoo")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializeDeepEvalRoutes(apiVersion *gin.RouterGroup, handler *deepeval.Handler) {
+	routes := apiVersion.Group("/deepeval")
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)

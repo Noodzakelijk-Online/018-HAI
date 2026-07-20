@@ -296,12 +296,16 @@ var entries = []Entry{
 	},
 	{
 		ID: "deepeval", Name: "DeepEval", UpstreamURL: "https://github.com/confident-ai/deepeval", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",
-		Status: StatusCandidate, Category: "LLM quality evaluation", IntegrationMode: "contained, no-write local evaluation adapter",
-		Capabilities: []string{"test cases", "quality metrics", "regression checks", "evaluation reports"}, RecommendedFor: []string{"retrieval evaluation", "grounded-answer checks", "model-routing regression"},
+		Status: StatusIntegrated, Category: "local synthetic source-grounding regression", IntegrationMode: "integrated opt-in isolated local evaluation runner",
+		Capabilities: []string{"FaithfulnessMetric regression", "synthetic evidence-answer evaluation", "aggregate evaluator accuracy evidence"}, RecommendedFor: []string{"source-grounded answer regression", "local judge model review", "retrieval quality safeguards"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Run only a reviewed local evaluation suite with redacted fixtures, an explicit provider allowlist, bounded time and cost, and retained result artifacts. A score may create a review item but cannot mark a task verified, alter a model route, or enable a provider on its own.",
-		Rationale:  "DeepEval adds a distinct evaluation-oriented path beside Promptfoo and garak. HAI can use it for evidence about quality changes while keeping verification, provider policy, and completion decisions in HAI.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Evaluation & Testing repository list and GitHub metadata checked on 2026-07-19; no DeepEval runner is configured by HAI.",
+		Activation: "Set HAI_DEEPEVAL_ENABLED=true, configure one reviewed local OpenAI-compatible model endpoint, and start the deepeval-evaluation Compose profile. HAI calls only a fixed three-case synthetic FaithfulnessMetric suite and returns aggregate evaluator accuracy. It cannot receive real sources, answers, prompts, metrics, provider choices, or commands, and the score cannot verify a task, change a route, or enable a provider.",
+		Rationale:  "HAI now uses DeepEval for a distinct source-grounding regression beside Promptfoo, Garak, and DeepTeam. It tests whether a local judge distinguishes fixed faithful from unsupported synthetic answers while retaining HAI's verification, provider policy, and completion authority.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official DeepEval repository and PyPI metadata reviewed on 2026-07-20: Apache-2.0, current 4.1.1 release, Python >=3.9,<4.0, and documented FaithfulnessMetric support for checking an answer against retrieval context. HAI ships a disabled-by-default local runner with fixed synthetic fixtures; no endpoint, model, real HAI answer, connected source, or cloud account is configured by HAI by default.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "synthetic evidence and answer fixture", HAIControl: "isolated DeepEval FaithfulnessMetric runner", Boundary: "fixed three-case suite only; no real source, answer, prompt, caller metric, or model setting is accepted"},
+			{SourcePattern: "evaluator score", HAIControl: "reviewable aggregate regression evidence", Boundary: "a score cannot mark a claim verified, alter routing, change policy, approve an action, or execute work"},
+		},
 	},
 	{
 		ID: "ollama", Name: "Ollama", UpstreamURL: "https://github.com/ollama/ollama", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",

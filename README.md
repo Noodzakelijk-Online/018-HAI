@@ -684,6 +684,18 @@ clears inherited proxy settings, runs unprivileged without a public port, and
 can reach only its configured local model endpoint. A passing result is
 synthetic regression evidence, not a safety claim about production HAI.
 
+Optional DeepEval source-grounding evidence uses the isolated
+`deepeval-evaluation` Compose profile. Set `HAI_DEEPEVAL_ENABLED=true`,
+configure `HAI_DEEPEVAL_MODEL_ID` and `HAI_DEEPEVAL_MODEL_BASE_URL` for one
+operator-reviewed local OpenAI-compatible judge, then run
+`docker compose --profile deepeval-evaluation up --build`. HAI can invoke only
+three shipped synthetic evidence/answer pairs using DeepEval's
+`FaithfulnessMetric`; it returns aggregate evaluator-accuracy score, count,
+duration, and digest metadata only. It does not read a HAI answer, connected
+source, credential, workflow, runtime, action, raw fixture, model generation,
+or metric reason, and it cannot verify completion or alter routing, policy,
+memory, approvals, or execution.
+
 Optional Garak prompt-injection evidence uses the isolated
 `garak-evaluation` Compose profile. Set `HAI_GARAK_ENABLED=true`, configure
 `HAI_GARAK_MODEL_ID` and `HAI_GARAK_MODEL_BASE_URL` for one

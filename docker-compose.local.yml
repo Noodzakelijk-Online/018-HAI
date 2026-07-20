@@ -208,6 +208,9 @@ services:
       HAI_DEEPTEAM_ENABLED: ${HAI_DEEPTEAM_ENABLED:-false}
       HAI_DEEPTEAM_BASE_URL: ${HAI_DEEPTEAM_BASE_URL:-http://deepteam-runner:8080}
       HAI_DEEPTEAM_TIMEOUT_SECONDS: ${HAI_DEEPTEAM_TIMEOUT_SECONDS:-180}
+      HAI_DEEPEVAL_ENABLED: ${HAI_DEEPEVAL_ENABLED:-false}
+      HAI_DEEPEVAL_BASE_URL: ${HAI_DEEPEVAL_BASE_URL:-http://deepeval-runner:8080}
+      HAI_DEEPEVAL_TIMEOUT_SECONDS: ${HAI_DEEPEVAL_TIMEOUT_SECONDS:-180}
       HAI_GARAK_ENABLED: ${HAI_GARAK_ENABLED:-false}
       HAI_GARAK_BASE_URL: ${HAI_GARAK_BASE_URL:-http://garak-runner:8080}
       HAI_GARAK_TIMEOUT_SECONDS: ${HAI_GARAK_TIMEOUT_SECONDS:-150}
@@ -397,6 +400,7 @@ services:
       - lm-eval-internal
       - promptfoo-internal
       - deepteam-internal
+      - deepeval-internal
       - garak-internal
       - whispercpp-internal
       - pydantic-ai-internal
@@ -728,6 +732,48 @@ services:
       start_period: 30s
     networks:
       - deepteam-internal
+
+  deepeval-runner:
+    build:
+      context: ./services/deepeval-runner
+    profiles: ["deepeval-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_DEEPEVAL_MODEL_ID: ${HAI_DEEPEVAL_MODEL_ID:-}
+      HAI_DEEPEVAL_MODEL_BASE_URL: ${HAI_DEEPEVAL_MODEL_BASE_URL:-}
+      HAI_DEEPEVAL_MODEL_API_KEY: ${HAI_DEEPEVAL_MODEL_API_KEY:-}
+      DEEPEVAL_DISABLE_DOTENV: "1"
+      DEEPEVAL_DISABLE_LEGACY_KEYFILE: "1"
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    mem_limit: 1024m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    networks:
+      - deepeval-internal
 
   garak-runner:
     build:
@@ -1085,6 +1131,10 @@ networks:
     internal: true
   deepteam-internal:
     name: 018-hai-deepteam-internal
+    driver: bridge
+    internal: true
+  deepeval-internal:
+    name: 018-hai-deepeval-internal
     driver: bridge
     internal: true
   garak-internal:
