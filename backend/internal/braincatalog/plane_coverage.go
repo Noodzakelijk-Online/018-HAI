@@ -68,7 +68,7 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneExecution: {
 		name: "Controlled execution", description: "Scoped browser, MCP, workspace, CLI, and WASI execution patterns behind HAI controls.",
-		entryIDs: []string{"a2a", "ag2", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "goose", "google-genai-toolbox", "livekit-agents", "mcp-inspector", "mcp-servers", "metagpt", "microsoft-agent-framework", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "serena", "swe-agent", "tabby", "taskweaver", "ufo", "wasmtime"},
+		entryIDs: []string{"a2a", "ag2", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "goose", "google-genai-toolbox", "livekit-agents", "mcp-inspector", "mcp-servers", "metagpt", "mini-swe-agent", "microsoft-agent-framework", "opencode", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "serena", "swe-agent", "tabby", "taskweaver", "ufo", "wasmtime"},
 	},
 	PlaneVerification: {
 		name: "Verification and safety", description: "Evaluation, redaction, guardrails, code review, and adversarial testing before completion or action.",

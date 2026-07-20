@@ -96,11 +96,14 @@ repositories. GitHub MCP Server, Playwright MCP, Gen AI Toolbox, Qodo PR-Agent,
 SWE-agent, OpenLIT, and LangMem reported `archived=false`; their GitHub API
 licences were MIT, Apache-2.0, Apache-2.0, MIT, MIT, Apache-2.0, and MIT
 respectively. They are catalogued only as review-first candidates or a memory
-reference. No MCP service, token, browser profile, database connection, code
-worker, collector, or memory store was installed by this screening. Arize
-Phoenix reported `NOASSERTION`, so it remains under licence review. PyRIT and
-TaskWeaver reported `archived=true`, so HAI records them as excluded rather
-than making them selectable capabilities.
+reference. A 2026 follow-up found that SWE-agent now recommends its maintained
+mini-SWE-agent successor: HAI holds SWE-agent as a reference and makes
+mini-SWE-agent the only review-first disposable-worktree candidate. No MCP
+service, token, browser profile, database connection, code worker, collector,
+or memory store was installed by this screening. Arize Phoenix reported
+`NOASSERTION`, so it remains under licence review. PyRIT and TaskWeaver
+reported `archived=true`, so HAI records them as excluded rather than making
+them selectable capabilities.
 
 AnythingLLM was separately confirmed in the same OSS Insight RAG Frameworks
 repository list. Its GitHub metadata reported `archived=false`, an active

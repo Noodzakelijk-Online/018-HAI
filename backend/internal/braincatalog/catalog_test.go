@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"openllmetry", "browser-use", "nemo-guardrails", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "swe-agent", "openlit", "opik", "pipecat", "livekit-agents"} {
+	for _, id := range []string{"openllmetry", "browser-use", "nemo-guardrails", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "mini-swe-agent", "openlit", "opik", "pipecat", "livekit-agents"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -160,6 +160,9 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	}
 	if entry, ok := EntryByID("agentbench"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("AgentBench must remain a reference-only evaluation pattern: %#v", entry)
+	}
+	if entry, ok := EntryByID("swe-agent"); !ok || entry.Status != StatusReferenceOnly || !entry.RequiresApproval {
+		t.Fatalf("SWE-agent must remain a superseded architecture reference: %#v", entry)
 	}
 	if entry, ok := EntryByID("whylogs"); !ok || entry.Status != StatusReferenceOnly || !entry.RequiresApproval || !entry.LocalFirstCompatible || len(entry.ControlMappings) != 2 {
 		t.Fatalf("Whylogs must remain a local-only freshness-held profiling reference: %#v", entry)
@@ -370,7 +373,7 @@ func TestRecommendNewControlledMCPAndCodeCandidatesStayReviewFirst(t *testing.T)
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"github-mcp-server", "playwright-mcp", "swe-agent"} {
+	for _, id := range []string{"github-mcp-server", "playwright-mcp", "mini-swe-agent"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)

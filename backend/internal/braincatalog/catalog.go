@@ -171,15 +171,28 @@ var entries = []Entry{
 	},
 	{
 		ID: "swe-agent", Name: "SWE-agent", UpstreamURL: "https://github.com/SWE-agent/SWE-agent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
-		Status: StatusCandidate, Category: "sandboxed code-task execution", IntegrationMode: "reviewed local workspace worker candidate",
-		Capabilities: []string{"issue-to-patch planning", "test-driven code changes", "workspace task loops"}, RecommendedFor: []string{"contained bug-fix experiments", "repository task planning", "test-backed patch proposals"},
+		Status: StatusReferenceOnly, Category: "superseded code-worker architecture", IntegrationMode: "historical architecture reference",
+		Capabilities: []string{"issue-to-patch planning", "test-driven code changes", "workspace task loops"}, RecommendedFor: []string{"coding-agent architecture review", "trajectory and sandbox comparison"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review an isolated local workspace image, fixed repository mount, no-secret environment, deny-by-default network, command and time limits, test allowlist, diff capture, rollback, and explicit human acceptance. It cannot commit, push, merge, access unrelated folders, or invoke a paid model without separate approval.",
-		Rationale:  "SWE-agent is a relevant maintained candidate for a narrowly contained coding-worker path, but HAI will preserve its own planning, verification, approval, and repository-boundary controls.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Code Review and Agent Harness repository lists and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no SWE-agent worker is installed or executable through HAI.",
+		Activation: "Do not install or connect SWE-agent. Its maintainers recommend mini-SWE-agent as the successor. Retain it only for design comparison; HAI will not create a legacy code-worker profile, mount a repository, grant a provider credential, or run an agent loop from this project.",
+		Rationale:  "SWE-agent remains an informative code-agent design, but its own upstream now directs new users to mini-SWE-agent. HAI therefore keeps the older project as a reference rather than maintaining two overlapping coding-worker candidates.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official upstream reviewed on 2026-07-20: active main branch, MIT licence, and its README states that current development effort is on mini-SWE-agent and recommends mini-SWE-agent going forward. HAI has no SWE-agent worker, repository mount, provider credential, or executable integration.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "agent shell loop", HAIControl: "controlled runtime worker and workspace allowlist", Boundary: "no generic shell, secret, network, or host access"},
 			{SourcePattern: "generated patch", HAIControl: "diff audit and deterministic tests", Boundary: "a patch never becomes a commit, push, or completion claim automatically"},
+		},
+	},
+	{
+		ID: "mini-swe-agent", Name: "mini-SWE-agent", UpstreamURL: "https://github.com/SWE-agent/mini-swe-agent", SourceCatalogURL: "https://github.com/SWE-agent/mini-swe-agent", SourceCollection: "SWE-agent successor / AI Code Review",
+		Status: StatusCandidate, Category: "minimal sandboxed code-worker", IntegrationMode: "reviewed disposable-worktree worker candidate",
+		Capabilities: []string{"linear agent trajectory", "repository patch proposal", "Docker or Podman environments", "local model compatibility"}, RecommendedFor: []string{"contained local bug-fix experiments", "reproducible patch proposals", "coding-worker sandbox evaluation"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a pinned release in a disposable copied worktree, never the canonical checkout; deny network except an explicitly reviewed local-model gateway; provide no provider token, Git credential, Docker socket, host mount, or unrelated source; enforce CPU, memory, PID, wall-time, and output caps; capture only a diff and selected test summary; then require human acceptance. It cannot commit, push, create a pull request, access accounts, or execute outside the disposable sandbox.",
+		Rationale:  "mini-SWE-agent is the maintained successor recommended by the SWE-agent project and has a smaller, linear execution model that is easier to constrain, audit, and compare with HAI's existing controlled-runtime policy. It remains a review-first candidate because it intentionally uses shell commands and can otherwise produce broad side effects.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official upstream and documentation reviewed on 2026-07-20: MIT, active main branch, latest v2.4.5 released 2026-07-06. It supports local and container environments but documents bash/subprocess execution and model-provider adapters. HAI has no mini-SWE-agent dependency, image, worktree, model route, provider credential, or execution adapter configured.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "bash or subprocess command", HAIControl: "isolated disposable worktree and resource-limited execution broker", Boundary: "no host shell, Docker socket, secret, account, or unrestricted network access"},
+			{SourcePattern: "agent trajectory and generated patch", HAIControl: "audit event, diff inspection, selected deterministic tests, and human approval", Boundary: "the agent cannot commit, push, open a pull request, or claim task completion"},
 		},
 	},
 	{
@@ -1039,7 +1052,7 @@ func Recommend(taskType, request string) []Recommendation {
 	text := strings.ToLower(taskType + " " + request)
 	ids := []string{}
 	if containsAny(text, "code", "coding", "repository", "repo", "pull request", "test", "build", "bug", "commit") {
-		ids = append(ids, "continue", "cline", "opencode", "aider", "openhands", "qodo-pr-agent", "swe-agent")
+		ids = append(ids, "continue", "cline", "opencode", "aider", "openhands", "qodo-pr-agent", "mini-swe-agent")
 	}
 	if containsAny(text, "serena", "semantic code", "symbol retrieval", "symbolic code", "cross-file impact", "language server diagnostics") {
 		ids = append(ids, "serena")
