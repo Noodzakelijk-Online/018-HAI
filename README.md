@@ -515,6 +515,19 @@ It never opens chat, sends attachments, reads history, ingests/deletes files,
 changes workspace settings, or calls AnythingLLM agents/tools. Results are not
 HAI memory, facts, or execution authority.
 
+Optional Airbyte inventory is a separate, operator-managed local API bridge.
+Set `HAI_AIRBYTE_ENABLED=true`, a local/private `HAI_AIRBYTE_BASE_URL`, a
+dedicated `HAI_AIRBYTE_API_KEY`, and one or more comma-separated
+`HAI_AIRBYTE_WORKSPACE_IDS`. In **Connected Sources**, create the local-only
+`airbyte-inventory` source. Each sync reads at most one 100-record page from
+Airbyte's `/sources` and `/connections` endpoints for precisely those approved
+workspaces. It preserves only names, IDs, source types, statuses, and schedule
+types as source-linked inventory. HAI never reads connector configuration,
+credentials, selected fields, records, or sync results; it cannot create,
+change, start, stop, or delete Airbyte sources or connections. Airbyte remains
+the external connector and credential authority, and its inventory is neither
+verified evidence nor execution authority.
+
 Optional CloudQuery intake is intentionally limited to a local, operator-
 produced JSONL run summary. Run CloudQuery separately with its own reviewed
 credentials and configuration, write `cloudquery sync --summary-location` to a

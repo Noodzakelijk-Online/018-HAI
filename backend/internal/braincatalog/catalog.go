@@ -430,12 +430,16 @@ var entries = []Entry{
 	},
 	{
 		ID: "airbyte", Name: "Airbyte", UpstreamURL: "https://github.com/airbytehq/airbyte", SourceCatalogURL: "https://ossinsight.io/collections/data-integration", SourceCollection: "Data Integration",
-		Status: StatusCandidate, Category: "connector ingestion", IntegrationMode: "operator-hosted, read-first connector bridge",
-		Capabilities: []string{"incremental source sync", "connector catalogue", "schema-aware ingestion"}, RecommendedFor: []string{"connected-source ingestion", "incremental sync design"},
+		Status: StatusIntegrated, Category: "local source and connection inventory", IntegrationMode: "integrated opt-in local Airbyte inventory adapter",
+		Capabilities: []string{"approved-workspace source inventory", "connection status and schedule inventory", "source-linked sync metadata"}, RecommendedFor: []string{"connected-source readiness", "account sync health", "connector governance"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review one connector at a time with least-privilege credentials, source scope, retention, cursors, audit events, local-only storage, pause/revoke controls, and no destructive destination writes.",
-		Rationale:  "A potential adapter for expanding HAI's source ingestion, but it must not become a parallel source-of-truth or receive broad account access by default.",
-		VerifiedAt: verifiedAt, VerificationNote: "Upstream data-movement project checked on 2026-07-19; no Airbyte service or connector is configured by HAI.",
+		Activation: "Configure a local Airbyte base URL, dedicated API key, and approved workspace UUID allowlist, then create a local-only airbyte-inventory source. HAI issues fixed, one-page read requests for source and connection metadata only; it cannot read configuration, credentials, records, selected fields, or sync results, and cannot create, change, start, stop, or delete anything in Airbyte.",
+		Rationale:  "HAI can now use Airbyte as a bounded account-sync inventory without turning it into a second credential store, connector authority, source-of-truth, or workflow engine.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official Airbyte repository and API reference reviewed on 2026-07-20: active open-source data-movement project with read endpoints for sources and connections. HAI ships a disabled-by-default local inventory adapter; no Airbyte service, workspace, key, data record, connector configuration, or sync job is configured or controlled by HAI by default.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "Airbyte source or connection inventory", HAIControl: "connected-source metadata and audit records", Boundary: "fixed allowlisted workspaces and one bounded metadata page; configurations, credentials, records, selected fields, and run results are excluded"},
+			{SourcePattern: "Airbyte sync management", HAIControl: "approval-gated HAI workflows", Boundary: "the inventory adapter cannot create, modify, start, stop, delete, or schedule Airbyte resources"},
+		},
 	},
 	{
 		ID: "odoo", Name: "Odoo", UpstreamURL: "https://github.com/odoo/odoo", SourceCatalogURL: "https://ossinsight.io/collections/business-management", SourceCollection: "Business Management",
