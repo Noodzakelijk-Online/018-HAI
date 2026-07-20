@@ -103,6 +103,11 @@
           {{ status.configured ? 'Ready: ' + status.provider + ' (' + status.datasetCount + ' approved datasets)' : 'Not configured' }}. {{ status.scope }}
         </p>
         <p class="research-scope" *ngIf="!ragflowStatus">RAGFlow status could not be loaded.</p>
+        <p class="research-scope" *ngIf="ragflowProbe as probe">Last endpoint check: {{ probe.reachable ? 'reachable' : 'unavailable' }}. {{ probe.scope }}</p>
+        <button nz-button nzType="default" (click)="probeRAGFlow()" [nzLoading]="ragflowProbeLoading" [disabled]="!ragflowStatus?.configured" title="Checks only the configured local RAGFlow health endpoint. It does not query datasets or retrieve evidence.">
+          <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+          Check local endpoint
+        </button>
         <button nz-button nzType="default" (click)="searchRAGFlow()" [nzLoading]="ragflowLoading" [disabled]="!ragflowStatus?.configured" title="Retrieves chunks only from the explicit, operator-approved local RAGFlow dataset allowlist. Results are not verified facts.">
           <i nz-icon nzType="database" nzTheme="outline"></i>
           Retrieve local candidates
@@ -113,7 +118,7 @@
             <div>
               <strong>{{ candidate.documentName || 'RAGFlow document candidate' }}</strong>
               <p>{{ candidate.content }}</p>
-              <span class="candidate-provenance">Dataset {{ candidate.datasetId }} · chunk {{ candidate.chunkId }}<ng-container *ngIf="candidate.similarity !== undefined"> · similarity {{ candidate.similarity | number: '1.2-2' }}</ng-container></span>
+              <span class="candidate-provenance">Dataset {{ candidate.datasetId }} &middot; chunk {{ candidate.chunkId }}<ng-container *ngIf="candidate.similarity !== undefined"> &middot; similarity {{ candidate.similarity | number: '1.2-2' }}</ng-container></span>
             </div>
             <button nz-button nzSize="small" nzType="default" (click)="useRAGFlowResult(candidate)">Use as unverified evidence</button>
           </article>
@@ -141,7 +146,7 @@
             <div>
               <strong>{{ candidate.title || 'AnythingLLM workspace candidate' }}</strong>
               <p>{{ candidate.content }}</p>
-              <span class="candidate-provenance">Workspace {{ candidate.workspaceSlug }} Â· chunk {{ candidate.chunkId }}<ng-container *ngIf="candidate.score !== undefined"> Â· score {{ candidate.score | number: '1.2-2' }}</ng-container></span>
+              <span class="candidate-provenance">Workspace {{ candidate.workspaceSlug }} &middot; chunk {{ candidate.chunkId }}<ng-container *ngIf="candidate.score !== undefined"> &middot; score {{ candidate.score | number: '1.2-2' }}</ng-container></span>
             </div>
             <button nz-button nzSize="small" nzType="default" (click)="useAnythingLLMResult(candidate)">Use as unverified evidence</button>
           </article>

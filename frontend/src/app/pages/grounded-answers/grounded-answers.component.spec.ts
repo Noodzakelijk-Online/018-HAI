@@ -7,7 +7,7 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
   function createComponent() {
     const verificationService = jasmine.createSpyObj('IVerificationService', ['answer', 'runs', 'runDetails'])
     const researchService = jasmine.createSpyObj('ResearchService', ['status', 'probe', 'search'])
-    const ragflowService = jasmine.createSpyObj('RAGFlowService', ['status', 'retrieve'])
+    const ragflowService = jasmine.createSpyObj('RAGFlowService', ['status', 'probe', 'retrieve'])
     const anythingLLMService = jasmine.createSpyObj('AnythingLLMService', ['status', 'retrieve'])
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'warning', 'info'])
     const route = { snapshot: { queryParamMap: convertToParamMap({}) } }
@@ -17,6 +17,7 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     researchService.status.and.returnValue(of({ configured: false, provider: 'SearXNG', scope: 'disabled' }))
     researchService.probe.and.returnValue(of({ reachable: true, checkedAt: '2026-07-20T12:00:00Z', scope: 'endpoint only' }))
     ragflowService.status.and.returnValue(of({ enabled: true, configured: true, provider: 'RAGFlow', datasetCount: 1, capabilities: [], restrictions: [], scope: 'candidate evidence only' }))
+    ragflowService.probe.and.returnValue(of({ reachable: true, checkedAt: '2026-07-20T12:00:00Z', scope: 'health endpoint only' }))
     anythingLLMService.status.and.returnValue(of({ enabled: true, configured: true, provider: 'AnythingLLM', workspaceCount: 1, workspaceSlugs: ['legal-workspace'], localEmbeddingsConfirmed: true, capabilities: [], restrictions: [], scope: 'candidate evidence only' }))
 
     return {
@@ -37,6 +38,18 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     expect(ragflowService.status).toHaveBeenCalled()
     expect(ragflowService.retrieve).not.toHaveBeenCalled()
     expect(component.ragflowStatus?.configured).toBeTrue()
+  })
+
+  it('probes the local RAGFlow endpoint without retrieving evidence', () => {
+    const { component, ragflowService, notification } = createComponent()
+    component.ragflowStatus = { enabled: true, configured: true, provider: 'RAGFlow', datasetCount: 1, capabilities: [], restrictions: [], scope: 'candidate evidence only' }
+
+    component.probeRAGFlow()
+
+    expect(ragflowService.probe).toHaveBeenCalled()
+    expect(ragflowService.retrieve).not.toHaveBeenCalled()
+    expect(component.ragflowProbe?.reachable).toBeTrue()
+    expect(notification.success).toHaveBeenCalled()
   })
 
   it('attaches a selected RAGFlow chunk as unverified candidate evidence', () => {

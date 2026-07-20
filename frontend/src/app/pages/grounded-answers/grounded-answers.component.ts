@@ -7,7 +7,7 @@ import {
   IVerificationRun,
 } from '../../models/verification.model.interface';
 import { IResearchProbe, IResearchResult, IResearchStatus } from '../../models/research.model.interface';
-import { IRAGFlowResult, IRAGFlowStatus } from '../../models/ragflow.model.interface';
+import { IRAGFlowProbeResult, IRAGFlowResult, IRAGFlowStatus } from '../../models/ragflow.model.interface';
 import { IAnythingLLMResult, IAnythingLLMStatus } from '../../models/anythingllm.model.interface';
 import { AnythingLLMService } from '../../services/anythingllm.service';
 import { RAGFlowService } from '../../services/ragflow.service';
@@ -31,7 +31,9 @@ export class GroundedAnswersComponent implements OnInit {
   researchResults: IResearchResult[] = [];
   selectedResearchCandidate?: IResearchResult;
   ragflowLoading = false;
+  ragflowProbeLoading = false;
   ragflowStatus?: IRAGFlowStatus;
+  ragflowProbe?: IRAGFlowProbeResult;
   ragflowResults: IRAGFlowResult[] = [];
   selectedRAGFlowCandidate?: IRAGFlowResult;
   anythingLLMLoading = false;
@@ -198,6 +200,23 @@ export class GroundedAnswersComponent implements OnInit {
     this.ragflowService.status().subscribe({
       next: (status) => (this.ragflowStatus = status),
       error: () => (this.ragflowStatus = undefined),
+    });
+  }
+
+  probeRAGFlow(): void {
+    if (!this.ragflowStatus?.configured || this.ragflowProbeLoading) return;
+    this.ragflowProbeLoading = true;
+    this.ragflowProbe = undefined;
+    this.ragflowService.probe().subscribe({
+      next: (probe) => {
+        this.ragflowProbeLoading = false;
+        this.ragflowProbe = probe;
+        this.notification.success('Local RAGFlow reachable', 'HAI checked only the configured health endpoint. No dataset was queried and no evidence was added.');
+      },
+      error: () => {
+        this.ragflowProbeLoading = false;
+        this.notification.error('Local RAGFlow unavailable', 'HAI could not verify the configured health endpoint. No dataset was queried and no evidence was added.');
+      },
     });
   }
 

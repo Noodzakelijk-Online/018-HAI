@@ -28,3 +28,9 @@ export interface IRAGFlowResponse {
   datasetIds: string[]
   scope: string
 }
+
+export interface IRAGFlowProbeResult {
+  reachable: boolean
+  checkedAt: string
+  scope: string
+}
