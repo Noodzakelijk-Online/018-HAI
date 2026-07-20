@@ -161,6 +161,9 @@ services:
       HAI_GUARDRAILS_ENABLED: ${HAI_GUARDRAILS_ENABLED}
       HAI_GUARDRAILS_BASE_URL: ${HAI_GUARDRAILS_BASE_URL}
       HAI_GUARDRAILS_TIMEOUT_SECONDS: ${HAI_GUARDRAILS_TIMEOUT_SECONDS}
+      HAI_PYDANTIC_AI_ENABLED: ${HAI_PYDANTIC_AI_ENABLED:-false}
+      HAI_PYDANTIC_AI_BASE_URL: ${HAI_PYDANTIC_AI_BASE_URL:-http://pydantic-ai-runner:8080}
+      HAI_PYDANTIC_AI_TIMEOUT_SECONDS: ${HAI_PYDANTIC_AI_TIMEOUT_SECONDS:-20}
       HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
       HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
       HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}
@@ -352,6 +355,7 @@ services:
       - lm-eval-internal
       - promptfoo-internal
       - whispercpp-internal
+      - pydantic-ai-internal
 
   frontend:
     build:
@@ -521,6 +525,37 @@ services:
       start_period: 30s
     networks:
       - guardrails-internal
+
+  pydantic-ai-runner:
+    build:
+      context: ./services/pydantic-ai-runner
+    profiles: ["typed-planning"]
+    restart: unless-stopped
+    environment:
+      HAI_PYDANTIC_AI_LOCAL_BASE_URL: ${HAI_PYDANTIC_AI_LOCAL_BASE_URL:-}
+      HAI_PYDANTIC_AI_LOCAL_MODEL_ID: ${HAI_PYDANTIC_AI_LOCAL_MODEL_ID:-}
+      HAI_PYDANTIC_AI_LOCAL_API_KEY: ${HAI_PYDANTIC_AI_LOCAL_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - pydantic-ai-internal
 
   lm-eval-runner:
     build:
@@ -897,6 +932,10 @@ networks:
     internal: true
   whispercpp-internal:
     name: 018-hai-whispercpp-internal
+    driver: bridge
+    internal: true
+  pydantic-ai-internal:
+    name: 018-hai-pydantic-ai-internal
     driver: bridge
     internal: true
 

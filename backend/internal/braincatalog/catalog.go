@@ -717,12 +717,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "pydantic-ai", Name: "PydanticAI", UpstreamURL: "https://github.com/pydantic/pydantic-ai", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
-		Status: StatusCandidate, Category: "typed agent planning and structured-output boundary", IntegrationMode: "reviewed local structured-output adapter",
+		Status: StatusIntegrated, Category: "typed local planning and structured-output boundary", IntegrationMode: "integrated opt-in local structured-proposal runner",
 		Capabilities: []string{"typed model outputs", "schema-first agent plans", "tool result validation", "dependency injection patterns"}, RecommendedFor: []string{"structured planning", "schema-constrained extraction", "validated agent proposals"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a narrow local adapter that accepts only HAI-defined input and output schemas, uses an approved local provider, redacts traces, and returns a proposal for HAI validation. It cannot choose providers, retain memory, self-authorize tools, or execute external actions.",
-		Rationale:  "PydanticAI offers a maintained, schema-first pattern for making model plans and extractions more deterministic without replacing HAI's planner, verifier, provider router, memory, or approval control plane.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no PydanticAI package, provider, or agent is installed by HAI.",
+		Activation: "Enable only the typed-planning Compose profile with one operator-reviewed loopback OpenAI-compatible model. HAI sends a short task request and optional success criteria to a fixed Pydantic schema. The runner has no tools, MCP, web, file, source, memory, persistence, retry, provider-selection, approval, or execution capability; its draft remains subject to HAI validation and policy.",
+		Rationale:  "The integrated local PydanticAI runner adds a constrained model-assisted planning draft without replacing HAI's deterministic planner, verifier, provider router, memory, audit, or approval control plane.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Upstream main and v2.13.0 release checked on 2026-07-20: MIT licence and maintained Python package. HAI pins pydantic-ai-slim[openai] 2.13.0 in an optional internal runner and exposes only one local schema-validated proposal endpoint.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "typed agent output", HAIControl: "HAI-owned schemas and verification status", Boundary: "model output remains a draft until HAI validates it"},
 			{SourcePattern: "tool-capable agent", HAIControl: "runtime allowlists and approval queue", Boundary: "the adapter cannot select tools or produce side effects"},

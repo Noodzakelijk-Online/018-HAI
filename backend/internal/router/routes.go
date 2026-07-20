@@ -41,6 +41,7 @@ import (
 	"automation-hub-backend/internal/privacyfilter"
 	"automation-hub-backend/internal/promptfoo"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/pydanticai"
 	"automation-hub-backend/internal/ragflow"
 	"automation-hub-backend/internal/rbac"
 	"automation-hub-backend/internal/research"
@@ -92,6 +93,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeBrainCatalogRoutes(v1, braincatalog.NewHandler())
 		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
 		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
+		initializePydanticAIRoutes(v1, pydanticai.NewHandler(pydanticai.DefaultService()))
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
 		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
 		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
@@ -662,6 +664,16 @@ func initializePlanningOptimizerRoutes(apiVersion *gin.RouterGroup, handler *pla
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
+		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
+	}
+}
+
+func initializePydanticAIRoutes(apiVersion *gin.RouterGroup, handler *pydanticai.Handler) {
+	routes := apiVersion.Group("/pydantic-ai")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
 	}
 }

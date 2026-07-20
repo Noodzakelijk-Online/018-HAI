@@ -500,6 +500,20 @@ credential, dataset permissions, or evidence quality. Keep RAGFlow's optional
 agent and code-executor features disabled and complete the capacity, retention,
 and provenance review described in the catalog before enabling this bridge.
 
+Optional local PydanticAI typed planning uses the isolated `typed-planning`
+Compose profile. Set `HAI_PYDANTIC_AI_ENABLED=true`, run
+`docker compose --profile typed-planning up --build`, and configure a reviewed
+loopback OpenAI-compatible `HAI_PYDANTIC_AI_LOCAL_BASE_URL` and explicit
+`HAI_PYDANTIC_AI_LOCAL_MODEL_ID`. HAI sends only a short task request and up to
+eight short success criteria to the runner. PydanticAI returns one
+schema-validated planning draft with no tools, MCP, web, file, source, memory,
+persistence, retries, provider selection, approval, or execution ability. The
+draft appears in **Task Blueprint** only after the owner requests it, and it
+must still pass HAI's normal planner, validation, and approval gates before it
+can influence any real work. The probe checks only the local runner and its
+configured model endpoint; it does not establish model quality, task
+correctness, or authorization to execute.
+
 Optional Presidio analysis is a separate, operator-managed local deployment.
 Set `HAI_PRESIDIO_ENABLED=true`, a loopback, `host.docker.internal`, `presidio`,
 or private-network `HAI_PRESIDIO_BASE_URL`, the configured language, and the

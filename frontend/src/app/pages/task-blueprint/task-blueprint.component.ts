@@ -14,6 +14,8 @@ import { AssistantCommandService } from '../../services/assistant-command.servic
 import { TASK_PLAN_SERVICE_TOKEN } from '../../services/task-plan/task-plan.service.token';
 import { ITaskPlanService } from '../../services/task-plan.service.interface';
 import { ThemeMode, ThemeService } from '../../services/theme.service';
+import { IPydanticAIResponse } from '../../models/pydantic-ai.model.interface';
+import { PydanticAIService } from '../../services/pydantic-ai.service';
 
 type ChatRole = 'assistant' | 'user' | 'system';
 type ChatIntent = 'plan' | 'run' | 'cycle';
@@ -48,8 +50,10 @@ export class TaskBlueprintComponent implements OnInit {
   running = false;
   cycling = false;
   resolvingReviewId = '';
-  inspectorMode: 'overview' | 'plan' | 'evidence' | 'logs' = 'overview';
+  inspectorMode: 'overview' | 'plan' | 'evidence' | 'typed-proposal' | 'logs' = 'overview';
   contextExpanded = false;
+  typedProposal?: IPydanticAIResponse;
+  typedProposalLoading = false;
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 20000;
@@ -128,7 +132,8 @@ export class TaskBlueprintComponent implements OnInit {
     private notification: NzNotificationService,
     private router: Router,
     private route: ActivatedRoute,
-    private themeService: ThemeService
+    private themeService: ThemeService,
+    private pydanticAIService: PydanticAIService,
   ) {}
 
   ngOnInit(): void {
@@ -158,6 +163,46 @@ export class TaskBlueprintComponent implements OnInit {
 
   runAgentCycle(): void {
     this.submitChat('cycle');
+  }
+
+  requestTypedProposal(): void {
+    const request = this.singleLine(this.planForm.value.request);
+    if (!request || this.typedProposalLoading) {
+      return;
+    }
+    this.typedProposalLoading = true;
+    this.pydanticAIService.propose(request, this.criteria()).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: (response) => {
+        this.typedProposalLoading = false;
+        this.typedProposal = response;
+        this.inspectorMode = 'typed-proposal';
+        this.addAssistantMessage(
+          'A local typed planning draft is ready for review.',
+          [
+            `Model: ${response.modelId}.`,
+            'It is a draft only. HAI has not executed, approved, saved, or treated it as verified work.',
+            'Review the draft, then explicitly copy criteria into the task before using Plan first.',
+          ],
+          'warning'
+        );
+      },
+      error: () => {
+        this.typedProposalLoading = false;
+        this.notification.warning(
+          'Local typed planner unavailable',
+          'Configure the local PydanticAI runner and an approved local model. HAI did not send work to any cloud provider or execute an action.'
+        );
+      },
+    });
+  }
+
+  useTypedProposalCriteria(): void {
+    const proposal = this.typedProposal?.proposal;
+    if (!proposal) return;
+    this.planForm.patchValue({ successCriteria: proposal.successCriteria.join('\n') });
+    this.contextExpanded = true;
+    this.inspectorMode = 'overview';
+    this.notification.info('Criteria copied', 'Review the copied criteria and use Plan first when ready. No task has been executed.');
   }
 
   submitChat(intent: ChatIntent): void {
@@ -601,6 +646,10 @@ export class TaskBlueprintComponent implements OnInit {
       return 'The success engine did not return a result. I kept the task unexecuted.';
     }
     return 'The planner did not return a result. No action was taken.';
+  }
+
+  private singleLine(value: unknown): string {
+    return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
   private addAssistantMessage(body: string, bullets: string[] = [], status: ChatMessage['status'] = 'neutral'): ChatMessage {

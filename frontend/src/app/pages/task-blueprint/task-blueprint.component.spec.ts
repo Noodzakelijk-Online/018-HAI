@@ -8,6 +8,7 @@ describe('TaskBlueprintComponent pursuit context', () => {
   function createComponent(pursuitId: string = ''): { component: TaskBlueprintComponent; router: jasmine.SpyObj<Router> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     const taskPlans = jasmine.createSpyObj('TaskPlanService', ['logs', 'reviewQueue', 'resolveReviewItem']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['info', 'warning', 'error']);
     taskPlans.logs.and.returnValue(of([]));
     taskPlans.reviewQueue.and.returnValue(of([]));
     const route = {
@@ -19,10 +20,11 @@ describe('TaskBlueprintComponent pursuit context', () => {
         new FormBuilder(),
         taskPlans,
         {} as any,
-        {} as NzNotificationService,
+        notification,
         router,
         route,
         { mode: () => 'light' } as any,
+        { propose: jasmine.createSpy('propose') } as any,
       ),
       router,
     };
@@ -49,5 +51,18 @@ describe('TaskBlueprintComponent pursuit context', () => {
     expect(component.contextExpanded).toBeTrue();
     expect(component.pursuitContextLabel()).toBe('No pursuit selected');
     expect(router.navigate).not.toHaveBeenCalled();
+  });
+
+  it('copies a reviewed typed draft only into editable success criteria', () => {
+    const { component } = createComponent();
+    component.typedProposal = {
+      engine: 'pydantic-ai 2.13.0', modelId: 'qwen-local', requestDigest: 'digest', scope: 'draft only',
+      proposal: { goal: 'Prepare a plan', successCriteria: ['Use evidence', 'Do not send'], nextSteps: ['Inspect'], risk: 'medium', requiresApproval: true, reasons: ['External impact'], uncertainties: [] },
+    };
+
+    component.useTypedProposalCriteria();
+
+    expect(component.planForm.value.successCriteria).toBe('Use evidence\nDo not send');
+    expect(component.contextExpanded).toBeTrue();
   });
 });

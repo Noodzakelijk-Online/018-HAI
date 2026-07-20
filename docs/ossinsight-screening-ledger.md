@@ -276,7 +276,7 @@ high-ranking collection.
 
 | Repository | Capability gap | Decision | Boundary |
 | --- | --- | --- | --- |
-| `pydantic/pydantic-ai` | Typed planning and schema-constrained output | Review-first candidate | HAI schemas, validation, provider policy, and approvals remain authoritative. |
+| `pydantic/pydantic-ai` | Typed planning and schema-constrained output | Integrated, opt-in local proposal runner | `pydantic-ai-slim[openai]` 2.13.0 runs only behind a fixed local schema, loopback-model allowlist, bounded request/response limits, and no-tool/no-persistence boundary. HAI retains schemas, validation, provider policy, audit, and approvals. |
 | `mudler/LocalAI` | Alternative local OpenAI-compatible model serving | Review-first candidate | Loopback only, approved model provenance, no automatic model download or paid routing. |
 | `cloudquery/cloudquery` | Read-first incremental source inventory | Review-first candidate | One least-privilege connector at a time; HAI retains source permissions and provenance. |
 | `comet-ml/opik` | Local trace and evaluation evidence | Review-first candidate | Redacted local traces, retention/export controls, no audit-authority replacement. |
