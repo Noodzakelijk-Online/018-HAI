@@ -183,6 +183,13 @@ missing categories, and unavailable category reads. The complete remote pass
 has one total deadline, so a slow source cannot become an unbounded dashboard
 operation.
 
+The catalogue also maintains a small, explicit list of source-reviewed GitHub
+repository aliases for upstream transfers. A known historic or renamed slug is
+suppressed only when it is recorded against the same HAI profile; it does not
+change that profile's status, activation requirements, permissions, or runtime
+state. Similar names and unreviewed forks remain discoveries, avoiding both
+duplicate reviews and unsafe automatic equivalence.
+
 Discovery is deliberately non-mutating. It does not clone code, download
 packages, add a catalog record, create credentials, configure a runtime, call a
 tool, or execute a repository. An owner can only turn one discovery into a

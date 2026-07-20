@@ -32,9 +32,14 @@ type ControlMapping struct {
 // Entry is a transparent, source-backed integration decision. Verification is
 // a curation snapshot rather than a claim that a runtime has been installed.
 type Entry struct {
-	ID                   string           `json:"id"`
-	Name                 string           `json:"name"`
-	UpstreamURL          string           `json:"upstreamUrl"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	UpstreamURL string `json:"upstreamUrl"`
+	// RepositoryAliases are reviewed historic or transferred GitHub slugs for
+	// this same upstream. They are discovery de-duplication hints only: an
+	// alias never expands the profile's scope, changes its status, or starts a
+	// runtime.
+	RepositoryAliases    []string         `json:"repositoryAliases,omitempty"`
 	SourceCatalogURL     string           `json:"sourceCatalogUrl"`
 	SourceCollection     string           `json:"sourceCollection,omitempty"`
 	Status               Status           `json:"status"`
@@ -156,7 +161,7 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no Gen AI Toolbox process or database connection is configured by HAI.",
 	},
 	{
-		ID: "qodo-pr-agent", Name: "Qodo PR-Agent", UpstreamURL: "https://github.com/qodo-ai/pr-agent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
+		ID: "qodo-pr-agent", Name: "Qodo PR-Agent", UpstreamURL: "https://github.com/qodo-ai/pr-agent", RepositoryAliases: []string{"Codium-ai/pr-agent", "The-PR-Agent/pr-agent"}, SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
 		Status: StatusLicenseReview, Category: "legacy AGPL pull-request review framework", IntegrationMode: "licence-review reference",
 		Capabilities: []string{"pull-request analysis", "change summaries", "review suggestions", "test-gap detection"}, RecommendedFor: []string{"developer quality gates", "pull-request triage", "review preparation"},
 		RequiresApproval: true, LocalFirstCompatible: true,
@@ -223,7 +228,7 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Agent Sandboxing and Agent Harness repository lists and GitHub metadata checked on 2026-07-19: archived=true, MIT licence; excluded from activation.",
 	},
 	{
-		ID: "presidio", Name: "Presidio", UpstreamURL: "https://github.com/data-privacy-stack/presidio", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
+		ID: "presidio", Name: "Presidio", UpstreamURL: "https://github.com/data-privacy-stack/presidio", RepositoryAliases: []string{"microsoft/presidio"}, SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
 		Status: StatusIntegrated, Category: "sensitive-data detection and redaction", IntegrationMode: "integrated opt-in local redaction adapter",
 		Capabilities: []string{"PII detection", "redaction", "masking", "anonymisation"}, RecommendedFor: []string{"secret redaction", "source-import privacy checks", "safe audit previews"},
 		RequiresApproval: true, LocalFirstCompatible: true,
@@ -277,7 +282,7 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight RAG Frameworks repository list and GitHub metadata checked on 2026-07-19; Haystack is not installed or connected.",
 	},
 	{
-		ID: "fastmcp", Name: "FastMCP", UpstreamURL: "https://github.com/jlowin/fastmcp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		ID: "fastmcp", Name: "FastMCP", UpstreamURL: "https://github.com/jlowin/fastmcp", RepositoryAliases: []string{"PrefectHQ/fastmcp"}, SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
 		Status: StatusIntegrated, Category: "MCP tool-server authoring", IntegrationMode: "integrated local read-only HAI MCP bridge",
 		Capabilities: []string{"authenticated MCP server", "fixed read-only HAI workflow tools", "typed tool schemas", "separate client and bridge tokens"}, RecommendedFor: []string{"reviewed local HAI operational context", "MCP capability design", "read-only agent situational awareness"},
 		RequiresApproval: true, LocalFirstCompatible: true,
@@ -482,7 +487,7 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "GitHub repository metadata checked on 2026-07-19; the upstream repository reports an active anomalyco/opencode project and MIT licence.",
 	},
 	{
-		ID: "openhands", Name: "OpenHands", UpstreamURL: "https://github.com/OpenHands/OpenHands", SourceCatalogURL: sourceCatalogURL,
+		ID: "openhands", Name: "OpenHands", UpstreamURL: "https://github.com/OpenHands/OpenHands", RepositoryAliases: []string{"All-Hands-AI/OpenHands"}, SourceCatalogURL: sourceCatalogURL,
 		Status: StatusCandidate, Category: "sandboxed development agent", IntegrationMode: "operator-configured container or service adapter",
 		Capabilities: []string{"coding agent", "sandboxed workspace", "skills", "MCP integration"}, RecommendedFor: []string{"coding", "repository work", "sandboxed task execution"},
 		RequiresApproval: true, LocalFirstCompatible: true,
@@ -500,7 +505,7 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository and release activity checked on 2026-07-19.",
 	},
 	{
-		ID: "aider", Name: "Aider", UpstreamURL: "https://github.com/Aider-AI/aider", SourceCatalogURL: sourceCatalogURL,
+		ID: "aider", Name: "Aider", UpstreamURL: "https://github.com/Aider-AI/aider", RepositoryAliases: []string{"paul-gauthier/aider"}, SourceCatalogURL: sourceCatalogURL,
 		Status: StatusCandidate, Category: "interactive coding agent", IntegrationMode: "operator-configured workspace CLI adapter",
 		Capabilities: []string{"repository editing", "git-aware code changes", "model-assisted coding"}, RecommendedFor: []string{"coding", "small repository changes"},
 		RequiresApproval: true, LocalFirstCompatible: true,
@@ -993,6 +998,7 @@ var entries = []Entry{
 func Entries() []Entry {
 	out := make([]Entry, 0, len(entries))
 	for _, entry := range entries {
+		entry.RepositoryAliases = append([]string(nil), entry.RepositoryAliases...)
 		entry.Capabilities = append([]string(nil), entry.Capabilities...)
 		entry.RecommendedFor = append([]string(nil), entry.RecommendedFor...)
 		entry.ControlMappings = append([]ControlMapping(nil), entry.ControlMappings...)
@@ -1004,6 +1010,7 @@ func Entries() []Entry {
 func EntryByID(id string) (Entry, bool) {
 	for _, entry := range entries {
 		if entry.ID == strings.ToLower(strings.TrimSpace(id)) {
+			entry.RepositoryAliases = append([]string(nil), entry.RepositoryAliases...)
 			entry.Capabilities = append([]string(nil), entry.Capabilities...)
 			entry.RecommendedFor = append([]string(nil), entry.RecommendedFor...)
 			entry.ControlMappings = append([]ControlMapping(nil), entry.ControlMappings...)

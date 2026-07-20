@@ -424,12 +424,32 @@ func normalizedDiscoveryScope(scope OSSInsightDiscoveryScope) (OSSInsightDiscove
 func catalogRepositories() map[string]bool {
 	known := map[string]bool{}
 	for _, entry := range Entries() {
-		parts := strings.Split(strings.TrimSuffix(entry.UpstreamURL, "/"), "/")
-		if len(parts) >= 2 {
-			known[strings.ToLower(parts[len(parts)-2]+"/"+parts[len(parts)-1])] = true
+		if repository := repositorySlugFromURL(entry.UpstreamURL); repository != "" {
+			known[repository] = true
+		}
+		for _, alias := range entry.RepositoryAliases {
+			if repository := normalizedRepositorySlug(alias); repository != "" {
+				known[repository] = true
+			}
 		}
 	}
 	return known
+}
+
+func repositorySlugFromURL(value string) string {
+	parts := strings.Split(strings.TrimSuffix(strings.TrimSpace(value), "/"), "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return normalizedRepositorySlug(parts[len(parts)-2] + "/" + parts[len(parts)-1])
+}
+
+func normalizedRepositorySlug(value string) string {
+	parts := strings.Split(strings.Trim(strings.ToLower(strings.TrimSpace(value)), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return parts[0] + "/" + parts[1]
 }
 
 func ossInsightCollectionRepositoriesURL(id string) string {

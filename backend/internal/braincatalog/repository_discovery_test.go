@@ -102,6 +102,24 @@ func TestOSSInsightRepositoryScoutRejectsUnknownScope(t *testing.T) {
 	}
 }
 
+func TestCatalogRepositoriesIncludesOnlyExplicitReviewedAliases(t *testing.T) {
+	known := catalogRepositories()
+	for _, repository := range []string{
+		"all-hands-ai/openhands",
+		"prefecthq/fastmcp",
+		"paul-gauthier/aider",
+		"microsoft/presidio",
+		"codium-ai/pr-agent",
+	} {
+		if !known[repository] {
+			t.Fatalf("reviewed upstream alias %q must suppress a duplicate discovery", repository)
+		}
+	}
+	if known["opencode-ai/opencode"] {
+		t.Fatal("an unreviewed similarly named repository must remain discoverable")
+	}
+}
+
 func TestMergeDiscoveryPreservesSourceProvenanceAndStrongerTrack(t *testing.T) {
 	existing := OSSInsightRepositoryDiscovery{
 		Collection: "AI Agent Frameworks", Repository: "owner/shared", ReviewTrack: "orchestration", Priority: 68,
