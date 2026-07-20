@@ -753,15 +753,15 @@ var entries = []Entry{
 	},
 	{
 		ID: "cloudquery", Name: "CloudQuery", UpstreamURL: "https://github.com/cloudquery/cloudquery", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10056/repos/", SourceCollection: "Data Integration",
-		Status: StatusCandidate, Category: "read-first source inventory connector", IntegrationMode: "reviewed scoped data-ingestion bridge",
-		Capabilities: []string{"connector schemas", "incremental extraction patterns", "source inventory", "local destination support"}, RecommendedFor: []string{"approved source ingestion", "account inventory", "incremental connector design"},
+		Status: StatusIntegrated, Category: "local read-only sync-summary intake", IntegrationMode: "integrated fixed-path local CloudQuery sync-summary adapter",
+		Capabilities: []string{"incremental sync summaries", "source inventory signals", "cursor-safe local intake", "provenance-linked operational review"}, RecommendedFor: []string{"approved source ingestion", "sync health review", "account inventory signals"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a single read-first source connector with least-privilege credentials, field and folder allowlists, cursor handling, local retention, provenance links, audit events, revocation, and a no-write probe. Do not import broad cloud or SaaS account inventories by default.",
-		Rationale:  "CloudQuery offers mature connector and incremental-ingestion patterns that can inform a scoped HAI source adapter, while HAI remains the owner of source permissions, extraction, memory updates, deletion, and approvals.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Data Integration listing and GitHub metadata checked on 2026-07-19: active main branch, MPL-2.0 licence; no CloudQuery connector, credential, or destination is installed by HAI.",
+		Activation: "Run CloudQuery separately with its own reviewed configuration and emit a local JSONL summary. Then enable HAI_CLOUDQUERY_SUMMARY_ENABLED, mount exactly one summary directory read-only, and register a local-only CloudQuery sync-summary source. HAI reads only completed newline-terminated summary rows from that fixed path; it never starts CloudQuery, reads its config/credentials, or accesses source/destination records.",
+		Rationale:  "HAI can now turn bounded, operator-produced CloudQuery run summaries into source-linked sync health signals without creating a parallel connector, credential, destination, or data authority.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Data Integration listing and CloudQuery CLI source checked on 2026-07-20: active main branch, MPL-2.0 licence. HAI implements only a disabled-by-default local JSONL summary reader; no CloudQuery process, configuration, credentials, plugin, raw source data, or destination is installed or accessed by HAI.",
 		ControlMappings: []ControlMapping{
-			{SourcePattern: "source connector", HAIControl: "connector registry and per-source permission policy", Boundary: "no credentials, scopes, or sync jobs are created from catalog discovery"},
-			{SourcePattern: "extracted records", HAIControl: "provenance, memory review, and deletion controls", Boundary: "ingested data does not become a fact or task without HAI processing"},
+			{SourcePattern: "CloudQuery sync JSONL summary", HAIControl: "fixed local path, size/line limits, incremental cursor, and source audit", Boundary: "HAI never runs CloudQuery or reads config, credentials, raw source data, plugin output, or destination contents"},
+			{SourcePattern: "sync health signal", HAIControl: "provenance, workflow review, memory review, and deletion controls", Boundary: "a summary does not become a fact, broad account inventory, or autonomous action without normal HAI processing"},
 		},
 	},
 	{

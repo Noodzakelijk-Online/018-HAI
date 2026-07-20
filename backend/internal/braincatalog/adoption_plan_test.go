@@ -35,8 +35,8 @@ func TestAdoptionPlanPrioritizesLocalFirstCoverageGapsWithoutClaimingActivation(
 			break
 		}
 	}
-	if cloudQuery.ID == "" || cloudQuery.Priority < 80 || !cloudQuery.LocalFirst || cloudQuery.Status != StatusCandidate {
-		t.Fatalf("source-intake candidate must be visible as a local-first gap: %#v", cloudQuery)
+	if cloudQuery.ID == "" || cloudQuery.Priority < 55 || !cloudQuery.LocalFirst || cloudQuery.Status != StatusIntegrated {
+		t.Fatalf("CloudQuery must be visible as an opt-in local summary adapter: %#v", cloudQuery)
 	}
 	if cloudQuery.RecommendedAction == "" || cloudQuery.RequiredGates[0] == "" {
 		t.Fatalf("roadmap must preserve manual review gates: %#v", cloudQuery)

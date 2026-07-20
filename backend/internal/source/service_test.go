@@ -103,6 +103,113 @@ func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
 	}
 }
 
+func TestSyncCloudQuerySummaryReadsOnlyBoundedIncrementalSummaries(t *testing.T) {
+	root := t.TempDir()
+	summaryPath := root + "/summary.jsonl"
+	writeTestFile(t, summaryPath, `{"sync_id":"sync-1","sync_time":"2026-07-20T10:00:00Z","sync_duration_ms":123,"resources":4,"sources":[{"name":"aws","errors":[]}],"destinations":[{"name":"postgres","tables":[{"name":"aws_ec2_instances","resources":4}]}],"api_key":"must-not-be-ingested"}`+"\n")
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_ENABLED", "true")
+	t.Setenv("HAI_CLOUDQUERY_ALLOWED_ROOT", root)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_PATH", summaryPath)
+	t.Setenv("HAI_CLOUDQUERY_MAX_ENTRIES", "10")
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      cloudQuerySummaryConnectorKey,
+		Name:              "CloudQuery local summary",
+		Category:          "cloud_inventory",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		DefaultProjectKey: "018-HAI",
+	})
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeManualImport})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 || result.Job.ItemsAdded != 1 || !strings.HasPrefix(result.Job.CursorAfter, cloudQuerySummaryCursorPrefix) {
+		t.Fatalf("unexpected CloudQuery sync result: %#v", result.Job)
+	}
+	if len(result.Extractions) != 1 || result.Extractions[0].ContentType != "cloudquery_sync_summary" {
+		t.Fatalf("unexpected CloudQuery extraction: %#v", result.Extractions)
+	}
+	if strings.Contains(result.Extractions[0].Text, "must-not-be-ingested") {
+		t.Fatalf("unexpected unknown CloudQuery JSON field leaked into extraction: %q", result.Extractions[0].Text)
+	}
+	if !repo.hasAudit("source.cloudquery_summary_read") || !repo.hasAudit("source.synced") {
+		t.Fatalf("expected CloudQuery summary and completed sync audits")
+	}
+
+	file, err := os.OpenFile(summaryPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if _, err := file.WriteString(`{"sync_id":"sync-2","resources":2,"sources":[{"name":"github"}],"destinations":[{"name":"postgres"}]}` + "\n"); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = file.Close()
+	result, err = NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err != nil {
+		t.Fatalf("incremental Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 || result.Job.ItemsAdded != 1 {
+		t.Fatalf("incremental sync reread prior records: %#v", result.Job)
+	}
+}
+
+func TestCloudQuerySummaryConfigurationStaysInsideConfiguredRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir() + "/summary.jsonl"
+	writeTestFile(t, outside, "{}\n")
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_ENABLED", "true")
+	t.Setenv("HAI_CLOUDQUERY_ALLOWED_ROOT", root)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_PATH", outside)
+	if _, err := cloudQuerySummaryConfigFromEnv(); err == nil || !strings.Contains(err.Error(), "remain inside") {
+		t.Fatalf("cloudQuerySummaryConfigFromEnv error = %v, want allowed-root rejection", err)
+	}
+}
+
+func TestSyncCloudQuerySummaryRejectsLegacyOrManualBypasses(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: cloudQuerySummaryConnectorKey,
+		Name:         "Invalid legacy CloudQuery source",
+		Category:     "cloud_inventory",
+		Enabled:      true,
+		LocalOnly:    false,
+		Status:       "active",
+	})
+	if _, err := NewService(repo, nil).Sync(sourceID, ImportRequest{}); err == nil || !strings.Contains(err.Error(), "must remain local-only") {
+		t.Fatalf("legacy CloudQuery source error = %v, want local-only rejection", err)
+	}
+	repo.sources[sourceID].LocalOnly = true
+	if _, err := NewService(repo, nil).Sync(sourceID, ImportRequest{Items: []ImportItem{{ExternalID: "forged", Title: "Forged", Content: "must not enter CloudQuery source"}}}); err == nil || !strings.Contains(err.Error(), "manual items") {
+		t.Fatalf("manual CloudQuery item error = %v, want manual-item rejection", err)
+	}
+}
+
+func TestCloudQuerySummaryRejectsIncompleteAndMalformedRecords(t *testing.T) {
+	root := t.TempDir()
+	summaryPath := root + "/summary.jsonl"
+	writeTestFile(t, summaryPath, `{"sync_id":"complete"}`+"\n"+`{"sync_id":"partial"`)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_ENABLED", "true")
+	t.Setenv("HAI_CLOUDQUERY_ALLOWED_ROOT", root)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_PATH", summaryPath)
+	items, cursor, err := fetchCloudQuerySummary(&models.ConnectedSource{})
+	if err != nil || len(items) != 1 || !strings.HasPrefix(cursor, cloudQuerySummaryCursorPrefix) {
+		t.Fatalf("incomplete final record must be deferred: items=%#v cursor=%q err=%v", items, cursor, err)
+	}
+	writeTestFile(t, summaryPath, "not-json\n")
+	if _, _, err := fetchCloudQuerySummary(&models.ConnectedSource{}); err == nil || !strings.Contains(err.Error(), "invalid JSONL") {
+		t.Fatalf("malformed complete record error = %v, want invalid JSONL", err)
+	}
+	writeTestFile(t, summaryPath, strings.Repeat("x", cloudQuerySummaryMaxLineBytes+1)+"\n")
+	if _, _, err := fetchCloudQuerySummary(&models.ConnectedSource{}); err == nil || !strings.Contains(err.Error(), "16 KiB") {
+		t.Fatalf("oversized summary record error = %v, want line-size rejection", err)
+	}
+}
+
 func TestSyncWhatsAppExportParsesChatWindowsAndGatesReview(t *testing.T) {
 	root := t.TempDir()
 	export := strings.Join([]string{

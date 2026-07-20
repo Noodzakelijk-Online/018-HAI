@@ -113,9 +113,11 @@ On 2026-07-20, the current FastMCP upstream was checked directly at
 Apache-2.0 licence. HAI's `mcp-bridge` profile is therefore an explicit,
 loopback-only, read-only integration, not a generic MCP executor. The same
 review found CloudQuery maintained, but its current public upstream did not
-contain a GitHub source plugin. HAI does not claim an installed CloudQuery
-GitHub connector and retains it as a future connector candidate pending a
-separately verified source implementation.
+contain a GitHub source plugin. On 2026-07-20, HAI added a disabled-by-default
+local JSONL summary reader instead of claiming a CloudQuery GitHub connector:
+it consumes only completed records emitted by an operator-run `cloudquery sync
+--summary-location` command. HAI never starts CloudQuery, reads its
+configuration or credentials, or accesses raw source/destination data.
 
 The same 2026-07-20 review confirmed the current A2A project at
 `a2aproject/A2A`, hosted by the Linux Foundation and Apache-2.0 licensed. HAI
@@ -298,7 +300,7 @@ high-ranking collection.
 | --- | --- | --- | --- |
 | `pydantic/pydantic-ai` | Typed planning and schema-constrained output | Integrated, opt-in local proposal runner | `pydantic-ai-slim[openai]` 2.13.0 runs only behind a fixed local schema, loopback-model allowlist, bounded request/response limits, and no-tool/no-persistence boundary. HAI retains schemas, validation, provider policy, audit, and approvals. |
 | `mudler/LocalAI` | Alternative local OpenAI-compatible model serving | Review-first candidate | Loopback only, approved model provenance, no automatic model download or paid routing. |
-| `cloudquery/cloudquery` | Read-first incremental source inventory | Review-first candidate | One least-privilege connector at a time; HAI retains source permissions and provenance. |
+| `cloudquery/cloudquery` | Read-first incremental source inventory | Integrated, opt-in local summary reader | Fixed local JSONL summary path only, bounded completed rows and incremental cursoring; CloudQuery credentials/configuration, raw source data, destinations, and process execution remain outside HAI. |
 | `comet-ml/opik` | Local trace and evaluation evidence | Review-first candidate | Redacted local traces, retention/export controls, no audit-authority replacement. |
 | `confident-ai/deepteam` | No-write agent red-team regression | Review-first candidate | Synthetic or redacted fixtures only; never connected accounts or real attack targets. |
 | `Fission-AI/OpenSpec` | Spec-first coding plans | Review-first candidate | Read-only planning artifact; no implicit edit, commit, branch, or pull request. |

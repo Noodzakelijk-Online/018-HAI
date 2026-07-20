@@ -515,6 +515,18 @@ It never opens chat, sends attachments, reads history, ingests/deletes files,
 changes workspace settings, or calls AnythingLLM agents/tools. Results are not
 HAI memory, facts, or execution authority.
 
+Optional CloudQuery intake is intentionally limited to a local, operator-
+produced JSONL run summary. Run CloudQuery separately with its own reviewed
+credentials and configuration, write `cloudquery sync --summary-location` to a
+file beneath `CLOUDQUERY_SUMMARY_HOST_DIR`, then set
+`HAI_CLOUDQUERY_SUMMARY_ENABLED=true`. HAI mounts that directory read-only and
+reads only newline-terminated records from the fixed
+`HAI_CLOUDQUERY_SUMMARY_PATH`. It preserves bounded sync-health summaries with
+provenance and cursoring through the normal source pipeline, but never starts
+CloudQuery, reads its configuration or credentials, accesses raw source or
+destination data, or treats a reported summary as verified fact or execution
+authority.
+
 Optional Serena semantic code context is a separate, owner-started local MCP
 service. Start Serena in Streamable HTTP mode with one explicit project, then
 set `HAI_SERENA_ENABLED=true`, a loopback or

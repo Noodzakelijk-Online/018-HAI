@@ -258,6 +258,14 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 			}
 		}
 	}
+	if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == cloudQuerySummaryConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "local CloudQuery sync-summary adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
 	return connectors, nil
 }
 
@@ -286,6 +294,20 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		}
 		if strings.TrimSpace(request.SyncTarget) != "" {
 			return nil, fmt.Errorf("Odoo JSON-2 endpoint is configured only through HAI_ODOO_BASE_URL; syncTarget must be empty")
+		}
+	}
+	if connectorKey == cloudQuerySummaryConnectorKey {
+		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("CloudQuery sync-summary connector requires explicit configuration: %w", err)
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("CloudQuery sync summaries must use the cloud_inventory category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("CloudQuery sync summaries are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must be empty")
 		}
 	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
@@ -327,6 +349,17 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 	source, err := s.repo.FindSource(id)
 	if err != nil {
 		return nil, err
+	}
+	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
+		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("CloudQuery sync-summary connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("CloudQuery sync summaries are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
+			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must remain empty")
+		}
 	}
 	if strings.TrimSpace(request.Name) != "" {
 		source.Name = strings.TrimSpace(request.Name)
@@ -387,6 +420,14 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
 		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")
+	}
+	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) != "" {
+			return nil, fmt.Errorf("CloudQuery sync summaries must remain local-only with the environment-configured summary path")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("CloudQuery sync summaries must be read from the configured local summary file; manual items are not accepted")
+		}
 	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) && len(request.Items) == 0 {
 		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
@@ -485,6 +526,19 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			return nil, err
 		}
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == cloudQuerySummaryConnectorKey {
+		items, adapterCursor, err = fetchCloudQuerySummary(source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
 		items, err = s.whatsAppExportItems(source, request)
@@ -1748,6 +1802,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
+		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
 	}
 }
 
@@ -1777,7 +1832,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
