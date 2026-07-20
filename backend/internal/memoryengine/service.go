@@ -580,11 +580,11 @@ func (s *service) SearchForOwner(ownerIdentity, query, projectKey string, limit 
 		Query:       query,
 		ProjectKey:  projectKey,
 		UsedContext: []memory.RankedMemory{},
-		Explanation: "Owner-scoped AI-history facts only. Generic context-memory results remain unavailable until those records carry owner identity.",
+		Explanation: "Context-memory retrieval is unavailable because the native memory service is not configured.",
 	}
-	if ownerIdentity == "" && s.memoryService != nil {
+	if s.memoryService != nil {
 		var err error
-		retrieved, err = s.memoryService.Retrieve(memory.RetrieveRequest{
+		retrieved, err = memory.RetrieveForOwner(s.memoryService, ownerIdentity, memory.RetrieveRequest{
 			Query:      query,
 			ProjectKey: projectKey,
 			Limit:      limit,
