@@ -10,6 +10,7 @@ import (
 	"automation-hub-backend/internal/mcppreflight"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/planningoptimizer"
+	"automation-hub-backend/internal/serena"
 
 	"github.com/gin-gonic/gin"
 )
@@ -394,6 +395,45 @@ func TestMCPPreflightRoutesRequireOwnerAndAdmin(t *testing.T) {
 	owner.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/mcp-preflight/local/run", nil))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("owner must receive the truthful disabled status, got %d", response.Code)
+	}
+}
+
+func TestSerenaRoutesRequireOwnerAndPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := serena.NewService(false, "", "", nil)
+
+	unauthenticated := gin.New()
+	initializeSerenaRoutes(unauthenticated.Group("/api/v1"), serena.NewHandler(service))
+	response := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/serena/status", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status without an owner must be unauthorized, got %d", response.Code)
+	}
+
+	viewer := gin.New()
+	viewer.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "viewer@example.test")
+		c.Set(contextRoleKey, "viewer")
+		c.Next()
+	})
+	initializeSerenaRoutes(viewer.Group("/api/v1"), serena.NewHandler(service))
+	response = httptest.NewRecorder()
+	viewer.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/serena/symbols", strings.NewReader(`{"pattern":"Service"}`)))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer must not request semantic code context, got %d", response.Code)
+	}
+
+	owner := gin.New()
+	owner.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "owner@example.test")
+		c.Set(contextRoleKey, "owner")
+		c.Next()
+	})
+	initializeSerenaRoutes(owner.Group("/api/v1"), serena.NewHandler(service))
+	response = httptest.NewRecorder()
+	owner.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/serena/probe", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("owner must receive truthful disabled state, got %d", response.Code)
 	}
 }
 

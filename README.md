@@ -504,6 +504,19 @@ permissions, provenance, or evidence quality. Keep RAGFlow's optional agent
 and code-executor features disabled and complete the capacity, retention, and
 provenance review described in the catalog before enabling this bridge.
 
+Optional Serena semantic code context is a separate, owner-started local MCP
+service. Start Serena in Streamable HTTP mode with one explicit project, then
+set `HAI_SERENA_ENABLED=true`, a loopback or
+`host.docker.internal` `HAI_SERENA_BASE_URL`, and a stable non-path
+`HAI_SERENA_PROJECT_ID`. An owner-admin can use
+`POST /api/v1/serena/probe` to check the MCP handshake and the presence of its
+single allowlisted tool. `POST /api/v1/serena/symbols` uses only Serena's
+`find_symbol` with source bodies and hover data disabled, then returns bounded
+symbol metadata. HAI does not start Serena, activate or change a project, pass
+credentials, expose generic MCP, or use Serena's shell, file, edit, memory,
+diagnostic, JetBrains, or cross-project tools. Results are read-only code
+context, not a test result, verified claim, code change, or execution grant.
+
 Optional local PydanticAI typed planning uses the isolated `typed-planning`
 Compose profile. Set `HAI_PYDANTIC_AI_ENABLED=true`, run
 `docker compose --profile typed-planning up --build`, and configure a reviewed

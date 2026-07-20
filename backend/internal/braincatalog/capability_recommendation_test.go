@@ -112,8 +112,8 @@ func TestRecommendSemanticCodeContextWithoutEnablingHostAutomation(t *testing.T)
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	if recommendation, ok := ids["serena"]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
-		t.Fatalf("Serena must remain a review-first code-context candidate: %#v", recommendations)
+	if recommendation, ok := ids["serena"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("Serena must remain an integrated but configuration-gated code-context profile: %#v", recommendations)
 	}
 
 	for _, expected := range []string{"ufo", "goose"} {

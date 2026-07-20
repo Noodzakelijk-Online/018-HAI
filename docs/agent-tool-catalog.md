@@ -93,7 +93,7 @@ none is installed, configured, or executable through HAI.
 | [AG2](https://github.com/ag2ai/ag2) | Compatibility only | Existing AG2 / AutoGen-era workload migration and pattern review | It cannot become a second agent control plane. Any bridge must use a fixed schema and HAI-owned model policy, audit, approvals, workspace limits, and tool allowlist. |
 | [RAGFlow](https://github.com/infiniflow/ragflow) | Integrated, opt-in | Complex document parsing, evidence-linked retrieval, and reranking | HAI has a disabled-by-default, local-only retrieval bridge with an explicit dataset allowlist. It remains an external retrieval index, not HAI memory or truth; its optional agent/code executor is disabled and any deployment first needs a measured gap, source allowlist, resource budget, provenance, and deletion review. |
 | [Presidio](https://github.com/data-privacy-stack/presidio) | Integrated, opt-in | Local PII detection second-pass | The maintained project moved from the Microsoft GitHub namespace. HAI has a disabled-by-default local Analyzer bridge with fixed language/entity allowlists and bounded metadata-only results; it cannot anonymize, persist, replay, delete, or prove content safe. HAI's deterministic privacy controls remain authoritative for known secrets. |
-| [Serena](https://github.com/oraios/serena) | Candidate, preflight eligible | Read-only semantic repository context and language-server diagnostics | A self-started local Serena HTTP endpoint can pass HAI's `initialize`/`tools/list` MCP preflight before any adapter review. It must then be limited to one named repository and a read-only symbol/diagnostic allowlist. Editing, shell, memory writing, and automatic language-server installation remain disabled. |
+| [Serena](https://github.com/oraios/serena) | Integrated, opt-in | Read-only semantic repository context | HAI exposes a disabled loopback-only bridge for one self-started project-pinned Serena endpoint. It calls only `find_symbol` with source bodies and hover data disabled, returns bounded symbol metadata, and never starts Serena, changes projects, or exposes shell, file, editing, memory, diagnostic, or generic MCP tools. |
 | [Microsoft UFO](https://github.com/microsoft/UFO) | Reference only | Windows and multi-device execution architecture | It exposes GUI, UIA, Win32, WinCOM, and cross-device agent capabilities. HAI will not connect it to a Windows session, screen, device, provider, or tool surface without a separate execution-safety design. |
 | [Goose](https://github.com/aaif-goose/goose) | Reference only | General-purpose local-agent and MCP interoperability patterns | Its desktop, CLI, API, provider, extension, and execution surfaces would create a second control plane. It is not embedded, installed, or run by HAI. |
 
@@ -165,10 +165,14 @@ HAI_MCP_PREFLIGHT_SERVERS=local-docs@mcp-inspector=http://host.docker.internal:3
 HAI_MCP_PREFLIGHT_TIMEOUT_SECONDS=5
 ```
 
-For a self-started Serena HTTP server, use a distinct reviewed profile such as
-`serena-code@serena=http://127.0.0.1:9121/mcp`. This merely verifies the MCP
-handshake and bounded declared-tool inventory; HAI does not install Serena,
-start its process, mount a repository, or call a Serena tool.
+For a self-started Serena HTTP server, `HAI_SERENA_ENABLED=true`,
+`HAI_SERENA_BASE_URL=http://host.docker.internal:9121/mcp`, and a stable
+non-path `HAI_SERENA_PROJECT_ID` expose `GET /api/v1/serena/status`, an
+owner-admin `POST /api/v1/serena/probe`, and owner `POST /api/v1/serena/symbols`.
+The probe performs only the MCP handshake and `tools/list`; symbol lookup calls
+only the reviewed `find_symbol` tool with source-body and hover data disabled.
+HAI does not install or start Serena, activate/mount a repository, supply
+credentials, or expose any other Serena tool.
 
 `GET /api/v1/mcp-preflight/overview` reports configuration and the most recent
 operator check. `POST /api/v1/mcp-preflight/local-docs/run` is admin-only and

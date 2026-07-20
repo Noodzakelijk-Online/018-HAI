@@ -26,14 +26,16 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const ragflowService = { status: jasmine.createSpy('status') }
     const presidioService = { status: jasmine.createSpy('status') }
 		const langfuseService = { status: jasmine.createSpy('status'), probe: jasmine.createSpy('probe'), exportOperationalSnapshot: jasmine.createSpy('exportOperationalSnapshot') }
+    const serenaService = { status: jasmine.createSpy('status') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
     return {
-      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, presidioService as any, langfuseService as any, notification, router as any),
+      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, presidioService as any, langfuseService as any, serenaService as any, notification, router as any),
       pursuitService,
       ragflowService,
       presidioService,
 			langfuseService,
+      serenaService,
       notification,
       router,
     }
@@ -199,6 +201,16 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     expect(langfuseService.status).toHaveBeenCalled()
     expect(component.langfuseStatus?.configured).toBeFalse()
+  })
+
+  it('reads Serena bridge state only when the Serena profile is selected', () => {
+    const { component, serenaService } = createComponent()
+    serenaService.status.and.returnValue(of({ enabled: false, configured: false, provider: 'Serena semantic code context', capabilities: [], restrictions: ['no edit'], scope: 'read-only metadata only' }))
+
+    component.select({ ...candidate, id: 'serena', name: 'Serena', status: 'integrated_profile' } as any)
+
+    expect(serenaService.status).toHaveBeenCalled()
+    expect(component.serenaStatus?.configured).toBeFalse()
   })
 
   it('probes Langfuse without exporting a trace', () => {

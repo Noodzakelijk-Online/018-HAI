@@ -50,6 +50,7 @@ import (
 	"automation-hub-backend/internal/research"
 	"automation-hub-backend/internal/runtimelab"
 	"automation-hub-backend/internal/semantic"
+	"automation-hub-backend/internal/serena"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/temporalbridge"
@@ -100,6 +101,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
 		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
 		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
+		initializeSerenaRoutes(v1, serena.NewHandler(serena.DefaultService()))
 		initializePresidioRoutes(v1, presidio.NewHandler(presidio.DefaultService()))
 		initializeEvidentlyRoutes(v1, evidently.NewHandler(evidently.DefaultService()))
 		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
@@ -484,6 +486,18 @@ func initializeRAGFlowRoutes(apiVersion *gin.RouterGroup, handler *ragflow.Handl
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.POST("/retrieve", requirePermission(rbac.PermWrite), handler.Retrieve)
+	}
+}
+
+// initializeSerenaRoutes exposes one bounded read-only semantic lookup. The
+// service never launches Serena or forwards a generic MCP call surface.
+func initializeSerenaRoutes(apiVersion *gin.RouterGroup, handler *serena.Handler) {
+	routes := apiVersion.Group("/serena")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/symbols", requirePermission(rbac.PermWrite), handler.FindSymbols)
 	}
 }
 

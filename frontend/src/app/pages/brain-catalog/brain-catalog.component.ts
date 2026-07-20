@@ -5,11 +5,13 @@ import { BrainCatalogCollectionDisposition, IBrainCatalogAdoptionPlan, IBrainCat
 import { IRAGFlowStatus } from '../../models/ragflow.model.interface'
 import { IPresidioStatus } from '../../models/presidio.model.interface'
 import { ILangfuseExportResult, ILangfuseProbeResult, ILangfuseStatus } from '../../models/langfuse.model.interface'
+import { ISerenaStatus } from '../../models/serena.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { LangfuseService } from '../../services/langfuse.service'
 import { PresidioService } from '../../services/presidio.service'
 import { PursuitService } from '../../services/pursuit.service'
 import { RAGFlowService } from '../../services/ragflow.service'
+import { SerenaService } from '../../services/serena.service'
 
 @Component({
   selector: 'app-brain-catalog',
@@ -49,6 +51,9 @@ export class BrainCatalogComponent implements OnInit {
   exportingLangfuse = false
   langfuseProbe?: ILangfuseProbeResult
   langfuseExport?: ILangfuseExportResult
+  serenaStatus?: ISerenaStatus
+  loadingSerenaStatus = false
+  serenaStatusUnavailable = false
 
   constructor(
     private service: BrainCatalogService,
@@ -56,6 +61,7 @@ export class BrainCatalogComponent implements OnInit {
     private ragflowService: RAGFlowService,
     private presidioService: PresidioService,
     private langfuseService: LangfuseService,
+    private serenaService: SerenaService,
     private notification: NzNotificationService,
     private router: Router,
   ) {}
@@ -106,9 +112,12 @@ export class BrainCatalogComponent implements OnInit {
     this.langfuseStatusUnavailable = false
     this.langfuseProbe = undefined
     this.langfuseExport = undefined
+    this.serenaStatus = undefined
+    this.serenaStatusUnavailable = false
     if (entry.id === 'ragflow') this.loadRAGFlowStatus()
     if (entry.id === 'presidio') this.loadPresidioStatus()
     if (entry.id === 'langfuse') this.loadLangfuseStatus()
+    if (entry.id === 'serena') this.loadSerenaStatus()
   }
 
   loadRAGFlowStatus(): void {
@@ -152,6 +161,21 @@ export class BrainCatalogComponent implements OnInit {
       error: () => {
         this.loadingLangfuseStatus = false
         this.langfuseStatusUnavailable = true
+      },
+    })
+  }
+
+  loadSerenaStatus(): void {
+    if (this.loadingSerenaStatus) return
+    this.loadingSerenaStatus = true
+    this.serenaService.status().subscribe({
+      next: (status) => {
+        this.loadingSerenaStatus = false
+        this.serenaStatus = status
+      },
+      error: () => {
+        this.loadingSerenaStatus = false
+        this.serenaStatusUnavailable = true
       },
     })
   }

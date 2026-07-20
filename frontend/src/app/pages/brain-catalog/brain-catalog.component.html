@@ -83,14 +83,21 @@
           <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
           <small>{{ status.scope }}</small>
           <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
-          <div class="brain-catalog-page__bridge-actions" *ngIf="status.configured">
-            <button nz-button nzType="default" (click)="probeLangfuse()" [nzLoading]="probingLangfuse" [disabled]="probingLangfuse || exportingLangfuse">Check local readiness</button>
-            <button nz-button nzType="primary" (click)="exportLangfuseSnapshot()" [nzLoading]="exportingLangfuse" [disabled]="probingLangfuse || exportingLangfuse">Export aggregate snapshot</button>
-          </div>
-          <small *ngIf="langfuseProbe as probe">Local health and readiness checked {{ probe.checkedAt }}. No trace was exported by the probe.</small>
-          <small *ngIf="langfuseExport as export">Aggregate trace accepted {{ export.exportedAt }}. Trace ID: {{ export.traceId }}.</small>
         </ng-container>
         <span *ngIf="ragflowStatusUnavailable">The local bridge status could not be read. No RAGFlow action was started.</span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'serena'">
+        <strong>Local bridge state</strong>
+        <span *ngIf="loadingSerenaStatus">Checking the configured local bridge.</span>
+        <ng-container *ngIf="serenaStatus as status">
+          <span>{{ status.configured ? 'Configured for bounded read-only semantic symbol lookup.' : 'Not configured. HAI cannot contact or query Serena.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small *ngIf="status.projectId">Configured project label: {{ status.projectId }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="serenaStatusUnavailable">The local bridge status could not be read. No Serena action was started.</span>
       </div>
       <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'presidio'">
         <strong>Local bridge state</strong>
@@ -102,6 +109,12 @@
           <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
           <small>{{ status.scope }}</small>
           <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+          <div class="brain-catalog-page__bridge-actions" *ngIf="status.configured">
+            <button nz-button nzType="default" (click)="probeLangfuse()" [nzLoading]="probingLangfuse" [disabled]="probingLangfuse || exportingLangfuse">Check local readiness</button>
+            <button nz-button nzType="primary" (click)="exportLangfuseSnapshot()" [nzLoading]="exportingLangfuse" [disabled]="probingLangfuse || exportingLangfuse">Export aggregate snapshot</button>
+          </div>
+          <small *ngIf="langfuseProbe as probe">Local health and readiness checked {{ probe.checkedAt }}. No trace was exported by the probe.</small>
+          <small *ngIf="langfuseExport as export">Aggregate trace accepted {{ export.exportedAt }}. Trace ID: {{ export.traceId }}.</small>
         </ng-container>
         <span *ngIf="presidioStatusUnavailable">The local bridge status could not be read. No Presidio action was started.</span>
       </div>
