@@ -523,6 +523,14 @@ change routing, policy, verification, memory, workflows, or external actions.
 A passing report is evaluation evidence for an operator review, not proof that
 an answer is true or a task is complete.
 
+Optional structured-proposal validation uses the isolated Guardrails AI
+`validation` Compose profile. Set `HAI_GUARDRAILS_ENABLED=true` and run
+`docker compose --profile validation up --build`. HAI sends only one bounded
+`action_proposal` JSON document after rejecting detected personal data and
+secrets. The runner validates the fixed schema and returns metadata only; it
+does not call a model, download validators, retain proposal text, change
+policy, mark work complete, or authorize execution.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job

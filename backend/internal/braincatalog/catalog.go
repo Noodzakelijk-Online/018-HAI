@@ -232,12 +232,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "guardrails-ai", Name: "Guardrails AI", UpstreamURL: "https://github.com/guardrails-ai/guardrails", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
-		Status: StatusCandidate, Category: "structured-output validation", IntegrationMode: "contained no-write validation adapter",
+		Status: StatusCandidate, Category: "structured-output validation", IntegrationMode: "opt-in internal fixed-schema validation bridge",
 		Capabilities: []string{"schema validation", "output validators", "retry signals", "structured extraction checks"}, RecommendedFor: []string{"structured extraction", "planning validation", "grounded-output review"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a local validator allowlist, redacted test fixtures, bounded retries, provider egress policy, and fail-closed result mapping. A validator may mark output uncertain or request review; it can never approve an action, change policy, or execute a tool.",
-		Rationale:  "Guardrails AI complements HAI's deterministic schemas and verification statuses with a reviewable validation layer rather than replacing the safety policy or human approval gate.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Safety & Alignment repository list and GitHub metadata checked on 2026-07-19; no Guardrails AI runtime is installed or configured by HAI.",
+		Activation: "HAI ships a disabled internal runner that validates one bounded redacted action_proposal JSON contract through Guardrails AI's Pydantic schema path. Enable it only with the local validation profile; no Hub validator download, LLM call, retry, persistence, execution, policy change, or approval is available.",
+		Rationale:  "Guardrails AI complements HAI's deterministic schemas and verification statuses with a constrained review signal rather than replacing the safety policy or human approval gate.",
+		VerifiedAt: "2026-07-20", VerificationNote: "OSS Insight AI Safety & Alignment listing and current Guardrails AI upstream were reviewed on 2026-07-20. HAI implements only an opt-in internal fixed-schema bridge; no local runner is enabled by default and proposal text is neither stored nor returned.",
 	},
 	{
 		ID: "lm-eval-harness", Name: "LM Evaluation Harness", UpstreamURL: "https://github.com/EleutherAI/lm-evaluation-harness", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",

@@ -53,6 +53,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | Project | Plane | Disposition | Required first gate |
 | --- | --- | --- | --- |
 | Evidently | Verification and observability | Candidate, local bridge implemented | Opt-in internal report runner for bounded synthetic/redacted fixtures; metadata-only output and no default egress. |
+| Guardrails AI | Verification and safety | Candidate, local bridge implemented | Opt-in internal fixed-schema action-proposal validator; metadata-only output, no model call, Hub download, persistence, approval, or execution. |
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
 | mistral.rs | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, approved model and resource configuration, live probe, and disabled upstream agentic tools. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
@@ -126,6 +127,16 @@ The bridge returns only aggregate report metadata and a digest; it persists no
 fixture text and cannot call a model provider, export telemetry, change routing
 or policy, mark work verified, update memory, or execute an action. A report is
 review evidence, never an automatic completion claim.
+
+## Implemented Guardrails AI boundary
+
+HAI now includes an opt-in internal Guardrails AI runner under the Compose
+`validation` profile. It accepts one bounded, already-redacted
+`action_proposal` JSON document and validates only the fixed Pydantic schema.
+The bridge returns validation metadata and a digest, never the proposal text.
+It cannot invoke an LLM, fetch a Guardrails Hub validator, retry a model,
+persist data, alter HAI policy or routing, verify completion, approve, or
+execute any action. A valid schema result remains a review signal only.
 
 ## Implemented metrics boundary
 

@@ -23,6 +23,7 @@ import (
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/evidently"
 	"automation-hub-backend/internal/featureflags"
+	"automation-hub-backend/internal/guardrails"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/health"
@@ -93,6 +94,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
 		initializePresidioRoutes(v1, presidio.NewHandler(presidio.DefaultService()))
 		initializeEvidentlyRoutes(v1, evidently.NewHandler(evidently.DefaultService()))
+		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -472,6 +474,16 @@ func initializeEvidentlyRoutes(apiVersion *gin.RouterGroup, handler *evidently.H
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.POST("/evaluate", requirePermission(rbac.PermWrite), handler.Evaluate)
+	}
+}
+
+func initializeGuardrailsRoutes(apiVersion *gin.RouterGroup, handler *guardrails.Handler) {
+	routes := apiVersion.Group("/guardrails")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/validate", requirePermission(rbac.PermWrite), handler.Validate)
 	}
 }
 
