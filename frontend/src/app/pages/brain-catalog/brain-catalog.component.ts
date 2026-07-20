@@ -229,7 +229,7 @@ export class BrainCatalogComponent implements OnInit {
       next: (result) => {
         this.exportingLangfuse = false
         this.langfuseExport = result
-        this.notification.success('Aggregate trace exported', 'Langfuse accepted HAI’s fixed aggregate operational snapshot. No prompts, sources, or workflow records were exported.')
+        this.notification.success('Aggregate trace exported', "Langfuse accepted HAI's fixed aggregate operational snapshot. No prompts, sources, or workflow records were exported.")
       },
       error: () => {
         this.exportingLangfuse = false

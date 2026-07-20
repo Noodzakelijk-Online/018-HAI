@@ -244,7 +244,7 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     expect(langfuseService.exportOperationalSnapshot).toHaveBeenCalled()
     expect(component.langfuseExport?.traceId).toBe('a'.repeat(32))
-    expect(notification.success).toHaveBeenCalledWith('Aggregate trace exported', 'Langfuse accepted HAI’s fixed aggregate operational snapshot. No prompts, sources, or workflow records were exported.')
+    expect(notification.success).toHaveBeenCalledWith('Aggregate trace exported', "Langfuse accepted HAI's fixed aggregate operational snapshot. No prompts, sources, or workflow records were exported.")
   })
 
   it('shows discovery results without changing runtime state', () => {
