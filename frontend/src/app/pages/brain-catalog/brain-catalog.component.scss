@@ -41,6 +41,7 @@
 .brain-catalog-page__rationale { line-height: 1.55; margin: 0 0 16px; }
 .brain-catalog-page__profile-state { background: color-mix(in srgb, var(--hai-success) 10%, var(--hai-surface)); border-left: 3px solid var(--hai-success); display: grid; gap: 4px; line-height: 1.45; margin: 0 0 12px; padding: 10px 12px; }
 .brain-catalog-page__profile-state span, .brain-catalog-page__verification-note { color: var(--hai-text-muted); }
+.brain-catalog-page__bridge-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .brain-catalog-page__activation { background: var(--hai-surface-muted); border: 1px solid var(--hai-border); border-radius: 6px; display: grid; gap: 5px; line-height: 1.45; padding: 12px; }
 .brain-catalog-page__activation span { color: var(--hai-text-muted); }
 .brain-catalog-page__review-action { align-items: center; border-bottom: 1px solid var(--hai-border); display: flex; gap: 14px; justify-content: space-between; margin-top: 14px; padding: 0 0 14px; }

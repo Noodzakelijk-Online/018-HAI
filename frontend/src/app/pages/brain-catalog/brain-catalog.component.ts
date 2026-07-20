@@ -4,7 +4,9 @@ import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { BrainCatalogCollectionDisposition, IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
 import { IRAGFlowStatus } from '../../models/ragflow.model.interface'
 import { IPresidioStatus } from '../../models/presidio.model.interface'
+import { ILangfuseExportResult, ILangfuseProbeResult, ILangfuseStatus } from '../../models/langfuse.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
+import { LangfuseService } from '../../services/langfuse.service'
 import { PresidioService } from '../../services/presidio.service'
 import { PursuitService } from '../../services/pursuit.service'
 import { RAGFlowService } from '../../services/ragflow.service'
@@ -40,12 +42,20 @@ export class BrainCatalogComponent implements OnInit {
   presidioStatus?: IPresidioStatus
   loadingPresidioStatus = false
   presidioStatusUnavailable = false
+  langfuseStatus?: ILangfuseStatus
+  loadingLangfuseStatus = false
+  langfuseStatusUnavailable = false
+  probingLangfuse = false
+  exportingLangfuse = false
+  langfuseProbe?: ILangfuseProbeResult
+  langfuseExport?: ILangfuseExportResult
 
   constructor(
     private service: BrainCatalogService,
     private pursuitService: PursuitService,
     private ragflowService: RAGFlowService,
     private presidioService: PresidioService,
+    private langfuseService: LangfuseService,
     private notification: NzNotificationService,
     private router: Router,
   ) {}
@@ -92,8 +102,13 @@ export class BrainCatalogComponent implements OnInit {
     this.ragflowStatusUnavailable = false
     this.presidioStatus = undefined
     this.presidioStatusUnavailable = false
+    this.langfuseStatus = undefined
+    this.langfuseStatusUnavailable = false
+    this.langfuseProbe = undefined
+    this.langfuseExport = undefined
     if (entry.id === 'ragflow') this.loadRAGFlowStatus()
     if (entry.id === 'presidio') this.loadPresidioStatus()
+    if (entry.id === 'langfuse') this.loadLangfuseStatus()
   }
 
   loadRAGFlowStatus(): void {
@@ -122,6 +137,55 @@ export class BrainCatalogComponent implements OnInit {
       error: () => {
         this.loadingPresidioStatus = false
         this.presidioStatusUnavailable = true
+      },
+    })
+  }
+
+  loadLangfuseStatus(): void {
+    if (this.loadingLangfuseStatus) return
+    this.loadingLangfuseStatus = true
+    this.langfuseService.status().subscribe({
+      next: (status) => {
+        this.loadingLangfuseStatus = false
+        this.langfuseStatus = status
+      },
+      error: () => {
+        this.loadingLangfuseStatus = false
+        this.langfuseStatusUnavailable = true
+      },
+    })
+  }
+
+  probeLangfuse(): void {
+    if (this.probingLangfuse) return
+    this.probingLangfuse = true
+    this.langfuseProbe = undefined
+    this.langfuseService.probe().subscribe({
+      next: (result) => {
+        this.probingLangfuse = false
+        this.langfuseProbe = result
+        this.notification.success('Langfuse ready', 'HAI verified the configured local health and readiness endpoints. No trace was exported.')
+      },
+      error: () => {
+        this.probingLangfuse = false
+        this.notification.error('Langfuse not ready', 'HAI could not verify the configured local health and readiness endpoints. No trace was exported.')
+      },
+    })
+  }
+
+  exportLangfuseSnapshot(): void {
+    if (this.exportingLangfuse) return
+    this.exportingLangfuse = true
+    this.langfuseExport = undefined
+    this.langfuseService.exportOperationalSnapshot().subscribe({
+      next: (result) => {
+        this.exportingLangfuse = false
+        this.langfuseExport = result
+        this.notification.success('Aggregate trace exported', 'Langfuse accepted HAI’s fixed aggregate operational snapshot. No prompts, sources, or workflow records were exported.')
+      },
+      error: () => {
+        this.exportingLangfuse = false
+        this.notification.error('Trace export unavailable', 'Langfuse did not accept the aggregate operational snapshot. No HAI workflow or policy state changed.')
       },
     })
   }

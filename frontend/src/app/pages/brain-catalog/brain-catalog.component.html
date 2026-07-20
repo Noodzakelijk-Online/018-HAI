@@ -83,6 +83,12 @@
           <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
           <small>{{ status.scope }}</small>
           <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+          <div class="brain-catalog-page__bridge-actions" *ngIf="status.configured">
+            <button nz-button nzType="default" (click)="probeLangfuse()" [nzLoading]="probingLangfuse" [disabled]="probingLangfuse || exportingLangfuse">Check local readiness</button>
+            <button nz-button nzType="primary" (click)="exportLangfuseSnapshot()" [nzLoading]="exportingLangfuse" [disabled]="probingLangfuse || exportingLangfuse">Export aggregate snapshot</button>
+          </div>
+          <small *ngIf="langfuseProbe as probe">Local health and readiness checked {{ probe.checkedAt }}. No trace was exported by the probe.</small>
+          <small *ngIf="langfuseExport as export">Aggregate trace accepted {{ export.exportedAt }}. Trace ID: {{ export.traceId }}.</small>
         </ng-container>
         <span *ngIf="ragflowStatusUnavailable">The local bridge status could not be read. No RAGFlow action was started.</span>
       </div>
@@ -98,6 +104,18 @@
           <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
         </ng-container>
         <span *ngIf="presidioStatusUnavailable">The local bridge status could not be read. No Presidio action was started.</span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'langfuse'">
+        <strong>Local bridge state</strong>
+        <span *ngIf="loadingLangfuseStatus">Checking the configured local bridge.</span>
+        <ng-container *ngIf="langfuseStatus as status">
+          <span>{{ status.configured ? 'Configured for explicit aggregate-only local trace export.' : 'Not configured. HAI cannot contact or export to Langfuse.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="langfuseStatusUnavailable">The local bridge status could not be read. No Langfuse action was started.</span>
       </div>
       <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
       <div class="brain-catalog-page__review-action" *ngIf="canStartReview(entry)">

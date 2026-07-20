@@ -25,13 +25,15 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const pursuitService = { create: jasmine.createSpy('create') }
     const ragflowService = { status: jasmine.createSpy('status') }
     const presidioService = { status: jasmine.createSpy('status') }
+		const langfuseService = { status: jasmine.createSpy('status'), probe: jasmine.createSpy('probe'), exportOperationalSnapshot: jasmine.createSpy('exportOperationalSnapshot') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
     return {
-      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, presidioService as any, notification, router as any),
+      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, presidioService as any, langfuseService as any, notification, router as any),
       pursuitService,
       ragflowService,
       presidioService,
+			langfuseService,
       notification,
       router,
     }
@@ -187,6 +189,38 @@ describe('BrainCatalogComponent adapter reviews', () => {
 
     expect(presidioService.status).toHaveBeenCalled()
     expect(component.presidioStatus?.configured).toBeFalse()
+  })
+
+  it('reads Langfuse bridge state only when the Langfuse profile is selected', () => {
+    const { component, langfuseService } = createComponent()
+    langfuseService.status.and.returnValue(of({ enabled: false, configured: false, provider: 'Langfuse self-hosted observability', capabilities: [], restrictions: ['no prompt export'], scope: 'aggregate-only local trace evidence' }))
+
+    component.select({ ...candidate, id: 'langfuse', name: 'Langfuse', status: 'integrated_profile' } as any)
+
+    expect(langfuseService.status).toHaveBeenCalled()
+    expect(component.langfuseStatus?.configured).toBeFalse()
+  })
+
+  it('probes Langfuse without exporting a trace', () => {
+    const { component, langfuseService, notification } = createComponent()
+    langfuseService.probe.and.returnValue(of({ healthy: true, ready: true, checkedAt: '2026-07-20T00:00:00Z', scope: 'health only' }))
+
+    component.probeLangfuse()
+
+    expect(langfuseService.probe).toHaveBeenCalled()
+    expect(component.langfuseProbe?.ready).toBeTrue()
+    expect(notification.success).toHaveBeenCalledWith('Langfuse ready', 'HAI verified the configured local health and readiness endpoints. No trace was exported.')
+  })
+
+  it('exports only through the explicit Langfuse snapshot action', () => {
+    const { component, langfuseService, notification } = createComponent()
+    langfuseService.exportOperationalSnapshot.and.returnValue(of({ traceId: 'a'.repeat(32), spanId: 'b'.repeat(16), exportedAt: '2026-07-20T00:00:00Z', scope: 'aggregate-only' }))
+
+    component.exportLangfuseSnapshot()
+
+    expect(langfuseService.exportOperationalSnapshot).toHaveBeenCalled()
+    expect(component.langfuseExport?.traceId).toBe('a'.repeat(32))
+    expect(notification.success).toHaveBeenCalledWith('Aggregate trace exported', 'Langfuse accepted HAI’s fixed aggregate operational snapshot. No prompts, sources, or workflow records were exported.')
   })
 
   it('shows discovery results without changing runtime state', () => {

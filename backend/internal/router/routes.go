@@ -29,6 +29,7 @@ import (
 	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
+	"automation-hub-backend/internal/langfuse"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/lmeval"
 	"automation-hub-backend/internal/mcpbridge"
@@ -104,6 +105,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
 		initializeLMEvalRoutes(v1, lmeval.NewHandler(lmeval.DefaultService()))
 		initializePromptfooRoutes(v1, promptfoo.NewHandler(promptfoo.DefaultService()))
+		initializeLangfuseRoutes(v1, langfuse.NewHandler(langfuse.DefaultService()))
 		whisperService := whispercpp.DefaultService()
 		initializeWhisperCPPRoutes(v1, whispercpp.NewHandler(whisperService))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
@@ -533,6 +535,16 @@ func initializePromptfooRoutes(apiVersion *gin.RouterGroup, handler *promptfoo.H
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializeLangfuseRoutes(apiVersion *gin.RouterGroup, handler *langfuse.Handler) {
+	routes := apiVersion.Group("/langfuse")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/export/operational-snapshot", requirePermission(rbac.PermAdmin), handler.ExportOperationalSnapshot)
 	}
 }
 

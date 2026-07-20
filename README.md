@@ -608,6 +608,18 @@ local model are configured. It clears inherited proxy settings before spawning
 Promptfoo and runs as an unprivileged container user; it still does not prove
 the local model endpoint, the six fixtures, or any real-world task is safe.
 
+Optional local Langfuse observability uses an operator-hosted Langfuse instance,
+not Langfuse Cloud. Set `HAI_LANGFUSE_ENABLED=true`, a loopback,
+`host.docker.internal`, `langfuse`, `langfuse-web`, or private-network
+`HAI_LANGFUSE_BASE_URL`, and a dedicated local project key pair. An owner can
+use `POST /api/v1/langfuse/probe` to check database-aware health and readiness,
+then explicitly call `POST /api/v1/langfuse/export/operational-snapshot` to
+export one fixed aggregate control-plane OTLP/HTTP JSON span. The bridge accepts
+no request body and exports no prompts, source text, documents, workflow data,
+model payloads, tokens, credentials, or caller-selected data. A successful
+export proves only that Langfuse accepted that fixed trace; it cannot verify
+work, change routing/policy, approve work, update memory, or trigger execution.
+
 Optional local speech-to-text uses the `local-transcription` Compose profile.
 Set `HAI_WHISPER_CPP_ENABLED=true`, manually place a reviewed whisper.cpp GGML
 model under `./whisper-models`, set `WHISPER_CPP_MODEL_FILE` to its filename,

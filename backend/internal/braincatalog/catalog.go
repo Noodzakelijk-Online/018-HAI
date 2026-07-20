@@ -399,12 +399,16 @@ var entries = []Entry{
 	},
 	{
 		ID: "langfuse", Name: "Langfuse", UpstreamURL: "https://github.com/langfuse/langfuse", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
-		Status: StatusCandidate, Category: "self-hosted LLM observability", IntegrationMode: "operator-hosted trace and evaluation service adapter",
-		Capabilities: []string{"LLM traces", "prompt versions", "evaluations", "datasets"}, RecommendedFor: []string{"model routing audit", "prompt evaluation", "agent trace review"},
+		Status: StatusIntegrated, Category: "self-hosted LLM observability", IntegrationMode: "opt-in local aggregate-trace observability bridge",
+		Capabilities: []string{"local health and readiness", "aggregate control-plane traces", "OTLP/HTTP JSON export"}, RecommendedFor: []string{"local operations visibility", "model-routing audit context", "agent trace review"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Host Langfuse locally and complete an adapter review covering trace redaction, retention, service credentials, data-egress controls, and health checks. HAI will not export prompts or task data by catalog entry.",
-		Rationale:  "A self-hostable observability and evaluation candidate that can make HAI's model and agent decisions more inspectable without replacing the existing audit ledger.",
-		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository, self-hosting path, and LLM trace/evaluation capabilities checked on 2026-07-19.",
+		Activation: "Host Langfuse locally, configure a project key pair and HAI_LANGFUSE_ENABLED=true, then use the owner-only probe before an explicit aggregate operational-snapshot export. Review local retention, trace redaction, and deletion controls separately. HAI will not export prompts, task data, source records, model payloads, tokens, files, or workflow records.",
+		Rationale:  "HAI now has a bounded local Langfuse bridge for explicit aggregate operational trace evidence without replacing its audit ledger or handing Langfuse routing, approval, verification, memory, workflow, or execution authority.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official repository and self-hosting documentation reviewed on 2026-07-20: active MIT core, current self-host health/readiness endpoints, project key basic authentication, and OTLP/HTTP trace ingestion. HAI implements only a local health/readiness probe plus one owner-triggered aggregate-only OTLP/JSON span. No Langfuse service, credentials, trace export, prompt, dataset, score, evaluation, callout, or cloud endpoint is configured by default.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "observability trace", HAIControl: "fixed aggregate-only operational snapshot", Boundary: "no prompt, source, file, model payload, token, workflow record, or caller-selected data is exported"},
+			{SourcePattern: "trace acceptance", HAIControl: "HAI audit, approval, verification, and routing controls", Boundary: "a Langfuse trace cannot authorize, verify, route, retain memory, or execute work"},
+		},
 	},
 	{
 		ID: "promptfoo", Name: "Promptfoo", UpstreamURL: "https://github.com/promptfoo/promptfoo", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
