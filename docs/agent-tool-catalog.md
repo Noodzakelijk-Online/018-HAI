@@ -110,6 +110,7 @@ none is installed, configured, or executable through HAI.
 | [SWE-agent](https://github.com/SWE-agent/SWE-agent) | Reference only | Superseded coding-agent architecture | Its own upstream now recommends mini-SWE-agent. HAI will not add a legacy code-worker, repository mount, provider credential, or agent loop from SWE-agent. |
 | [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) | Candidate | Minimal disposable-worktree coding worker | It is the maintained successor and remains review-first: any future run must use a pinned release, a copied disposable worktree, no host shell/Docker socket/secrets/accounts, deny-by-default network, strict resource caps, and return only a reviewed diff plus selected test summary. It cannot commit, push, or open a pull request. |
 | [OpenCode (opencode-ai legacy)](https://github.com/opencode-ai/opencode) | Excluded | Archived same-name terminal agent | This is a distinct archived project, not an alias for HAI's active `anomalyco/opencode` candidate. It cannot inherit that profile's review status or receive a workspace, model provider, MCP server, credential, or runtime adapter. |
+| [Daytona](https://github.com/daytonaio/daytona) | Excluded | Unmaintained public sandbox upstream | The public repository states that core development moved private in June 2026. HAI must not install, connect, or recommend it as a runtime, sandbox, account integration, or execution adapter. |
 
 ### RAGFlow capacity gate
 

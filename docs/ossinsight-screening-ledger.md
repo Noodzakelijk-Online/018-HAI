@@ -57,7 +57,8 @@ only in its expandable collection-coverage section.
 | AutoGen | AI Agent Frameworks | Compatibility only | Migration and protocol translation | Dedicated bridge and approval required; no new foundation work. |
 | Activepieces | Zapier Alternatives | Reference only | Connector and workflow-pattern research | No second automation control plane by default. |
 | Mem0 | LLM Tools | Reference only | Memory-consolidation reference | HAI remains the sole memory/provenance authority. |
-| Letta, ComfyUI, Daytona | Agent Memory / Image Generation / Agent Sandboxing | Reference only | Design and workflow references | HAI does not create a second memory authority, autonomous publication workflow, or broad execution sandbox without an explicit architecture decision. |
+| Letta, ComfyUI | Agent Memory / Image Generation | Reference only | Design and workflow references | HAI does not create a second memory authority or autonomous publication workflow without an explicit architecture decision. |
+| Daytona | Agent Sandboxing | Excluded | Public upstream no longer maintained | The public repository states that core development moved private in June 2026. HAI must not install, connect, or recommend a discontinued, account/API-key based external sandbox. |
 | OpenMetadata | Open Source Data Catalogs | Reference only | Data lineage and governance reference | Too large for current local-first source registry. |
 | LangChain, LlamaIndex, Cognee, Microsoft GraphRAG, Haystack, Qdrant, Grafana | Agent / GraphRAG / Vector / Monitoring | Reference only | Pattern or future scale option | Revisit only after a measured native gap; HAI keeps one source-linked memory and retrieval authority. |
 | n8n | Zapier Alternatives | License review | Workflow-platform comparison | Sustainable Use License and architecture overlap need a decision first. |
@@ -88,9 +89,12 @@ The check confirmed
 Apache-2.0 metadata for FastMCP, vLLM, DeepEval, garak, A2A, and Letta; MIT for
 Ollama, browser-use, and whisper.cpp; GPL-3.0 for ComfyUI; and `NOASSERTION`
 for NeMo Guardrails, Tabby, and Daytona. A separate metadata check found the
-LLM Guard project archived, so it is not admitted as a profile. HAI therefore
-keeps every new runtime-capable project review-first, and holds the
-licence-sensitive or external-sandbox candidates as references.
+LLM Guard project archived, so it is not admitted as a profile. A 2026-07-20
+upstream review then found that Daytona's public repository is no longer
+maintained and its core moved private; Daytona is therefore excluded rather
+than retained as a sandbox reference. HAI keeps every new runtime-capable
+project review-first, and holds licence-sensitive or external-sandbox
+candidates as references only where their upstream remains suitable.
 
 The same-day expansion also checked the next operationally relevant OSS Insight
 repositories. GitHub MCP Server, Playwright MCP, Gen AI Toolbox, Qodo PR-Agent,

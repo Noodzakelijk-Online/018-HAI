@@ -417,12 +417,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "daytona", Name: "Daytona", UpstreamURL: "https://github.com/daytonaio/daytona", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10137/repos/", SourceCollection: "Agent Sandboxing",
-		Status: StatusReferenceOnly, Category: "agent sandboxing patterns", IntegrationMode: "sandbox architecture reference",
-		Capabilities: []string{"isolated workspaces", "execution sandboxing", "workspace lifecycle"}, RecommendedFor: []string{"runtime isolation design", "sandbox review"},
+		Status: StatusExcluded, Category: "unmaintained external sandbox architecture", IntegrationMode: "excluded upstream",
+		Capabilities: []string{"historical isolated-workspace patterns", "historical execution-sandbox patterns"}, RecommendedFor: []string{"upstream lifecycle caution"},
 		RequiresApproval: true, LocalFirstCompatible: false,
-		Activation: "Do not enable by default. Any future sandbox must prove local deployment, workspace isolation, network policy, credential handling, cost controls, and audit coverage before a HAI adapter is considered.",
-		Rationale:  "Useful sandbox architecture reference, but it must not weaken HAI's local-first execution boundary or introduce an unreviewed control plane.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Agent Sandboxing repository list checked on 2026-07-19; no Daytona environment is configured by HAI.",
+		Activation: "Do not install, connect, or recommend. Daytona's public repository states that it is no longer maintained and that its core moved private in June 2026; its hosted service also requires an account/API key and is outside HAI's local-first execution boundary.",
+		Rationale:  "A discontinued public upstream and account-based external sandbox must not be represented as an eligible HAI execution option. Preserve it only as a lifecycle and sandbox-boundary caution.",
+		VerifiedAt: verifiedAt, VerificationNote: "Upstream public repository reviewed on 2026-07-20: no longer maintained, with core development private; no Daytona environment is configured by HAI.",
 	},
 	{
 		ID: "langfuse", Name: "Langfuse", UpstreamURL: "https://github.com/langfuse/langfuse", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",

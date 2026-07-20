@@ -142,10 +142,13 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
 	}
-	for _, id := range []string{"activepieces", "mem0", "letta", "comfyui", "daytona", "openmetadata"} {
+	for _, id := range []string{"activepieces", "mem0", "letta", "comfyui", "openmetadata"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusReferenceOnly {
 			t.Fatalf("%s must remain a reference rather than a parallel control plane: %#v", id, entry)
 		}
+	}
+	if entry, ok := EntryByID("daytona"); !ok || entry.Status != StatusExcluded {
+		t.Fatalf("Daytona must remain excluded after its public upstream became unmaintained: %#v", entry)
 	}
 	if entry, ok := EntryByID("n8n"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("n8n must remain under license review: %#v", entry)
