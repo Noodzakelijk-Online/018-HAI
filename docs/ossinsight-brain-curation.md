@@ -52,7 +52,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 
 | Project | Plane | Disposition | Required first gate |
 | --- | --- | --- | --- |
-| Evidently | Verification and observability | Candidate | Local redacted evaluation runner; report-only output and no default egress. |
+| Evidently | Verification and observability | Candidate, local bridge implemented | Opt-in internal report runner for bounded synthetic/redacted fixtures; metadata-only output and no default egress. |
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
 | mistral.rs | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, approved model and resource configuration, live probe, and disabled upstream agentic tools. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
@@ -115,6 +115,17 @@ and public endpoints, requires a live `/v1/models` probe, and invokes only
 0 routing, fallback, audit, and approval policy. It never starts
 `mistralrs`, downloads a model, or calls its UI, agent, shell, web, file, MCP,
 Skills, or code-execution APIs.
+
+## Implemented Evidently boundary
+
+HAI now includes an opt-in internal Evidently runner under the Compose
+`evaluation` profile. It accepts only 1-25 bounded `synthetic` or `redacted`
+fixtures with opaque IDs, performs a deterministic sensitive-data gate before
+any local request, and invokes a local offline Evidently DataSummary report.
+The bridge returns only aggregate report metadata and a digest; it persists no
+fixture text and cannot call a model provider, export telemetry, change routing
+or policy, mark work verified, update memory, or execute an action. A report is
+review evidence, never an automatic completion claim.
 
 ## Implemented metrics boundary
 

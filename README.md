@@ -511,6 +511,18 @@ not prove content safe for storage, cloud providers, or external action. This
 bridge cannot edit sources, write HAI memory or facts, change policy, run a
 workflow, or contact an external service.
 
+Optional Evidently evaluation uses the isolated `evaluation` Compose profile.
+Set `HAI_EVIDENTLY_ENABLED=true` and run
+`docker compose --profile evaluation up --build`. HAI accepts only 1-25
+synthetic or already-redacted fixture cases with opaque IDs and bounded input
+and output text. It rejects deterministic detections of secrets or personal
+data before any local request, and returns only report metadata: a status,
+counts, aggregate length, and a report digest. The runner is internal-only,
+stores no fixtures, exports nothing, calls no model providers, and cannot
+change routing, policy, verification, memory, workflows, or external actions.
+A passing report is evaluation evidence for an operator review, not proof that
+an answer is true or a task is complete.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job

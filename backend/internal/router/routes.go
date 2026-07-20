@@ -21,6 +21,7 @@ import (
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/events"
+	"automation-hub-backend/internal/evidently"
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
@@ -91,6 +92,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
 		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
 		initializePresidioRoutes(v1, presidio.NewHandler(presidio.DefaultService()))
+		initializeEvidentlyRoutes(v1, evidently.NewHandler(evidently.DefaultService()))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -460,6 +462,16 @@ func initializePresidioRoutes(apiVersion *gin.RouterGroup, handler *presidio.Han
 		// Text leaves the request process only for the explicitly configured local
 		// analyzer; analysis has no persistence or external-action capability.
 		routes.POST("/analyze", requirePermission(rbac.PermWrite), handler.Analyze)
+	}
+}
+
+func initializeEvidentlyRoutes(apiVersion *gin.RouterGroup, handler *evidently.Handler) {
+	routes := apiVersion.Group("/evidently")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/evaluate", requirePermission(rbac.PermWrite), handler.Evaluate)
 	}
 }
 

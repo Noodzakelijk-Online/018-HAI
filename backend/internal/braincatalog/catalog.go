@@ -849,12 +849,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "evidently", Name: "Evidently", UpstreamURL: "https://github.com/evidentlyai/evidently", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
-		Status: StatusCandidate, Category: "local AI quality evaluation and monitoring", IntegrationMode: "reviewed, report-only local evaluation adapter",
+		Status: StatusCandidate, Category: "local AI quality evaluation and monitoring", IntegrationMode: "opt-in internal report-only evaluation bridge",
 		Capabilities: []string{"LLM evaluation", "RAG evaluation", "data-quality checks", "drift detection", "pass/fail test suites"}, RecommendedFor: []string{"source-grounded answer regression", "retrieval evaluation", "routing quality review", "input-quality monitoring"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a local, report-only runner using synthetic or redacted fixtures, an explicit model-provider allowlist, bounded resources, result retention, and a no-egress default. Evidently reports may create HAI review work, but cannot mark an answer verified, change routing, alter policy, or enable a provider.",
-		Rationale:  "Evidently provides maintained evaluation, testing, and monitoring patterns that fit HAI's verification plane without displacing HAI's source grounding, deterministic validators, approval gates, or audit authority.",
-		VerifiedAt: verifiedAt, VerificationNote: "Official repository reviewed on 2026-07-19: Apache-2.0, latest v0.7.21 released 2026-03-10, with offline evaluation, test-suite, JSON/HTML export, and optional self-hosted monitoring support. No Evidently dependency, runner, or telemetry export is configured by HAI.",
+		Activation: "HAI includes a disabled internal report runner. Enable only the local evaluation Compose profile after reviewing synthetic/redacted fixture provenance, capacity, retention, and result review. The bridge rejects detected personal data and secrets, returns metadata only, and cannot mark an answer verified, change routing or policy, enable a provider, or execute an action.",
+		Rationale:  "Evidently now contributes a contained local quality-evidence path without displacing HAI's source grounding, deterministic validators, approval gates, or audit authority.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official repository reviewed on 2026-07-20: Apache-2.0, with offline reports, test suites, and optional self-hosted monitoring. HAI ships only an opt-in internal DataSummary bridge for bounded synthetic/redacted fixtures; no service is enabled, no fixture is persisted, and no telemetry export is configured.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "evaluation report or test suite", HAIControl: "verification evidence and review queue", Boundary: "a score cannot claim completion or change policy automatically"},
 			{SourcePattern: "monitoring dashboard", HAIControl: "local observability and retention policy", Boundary: "no prompt, source, or telemetry egress is implicit"},
