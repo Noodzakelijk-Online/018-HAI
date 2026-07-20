@@ -30,6 +30,7 @@ import (
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/lmeval"
+	"automation-hub-backend/internal/mcpbridge"
 	"automation-hub-backend/internal/mcppreflight"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
@@ -143,6 +144,9 @@ func initializeRoutes(router *gin.Engine) error {
 		workflowRunner.Set(workflowtask.NewRunner(taskService))
 		source.StartScheduler(context.Background(), sourceService)
 		workflow.StartScheduler(context.Background(), workflowService)
+		mcpBridgeHandler := mcpbridge.NewHandler(mcpbridge.NewServiceFromEnv(workflowService))
+		initializeMCPBridgeStatusRoutes(v1, mcpBridgeHandler)
+		initializeMCPAgentRoutes(router, relativePathV1, mcpBridgeHandler)
 		initializeSourceRoutes(v1, source.NewHandler(sourceService, whisperService))
 		initializeWorkflowRoutes(v1, workflow.NewHandlerWithPursuitIntakeRouter(workflowService, pursuitService))
 		initializePursuitRoutes(v1, pursuit.NewHandler(pursuitService))
@@ -654,6 +658,28 @@ func initializeMCPPreflightRoutes(apiVersion *gin.RouterGroup, handler *mcpprefl
 	{
 		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
 		routes.POST("/:serverId/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+// initializeMCPBridgeStatusRoutes is part of the normal owner-authenticated
+// API. It reports configuration only; the data surface below uses a separate
+// narrow bridge token for the local FastMCP process.
+func initializeMCPBridgeStatusRoutes(apiVersion *gin.RouterGroup, handler *mcpbridge.Handler) {
+	routes := apiVersion.Group("/mcp-bridge")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+	}
+}
+
+// initializeMCPAgentRoutes intentionally avoids the browser identity and
+// backend API-key middleware. It is reachable only with the dedicated bridge
+// token, serves aggregate/sanitized read models, and is not a general API.
+func initializeMCPAgentRoutes(router *gin.Engine, relativePathV1 string, handler *mcpbridge.Handler) {
+	routes := router.Group(relativePathV1 + "/mcp-agent")
+	{
+		routes.GET("/overview", handler.Overview)
+		routes.GET("/actionable", handler.Actionable)
 	}
 }
 

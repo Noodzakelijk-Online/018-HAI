@@ -164,6 +164,12 @@ services:
       HAI_PYDANTIC_AI_ENABLED: ${HAI_PYDANTIC_AI_ENABLED:-false}
       HAI_PYDANTIC_AI_BASE_URL: ${HAI_PYDANTIC_AI_BASE_URL:-http://pydantic-ai-runner:8080}
       HAI_PYDANTIC_AI_TIMEOUT_SECONDS: ${HAI_PYDANTIC_AI_TIMEOUT_SECONDS:-20}
+      # Optional FastMCP read-only context bridge. The backend never receives
+      # the MCP client token; it accepts only this separate service token and
+      # returns bounded workflow summaries for one explicitly configured owner.
+      HAI_FASTMCP_BRIDGE_ENABLED: ${HAI_FASTMCP_BRIDGE_ENABLED:-false}
+      HAI_FASTMCP_BRIDGE_TOKEN: ${HAI_FASTMCP_BRIDGE_TOKEN:-}
+      HAI_FASTMCP_BRIDGE_OWNER_ID: ${HAI_FASTMCP_BRIDGE_OWNER_ID:-}
       HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
       HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
       HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}
@@ -356,6 +362,7 @@ services:
       - promptfoo-internal
       - whispercpp-internal
       - pydantic-ai-internal
+      - fastmcp-internal
 
   frontend:
     build:
@@ -556,6 +563,36 @@ services:
       start_period: 20s
     networks:
       - pydantic-ai-internal
+
+  # An optional Streamable HTTP MCP endpoint for a reviewed local client. It
+  # exposes exactly two read-only tools and is bound to the host loopback only.
+  # It does not make HAI's normal API or any write/action endpoint available.
+  fastmcp-bridge:
+    build:
+      context: ./services/fastmcp-bridge
+    profiles: ["mcp-bridge"]
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      HAI_FASTMCP_BRIDGE_ENABLED: ${HAI_FASTMCP_BRIDGE_ENABLED:-false}
+      HAI_FASTMCP_BRIDGE_TOKEN: ${HAI_FASTMCP_BRIDGE_TOKEN:-}
+      HAI_FASTMCP_CLIENT_TOKEN: ${HAI_FASTMCP_CLIENT_TOKEN:-}
+      HAI_FASTMCP_BRIDGE_API_BASE_URL: ${HAI_FASTMCP_BRIDGE_API_BASE_URL:-http://backend:8080/api/v1/mcp-agent}
+    ports:
+      - "127.0.0.1:${HAI_FASTMCP_PORT:-8090}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - fastmcp-internal
 
   lm-eval-runner:
     build:
@@ -936,6 +973,10 @@ networks:
     internal: true
   pydantic-ai-internal:
     name: 018-hai-pydantic-ai-internal
+    driver: bridge
+    internal: true
+  fastmcp-internal:
+    name: 018-hai-fastmcp-internal
     driver: bridge
     internal: true
 

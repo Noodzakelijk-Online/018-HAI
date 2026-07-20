@@ -32,7 +32,7 @@ only in its expandable collection-coverage section.
 | Wasmtime | WebAssembly Runtime | Integrated, opt-in | Bounded WASI helper execution | Reviewed content-addressed modules only; no inherited network, filesystem, environment, or arguments; strict resource caps and approval gate. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
 | Ollama | LLM Inference Engines | Integrated, opt-in | Local model routing and live probe | Existing loopback provider, model-tag probe, persisted readiness, EUR 0 policy, and task approval gates remain authoritative. |
-| FastMCP | MCP Servers | Candidate | Narrow local MCP service authoring | A fixed loopback service, bounded tool list, preflight, audit contract, and separate execution review are required. |
+| FastMCP | MCP Servers | Integrated, opt-in | Authenticated local HAI read-context bridge | The `mcp-bridge` profile publishes exactly two bounded read-only workflow tools over loopback using distinct client and backend tokens. HAI retains sources, memory, approvals, execution, and audit; any write tool needs a separate review. |
 | vLLM | LLM Inference Engines | Candidate | Local high-throughput model serving | A loopback endpoint, explicit GPU/model limits, existing HAI provider probe, and EUR 0 routing policy are required. |
 | DeepEval | AI Evaluation & Testing | Candidate | Local LLM quality evaluation | Redacted fixtures, provider allowlists, bounded runs, and no-write result handling are required. |
 | Microsoft Presidio | AI Safety & Alignment | Candidate | Local sensitive-data detection and redaction | Explicit recognisers, confidence thresholds, false-positive review, source retention, and audit events are required; redaction cannot delete or hide authorised source evidence. |
@@ -105,6 +105,15 @@ repository list. Its GitHub metadata reported `archived=false`, an active
 `master` branch, and MIT on 2026-07-19. It is a review-first local workspace
 and RAG adapter candidate, not a parallel HAI memory, source, verification, or
 execution authority; no AnythingLLM deployment or connector was installed.
+
+On 2026-07-20, the current FastMCP upstream was checked directly at
+`jlowin/fastmcp`: the current package was 3.4.4 and the repository carries an
+Apache-2.0 licence. HAI's `mcp-bridge` profile is therefore an explicit,
+loopback-only, read-only integration, not a generic MCP executor. The same
+review found CloudQuery maintained, but its current public upstream did not
+contain a GitHub source plugin. HAI does not claim an installed CloudQuery
+GitHub connector and retains it as a future connector candidate pending a
+separately verified source implementation.
 
 ## Complete collection screen
 

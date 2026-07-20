@@ -18,7 +18,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "fastmcp", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "evidently", "livekit-agents", "ragflow", "serena"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "openllmetry", "deepeval", "langfuse", "promptfoo", "airbyte", "odoo", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "qodo-pr-agent", "swe-agent", "openlit", "anythingllm", "cloudquery", "opik", "deepteam", "openspec", "pipecat", "evidently", "livekit-agents", "ragflow", "serena"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
@@ -45,6 +45,9 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	}
 	if entry, ok := EntryByID("pydantic-ai"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("PydanticAI must report its integrated, approval-gated local typed-planning profile: %#v", entry)
+	}
+	if entry, ok := EntryByID("fastmcp"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("FastMCP must report its integrated, approval-gated local read-only bridge: %#v", entry)
 	}
 	if entry, ok := EntryByID("a2a"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval {
 		t.Fatalf("A2A must remain a review-first compatibility profile: %#v", entry)
@@ -314,17 +317,20 @@ func TestRecommendAnythingLLMWorkspaceStaysReviewFirst(t *testing.T) {
 	t.Fatalf("AnythingLLM workspace request should surface the local workspace candidate: %#v", recommendations)
 }
 
-func TestRecommendAdditionalOSSInsightCandidatesStayReviewFirst(t *testing.T) {
+func TestRecommendAdditionalOSSInsightProfilesKeepTheirRecordedBoundaries(t *testing.T) {
 	recommendations := Recommend("operations", "Design a FastMCP tool server, serve a local model with vLLM, and evaluate grounded retrieval quality")
 	ids := map[string]Recommendation{}
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"fastmcp", "deepeval"} {
+	for _, id := range []string{"deepeval"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["fastmcp"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("FastMCP must surface as an integrated, configuration-gated read-only bridge: %#v", recommendations)
 	}
 	if recommendation, ok := ids["vllm"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
 		t.Fatalf("vLLM must surface as an integrated, configuration-gated provider profile: %#v", recommendations)

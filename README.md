@@ -514,6 +514,21 @@ can influence any real work. The probe checks only the local runner and its
 configured model endpoint; it does not establish model quality, task
 correctness, or authorization to execute.
 
+Optional FastMCP context sharing uses the isolated `mcp-bridge` Compose
+profile. It is not a generic HAI MCP executor. Set
+`HAI_FASTMCP_BRIDGE_ENABLED=true`, one explicit
+`HAI_FASTMCP_BRIDGE_OWNER_ID`, and two different local-only 32+ character
+tokens: `HAI_FASTMCP_BRIDGE_TOKEN` is used only from the container to HAI, and
+`HAI_FASTMCP_CLIENT_TOKEN` is used only by the approved local MCP client. Run
+`docker compose --profile mcp-bridge up --build`, then connect the client to
+`http://127.0.0.1:8090/mcp` with the `hai:read` bearer scope. The bridge offers
+only `hai_operating_overview` and `hai_actionable_workflows`; it returns a
+single owner's aggregate counts and bounded sanitized workflow summaries. It
+cannot create tasks, transition workflows, approve, execute, read connected
+sources, retrieve evidence, write memory, alter policy, access files or
+processes, or return secrets. Do not add this authenticated bridge to
+`HAI_MCP_PREFLIGHT_SERVERS`, which intentionally has no credential support.
+
 Optional Presidio analysis is a separate, operator-managed local deployment.
 Set `HAI_PRESIDIO_ENABLED=true`, a loopback, `host.docker.internal`, `presidio`,
 or private-network `HAI_PRESIDIO_BASE_URL`, the configured language, and the
