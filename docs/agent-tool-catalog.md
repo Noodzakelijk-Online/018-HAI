@@ -116,8 +116,10 @@ none is installed, configured, or executable through HAI.
 
 RAGFlow's own self-hosting guidance calls for at least 4 CPU cores, 16 GB RAM,
 50 GB disk, Docker Compose, and gVisor when its optional code executor is
-used. HAI does not provision it automatically. The implemented retrieval bridge
-is disabled until `HAI_RAGFLOW_ENABLED`, its API key, and at least one approved
+used. Its standard Compose HTTP service uses port `80`; operators must map it
+to a dedicated port that does not collide with HAI before setting the bridge
+base URL. HAI does not provision it automatically. The implemented retrieval
+bridge is disabled until `HAI_RAGFLOW_ENABLED`, its API key, and at least one approved
 dataset ID are configured. A local deployment review must
 record its resource reservation, document folder/connector allowlist, model and
 embedding endpoint, retention/deletion/export rules, and proof that its code

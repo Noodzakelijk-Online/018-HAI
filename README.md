@@ -488,9 +488,13 @@ local `/healthz` endpoint. This does not prove SearXNG JSON output, configured
 search-engine behavior, upstream privacy, result provenance, or evidence quality.
 
 Optional RAGFlow retrieval is a separate, operator-managed local deployment.
-Set `HAI_RAGFLOW_ENABLED=true`, a loopback, `host.docker.internal`, `ragflow`,
-or private-network `HAI_RAGFLOW_BASE_URL`, a local API key, and the comma-
-separated `HAI_RAGFLOW_DATASET_IDS` that HAI is allowed to query. The bridge
+RAGFlow's standard Compose deployment serves HTTP on port `80`; do not reuse
+HAI's own gateway port. Map it to a dedicated host port (for example,
+`9380:80`) and set `HAI_RAGFLOW_BASE_URL=http://host.docker.internal:9380` for
+the HAI backend container, or use an approved loopback, `ragflow`, or private-
+network address with the port actually selected by the operator. Then set
+`HAI_RAGFLOW_ENABLED=true`, a local API key, and the comma-separated
+`HAI_RAGFLOW_DATASET_IDS` that HAI is allowed to query. The bridge
 only uses RAGFlow's retrieval endpoint for those fixed datasets and returns
 candidate evidence for normal HAI source-grounding and verification. In
 **Grounded Answers**, an operator must explicitly select a returned chunk before
