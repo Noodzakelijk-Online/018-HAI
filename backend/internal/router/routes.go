@@ -26,6 +26,7 @@ import (
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/evidently"
 	"automation-hub-backend/internal/featureflags"
+	"automation-hub-backend/internal/garak"
 	"automation-hub-backend/internal/guardrails"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
@@ -111,6 +112,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeLMEvalRoutes(v1, lmeval.NewHandler(lmeval.DefaultService()))
 		initializePromptfooRoutes(v1, promptfoo.NewHandler(promptfoo.DefaultService()))
 		initializeDeepTeamRoutes(v1, deepteam.NewHandler(deepteam.DefaultService()))
+		initializeGarakRoutes(v1, garak.NewHandler(garak.DefaultService()))
 		initializeLangfuseRoutes(v1, langfuse.NewHandler(langfuse.DefaultService()))
 		whisperService := whispercpp.DefaultService()
 		initializeWhisperCPPRoutes(v1, whispercpp.NewHandler(whisperService))
@@ -568,6 +570,16 @@ func initializePromptfooRoutes(apiVersion *gin.RouterGroup, handler *promptfoo.H
 
 func initializeDeepTeamRoutes(apiVersion *gin.RouterGroup, handler *deepteam.Handler) {
 	routes := apiVersion.Group("/deepteam")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializeGarakRoutes(apiVersion *gin.RouterGroup, handler *garak.Handler) {
+	routes := apiVersion.Group("/garak")
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)

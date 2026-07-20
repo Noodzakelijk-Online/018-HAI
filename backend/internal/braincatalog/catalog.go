@@ -332,12 +332,16 @@ var entries = []Entry{
 	},
 	{
 		ID: "garak", Name: "garak", UpstreamURL: "https://github.com/NVIDIA/garak", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10138/repos/", SourceCollection: "AI Red Teaming",
-		Status: StatusCandidate, Category: "LLM vulnerability testing", IntegrationMode: "contained, no-write evaluation runner",
-		Capabilities: []string{"probe suites", "model safety testing", "evaluation reports"}, RecommendedFor: []string{"provider validation", "prompt safety review", "pre-release checks"},
+		Status: StatusIntegrated, Category: "local synthetic prompt-injection regression", IntegrationMode: "integrated opt-in isolated local evaluation runner",
+		Capabilities: []string{"prompt-injection probe", "local model vulnerability regression", "aggregate pass/fail evidence"}, RecommendedFor: []string{"local model safety regression", "pre-release prompt-injection review", "safety harness review"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Run only against explicitly configured local test providers with redacted fixtures, a time limit, no production credentials, and retained audit results. A failed probe creates review work; it cannot mutate policy or runtime configuration.",
-		Rationale:  "A strong red-team candidate that can give HAI evidence before enabling a model or agent profile, provided evaluation inputs and execution remain contained.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Red Teaming repository list checked on 2026-07-19; no garak runner is configured by HAI.",
+		Activation: "Set a reviewed local OpenAI-compatible model endpoint and start the `garak-evaluation` Compose profile. HAI runs exactly one shipped four-case synthetic PromptInject probe. It cannot inspect HAI, target a real agent, accept user test data, call a runtime, use a cloud model, retain raw reports, or change HAI policy. Any real-system red-team plan needs a separately approved, redacted, isolated evaluation design.",
+		Rationale:  "The integration adds a distinct, broader scanner-derived prompt-injection regression signal while HAI retains all production workflow, data, provider, verification, approval, runtime, and audit authority.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official Garak repository and package metadata reviewed on 2026-07-20: active Apache-2.0 LLM vulnerability scanner; garak 0.15.1 supports selectable probes and OpenAI-compatible local endpoints. HAI pins 0.15.1 in an opt-in internal runner, fixes one four-case PromptInject probe, clears inherited proxy/provider credentials, deletes raw reports, and returns aggregate metadata only. No real HAI target, account, source, runtime, model route, or action is configured.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "PromptInject probe pass/fail aggregate", HAIControl: "verification and safety review evidence", Boundary: "synthetic aggregate evidence cannot mark production work verified or alter a routing, policy, approval, or execution decision"},
+			{SourcePattern: "Garak JSONL reports and model generations", HAIControl: "temporary runner filesystem and source-privacy boundary", Boundary: "raw prompts, outputs, hit logs, HTML, and full reports are deleted before the runner responds and are never persisted or exported by HAI"},
+		},
 	},
 	{
 		ID: "whisper-cpp", Name: "whisper.cpp", UpstreamURL: "https://github.com/ggml-org/whisper.cpp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10118/repos/", SourceCollection: "Multimodal AI",

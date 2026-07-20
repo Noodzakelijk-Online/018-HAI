@@ -18,12 +18,12 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
 		t.Fatalf("AutoGPT must require license review: %#v", entry)
 	}
-	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "garak", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "swe-agent", "openlit", "opik", "pipecat", "livekit-agents"} {
+	for _, id := range []string{"openllmetry", "deepeval", "airbyte", "browser-use", "nemo-guardrails", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "swe-agent", "openlit", "opik", "pipecat", "livekit-agents"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "deepteam", "evidently", "ragflow", "anythingllm", "serena", "odoo", "cloudquery", "openspec"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "deepteam", "garak", "evidently", "ragflow", "anythingllm", "serena", "odoo", "cloudquery", "openspec"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must expose its implemented local profile without claiming that it is configured: %#v", id, entry)
 		}
@@ -298,10 +298,13 @@ func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
 	if recommendation, ok := ids["ollama"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
 		t.Fatalf("Ollama must surface as HAI's existing approval-gated local provider profile: %#v", recommendations)
 	}
-	for _, id := range []string{"browser-use", "nemo-guardrails", "garak"} {
+	for _, id := range []string{"browser-use", "nemo-guardrails"} {
 		if recommendation, ok := ids[id]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
 		}
+	}
+	if recommendation, ok := ids["garak"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("Garak must surface as a configuration-gated local safety profile: %#v", recommendations)
 	}
 	if recommendation, ok := ids["whisper-cpp"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
 		t.Fatalf("whisper.cpp must surface as HAI's approval-gated local transcription profile: %#v", recommendations)
@@ -417,7 +420,7 @@ func TestRecommendRetrievalReferencesNeverClaimActivation(t *testing.T) {
 }
 
 func TestRecommendLiveGapProfilesKeepTheirRecordedBoundaries(t *testing.T) {
-	recommendations := Recommend("operations", "Create typed structured plans, use LocalAI for local inference, inventory a source, prepare a voice pipeline, and run DeepTeam red-team regression")
+	recommendations := Recommend("operations", "Create typed structured plans, use LocalAI for local inference, inventory a source, prepare a voice pipeline, and run DeepTeam and Garak red-team regression")
 	ids := map[string]Recommendation{}
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
@@ -430,6 +433,9 @@ func TestRecommendLiveGapProfilesKeepTheirRecordedBoundaries(t *testing.T) {
 	}
 	if recommendation, ok := ids["deepteam"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
 		t.Fatalf("DeepTeam must surface as an integrated, configuration-gated synthetic safety profile: %#v", recommendations)
+	}
+	if recommendation, ok := ids["garak"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("Garak must surface as an integrated, configuration-gated synthetic safety profile: %#v", recommendations)
 	}
 	if recommendation, ok := ids["cloudquery"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
 		t.Fatalf("CloudQuery must surface as an integrated, configuration-gated local summary profile: %#v", recommendations)

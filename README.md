@@ -671,6 +671,19 @@ clears inherited proxy settings, runs unprivileged without a public port, and
 can reach only its configured local model endpoint. A passing result is
 synthetic regression evidence, not a safety claim about production HAI.
 
+Optional Garak prompt-injection evidence uses the isolated
+`garak-evaluation` Compose profile. Set `HAI_GARAK_ENABLED=true`, configure
+`HAI_GARAK_MODEL_ID` and `HAI_GARAK_MODEL_BASE_URL` for one
+operator-reviewed local OpenAI-compatible endpoint, then run
+`docker compose --profile garak-evaluation up --build`. The runner executes
+only one shipped, deterministic four-case PromptInject suite and returns only
+aggregate pass/fail counts, duration, and a digest. It does not accept a
+caller-selected model, endpoint, prompt, target, probe, command, or report
+path; it clears inherited provider credentials and proxy settings, runs
+unprivileged without a public port, and deletes raw Garak JSONL/hit/HTML
+reports before responding. A result is synthetic regression evidence, not
+proof that HAI or any local model is safe for production work.
+
 Optional local Langfuse observability uses an operator-hosted Langfuse instance,
 not Langfuse Cloud. Set `HAI_LANGFUSE_ENABLED=true`, a loopback,
 `host.docker.internal`, `langfuse`, `langfuse-web`, or private-network
