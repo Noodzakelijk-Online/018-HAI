@@ -28,6 +28,7 @@ const (
 	maxQueryLength         = 512
 	maxResults             = 10
 	maxResponseBytes int64 = 1 << 20
+	maxHealthBytes   int64 = 64 << 10
 )
 
 var (
@@ -162,7 +163,13 @@ func (s *service) Probe(ctx context.Context) (*ProbeResult, error) {
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("local RAGFlow endpoint did not pass health probe")
 	}
-	return &ProbeResult{Reachable: true, CheckedAt: s.now().UTC(), Scope: "Endpoint reachability only. This does not validate retrieval credentials, dataset access, chunk provenance, or downstream verification."}, nil
+	var health struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxHealthBytes)).Decode(&health); err != nil || !strings.EqualFold(strings.TrimSpace(health.Status), "ok") {
+		return nil, fmt.Errorf("local RAGFlow dependencies are not healthy")
+	}
+	return &ProbeResult{Reachable: true, CheckedAt: s.now().UTC(), Scope: "Endpoint and reported RAGFlow dependency health only. This does not validate retrieval credentials, dataset access, chunk provenance, or downstream verification."}, nil
 }
 
 func (s *service) Retrieve(ctx context.Context, request Request) (*Response, error) {
@@ -236,7 +243,7 @@ func (s *service) Retrieve(ctx context.Context, request Request) (*Response, err
 	}
 	results := make([]Result, 0, limit)
 	for _, chunk := range payloadResponse.Data.Chunks {
-		if len(results) >= limit || !allowed[chunk.KBID] || strings.TrimSpace(chunk.Content) == "" {
+		if len(results) >= limit || !allowed[chunk.KBID] || strings.TrimSpace(chunk.ID) == "" || strings.TrimSpace(chunk.Content) == "" {
 			continue
 		}
 		results = append(results, Result{

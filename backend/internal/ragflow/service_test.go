@@ -81,10 +81,32 @@ func TestProbeUsesOnlyDocumentedHealthEndpointWithoutCredential(t *testing.T) {
 		if request.Header.Get("Authorization") != "" {
 			t.Fatal("health probe must not expose the retrieval credential")
 		}
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"db":"ok","redis":"ok","doc_engine":"ok","storage":"ok","status":"ok"}`))}, nil
 	})}
 	service := NewService(true, "http://127.0.0.1:9380", "local-token", "dataset-a", client)
 	if result, err := service.Probe(context.Background()); err != nil || !result.Reachable {
 		t.Fatalf("Probe result=%#v err=%v", result, err)
+	}
+}
+
+func TestProbeRejectsAHealthyHTTPStatusWithUnhealthyRAGFlowDependencies(t *testing.T) {
+	client := &http.Client{Transport: roundTripper(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"db":"ok","redis":"error","status":"degraded"}`))}, nil
+	})}
+	service := NewService(true, "http://127.0.0.1:9380", "local-token", "dataset-a", client)
+	if result, err := service.Probe(context.Background()); err == nil || result != nil {
+		t.Fatalf("Probe result=%#v err=%v, want dependency-health error", result, err)
+	}
+}
+
+func TestRetrieveDropsChunksWithoutStableProvenanceID(t *testing.T) {
+	client := &http.Client{Transport: roundTripper(func(request *http.Request) (*http.Response, error) {
+		body := `{"code":0,"data":{"total":2,"chunks":[{"id":"","kb_id":"dataset-a","content":"no stable source reference"},{"id":"chunk-a","kb_id":"dataset-a","content":"candidate evidence"}]}}}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	service := NewService(true, "http://127.0.0.1:9380", "local-token", "dataset-a", client)
+	result, err := service.Retrieve(context.Background(), Request{Query: "retrieve"})
+	if err != nil || len(result.Results) != 1 || result.Results[0].ChunkID != "chunk-a" {
+		t.Fatalf("Retrieve result=%#v err=%v", result, err)
 	}
 }

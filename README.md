@@ -495,10 +495,11 @@ it is attached as unverified evidence; retrieval never silently changes an
 answer, memory, workflow, or external action. It does not upload, ingest, edit,
 delete, run agents, use MCP, execute code, change RAGFlow settings, write HAI
 memory, or trigger a workflow or external action.
-The optional probe checks endpoint reachability only; it does not prove the
-credential, dataset permissions, or evidence quality. Keep RAGFlow's optional
-agent and code-executor features disabled and complete the capacity, retention,
-and provenance review described in the catalog before enabling this bridge.
+The optional probe checks endpoint reachability and RAGFlow's reported
+dependency-health status; it does not prove the credential, dataset
+permissions, provenance, or evidence quality. Keep RAGFlow's optional agent
+and code-executor features disabled and complete the capacity, retention, and
+provenance review described in the catalog before enabling this bridge.
 
 Optional local PydanticAI typed planning uses the isolated `typed-planning`
 Compose profile. Set `HAI_PYDANTIC_AI_ENABLED=true`, run
