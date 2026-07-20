@@ -137,6 +137,20 @@ func TestRecommendSemanticCodeContextWithoutEnablingHostAutomation(t *testing.T)
 	}
 }
 
+func TestRecommendOdooAsConfiguredReadOnlySourceNotAnERPControlPlane(t *testing.T) {
+	recommendations := Recommend("operations", "Read Odoo CRM leads, project tasks, and invoices into source-linked HAI workflows")
+	for _, recommendation := range recommendations {
+		if recommendation.ID != "odoo" {
+			continue
+		}
+		if recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+			t.Fatalf("Odoo must be an integrated but configuration-gated read-only source profile: %#v", recommendation)
+		}
+		return
+	}
+	t.Fatalf("expected Odoo recommendation: %#v", recommendations)
+}
+
 func hasRecommendationID(recommendations []CapabilityRecommendation, id string) bool {
 	for _, recommendation := range recommendations {
 		if recommendation.ID == id {

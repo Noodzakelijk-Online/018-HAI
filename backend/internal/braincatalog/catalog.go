@@ -434,12 +434,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "odoo", Name: "Odoo", UpstreamURL: "https://github.com/odoo/odoo", SourceCatalogURL: "https://ossinsight.io/collections/business-management", SourceCollection: "Business Management",
-		Status: StatusCandidate, Category: "business system bridge", IntegrationMode: "scoped, read-first business-system API adapter",
+		Status: StatusIntegrated, Category: "business system bridge", IntegrationMode: "integrated opt-in Odoo JSON-2 read-only source adapter",
 		Capabilities: []string{"business records", "projects", "contacts", "accounting-adjacent workflows"}, RecommendedFor: []string{"business context", "project operations", "account bridge design"},
-		RequiresApproval: true, LocalFirstCompatible: false,
-		Activation: "Start with a read-only, named Odoo instance and resource allowlist. Any write, financial, customer, or accounting action remains a separate approval-gated workflow.",
-		Rationale:  "A relevant external business-system integration candidate, not a replacement for HAI's decision, approval, audit, or memory planes.",
-		VerifiedAt: verifiedAt, VerificationNote: "Upstream business-management project checked on 2026-07-19; HAI has no Odoo connection or credentials configured.",
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Configure one operator-owned Odoo JSON-2 endpoint, API key, optional database, and fixed read-model allowlist. HAI only calls search_read; any write, financial, customer, or accounting action remains a separate approval-gated workflow.",
+		Rationale:  "HAI can ingest a bounded, source-linked read-only Odoo snapshot without replacing its decision, approval, audit, or memory planes.",
+		VerifiedAt: verifiedAt, VerificationNote: "Odoo JSON-2 external API checked on 2026-07-20; HAI has an opt-in adapter but no Odoo instance or credentials configured.",
 	},
 	{
 		ID: "continue", Name: "Continue", UpstreamURL: "https://github.com/continuedev/continue", SourceCatalogURL: sourceCatalogURL,
@@ -1049,6 +1049,9 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "ragflow", "document retrieval", "document parsing", "complex pdf", "evidence retrieval", "reranking", "re-ranking") {
 		ids = append(ids, "ragflow")
+	}
+	if containsAny(text, "odoo", "crm lead", "crm leads", "sales order", "sales orders", "business system", "business records", "accounting-adjacent", "project task", "project tasks") {
+		ids = append(ids, "odoo")
 	}
 	if containsAny(text, "source inventory", "inventory source", "inventory a source", "inventory sources", "source ingestion", "incremental connector", "cloudquery", "read first connector", "account inventory") {
 		ids = append(ids, "cloudquery")

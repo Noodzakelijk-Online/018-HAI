@@ -61,6 +61,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | RAGFlow | Memory and source intake | Integrated, opt-in | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, disabled code executor, and fixed-dataset local retrieval configuration. |
 | Promptfoo | Model safety regression | Integrated, opt-in | One reviewed local model endpoint, fixed synthetic suite, no external providers or telemetry, no production data, aggregate-only report, and human review before any routing or policy decision. |
 | Serena | Coding-context retrieval | Integrated, opt-in | One owner-started loopback MCP endpoint pinned to a single project, a stable HAI project label, MCP handshake/tool inventory probe, and HAI's fixed `find_symbol` allowlist with source-body and hover data disabled. |
+| Odoo | Business-system source ingestion | Integrated, opt-in | One operator-owned JSON-2 endpoint, read-only API key, optional database, and fixed HAI model/field allowlist. HAI uses only bounded `search_read`; all writes, payments, accounting changes, and generic RPC calls remain unavailable. |
 
 RAGFlow is deliberately not presented as HAI memory. Its parsed chunks and
 citations are candidate evidence that must pass HAI's source-grounding,

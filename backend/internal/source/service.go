@@ -250,6 +250,14 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 			}
 		}
 	}
+	if _, err := odooJSON2ConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == odooJSON2ConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "live read-only Odoo JSON-2 adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
 	return connectors, nil
 }
 
@@ -268,6 +276,17 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 	connector, err := s.connectorByKey(connectorKey)
 	if err != nil {
 		return nil, err
+	}
+	if connectorKey == odooJSON2ConnectorKey {
+		if _, err := odooJSON2ConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("Odoo JSON-2 connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly {
+			return nil, fmt.Errorf("Odoo JSON-2 is a remote account bridge; localOnly must be false")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("Odoo JSON-2 endpoint is configured only through HAI_ODOO_BASE_URL; syncTarget must be empty")
+		}
 	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
@@ -453,6 +472,19 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			s.audit(sourceID, "source.sync_failed", err.Error())
 			return nil, err
 		}
+	}
+	if len(items) == 0 && source.ConnectorKey == odooJSON2ConnectorKey {
+		items, adapterCursor, err = fetchOdooJSON2Source(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
 		items, err = s.whatsAppExportItems(source, request)
@@ -1678,14 +1710,16 @@ func (s *service) audit(sourceID uuid.UUID, action, message string) {
 //	                     than reading a real source.
 //	AdapterNotImplemented — registered as a contract only; no working adapter.
 //
-// All but AdapterNotImplemented are "usable" (see adapterIsUsable): a source can
-// be created and will ingest. The distinction exists so the UI can stop
-// reporting a local-folder reader as a live Gmail/Trello/Drive connector.
+// Only operational, local-only, and modeled adapters are usable (see
+// adapterIsUsable). The distinction lets the UI avoid reporting a local-folder
+// reader as a live Gmail/Trello/Drive connector or a disabled remote adapter as
+// ready to connect.
 const (
-	AdapterOperational    = "operational"
-	AdapterLocalOnly      = "local_only"
-	AdapterModeled        = "modeled"
-	AdapterNotImplemented = "not_implemented"
+	AdapterOperational           = "operational"
+	AdapterLocalOnly             = "local_only"
+	AdapterModeled               = "modeled"
+	AdapterConfigurationRequired = "configuration_required"
+	AdapterNotImplemented        = "not_implemented"
 )
 
 // adapterIsUsable reports whether a connector with the given status can back a
@@ -1713,6 +1747,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
 		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
+		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
 	}
 }
 
@@ -1742,7 +1777,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp"
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
