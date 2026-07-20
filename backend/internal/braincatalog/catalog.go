@@ -403,12 +403,16 @@ var entries = []Entry{
 	},
 	{
 		ID: "promptfoo", Name: "Promptfoo", UpstreamURL: "https://github.com/promptfoo/promptfoo", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
-		Status: StatusCandidate, Category: "LLM evaluation", IntegrationMode: "operator-configured local CLI or contained evaluation service",
-		Capabilities: []string{"prompt regression testing", "provider comparison", "red-team evaluation"}, RecommendedFor: []string{"LLM routing validation", "prompt regression checks", "evaluation design"},
+		Status: StatusCandidate, Category: "LLM safety regression", IntegrationMode: "opt-in internal fixed-suite local evaluation bridge",
+		Capabilities: []string{"prompt regression testing", "provider comparison", "synthetic high-risk action regression"}, RecommendedFor: []string{"local model safety regression", "prompt-injection regression checks", "evaluation design"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Complete a review for provider credentials, test-data redaction, workspace confinement, network access, artifact retention, and no-write validation before HAI can invoke any evaluation run.",
-		Rationale:  "A useful evaluation candidate for verifying routing and prompt changes, but test inputs can contain sensitive context and must not bypass HAI's source and secret controls.",
-		VerifiedAt: verifiedAt, VerificationNote: "Catalog candidate recorded for review on 2026-07-19; no Promptfoo runtime is configured by HAI.",
+		Activation: "Enable only the contained `safety-evaluation` profile after reviewing one local OpenAI-compatible endpoint and its model provenance. HAI invokes a fixed six-case synthetic suite; it accepts no caller-provided provider, model, endpoint, prompt, command, source, or data. Review aggregate evidence before any separate routing or policy decision.",
+		Rationale:  "HAI implements a bounded Promptfoo bridge for repeatable local prompt-injection and high-risk-action regression evidence without turning Promptfoo into an agent, data store, policy engine, or production red-team service.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official repository and documentation reviewed on 2026-07-20: MIT, active main branch, v0.121.19, local CLI/library evaluation with explicit OpenAI-compatible chat endpoints and declarative assertions. HAI pins that version in an opt-in internal runner and returns aggregate metadata only; no Promptfoo runtime, provider, real prompt, source record, telemetry export, or safety claim is configured by default.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "prompt or red-team test", HAIControl: "fixed synthetic regression suite", Boundary: "callers cannot choose prompts, datasets, providers, commands, or real account context"},
+			{SourcePattern: "evaluation pass or failure", HAIControl: "model review and audit evidence", Boundary: "a score cannot change routing, policy, verification, approval, memory, workflow, or execution"},
+		},
 	},
 	{
 		ID: "airbyte", Name: "Airbyte", UpstreamURL: "https://github.com/airbytehq/airbyte", SourceCatalogURL: "https://ossinsight.io/collections/data-integration", SourceCollection: "Data Integration",

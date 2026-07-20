@@ -59,6 +59,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | mistral.rs | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, approved model and resource configuration, live probe, and disabled upstream agentic tools. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
 | RAGFlow | Memory and source intake | Candidate, local bridge implemented | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, disabled code executor, and fixed-dataset local retrieval configuration. |
+| Promptfoo | Model safety regression | Candidate, local bridge implemented | One reviewed local model endpoint, fixed synthetic suite, no external providers or telemetry, no production data, aggregate-only report, and human review before any routing or policy decision. |
 
 RAGFlow is deliberately not presented as HAI memory. Its parsed chunks and
 citations are candidate evidence that must pass HAI's source-grounding,

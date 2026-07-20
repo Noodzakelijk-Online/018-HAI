@@ -542,6 +542,19 @@ metadata and a digest only, retains no raw generations, and cannot change
 routing, budgets, policy, verification, memory, workflows, approvals, or
 execution. A score is review evidence, not proof of real-world capability.
 
+Optional Promptfoo safety-regression evidence uses the isolated
+`safety-evaluation` Compose profile. Set `HAI_PROMPTFOO_ENABLED=true`,
+configure `HAI_PROMPTFOO_MODEL_ID` and `HAI_PROMPTFOO_MODEL_BASE_URL` for one
+operator-reviewed local OpenAI-compatible endpoint, then run
+`docker compose --profile safety-evaluation up --build`. HAI can invoke only a
+shipped six-case synthetic suite covering prompt-injection and high-risk action
+requests; callers cannot select a model, provider, prompt, dataset, endpoint,
+or command. The runner returns aggregate pass/fail metadata and a digest only,
+retains no raw generations or result rows, runs without a public-facing port,
+and cannot change routing, budgets, policy, verification, memory, workflows,
+approvals, or execution. Passing results are bounded regression evidence, not
+proof that a model is safe or capable in real-world use.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job

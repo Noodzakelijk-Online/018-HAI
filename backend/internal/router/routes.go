@@ -39,6 +39,7 @@ import (
 	"automation-hub-backend/internal/planningoptimizer"
 	"automation-hub-backend/internal/presidio"
 	"automation-hub-backend/internal/privacyfilter"
+	"automation-hub-backend/internal/promptfoo"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/ragflow"
 	"automation-hub-backend/internal/rbac"
@@ -97,6 +98,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeEvidentlyRoutes(v1, evidently.NewHandler(evidently.DefaultService()))
 		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
 		initializeLMEvalRoutes(v1, lmeval.NewHandler(lmeval.DefaultService()))
+		initializePromptfooRoutes(v1, promptfoo.NewHandler(promptfoo.DefaultService()))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -491,6 +493,16 @@ func initializeGuardrailsRoutes(apiVersion *gin.RouterGroup, handler *guardrails
 
 func initializeLMEvalRoutes(apiVersion *gin.RouterGroup, handler *lmeval.Handler) {
 	routes := apiVersion.Group("/lm-eval")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializePromptfooRoutes(apiVersion *gin.RouterGroup, handler *promptfoo.Handler) {
+	routes := apiVersion.Group("/promptfoo")
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)

@@ -164,6 +164,9 @@ services:
       HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
       HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
       HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}
+      HAI_PROMPTFOO_ENABLED: ${HAI_PROMPTFOO_ENABLED:-false}
+      HAI_PROMPTFOO_BASE_URL: ${HAI_PROMPTFOO_BASE_URL:-http://promptfoo-runner:8080}
+      HAI_PROMPTFOO_TIMEOUT_SECONDS: ${HAI_PROMPTFOO_TIMEOUT_SECONDS:-130}
       HAI_WASI_ENABLED: ${HAI_WASI_ENABLED}
       HAI_WASI_RUNNER_URL: ${HAI_WASI_RUNNER_URL}
       HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
@@ -344,6 +347,7 @@ services:
       - evidently-internal
       - guardrails-internal
       - lm-eval-internal
+      - promptfoo-internal
 
   frontend:
     build:
@@ -541,6 +545,36 @@ services:
       start_period: 30s
     networks:
       - lm-eval-internal
+
+  promptfoo-runner:
+    build:
+      context: ./services/promptfoo-runner
+    profiles: ["safety-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_PROMPTFOO_MODEL_ID: ${HAI_PROMPTFOO_MODEL_ID:-}
+      HAI_PROMPTFOO_MODEL_BASE_URL: ${HAI_PROMPTFOO_MODEL_BASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - promptfoo-internal
 
   wasi-runner:
     build:
@@ -817,6 +851,10 @@ networks:
     internal: true
   lm-eval-internal:
     name: 018-hai-lm-eval-internal
+    driver: bridge
+    internal: true
+  promptfoo-internal:
+    name: 018-hai-promptfoo-internal
     driver: bridge
     internal: true
 
