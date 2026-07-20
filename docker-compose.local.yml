@@ -161,6 +161,9 @@ services:
       HAI_GUARDRAILS_ENABLED: ${HAI_GUARDRAILS_ENABLED}
       HAI_GUARDRAILS_BASE_URL: ${HAI_GUARDRAILS_BASE_URL}
       HAI_GUARDRAILS_TIMEOUT_SECONDS: ${HAI_GUARDRAILS_TIMEOUT_SECONDS}
+      HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
+      HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
+      HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}
       HAI_WASI_ENABLED: ${HAI_WASI_ENABLED}
       HAI_WASI_RUNNER_URL: ${HAI_WASI_RUNNER_URL}
       HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
@@ -340,6 +343,7 @@ services:
       - automation-hub-network
       - evidently-internal
       - guardrails-internal
+      - lm-eval-internal
 
   frontend:
     build:
@@ -509,6 +513,34 @@ services:
       start_period: 30s
     networks:
       - guardrails-internal
+
+  lm-eval-runner:
+    build:
+      context: ./services/lm-eval-runner
+    profiles: ["model-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_LM_EVAL_MODEL_ID: ${HAI_LM_EVAL_MODEL_ID:-}
+      HAI_LM_EVAL_MODEL_BASE_URL: ${HAI_LM_EVAL_MODEL_BASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - lm-eval-internal
 
   wasi-runner:
     build:
@@ -781,6 +813,10 @@ networks:
     internal: true
   guardrails-internal:
     name: 018-hai-guardrails-internal
+    driver: bridge
+    internal: true
+  lm-eval-internal:
+    name: 018-hai-lm-eval-internal
     driver: bridge
     internal: true
 

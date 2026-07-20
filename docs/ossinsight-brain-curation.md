@@ -54,6 +54,7 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | --- | --- | --- | --- |
 | Evidently | Verification and observability | Candidate, local bridge implemented | Opt-in internal report runner for bounded synthetic/redacted fixtures; metadata-only output and no default egress. |
 | Guardrails AI | Verification and safety | Candidate, local bridge implemented | Opt-in internal fixed-schema action-proposal validator; metadata-only output, no model call, Hub download, persistence, approval, or execution. |
+| LM Evaluation Harness | Model evaluation | Candidate, local bridge implemented | Opt-in fixed six-case synthetic local suite against one preconfigured local OpenAI-compatible model; aggregate metadata only and manual review required. |
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
 | mistral.rs | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, approved model and resource configuration, live probe, and disabled upstream agentic tools. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
@@ -137,6 +138,19 @@ The bridge returns validation metadata and a digest, never the proposal text.
 It cannot invoke an LLM, fetch a Guardrails Hub validator, retry a model,
 persist data, alter HAI policy or routing, verify completion, approve, or
 execute any action. A valid schema result remains a review signal only.
+
+## Implemented LM Evaluation Harness boundary
+
+HAI now includes an opt-in internal LM Evaluation Harness runner under the
+Compose `model-evaluation` profile. It accepts no model, endpoint, task,
+prompt, fixture, or command from the API. The operator configures exactly one
+local OpenAI-compatible model endpoint in environment settings; the runner
+executes only HAI's shipped six-case synthetic `hai_synthetic_v1` suite and
+returns aggregate exact-match metadata plus a digest. It never writes samples,
+downloads public datasets or benchmarks, retains task rows or raw generations,
+exports telemetry, or changes model routing, budget, policy, verification,
+memory, workflows, approvals, or execution. A score is review evidence, never
+proof that a model is suitable for a real task.
 
 ## Implemented metrics boundary
 

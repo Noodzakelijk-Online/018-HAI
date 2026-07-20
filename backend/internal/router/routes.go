@@ -29,6 +29,7 @@ import (
 	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/llm"
+	"automation-hub-backend/internal/lmeval"
 	"automation-hub-backend/internal/mcppreflight"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
@@ -95,6 +96,7 @@ func initializeRoutes(router *gin.Engine) error {
 		initializePresidioRoutes(v1, presidio.NewHandler(presidio.DefaultService()))
 		initializeEvidentlyRoutes(v1, evidently.NewHandler(evidently.DefaultService()))
 		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
+		initializeLMEvalRoutes(v1, lmeval.NewHandler(lmeval.DefaultService()))
 		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
@@ -484,6 +486,16 @@ func initializeGuardrailsRoutes(apiVersion *gin.RouterGroup, handler *guardrails
 		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.POST("/validate", requirePermission(rbac.PermWrite), handler.Validate)
+	}
+}
+
+func initializeLMEvalRoutes(apiVersion *gin.RouterGroup, handler *lmeval.Handler) {
+	routes := apiVersion.Group("/lm-eval")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
 	}
 }
 

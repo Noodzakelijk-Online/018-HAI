@@ -531,6 +531,17 @@ secrets. The runner validates the fixed schema and returns metadata only; it
 does not call a model, download validators, retain proposal text, change
 policy, mark work complete, or authorize execution.
 
+Optional local model-evaluation evidence uses the isolated LM Evaluation
+Harness `model-evaluation` Compose profile. Set `HAI_LM_EVAL_ENABLED=true`,
+configure `HAI_LM_EVAL_MODEL_ID` and `HAI_LM_EVAL_MODEL_BASE_URL` for one
+operator-reviewed local OpenAI-compatible endpoint, then run
+`docker compose --profile model-evaluation up --build`. HAI can invoke only a
+shipped six-case synthetic suite; callers cannot select a model, task, prompt,
+dataset, endpoint, or command. The runner returns aggregate exact-match
+metadata and a digest only, retains no raw generations, and cannot change
+routing, budgets, policy, verification, memory, workflows, approvals, or
+execution. A score is review evidence, not proof of real-world capability.
+
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
 `docker compose --profile optimization up --build`. HAI sends only opaque job

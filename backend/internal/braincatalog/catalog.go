@@ -241,12 +241,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "lm-eval-harness", Name: "LM Evaluation Harness", UpstreamURL: "https://github.com/EleutherAI/lm-evaluation-harness", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",
-		Status: StatusCandidate, Category: "offline model evaluation", IntegrationMode: "contained local benchmark runner",
+		Status: StatusCandidate, Category: "offline model evaluation", IntegrationMode: "opt-in internal fixed-suite local benchmark runner",
 		Capabilities: []string{"benchmark suites", "few-shot evaluation", "repeatable model comparison", "result artifacts"}, RecommendedFor: []string{"local model comparison", "routing regression", "capability baselines"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review named local models, benchmark licences, fixture provenance, hardware limits, result retention, and a no-production-data rule. Results can inform an operator review but cannot select a model, spend budget, or change HAI routing automatically.",
-		Rationale:  "LM Evaluation Harness adds reproducible local model evidence where HAI needs to compare capability rather than assume the cheapest provider is sufficient.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Evaluation & Testing repository list and GitHub metadata checked on 2026-07-19; no LM Evaluation Harness runner is configured by HAI.",
+		Activation: "HAI ships a disabled local runner for one preconfigured local OpenAI-compatible model and a six-case synthetic suite. Enable the model-evaluation profile only after reviewing the named local endpoint, fixture provenance, resource limits, and no-production-data rule. Results can inform an operator review but cannot select a model, spend budget, or change HAI routing automatically.",
+		Rationale:  "LM Evaluation Harness now adds reproducible local model evidence where HAI needs to compare capability rather than assume the cheapest provider is sufficient.",
+		VerifiedAt: "2026-07-20", VerificationNote: "OSS Insight AI Evaluation & Testing listing and current LM Evaluation Harness upstream were reviewed on 2026-07-20. HAI implements only an opt-in six-case synthetic local bridge; no runner is enabled by default and no raw generations, task rows, or result artifacts are retained or returned.",
 	},
 	{
 		ID: "openllmetry", Name: "OpenLLMetry", UpstreamURL: "https://github.com/traceloop/openllmetry", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
