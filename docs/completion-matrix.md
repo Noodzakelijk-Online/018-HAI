@@ -18,9 +18,9 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 
 | Item | Implemented | Unit-tested | Sandbox-tested | Live-tested | Notes / Deferred |
 | --- | :--: | :--: | :--: | :--: | --- |
-| Trello **read-only REST** connector (`internal/source/trello.go`) | ✅ | ✅ | ⬜ | ⬜ | 5 tests incl. GET-only (read-only) assertion, incremental cursor, provenance, host allowlist, credential-required. Live run needs a real `TRELLO_API_KEY` + least-privilege `TRELLO_READ_TOKEN`. |
+| Trello **read-only REST** connector (`internal/source/trello.go`) | ✅ | ✅ | ✅ | ✅ | **Live-tested against a real Trello board (2026-07-23).** 7 cards ingested, 0 failed; every extraction carried its `trello.com/c/…` card provenance; cursor advanced to the newest `dateLastActivity`. **Incrementality proven live:** an immediate second sync ingested **0** cards. **Least privilege proven at the credential level:** the token reports `write=False` on both Board and Organization. Reproduce with `go test -tags live -run Live ./internal/source/`. |
 | — least privilege / no stored secrets | ✅ | ✅ | — | — | Creds from env only; no key/token/board id on the row. |
-| — incremental sync + cursor | ✅ | ✅ | ⬜ | ⬜ | Cursor = max card `dateLastActivity`; unchanged cards skipped (test). |
+| — incremental sync + cursor | ✅ | ✅ | ✅ | ✅ | Cursor = max card `dateLastActivity`; unchanged cards skipped (test). |
 | — pause / revoke | ✅ | ✅ | — | — | Generic `Pause`/`Revoke` apply to the connector. |
 | — provenance + audit logs | ✅ | ✅ | — | — | Card `shortUrl` on every extraction; audit via sync pipeline. |
 | Trello **JSON export** (`project-board`, local) | ✅ | ✅ | — | — | Distinct `local_only` path; unchanged. |
@@ -57,12 +57,13 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 
 ## Remaining external gates (need resources outside this environment)
 
-1. **Trello live run** — real API key + least-privilege read token against a throwaway board.
-2. **Gmail sandbox acceptance** — Google Cloud OAuth app + dedicated sandbox mailbox: consent → encrypted token → refresh → incremental → revoke → retained source links.
-3. **Windows 11 fresh-clone run** — `docker compose up --build` + the full operator flow on a clean Windows host.
-4. **Browser E2E execution** — run `frontend/e2e` against a live stack with a seeded account; confirm the two TODO source selectors.
-5. **Two-real-account isolation** — two real provider accounts, end-to-end.
-6. **Per-runtime live tests** — one controlled integration test + approval boundary each for agent runtimes, browser automation, and any paid provider before enabling.
+> ✅ **Trello live run closed 2026-07-23** — see §1.
+
+1. **Gmail sandbox acceptance** — Google Cloud OAuth app + dedicated sandbox mailbox: consent → encrypted token → refresh → incremental → revoke → retained source links.
+2. **Windows 11 fresh-clone run** — `docker compose up --build` + the full operator flow on a clean Windows host.
+3. **Browser E2E execution** — run `frontend/e2e` against a live stack with a seeded account; confirm the two TODO source selectors.
+4. **Two-real-account isolation** — two real provider accounts, end-to-end.
+5. **Per-runtime live tests** — one controlled integration test + approval boundary each for agent runtimes, browser automation, and any paid provider before enabling.
 
 > Closed since the first pass: the migration baseline (AutoMigrate is now off by
 > default) and the durable worker model are both built and verified against real
