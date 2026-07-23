@@ -33,11 +33,25 @@ func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limi
 	return &Scheduler{service: service, interval: interval, limit: limit}
 }
 
+// StartScheduler starts the workflow sweep.
+//
+// It prefers the durable path (persisted, retried, crash-recovered — see
+// durable_scheduler.go) and falls back to the legacy in-process ticker, saying
+// so, if the durable queue cannot be reached.
 func StartScheduler(ctx context.Context, service ScheduledWorkflowService) {
 	if !schedulerEnabled("WORKFLOW_SCHEDULER_ENABLED", true) {
 		return
 	}
-	scheduler := NewScheduler(service, schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"), schedulerLimit())
+	interval := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS")
+	limit := schedulerLimit()
+	if durableSchedulerEnabled() {
+		if err := startDurableScheduler(ctx, service, interval, limit); err != nil {
+			log.Printf("workflow scheduler: durable queue unavailable (%v); falling back to the in-process ticker", err)
+		} else {
+			return
+		}
+	}
+	scheduler := NewScheduler(service, interval, limit)
 	go scheduler.Start(ctx)
 }
 

@@ -88,25 +88,20 @@ func RegisterDurableScheduling(runner *durablejob.Runner, service Service, inter
 		interval = 10 * time.Minute
 	}
 
-	runner.Register(JobKindScan, scanHandler(runner, service, interval))
 	runner.Register(JobKindSync, syncHandler(service))
-
-	created, err := runner.EnsureScheduled(JobKindScan, "{}", time.Now().UTC(), scanMaxAttempts)
-	if err != nil {
+	if err := runner.RegisterRecurring(JobKindScan, interval, scanMaxAttempts, scanWork(runner, service)); err != nil {
 		return fmt.Errorf("schedule source scan: %w", err)
 	}
-	if created {
-		log.Printf("source scheduler: durable scan job scheduled (interval %s)", interval)
-	}
+	log.Printf("source scheduler: durable scan job scheduled (interval %s)", interval)
 	return nil
 }
 
-// scanHandler finds due sources, enqueues a durable sync job for each, and then
-// re-schedules itself. Enqueuing is idempotent enough in practice: Sync refuses
+// scanWork finds due sources and enqueues a durable sync job for each. The
+// recurring wrapper owns rescheduling. Enqueuing is safe to repeat: Sync refuses
 // concurrent runs for the same source and upserts by external id, so a retried
 // scan cannot corrupt state.
-func scanHandler(runner *durablejob.Runner, service Service, interval time.Duration) durablejob.Handler {
-	return func(ctx context.Context, job durablejob.Job) error {
+func scanWork(runner *durablejob.Runner, service Service) func(context.Context) error {
+	return func(ctx context.Context) error {
 		now := time.Now().UTC()
 		due, err := service.DueSources(now)
 		if err != nil {
@@ -123,11 +118,6 @@ func scanHandler(runner *durablejob.Runner, service Service, interval time.Durat
 		}
 		if len(due) > 0 {
 			log.Printf("source scheduler: enqueued %d durable sync job(s)", len(due))
-		}
-		// Re-schedule the sweep. Done last so a failure retries the scan itself
-		// rather than leaving two scan jobs queued.
-		if _, err := runner.Enqueue(JobKindScan, "{}", now.Add(interval), scanMaxAttempts); err != nil {
-			return fmt.Errorf("reschedule source scan: %w", err)
 		}
 		return nil
 	}

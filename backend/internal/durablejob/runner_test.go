@@ -241,6 +241,52 @@ func TestRunnerReclaimsJobAfterWorkerCrash(t *testing.T) {
 	}
 }
 
+func TestRegisterRecurringKeepsScheduleAliveAfterRepeatedFailures(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	// Zero backoff so the retry is immediately claimable in the next cycle.
+	runner := NewRunner(repo, Options{WorkerID: "w1", Policy: backoff.Policy{Base: 0, Factor: 1}, Now: fixedClock(&now)})
+
+	calls := 0
+	if err := runner.RegisterRecurring("tick", time.Minute, 2, func(ctx context.Context) error {
+		calls++
+		return errors.New("always fails")
+	}); err != nil {
+		t.Fatalf("RegisterRecurring: %v", err)
+	}
+
+	// Burn through the first occurrence's attempts.
+	for i := 0; i < 2; i++ {
+		if _, err := runner.RunOnce(context.Background()); err != nil {
+			t.Fatalf("RunOnce %d: %v", i, err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("work invoked %d times, want 2 (attempt + retry)", calls)
+	}
+
+	dead, pending := 0, 0
+	for _, job := range repo.jobs {
+		if job.Kind != "tick" {
+			continue
+		}
+		switch job.Status {
+		case models.DurableJobDead:
+			dead++
+		case models.DurableJobPending:
+			pending++
+		}
+	}
+	// The exhausted occurrence dead-letters, but the schedule must continue:
+	// rescheduling only on success would silently kill recurring work forever.
+	if dead != 1 {
+		t.Fatalf("dead occurrences = %d, want 1", dead)
+	}
+	if pending != 1 {
+		t.Fatalf("pending occurrences = %d, want exactly 1 — the recurring schedule must survive failure", pending)
+	}
+}
+
 func TestRunnerDeadLettersUnknownKindAndSurvivesPanic(t *testing.T) {
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 	repo := newFakeRepo()

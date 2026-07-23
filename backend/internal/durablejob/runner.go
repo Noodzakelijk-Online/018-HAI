@@ -122,6 +122,38 @@ func (r *Runner) EnsureScheduled(kind, payload string, runAt time.Time, maxAttem
 	return true, nil
 }
 
+// RegisterRecurring turns a periodic task into a durable, self-rescheduling
+// singleton job — the replacement for an in-process ticker. The work survives
+// restarts and gets bounded retry with backoff.
+//
+// The next occurrence is scheduled when the work succeeds *or* when this was its
+// final attempt. That matters: rescheduling only on success would mean a short
+// burst of failures dead-letters the job and silently kills the recurring
+// schedule forever. Here a failing run still retries on backoff, and the
+// schedule always continues.
+func (r *Runner) RegisterRecurring(kind string, interval time.Duration, maxAttempts int, work func(ctx context.Context) error) error {
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	r.Register(kind, func(ctx context.Context, job Job) error {
+		err := work(ctx)
+		finalAttempt := job.Attempts+1 >= job.MaxAttempts
+		if err == nil || finalAttempt {
+			if _, scheduleErr := r.Enqueue(kind, "{}", r.now().Add(interval), maxAttempts); scheduleErr != nil {
+				return fmt.Errorf("reschedule %s: %w", kind, scheduleErr)
+			}
+		}
+		return err
+	})
+	if _, err := r.EnsureScheduled(kind, "{}", r.now(), maxAttempts); err != nil {
+		return fmt.Errorf("schedule %s: %w", kind, err)
+	}
+	return nil
+}
+
 // RunOnce performs a single durable cycle: recover leases abandoned by dead
 // workers, claim the due batch, and execute it. It returns how many jobs were
 // processed. Handler failures are recorded as retries/dead-letters, not
