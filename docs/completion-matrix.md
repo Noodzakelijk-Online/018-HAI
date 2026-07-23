@@ -24,7 +24,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 | — pause / revoke | ✅ | ✅ | — | — | Generic `Pause`/`Revoke` apply to the connector. |
 | — provenance + audit logs | ✅ | ✅ | — | — | Card `shortUrl` on every extraction; audit via sync pipeline. |
 | Trello **JSON export** (`project-board`, local) | ✅ | ✅ | — | — | Distinct `local_only` path; unchanged. |
-| Gmail OAuth (consent, encrypted token, refresh, incremental, revoke, source links) | ✅ | ✅ | ⬜ | ⬜ | Pre-existing (`internal/source/oauth.go`, `internal/googleoauth`). **Sandbox mailbox acceptance run is the gate.** |
+| Gmail OAuth (consent, encrypted token, refresh, incremental, revoke, source links) | ✅ | ✅ | ✅ | ✅ | **Live-tested against a real sandbox mailbox (2026-07-23), all six assertions pass.** Consent via real authorization-code exchange; token stored as `bytea` ciphertext (281 bytes, no `ya29.` prefix); refresh verified by forcing expiry — ciphertext rotated and expiry advanced; 25 messages ingested with `mail.google.com` provenance on every extraction; revoke blocks sync (*"source is not enabled for sync"*); 25/25 source links retained after revoke. The run exposed **two real defects, both fixed in PR #25**: the grant carried `userinfo.email`/`profile`/`openid` beyond the declared `gmail.readonly` (caused by `include_granted_scopes`), and sync re-fetched all 25 messages each run instead of using a cursor — now **0 fetched** when no new mail. |
 | Google Drive / Calendar | ✅ (export-only) | ✅ | — | — | Marked `local_only`. **Live API intentionally deferred** (documented in provider-reality review). |
 | Documentation contradiction resolved | ✅ | — | — | — | `external-provider-reality-review.md` + README now report verified adapter status, not intent. |
 
@@ -59,11 +59,11 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 
 > ✅ **Trello live run closed 2026-07-23** — see §1.
 > ✅ **Two-account isolation closed 2026-07-23** — see §3.
+> ✅ **Gmail sandbox acceptance closed 2026-07-23** — see §1 (two defects found and fixed).
 
-1. **Gmail sandbox acceptance** — Google Cloud OAuth app + dedicated sandbox mailbox: consent → encrypted token → refresh → incremental → revoke → retained source links.
-2. **Windows 11 fresh-clone run** — `docker compose up --build` + the full operator flow on a clean Windows host.
-3. **Browser E2E execution** — run `frontend/e2e` against a live stack with a seeded account; confirm the two TODO source selectors.
-5. **Per-runtime live tests** — one controlled integration test + approval boundary each for agent runtimes, browser automation, and any paid provider before enabling.
+1. **Windows 11 fresh-clone run** — `docker compose up --build` + the full operator flow on a clean Windows host.
+2. **Browser E2E execution** — run `frontend/e2e` against a live stack with a seeded account; confirm the two TODO source selectors.
+3. **Per-runtime live tests** — one controlled integration test + approval boundary each for agent runtimes, browser automation, and any paid provider before enabling.
 
 > Closed since the first pass: the migration baseline (AutoMigrate is now off by
 > default) and the durable worker model are both built and verified against real
