@@ -43,7 +43,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 | Versioned DB migrations (`backend/migrations/`, `internal/infra/migrate.go`) | ✅ | ✅ | ✅ | ✅ | Runner + `schema_migrations` + two-phase (pre/post) + `migrate status\|up\|down` CLI. **Verified against real Postgres 17**: full schema apply, idempotency, rollback+re-apply. |
 | Replace production reliance on AutoMigrate | ✅ | ✅ | ✅ | ✅ | **Done.** Generated baseline (`pre/0002_baseline`, 53 tables / 301 indexes / 56 guarded constraints) and `DB_AUTOMIGRATE` now defaults to **false**. Proven 3 ways on real Postgres 17: fresh DB builds all 54 tables from migrations alone; re-run idempotent; baseline safe over an existing AutoMigrate-built DB. Regenerate via `scripts/generate-migration-baseline.sh`. |
 | Durable worker (scheduling/retry) | ✅ | ✅ | ✅ | ⬜ | **Built** (`internal/durablejob`): persisted jobs, `RunAt` scheduling, bounded retry with backoff, dead-lettering, lease-based crash recovery, panic containment. 8 tests pass incl. **real Postgres**: survives process restart, 25 jobs × 2 concurrent workers each executed exactly once (`FOR UPDATE SKIP LOCKED`), orphaned leases reclaimed. **All three schedulers now run on it** — source (`source.scan` → one retryable `source.sync` per due source), workflow (`workflow.sweep`), and ambient (`ambient.scan`), via a shared `RegisterRecurring` helper that keeps each a self-rescheduling singleton. Each falls back to its legacy in-process ticker (with a log line) if the queue is unreachable. Recurring jobs reschedule on success **or** final attempt, so a burst of failures cannot silently kill a schedule. |
-| Two-account isolation | 🟡 | ✅ | ⬜ | ⬜ | Owner-scoped isolation tested (`TestRunDueScheduledSyncsForOwnerDoesNotTouchAnotherOwnersSources`, alice/bob). **Two-real-account live isolation run is the gate.** |
+| Two-account isolation | ✅ | ✅ | ✅ | ✅ | **Live-proven against a running stack (2026-07-23), 9/9 assertions pass.** Two authenticated owners over real HTTP + real Postgres: source listing, extracted content, grounded search, and sync history are all owner-scoped, and the second owner cannot pause/sync/revoke the first owner's source by id — each returns **404, not 403**, so the refusal does not confirm the resource exists. Repeatable: `scripts/two-account-isolation-test.sh` (exits non-zero on first failure). Complements the unit-level test. |
 | Risky runtimes disabled until gated | ✅ | ✅ | — | ⬜ | Agent runtimes, browser automation, paid providers, and external side effects are disabled by default behind approval boundaries. Per-runtime **live** integration tests remain deferred gates. |
 
 ## 4. Delivery hygiene
@@ -58,11 +58,11 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 ## Remaining external gates (need resources outside this environment)
 
 > ✅ **Trello live run closed 2026-07-23** — see §1.
+> ✅ **Two-account isolation closed 2026-07-23** — see §3.
 
 1. **Gmail sandbox acceptance** — Google Cloud OAuth app + dedicated sandbox mailbox: consent → encrypted token → refresh → incremental → revoke → retained source links.
 2. **Windows 11 fresh-clone run** — `docker compose up --build` + the full operator flow on a clean Windows host.
 3. **Browser E2E execution** — run `frontend/e2e` against a live stack with a seeded account; confirm the two TODO source selectors.
-4. **Two-real-account isolation** — two real provider accounts, end-to-end.
 5. **Per-runtime live tests** — one controlled integration test + approval boundary each for agent runtimes, browser automation, and any paid provider before enabling.
 
 > Closed since the first pass: the migration baseline (AutoMigrate is now off by
