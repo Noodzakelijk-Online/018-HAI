@@ -98,6 +98,16 @@ func (f *fakeRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, e
 	return reaped, nil
 }
 
+func (f *fakeRepo) CountActiveByKind(kind string) (int64, error) {
+	var count int64
+	for _, job := range f.jobs {
+		if job.Kind == kind && (job.Status == models.DurableJobPending || job.Status == models.DurableJobRunning) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (f *fakeRepo) Find(id uuid.UUID) (*models.DurableJob, error) {
 	job, ok := f.jobs[id]
 	if !ok {

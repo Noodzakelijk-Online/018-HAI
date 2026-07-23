@@ -7,6 +7,7 @@ package durablejob
 import (
 	"time"
 
+	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 
 	"github.com/google/uuid"
@@ -27,12 +28,24 @@ type Repository interface {
 	// ReapExpiredLeases returns jobs whose worker died back to pending.
 	ReapExpiredLeases(now time.Time, lease time.Duration) (int, error)
 	Find(id uuid.UUID) (*models.DurableJob, error)
+	// CountActiveByKind counts jobs of a kind that are still pending or running.
+	// Used to keep recurring work singleton across restarts.
+	CountActiveByKind(kind string) (int64, error)
 }
 
 type gormRepository struct{ db *gorm.DB }
 
 // NewGormRepository returns the Postgres-backed repository.
 func NewGormRepository(db *gorm.DB) Repository { return &gormRepository{db: db} }
+
+// DefaultRepository builds the repository over the default database.
+func DefaultRepository() (Repository, error) {
+	db, err := infra.GetDefaultDB()
+	if err != nil {
+		return nil, err
+	}
+	return NewGormRepository(db), nil
+}
 
 func (r *gormRepository) Enqueue(job *models.DurableJob) (*models.DurableJob, error) {
 	if job.Queue == "" {
@@ -138,6 +151,14 @@ func (r *gormRepository) ReapExpiredLeases(now time.Time, lease time.Duration) (
 			"locked_at": nil,
 		})
 	return int(result.RowsAffected), result.Error
+}
+
+func (r *gormRepository) CountActiveByKind(kind string) (int64, error) {
+	var count int64
+	err := r.db.Model(&models.DurableJob{}).
+		Where("kind = ? AND status IN ?", kind, []string{models.DurableJobPending, models.DurableJobRunning}).
+		Count(&count).Error
+	return count, err
 }
 
 func (r *gormRepository) Find(id uuid.UUID) (*models.DurableJob, error) {

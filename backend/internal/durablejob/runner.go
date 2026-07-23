@@ -10,10 +10,14 @@ import (
 	"automation-hub-backend/internal/models"
 )
 
+// Job is the unit of work handed to a Handler. Aliased so callers registering
+// handlers do not need to import the models package.
+type Job = models.DurableJob
+
 // Handler executes one job. It must be idempotent: delivery is at-least-once,
 // so a handler can run twice if a worker dies after the side effect but before
 // the status write.
-type Handler func(ctx context.Context, job models.DurableJob) error
+type Handler func(ctx context.Context, job Job) error
 
 // DefaultLease is how long a claimed job may be held before another worker is
 // allowed to assume the holder died and reclaim it.
@@ -98,6 +102,24 @@ func (r *Runner) Enqueue(kind, payload string, runAt time.Time, maxAttempts int)
 		MaxAttempts: maxAttempts,
 		Status:      models.DurableJobPending,
 	})
+}
+
+// EnsureScheduled enqueues a job of the given kind only when none is already
+// pending or running. Recurring work (a periodic scan that re-enqueues itself)
+// uses this at startup so restarts do not pile up duplicate schedules.
+// It reports whether a new job was created.
+func (r *Runner) EnsureScheduled(kind, payload string, runAt time.Time, maxAttempts int) (bool, error) {
+	active, err := r.repo.CountActiveByKind(kind)
+	if err != nil {
+		return false, fmt.Errorf("count active %s jobs: %w", kind, err)
+	}
+	if active > 0 {
+		return false, nil
+	}
+	if _, err := r.Enqueue(kind, payload, runAt, maxAttempts); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RunOnce performs a single durable cycle: recover leases abandoned by dead

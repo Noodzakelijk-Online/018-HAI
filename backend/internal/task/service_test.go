@@ -888,6 +888,10 @@ func (s *fakeTaskSourceService) CompleteGoogleOAuth(ctx context.Context, code, s
 	return uuid.Nil, nil
 }
 
+func (s *fakeTaskSourceService) DueSources(now time.Time) ([]models.ConnectedSource, error) {
+	return nil, nil
+}
+
 func (s *fakeTaskSourceService) RunDueScheduledSyncs(now time.Time) (*source.ScheduledSyncRun, error) {
 	s.refreshCalls++
 	s.order = append(s.order, "refresh")

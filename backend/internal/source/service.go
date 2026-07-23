@@ -139,6 +139,9 @@ type Service interface {
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
 	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
+	// DueSources lists enabled sources whose schedule is due at now. The durable
+	// scheduler uses it to enqueue one retryable job per source.
+	DueSources(now time.Time) ([]models.ConnectedSource, error)
 	RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 	RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*ScheduledSyncRun, error)
 	Reindex(sourceID uuid.UUID) (*SyncResult, error)
@@ -529,6 +532,21 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, action, job.Message)
 	}
 	return &SyncResult{Job: *job, Extractions: extractions, PursuitOutcomes: pursuitOutcomes, Message: job.Message, Errors: itemErrors}, err
+}
+
+// DueSources returns the enabled sources whose schedule has come due at now.
+func (s *service) DueSources(now time.Time) ([]models.ConnectedSource, error) {
+	sources, err := s.repo.FindSources(false)
+	if err != nil {
+		return nil, err
+	}
+	due := make([]models.ConnectedSource, 0, len(sources))
+	for _, item := range sources {
+		if ok, _ := scheduledSourceDue(item, now); ok {
+			due = append(due, item)
+		}
+	}
+	return due, nil
 }
 
 func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error) {
