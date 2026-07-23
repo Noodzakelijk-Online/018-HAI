@@ -203,19 +203,38 @@ func (s *service) gmailAccessToken(ctx context.Context, sourceID uuid.UUID) (str
 	return refreshed.AccessToken, nil
 }
 
-// fetchGmailSource pulls recent message metadata as import items.
+// gmailIncrementalQuery turns a stored cursor into a Gmail search query so a
+// sync only fetches mail that arrived after the last run. The cursor is the
+// newest message timestamp seen. Gmail's `after:` is second-granular and
+// inclusive at the boundary, so a message can be re-listed; that is harmless
+// because raw items are upserted by external id rather than duplicated.
+func gmailIncrementalQuery(cursor string) string {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(cursor))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("after:%d", parsed.UTC().Unix())
+}
+
+// fetchGmailSource pulls recent message metadata as import items and returns the
+// advanced cursor (the newest message timestamp seen).
 func (s *service) fetchGmailSource(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	access, err := s.gmailAccessToken(ctx, source.ID)
 	if err != nil {
 		return nil, "", err
 	}
-	messages, err := (googleoauth.GmailClient{AccessToken: access}).FetchRecent(ctx, gmailFetchLimit)
+	query := gmailIncrementalQuery(source.Cursor)
+	messages, err := (googleoauth.GmailClient{AccessToken: access}).FetchRecent(ctx, gmailFetchLimit, query)
 	if err != nil {
 		return nil, "", err
 	}
 	projectKey := firstNonEmpty(source.DefaultProjectKey, "Robert-life-os")
+	newest := time.Time{}
 	items := make([]ImportItem, 0, len(messages))
 	for _, m := range messages {
+		if m.Date.After(newest) {
+			newest = m.Date
+		}
 		items = append(items, ImportItem{
 			ExternalID: "gmail:" + m.ID,
 			Title:      firstNonEmpty(m.Subject, "(no subject)"),
@@ -226,5 +245,11 @@ func (s *service) fetchGmailSource(ctx context.Context, source *models.Connected
 			Metadata:   fmt.Sprintf("source=gmail;from=%s;date=%s", m.From, m.Date.Format(time.RFC3339)),
 		})
 	}
-	return items, "", nil
+	// Keep the previous cursor when nothing new arrived, so an empty incremental
+	// run cannot rewind the window and re-ingest old mail next time.
+	nextCursor := strings.TrimSpace(source.Cursor)
+	if !newest.IsZero() {
+		nextCursor = newest.UTC().Format(time.RFC3339)
+	}
+	return items, nextCursor, nil
 }

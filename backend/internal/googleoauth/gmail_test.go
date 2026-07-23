@@ -43,7 +43,7 @@ func TestGmailFetchRecentParsesHeadersAndSnippet(t *testing.T) {
 	defer srv.Close()
 
 	client := GmailClient{AccessToken: "test-access-token", BaseURL: srv.URL}
-	msgs, err := client.FetchRecent(context.Background(), 10)
+	msgs, err := client.FetchRecent(context.Background(), 10, "")
 	if err != nil {
 		t.Fatalf("FetchRecent: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestGmailSurfacesExpiredToken(t *testing.T) {
 	defer srv.Close()
 
 	client := GmailClient{AccessToken: "stale", BaseURL: srv.URL}
-	_, err := client.ListRecentMessageIDs(context.Background(), 5)
+	_, err := client.ListRecentMessageIDs(context.Background(), 5, "")
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("expected a clear 401/expired error, got %v", err)
 	}
@@ -98,7 +98,7 @@ func TestGmailSkipsUnfetchableMessage(t *testing.T) {
 	defer srv.Close()
 
 	client := GmailClient{AccessToken: "t", BaseURL: srv.URL}
-	msgs, err := client.FetchRecent(context.Background(), 10)
+	msgs, err := client.FetchRecent(context.Background(), 10, "")
 	if err != nil {
 		t.Fatalf("FetchRecent should not fail on one bad message: %v", err)
 	}

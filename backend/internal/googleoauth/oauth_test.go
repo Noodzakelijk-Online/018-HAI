@@ -167,3 +167,29 @@ func TestNewStateIsRandom(t *testing.T) {
 		t.Fatalf("state too short to be a real CSRF token: %q", a)
 	}
 }
+
+// The connector must request only the scopes it declares. include_granted_scopes
+// would fold in every scope the account previously granted the project, making
+// the stored grant wider than the documented least-privilege claim.
+func TestAuthorizeURLRequestsOnlyDeclaredScopes(t *testing.T) {
+	cfg := Config{
+		ClientID:    "cid",
+		RedirectURL: "http://localhost:8080/cb",
+		Scopes:      []string{GmailReadonlyScope},
+	}
+	raw := cfg.AuthorizeURL("state-123")
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	q := parsed.Query()
+	if got := q.Get("scope"); got != GmailReadonlyScope {
+		t.Fatalf("scope = %q, want only %q", got, GmailReadonlyScope)
+	}
+	if q.Has("include_granted_scopes") {
+		t.Fatal("include_granted_scopes must not be sent: it widens the grant beyond the declared scope")
+	}
+	if q.Get("access_type") != "offline" || q.Get("prompt") != "consent" {
+		t.Fatalf("refresh token would not be issued: access_type=%q prompt=%q", q.Get("access_type"), q.Get("prompt"))
+	}
+}
