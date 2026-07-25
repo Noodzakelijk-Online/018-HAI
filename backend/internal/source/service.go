@@ -181,7 +181,7 @@ var ErrSyncInProgress = errors.New("source sync is already in progress")
 
 const maxSyncErrorDetails = 20
 const maxSyncPursuitOutcomes = 20
-const defaultHTTPFeedAllowedHosts = "localhost,127.0.0.1,::1,host.docker.internal,api.github.com"
+const defaultHTTPFeedAllowedHosts = "localhost,127.0.0.1,::1,host.docker.internal,api.github.com,api.trello.com"
 const defaultWhatsAppChunkMessages = 40
 
 var whatsAppMessageLine = regexp.MustCompile(`^\[?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[APap]\.?[Mm]\.?)?)\]?\s*[-\x{2013}]\s*([^:]{1,120}):\s*(.*)$`)
@@ -235,6 +235,16 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 			if connectors[i].ConnectorKey == gmailConnectorKey {
 				connectors[i].AdapterStatus = AdapterNotImplemented
 				connectors[i].StatusReason = "real Gmail OAuth adapter is implemented but GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REDIRECT_URL are not set, so it cannot connect yet"
+			}
+		}
+	}
+	// Same honesty for Trello: the live read-only REST adapter is implemented but
+	// cannot connect until least-privilege credentials are configured.
+	if !trelloConfigured() {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == trelloConnectorKey {
+				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].StatusReason = "real read-only Trello REST adapter is implemented but TRELLO_API_KEY/TRELLO_READ_TOKEN are not set, so it cannot connect yet"
 			}
 		}
 	}
@@ -429,6 +439,18 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
 		items, adapterCursor, err = s.fetchGmailSource(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == trelloConnectorKey {
+		items, adapterCursor, err = fetchTrelloSource(source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -1659,6 +1681,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "calendar", Name: "Calendar exports (ICS)", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads ICS export files from an allowlisted local folder; does not connect to Google/Outlook Calendar"},
 		{ConnectorKey: "cloud-documents", Name: "Synced cloud document folders", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads a locally-synced folder (bounded by the folder allowlist); does not connect to a Drive/Dropbox API"},
 		{ConnectorKey: "project-board", Name: "Trello project-board exports", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads Trello JSON export files from an allowlisted local folder; does not connect to the Trello API"},
+		{ConnectorKey: trelloConnectorKey, Name: "Trello board (read-only API)", Category: "project_board", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Trello REST sync of board cards, lists, due dates, and labels; set a board id in syncTarget and least-privilege TRELLO_API_KEY/TRELLO_READ_TOKEN. Never writes to Trello."},
 		{ConnectorKey: "github", Name: "GitHub repositories and work", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only GitHub REST sync of repositories, issues, pull requests, commits, and workflow runs; optional token in GITHUB_SOURCE_TOKEN"},
 		{ConnectorKey: gmailConnectorKey, Name: "Gmail (Google OAuth)", Category: "email", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "gmail.readonly", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Gmail REST sync over Google OAuth (metadata only); connect a Google account per source. Requires GOOGLE_OAUTH_* configuration."},
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "manual and scheduled ingestion of an allowlisted local folder"},
@@ -1694,7 +1717,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "odoo-herp"
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "odoo-herp"
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
