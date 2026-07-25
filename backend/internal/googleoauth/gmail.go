@@ -67,13 +67,18 @@ type messageResponse struct {
 }
 
 // ListRecentMessageIDs returns up to maxResults recent message IDs, newest
-// first (Gmail's default order).
-func (g GmailClient) ListRecentMessageIDs(ctx context.Context, maxResults int) ([]string, error) {
+// first (Gmail's default order). A non-empty query is passed straight to
+// Gmail's `q` search parameter, which is how incremental sync narrows the fetch
+// to mail that arrived after the last cursor (e.g. "after:1750000000").
+func (g GmailClient) ListRecentMessageIDs(ctx context.Context, maxResults int, query string) ([]string, error) {
 	if maxResults <= 0 {
 		maxResults = 25
 	}
 	q := url.Values{}
 	q.Set("maxResults", strconv.Itoa(maxResults))
+	if trimmed := strings.TrimSpace(query); trimmed != "" {
+		q.Set("q", trimmed)
+	}
 	var parsed messageListResponse
 	if err := g.getJSON(ctx, "/users/me/messages?"+q.Encode(), &parsed); err != nil {
 		return nil, err
@@ -108,11 +113,12 @@ func (g GmailClient) GetMessageMetadata(ctx context.Context, id string) (GmailMe
 	return msg, nil
 }
 
-// FetchRecent lists and then hydrates up to maxResults recent messages. A single
-// message that fails to fetch is skipped rather than failing the whole sync, so
-// one malformed item does not block ingestion.
-func (g GmailClient) FetchRecent(ctx context.Context, maxResults int) ([]GmailMessage, error) {
-	ids, err := g.ListRecentMessageIDs(ctx, maxResults)
+// FetchRecent lists and then hydrates up to maxResults recent messages matching
+// query (empty fetches the newest overall). A single message that fails to fetch
+// is skipped rather than failing the whole sync, so one malformed item does not
+// block ingestion.
+func (g GmailClient) FetchRecent(ctx context.Context, maxResults int, query string) ([]GmailMessage, error) {
+	ids, err := g.ListRecentMessageIDs(ctx, maxResults, query)
 	if err != nil {
 		return nil, err
 	}

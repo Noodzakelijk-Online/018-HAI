@@ -106,6 +106,13 @@ func NewState() (string, error) {
 // AuthorizeURL builds the Google consent URL. access_type=offline and
 // prompt=consent request a refresh token, so the connector can keep syncing
 // without the user re-authorizing each hour.
+//
+// include_granted_scopes is deliberately NOT set. With it, Google folds every
+// scope the account previously granted this project into the new grant, so a
+// live run produced a token carrying userinfo.email, userinfo.profile and
+// openid alongside gmail.readonly. The connector only needs gmail.readonly, and
+// a stored grant wider than the documented least-privilege claim is exactly the
+// kind of gap this codebase refuses to paper over.
 func (c Config) AuthorizeURL(state string) string {
 	q := url.Values{}
 	q.Set("client_id", c.ClientID)
@@ -114,7 +121,6 @@ func (c Config) AuthorizeURL(state string) string {
 	q.Set("scope", strings.Join(c.Scopes, " "))
 	q.Set("access_type", "offline")
 	q.Set("prompt", "consent")
-	q.Set("include_granted_scopes", "true")
 	q.Set("state", state)
 	return c.authEndpoint() + "?" + q.Encode()
 }
