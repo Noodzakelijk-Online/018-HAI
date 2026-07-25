@@ -1,0 +1,221 @@
+package source
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"automation-hub-backend/internal/durablejob"
+	"automation-hub-backend/internal/models"
+
+	"github.com/google/uuid"
+)
+
+// fakeJobRepo is an in-memory durablejob.Repository so the durable scheduler can
+// be exercised without a database.
+type fakeJobRepo struct {
+	jobs map[uuid.UUID]*models.DurableJob
+}
+
+func newFakeJobRepo() *fakeJobRepo { return &fakeJobRepo{jobs: map[uuid.UUID]*models.DurableJob{}} }
+
+func (f *fakeJobRepo) Enqueue(job *models.DurableJob) (*models.DurableJob, error) {
+	if job.ID == uuid.Nil {
+		job.ID = uuid.New()
+	}
+	if job.Status == "" {
+		job.Status = models.DurableJobPending
+	}
+	stored := *job
+	f.jobs[job.ID] = &stored
+	return &stored, nil
+}
+
+func (f *fakeJobRepo) ClaimDue(workerID string, now time.Time, limit int) ([]models.DurableJob, error) {
+	claimed := []models.DurableJob{}
+	for _, job := range f.jobs {
+		if len(claimed) >= limit {
+			break
+		}
+		if job.Status != models.DurableJobPending || job.RunAt.After(now) {
+			continue
+		}
+		job.Status = models.DurableJobRunning
+		lockedAt := now
+		job.LockedBy, job.LockedAt = workerID, &lockedAt
+		claimed = append(claimed, *job)
+	}
+	return claimed, nil
+}
+
+func (f *fakeJobRepo) MarkSucceeded(id uuid.UUID, now time.Time) error {
+	f.jobs[id].Status = models.DurableJobSucceeded
+	return nil
+}
+
+func (f *fakeJobRepo) MarkForRetry(id uuid.UUID, runAt time.Time, attempts int, lastErr string) error {
+	job := f.jobs[id]
+	job.Status, job.RunAt, job.Attempts, job.LastError = models.DurableJobPending, runAt, attempts, lastErr
+	return nil
+}
+
+func (f *fakeJobRepo) MarkDead(id uuid.UUID, now time.Time, attempts int, lastErr string) error {
+	job := f.jobs[id]
+	job.Status, job.Attempts, job.LastError = models.DurableJobDead, attempts, lastErr
+	return nil
+}
+
+func (f *fakeJobRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeJobRepo) Find(id uuid.UUID) (*models.DurableJob, error) { return f.jobs[id], nil }
+
+func (f *fakeJobRepo) CountActiveByKind(kind string) (int64, error) {
+	var count int64
+	for _, job := range f.jobs {
+		if job.Kind == kind && (job.Status == models.DurableJobPending || job.Status == models.DurableJobRunning) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (f *fakeJobRepo) byKind(kind string) []models.DurableJob {
+	found := []models.DurableJob{}
+	for _, job := range f.jobs {
+		if job.Kind == kind {
+			found = append(found, *job)
+		}
+	}
+	return found
+}
+
+// localFolderSource builds a due local-folder source backed by a temp directory.
+func localFolderSource(t *testing.T, name string) (*models.ConnectedSource, string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(root+"/"+name, 0o755); err != nil {
+		t.Fatalf("create fixture dir: %v", err)
+	}
+	writeTestFile(t, root+"/"+name+"/brief.md", "Follow up: prepare the delivery checklist by Friday.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+	return &models.ConnectedSource{
+		ID: uuid.New(), OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: name,
+		Category: "local_folder", Enabled: true, LocalOnly: true, Status: "active",
+		SyncFrequency: "1m", SyncTarget: name,
+	}, root
+}
+
+func TestDurableScanEnqueuesOneSyncPerDueSourceAndReschedulesItself(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+	if err := RegisterDurableScheduling(runner, service, time.Minute); err != nil {
+		t.Fatalf("RegisterDurableScheduling: %v", err)
+	}
+	// Startup must schedule exactly one scan job.
+	if got := len(jobs.byKind(JobKindScan)); got != 1 {
+		t.Fatalf("scan jobs after registration = %d, want 1", got)
+	}
+
+	// Run the scan.
+	if _, err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	syncJobs := jobs.byKind(JobKindSync)
+	if len(syncJobs) != 1 {
+		t.Fatalf("sync jobs = %d, want 1 (one per due source)", len(syncJobs))
+	}
+	if syncJobs[0].MaxAttempts != syncMaxAttempts {
+		t.Fatalf("sync MaxAttempts = %d, want %d", syncJobs[0].MaxAttempts, syncMaxAttempts)
+	}
+	// The scan must have re-scheduled itself for the next interval.
+	pendingScans := 0
+	for _, job := range jobs.byKind(JobKindScan) {
+		if job.Status == models.DurableJobPending {
+			pendingScans++
+		}
+	}
+	if pendingScans != 1 {
+		t.Fatalf("pending scan jobs = %d, want exactly 1 (self-rescheduled)", pendingScans)
+	}
+}
+
+func TestDurableSyncJobActuallySyncsTheSource(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+	if err := RegisterDurableScheduling(runner, service, time.Minute); err != nil {
+		t.Fatalf("RegisterDurableScheduling: %v", err)
+	}
+	// Cycle 1 runs the scan (enqueues the sync); cycle 2 runs the sync itself.
+	for i := 0; i < 2; i++ {
+		if _, err := runner.RunOnce(context.Background()); err != nil {
+			t.Fatalf("RunOnce %d: %v", i, err)
+		}
+	}
+	updated, err := repo.FindSource(source.ID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if updated.LastSyncedAt == nil {
+		t.Fatal("durable sync job did not actually sync the source")
+	}
+	for _, job := range jobs.byKind(JobKindSync) {
+		if job.Status != models.DurableJobSucceeded {
+			t.Fatalf("sync job status = %q (%s), want succeeded", job.Status, job.LastError)
+		}
+	}
+}
+
+func TestRegisterDurableSchedulingIsSingletonAcrossRestarts(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	service := NewService(newFakeSourceRepo(source), &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+
+	// Three "process starts" against the same durable queue.
+	for i := 0; i < 3; i++ {
+		runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w"})
+		if err := RegisterDurableScheduling(runner, service, time.Minute); err != nil {
+			t.Fatalf("restart %d: %v", i, err)
+		}
+	}
+	if got := len(jobs.byKind(JobKindScan)); got != 1 {
+		t.Fatalf("scan jobs after 3 restarts = %d, want 1 (must stay singleton)", got)
+	}
+}
+
+func TestDurableSyncHandlerDeadLettersMalformedPayload(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	handler := syncHandler(service)
+
+	if err := handler(context.Background(), durablejob.Job{Payload: "not-json"}); err == nil {
+		t.Fatal("expected an error for a malformed payload")
+	}
+	if err := handler(context.Background(), durablejob.Job{Payload: `{"sourceId":"nope"}`}); err == nil {
+		t.Fatal("expected an error for an invalid source id")
+	}
+}
+
+func TestDurableSyncHandlerTreatsInProgressAsSuccess(t *testing.T) {
+	src, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(src)
+	svc := NewService(repo, &fakeSourceMemoryService{}).(*service)
+
+	// Mark a sync as already running, as another worker would have.
+	svc.beginSync(src.ID)
+	defer svc.endSync(src.ID)
+
+	payload := `{"sourceId":"` + src.ID.String() + `"}`
+	if err := syncHandler(svc)(context.Background(), durablejob.Job{Payload: payload}); err != nil {
+		t.Fatalf("in-progress sync should not fail the job (it would retry-storm): %v", err)
+	}
+}

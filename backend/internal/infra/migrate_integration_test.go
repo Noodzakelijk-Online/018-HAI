@@ -1,0 +1,103 @@
+//go:build integration
+
+// These tests run only under `-tags integration` against a real Postgres
+// pointed to by HAI_TEST_DATABASE_DSN. They prove the versioned migration
+// runner (and the full schema) apply against the actual configured engine, not
+// a mock. Normal `go test ./...` never compiles or runs them.
+package infra
+
+import (
+	"os"
+	"testing"
+
+	"automation-hub-backend/migrations"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+func integrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := os.Getenv("HAI_TEST_DATABASE_DSN")
+	if dsn == "" {
+		t.Skip("HAI_TEST_DATABASE_DSN not set; skipping Postgres integration test")
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	// Start from a clean schema so the run is reproducible.
+	if err := db.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error; err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	return db
+}
+
+func indexExists(t *testing.T, db *gorm.DB, name string) bool {
+	t.Helper()
+	var count int64
+	if err := db.Raw("SELECT count(*) FROM pg_indexes WHERE indexname = ?", name).Scan(&count).Error; err != nil {
+		t.Fatalf("query index %s: %v", name, err)
+	}
+	return count > 0
+}
+
+func TestRunMigrationsAppliesAndIsIdempotent(t *testing.T) {
+	db := integrationDB(t)
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations (first): %v", err)
+	}
+
+	applied, err := appliedVersions(db)
+	if err != nil {
+		t.Fatalf("appliedVersions: %v", err)
+	}
+	for _, want := range []string{"pre/0001_extensions", "post/0001_conversation_owner_identity"} {
+		if !applied[want] {
+			t.Fatalf("expected %s recorded in schema_migrations, got %#v", want, applied)
+		}
+	}
+	if !indexExists(t, db, "idx_ai_conversation_owner_identity") {
+		t.Fatal("expected owner-scoped conversation index to exist after migration")
+	}
+
+	// Idempotent: a second run applies nothing new.
+	post, err := Status(db, migrations.Files, "post")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(post.Pending) != 0 {
+		t.Fatalf("post pending after apply = %#v, want none", post.Pending)
+	}
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations (second): %v", err)
+	}
+}
+
+func TestRollbackMigrationReversesPostMigration(t *testing.T) {
+	db := integrationDB(t)
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	if err := RollbackMigration(db, migrations.Files, "post", "post/0001_conversation_owner_identity"); err != nil {
+		t.Fatalf("RollbackMigration: %v", err)
+	}
+	if indexExists(t, db, "idx_ai_conversation_owner_identity") {
+		t.Fatal("owner-scoped index should be gone after rollback")
+	}
+	applied, err := appliedVersions(db)
+	if err != nil {
+		t.Fatalf("appliedVersions: %v", err)
+	}
+	if applied["post/0001_conversation_owner_identity"] {
+		t.Fatal("rolled-back migration should not remain recorded")
+	}
+	// Re-apply cleanly.
+	if _, err := ApplyMigrations(db, migrations.Files, "post"); err != nil {
+		t.Fatalf("re-apply post: %v", err)
+	}
+	if !indexExists(t, db, "idx_ai_conversation_owner_identity") {
+		t.Fatal("index should be restored after re-apply")
+	}
+}

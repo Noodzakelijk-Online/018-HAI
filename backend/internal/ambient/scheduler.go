@@ -14,13 +14,29 @@ type Scheduler struct {
 	running atomic.Bool
 }
 
+// StartScheduler starts ambient scanning.
+//
+// It prefers the durable path (persisted, retried, crash-recovered — see
+// durable_scheduler.go) and falls back to the legacy in-process ticker, saying
+// so, if the durable queue cannot be reached.
 func StartScheduler(ctx context.Context, service Service) {
 	policy := policyFromEnv()
 	if !policy.SchedulerEnabled {
 		return
 	}
+	interval := time.Duration(policy.ScanIntervalSeconds) * time.Second
+	if interval < 30*time.Second {
+		interval = 5 * time.Minute
+	}
+	if durableSchedulerEnabled() {
+		if err := startDurableScheduler(ctx, service, interval); err != nil {
+			log.Printf("ambient scheduler: durable queue unavailable (%v); falling back to the in-process ticker", err)
+		} else {
+			return
+		}
+	}
 	scheduler := &Scheduler{service: service}
-	go scheduler.Start(ctx, time.Duration(policy.ScanIntervalSeconds)*time.Second)
+	go scheduler.Start(ctx, interval)
 }
 
 func (s *Scheduler) Start(ctx context.Context, interval time.Duration) {

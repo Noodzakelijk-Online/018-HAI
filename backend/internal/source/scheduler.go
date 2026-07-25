@@ -23,12 +23,36 @@ func NewScheduler(service Service, interval time.Duration) *Scheduler {
 	return &Scheduler{service: service, interval: interval}
 }
 
+// StartScheduler starts scheduled source syncing.
+//
+// It prefers the durable path: scans and per-source syncs become persisted jobs
+// with backoff retry and crash recovery (see durable_scheduler.go). If the
+// durable queue cannot be reached — or SOURCE_SCHEDULER_DURABLE is explicitly
+// disabled — it falls back to the legacy in-process ticker and says so, rather
+// than silently running no scheduler at all.
 func StartScheduler(ctx context.Context, service Service) {
 	if !schedulerEnabled() {
 		return
 	}
-	scheduler := NewScheduler(service, schedulerInterval())
+	interval := schedulerInterval()
+	if durableSchedulerEnabled() {
+		if err := startDurableScheduler(ctx, service, interval); err != nil {
+			log.Printf("source scheduler: durable queue unavailable (%v); falling back to the in-process ticker", err)
+		} else {
+			return
+		}
+	}
+	scheduler := NewScheduler(service, interval)
 	go scheduler.Start(ctx)
+}
+
+func durableSchedulerEnabled() bool {
+	switch strings.TrimSpace(strings.ToLower(os.Getenv("SOURCE_SCHEDULER_DURABLE"))) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {

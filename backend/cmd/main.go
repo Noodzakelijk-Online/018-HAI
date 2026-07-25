@@ -10,6 +10,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/reconcile"
 	"automation-hub-backend/internal/router"
+	"automation-hub-backend/migrations"
 )
 
 func main() {
@@ -22,6 +23,8 @@ func main() {
 			os.Exit(doctor.Render(os.Stdout, doctor.Diagnose(config.AppConfig)))
 		case "reconcile":
 			os.Exit(runReconcile())
+		case "migrate":
+			os.Exit(runMigrate(os.Args[2:]))
 		}
 	}
 
@@ -56,4 +59,66 @@ func runReconcile() int {
 		fmt.Println("reconcile: all memories satisfy their invariants")
 	}
 	return 0
+}
+
+// runMigrate drives the versioned SQL migrations:
+//
+//	migrate status          show applied/pending migrations without changing anything
+//	migrate up              apply all pending migrations (pre + AutoMigrate + post)
+//	migrate down <version>  roll back a single post migration by version
+func runMigrate(args []string) int {
+	config.Init()
+	action := "status"
+	if len(args) > 0 {
+		action = args[0]
+	}
+	switch action {
+	case "up":
+		if _, err := infra.GetDefaultDB(); err != nil {
+			fmt.Fprintln(os.Stderr, "migrate up failed:", err)
+			return 1
+		}
+		fmt.Println("migrate up: all pending migrations applied")
+		return runMigrate([]string{"status"})
+	case "status":
+		db, err := infra.OpenDefaultDB()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "migrate status requires a database connection:", err)
+			return 1
+		}
+		for _, dir := range []string{"pre", "post"} {
+			status, err := infra.Status(db, migrations.Files, dir)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "migrate status:", err)
+				return 1
+			}
+			fmt.Printf("[%s] applied=%d pending=%d\n", dir, len(status.Applied), len(status.Pending))
+			for _, v := range status.Applied {
+				fmt.Printf("  applied  %s\n", v)
+			}
+			for _, v := range status.Pending {
+				fmt.Printf("  pending  %s\n", v)
+			}
+		}
+		return 0
+	case "down":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "migrate down requires a version, e.g. post/0001_conversation_owner_identity")
+			return 1
+		}
+		db, err := infra.OpenDefaultDB()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "migrate down requires a database connection:", err)
+			return 1
+		}
+		if err := infra.RollbackMigration(db, migrations.Files, "post", args[1]); err != nil {
+			fmt.Fprintln(os.Stderr, "migrate down failed:", err)
+			return 1
+		}
+		fmt.Printf("migrate down: rolled back %s\n", args[1])
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "unknown migrate action %q; use status|up|down\n", action)
+		return 1
+	}
 }
