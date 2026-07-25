@@ -22,3 +22,24 @@ Thumbs.db
 # Local verification artifacts (may contain session tokens, build logs).
 .verify/
 .playwright-mcp/
+.playwright-cli/
+
+# Environment backups. Never deliver these — a backup of .env.local carries the
+# same real local secrets. Covers .env.local.bak and any *.bak.
+*.bak
+.env*.bak
+
+# Connected-source ingestion data and personal fixtures (client emails, exported
+# threads, sync summaries). Keep the folder, never the contents.
+/connected-sources/*
+!/connected-sources/.gitkeep
+
+# Generated diagnostics, work reports, and support bundles.
+/*.pdf
+support-bundle-*.zip
+support-bundle-*.tar.gz
+
+# Local tooling and agent runtime state (not part of the delivered product).
+.claude/
+/agent-workspaces/*
+!/agent-workspaces/.gitkeep
