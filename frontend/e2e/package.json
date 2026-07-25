@@ -1,0 +1,14 @@
+{
+  "name": "hai-e2e",
+  "private": true,
+  "description": "Browser-level end-to-end acceptance tests for the HAI operator flow. Self-contained so it does not affect the Angular app build.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report",
+    "install-browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}
