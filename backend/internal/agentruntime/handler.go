@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +16,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	// Ecosystem archives are inspected, not extracted, but their metadata still
+	// determines what HAI indexes. Bound it so an uploaded archive cannot create
+	// ambiguous paths or consume unbounded parsing resources.
+	maxOpenClawZipEntries           = 100_000
+	maxOpenClawZipUncompressedBytes = uint64(1 << 30)
+	maxOpenClawZipCompressionRatio  = uint64(200)
 )
 
 type Handler struct {
@@ -211,12 +221,32 @@ func validateOpenClawZip(path string) error {
 	if len(reader.File) == 0 {
 		return errors.New("openclaw ecosystem zip is empty")
 	}
+	if len(reader.File) > maxOpenClawZipEntries {
+		return fmt.Errorf("openclaw ecosystem zip has too many entries (maximum %d)", maxOpenClawZipEntries)
+	}
 	hasOpenClawName := false
 	hasSkillMarker := false
+	seenPaths := make(map[string]struct{}, len(reader.File))
+	var totalUncompressed uint64
 	for _, file := range reader.File {
 		normalized, ok := safeZipEntryName(file.Name)
 		if !ok {
 			return errors.New("openclaw ecosystem zip contains an unsafe path")
+		}
+		// Windows is case-insensitive by default. Treat case-only aliases as
+		// duplicates too, so an uploaded archive cannot resolve differently on
+		// the host than it did during validation.
+		pathKey := strings.ToLower(normalized)
+		if _, duplicate := seenPaths[pathKey]; duplicate {
+			return fmt.Errorf("openclaw ecosystem zip contains a duplicate entry: %s", normalized)
+		}
+		seenPaths[pathKey] = struct{}{}
+		if file.UncompressedSize64 > maxOpenClawZipUncompressedBytes-totalUncompressed {
+			return fmt.Errorf("openclaw ecosystem zip expands beyond the %d byte inspection limit", maxOpenClawZipUncompressedBytes)
+		}
+		totalUncompressed += file.UncompressedSize64
+		if file.UncompressedSize64 > 0 && file.CompressedSize64 > 0 && file.UncompressedSize64 > file.CompressedSize64*maxOpenClawZipCompressionRatio {
+			return fmt.Errorf("openclaw ecosystem zip entry is compressed beyond the %d:1 inspection limit: %s", maxOpenClawZipCompressionRatio, normalized)
 		}
 		parts := strings.Split(normalized, "/")
 		if isOpenClawRootPackage(parts) {

@@ -220,7 +220,7 @@ func (h *Handler) Overview(c *gin.Context) {
 		Planes: []PlaneStatus{
 			{Name: "Control", Status: "operational", Description: "Dashboard, automation registry, health, workflow inbox, policy, and queues.", Links: []string{"/home", "/control-center", "/workflow-engine"}},
 			{Name: "Pursuits", Status: pursuitStatus, Description: "Top-level life/work objectives now aggregate workflows, evidence, memory, approvals, blockers, and next actions.", Links: []string{"/pursuits", "/command-dashboard", "/workflow-engine"}},
-			{Name: "Knowledge", Status: "partial", Description: "Local-folder ingestion is operational; real OAuth email/calendar/Drive/Trello/GitHub adapters are not yet wired end-to-end.", Links: []string{"/connected-sources"}},
+			{Name: "Knowledge", Status: "partial", Description: "Local-folder ingestion plus read-only Trello, GitHub, and Gmail adapters are implemented. Account configuration and bounded live validation remain per connector; Calendar and Drive remain local-export paths.", Links: []string{"/connected-sources"}},
 			{Name: "Memory", Status: "operational", Description: "Editable local memory with retrieval, dedupe, merge, archive, export, and correction.", Links: []string{"/memory"}},
 			{Name: "Reasoning", Status: "operational", Description: "Task classifier, criteria generator, context planner, model router, workflow state machine, priority, retry, and review.", Links: []string{"/task-blueprint", "/llm-policy", "/workflow-engine"}},
 			{Name: "Execution", Status: "guarded", Description: "Automation launch, workflow worker execution, retry limits, and controlled task runs exist; autonomous execution remains approval-gated.", Links: []string{"/control-center", "/task-blueprint", "/workflow-engine"}},
@@ -636,8 +636,8 @@ func readinessGates(policy llm.Policy) []ReadinessGate {
 		{
 			Name:     "Real account connectors",
 			Status:   "partial",
-			Evidence: "Manual import and local-folder sync are implemented; OAuth email/calendar/Drive/Trello/GitHub adapters remain connector contracts.",
-			Next:     "Implement one real OAuth connector at a time with incremental sync, provenance, and delete/revoke behavior.",
+			Evidence: "Read-only Trello REST, GitHub REST, and Gmail OAuth adapters are implemented alongside manual import and local-folder sync. Calendar and Drive remain export/local-folder paths.",
+			Next:     "Configure only the needed connector, then retain bounded live sync, provenance, revoke, and owner-isolation evidence before relying on it.",
 		},
 		{
 			Name:     "Controlled runtime execution safety",

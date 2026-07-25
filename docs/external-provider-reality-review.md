@@ -1,88 +1,68 @@
 # External Provider Reality Review
 
-Confirms external integrations are treated as real operational boundaries, not
-placeholders presented as working. Status below reflects **verified code
-behavior** (the connector `AdapterStatus` the backend actually reports and the
-tests that cover it), not intended capability. "Implemented" and "live-proven"
-are deliberately different rows — see [Evidence levels](#evidence-levels).
+External integrations are operating boundaries, not placeholders presented as
+working. This document distinguishes implemented code, retained bounded live
+evidence, and the configuration or acceptance work still required for a newly
+connected account.
 
-## Providers in scope
+## Providers In Scope
 
-| Provider | Adapter status (code) | Verified behavior | Evidence |
+| Provider | Adapter status | Verified behavior | Evidence |
 | --- | --- | --- | --- |
-| Local LLM (Ollama) | Probeable | `/api/tags` probe; free/local, preferred by fallback | unit + probe |
-| OpenAI-compatible | Probeable, paid-gated | `/v1/models` probe; blocked until paid approval | unit |
-| Gmail (Google OAuth) | `operational`, unconfigured by default | Live read-only Gmail REST sync over Google OAuth, **metadata/snippet only**. Consent, encrypted token storage, and refresh are implemented (`internal/source/oauth.go`, `internal/googleoauth`). Reports `not_implemented` until `GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REDIRECT_URL` are set. | unit-tested; **not yet sandbox/live-proven** |
-| Trello (read-only REST) | `operational`, unconfigured by default | Live read-only sync of board cards, lists, due dates, and labels with incremental cursor and card-level provenance (`internal/source/trello.go`). Every request is a GET; there is no write path. Reports `not_implemented` until `TRELLO_API_KEY` + a least-privilege `TRELLO_READ_TOKEN` are set. | unit-tested (mock API); **not yet live-proven** |
-| Trello JSON export (`project-board`) | `local_only` | Reads Trello JSON export files from the allowlisted local folder. Distinct from the live Trello adapter above. | unit-tested |
-| Google Drive | `local_only` (export path only) | Synced document folders are ingested from the allowlisted local root. **A live Drive API connector is intentionally deferred** (see [Deferred](#intentionally-deferred)). | unit-tested |
-| Google Calendar | `local_only` (export path only) | ICS exports are ingested from the allowlisted local root. **A live Calendar API connector is intentionally deferred.** | unit-tested |
-| GitHub (read-only) | `operational` | Bounded REST sync of repositories, issues, pull requests, commits, and workflow runs. Public repositories read without a token; private/rate-limited use needs a least-privilege `GITHUB_SOURCE_TOKEN`. | unit-tested |
-| Kafka event bus | Operational | Configured brokers/topic | compose/local |
+| Local LLM (Ollama) | Probeable | Local/free model probe and fallback preference. | Unit and probe coverage; no configured live model acceptance run. |
+| OpenAI-compatible endpoint | Probeable, paid-gated | Model probe; paid use remains approval-gated. | Unit coverage; no configured live model acceptance run. |
+| Gmail (Google OAuth) | `operational`, unconfigured by default | Read-only metadata/snippet ingestion; consent, encrypted token storage, refresh, incremental sync, revoke, and retained source links. Reports `not_implemented` until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URL` are set. | Unit-tested and live-tested against a real sandbox mailbox on 2026-07-23. |
+| Trello (read-only REST) | `operational`, unconfigured by default | Read-only board card, list, due-date, and label sync with incremental cursor and card provenance. Every request is a GET; there is no write path. Reports `not_implemented` until a board id and least-privilege `TRELLO_API_KEY` and `TRELLO_READ_TOKEN` are set. | Unit-tested and live-tested against a real board on 2026-07-23. |
+| Trello JSON export | `local_only` | Reads Trello JSON exports from an allowlisted local folder. This is distinct from the Trello REST adapter. | Unit-tested. |
+| Google Drive | `local_only` | Reads a synced document folder within the local allowlist. Live Drive API access is intentionally deferred. | Unit-tested. |
+| Google Calendar | `local_only` | Reads ICS exports from the local allowlist. Live Calendar API access is intentionally deferred. | Unit-tested. |
+| GitHub (read-only) | `operational` | Bounded REST sync of repositories, issues, pull requests, commits, and workflow runs. Private or rate-limited access needs a least-privilege token. | Unit-tested. |
+| Kafka event bus | Operational | Configured broker/topic integration. | Compose/local coverage. |
 
-## Evidence levels
+## Evidence Levels
 
-- **Implemented** — code, persistence, API contract, and focused automated
+- **Implemented**: code, persistence, API contract, and focused automated
   coverage exist in this repository.
-- **Live-proven** — a real credential/account completed a bounded, approved,
-  end-to-end run with audit and verification evidence. **No provider below is
-  live-proven yet**; that requires the external gates listed in
-  `docs/completion-matrix.md`.
+- **Live-tested**: a real credential/account completed a bounded approved
+  end-to-end run with audit and verification evidence. This proves that exact
+  scenario, not any future account or configuration.
+- **Live-proven for current use**: the currently configured account, model, or
+  runtime has its own bounded retained acceptance evidence. No LLM provider or
+  agent runtime currently meets this bar.
 
-## Reality checks
+The detailed Gmail and Trello evidence is retained in
+`docs/completion-matrix.md`.
 
-- **No provider is presented as production-ready unless it can actually be
-  reached.** Gmail and Trello are honest about being *implemented but
-  unconfigured*: the catalog downgrades each to `not_implemented` with a reason
-  string until its credentials are present, so the dashboard never shows a live
-  connection that cannot be made.
-- **Read-only by construction.** The Gmail adapter requests only
-  `gmail.readonly` and reads metadata/snippets. The Trello adapter issues only
-  HTTP GET requests (enforced by test: a non-GET request fails the suite) and
-  expects a token carrying only the `read` scope. Neither can mutate the remote
-  account.
-- **Least privilege, no stored secrets in rows.** Credentials come from the
-  environment. No API key, token, or board id is persisted on the
-  `ConnectedSource`. Google OAuth tokens are encrypted at rest and refreshed
-  transparently.
-- **Bounded egress.** Every remote fetch passes the shared host allowlist,
-  blocked-address guard (link-local/metadata IPs rejected), timeout, and
-  response-size cap. Trello's host (`api.trello.com`) was added to the default
-  allowlist deliberately.
-- **Provider selection is real:** `internal/providerfallback` prefers available
-  free/local providers and never selects a paid one unless explicitly allowed.
-- **Failure is retained, not ignored:** sync failures keep the cursor for retry
-  and record a redacted audit entry; each live provider probe persists a
-  redacted result.
-- **Assisted, not pretended:** where a provider cannot be safely automated, the
-  system prepares the work and tells the user what remains manual.
+## Safety Controls
 
-## Intentionally deferred
+- Gmail requests only `gmail.readonly` and reads metadata/snippets. Trello
+  issues only HTTP GET requests and expects a read-scoped token. Neither has a
+  remote mutation path.
+- Credentials remain environment-managed. Source rows do not persist API keys,
+  tokens, or board ids. Google OAuth tokens are encrypted at rest.
+- Remote fetches use the shared allowlist, blocked-address guard, timeout, and
+  response-size cap. Trello's API host is explicitly allowlisted.
+- The local-first provider policy never selects a paid model without explicit
+  policy approval. A failed probe or sync keeps its failure/audit record rather
+  than reporting simulated success.
 
-- **Google Drive and Google Calendar live API connectors.** The export/local
-  paths are the only supported ingestion today; the live API adapters are
-  deferred, not implied. They are marked `local_only` in the catalog so the UI
-  cannot present them as live.
-- **Write-back to any provider.** All adapters are read-only.
+## Deferred And Remaining Work
 
-## Remaining gap
+Google Drive and Google Calendar live APIs remain deliberately deferred; the
+supported paths are local exports and synced folders. All source adapters are
+read-only: provider write-back is not implemented.
 
-Live end-to-end provider tests require real credentials and a running stack:
-
-- **Gmail** needs a Google Cloud OAuth app and a dedicated **sandbox mailbox**
-  to prove consent → encrypted token storage → refresh → incremental sync →
-  disconnect/revoke → retained source links.
-- **Trello** needs a real `TRELLO_API_KEY` and a least-privilege
-  `TRELLO_READ_TOKEN` against a throwaway board.
-- **GitHub** needs a chosen repository and, where necessary, a least-privilege
-  token.
-
-These are tracked as external gates in `docs/completion-matrix.md`.
+Gmail and Trello are unconfigured by default despite their retained bounded
+acceptance evidence. Any newly connected account must complete its own
+consent/token, source-sync, audit, and revoke test before it is relied upon.
+GitHub needs a chosen repository and, where necessary, a least-privilege token.
+LLM provider and agent-runtime acceptance runs remain separate external gates.
 
 ## Verdict
 
-External integrations are honest operational boundaries. Gmail and Trello are
-implemented as **live read-only adapters** that stay disabled until credentials
-are supplied; Drive and Calendar live APIs are explicitly deferred; defaults
-fail safe (disabled/free-only); and nothing is dressed up as live-proven before
-a real credentialed run exists.
+HAI exposes Gmail and Trello as implemented read-only connectors with bounded
+live evidence, not as permanently connected accounts. Drive and Calendar live
+APIs are explicitly deferred. The defaults fail safe: unconfigured connectors
+and providers do not claim a live connection, and no source, model, or runtime
+is treated as operational for a new account until that account has its own
+verified run.

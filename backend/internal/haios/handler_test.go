@@ -122,6 +122,24 @@ func TestLiveProviderConfiguredIgnoresFreeCloudWithoutQuota(t *testing.T) {
 	}
 }
 
+func TestReadinessGatesDescribeImplementedReadOnlyConnectors(t *testing.T) {
+	var connectors ReadinessGate
+	for _, gate := range readinessGates(llm.Policy{}) {
+		if gate.Name == "Real account connectors" {
+			connectors = gate
+			break
+		}
+	}
+	if connectors.Name == "" {
+		t.Fatal("real account connectors readiness gate is missing")
+	}
+	for _, fragment := range []string{"Trello REST", "GitHub REST", "Gmail OAuth", "Calendar and Drive remain export/local-folder paths"} {
+		if !strings.Contains(connectors.Evidence, fragment) {
+			t.Fatalf("connector evidence = %q, want %q", connectors.Evidence, fragment)
+		}
+	}
+}
+
 func TestPursuitOverviewPrioritizesRobertQueue(t *testing.T) {
 	id := uuid.New()
 	overview := pursuitOverviewFromDashboard(&pursuit.Dashboard{

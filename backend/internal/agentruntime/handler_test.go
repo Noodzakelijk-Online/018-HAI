@@ -281,6 +281,20 @@ func TestValidateOpenClawZipRejectsNonOpenClawArchive(t *testing.T) {
 	}
 }
 
+func TestValidateOpenClawZipRejectsDuplicateEntries(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "openclaw-duplicate.zip")
+	if err := writeZipEntryList(zipPath, []zipEntry{
+		{name: "openclaw-main/package.json", content: `{"name":"openclaw"}`},
+		{name: "openclaw-main/PACKAGE.json", content: `{"name":"not-openclaw"}`},
+	}); err != nil {
+		t.Fatalf("write duplicate zip: %v", err)
+	}
+	if err := validateOpenClawZip(zipPath); err == nil {
+		t.Fatalf("expected duplicate zip entries to be rejected")
+	}
+}
+
 func TestValidateOpenClawZipAcceptsSkillsOnlyArchive(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "openclaw-main.zip")
@@ -339,19 +353,32 @@ func writeMinimalOpenClawZip(path string) error {
 }
 
 func writeZipEntries(path string, entries map[string]string) error {
+	ordered := make([]zipEntry, 0, len(entries))
+	for name, content := range entries {
+		ordered = append(ordered, zipEntry{name: name, content: content})
+	}
+	return writeZipEntryList(path, ordered)
+}
+
+type zipEntry struct {
+	name    string
+	content string
+}
+
+func writeZipEntryList(path string, entries []zipEntry) error {
 	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	writer := zip.NewWriter(file)
-	for name, content := range entries {
-		entry, err := writer.Create(name)
+	for _, item := range entries {
+		entry, err := writer.Create(item.name)
 		if err != nil {
 			_ = writer.Close()
 			_ = file.Close()
 			return err
 		}
-		if _, err := entry.Write([]byte(content)); err != nil {
+		if _, err := entry.Write([]byte(item.content)); err != nil {
 			_ = writer.Close()
 			_ = file.Close()
 			return err
