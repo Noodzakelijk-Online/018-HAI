@@ -107,11 +107,12 @@ type PursuitRoutingOutcome struct {
 }
 
 type SearchRequest struct {
-	OwnerIdentity    string `json:"-"`
-	Query            string `json:"query"`
-	ProjectKey       string `json:"projectKey,omitempty"`
-	Limit            int    `json:"limit,omitempty"`
-	IncludeSensitive bool   `json:"includeSensitive,omitempty"`
+	OwnerIdentity        string   `json:"-"`
+	Query                string   `json:"query"`
+	ProjectKey           string   `json:"projectKey,omitempty"`
+	Limit                int      `json:"limit,omitempty"`
+	IncludeSensitive     bool     `json:"includeSensitive,omitempty"`
+	ExcludeConnectorKeys []string `json:"-"`
 }
 
 type RankedExtraction struct {
@@ -359,6 +360,24 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
 		}
 	}
+	if connectorKey == projectInstructionsConnectorKey || connectorKey == fabricPatternsConnectorKey {
+		label := "project instructions"
+		if connectorKey == fabricPatternsConnectorKey {
+			label = "Fabric patterns"
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("%s must use the code_spec category", label)
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("%s are local-only; localOnly must be true", label)
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("%s require a selected folder under CONNECTED_SOURCE_LOCAL_ROOT", label)
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("%s folder is not allowed: %w", label, err)
+		}
+	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
 	}
@@ -431,6 +450,23 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 			}
 			if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), *request.SyncTarget); err != nil {
 				return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
+			}
+		}
+	}
+	if source.ConnectorKey == projectInstructionsConnectorKey || source.ConnectorKey == fabricPatternsConnectorKey {
+		label := "project instructions"
+		if source.ConnectorKey == fabricPatternsConnectorKey {
+			label = "Fabric patterns"
+		}
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("%s are local-only; localOnly must remain true", label)
+		}
+		if request.SyncTarget != nil {
+			if strings.TrimSpace(*request.SyncTarget) == "" {
+				return nil, fmt.Errorf("%s require a selected folder", label)
+			}
+			if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), *request.SyncTarget); err != nil {
+				return nil, fmt.Errorf("%s folder is not allowed: %w", label, err)
 			}
 		}
 	}
@@ -519,6 +555,19 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 		if requested := strings.TrimSpace(request.FolderPath); requested != "" && requested != strings.TrimSpace(source.SyncTarget) {
 			return nil, fmt.Errorf("OpenSpec sync must use its registered project folder")
+		}
+		request.FolderPath = source.SyncTarget
+		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
+	}
+	if isManualPlanningContextOnlyConnector(source.ConnectorKey) {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) == "" {
+			return nil, fmt.Errorf("%s must remain local-only with a selected folder", source.ConnectorKey)
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("%s must be read from the selected folder; manual items are not accepted", source.ConnectorKey)
+		}
+		if requested := strings.TrimSpace(request.FolderPath); requested != "" && requested != strings.TrimSpace(source.SyncTarget) {
+			return nil, fmt.Errorf("%s sync must use its registered folder", source.ConnectorKey)
 		}
 		request.FolderPath = source.SyncTarget
 		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
@@ -671,6 +720,32 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			return nil, err
 		}
 		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == projectInstructionsConnectorKey {
+		items, err = s.projectInstructionItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.project_instructions_read", fmt.Sprintf("read %d untrusted project instruction file(s) from the selected local project", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == fabricPatternsConnectorKey {
+		items, err = s.fabricPatternItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.fabric_patterns_read", fmt.Sprintf("read %d bounded untrusted Fabric prompt pattern(s) from the selected local folder", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
 		items, err = s.whatsAppExportItems(source, request)
@@ -956,11 +1031,11 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 8
 	}
-	visibleSourceIDs, err := s.visibleSourceIDs(request.OwnerIdentity)
+	visibleSourceIDs, err := s.visibleSourceIDsExcluding(request.OwnerIdentity, request.ExcludeConnectorKeys)
 	if err != nil {
 		return nil, err
 	}
-	if s.semanticService != nil && s.semanticService.Enabled() {
+	if len(request.ExcludeConnectorKeys) == 0 && s.semanticService != nil && s.semanticService.Enabled() {
 		matches, semanticErr := s.semanticService.Search(context.Background(), semantic.SearchRequest{
 			OwnerIdentity: request.OwnerIdentity, Query: request.Query, ProjectKey: request.ProjectKey,
 			Limit: limit, IncludeSensitive: request.IncludeSensitive,
@@ -1016,13 +1091,26 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 }
 
 func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, error) {
+	return s.visibleSourceIDsExcluding(ownerIdentity, nil)
+}
+
+func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnectorKeys []string) (map[uuid.UUID]bool, error) {
 	sources, err := s.repo.FindSources(true)
 	if err != nil {
 		return nil, err
 	}
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	excluded := make(map[string]bool, len(excludedConnectorKeys))
+	for _, connectorKey := range excludedConnectorKeys {
+		if connectorKey = strings.TrimSpace(connectorKey); connectorKey != "" {
+			excluded[connectorKey] = true
+		}
+	}
 	visible := make(map[uuid.UUID]bool, len(sources))
 	for _, source := range sources {
+		if excluded[strings.TrimSpace(source.ConnectorKey)] {
+			continue
+		}
 		if ownerIdentity == "" || source.OwnerIdentity == "" || source.OwnerIdentity == ownerIdentity {
 			visible[source.ID] = true
 		}
@@ -1476,13 +1564,16 @@ func (s *service) extractAndStore(source *models.ConnectedSource, raw *models.So
 	existing.SourceLabel = raw.Title
 	existing.ContentHash = raw.ContentHash
 	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
-	existing.Uncertain = len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
+	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
 	existing.LastIndexedAt = &now
 	return s.repo.SaveExtraction(existing)
 }
 
 func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *models.SourceExtraction) {
 	if s.memoryService == nil || source == nil || extraction == nil {
+		return
+	}
+	if isManualPlanningContextOnlyConnector(source.ConnectorKey) {
 		return
 	}
 	if extraction.Sensitive || extraction.Uncertain || extraction.Summary == "" {
@@ -1512,6 +1603,9 @@ func (s *service) rememberExtractionCorrection(before, after *models.SourceExtra
 		return
 	}
 	source, _ := s.repo.FindSource(after.SourceID)
+	if source != nil && isManualPlanningContextOnlyConnector(source.ConnectorKey) {
+		return
+	}
 	request := extractionCorrectionMemoryRequest(source, before, after)
 	ownerIdentity := ""
 	if source != nil {
@@ -1650,6 +1744,9 @@ func extractionCorrectionValue(label, value string) string {
 
 func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) (*PursuitRoutingOutcome, error) {
 	if s.workflowService == nil {
+		return nil, nil
+	}
+	if source == nil || isManualPlanningContextOnlyConnector(source.ConnectorKey) {
 		return nil, nil
 	}
 	taskSignal := firstNonEmpty(extraction.Tasks, extraction.FollowUps)
@@ -1953,6 +2050,8 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
 		{ConnectorKey: airbyteInventoryConnectorKey, Name: "Airbyte source and connection inventory (local read only)", Category: "connector_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "airbyte-api-key,approved-workspace:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded source and connection metadata from a configured local Airbyte API and fixed workspace allowlist; never reads credentials/configuration/records or creates, changes, starts, stops, or deletes a sync"},
 		{ConnectorKey: openSpecArtifactConnectorKey, Name: "OpenSpec change artifacts (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only proposal.md, design.md, tasks.md, and specs Markdown below a selected local openspec/changes folder; never installs or runs OpenSpec, edits a repository, or authorizes code changes"},
+		{ConnectorKey: projectInstructionsConnectorKey, Name: "Project instructions (manual context only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only root AGENTS.md and CLAUDE.md from a selected local project; stores untrusted review context and never authorizes execution"},
+		{ConnectorKey: fabricPatternsConnectorKey, Name: "Fabric patterns (manual context only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded immediate-child system.md pattern files from a selected local folder; never runs or auto-attaches patterns"},
 	}
 }
 
@@ -1982,7 +2081,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {

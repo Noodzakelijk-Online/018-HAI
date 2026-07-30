@@ -67,6 +67,38 @@ type SemanticReindexResult struct {
 	Explanation string `json:"explanation"`
 }
 
+const (
+	memoryHealthStaleAfter           = 90 * 24 * time.Hour
+	maxMemoryConsolidationCandidates = 25
+)
+
+// MemoryHealthReport is a read-only owner-scoped review. It proposes no
+// mutation; corrections, merges, archival, and deletion use existing paths.
+type MemoryHealthReport struct {
+	ProjectKey               string                         `json:"projectKey,omitempty"`
+	GeneratedAt              time.Time                      `json:"generatedAt"`
+	Active                   int                            `json:"active"`
+	Archived                 int                            `json:"archived"`
+	SourceLinked             int                            `json:"sourceLinked"`
+	NeedsSourceReview        int                            `json:"needsSourceReview"`
+	HighConfidenceUngrounded int                            `json:"highConfidenceUngrounded"`
+	Stale                    int                            `json:"stale"`
+	Dormant                  int                            `json:"dormant"`
+	PossibleDuplicatePairs   int                            `json:"possibleDuplicatePairs"`
+	ConsolidationCandidates  []MemoryConsolidationCandidate `json:"consolidationCandidates"`
+	Scope                    string                         `json:"scope"`
+}
+
+type MemoryConsolidationCandidate struct {
+	FirstID        uuid.UUID `json:"firstId"`
+	SecondID       uuid.UUID `json:"secondId"`
+	ProjectKey     string    `json:"projectKey,omitempty"`
+	Kind           string    `json:"kind"`
+	Similarity     float64   `json:"similarity"`
+	SourceDiverges bool      `json:"sourceDiverges"`
+	Reason         string    `json:"reason"`
+}
+
 type Service interface {
 	Create(request CreateRequest) (*models.ContextMemory, error)
 	Update(id uuid.UUID, request UpdateRequest) (*models.ContextMemory, error)
@@ -97,6 +129,10 @@ type SemanticReindexService interface {
 	ReindexSemanticForOwner(ownerIdentity string, limit int) (*SemanticReindexResult, error)
 }
 
+type MemoryHealthService interface {
+	MemoryHealthForOwner(ownerIdentity, projectKey string) (*MemoryHealthReport, error)
+}
+
 type service struct {
 	repo            Repository
 	semanticService semantic.Service
@@ -120,6 +156,87 @@ func DefaultService() Service {
 
 func (s *service) Create(request CreateRequest) (*models.ContextMemory, error) {
 	return s.createForOwner("", request)
+}
+
+func (s *service) MemoryHealthForOwner(ownerIdentity, projectKey string) (*MemoryHealthReport, error) {
+	projectKey = strings.TrimSpace(projectKey)
+	memories, err := s.FindAllForOwner(ownerIdentity, projectKey, true)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	staleBefore := now.Add(-memoryHealthStaleAfter)
+	report := &MemoryHealthReport{
+		ProjectKey:              projectKey,
+		GeneratedAt:             now,
+		ConsolidationCandidates: []MemoryConsolidationCandidate{},
+		Scope:                   "Read-only owner-scoped memory health and consolidation preview. Suggestions never archive, merge, delete, change provenance, or make a memory eligible as verified context.",
+	}
+	active := make([]models.ContextMemory, 0, len(memories))
+	for _, item := range memories {
+		if item.Archived {
+			report.Archived++
+			continue
+		}
+		report.Active++
+		active = append(active, item)
+		if strings.TrimSpace(item.SourceURI) != "" {
+			report.SourceLinked++
+		} else {
+			report.NeedsSourceReview++
+			if item.Confidence >= 0.8 {
+				report.HighConfidenceUngrounded++
+			}
+		}
+		if !item.UpdatedAt.IsZero() && item.UpdatedAt.Before(staleBefore) {
+			report.Stale++
+		}
+		if item.LastUsedAt == nil {
+			if !item.CreatedAt.IsZero() && item.CreatedAt.Before(staleBefore) {
+				report.Dormant++
+			}
+		} else if item.LastUsedAt.Before(staleBefore) {
+			report.Dormant++
+		}
+	}
+
+	for first := 0; first < len(active); first++ {
+		for second := first + 1; second < len(active); second++ {
+			left, right := active[first], active[second]
+			if left.ProjectKey != right.ProjectKey || left.Kind != right.Kind {
+				continue
+			}
+			score := similarity(left.Content, right.Content)
+			if score < 0.78 {
+				continue
+			}
+			report.PossibleDuplicatePairs++
+			if len(report.ConsolidationCandidates) == maxMemoryConsolidationCandidates {
+				continue
+			}
+			report.ConsolidationCandidates = append(report.ConsolidationCandidates, MemoryConsolidationCandidate{
+				FirstID: left.ID, SecondID: right.ID, ProjectKey: left.ProjectKey, Kind: left.Kind,
+				Similarity:     math.Round(score*1000) / 1000,
+				SourceDiverges: strings.TrimSpace(left.SourceURI) != strings.TrimSpace(right.SourceURI),
+				Reason:         "Similar active memories share a project and kind; inspect both records and their provenance before any manual consolidation.",
+			})
+		}
+	}
+	sort.SliceStable(report.ConsolidationCandidates, func(i, j int) bool {
+		if report.ConsolidationCandidates[i].Similarity == report.ConsolidationCandidates[j].Similarity {
+			return report.ConsolidationCandidates[i].FirstID.String() < report.ConsolidationCandidates[j].FirstID.String()
+		}
+		return report.ConsolidationCandidates[i].Similarity > report.ConsolidationCandidates[j].Similarity
+	})
+	return report, nil
+}
+
+func HealthForOwner(service Service, ownerIdentity, projectKey string) (*MemoryHealthReport, error) {
+	health, ok := service.(MemoryHealthService)
+	if !ok {
+		return nil, fmt.Errorf("memory health review is unavailable")
+	}
+	return health.MemoryHealthForOwner(ownerIdentity, projectKey)
 }
 
 // CreateForOwner stores a memory under the authenticated owner. It never

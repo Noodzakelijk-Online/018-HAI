@@ -72,19 +72,20 @@ type Tool struct {
 // Result is an auditable result of a read-only preflight. It contains no raw
 // MCP response, credentials, headers, or tool arguments.
 type Result struct {
-	ID              string    `json:"id"`
-	ServerID        string    `json:"serverId"`
-	CatalogID       string    `json:"catalogId,omitempty"`
-	CatalogName     string    `json:"catalogName,omitempty"`
-	URL             string    `json:"url,omitempty"`
-	Status          string    `json:"status"`
-	Detail          string    `json:"detail"`
-	ProtocolVersion string    `json:"protocolVersion,omitempty"`
-	ToolCount       int       `json:"toolCount"`
-	Tools           []Tool    `json:"tools,omitempty"`
-	Truncated       bool      `json:"truncated"`
-	DurationMs      int64     `json:"durationMs"`
-	CheckedAt       time.Time `json:"checkedAt"`
+	ID               string    `json:"id"`
+	ServerID         string    `json:"serverId"`
+	CatalogID        string    `json:"catalogId,omitempty"`
+	CatalogName      string    `json:"catalogName,omitempty"`
+	URL              string    `json:"url,omitempty"`
+	Status           string    `json:"status"`
+	Detail           string    `json:"detail"`
+	ProtocolVersion  string    `json:"protocolVersion,omitempty"`
+	ToolCount        int       `json:"toolCount"`
+	Tools            []Tool    `json:"tools,omitempty"`
+	Truncated        bool      `json:"truncated"`
+	ReadOnlyVerified bool      `json:"readOnlyVerified"`
+	DurationMs       int64     `json:"durationMs"`
+	CheckedAt        time.Time `json:"checkedAt"`
 }
 
 // ServerStatus is safe to show in an authenticated operator view.
@@ -242,7 +243,7 @@ func (s *Service) Preflight(ctx context.Context, serverID string) (Result, bool)
 		result.Detail = safeError("tools/list", err)
 		return s.record(result, start), true
 	}
-	tools, count, truncated, err := boundedTools(toolsResponse.Result)
+	tools, declaredToolNames, count, truncated, err := boundedTools(toolsResponse.Result)
 	if err != nil {
 		result.Status = "failed"
 		result.Detail = "tools/list returned an invalid result"
@@ -253,6 +254,19 @@ func (s *Service) Preflight(ctx context.Context, serverID string) (Result, bool)
 	result.Tools = tools
 	result.ToolCount = count
 	result.Truncated = truncated
+	if allowedTools, contractName, hasContract := readOnlyToolContract(server.CatalogID); hasContract {
+		if count == 0 {
+			result.Status = "blocked"
+			result.Detail = contractName + " declared no reviewed read-only context tools; keep the server blocked until an explicit inspection-only toolset is configured"
+			return s.record(result, start), true
+		}
+		if disallowed := readOnlyToolNameViolations(declaredToolNames, allowedTools); len(disallowed) > 0 {
+			result.Status = "blocked"
+			result.Detail = contractName + " declared tools outside HAI's reviewed inspection-only context allowlist; keep interactive, file, storage, and unknown tools unavailable"
+			return s.record(result, start), true
+		}
+		result.ReadOnlyVerified = true
+	}
 	return s.record(result, start), true
 }
 
@@ -388,7 +402,7 @@ func matchesRequestID(raw json.RawMessage, expected int) bool {
 	return strings.TrimSpace(string(raw)) == strconv.Itoa(expected)
 }
 
-func boundedTools(raw json.RawMessage) ([]Tool, int, bool, error) {
+func boundedTools(raw json.RawMessage) ([]Tool, []string, int, bool, error) {
 	var result struct {
 		Tools []struct {
 			Name        string          `json:"name"`
@@ -397,27 +411,68 @@ func boundedTools(raw json.RawMessage) ([]Tool, int, bool, error) {
 		} `json:"tools"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, 0, false, err
+		return nil, nil, 0, false, err
 	}
 	count := len(result.Tools)
+	declaredNames := make([]string, 0, count)
+	for _, item := range result.Tools {
+		name := redactDisplay(strings.TrimSpace(item.Name))
+		if name == "" {
+			name = "redacted-tool"
+		}
+		declaredNames = append(declaredNames, truncate(name, 128))
+	}
 	truncated := count > maxTools
 	if truncated {
 		result.Tools = result.Tools[:maxTools]
 	}
 	tools := make([]Tool, 0, len(result.Tools))
 	for _, item := range result.Tools {
-		name := redactDisplay(strings.TrimSpace(item.Name))
-		if name == "" {
-			name = "redacted-tool"
-		}
 		tools = append(tools, Tool{
-			Name:           truncate(name, 128),
+			Name:           declaredNames[len(tools)],
 			Title:          truncate(redactDisplay(strings.TrimSpace(item.Title)), 160),
 			HasInputSchema: len(item.InputSchema) > 0 && string(item.InputSchema) != "null",
 		})
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools, count, truncated, nil
+	return tools, declaredNames, count, truncated, nil
+}
+
+var githubReadOnlyContextTools = map[string]struct{}{
+	"get_commit": {}, "get_file_contents": {}, "get_pull_request": {},
+	"get_pull_request_diff": {}, "get_pull_request_files": {}, "get_repository": {},
+	"get_workflow_run_logs": {}, "issue_read": {}, "list_branches": {},
+	"list_commits": {}, "list_issues": {}, "list_pull_requests": {},
+	"list_workflow_runs": {}, "pull_request_read": {}, "search_code": {},
+	"search_issues": {}, "search_pull_requests": {}, "search_repositories": {},
+}
+
+var playwrightReadOnlyContextTools = map[string]struct{}{
+	"browser_console_messages": {}, "browser_find": {}, "browser_get_config": {},
+	"browser_route_list": {}, "browser_snapshot": {},
+}
+
+func readOnlyToolContract(catalogID string) (map[string]struct{}, string, bool) {
+	switch strings.TrimSpace(catalogID) {
+	case "github-mcp-server":
+		return githubReadOnlyContextTools, "GitHub MCP", true
+	case "playwright-mcp":
+		return playwrightReadOnlyContextTools, "Playwright MCP", true
+	default:
+		return nil, "", false
+	}
+}
+
+func readOnlyToolNameViolations(names []string, allowedTools map[string]struct{}) []string {
+	violations := make([]string, 0)
+	for _, declared := range names {
+		name := strings.TrimSpace(declared)
+		if _, allowed := allowedTools[name]; !allowed {
+			violations = append(violations, name)
+		}
+	}
+	sort.Strings(violations)
+	return violations
 }
 
 func safeError(stage string, err error) string {

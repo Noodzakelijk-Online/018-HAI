@@ -1723,10 +1723,11 @@ func (s *service) retrieveSourceContext(request IntakeRequest) ([]source.RankedE
 		return []source.RankedExtraction{}, "Connected-source retrieval is not configured."
 	}
 	result, err := s.sourceService.Search(source.SearchRequest{
-		OwnerIdentity: request.OwnerIdentity,
-		Query:         request.Request,
-		ProjectKey:    request.ProjectKey,
-		Limit:         6,
+		OwnerIdentity:        request.OwnerIdentity,
+		Query:                request.Request,
+		ProjectKey:           request.ProjectKey,
+		Limit:                6,
+		ExcludeConnectorKeys: source.ManualPlanningContextOnlyConnectorKeys(),
 	})
 	if err != nil {
 		return []source.RankedExtraction{}, "Connected-source retrieval failed or has no available index."

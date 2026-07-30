@@ -703,7 +703,7 @@ func TestRunValidatedTaskStoresLesson(t *testing.T) {
 	}
 
 	if plan.CompletionStatus != "validated" {
-		t.Fatalf("status = %q, want validated: %#v", plan.CompletionStatus, plan.ValidationResult)
+		t.Fatalf("status = %q, want validated: validation=%#v model=%#v events=%#v", plan.CompletionStatus, plan.ValidationResult, plan.ModelDecision, plan.Events)
 	}
 	if !plan.ValidationResult.Passed {
 		t.Fatalf("expected validation to pass")
@@ -962,7 +962,9 @@ func newTaskTestLLMService(t *testing.T) *llm.Service {
 	t.Helper()
 	t.Setenv("LLM_PROVIDERS_JSON", "")
 	t.Setenv("LLM_POLICY_JSON", "")
+	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "false")
 	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+	t.Setenv("OLLAMA_MODEL_IDS", "qwen2.5-coder:32b,qwen2.5-coder:7b,gemma3:4b")
 	t.Setenv("LM_STUDIO_BASE_URL", "")
 	t.Setenv("FREE_CLOUD_OPENAI_BASE_URL", "")
 	llmService, err := llm.NewServiceFromEnv()

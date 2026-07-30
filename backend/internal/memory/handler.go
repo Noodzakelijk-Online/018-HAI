@@ -46,6 +46,15 @@ func (h *Handler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, memories)
 }
 
+func (h *Handler) Health(c *gin.Context) {
+	report, err := HealthForOwner(h.service, memoryOwner(c), c.Query("projectKey"))
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "memory health review is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
 // Query lists memories with search, filtering, sorting, and pagination.
 // It preserves the existing List endpoint unchanged and adds a richer,
 // paginated envelope for clients that need to browse large memory sets.

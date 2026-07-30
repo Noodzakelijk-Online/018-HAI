@@ -143,3 +143,88 @@ func TestPreflightFailsClosedForProtocolDowngradeOrMismatchedResponseID(t *testi
 		}
 	}
 }
+
+func TestPreflightBlocksGitHubWriteInventory(t *testing.T) {
+	methods := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		methods = append(methods, request.Method)
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "github-session")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_repository"},{"name":"create_issue"}]}}`))
+		default:
+			t.Fatalf("preflight must not call %q", request.Method)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "github", CatalogID: "github-mcp-server", URL: server.URL}}})
+	result, found := svc.Preflight(context.Background(), "github")
+	if !found || result.Status != "blocked" || result.ReadOnlyVerified {
+		t.Fatalf("write-capable GitHub inventory must be blocked: %#v", result)
+	}
+	if got := strings.Join(methods, ","); got != "initialize,notifications/initialized,tools/list" {
+		t.Fatalf("methods = %q", got)
+	}
+}
+
+func TestPreflightVerifiesReviewedReadOnlyInventory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "github-session")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_repository"},{"name":"list_issues"}]}}`))
+		default:
+			t.Fatalf("unexpected MCP method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "github", CatalogID: "github-mcp-server", URL: server.URL}}})
+	result, found := svc.Preflight(context.Background(), "github")
+	if !found || result.Status != "ready" || !result.ReadOnlyVerified {
+		t.Fatalf("reviewed GitHub inventory must be ready: %#v", result)
+	}
+}
+
+func TestToolAllowlistChecksNamesBeyondDisplayLimit(t *testing.T) {
+	declared := make([]map[string]string, 0, maxTools+1)
+	for index := 0; index < maxTools; index++ {
+		declared = append(declared, map[string]string{"name": "get_repository"})
+	}
+	declared = append(declared, map[string]string{"name": "create_issue"})
+	raw, err := json.Marshal(map[string]any{"tools": declared})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tools, names, count, truncated, err := boundedTools(raw)
+	if err != nil || len(tools) != maxTools || len(names) != maxTools+1 || count != maxTools+1 || !truncated {
+		t.Fatalf("bounded tools = tools:%d names:%d count:%d truncated:%t err:%v", len(tools), len(names), count, truncated, err)
+	}
+	violations := readOnlyToolNameViolations(names, githubReadOnlyContextTools)
+	if len(violations) != 1 || violations[0] != "create_issue" {
+		t.Fatalf("tail violation = %#v", violations)
+	}
+}
