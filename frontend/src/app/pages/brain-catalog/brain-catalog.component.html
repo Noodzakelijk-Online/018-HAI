@@ -144,6 +144,98 @@
         </ng-container>
         <span *ngIf="langfuseStatusUnavailable">The local bridge status could not be read. No Langfuse action was started.</span>
       </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="isBoundedStatusProfile(entry.id)">
+        <strong>Bounded local integration state</strong>
+        <span *ngIf="boundedStatusLoading(entry.id)">Checking the reviewed local boundary.</span>
+        <ng-container *ngIf="boundedStatus(entry.id) as status">
+          <span>
+            {{ status.configured
+              ? 'Configured within its reviewed local-only capability boundary.'
+              : 'Not configured. HAI cannot use this integration.' }}
+          </span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small *ngIf="status.workspaces?.length">Approved snapshots: {{ status.workspaces?.length }}.</small>
+          <small *ngIf="status.experimentIds?.length">
+            Approved experiments: {{ status.experimentIds?.length }}. Metrics: {{ status.metricKeys?.length || 0 }}.
+          </small>
+          <small *ngIf="status.profiles?.length">Approved verification profiles: {{ status.profiles?.length }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small *ngIf="status.restrictions?.length">
+            Blocked capabilities: {{ status.restrictions?.join('; ') }}.
+          </small>
+          <div class="brain-catalog-page__bridge-actions" *ngIf="entry.id === 'openlit' && status.configured">
+            <button
+              nz-button
+              nzType="primary"
+              (click)="exportOpenLITSnapshot()"
+              [nzLoading]="exportingOpenLIT"
+              [disabled]="exportingOpenLIT"
+            >
+              Export aggregate snapshot
+            </button>
+          </div>
+          <small *ngIf="entry.id === 'openlit' && openLITExport as export">
+            Aggregate trace accepted {{ export.exportedAt }}. Trace ID: {{ export.traceId }}.
+          </small>
+        </ng-container>
+        <span *ngIf="boundedStatusUnavailable(entry.id)">
+          The local integration status could not be read. No action was started.
+        </span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'google-genai-toolbox'">
+        <strong>MCP Toolbox inspection</strong>
+        <span>
+          HAI can inspect one owner-configured local toolset in Runtime Lab. It never receives
+          database credentials or calls a declared tool during readiness checks.
+        </span>
+        <div class="brain-catalog-page__bridge-actions">
+          <button nz-button nzType="default" (click)="openMCPToolboxRuntimeLab()">
+            Open MCP readiness
+          </button>
+        </div>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'microsoft-agent-framework'">
+        <strong>Migration planning</strong>
+        <span>
+          Paste a redacted AutoGen-style event export. HAI returns a transient control map; it
+          does not store the sample or start Microsoft Agent Framework.
+        </span>
+        <textarea
+          #frameworkMigrationInput
+          nz-input
+          [value]="frameworkMigrationExample"
+          rows="8"
+          aria-label="Redacted AutoGen migration sample"
+        ></textarea>
+        <div class="brain-catalog-page__bridge-actions">
+          <button
+            nz-button
+            nzType="primary"
+            (click)="prepareFrameworkMigration(frameworkMigrationInput.value)"
+            [nzLoading]="planningFrameworkMigration"
+            [disabled]="planningFrameworkMigration"
+          >
+            Prepare migration plan
+          </button>
+        </div>
+        <ng-container *ngIf="frameworkMigrationPlan as plan">
+          <small>
+            <strong>{{ plan.steps.length }} HAI control stages</strong> -
+            runtime detected: {{ plan.frameworkRuntimeDetected ? 'yes' : 'no' }};
+            execution allowed: {{ plan.executionAllowed ? 'yes' : 'no' }}.
+          </small>
+          <div class="brain-catalog-page__control-mappings">
+            <div *ngFor="let step of plan.steps">
+              <strong>{{ step.order }}. {{ step.haiControl }}</strong>
+              <span>{{ step.agentFrameworkRole }}</span>
+              <small>{{ step.gate }}</small>
+            </div>
+          </div>
+          <small>Blocked until: {{ plan.blockedUntil.join('; ') }}.</small>
+          <small>{{ plan.scope }}</small>
+        </ng-container>
+      </div>
       <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
       <div class="brain-catalog-page__review-action" *ngIf="canStartReview(entry)">
         <div>
@@ -162,6 +254,15 @@
         <div><dt>Reviewed</dt><dd>{{ entry.verifiedAt }}</dd></div>
         <div *ngIf="entry.sourceCollection"><dt>OSS Insight collection</dt><dd>{{ entry.sourceCollection }}</dd></div>
       </dl>
+      <div class="brain-catalog-page__control-mappings" *ngIf="entry.implementation as implementation">
+        <strong>HAI implementation boundary</strong>
+        <div>
+          <span>{{ implementation.control }}</span>
+          <i nz-icon nzType="arrow-right" nzTheme="outline"></i>
+          <span>{{ implementation.route }}</span>
+          <small>{{ implementation.scope }}</small>
+        </div>
+      </div>
       <p class="brain-catalog-page__verification-note">{{ entry.verificationNote }}</p>
       <div class="brain-catalog-page__upstream-review">
         <div>
@@ -172,9 +273,20 @@
           Recheck upstream
         </button>
       </div>
-      <div class="brain-catalog-page__upstream-result" *ngIf="upstreamReview as review" [class.brain-catalog-page__upstream-result--warning]="review.archived || !review.available">
+      <div class="brain-catalog-page__upstream-result" *ngIf="upstreamReview as review" [class.brain-catalog-page__upstream-result--warning]="review.archived || !review.available || review.repositoryMoved">
         <strong>{{ review.available ? (review.archived ? 'Archived upstream' : 'Upstream available') : 'Upstream unavailable' }}</strong>
         <span>{{ review.message }}</span>
+        <small *ngIf="review.repositoryMoved && review.resolvedRepository">
+          GitHub resolves this project as
+          <a
+            *ngIf="review.resolvedUpstreamUrl; else resolvedRepositoryText"
+            [href]="review.resolvedUpstreamUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ review.resolvedRepository }}</a>
+          <ng-template #resolvedRepositoryText>{{ review.resolvedRepository }}</ng-template>.
+          Catalog configuration was not changed.
+        </small>
         <small><strong>Readiness: {{ readinessLabel(review.readiness) }}</strong> - {{ review.readinessReason }}</small>
         <small *ngIf="review.requiredGates?.length">Required before activation: {{ review.requiredGates?.join('; ') }}.</small>
         <small>Checked {{ review.checkedAt }}<ng-container *ngIf="review.license"> · {{ review.license }}</ng-container><ng-container *ngIf="review.defaultBranch"> · {{ review.defaultBranch }}</ng-container></small>
@@ -227,6 +339,62 @@
   </hai-progressive-section>
 
   <hai-progressive-section moduleId="brain-catalog" sectionId="oss-insight-screening" title="OSS Insight collection coverage" summary="The complete discovery pass is visible here. A collection is evidence for review, never a permission to install its repositories.">
+    <div class="brain-catalog-page__source-review">
+      <div>
+        <strong>Catalog metadata maintenance</strong>
+        <span>
+          Check only due fixed entries in a bounded daily batch. This records public metadata
+          without installing, enabling, or reclassifying an upstream project.
+        </span>
+      </div>
+      <button
+        nz-button
+        nzType="default"
+        (click)="runDueCatalogRevalidations()"
+        [nzLoading]="runningCatalogRevalidation"
+        [disabled]="runningCatalogRevalidation"
+      >
+        <i nz-icon nzType="sync" nzTheme="outline"></i>
+        Run due checks
+      </button>
+    </div>
+    <div
+      class="brain-catalog-page__source-result"
+      *ngIf="catalogRevalidation as run"
+      [class.brain-catalog-page__source-result--warning]="!run.enabled || run.failed > 0"
+    >
+      <strong>{{ run.checked }} checked / {{ run.eligible }} eligible</strong>
+      <span>
+        {{ run.reused }} recent results reused; {{ run.failed }} need retry or review.
+        No upstream was installed, enabled, or reclassified.
+      </span>
+    </div>
+    <div class="brain-catalog-page__source-result" *ngIf="collectionMaintenanceHistory.length">
+      <strong>Recent persisted collection checks</strong>
+      <small *ngFor="let review of collectionMaintenanceHistory">
+        {{ review.checkedAt | date: 'short' }}:
+        {{ review.currentTotal }} live / {{ review.expectedTotal }} recorded.
+      </small>
+    </div>
+    <div
+      class="brain-catalog-page__source-result brain-catalog-page__source-result--warning"
+      *ngIf="collectionMaintenanceHistoryUnavailable"
+    >
+      Persisted collection history is unavailable. HAI did not start a replacement scan.
+    </div>
+    <div class="brain-catalog-page__source-result" *ngIf="repositoryDiscoveryMaintenanceHistory.length">
+      <strong>Recent repository gap reviews</strong>
+      <small *ngFor="let review of repositoryDiscoveryMaintenanceHistory">
+        {{ review.checkedAt | date: 'short' }}:
+        {{ review.unreviewedDiscoveries }} candidates from {{ review.repositoriesChecked }} names.
+      </small>
+    </div>
+    <div
+      class="brain-catalog-page__source-result brain-catalog-page__source-result--warning"
+      *ngIf="repositoryDiscoveryMaintenanceHistoryUnavailable"
+    >
+      Persisted repository gap-review history is unavailable. HAI did not start a replacement scan.
+    </div>
 	<div class="brain-catalog-page__source-review">
 	  <div><strong>Source freshness</strong><span>Admin-only read of one fixed public collection list. It reports drift but never changes HAI's catalog or runtime.</span></div>
 	  <button nz-button nzType="default" (click)="revalidateOSSInsightCollections()" [nzLoading]="checkingOSSInsight" [disabled]="checkingOSSInsight"><i nz-icon nzType="sync" nzTheme="outline"></i> Recheck OSS Insight</button>
@@ -253,10 +421,27 @@
       <small *ngIf="report.unavailableCollections?.length">Unavailable: {{ report.unavailableCollections?.join(', ') }}</small>
       <small *ngIf="report.missingCollections?.length">Missing from source: {{ report.missingCollections?.join(', ') }}</small>
     </div>
+    <div class="brain-catalog-page__source-result" *ngIf="visibleKnownProfiles.length">
+      <strong>Known profiles represented in HAI</strong>
+      <span>
+        These upstreams were matched to existing catalog profiles and were not duplicated as new candidates.
+      </span>
+      <small *ngFor="let profile of visibleKnownProfiles">
+        {{ profile.repository }}: {{ profile.catalogEntryIds.join(', ') }}
+      </small>
+      <button
+        nz-button
+        nzType="default"
+        *ngIf="(ossInsightDiscovery?.knownProfiles?.length ?? 0) > knownProfileDisplayLimit"
+        (click)="showMoreKnownProfiles()"
+      >
+        Show 20 more known profiles
+      </button>
+    </div>
     <div class="brain-catalog-page__discovery-list" *ngIf="visibleDiscoveries.length">
       <article *ngFor="let discovery of visibleDiscoveries">
-        <div><strong>{{ discovery.repository }}</strong><small>Priority {{ discovery.priority }} - {{ discovery.reviewTrack }} - {{ discovery.risk }} risk</small><small>{{ discovery.collection }} - {{ collectionDispositionLabel(discovery.disposition) }}<ng-container *ngIf="(discovery.relatedCollections?.length ?? 0) > 1"> + {{ (discovery.relatedCollections?.length ?? 0) - 1 }} related source categories</ng-container></small><span>{{ discovery.reviewReason }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
-        <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository || !discoveryReviews[discovery.repository]">Review</button></div>
+        <div><strong>{{ discovery.repository }}</strong><small>Priority {{ discovery.priority }} - {{ discovery.reviewTrack }} - {{ discovery.risk }} risk</small><small>{{ discovery.collection }} - {{ collectionDispositionLabel(discovery.disposition) }}<ng-container *ngIf="(discovery.relatedCollections?.length ?? 0) > 1"> + {{ (discovery.relatedCollections?.length ?? 0) - 1 }} related source categories</ng-container></small><span>{{ discovery.reviewReason }}</span><small *ngIf="discovery.triageReason">{{ discovery.triageReason }}</small><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
+        <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="discovery.reviewAllowed === false || !!reviewingDiscoveryRepository || !discoveryReviews[discovery.repository]">Review</button></div>
       </article>
     </div>
     <button nz-button nzType="default" *ngIf="(ossInsightDiscovery?.discoveries?.length ?? 0) > discoveryDisplayLimit" (click)="showMoreDiscoveries()">Show 30 more review candidates</button>

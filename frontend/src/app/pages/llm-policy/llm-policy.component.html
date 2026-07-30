@@ -529,6 +529,52 @@
             <button
               type="button"
               class="section-title-button"
+              (click)="runDueModelMaintenance()"
+              title="Check each due model before routing. Only the fixed configured Ollama tag may be pulled; cloud-managed versions are never silently substituted."
+            >
+              <h2>Daily model checks</h2>
+              <p>Due routable models are checked at most once every 24 hours.</p>
+            </button>
+            <button
+              type="button"
+              nz-button
+              nzType="default"
+              (click)="runDueModelMaintenance()"
+              [nzLoading]="maintaining"
+              [disabled]="maintaining"
+            >
+              Run due checks
+            </button>
+          </div>
+          <nz-empty
+            *ngIf="!maintenance.length"
+            nzNotFoundContent="No persisted model maintenance records yet."
+          ></nz-empty>
+          <div class="event-list" *ngIf="maintenance.length">
+            <article *ngFor="let record of maintenance; trackBy: trackByMaintenance">
+              <i nz-icon nzType="sync" nzTheme="outline"></i>
+              <div>
+                <strong>{{ record.modelName || record.modelId }}</strong>
+                <span>{{ record.providerName }} / checked {{ record.checkedAt | date: 'short' }}</span>
+                <small>{{ record.reason }}</small>
+                <small>{{ maintenanceScheduleText(record) }}</small>
+                <small *ngIf="record.configurationChanged">
+                  Provider or model configuration changed, so HAI verified it again before use.
+                </small>
+                <small *ngIf="record.blocksExecution">
+                  This model remains unavailable for routing until a successful check.
+                </small>
+              </div>
+              <nz-tag [nzColor]="maintenanceColor(record)">{{ record.status }}</nz-tag>
+            </article>
+          </div>
+        </article>
+
+        <article class="surface-panel">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
               (click)="probeProviders()"
               title="Run live provider probes"
             >

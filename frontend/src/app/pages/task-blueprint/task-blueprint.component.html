@@ -222,6 +222,16 @@
             <i nz-icon nzType="file-search" nzTheme="outline"></i>
             Typed draft
           </button>
+          <button
+            type="button"
+            class="chip-button"
+            title="Optional local two-role CrewAI planning draft. It has no tools, memory, delegation, or execution authority."
+            (click)="requestCrewProposal()"
+            [disabled]="crewProposalLoading"
+          >
+            <i nz-icon nzType="team" nzTheme="outline"></i>
+            Review draft
+          </button>
           <span class="chip-button chip-button--status" title="Controlled runtime execution uses automation ID when configured">
             <i nz-icon nzType="deployment-unit" nzTheme="outline"></i>
             Runtime
@@ -282,6 +292,16 @@
           <span>Success criteria</span>
           <textarea nz-input rows="3" formControlName="successCriteria" placeholder="One criterion per line" title="HAI validates against these criteria before treating work as complete"></textarea>
         </label>
+        <label
+          class="candidate-context-toggle"
+          title="Query only explicitly approved local RAGFlow datasets. Returned text remains unverified and cannot become evidence, memory, or an action without independent grounding."
+        >
+          <input type="checkbox" formControlName="includeRagflowCandidates" />
+          <span>
+            <strong>Use local RAGFlow leads</strong>
+            <small>Optional candidate context only. It never counts as evidence.</small>
+          </span>
+        </label>
       </section>
 
       <p class="safety-note">
@@ -303,6 +323,7 @@
         <button type="button" [class.active]="inspectorMode === 'plan'" (click)="inspectorMode = 'plan'">Plan</button>
         <button type="button" [class.active]="inspectorMode === 'evidence'" (click)="inspectorMode = 'evidence'">Evidence</button>
         <button type="button" *ngIf="typedProposal" [class.active]="inspectorMode === 'typed-proposal'" (click)="inspectorMode = 'typed-proposal'">Typed draft</button>
+        <button type="button" *ngIf="crewProposal" [class.active]="inspectorMode === 'crew-proposal'" (click)="inspectorMode = 'crew-proposal'">Review draft</button>
         <button type="button" [class.active]="inspectorMode === 'logs'" (click)="inspectorMode = 'logs'">Logs</button>
       </nav>
 
@@ -566,6 +587,43 @@
         </article>
       </section>
 
+      <section class="inspector-body" *ngIf="inspectorMode === 'crew-proposal' && crewProposal as crew">
+        <article class="inspector-card">
+          <h3>
+            Local reviewed planning draft
+            <span title="Two fixed CrewAI roles created this advisory draft without tools, memory, delegation, or execution access.">?</span>
+          </h3>
+          <p>{{ crew.proposal.goal }}</p>
+          <dl>
+            <div><dt>Model</dt><dd>{{ crew.modelId }}</dd></div>
+            <div><dt>Risk</dt><dd>{{ crew.proposal.risk }}</dd></div>
+            <div>
+              <dt>Approval</dt>
+              <dd>{{ crew.proposal.requiresApproval ? 'Required before external or high-risk action' : 'Still subject to HAI policy' }}</dd>
+            </div>
+          </dl>
+        </article>
+        <article class="inspector-card">
+          <h3>Suggested success criteria</h3>
+          <ul><li *ngFor="let criterion of crew.proposal.successCriteria">{{ criterion }}</li></ul>
+          <button
+            nz-button
+            nzType="default"
+            (click)="useCrewProposalCriteria()"
+            title="Copy criteria into the editable task form only. This does not run, approve, or save work."
+          >
+            Use criteria in task
+          </button>
+        </article>
+        <article class="inspector-card">
+          <h3>Reviewed next steps</h3>
+          <ol><li *ngFor="let step of crew.proposal.nextSteps">{{ step }}</li></ol>
+          <p *ngIf="crew.proposal.uncertainties.length">
+            <strong>Uncertainties:</strong> {{ crew.proposal.uncertainties.join('; ') }}
+          </p>
+        </article>
+      </section>
+
       <section class="inspector-body" *ngIf="inspectorMode === 'plan'">
         <article class="inspector-card">
           <h3>Universal Task Loop</h3>
@@ -768,6 +826,26 @@
             <span>{{ item.extraction.sourceLabel || item.extraction.sourceUri || '-' }}</span>
           </div>
           <nz-empty *ngIf="!plan?.contextPlan?.sourceContext?.length" nzNotFoundContent="No source context loaded."></nz-empty>
+        </article>
+
+        <article
+          class="inspector-card"
+          *ngIf="plan?.contextPlan?.ragflowExplanation || plan?.contextPlan?.ragflowCandidates?.length"
+        >
+          <h3>
+            RAGFlow leads
+            <span title="Optional retrieval leads from approved local datasets. These are not evidence, facts, memory, or execution instructions.">?</span>
+          </h3>
+          <p>{{ plan?.contextPlan?.ragflowExplanation }}</p>
+          <div class="source-row" *ngFor="let item of plan?.contextPlan?.ragflowCandidates || []">
+            <strong>{{ item.documentName || item.chunkId }}</strong>
+            <span>{{ item.snippet }}</span>
+            <small>{{ item.status }} &middot; {{ item.sourceUri }}</small>
+          </div>
+          <nz-empty
+            *ngIf="!plan?.contextPlan?.ragflowCandidates?.length"
+            nzNotFoundContent="No RAGFlow leads were used for this plan."
+          ></nz-empty>
         </article>
 
         <article class="inspector-card" *ngIf="plan?.executionResult as result">

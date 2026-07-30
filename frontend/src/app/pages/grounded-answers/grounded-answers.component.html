@@ -53,6 +53,20 @@
           </div>
           <div class="form-row">
             <label nz-checkbox formControlName="includeSensitive">Include sensitive</label>
+            <label
+              nz-checkbox
+              formControlName="includeRagflowCandidates"
+              title="Retrieve a small set of previews from approved local RAGFlow datasets. Previews cannot support claims, update memory, or trigger actions until explicitly attached and verified."
+            >
+              Offer local RAGFlow candidates
+            </label>
+            <label
+              nz-checkbox
+              formControlName="includeResearchCandidates"
+              title="Retrieve public-source discovery previews from the approved local SearXNG instance. Results remain unverified until explicitly attached and checked."
+            >
+              Offer public-source candidates
+            </label>
             <label nz-checkbox formControlName="allowMemoryUpdate">Allow memory update</label>
             <span class="approval-notice" title="Only a server-recorded approval can authorize a high-risk action. Browser form values are never treated as approval.">Action-mode approval comes from the workflow queue.</span>
           </div>
@@ -214,6 +228,88 @@
             </tr>
           </tbody>
         </nz-table>
+      </nz-card>
+
+      <nz-card nzTitle="Source conflicts" *ngIf="result as r" class="section-card conflict-card">
+        <p class="research-scope">
+          Opposing source assertions remain unresolved. HAI does not select a winner or change a record automatically.
+        </p>
+        <nz-empty
+          *ngIf="!(r.conflicts || []).length"
+          nzNotFoundContent="No source conflicts detected in this verification run."
+        ></nz-empty>
+        <article class="source-conflict" *ngFor="let conflict of r.conflicts || []">
+          <div>
+            <strong>{{ conflict.topic }}</strong>
+            <p>{{ conflict.reason }}</p>
+          </div>
+          <div class="conflict-references" aria-label="Conflicting source records">
+            <code *ngFor="let reference of conflict.evidenceRefs">{{ reference }}</code>
+          </div>
+        </article>
+      </nz-card>
+
+      <nz-card nzTitle="RAGFlow candidate previews" *ngIf="result as r" class="section-card">
+        <p class="research-scope">
+          Retrieval previews are not verification evidence and are not saved. Attach one explicitly, then verify again.
+        </p>
+        <nz-empty
+          *ngIf="!(r.ragflowCandidates || []).length"
+          nzNotFoundContent="No RAGFlow candidate previews were requested or available."
+        ></nz-empty>
+        <div class="research-results" *ngIf="(r.ragflowCandidates || []).length">
+          <article class="research-result" *ngFor="let candidate of r.ragflowCandidates || []">
+            <div>
+              <strong>{{ candidate.sourceLabel }}</strong>
+              <p>{{ candidate.snippet }}</p>
+              <span class="candidate-provenance">
+                Dataset {{ candidate.datasetId }} &middot; chunk {{ candidate.chunkId }}
+                <ng-container *ngIf="candidate.similarity !== undefined">
+                  &middot; similarity {{ candidate.similarity | number: '1.2-2' }}
+                </ng-container>
+              </span>
+              <p class="research-scope">{{ candidate.restrictions }}</p>
+            </div>
+            <button
+              nz-button
+              nzSize="small"
+              nzType="default"
+              (click)="useRAGFlowResult({
+                datasetId: candidate.datasetId,
+                documentId: candidate.documentId,
+                documentName: candidate.sourceLabel,
+                chunkId: candidate.chunkId,
+                content: candidate.snippet,
+                similarity: candidate.similarity
+              })"
+            >
+              Attach as unverified evidence
+            </button>
+          </article>
+        </div>
+      </nz-card>
+
+      <nz-card nzTitle="Public-source candidate previews" *ngIf="result as r" class="section-card">
+        <p class="research-scope">
+          Local SearXNG previews have not been fetched or verified. Attach one explicitly before it can influence an answer.
+        </p>
+        <nz-empty
+          *ngIf="!(r.researchCandidates || []).length"
+          nzNotFoundContent="No public-source candidate previews were requested or available."
+        ></nz-empty>
+        <div class="research-results" *ngIf="(r.researchCandidates || []).length">
+          <article class="research-result" *ngFor="let candidate of r.researchCandidates || []">
+            <div>
+              <strong>{{ candidate.sourceLabel }}</strong>
+              <p>{{ candidate.snippet || 'No snippet returned.' }}</p>
+              <a [href]="candidate.sourceUri" target="_blank" rel="noopener noreferrer">{{ candidate.sourceUri }}</a>
+              <p class="research-scope">{{ candidate.restrictions }}</p>
+            </div>
+            <button nz-button nzSize="small" nzType="default" (click)="useResearchCandidate(candidate)">
+              Attach as unverified evidence
+            </button>
+          </article>
+        </div>
       </nz-card>
 
       <nz-card nzTitle="Needs Review" *ngIf="result as r" class="section-card">

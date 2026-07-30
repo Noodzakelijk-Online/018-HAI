@@ -1,12 +1,38 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { BrainCatalogCollectionDisposition, IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogEntry, IBrainCatalogOSSInsightDiscovery, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../../models/brain-catalog.model.interface'
+import {
+  BrainCatalogCollectionDisposition,
+  IBrainCatalogAdoptionPlan,
+  IBrainCatalogCapabilityRecommendationResponse,
+  IBrainCatalogEntry,
+  IBrainCatalogOSSInsightDiscovery,
+  IBrainCatalogOSSInsightDiscoveryReport,
+  IBrainCatalogOSSInsightKnownProfileHit,
+  IBrainCatalogOSSInsightReview,
+  IBrainCatalogRepositoryDiscoveryMaintenanceReview,
+  IBrainCatalogRevalidationRun,
+  IBrainCatalogResponse,
+  IBrainCatalogUpstreamReview,
+} from '../../models/brain-catalog.model.interface'
 import { IRAGFlowStatus } from '../../models/ragflow.model.interface'
 import { IAnythingLLMStatus } from '../../models/anythingllm.model.interface'
 import { IPresidioStatus } from '../../models/presidio.model.interface'
 import { ILangfuseExportResult, ILangfuseProbeResult, ILangfuseStatus } from '../../models/langfuse.model.interface'
 import { ISerenaStatus } from '../../models/serena.model.interface'
+import { IOpenLITExportResult, IOpenLITStatus } from '../../models/openlit.model.interface'
+import { IMLflowStatus } from '../../models/mlflow.model.interface'
+import { IMiniSWEStatus } from '../../models/miniswe.model.interface'
+import { IGitleaksStatus } from '../../models/gitleaks.model.interface'
+import { IGosecStatus } from '../../models/gosec.model.interface'
+import { ITrivyStatus } from '../../models/trivy.model.interface'
+import { IGrypeStatus } from '../../models/grype.model.interface'
+import { ISyftStatus } from '../../models/syft.model.interface'
+import { IBrowserVerificationStatus } from '../../models/browser-verification.model.interface'
+import {
+  IAgentFrameworkMigrationPlan,
+  IAutoGenCompatibilityEvent,
+} from '../../models/autogen-compat.model.interface'
 import { BrainCatalogService } from '../../services/brain-catalog.service'
 import { LangfuseService } from '../../services/langfuse.service'
 import { PresidioService } from '../../services/presidio.service'
@@ -14,6 +40,28 @@ import { PursuitService } from '../../services/pursuit.service'
 import { RAGFlowService } from '../../services/ragflow.service'
 import { AnythingLLMService } from '../../services/anythingllm.service'
 import { SerenaService } from '../../services/serena.service'
+import { OpenLITService } from '../../services/openlit.service'
+import { MLflowService } from '../../services/mlflow.service'
+import { MiniSWEService } from '../../services/miniswe.service'
+import { GitleaksService } from '../../services/gitleaks.service'
+import { GosecService } from '../../services/gosec.service'
+import { TrivyService } from '../../services/trivy.service'
+import { GrypeService } from '../../services/grype.service'
+import { SyftService } from '../../services/syft.service'
+import { BrowserVerificationService } from '../../services/browser-verification.service'
+import { AutoGenCompatibilityService } from '../../services/autogen-compat.service'
+
+interface BoundedCatalogStatus {
+  configured: boolean
+  endpoint?: string
+  scope: string
+  restrictions?: string[]
+  workspaces?: string[]
+  experimentIds?: string[]
+  metricKeys?: string[]
+  profiles?: Array<unknown>
+  configError?: string
+}
 
 @Component({
   selector: 'app-brain-catalog',
@@ -30,12 +78,19 @@ export class BrainCatalogComponent implements OnInit {
   verifyingDiscoveryRepository = ''
   revalidatingId = ''
   checkingOSSInsight = false
+  runningCatalogRevalidation = false
   discoveringOSSInsight = false
   loadingAdoptionPlan = false
   recommendingCapabilities = false
   discoveryDisplayLimit = 30
+  knownProfileDisplayLimit = 20
   upstreamReview?: IBrainCatalogUpstreamReview
   ossInsightReview?: IBrainCatalogOSSInsightReview
+  catalogRevalidation?: IBrainCatalogRevalidationRun
+  collectionMaintenanceHistory: IBrainCatalogOSSInsightReview[] = []
+  collectionMaintenanceHistoryUnavailable = false
+  repositoryDiscoveryMaintenanceHistory: IBrainCatalogRepositoryDiscoveryMaintenanceReview[] = []
+  repositoryDiscoveryMaintenanceHistoryUnavailable = false
   ossInsightDiscovery?: IBrainCatalogOSSInsightDiscoveryReport
   adoptionPlan?: IBrainCatalogAdoptionPlan
   capabilityRecommendation?: IBrainCatalogCapabilityRecommendationResponse
@@ -59,6 +114,53 @@ export class BrainCatalogComponent implements OnInit {
   serenaStatus?: ISerenaStatus
   loadingSerenaStatus = false
   serenaStatusUnavailable = false
+  openLITStatus?: IOpenLITStatus
+  loadingOpenLITStatus = false
+  openLITStatusUnavailable = false
+  exportingOpenLIT = false
+  openLITExport?: IOpenLITExportResult
+  mlflowStatus?: IMLflowStatus
+  loadingMLflowStatus = false
+  mlflowStatusUnavailable = false
+  miniSWEStatus?: IMiniSWEStatus
+  loadingMiniSWEStatus = false
+  miniSWEStatusUnavailable = false
+  gitleaksStatus?: IGitleaksStatus
+  loadingGitleaksStatus = false
+  gitleaksStatusUnavailable = false
+  gosecStatus?: IGosecStatus
+  loadingGosecStatus = false
+  gosecStatusUnavailable = false
+  trivyStatus?: ITrivyStatus
+  loadingTrivyStatus = false
+  trivyStatusUnavailable = false
+  grypeStatus?: IGrypeStatus
+  loadingGrypeStatus = false
+  grypeStatusUnavailable = false
+  syftStatus?: ISyftStatus
+  loadingSyftStatus = false
+  syftStatusUnavailable = false
+  browserVerificationStatus?: IBrowserVerificationStatus
+  loadingBrowserVerificationStatus = false
+  browserVerificationStatusUnavailable = false
+  planningFrameworkMigration = false
+  frameworkMigrationPlan?: IAgentFrameworkMigrationPlan
+  readonly frameworkMigrationExample = JSON.stringify(
+    {
+      workloadId: 'legacy-workload',
+      events: [
+        {
+          id: 'event-1',
+          type: 'handoff',
+          agent: 'triage',
+          correlationId: 'review-1',
+          summary: 'Prepare a source-backed review.',
+        },
+      ],
+    },
+    null,
+    2
+  )
 
   constructor(
     private service: BrainCatalogService,
@@ -68,6 +170,16 @@ export class BrainCatalogComponent implements OnInit {
     private presidioService: PresidioService,
     private langfuseService: LangfuseService,
     private serenaService: SerenaService,
+    private openLITService: OpenLITService,
+    private mlflowService: MLflowService,
+    private miniSWEService: MiniSWEService,
+    private gitleaksService: GitleaksService,
+    private gosecService: GosecService,
+    private trivyService: TrivyService,
+    private grypeService: GrypeService,
+    private syftService: SyftService,
+    private browserVerificationService: BrowserVerificationService,
+    private autoGenCompatibilityService: AutoGenCompatibilityService,
     private notification: NzNotificationService,
     private router: Router,
   ) {}
@@ -81,6 +193,8 @@ export class BrainCatalogComponent implements OnInit {
       next: (catalog) => {
         this.catalog = catalog
         this.select(this.integrated[0] ?? catalog.entries[0])
+        this.loadCollectionMaintenanceHistory()
+        this.loadRepositoryDiscoveryMaintenanceHistory()
         this.loading = false
       },
       error: () => {
@@ -122,11 +236,40 @@ export class BrainCatalogComponent implements OnInit {
     this.langfuseExport = undefined
     this.serenaStatus = undefined
     this.serenaStatusUnavailable = false
+    this.openLITStatus = undefined
+    this.openLITStatusUnavailable = false
+    this.openLITExport = undefined
+    this.mlflowStatus = undefined
+    this.mlflowStatusUnavailable = false
+    this.miniSWEStatus = undefined
+    this.miniSWEStatusUnavailable = false
+    this.gitleaksStatus = undefined
+    this.gitleaksStatusUnavailable = false
+    this.gosecStatus = undefined
+    this.gosecStatusUnavailable = false
+    this.trivyStatus = undefined
+    this.trivyStatusUnavailable = false
+    this.grypeStatus = undefined
+    this.grypeStatusUnavailable = false
+    this.syftStatus = undefined
+    this.syftStatusUnavailable = false
+    this.browserVerificationStatus = undefined
+    this.browserVerificationStatusUnavailable = false
+    this.frameworkMigrationPlan = undefined
     if (entry.id === 'ragflow') this.loadRAGFlowStatus()
     if (entry.id === 'anythingllm') this.loadAnythingLLMStatus()
     if (entry.id === 'presidio') this.loadPresidioStatus()
     if (entry.id === 'langfuse') this.loadLangfuseStatus()
     if (entry.id === 'serena') this.loadSerenaStatus()
+    if (entry.id === 'openlit') this.loadOpenLITStatus()
+    if (entry.id === 'mlflow') this.loadMLflowStatus()
+    if (entry.id === 'mini-swe-agent') this.loadMiniSWEStatus()
+    if (entry.id === 'gitleaks') this.loadGitleaksStatus()
+    if (entry.id === 'gosec') this.loadGosecStatus()
+    if (entry.id === 'trivy') this.loadTrivyStatus()
+    if (entry.id === 'grype') this.loadGrypeStatus()
+    if (entry.id === 'syft') this.loadSyftStatus()
+    if (entry.id === 'playwright') this.loadBrowserVerificationStatus()
   }
 
   loadRAGFlowStatus(): void {
@@ -204,6 +347,209 @@ export class BrainCatalogComponent implements OnInit {
     })
   }
 
+  loadOpenLITStatus(): void {
+    if (this.loadingOpenLITStatus) return
+    this.loadingOpenLITStatus = true
+    this.openLITService.status().subscribe({
+      next: (status) => {
+        this.loadingOpenLITStatus = false
+        this.openLITStatus = status
+      },
+      error: () => {
+        this.loadingOpenLITStatus = false
+        this.openLITStatusUnavailable = true
+      },
+    })
+  }
+
+  loadMLflowStatus(): void {
+    if (this.loadingMLflowStatus) return
+    this.loadingMLflowStatus = true
+    this.mlflowService.status().subscribe({
+      next: (status) => {
+        this.loadingMLflowStatus = false
+        this.mlflowStatus = status
+      },
+      error: () => {
+        this.loadingMLflowStatus = false
+        this.mlflowStatusUnavailable = true
+      },
+    })
+  }
+
+  loadMiniSWEStatus(): void {
+    if (this.loadingMiniSWEStatus) return
+    this.loadingMiniSWEStatus = true
+    this.miniSWEService.status().subscribe({
+      next: (status) => {
+        this.loadingMiniSWEStatus = false
+        this.miniSWEStatus = status
+      },
+      error: () => {
+        this.loadingMiniSWEStatus = false
+        this.miniSWEStatusUnavailable = true
+      },
+    })
+  }
+
+  loadGitleaksStatus(): void {
+    if (this.loadingGitleaksStatus) return
+    this.loadingGitleaksStatus = true
+    this.gitleaksService.status().subscribe({
+      next: (status) => {
+        this.loadingGitleaksStatus = false
+        this.gitleaksStatus = status
+      },
+      error: () => {
+        this.loadingGitleaksStatus = false
+        this.gitleaksStatusUnavailable = true
+      },
+    })
+  }
+
+  loadGosecStatus(): void {
+    if (this.loadingGosecStatus) return
+    this.loadingGosecStatus = true
+    this.gosecService.status().subscribe({
+      next: (status) => {
+        this.loadingGosecStatus = false
+        this.gosecStatus = status
+      },
+      error: () => {
+        this.loadingGosecStatus = false
+        this.gosecStatusUnavailable = true
+      },
+    })
+  }
+
+  loadTrivyStatus(): void {
+    if (this.loadingTrivyStatus) return
+    this.loadingTrivyStatus = true
+    this.trivyService.status().subscribe({
+      next: (status) => {
+        this.loadingTrivyStatus = false
+        this.trivyStatus = status
+      },
+      error: () => {
+        this.loadingTrivyStatus = false
+        this.trivyStatusUnavailable = true
+      },
+    })
+  }
+
+  loadGrypeStatus(): void {
+    if (this.loadingGrypeStatus) return
+    this.loadingGrypeStatus = true
+    this.grypeService.status().subscribe({
+      next: (status) => {
+        this.loadingGrypeStatus = false
+        this.grypeStatus = status
+      },
+      error: () => {
+        this.loadingGrypeStatus = false
+        this.grypeStatusUnavailable = true
+      },
+    })
+  }
+
+  loadSyftStatus(): void {
+    if (this.loadingSyftStatus) return
+    this.loadingSyftStatus = true
+    this.syftService.status().subscribe({
+      next: (status) => {
+        this.loadingSyftStatus = false
+        this.syftStatus = status
+      },
+      error: () => {
+        this.loadingSyftStatus = false
+        this.syftStatusUnavailable = true
+      },
+    })
+  }
+
+  loadBrowserVerificationStatus(): void {
+    if (this.loadingBrowserVerificationStatus) return
+    this.loadingBrowserVerificationStatus = true
+    this.browserVerificationService.status().subscribe({
+      next: (status) => {
+        this.loadingBrowserVerificationStatus = false
+        this.browserVerificationStatus = status
+      },
+      error: () => {
+        this.loadingBrowserVerificationStatus = false
+        this.browserVerificationStatusUnavailable = true
+      },
+    })
+  }
+
+  boundedStatus(id: string): BoundedCatalogStatus | undefined {
+    switch (id) {
+      case 'openlit': return this.openLITStatus
+      case 'mlflow': return this.mlflowStatus
+      case 'mini-swe-agent': return this.miniSWEStatus
+      case 'gitleaks': return this.gitleaksStatus
+      case 'gosec': return this.gosecStatus
+      case 'trivy': return this.trivyStatus
+      case 'grype': return this.grypeStatus
+      case 'syft': return this.syftStatus
+      case 'playwright':
+        return this.browserVerificationStatus
+          ? {
+              configured: this.browserVerificationStatus.configured,
+              endpoint: this.browserVerificationStatus.runnerUrl,
+              profiles: this.browserVerificationStatus.profiles,
+              configError: this.browserVerificationStatus.configError,
+              scope: this.browserVerificationStatus.scope,
+            }
+          : undefined
+      default: return undefined
+    }
+  }
+
+  boundedStatusLoading(id: string): boolean {
+    const flags: Record<string, boolean> = {
+      openlit: this.loadingOpenLITStatus,
+      mlflow: this.loadingMLflowStatus,
+      'mini-swe-agent': this.loadingMiniSWEStatus,
+      gitleaks: this.loadingGitleaksStatus,
+      gosec: this.loadingGosecStatus,
+      trivy: this.loadingTrivyStatus,
+      grype: this.loadingGrypeStatus,
+      syft: this.loadingSyftStatus,
+      playwright: this.loadingBrowserVerificationStatus,
+    }
+    return Boolean(flags[id])
+  }
+
+  boundedStatusUnavailable(id: string): boolean {
+    const flags: Record<string, boolean> = {
+      openlit: this.openLITStatusUnavailable,
+      mlflow: this.mlflowStatusUnavailable,
+      'mini-swe-agent': this.miniSWEStatusUnavailable,
+      gitleaks: this.gitleaksStatusUnavailable,
+      gosec: this.gosecStatusUnavailable,
+      trivy: this.trivyStatusUnavailable,
+      grype: this.grypeStatusUnavailable,
+      syft: this.syftStatusUnavailable,
+      playwright: this.browserVerificationStatusUnavailable,
+    }
+    return Boolean(flags[id])
+  }
+
+  isBoundedStatusProfile(id: string): boolean {
+    return [
+      'openlit',
+      'mlflow',
+      'mini-swe-agent',
+      'gitleaks',
+      'gosec',
+      'trivy',
+      'grype',
+      'syft',
+      'playwright',
+    ].includes(id)
+  }
+
   probeLangfuse(): void {
     if (this.probingLangfuse) return
     this.probingLangfuse = true
@@ -236,6 +582,83 @@ export class BrainCatalogComponent implements OnInit {
         this.notification.error('Trace export unavailable', 'Langfuse did not accept the aggregate operational snapshot. No HAI workflow or policy state changed.')
       },
     })
+  }
+
+  exportOpenLITSnapshot(): void {
+    if (this.exportingOpenLIT) return
+    this.exportingOpenLIT = true
+    this.openLITExport = undefined
+    this.openLITService.exportOperationalSnapshot().subscribe({
+      next: (result) => {
+        this.exportingOpenLIT = false
+        this.openLITExport = result
+        this.notification.success(
+          'Aggregate trace exported',
+          "OpenLIT accepted HAI's fixed aggregate operational snapshot. No prompts, sources, tokens, models, or workflow records were exported."
+        )
+      },
+      error: () => {
+        this.exportingOpenLIT = false
+        this.notification.error(
+          'Trace export unavailable',
+          'OpenLIT did not accept the aggregate operational snapshot. No HAI workflow or policy state changed.'
+        )
+      },
+    })
+  }
+
+  openMCPToolboxRuntimeLab(): void {
+    this.router.navigate(['/runtime-lab'])
+  }
+
+  prepareFrameworkMigration(input: string): void {
+    if (this.planningFrameworkMigration) return
+    let parsed: { workloadId?: unknown; events?: unknown }
+    try {
+      parsed = JSON.parse(input)
+    } catch {
+      this.notification.error(
+        'Invalid migration sample',
+        'Use a redacted JSON object with workloadId and 1-100 supported event envelopes. Nothing was sent to an agent runtime.'
+      )
+      return
+    }
+    if (
+      typeof parsed.workloadId !== 'string' ||
+      !Array.isArray(parsed.events) ||
+      parsed.events.length < 1 ||
+      parsed.events.length > 100
+    ) {
+      this.notification.error(
+        'Invalid migration sample',
+        'A workloadId string and 1-100 event envelopes are required. Nothing was sent to an agent runtime.'
+      )
+      return
+    }
+    this.planningFrameworkMigration = true
+    this.frameworkMigrationPlan = undefined
+    this.autoGenCompatibilityService
+      .microsoftAgentFrameworkMigrationPlan(
+        parsed.workloadId,
+        parsed.events as IAutoGenCompatibilityEvent[]
+      )
+      .subscribe({
+        next: (plan) => {
+          this.planningFrameworkMigration = false
+          this.frameworkMigrationPlan = plan
+          this.notification.success(
+            'Migration plan prepared',
+            'HAI created a transient control map. Microsoft Agent Framework was not installed or started.'
+          )
+        },
+        error: () => {
+          this.planningFrameworkMigration = false
+          this.notification.error(
+            'Migration plan unavailable',
+            'HAI could not validate the redacted sample. No sample was stored and no agent runtime was started.'
+          )
+        },
+      })
   }
 
   selectById(id: string): void {
@@ -298,6 +721,64 @@ export class BrainCatalogComponent implements OnInit {
     })
   }
 
+  runDueCatalogRevalidations(): void {
+    if (this.runningCatalogRevalidation) return
+    this.runningCatalogRevalidation = true
+    this.catalogRevalidation = undefined
+    this.service.runDueRevalidations().subscribe({
+      next: (run) => {
+        this.runningCatalogRevalidation = false
+        this.catalogRevalidation = run
+        this.loadCollectionMaintenanceHistory()
+        this.loadRepositoryDiscoveryMaintenanceHistory()
+        if (!run.enabled) {
+          this.notification.error(
+            'Catalog maintenance is disabled',
+            'Enable bounded public metadata checks before running maintenance. Catalog and runtime state were not changed.'
+          )
+          return
+        }
+        const summary =
+          `${run.checked} checked, ${run.reused} still current, ` +
+          `${run.failed} unavailable or failed.`
+        if (run.failed > 0) {
+          this.notification.error('Catalog maintenance needs review', summary)
+        } else {
+          this.notification.success('Catalog maintenance complete', summary)
+        }
+      },
+      error: () => {
+        this.runningCatalogRevalidation = false
+        this.notification.error(
+          'Catalog maintenance unavailable',
+          'HAI could not check the fixed public upstream metadata. Catalog and runtime state were not changed.'
+        )
+      },
+    })
+  }
+
+  private loadCollectionMaintenanceHistory(): void {
+    this.collectionMaintenanceHistoryUnavailable = false
+    this.service.collectionRevalidationHistory().subscribe({
+      next: (history) => (this.collectionMaintenanceHistory = history || []),
+      error: () => {
+        this.collectionMaintenanceHistory = []
+        this.collectionMaintenanceHistoryUnavailable = true
+      },
+    })
+  }
+
+  private loadRepositoryDiscoveryMaintenanceHistory(): void {
+    this.repositoryDiscoveryMaintenanceHistoryUnavailable = false
+    this.service.repositoryDiscoveryRevalidationHistory().subscribe({
+      next: (history) => (this.repositoryDiscoveryMaintenanceHistory = history || []),
+      error: () => {
+        this.repositoryDiscoveryMaintenanceHistory = []
+        this.repositoryDiscoveryMaintenanceHistoryUnavailable = true
+      },
+    })
+  }
+
   discoverOSSInsightRepositories(): void {
     if (this.discoveringOSSInsight) return
     this.discoveringOSSInsight = true
@@ -308,6 +789,7 @@ export class BrainCatalogComponent implements OnInit {
         this.ossInsightDiscovery = report
         this.discoveryReviews = {}
         this.discoveryDisplayLimit = 30
+        this.knownProfileDisplayLimit = 20
         this.notification.success('Candidate discovery complete', `${report.discoveries?.length ?? 0} unreviewed repositories were found. No catalog entry, credential, or runtime state changed.`)
       },
       error: () => {
@@ -327,6 +809,7 @@ export class BrainCatalogComponent implements OnInit {
         this.ossInsightDiscovery = report
         this.discoveryReviews = {}
         this.discoveryDisplayLimit = 30
+        this.knownProfileDisplayLimit = 20
         this.notification.success('Relevant discovery complete', `${report.discoveries?.length ?? 0} unreviewed repositories were found across candidate and represented categories. No catalog entry, credential, or runtime state changed.`)
       },
       error: () => {
@@ -375,6 +858,29 @@ export class BrainCatalogComponent implements OnInit {
 
   queueDiscoveryReview(discovery: IBrainCatalogOSSInsightDiscovery): void {
     if (this.reviewingDiscoveryRepository) return
+    if (discovery.reviewAllowed === false) {
+      this.notification.info(
+        'Discovery is not an adapter candidate',
+        discovery.triageReason ||
+          'This repository is recorded as reference or deferred material. HAI did not create a pursuit or activate anything.'
+      )
+      return
+    }
+    const review = this.discoveryReviews[discovery.repository]
+    if (!review) {
+      this.notification.error(
+        'Verify metadata first',
+        'HAI needs current upstream metadata before creating a manual adapter review.'
+      )
+      return
+    }
+    if (!review.available || review.archived) {
+      this.notification.error(
+        'Upstream is unavailable',
+        'HAI cannot create an adapter review for an unavailable or archived repository.'
+      )
+      return
+    }
     this.reviewingDiscoveryRepository = discovery.repository
     this.pursuitService.create({
       title: `Screen ${discovery.repository} for a HAI adapter`,
@@ -412,9 +918,18 @@ export class BrainCatalogComponent implements OnInit {
     return (this.ossInsightDiscovery?.discoveries ?? []).slice(0, this.discoveryDisplayLimit)
   }
 
+  get visibleKnownProfiles(): IBrainCatalogOSSInsightKnownProfileHit[] {
+    return (this.ossInsightDiscovery?.knownProfiles ?? []).slice(0, this.knownProfileDisplayLimit)
+  }
+
   showMoreDiscoveries(): void {
     const available = this.ossInsightDiscovery?.discoveries?.length ?? 0
     this.discoveryDisplayLimit = Math.min(available, this.discoveryDisplayLimit + 30)
+  }
+
+  showMoreKnownProfiles(): void {
+    const available = this.ossInsightDiscovery?.knownProfiles?.length ?? 0
+    this.knownProfileDisplayLimit = Math.min(available, this.knownProfileDisplayLimit + 20)
   }
 
   startAdapterReview(entry: IBrainCatalogEntry): void {

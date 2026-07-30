@@ -1,7 +1,16 @@
 import { HttpClient } from '@angular/common/http'
 import { Injectable } from '@angular/core'
 import { Observable } from 'rxjs'
-import { IBrainCatalogAdoptionPlan, IBrainCatalogCapabilityRecommendationResponse, IBrainCatalogOSSInsightDiscoveryReport, IBrainCatalogOSSInsightReview, IBrainCatalogResponse, IBrainCatalogUpstreamReview } from '../models/brain-catalog.model.interface'
+import {
+  IBrainCatalogAdoptionPlan,
+  IBrainCatalogCapabilityRecommendationResponse,
+  IBrainCatalogOSSInsightDiscoveryReport,
+  IBrainCatalogOSSInsightReview,
+  IBrainCatalogRepositoryDiscoveryMaintenanceReview,
+  IBrainCatalogRevalidationRun,
+  IBrainCatalogResponse,
+  IBrainCatalogUpstreamReview,
+} from '../models/brain-catalog.model.interface'
 
 @Injectable({ providedIn: 'root' })
 export class BrainCatalogService {
@@ -16,7 +25,30 @@ export class BrainCatalogService {
   }
 
   revalidate(id: string): Observable<IBrainCatalogUpstreamReview> {
-	return this.http.post<IBrainCatalogUpstreamReview>(`/api/v1/brain-catalog/${encodeURIComponent(id)}/revalidate`, {})
+    return this.http.post<IBrainCatalogUpstreamReview>(`/api/v1/brain-catalog/${encodeURIComponent(id)}/revalidate`, {})
+  }
+
+  revalidationHistory(limit: number = 30): Observable<IBrainCatalogUpstreamReview[]> {
+    return this.http.get<IBrainCatalogUpstreamReview[]>('/api/v1/brain-catalog/revalidation-history', {
+      params: { limit: String(limit) },
+    })
+  }
+
+  runDueRevalidations(): Observable<IBrainCatalogRevalidationRun> {
+    return this.http.post<IBrainCatalogRevalidationRun>('/api/v1/brain-catalog/revalidation/run', {})
+  }
+
+  collectionRevalidationHistory(limit: number = 5): Observable<IBrainCatalogOSSInsightReview[]> {
+    return this.http.get<IBrainCatalogOSSInsightReview[]>('/api/v1/brain-catalog/collection-revalidation-history', {
+      params: { limit: String(limit) },
+    })
+  }
+
+  repositoryDiscoveryRevalidationHistory(limit: number = 5): Observable<IBrainCatalogRepositoryDiscoveryMaintenanceReview[]> {
+    return this.http.get<IBrainCatalogRepositoryDiscoveryMaintenanceReview[]>(
+      '/api/v1/brain-catalog/repository-discovery-revalidation-history',
+      { params: { limit: String(limit) } }
+    )
   }
 
   revalidateOSSInsightCollections(): Observable<IBrainCatalogOSSInsightReview> {

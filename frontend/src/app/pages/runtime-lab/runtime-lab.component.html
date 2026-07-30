@@ -87,6 +87,18 @@
             <strong>{{ server.catalogName || server.id }}</strong>
             <span>{{ server.url || 'No local endpoint configured' }}</span>
             <small *ngIf="server.lastAttempt as attempt">Last check: {{ attempt.status }} - {{ attempt.detail }}</small>
+            <small
+              *ngIf="isReadOnlyContractServer(server) && server.lastAttempt?.readOnlyVerified"
+              class="rl__success"
+            >
+              Declared tool inventory matches HAI's reviewed inspection-only context contract.
+            </small>
+            <small
+              *ngIf="isReadOnlyContractServer(server) && server.lastAttempt && !server.lastAttempt.readOnlyVerified"
+              class="rl__warning"
+            >
+              Context remains blocked until the declared tool inventory is verified as inspection-only.
+            </small>
           </div>
           <button
             type="button"

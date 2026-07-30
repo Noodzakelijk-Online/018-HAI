@@ -6,6 +6,7 @@ import { ThemeService } from '../../services/theme.service';
 import {
   ILLMFallbackOption,
   ILLMModel,
+  ILLMModelMaintenanceResult,
   ILLMPolicy,
   ILLMProvider,
   ILLMProviderProbe,
@@ -48,6 +49,7 @@ interface PolicyActionCard {
 export class LLMPolicyComponent implements OnInit {
   policy?: ILLMPolicy;
   probes: ILLMProviderProbe[] = [];
+  maintenance: ILLMModelMaintenanceResult[] = [];
   logs: ILLMRouteDecision[] = [];
   decision?: ILLMRouteDecision;
   policyActions: PolicyActionCard[] = [];
@@ -56,6 +58,7 @@ export class LLMPolicyComponent implements OnInit {
   catalogFilter = '';
   loading = false;
   probing = false;
+  maintaining = false;
   routing = false;
   themeMode = this.themeService.mode();
   private providerTierGroups = new Map<string, TierModelGroup[]>();
@@ -97,6 +100,7 @@ export class LLMPolicyComponent implements OnInit {
     });
     this.loadLogs();
     this.loadProbeHistory();
+    this.loadModelMaintenanceHistory();
   }
 
   toggleTheme(): void {
@@ -136,6 +140,42 @@ export class LLMPolicyComponent implements OnInit {
       error: () => {
         // A missing history table must not hide routing policy or live probes.
         this.rebuildActionCards();
+      },
+    });
+  }
+
+  private loadModelMaintenanceHistory(): void {
+    this.llmPolicyService.getModelMaintenanceHistory().subscribe({
+      next: (records) => (this.maintenance = records || []),
+      error: () => (this.maintenance = []),
+    });
+  }
+
+  runDueModelMaintenance(): void {
+    if (this.maintaining) {
+      return;
+    }
+    this.maintaining = true;
+    this.llmPolicyService.runDueModelMaintenance().subscribe({
+      next: (run) => {
+        this.maintaining = false;
+        this.maintenance = run.results || this.maintenance;
+        this.loadModelMaintenanceHistory();
+        const summary =
+          `${run.checked}/${run.eligible} due checks, ${run.reused} still current, ` +
+          `${run.updated} updated, ${run.failed} failed`;
+        if (run.failed > 0) {
+          this.notification.warning('Model maintenance needs review', summary);
+        } else {
+          this.notification.success('Daily model checks complete', summary);
+        }
+      },
+      error: () => {
+        this.maintaining = false;
+        this.notification.error(
+          'Model maintenance failed',
+          'HAI could not complete the due model checks. Routing retains its existing safety gates.'
+        );
       },
     });
   }
@@ -404,6 +444,29 @@ export class LLMPolicyComponent implements OnInit {
       return 'default';
     }
     return 'red';
+  }
+
+  maintenanceColor(record: ILLMModelMaintenanceResult): string {
+    if (record.status === 'updated' || record.status === 'installed') {
+      return 'green';
+    }
+    if (record.status === 'current' || record.status === 'provider_managed') {
+      return 'blue';
+    }
+    if (record.status === 'not_enforced') {
+      return 'default';
+    }
+    return 'red';
+  }
+
+  maintenanceScheduleText(record: ILLMModelMaintenanceResult): string {
+    if (!record.nextCheckDueAt) {
+      return 'Next check is scheduled within 24 hours of this result.';
+    }
+    const due = new Date(record.nextCheckDueAt);
+    return Number.isNaN(due.getTime())
+      ? 'Next check time is unavailable.'
+      : `Next check due ${due.toLocaleString()}.`;
   }
 
   tierColor(tier?: string): string {
@@ -906,6 +969,10 @@ export class LLMPolicyComponent implements OnInit {
 
   trackByProbe(_index: number, probe: ILLMProviderProbe): string {
     return probe.providerId;
+  }
+
+  trackByMaintenance(_index: number, record: ILLMModelMaintenanceResult): string {
+    return `${record.providerId}:${record.modelId}:${record.checkedAt}`;
   }
 
   trackByLog(index: number, log: ILLMRouteDecision): string {

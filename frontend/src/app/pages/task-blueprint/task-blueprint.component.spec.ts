@@ -25,6 +25,7 @@ describe('TaskBlueprintComponent pursuit context', () => {
         route,
         { mode: () => 'light' } as any,
         {} as any,
+        { propose: jasmine.createSpy('propose') } as any,
       ),
       router,
     };

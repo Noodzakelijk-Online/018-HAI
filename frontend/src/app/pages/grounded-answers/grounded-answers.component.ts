@@ -3,6 +3,7 @@ import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import {
+  IResearchCandidateEvidence,
   IVerificationResult,
   IVerificationRun,
 } from '../../models/verification.model.interface';
@@ -47,6 +48,8 @@ export class GroundedAnswersComponent implements OnInit {
     pursuitId: [''],
     mode: ['grounded'],
     includeSensitive: [false],
+    includeRagflowCandidates: [false],
+    includeResearchCandidates: [false],
     allowMemoryUpdate: [false],
     evidenceLabel: ['Manual evidence'],
     evidenceUri: ['local://manual-evidence'],
@@ -93,6 +96,8 @@ export class GroundedAnswersComponent implements OnInit {
         pursuitId: this.answerForm.value.pursuitId,
         mode: this.answerForm.value.mode,
         includeSensitive: this.answerForm.value.includeSensitive,
+        includeRagflowCandidates: this.answerForm.value.includeRagflowCandidates,
+        includeResearchCandidates: this.answerForm.value.includeResearchCandidates,
         allowMemoryUpdate: this.answerForm.value.allowMemoryUpdate,
         externalEvidence: snippet
           ? [
@@ -194,6 +199,14 @@ export class GroundedAnswersComponent implements OnInit {
       primary: false,
     });
     this.notification.info('Candidate selected', 'The source is attached as unverified evidence. Claim verification remains required.');
+  }
+
+  useResearchCandidate(candidate: IResearchCandidateEvidence): void {
+    this.useResearchResult({
+      title: candidate.sourceLabel,
+      sourceUri: candidate.sourceUri,
+      snippet: candidate.snippet,
+    });
   }
 
   loadRAGFlowStatus(): void {

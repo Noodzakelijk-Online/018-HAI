@@ -9,6 +9,8 @@ import {
   ISourceAuditLog,
   ISourceConnector,
   ISourceExtraction,
+  IKnowledgeGraphResult,
+  IKnowledgeGraphSourceRef,
   ISourcePursuitRoutingOutcome,
   ISourceSearchResult,
   ISourceSyncJob,
@@ -18,7 +20,15 @@ import { CONNECTED_SOURCE_SERVICE_TOKEN } from '../../services/connected-source/
 import { IConnectedSourceService } from '../../services/connected-source.service.interface';
 import { ThemeMode, ThemeService } from '../../services/theme.service';
 
-type SourceAction = 'connect' | 'gmail' | 'odoo' | 'import' | 'folder' | 'whatsapp' | 'search';
+type SourceAction =
+  | 'connect'
+  | 'gmail'
+  | 'odoo'
+  | 'import'
+  | 'folder'
+  | 'whatsapp'
+  | 'search'
+  | 'graph';
 
 interface SourceActionCard {
   id: SourceAction;
@@ -41,6 +51,9 @@ export class ConnectedSourcesComponent implements OnInit {
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
   searchResult?: ISourceSearchResult;
+  knowledgeGraph?: IKnowledgeGraphResult;
+  graphLoading = false;
+  graphIncludeSensitive = false;
   lastSyncResult?: ISourceSyncResult;
   includeDisabled = true;
   includeArchived = false;
@@ -188,7 +201,9 @@ export class ConnectedSourcesComponent implements OnInit {
         defaultProjectKey: this.sourceForm.value.defaultProjectKey,
         permissions: this.sourceForm.value.connectorKey === 'whisper-audio'
           ? ['metadata:read', 'audio:read', 'selected-audio-folder-read', 'explicit-consent']
-          : undefined,
+          : this.sourceForm.value.connectorKey === 'docling-documents'
+            ? ['metadata:read', 'document:read', 'selected-document-folder-read', 'explicit-consent']
+            : undefined,
         excludePatterns: String(this.sourceForm.value.excludePatterns || '')
           .split(',')
           .map((item) => item.trim())
@@ -238,6 +253,9 @@ export class ConnectedSourcesComponent implements OnInit {
 
   setAction(action: SourceAction): void {
     this.selectedAction = action;
+    if (action === 'graph' && !this.knowledgeGraph && !this.graphLoading) {
+      this.loadKnowledgeGraph();
+    }
   }
 
   private updateSourceActions(): void {
@@ -297,6 +315,14 @@ export class ConnectedSourcesComponent implements OnInit {
         icon: 'search',
         metric: this.searchResult ? `${this.searchResult.usedContext.length} hits` : 'ready',
         tone: 'gold',
+      },
+      {
+        id: 'graph',
+        title: 'Inspect connections',
+        detail: 'Review source-linked candidates.',
+        icon: 'share-alt',
+        metric: this.knowledgeGraph ? `${this.knowledgeGraph.entities.length} entities` : 'review',
+        tone: 'blue',
       },
     ];
   }
@@ -583,6 +609,17 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
+    if (connectorKey === 'docling-documents') {
+      this.sourceForm.patchValue({
+        name: 'Selected document evidence folder',
+        syncFrequency: 'manual',
+        syncTarget: 'documents',
+        defaultProjectKey: 'Robert-life-os',
+        localOnly: true,
+        excludePatterns: 'private,do-not-extract',
+      });
+      return;
+    }
     if (connectorKey === 'odoo-herp') {
       this.sourceForm.patchValue({
         name: 'Odoo / HERP workspace',
@@ -604,6 +641,9 @@ export class ConnectedSourcesComponent implements OnInit {
     }
     if (this.sourceForm.value.connectorKey === 'whisper-audio') {
       return 'Explicit audio subfolder, e.g. voice-notes/2026-07';
+    }
+    if (this.sourceForm.value.connectorKey === 'docling-documents') {
+      return 'Explicit document subfolder, e.g. legal/vivare';
     }
     if (this.sourceForm.value.connectorKey === 'email') {
       return 'Folder under connected-source root containing .mbox or .eml exports';
@@ -627,10 +667,14 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   syncSource(source: IConnectedSource): void {
-	if (source.connectorKey === 'whisper-audio') {
-		this.transcribeSource(source);
-		return;
-	}
+    if (source.connectorKey === 'whisper-audio') {
+      this.transcribeSource(source);
+      return;
+    }
+    if (source.connectorKey === 'docling-documents') {
+      this.extractDocuments(source);
+      return;
+    }
     this.syncing = true;
     this.sourceService
       .sync(source.id, {
@@ -671,6 +715,48 @@ export class ConnectedSourcesComponent implements OnInit {
           );
         },
       });
+  }
+
+  extractDocuments(source: IConnectedSource): void {
+    this.syncing = true;
+    this.sourceService
+      .extractDocuments(source.id)
+      .pipe(timeout(Math.max(this.operationTimeoutMs, 300000)))
+      .subscribe({
+        next: (result) => {
+          this.syncing = false;
+          this.notifySyncResult('Local document extraction', result);
+          this.refresh();
+        },
+        error: (error) => {
+          this.syncing = false;
+          this.notification.error(
+            'Local document extraction failed',
+            error?.error?.error ||
+              'Check the local Docling runner, selected document folder, and pre-provisioned artifacts.'
+          );
+        },
+      });
+  }
+
+  sourceActionLabel(source: IConnectedSource): string {
+    if (source.connectorKey === 'whisper-audio') {
+      return 'Transcribe';
+    }
+    if (source.connectorKey === 'docling-documents') {
+      return 'Extract documents';
+    }
+    return 'Sync';
+  }
+
+  sourceActionTitle(source: IConnectedSource): string {
+    if (source.connectorKey === 'whisper-audio') {
+      return 'Transcribe the explicit local audio folder. HAI never records a microphone or accepts uploaded audio.';
+    }
+    if (source.connectorKey === 'docling-documents') {
+      return 'Extract text from the explicit local document folder. HAI never chooses cloud services or enables OCR implicitly.';
+    }
+    return 'Run an incremental sync for this source';
   }
 
   syncFolder(): void {
@@ -1039,6 +1125,36 @@ export class ConnectedSourcesComponent implements OnInit {
 
   goHome(): void {
     this.router.navigate(['/home']);
+  }
+
+  loadKnowledgeGraph(): void {
+    this.graphLoading = true;
+    this.sourceService
+      .knowledgeGraph(
+        this.searchForm.value.projectKey,
+        this.includeArchived,
+        this.graphIncludeSensitive
+      )
+      .pipe(
+        timeout(this.loadTimeoutMs),
+        finalize(() => (this.graphLoading = false))
+      )
+      .subscribe({
+        next: (graph) => {
+          this.knowledgeGraph = graph;
+          this.updateSourceActions();
+        },
+        error: () =>
+          this.notification.error(
+            'Knowledge view unavailable',
+            'The source-linked candidate view could not load.'
+          ),
+      });
+  }
+
+  knowledgeGraphSourceLabel(refs: IKnowledgeGraphSourceRef[]): string {
+    const ref = refs?.[0];
+    return ref?.sourceLabel || ref?.sourceUri || 'source linked';
   }
 
   private loadExtractions(): void {

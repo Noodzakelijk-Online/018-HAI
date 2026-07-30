@@ -28,10 +28,40 @@ describe('BrainCatalogComponent adapter reviews', () => {
     const presidioService = { status: jasmine.createSpy('status') }
 		const langfuseService = { status: jasmine.createSpy('status'), probe: jasmine.createSpy('probe'), exportOperationalSnapshot: jasmine.createSpy('exportOperationalSnapshot') }
     const serenaService = { status: jasmine.createSpy('status') }
+    const openLITService = { status: jasmine.createSpy('status'), exportOTLP: jasmine.createSpy('exportOTLP') }
+    const mlflowService = { status: jasmine.createSpy('status') }
+    const miniSWEService = { status: jasmine.createSpy('status') }
+    const gitleaksService = { status: jasmine.createSpy('status') }
+    const gosecService = { status: jasmine.createSpy('status') }
+    const trivyService = { status: jasmine.createSpy('status') }
+    const grypeService = { status: jasmine.createSpy('status') }
+    const syftService = { status: jasmine.createSpy('status') }
+    const browserVerificationService = { status: jasmine.createSpy('status') }
+    const autoGenCompatibilityService = { migration: jasmine.createSpy('migration') }
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error'])
     const router = { navigate: jasmine.createSpy('navigate') }
     return {
-      component: new BrainCatalogComponent(catalogService as any, pursuitService as any, ragflowService as any, anythingLLMService as any, presidioService as any, langfuseService as any, serenaService as any, notification, router as any),
+      component: new BrainCatalogComponent(
+        catalogService as any,
+        pursuitService as any,
+        ragflowService as any,
+        anythingLLMService as any,
+        presidioService as any,
+        langfuseService as any,
+        serenaService as any,
+        openLITService as any,
+        mlflowService as any,
+        miniSWEService as any,
+        gitleaksService as any,
+        gosecService as any,
+        trivyService as any,
+        grypeService as any,
+        syftService as any,
+        browserVerificationService as any,
+        autoGenCompatibilityService as any,
+        notification,
+        router as any,
+      ),
       pursuitService,
       ragflowService,
       anythingLLMService,
@@ -138,6 +168,20 @@ describe('BrainCatalogComponent adapter reviews', () => {
   it('creates a manual discovery review without adding a catalog profile', () => {
     const { component, pursuitService, notification, router } = createComponent()
     pursuitService.create.and.returnValue(of({ id: 'pursuit-discovery-1' }))
+    component.discoveryReviews['owner/new-mcp'] = {
+      id: 'ossinsight-owner-new-mcp',
+      name: 'owner/new-mcp',
+      upstreamUrl: 'https://github.com/owner/new-mcp',
+      available: true,
+      archived: false,
+      repositoryMoved: false,
+      license: 'MIT',
+      message: 'metadata only',
+      disposition: 'candidate',
+      readiness: 'review_now',
+      readinessReason: 'review safely',
+      checkedAt: '2026-07-30T18:00:00Z',
+    }
 
     component.queueDiscoveryReview({ collection: 'MCP Servers', disposition: 'review_candidate', repository: 'owner/new-mcp', sourceUrl: 'https://api.ossinsight.io/example', rationale: 'Review first.', reviewTrack: 'controlled execution', priority: 72, risk: 'high', reviewReason: 'Review locally.' })
 

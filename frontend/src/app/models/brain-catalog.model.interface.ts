@@ -12,6 +12,13 @@ export interface IBrainCatalogControlMapping {
   boundary: string
 }
 
+export interface IBrainCatalogImplementationBoundary {
+  control: string;
+  route: string;
+  sourcePath: string;
+  scope: string;
+}
+
 export interface IBrainCatalogEntry {
   id: string
   name: string
@@ -30,12 +37,16 @@ export interface IBrainCatalogEntry {
   verifiedAt: string
   verificationNote: string
   controlMappings?: IBrainCatalogControlMapping[]
+  implementation?: IBrainCatalogImplementationBoundary
 }
 
 export interface IBrainCatalogUpstreamReview {
   id: string
   name: string
   upstreamUrl: string
+  resolvedRepository?: string
+  resolvedUpstreamUrl?: string
+  repositoryMoved: boolean
   checkedAt: string
   available: boolean
   archived: boolean
@@ -47,6 +58,52 @@ export interface IBrainCatalogUpstreamReview {
   readiness: string
   readinessReason: string
   requiredGates?: string[]
+}
+
+export interface IBrainCatalogRevalidationRun {
+  enabled: boolean;
+  eligible: number;
+  checked: number;
+  reused: number;
+  failed: number;
+  results: IBrainCatalogUpstreamReview[];
+  collectionReview?: IBrainCatalogCollectionRevalidationRun;
+  repositoryDiscoveryReview?: IBrainCatalogRepositoryDiscoveryRevalidationRun;
+  runAt: string;
+}
+
+export interface IBrainCatalogCollectionRevalidationRun {
+  enabled: boolean;
+  reused: boolean;
+  failed: boolean;
+  review: IBrainCatalogOSSInsightReview;
+  runAt: string;
+}
+
+export interface IBrainCatalogRepositoryDiscoveryRevalidationRun {
+  enabled: boolean;
+  reused: boolean;
+  failed: boolean;
+  review: IBrainCatalogRepositoryDiscoveryMaintenanceReview;
+  runAt: string;
+}
+
+export interface IBrainCatalogRepositoryDiscoveryMaintenanceReview {
+  checkedAt: string;
+  sourceUrl: string;
+  scope: 'candidate' | 'reviewable';
+  available: boolean;
+  collectionsScreened: number;
+  eligibleCollections: number;
+  collectionsChecked: number;
+  repositoriesChecked: number;
+  knownProfileHits: number;
+  unreviewedDiscoveries: number;
+  missingCollections?: string[];
+  unavailableCollections?: string[];
+  candidateRepositories?: string[];
+  candidatesTruncated: boolean;
+  message: string;
 }
 
 export interface IBrainCatalogOSSInsightReview {
@@ -70,8 +127,18 @@ export interface IBrainCatalogOSSInsightDiscovery {
   priority: number
   risk: 'low' | 'medium' | 'high'
   reviewReason: string
+  triage?: 'manual_review' | 'reference_only' | 'deferred' | string
+  triageReason?: string
+  reviewAllowed?: boolean
   relatedCollections?: string[]
   relatedSourceUrls?: string[]
+}
+
+export interface IBrainCatalogOSSInsightKnownProfileHit {
+  repository: string;
+  catalogEntryIds: string[];
+  relatedCollections?: string[];
+  relatedSourceUrls?: string[];
 }
 
 export interface IBrainCatalogOSSInsightDiscoveryReport {
@@ -91,6 +158,8 @@ export interface IBrainCatalogOSSInsightDiscoveryReport {
   sourceQueryLimit?: number
   collectionsAtQueryLimit?: number
   knownProfileHits: number
+  knownProfiles?: IBrainCatalogOSSInsightKnownProfileHit[]
+  knownProfilesTruncated: boolean
   discoveries?: IBrainCatalogOSSInsightDiscovery[]
   missingCollections?: string[]
   unavailableCollections?: string[]

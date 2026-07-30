@@ -21,6 +21,8 @@ import { ITaskPlanService } from '../../services/task-plan.service.interface';
 import { ThemeMode, ThemeService } from '../../services/theme.service';
 import { IPydanticAIResponse } from '../../models/pydantic-ai.model.interface';
 import { PydanticAIService } from '../../services/pydantic-ai.service';
+import { ICrewAIResponse } from '../../models/crewai.model.interface';
+import { CrewAIService } from '../../services/crewai.service';
 
 type ChatRole = 'assistant' | 'user' | 'system';
 type ChatIntent = 'plan' | 'run' | 'cycle';
@@ -55,10 +57,18 @@ export class TaskBlueprintComponent implements OnInit {
   running = false;
   cycling = false;
   resolvingReviewId = '';
-  inspectorMode: 'overview' | 'plan' | 'evidence' | 'typed-proposal' | 'logs' = 'overview';
+  inspectorMode:
+    | 'overview'
+    | 'plan'
+    | 'evidence'
+    | 'typed-proposal'
+    | 'crew-proposal'
+    | 'logs' = 'overview';
   contextExpanded = false;
   typedProposal?: IPydanticAIResponse;
   typedProposalLoading = false;
+  crewProposal?: ICrewAIResponse;
+  crewProposalLoading = false;
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 20000;
@@ -127,6 +137,7 @@ export class TaskBlueprintComponent implements OnInit {
     pursuitId: [''],
     automationId: [''],
     successCriteria: [''],
+    includeRagflowCandidates: [false],
   });
 
   constructor(
@@ -139,6 +150,7 @@ export class TaskBlueprintComponent implements OnInit {
     private route: ActivatedRoute,
     private themeService: ThemeService,
     private pydanticAIService: PydanticAIService,
+    private crewAIService: CrewAIService,
   ) {}
 
   ngOnInit(): void {
@@ -210,6 +222,54 @@ export class TaskBlueprintComponent implements OnInit {
     this.notification.info('Criteria copied', 'Review the copied criteria and use Plan first when ready. No task has been executed.');
   }
 
+  requestCrewProposal(): void {
+    const request = this.singleLine(this.planForm.value.request);
+    if (!request || this.crewProposalLoading) {
+      return;
+    }
+    this.crewProposalLoading = true;
+    this.crewAIService
+      .propose(request, this.criteria())
+      .pipe(timeout(this.operationTimeoutMs))
+      .subscribe({
+        next: (response) => {
+          this.crewProposalLoading = false;
+          this.crewProposal = response;
+          this.inspectorMode = 'crew-proposal';
+          this.addAssistantMessage(
+            'A local CrewAI planner/reviewer draft is ready for review.',
+            [
+              `Model: ${response.modelId}.`,
+              'The draft is advisory only. HAI has not executed, approved, saved, or verified it.',
+              'Review its criteria before using Plan first.',
+            ],
+            'warning'
+          );
+        },
+        error: () => {
+          this.crewProposalLoading = false;
+          this.notification.warning(
+            'Local CrewAI planner unavailable',
+            'Configure the isolated CrewAI runner and an approved local model. No cloud call or action was started.'
+          );
+        },
+      });
+  }
+
+  useCrewProposalCriteria(): void {
+    const proposal = this.crewProposal?.proposal;
+    if (!proposal) {
+      return;
+    }
+    this.planForm.patchValue({ successCriteria: proposal.successCriteria.join('\n') });
+    this.contextExpanded = true;
+    this.inspectorMode = 'overview';
+    this.notification.info(
+      'Criteria copied',
+      'Review the copied criteria and use Plan first when ready. No task has been executed.'
+    );
+  }
+
   submitChat(intent: ChatIntent): void {
     if (this.planForm.invalid) {
       Object.values(this.planForm.controls).forEach((control) => {
@@ -260,6 +320,7 @@ export class TaskBlueprintComponent implements OnInit {
       pursuitId: this.planForm.value.pursuitId,
       automationId: this.planForm.value.automationId,
       successCriteria: this.criteria(),
+      includeRagflowCandidates: Boolean(this.planForm.value.includeRagflowCandidates),
       executeAllowed: intent === 'run' || intent === 'cycle',
       runCycle: intent === 'cycle',
     };
@@ -838,6 +899,7 @@ export class TaskBlueprintComponent implements OnInit {
     safe.minimalityDecision.ladder = safe.minimalityDecision.ladder || [];
     safe.contextPlan.usedContext = safe.contextPlan.usedContext || [];
     safe.contextPlan.sourceContext = safe.contextPlan.sourceContext || [];
+    safe.contextPlan.ragflowCandidates = safe.contextPlan.ragflowCandidates || [];
     safe.intake.successCriteria = safe.intake.successCriteria || [];
     safe.steps = safe.steps || [];
     safe.riskAssessment.reasons = safe.riskAssessment.reasons || [];

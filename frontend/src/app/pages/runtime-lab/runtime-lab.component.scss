@@ -4,6 +4,7 @@
   --rl-muted: var(--hai-text-muted);
   --rl-border: var(--hai-border);
   --rl-warning: var(--hai-gold);
+  --rl-success: var(--hai-green);
 
   color: var(--rl-text);
   padding: 24px;
@@ -172,5 +173,9 @@
 
   &__warning {
     color: var(--rl-warning) !important;
+  }
+
+  &__success {
+    color: var(--rl-success) !important;
   }
 }

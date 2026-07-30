@@ -8,6 +8,7 @@ export interface IAssistantCommandRequest {
   pursuitId?: string;
   automationId?: string;
   successCriteria?: string[];
+  includeRagflowCandidates?: boolean;
   executeAllowed?: boolean;
   runCycle?: boolean;
   skipSourceSync?: boolean;
