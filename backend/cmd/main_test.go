@@ -35,3 +35,13 @@ func TestParseMigrationTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestParseMigrationTargetProducesRollbackVersion(t *testing.T) {
+	dir, version, err := parseMigrationTarget("pre/0012_recovered_durable_models")
+	if err != nil {
+		t.Fatalf("parseMigrationTarget: %v", err)
+	}
+	if got, want := dir+"/"+version, "pre/0012_recovered_durable_models"; got != want {
+		t.Fatalf("rollback version = %q, want %q", got, want)
+	}
+}

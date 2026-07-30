@@ -118,7 +118,7 @@ func runMigrate(args []string) int {
 			fmt.Fprintln(os.Stderr, "migrate down requires a database connection:", err)
 			return 1
 		}
-		if err := infra.RollbackMigration(db, migrations.Files, dir, version); err != nil {
+		if err := infra.RollbackMigration(db, migrations.Files, dir, dir+"/"+version); err != nil {
 			fmt.Fprintln(os.Stderr, "migrate down failed:", err)
 			return 1
 		}
