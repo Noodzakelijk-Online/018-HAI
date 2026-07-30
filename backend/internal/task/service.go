@@ -63,6 +63,14 @@ type IntakeAnalysis struct {
 	Reason              string   `json:"reason"`
 }
 
+// OperatingContextProvider supplies owner-scoped, source-backed personal state
+// to the task planner. Browser requests cannot set these values directly; the
+// provider is the trust boundary that resolves the latest reviewed records.
+type OperatingContextProvider interface {
+	LatestNeeds(ownerIdentity string, at time.Time) ([]frameworkregistry.NeedStateAssessment, error)
+	LatestCapacity(ownerIdentity string, at time.Time) (*frameworkregistry.CapacitySnapshot, error)
+}
+
 type ContextPlan struct {
 	Strategy                 []string                  `json:"strategy"`
 	UsedContext              []memory.RankedMemory     `json:"usedContext"`
@@ -330,6 +338,7 @@ type service struct {
 	pursuitAttempts     PursuitAttemptRecorder
 	frameworkSelector   FrameworkSelector
 	stateRepository     TaskStateRepository
+	operatingContext    OperatingContextProvider
 	mu                  sync.Mutex
 	logs                []CompletionPlan
 	reviewQueue         []ReviewQueueItem
@@ -395,12 +404,17 @@ func NewServiceWithDependencies(
 	pursuitAttempts PursuitAttemptRecorder,
 	frameworkSelector FrameworkSelector,
 	stateRepository TaskStateRepository,
+	operatingContextProviders ...OperatingContextProvider,
 ) Service {
 	if frameworkSelector == nil {
 		frameworkSelector = defaultFrameworkSelector()
 	}
 	if stateRepository == nil {
 		stateRepository = NewMemoryTaskStateRepository()
+	}
+	var operatingContext OperatingContextProvider
+	if len(operatingContextProviders) > 0 {
+		operatingContext = operatingContextProviders[0]
 	}
 	return &service{
 		memoryService:       memoryService,
@@ -411,6 +425,7 @@ func NewServiceWithDependencies(
 		pursuitAttempts:     pursuitAttempts,
 		frameworkSelector:   frameworkSelector,
 		stateRepository:     stateRepository,
+		operatingContext:    operatingContext,
 		logs:                []CompletionPlan{},
 		reviewQueue:         []ReviewQueueItem{},
 	}
@@ -738,6 +753,11 @@ func planLaunchEventID(plan *CompletionPlan) string {
 }
 
 func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh bool) (*CompletionPlan, error) {
+	var err error
+	request, err = s.loadOperatingContext(request)
+	if err != nil {
+		return nil, fmt.Errorf("load current needs and capacity: %w", err)
+	}
 	intake := analyzeIntake(request)
 	if s.llmService == nil {
 		return nil, ErrTaskLLMRouterNotConfigured
@@ -860,6 +880,28 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 
 	_ = runMode
 	return plan, nil
+}
+
+func (s *service) loadOperatingContext(request IntakeRequest) (IntakeRequest, error) {
+	if s.operatingContext == nil || strings.TrimSpace(request.OwnerIdentity) == "" {
+		return request, nil
+	}
+	now := time.Now().UTC()
+	if len(request.ObservedNeeds) == 0 {
+		needs, err := s.operatingContext.LatestNeeds(request.OwnerIdentity, now)
+		if err != nil {
+			return request, fmt.Errorf("load needs state: %w", err)
+		}
+		request.ObservedNeeds = append([]frameworkregistry.NeedStateAssessment(nil), needs...)
+	}
+	if request.Capacity == nil {
+		capacity, err := s.operatingContext.LatestCapacity(request.OwnerIdentity, now)
+		if err != nil {
+			return request, fmt.Errorf("load capacity state: %w", err)
+		}
+		request.Capacity = capacity
+	}
+	return request, nil
 }
 
 func (s *service) Logs() []CompletionPlan {
