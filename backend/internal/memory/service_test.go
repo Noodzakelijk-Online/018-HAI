@@ -111,6 +111,65 @@ func TestOwnerScopedMemorySeparatesDeduplicationRetrievalAndMutation(t *testing.
 	}
 }
 
+func TestOwnerScopedMemoryQuarantinesOwnerlessRecords(t *testing.T) {
+	repo := newFakeRepository()
+	service := NewService(repo)
+	scoped := service.(OwnerScopedService)
+
+	legacy, err := service.Create(CreateRequest{
+		ProjectKey: "legal-case",
+		Kind:       "preference",
+		Content:    "Legacy personal preference without an owner.",
+	})
+	if err != nil {
+		t.Fatalf("create ownerless memory: %v", err)
+	}
+	owned, err := scoped.CreateForOwner("alice", CreateRequest{
+		ProjectKey: "legal-case",
+		Kind:       "preference",
+		Content:    "Alice's verified personal preference.",
+	})
+	if err != nil {
+		t.Fatalf("create owned memory: %v", err)
+	}
+
+	memories, err := scoped.FindAllForOwner("alice", "legal-case", false)
+	if err != nil {
+		t.Fatalf("FindAllForOwner: %v", err)
+	}
+	if len(memories) != 1 || memories[0].ID != owned.ID {
+		t.Fatalf("owner-scoped list = %#v, want only Alice's memory", memories)
+	}
+	if _, err := scoped.FindByIDForOwner("alice", legacy.ID); err == nil {
+		t.Fatal("Alice read quarantined ownerless memory by ID")
+	}
+	result, err := scoped.RetrieveForOwner("alice", RetrieveRequest{
+		ProjectKey: "legal-case",
+		Query:      "personal preference",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("RetrieveForOwner: %v", err)
+	}
+	if len(result.UsedContext) != 1 || result.UsedContext[0].Memory.ID != owned.ID {
+		t.Fatalf("owner-scoped retrieval = %#v, want only Alice's memory", result.UsedContext)
+	}
+	if _, err := scoped.UpdateForOwner("alice", legacy.ID, UpdateRequest{Summary: "claimed"}); err == nil {
+		t.Fatal("Alice updated quarantined ownerless memory")
+	}
+	if err := scoped.DeleteForOwner("alice", legacy.ID); err == nil {
+		t.Fatal("Alice deleted quarantined ownerless memory")
+	}
+
+	systemMemories, err := service.FindAll("legal-case", false)
+	if err != nil {
+		t.Fatalf("system FindAll: %v", err)
+	}
+	if len(systemMemories) != 2 {
+		t.Fatalf("trusted unscoped list returned %d memories, want 2", len(systemMemories))
+	}
+}
+
 type fakeRepository struct {
 	memories map[uuid.UUID]models.ContextMemory
 }

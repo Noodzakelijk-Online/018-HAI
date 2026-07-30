@@ -24,6 +24,12 @@ func TestAnswerHandlerIgnoresClientHumanApproval(t *testing.T) {
 		Mode:          ModeAction,
 		PursuitID:     pursuitID,
 		HumanApproved: true,
+		ExternalEvidence: []EvidenceInput{{
+			Snippet:   "Caller supplied evidence",
+			Authority: "official_government",
+			Official:  true,
+			Primary:   true,
+		}},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/verification/answer", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -45,6 +51,10 @@ func TestAnswerHandlerIgnoresClientHumanApproval(t *testing.T) {
 	}
 	if service.request.OwnerIdentity != "alice" {
 		t.Fatalf("owner identity = %q, want alice", service.request.OwnerIdentity)
+	}
+	evidence := service.request.ExternalEvidence[0]
+	if evidence.Authority != "" || evidence.Official || evidence.Primary {
+		t.Fatalf("client authority assertions reached verification service: %#v", evidence)
 	}
 }
 

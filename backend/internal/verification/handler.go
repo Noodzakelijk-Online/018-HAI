@@ -34,6 +34,14 @@ func (h *Handler) Answer(c *gin.Context) {
 	// Approval provenance must come from a server-side approval workflow,
 	// never from a caller asserting approval in request JSON.
 	request.HumanApproved = false
+	// Evidence authority is also server-owned provenance. The verification
+	// service independently fails closed, and this strips HTTP assertions at
+	// the boundary so a trusted resolver cannot accidentally consume them.
+	for index := range request.ExternalEvidence {
+		request.ExternalEvidence[index].Authority = ""
+		request.ExternalEvidence[index].Official = false
+		request.ExternalEvidence[index].Primary = false
+	}
 	request.OwnerIdentity = verifiedOwner(c)
 	result, err := h.service.Answer(request)
 	if err != nil {
