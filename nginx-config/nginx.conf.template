@@ -44,7 +44,7 @@ http {
         # Backend route groups. Anything not listed here falls through to the
         # IDP below and 404s. Keep this list aligned with backend router groups;
         # background operations need operations, background and account-feeds.
-        location ~ ^/api/v1/(account-feeds|agent-cycle|agent-runtimes|ambient|assistant|automation|autonomy|background|evidence-packs|flags|framework-registry|hardware|llm|memory|memory-engine|model-intelligence|operations|os|power|privacy|pursuits|runtime-lab|sources|system|task|verification|windows-runtime|workflow)(/|$) {
+        location ~ ^/api/v1/(a2a|account-feeds|agent-cycle|agent-runtimes|ambient|anythingllm|assistant|automation|autonomy|background|brain-catalog|browser-verification|deepeval|deepteam|evidence-packs|evidently|flags|framework-registry|garak|guardrails|hardware|langfuse|llm|lm-eval|mcp-bridge|mcp-preflight|memory|memory-engine|model-intelligence|operations|os|planning-optimizer|power|presidio|privacy|promptfoo|pursuits|pydantic-ai|ragflow|research|runtime-lab|serena|sources|system|task|temporal|verification|wasi|windows-runtime|workflow)(/|$) {
             auth_request /auth-verify;
             auth_request_set $hai_refreshed_access_cookie $upstream_http_set_cookie;
             auth_request_set $hai_verified_access_token $upstream_http_x_hai_verified_access_token;

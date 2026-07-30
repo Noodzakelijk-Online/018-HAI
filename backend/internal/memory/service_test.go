@@ -2,6 +2,10 @@ package memory
 
 import (
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/semantic"
+	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +113,130 @@ func TestOwnerScopedMemorySeparatesDeduplicationRetrievalAndMutation(t *testing.
 	if _, err := scoped.FindByIDForOwner("alice", bob.ID); err == nil {
 		t.Fatal("alice read Bob's private memory by ID")
 	}
+}
+
+func TestRetrieveUsesOwnerScopedLocalSemanticMemoryMatches(t *testing.T) {
+	repo := newFakeRepository()
+	semanticSpy := &semanticMemoryStub{}
+	service := NewServiceWithSemantic(repo, semanticSpy)
+	scoped := service.(OwnerScopedService)
+
+	alice, err := scoped.CreateForOwner("alice", CreateRequest{ProjectKey: "vivare", Kind: "decision", Content: "A formal response is required."})
+	if err != nil {
+		t.Fatalf("CreateForOwner alice: %v", err)
+	}
+	bob, err := scoped.CreateForOwner("bob", CreateRequest{ProjectKey: "vivare", Kind: "decision", Content: "An unrelated private decision."})
+	if err != nil {
+		t.Fatalf("CreateForOwner bob: %v", err)
+	}
+	semanticSpy.matches = []semantic.MemoryMatch{
+		{Memory: *alice, Similarity: 0.92},
+		{Memory: *bob, Similarity: 0.99},
+	}
+
+	result, err := scoped.RetrieveForOwner("alice", RetrieveRequest{ProjectKey: "vivare", Query: "compose lawyer evidence response", Limit: 5})
+	if err != nil {
+		t.Fatalf("RetrieveForOwner: %v", err)
+	}
+	if len(semanticSpy.requests) != 1 || semanticSpy.requests[0].OwnerIdentity != "alice" || semanticSpy.requests[0].ProjectKey != "vivare" {
+		t.Fatalf("semantic memory requests = %#v", semanticSpy.requests)
+	}
+	if len(result.UsedContext) != 1 || result.UsedContext[0].Memory.ID != alice.ID {
+		t.Fatalf("semantic owner-scoped results = %#v", result.UsedContext)
+	}
+	if !strings.Contains(result.UsedContext[0].Explanation, "local semantic similarity") || !strings.Contains(result.Explanation, "pgvector") {
+		t.Fatalf("semantic retrieval explanation = %q / %q", result.UsedContext[0].Explanation, result.Explanation)
+	}
+}
+
+func TestRetrieveFallsBackToKeywordMemoryWhenSemanticSearchFails(t *testing.T) {
+	repo := newFakeRepository()
+	semanticSpy := &semanticMemoryStub{searchErr: errors.New("local endpoint unavailable")}
+	service := NewServiceWithSemantic(repo, semanticSpy)
+	_, err := service.Create(CreateRequest{ProjectKey: "018-hai", Kind: "preference", Content: "Use local models before free cloud providers."})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	result, err := service.Retrieve(RetrieveRequest{ProjectKey: "018-hai", Query: "local models", Limit: 3})
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	if len(result.UsedContext) != 1 || !strings.Contains(result.Explanation, "keyword ranking was used") {
+		t.Fatalf("keyword fallback result = %#v", result)
+	}
+}
+
+func TestReindexSemanticOnlyIndexesVisibleOwnerMemories(t *testing.T) {
+	repo := newFakeRepository()
+	semanticSpy := &semanticMemoryStub{}
+	service := NewServiceWithSemantic(repo, semanticSpy)
+	scoped := service.(OwnerScopedService)
+	_, _ = scoped.CreateForOwner("alice", CreateRequest{ProjectKey: "vivare", Kind: "project", Content: "Alice legal case memory"})
+	_, _ = scoped.CreateForOwner("bob", CreateRequest{ProjectKey: "vivare", Kind: "project", Content: "Bob private case memory"})
+	_, _ = service.Create(CreateRequest{Kind: "preference", Content: "Global local-first preference"})
+	semanticSpy.indexedMemoryIDs = nil
+
+	reindexer, ok := service.(SemanticReindexService)
+	if !ok {
+		t.Fatal("native memory service does not implement SemanticReindexService")
+	}
+	result, err := reindexer.ReindexSemanticForOwner("alice", 10)
+	if err != nil {
+		t.Fatalf("ReindexSemanticForOwner: %v", err)
+	}
+	if !result.Enabled || result.Attempted != 2 || result.Indexed != 2 || result.Failed != 0 || len(semanticSpy.indexedMemoryIDs) != 2 {
+		t.Fatalf("semantic reindex result = %#v indexed=%#v", result, semanticSpy.indexedMemoryIDs)
+	}
+
+	for _, id := range semanticSpy.indexedMemoryIDs {
+		memory, err := repo.FindByID(id)
+		if err != nil || memory.OwnerIdentity == "bob" {
+			t.Fatalf("reindex crossed owner boundary: id=%s memory=%#v err=%v", id, memory, err)
+		}
+	}
+}
+
+func TestReindexSemanticDoesNothingWhenLocalEmbeddingIsDisabled(t *testing.T) {
+	service := NewService(newFakeRepository())
+	reindexer := service.(SemanticReindexService)
+	result, err := reindexer.ReindexSemanticForOwner("alice", 10)
+	if err != nil {
+		t.Fatalf("ReindexSemanticForOwner: %v", err)
+	}
+	if result.Enabled || result.Attempted != 0 || !strings.Contains(result.Explanation, "disabled") {
+		t.Fatalf("disabled semantic reindex result = %#v", result)
+	}
+}
+
+type semanticMemoryStub struct {
+	matches          []semantic.MemoryMatch
+	requests         []semantic.MemorySearchRequest
+	indexedMemoryIDs []uuid.UUID
+	searchErr        error
+}
+
+var _ semantic.Service = (*semanticMemoryStub)(nil)
+
+func (s *semanticMemoryStub) Enabled() bool                                         { return true }
+func (s *semanticMemoryStub) Reason() string                                        { return "test local semantic retrieval" }
+func (s *semanticMemoryStub) Index(context.Context, *models.SourceExtraction) error { return nil }
+func (s *semanticMemoryStub) Search(context.Context, semantic.SearchRequest) ([]semantic.Match, error) {
+	return nil, nil
+}
+func (s *semanticMemoryStub) IndexMemory(_ context.Context, memory *models.ContextMemory) error {
+	if memory != nil {
+		s.indexedMemoryIDs = append(s.indexedMemoryIDs, memory.ID)
+	}
+	return nil
+}
+func (s *semanticMemoryStub) DeleteMemory(context.Context, uuid.UUID) error { return nil }
+func (s *semanticMemoryStub) SearchMemory(_ context.Context, request semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error) {
+	s.requests = append(s.requests, request)
+	if s.searchErr != nil {
+		return nil, s.searchErr
+	}
+	return s.matches, nil
 }
 
 type fakeRepository struct {

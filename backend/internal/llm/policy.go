@@ -502,6 +502,23 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			LoggedAt:         time.Now().UTC(),
 		}, nil
 	}
+	if provider.ID == "litellm" {
+		probe := probeProvider(provider, s.policy)
+		if !probe.Live {
+			return &GenerationResult{
+				ProviderID:       provider.ID,
+				ModelID:          model.ID,
+				ModelName:        model.Name,
+				Tier:             model.Tier,
+				Status:           "skipped",
+				Reason:           "LiteLLM gateway must pass a live authenticated /v1/models probe before generation: " + probe.Reason,
+				EstimatedCostEUR: model.EstimatedCostEUR,
+				DurationMs:       time.Since(started).Milliseconds(),
+				FallbackPath:     fallbackLabels(decision.FallbackPath),
+				LoggedAt:         time.Now().UTC(),
+			}, nil
+		}
+	}
 
 	output, err := s.callProvider(context.Background(), provider, model, endpoint, request)
 	if err != nil {
@@ -1191,10 +1208,43 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
 	}
+	if isLoopbackOnlyProvider(provider.ID) && !isLocalModelHost(host) {
+		return providerReadiness{configured: false, status: "blocked_endpoint", reason: localProviderDisplayName(provider.ID) + " endpoint must use localhost, loopback, or host.docker.internal"}
+	}
 	if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
 		return providerReadiness{configured: false, status: "missing_api_key", reason: "required API key environment variable " + provider.APIKeyEnv + " is not set"}
 	}
 	return providerReadiness{configured: true, status: "configured", reason: "provider endpoint and required credentials are configured"}
+}
+
+func isLoopbackOnlyProvider(providerID string) bool {
+	switch providerID {
+	case "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "mistral-rs", "litellm":
+		return true
+	default:
+		return false
+	}
+}
+
+func localProviderDisplayName(providerID string) string {
+	switch providerID {
+	case "ollama":
+		return "Ollama"
+	case "lm-studio":
+		return "LM Studio"
+	case "llama-cpp":
+		return "llama.cpp"
+	case "localai":
+		return "LocalAI"
+	case "vllm":
+		return "vLLM"
+	case "mistral-rs":
+		return "mistral.rs"
+	case "litellm":
+		return "LiteLLM gateway"
+	default:
+		return "local provider"
+	}
 }
 
 func generationStatusForReadiness(status string) string {
@@ -1212,6 +1262,18 @@ func unsafeEndpointHost(host string) bool {
 		return false
 	}
 	return ip.IsUnspecified() || ip.IsLinkLocalUnicast()
+}
+
+// isLocalModelHost allows a local server on the host OS when HAI itself runs
+// in Docker. It intentionally rejects LAN and public endpoints for llama.cpp:
+// this provider is the explicit local/offline route, not a cloud gateway.
+func isLocalModelHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "localhost" || host == "host.docker.internal" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func noRedirectHTTPClient() *http.Client {
@@ -1271,6 +1333,32 @@ func normalizeProbePolicy(policy Policy) Policy {
 func defaultPolicy() Policy {
 	ollamaEndpoint := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
 	lmStudioEndpoint := strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
+	llamaCPPEndpoint := strings.TrimSpace(os.Getenv("LLAMA_CPP_BASE_URL"))
+	llamaCPPModelID := strings.TrimSpace(os.Getenv("LLAMA_CPP_MODEL_ID"))
+	if llamaCPPModelID == "" {
+		llamaCPPModelID = "local-model"
+	}
+	localAIEndpoint := strings.TrimSpace(os.Getenv("LOCALAI_BASE_URL"))
+	localAIModelID := strings.TrimSpace(os.Getenv("LOCALAI_MODEL_ID"))
+	if localAIModelID == "" {
+		localAIModelID = "localai-default"
+	}
+	vLLMEndpoint := strings.TrimSpace(os.Getenv("VLLM_BASE_URL"))
+	vLLMModelID := strings.TrimSpace(os.Getenv("VLLM_MODEL_ID"))
+	if vLLMModelID == "" {
+		vLLMModelID = "vllm-default"
+	}
+	mistralRSEndpoint := strings.TrimSpace(os.Getenv("MISTRAL_RS_BASE_URL"))
+	mistralRSModelID := strings.TrimSpace(os.Getenv("MISTRAL_RS_MODEL_ID"))
+	if mistralRSModelID == "" {
+		mistralRSModelID = "mistralrs-default"
+	}
+	liteLLMEnabled := envEnabled("LITELLM_ENABLED")
+	liteLLMEndpoint := strings.TrimSpace(os.Getenv("LITELLM_BASE_URL"))
+	liteLLMModelID := strings.TrimSpace(os.Getenv("LITELLM_MODEL_ID"))
+	if liteLLMModelID == "" {
+		liteLLMModelID = "local-model"
+	}
 	odysseusEndpoint := strings.TrimSpace(os.Getenv("ODYSSEUS_BASE_URL"))
 	odysseusAPIKeyEnv := ""
 	if strings.TrimSpace(os.Getenv("ODYSSEUS_API_TOKEN")) != "" {
@@ -1342,6 +1430,67 @@ func defaultPolicy() Policy {
 					{ID: "openai-compatible-local", Name: "OpenAI-compatible local endpoint", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
 					{ID: "local-small", Name: "Configured small local model", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
 					{ID: "local-best", Name: "Configured best local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "llama-cpp",
+				Name:           "llama.cpp local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    llamaCPPEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: llamaCPPModelID, Name: "Configured llama.cpp GGUF model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "localai",
+				Name:           "LocalAI local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    localAIEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: localAIModelID, Name: "Configured LocalAI local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "vllm",
+				Name:           "vLLM local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    vLLMEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: vLLMModelID, Name: "Configured vLLM local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "mistral-rs",
+				Name:           "mistral.rs local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    mistralRSEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: mistralRSModelID, Name: "Configured mistral.rs local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "litellm",
+				Name:           "LiteLLM local gateway",
+				Enabled:        liteLLMEnabled,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    liteLLMEndpoint,
+				APIKeyEnv:      "LITELLM_API_KEY",
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: liteLLMModelID, Name: "Configured LiteLLM local model alias", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", RequiresApproval: true, Enabled: true},
 				},
 			},
 			{

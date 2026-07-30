@@ -12,6 +12,7 @@ import (
 	"automation-hub-backend/internal/actionresolver"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomygate"
+	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
@@ -97,10 +98,12 @@ type ExecutionPlan struct {
 }
 
 type ToolRouteDecision struct {
-	SelectedTools []string `json:"selectedTools"`
-	SkippedTools  []string `json:"skippedTools"`
-	BlockedTools  []string `json:"blockedTools"`
-	Reason        string   `json:"reason"`
+	SelectedTools             []string                                `json:"selectedTools"`
+	SkippedTools              []string                                `json:"skippedTools"`
+	BlockedTools              []string                                `json:"blockedTools"`
+	CatalogRecommendations    []braincatalog.Recommendation           `json:"catalogRecommendations,omitempty"`
+	CapabilityRecommendations []braincatalog.CapabilityRecommendation `json:"capabilityRecommendations,omitempty"`
+	Reason                    string                                  `json:"reason"`
 }
 
 type TaskStep struct {
@@ -310,6 +313,14 @@ type DurableOwnerScopedService interface {
 
 const internalTaskStateOwnerIdentity = "urn:hai:internal:task-system"
 
+// PreviewService is the side-effect-free planning boundary used by reviewed
+// local interoperability adapters. A preview may read owner-scoped context but
+// must not refresh sources, persist task attempts, create review items, or
+// execute work.
+type PreviewService interface {
+	Preview(request IntakeRequest) (*CompletionPlan, error)
+}
+
 type service struct {
 	memoryService       memory.Service
 	sourceService       source.Service
@@ -443,7 +454,7 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
-	plan, err := s.buildPlan(request, false)
+	plan, err := s.buildPlan(request, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -456,6 +467,20 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	return plan, nil
 }
 
+// Preview returns a planning draft without adding task logs, refreshing a
+// connector, persisting a pursuit attempt, queueing approval, or executing an
+// action. It is deliberately separate from Plan so an external protocol peer
+// can never turn a request into durable operational work by accident.
+func (s *service) Preview(request IntakeRequest) (*CompletionPlan, error) {
+	if err := s.validatePursuitAttemptRequest(request); err != nil {
+		return nil, err
+	}
+	request.ExecuteAllowed = false
+	request.HumanApproved = false
+	request.ApprovalNote = ""
+	return s.buildPlan(request, false, false)
+}
+
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
@@ -464,7 +489,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	if safety.EmergencyStopActive() {
 		request.ExecuteAllowed = false
 		request.HumanApproved = false
-		plan, err := s.buildPlan(request, false)
+		plan, err := s.buildPlan(request, false, true)
 		if err != nil {
 			return nil, err
 		}
@@ -496,7 +521,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		}
 		return plan, nil
 	}
-	plan, err := s.buildPlan(request, true)
+	plan, err := s.buildPlan(request, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -712,7 +737,7 @@ func planLaunchEventID(plan *CompletionPlan) string {
 	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.LaunchEventID)
 }
 
-func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
+func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh bool) (*CompletionPlan, error) {
 	intake := analyzeIntake(request)
 	if s.llmService == nil {
 		return nil, ErrTaskLLMRouterNotConfigured
@@ -746,7 +771,13 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	if err != nil {
 		return nil, fmt.Errorf("select planning frameworks: %w", err)
 	}
-	sourceRefresh, sourceRefreshExplanation := s.refreshSourcesForTask(request, intake)
+	var sourceRefresh *source.ScheduledSyncRun
+	var sourceRefreshExplanation string
+	if allowSourceRefresh {
+		sourceRefresh, sourceRefreshExplanation = s.refreshSourcesForTask(request, intake)
+	} else {
+		sourceRefreshExplanation = "Source refresh is disabled for this planning preview."
+	}
 	contextResult, err := memory.RetrieveForOwner(s.memoryService, request.OwnerIdentity, memory.RetrieveRequest{
 		Query:      request.Request,
 		ProjectKey: request.ProjectKey,
@@ -766,7 +797,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 		return nil, err
 	}
 
-	toolDecision := routeTools(intake)
+	toolDecision := routeTools(intake, request.Request)
 	minimalityDecision := decideMinimality(request, intake)
 	risk := assessRisk(intake, request)
 	risk = applyFrameworkRisk(risk, frameworkDecision, intake, request)
@@ -1887,7 +1918,7 @@ func applyFrameworkExecution(plan ExecutionPlan, decision *frameworkregistry.Sel
 	return plan
 }
 
-func routeTools(intake IntakeAnalysis) ToolRouteDecision {
+func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
 	selected := []string{"memory.retrieve", "llm.route", "validator.criteria"}
 	skipped := []string{}
 	blocked := []string{}
@@ -1916,12 +1947,40 @@ func routeTools(intake IntakeAnalysis) ToolRouteDecision {
 		reasons = append(reasons, "high-risk tools blocked until human approval")
 	}
 
-	return ToolRouteDecision{
-		SelectedTools: uniqueStrings(selected),
-		SkippedTools:  uniqueStrings(skipped),
-		BlockedTools:  uniqueStrings(blocked),
-		Reason:        strings.Join(reasons, "; "),
+	catalogRecommendations := braincatalog.Recommend(intake.TaskType, request)
+	capabilityRecommendations, capabilityRecommendationErr := braincatalog.RecommendForNeed(request)
+	if len(catalogRecommendations) > 0 || (capabilityRecommendationErr == nil && len(capabilityRecommendations.Recommendations) > 0) {
+		reasons = append(reasons, "external agent capabilities are recommendations only until a reviewed adapter is configured")
+		for _, recommendation := range catalogRecommendations {
+			skipped, blocked = applyCatalogBoundary(recommendation.ID, recommendation.Status, skipped, blocked)
+		}
+		for _, recommendation := range capabilityRecommendations.Recommendations {
+			skipped, blocked = applyCatalogBoundary(recommendation.ID, recommendation.Status, skipped, blocked)
+		}
 	}
+
+	return ToolRouteDecision{
+		SelectedTools:             uniqueStrings(selected),
+		SkippedTools:              uniqueStrings(skipped),
+		BlockedTools:              uniqueStrings(blocked),
+		CatalogRecommendations:    catalogRecommendations,
+		CapabilityRecommendations: capabilityRecommendations.Recommendations,
+		Reason:                    strings.Join(reasons, "; "),
+	}
+}
+
+func applyCatalogBoundary(id string, status braincatalog.Status, skipped, blocked []string) ([]string, []string) {
+	switch status {
+	case braincatalog.StatusIntegrated:
+		skipped = append(skipped, "agent-catalog."+id+": integrated profile requires local configuration and live health")
+	case braincatalog.StatusCandidate:
+		skipped = append(skipped, "agent-catalog."+id+": operator-configured adapter required")
+	case braincatalog.StatusCompatibility:
+		blocked = append(blocked, "agent-catalog."+id+": compatibility bridge and approval required")
+	default:
+		blocked = append(blocked, "agent-catalog."+id+": "+string(status))
+	}
+	return skipped, blocked
 }
 
 func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {

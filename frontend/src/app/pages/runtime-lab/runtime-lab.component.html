@@ -6,9 +6,9 @@
       </button>
       <h1>Runtime Lab</h1>
       <p class="rl__subtitle">
-        HAI is the control plane above external runtimes — it never rebuilds or fakes them. The local safe worker
-        actually executes and self-tests through the Operation Ledger; Hermes, OpenClaw and Odysseus show their exact
-        setup requirements and never report execution until a real runtime runs.
+        HAI is the control plane above external runtimes - it never rebuilds or fakes them. The local safe worker
+        actually executes and self-tests through the Operation Ledger; Hermes, OpenClaw, Odysseus, and OpenHands show
+        their exact setup requirements and never report execution until a real runtime runs.
       </p>
     </div>
     <button nz-button nzType="text" (click)="refresh()">
@@ -50,7 +50,7 @@
         <div class="rl__label">Setup required</div>
         <ol>
           <li *ngFor="let s of r.setupRequirements">
-            <strong>{{ s.step }}</strong> — {{ s.detail }}
+            <strong>{{ s.step }}</strong> - {{ s.detail }}
           </li>
         </ol>
       </div>
@@ -69,4 +69,39 @@
       </div>
     </nz-card>
   </div>
+
+  <details class="rl__mcp" [open]="!!mcpOverview?.servers?.length">
+    <summary>Approved MCP server readiness (advanced)</summary>
+    <p>
+      HAI can verify only explicitly configured local MCP endpoints through initialize and tools/list. It never starts a server, sends credentials, or calls a listed tool from this screen.
+    </p>
+    <p *ngIf="mcpLoading" class="rl__muted">Loading the local MCP readiness boundary...</p>
+    <p *ngIf="!mcpLoading && !mcpOverview" class="rl__muted">MCP readiness is unavailable. No MCP action was attempted.</p>
+    <ng-container *ngIf="mcpOverview as overview">
+      <p class="rl__muted">{{ overview.scope }}</p>
+      <p *ngIf="overview.configError" class="rl__warning">Configuration blocked: {{ overview.configError }}</p>
+      <p *ngIf="!overview.enabled && !overview.configError" class="rl__muted">No approved local MCP server is enabled.</p>
+      <div class="rl__mcp-list" *ngIf="overview.servers.length">
+        <article *ngFor="let server of overview.servers" class="rl__mcp-server">
+          <div>
+            <strong>{{ server.catalogName || server.id }}</strong>
+            <span>{{ server.url || 'No local endpoint configured' }}</span>
+            <small *ngIf="server.lastAttempt as attempt">Last check: {{ attempt.status }} - {{ attempt.detail }}</small>
+          </div>
+          <button
+            type="button"
+            nz-button
+            nzSize="small"
+            nzType="default"
+            [nzLoading]="mcpBusy[server.id]"
+            [disabled]="!server.configured"
+            (click)="runMCPPreflight(server)"
+            title="Runs only a local MCP initialize and tools/list handshake. No listed tool will be called."
+          >
+            Check readiness
+          </button>
+        </article>
+      </div>
+    </ng-container>
+  </details>
 </div>

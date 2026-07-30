@@ -3,8 +3,10 @@ package source
 import (
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/whispercpp"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,11 +16,16 @@ import (
 )
 
 type Handler struct {
-	service Service
+	service     Service
+	transcriber whispercpp.Service
 }
 
-func NewHandler(service Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
+	transcriber := whispercpp.DefaultService()
+	if len(transcribers) > 0 && transcribers[0] != nil {
+		transcriber = transcribers[0]
+	}
+	return &Handler{service: service, transcriber: transcriber}
 }
 
 func DefaultHandler() *Handler {
@@ -161,6 +168,70 @@ func (h *Handler) Sync(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// Transcribe invokes the opt-in local whisper.cpp runner for a configured
+// whisper-audio source. It deliberately accepts no request body: the source's
+// approved folder is the sole file scope, and the runner owns model/language
+// configuration. The resulting text is persisted through the normal source
+// sync path, preserving existing provenance, review, workflow, and audit gates.
+func (h *Handler) Transcribe(c *gin.Context) {
+	if c.Request.ContentLength != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transcription uses the source's configured selected folder and accepts no caller-provided files, model, language, or audio"})
+		return
+	}
+	id, ok := parseUUID(c)
+	if !ok {
+		return
+	}
+	if !h.requireMutableSource(c, id) {
+		return
+	}
+	source, err := h.sourceByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+		return
+	}
+	if source.ConnectorKey != "whisper-audio" || !source.LocalOnly {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transcription requires an enabled local-only whisper-audio source"})
+		return
+	}
+	folder, err := selectedAudioFolder(source.SyncTarget)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	transcripts, err := h.transcriber.Transcribe(c.Request.Context(), folder)
+	if errors.Is(err, whispercpp.ErrNotConfigured) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "local whisper.cpp transcription runner is not configured"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "local whisper.cpp transcription could not complete"})
+		return
+	}
+	items := make([]ImportItem, 0, len(transcripts))
+	for _, transcript := range transcripts {
+		items = append(items, ImportItem{
+			ExternalID: "whisper:" + transcript.Path,
+			Title:      filepath.Base(transcript.Path),
+			Content:    transcript.Text,
+			SourceURI:  "audio://selected-source/" + id.String() + "/" + transcript.Path,
+			ItemType:   "audio_transcript",
+			ProjectKey: source.DefaultProjectKey,
+			Metadata:   "engine=whisper.cpp;model=" + transcript.ModelID + ";language=" + transcript.Language + ";audio_retained=false;consent=source_owner",
+		})
+	}
+	result, err := h.service.Sync(id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey, controlledTranscription: true})
+	if errors.Is(err, ErrSyncInProgress) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -400,6 +471,31 @@ func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
 		visible[source.ID] = true
 	}
 	return visible, nil
+}
+
+func (h *Handler) sourceByID(id uuid.UUID) (*models.ConnectedSource, error) {
+	sources, err := h.service.Sources(true)
+	if err != nil {
+		return nil, err
+	}
+	for index := range sources {
+		if sources[index].ID == id {
+			return &sources[index], nil
+		}
+	}
+	return nil, errors.New("connected source not found")
+}
+
+func selectedAudioFolder(value string) (string, error) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" || value == "." || strings.HasPrefix(value, "/") || strings.Contains(value, "//") {
+		return "", errors.New("an explicit relative selected audio folder is required")
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(value))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || len(cleaned) > 400 {
+		return "", errors.New("audio folder must stay inside the selected intake root")
+	}
+	return cleaned, nil
 }
 
 func (h *Handler) requireSourceAccess(c *gin.Context, id uuid.UUID) bool {

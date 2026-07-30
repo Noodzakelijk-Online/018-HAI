@@ -44,6 +44,16 @@ func TestServingStackSelection(t *testing.T) {
 		t.Fatalf("llama.cpp profile must select llama_cpp_gguf, got %s", got)
 	}
 
+	base.ExecutionProviders = []ExecutionProvider{EPOnnxCPU, EPLocalAI}
+	if got := base.SelectServingStack(); got != StackLocalAI {
+		t.Fatalf("LocalAI profile must select localai, got %s", got)
+	}
+
+	base.ExecutionProviders = []ExecutionProvider{EPOnnxCPU, EPVLLM}
+	if got := base.SelectServingStack(); got != StackVLLM {
+		t.Fatalf("vLLM profile must select vllm, got %s", got)
+	}
+
 	// DirectML is only a legacy fallback, never chosen over llama.cpp/ollama.
 	base.ExecutionProviders = []ExecutionProvider{EPOnnxDirectML}
 	if got := base.SelectServingStack(); got != StackDirectMLLegacy {

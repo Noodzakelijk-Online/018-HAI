@@ -1,0 +1,6 @@
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true # Local development only; do not enable in a production cluster.
+    constraints: {}

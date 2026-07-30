@@ -2,6 +2,9 @@ package automation
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -1206,6 +1209,12 @@ func (s *service) executeScriptLaunch(automation *models.Automation, started tim
 	if info.IsDir() {
 		return blockedLaunch("script target is a directory", started, append(audit, "script target rejected"))
 	}
+	if !info.Mode().IsRegular() {
+		return blockedLaunch("script target must be a regular file", started, append(audit, "script target rejected"))
+	}
+	if err := verifyPinnedScript(scriptPath); err != nil {
+		return blockedLaunch(err.Error(), started, append(audit, "script hash pin rejected"))
+	}
 	timeoutSeconds := intEnv("AUTOMATION_SCRIPT_TIMEOUT_SECONDS", 30)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
@@ -1247,8 +1256,54 @@ func (s *service) executeScriptLaunch(automation *models.Automation, started tim
 		Output:      outputText,
 		ExitCode:    0,
 		DurationMs:  time.Since(started).Milliseconds(),
-		AuditEvents: append(audit, "script executed without shell", "script completed"),
+		AuditEvents: append(audit, "script SHA-256 pin verified", "script executed without shell", "script completed"),
 	}
+}
+
+func verifyPinnedScript(scriptPath string) error {
+	expected, err := configuredScriptHash(filepath.Base(scriptPath))
+	if err != nil {
+		return err
+	}
+	file, err := os.Open(scriptPath)
+	if err != nil {
+		return fmt.Errorf("could not read script for SHA-256 verification: %w", err)
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return fmt.Errorf("could not hash script for SHA-256 verification: %w", err)
+	}
+	actual := hash.Sum(nil)
+	want, _ := hex.DecodeString(expected)
+	if subtle.ConstantTimeCompare(actual, want) != 1 {
+		return fmt.Errorf("script SHA-256 does not match the configured pin for %s", filepath.Base(scriptPath))
+	}
+	return nil
+}
+
+func configuredScriptHash(name string) (string, error) {
+	const envName = "AUTOMATION_SCRIPT_SHA256_ALLOWLIST"
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return "", fmt.Errorf("script execution requires a reviewed SHA-256 pin in %s", envName)
+	}
+	name = filepath.Base(strings.TrimSpace(name))
+	for _, entry := range strings.Split(raw, ",") {
+		file, hash, ok := strings.Cut(strings.TrimSpace(entry), "=")
+		file = filepath.Base(strings.TrimSpace(file))
+		hash = strings.ToLower(strings.TrimSpace(hash))
+		if !ok || file == "." || file == "" || len(hash) != 64 {
+			return "", fmt.Errorf("%s must contain comma-separated basename=SHA-256 pins", envName)
+		}
+		if _, err := hex.DecodeString(hash); err != nil {
+			return "", fmt.Errorf("%s contains an invalid SHA-256 pin", envName)
+		}
+		if file == name {
+			return hash, nil
+		}
+	}
+	return "", fmt.Errorf("script %s is not present in %s", name, envName)
 }
 
 func (s *service) executeDockerLaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {

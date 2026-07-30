@@ -359,6 +359,27 @@
               <button type="button" nz-button nzType="default" (click)="setAction('review')">Review records</button>
               <button type="button" nz-button nzType="primary" (click)="exportMemories()">Export before cleanup</button>
               <p>Deletion remains manual and confirmed per record. Archive first unless the data is clearly wrong or unwanted.</p>
+              <details class="semantic-index-control">
+                <summary>Local semantic index (advanced)</summary>
+                <p>
+                  Index up to 100 memory records that you can read on this local HAI installation. This never sends memory to a cloud provider.
+                </p>
+                <button
+                  type="button"
+                  nz-button
+                  nzType="default"
+                  (click)="reindexSemantic()"
+                  [nzLoading]="reindexingSemantic"
+                >
+                  Refresh local semantic retrieval
+                </button>
+                <p *ngIf="semanticReindexResult" class="semantic-index-result">
+                  {{ semanticReindexResult.explanation }}
+                  <ng-container *ngIf="semanticReindexResult.enabled">
+                    {{ semanticReindexResult.indexed }} indexed, {{ semanticReindexResult.deferred }} deferred, {{ semanticReindexResult.failed }} failed.
+                  </ng-container>
+                </p>
+              </details>
             </div>
           </div>
 
@@ -426,11 +447,11 @@
               <button type="button" *ngIf="!memory.archived" nz-button nzType="default" (click)="archive(memory)">Archive</button>
               <button type="button" *ngIf="memory.archived" nz-button nzType="default" (click)="restore(memory)">Restore</button>
             </div>
-            <details>
+            <details class="advanced-section">
               <summary>Full content</summary>
               <p>{{ memory.content }}</p>
             </details>
-            <details class="danger-zone">
+            <details class="advanced-section danger-zone">
               <summary>Danger zone</summary>
               <p>Delete only when the record is wrong, private data should be removed, or it must never be used again.</p>
               <button type="button" nz-button nzDanger nzType="default" (click)="delete(memory)">Delete permanently</button>

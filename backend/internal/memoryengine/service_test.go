@@ -81,6 +81,29 @@ func TestClassifySentenceTreatsExplicitRiskAsRiskBeforeAction(t *testing.T) {
 	}
 }
 
+func TestSearchForOwnerRetrievesOwnerScopedContextMemory(t *testing.T) {
+	memorySpy := &memoryEngineMemoryStub{}
+	service := NewService(&memoryEngineRepoStub{}, memorySpy, &memoryEngineWorkflowStub{}, "test-memory-encryption-secret")
+
+	result, err := service.SearchForOwner("alice", "formal legal reply", "vivare", 4)
+	if err != nil {
+		t.Fatalf("SearchForOwner: %v", err)
+	}
+	if len(memorySpy.retrieveOwners) != 1 || memorySpy.retrieveOwners[0] != "alice" {
+		t.Fatalf("owner-scoped retrieval owners = %#v, want [alice]", memorySpy.retrieveOwners)
+	}
+	if len(memorySpy.retrieveRequests) != 1 {
+		t.Fatalf("retrieval requests = %#v, want one", memorySpy.retrieveRequests)
+	}
+	request := memorySpy.retrieveRequests[0]
+	if request.Query != "formal legal reply" || request.ProjectKey != "vivare" || request.Limit != 4 {
+		t.Fatalf("retrieval request = %#v", request)
+	}
+	if result.Memory == nil || !strings.Contains(result.Memory.Explanation, "alice") {
+		t.Fatalf("owner-scoped memory result = %#v", result.Memory)
+	}
+}
+
 func TestEncryptedPayloadRoundTrip(t *testing.T) {
 	key := make([]byte, 32)
 	plaintext := []byte(`{"messages":[{"role":"user","content":"private"}]}`)
@@ -647,7 +670,9 @@ func (r *memoryEngineRepoStub) DeleteMemoriesBySourceURI(ownerIdentity, sourceUR
 }
 
 type memoryEngineMemoryStub struct {
-	memories []models.ContextMemory
+	memories         []models.ContextMemory
+	retrieveOwners   []string
+	retrieveRequests []memory.RetrieveRequest
 }
 
 var _ memory.OwnerScopedService = (*memoryEngineMemoryStub)(nil)
@@ -732,11 +757,15 @@ func (s *memoryEngineMemoryStub) Delete(id uuid.UUID) error {
 func (s *memoryEngineMemoryStub) DeleteForOwner(ownerIdentity string, id uuid.UUID) error { return nil }
 
 func (s *memoryEngineMemoryStub) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
-	return &memory.RetrieveResult{Query: request.Query, ProjectKey: request.ProjectKey}, nil
+	s.retrieveOwners = append(s.retrieveOwners, "")
+	s.retrieveRequests = append(s.retrieveRequests, request)
+	return &memory.RetrieveResult{Query: request.Query, ProjectKey: request.ProjectKey, Explanation: "ownerless retrieval"}, nil
 }
 
 func (s *memoryEngineMemoryStub) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
-	return s.Retrieve(request)
+	s.retrieveOwners = append(s.retrieveOwners, ownerIdentity)
+	s.retrieveRequests = append(s.retrieveRequests, request)
+	return &memory.RetrieveResult{Query: request.Query, ProjectKey: request.ProjectKey, Explanation: "owner-scoped retrieval for " + ownerIdentity}, nil
 }
 
 type memoryEngineWorkflowStub struct {

@@ -32,6 +32,8 @@ const (
 	EPOllama             ExecutionProvider = "ollama"
 	EPLMStudio           ExecutionProvider = "lm_studio"
 	EPLlamaCPP           ExecutionProvider = "llama_cpp"
+	EPLocalAI            ExecutionProvider = "localai"
+	EPVLLM               ExecutionProvider = "vllm"
 	EPDSparkCompatible   ExecutionProvider = "dspark_compatible"
 	EPCustomOpenAICompat ExecutionProvider = "custom_openai_compatible"
 	EPWSL2CUDA           ExecutionProvider = "wsl2_cuda"
@@ -41,7 +43,7 @@ const (
 func allExecutionProviders() []ExecutionProvider {
 	return []ExecutionProvider{
 		EPWindowsML, EPOnnxCPU, EPOnnxCUDA, EPOnnxDirectML, EPOnnxQNN, EPOnnxOpenVINO,
-		EPOnnxVitisAI, EPOnnxTensorRTRTX, EPFoundryLocal, EPOllama, EPLMStudio, EPLlamaCPP,
+		EPOnnxVitisAI, EPOnnxTensorRTRTX, EPFoundryLocal, EPOllama, EPLMStudio, EPLlamaCPP, EPLocalAI, EPVLLM,
 		EPDSparkCompatible, EPCustomOpenAICompat, EPWSL2CUDA, EPUnknown,
 	}
 }
@@ -72,6 +74,8 @@ const (
 	StackLlamaCPPGGUF       ServingStack = "llama_cpp_gguf"
 	StackOllama             ServingStack = "ollama"
 	StackLMStudio           ServingStack = "lm_studio"
+	StackLocalAI            ServingStack = "localai"
+	StackVLLM               ServingStack = "vllm"
 	StackDSparkCompatible   ServingStack = "dspark_compatible"
 	StackCustomOpenAICompat ServingStack = "custom_openai_compatible"
 	StackCloudAPI           ServingStack = "cloud_api"
@@ -82,7 +86,7 @@ func allServingStacks() []ServingStack {
 	return []ServingStack{
 		StackWindowsMLOnnx, StackOnnxCPU, StackOnnxCUDA, StackOnnxQNN, StackOnnxOpenVINO,
 		StackOnnxVitisAI, StackOnnxTensorRTRTX, StackDirectMLLegacy, StackFoundryLocal,
-		StackWSL2CUDA, StackLlamaCPPGGUF, StackOllama, StackLMStudio, StackDSparkCompatible,
+		StackWSL2CUDA, StackLlamaCPPGGUF, StackOllama, StackLMStudio, StackLocalAI, StackVLLM, StackDSparkCompatible,
 		StackCustomOpenAICompat, StackCloudAPI, StackUnknown,
 	}
 }

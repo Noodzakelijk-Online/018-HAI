@@ -68,6 +68,7 @@
     </ng-template>
   </section>
 
+  <hai-progressive-section moduleId="background-operations" sectionId="operation-ledger" title="Operation ledger" summary="Inspect decisions, execution state, and audit trails.">
   <section class="bg-ops__workspace">
     <header class="bg-ops__workspace-heading">
       <div>
@@ -131,6 +132,7 @@
       </div>
     </ng-template>
   </section>
+  </hai-progressive-section>
 </main>
 
 <nz-drawer [nzVisible]="detailVisible" [nzTitle]="selected?.title ?? 'Operation'" nzWidth="520" (nzOnClose)="closeDetail()">

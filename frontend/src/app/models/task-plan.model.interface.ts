@@ -122,7 +122,34 @@ export interface IToolRouteDecision {
   selectedTools: string[];
   skippedTools: string[];
   blockedTools: string[];
+  catalogRecommendations?: ICatalogRecommendation[];
+  capabilityRecommendations?: ICapabilityRecommendation[];
   reason: string;
+}
+
+export interface ICatalogRecommendation {
+  id: string;
+  name: string;
+  status: string;
+  role: string;
+  rationale: string;
+  requiresApproval: boolean;
+  activation: string;
+  upstreamUrl?: string;
+  sourceCatalogUrl?: string;
+  sourceCollection?: string;
+  verifiedAt?: string;
+  verificationNote?: string;
+}
+
+export interface ICapabilityRecommendation extends ICatalogRecommendation {
+  score: number;
+  matchedTerms: string[];
+  roadmapPriority: number;
+  roadmapReason: string;
+  capabilityPlanes: string[];
+  reasons: string[];
+  nextStep: string;
 }
 
 export interface ITaskStep {

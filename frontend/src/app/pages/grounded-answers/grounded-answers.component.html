@@ -71,6 +71,88 @@
         </form>
       </nz-card>
 
+      <nz-card nzSize="small" nzTitle="Local source discovery" class="section-card">
+        <p class="research-scope" *ngIf="researchStatus as status">
+          {{ status.configured ? 'Ready: ' + status.provider : 'Not configured' }}. {{ status.scope }}
+        </p>
+        <p class="research-scope" *ngIf="!researchStatus">Research status could not be loaded.</p>
+        <p class="research-scope" *ngIf="researchProbe as probe">Last endpoint check: {{ probe.reachable ? 'reachable' : 'unavailable' }}. {{ probe.scope }}</p>
+        <button nz-button nzType="default" (click)="probeResearch()" [nzLoading]="researchProbeLoading" [disabled]="!researchStatus?.configured" title="Checks only the configured local SearXNG health endpoint. It does not search the web or verify sources.">
+          <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+          Check local endpoint
+        </button>
+        <button nz-button nzType="default" (click)="searchResearch()" [nzLoading]="researchLoading" [disabled]="!researchStatus?.configured" title="Searches only the configured local SearXNG instance. Results are candidates, not verified facts.">
+          <i nz-icon nzType="search" nzTheme="outline"></i>
+          Find source candidates
+        </button>
+        <nz-empty *ngIf="!researchLoading && researchStatus?.configured && !researchResults.length" nzNotFoundContent="Search when you need public sources. HAI will not add anything until you select a candidate."></nz-empty>
+        <div class="research-results" *ngIf="researchResults.length">
+          <article class="research-result" *ngFor="let candidate of researchResults">
+            <div>
+              <strong>{{ candidate.title || candidate.sourceUri }}</strong>
+              <p>{{ candidate.snippet || 'No snippet returned.' }}</p>
+              <a [href]="candidate.sourceUri" target="_blank" rel="noopener noreferrer">{{ candidate.sourceUri }}</a>
+            </div>
+            <button nz-button nzSize="small" nzType="default" (click)="useResearchResult(candidate)">Use as unverified evidence</button>
+          </article>
+        </div>
+      </nz-card>
+
+      <nz-card nzSize="small" nzTitle="Local RAGFlow evidence retrieval" class="section-card">
+        <p class="research-scope" *ngIf="ragflowStatus as status">
+          {{ status.configured ? 'Ready: ' + status.provider + ' (' + status.datasetCount + ' approved datasets)' : 'Not configured' }}. {{ status.scope }}
+        </p>
+        <p class="research-scope" *ngIf="!ragflowStatus">RAGFlow status could not be loaded.</p>
+        <p class="research-scope" *ngIf="ragflowProbe as probe">Last endpoint check: {{ probe.reachable ? 'reachable' : 'unavailable' }}. {{ probe.scope }}</p>
+        <button nz-button nzType="default" (click)="probeRAGFlow()" [nzLoading]="ragflowProbeLoading" [disabled]="!ragflowStatus?.configured" title="Checks only the configured local RAGFlow health endpoint. It does not query datasets or retrieve evidence.">
+          <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+          Check local endpoint
+        </button>
+        <button nz-button nzType="default" (click)="searchRAGFlow()" [nzLoading]="ragflowLoading" [disabled]="!ragflowStatus?.configured" title="Retrieves chunks only from the explicit, operator-approved local RAGFlow dataset allowlist. Results are not verified facts.">
+          <i nz-icon nzType="database" nzTheme="outline"></i>
+          Retrieve local candidates
+        </button>
+        <nz-empty *ngIf="!ragflowLoading && ragflowStatus?.configured && !ragflowResults.length" nzNotFoundContent="Retrieve only when local indexed documents may contain relevant evidence. HAI will not add anything until you select a chunk."></nz-empty>
+        <div class="research-results" *ngIf="ragflowResults.length">
+          <article class="research-result" *ngFor="let candidate of ragflowResults">
+            <div>
+              <strong>{{ candidate.documentName || 'RAGFlow document candidate' }}</strong>
+              <p>{{ candidate.content }}</p>
+              <span class="candidate-provenance">Dataset {{ candidate.datasetId }} &middot; chunk {{ candidate.chunkId }}<ng-container *ngIf="candidate.similarity !== undefined"> &middot; similarity {{ candidate.similarity | number: '1.2-2' }}</ng-container></span>
+            </div>
+            <button nz-button nzSize="small" nzType="default" (click)="useRAGFlowResult(candidate)">Use as unverified evidence</button>
+          </article>
+        </div>
+      </nz-card>
+
+      <nz-card nzSize="small" nzTitle="Local AnythingLLM workspace evidence" class="section-card">
+        <p class="research-scope" *ngIf="anythingLLMStatus as status">
+          {{ status.configured ? 'Ready: ' + status.provider + ' (' + status.workspaceCount + ' approved workspaces)' : 'Not configured' }}. {{ status.scope }}
+        </p>
+        <p class="research-scope" *ngIf="!anythingLLMStatus">AnythingLLM status could not be loaded.</p>
+        <div class="research-actions" *ngIf="anythingLLMStatus?.configured">
+          <select #anythingLLMWorkspace aria-label="Approved AnythingLLM workspace">
+            <option value="" selected>Select an approved workspace</option>
+            <option *ngFor="let workspace of anythingLLMStatus?.workspaceSlugs" [value]="workspace">{{ workspace }}</option>
+          </select>
+          <button nz-button nzType="default" (click)="searchAnythingLLM(anythingLLMWorkspace.value)" [nzLoading]="anythingLLMLoading" [disabled]="!anythingLLMWorkspace.value" title="Retrieves source chunks only through the approved local workspace vector-search endpoint. Results are not verified facts.">
+            <i nz-icon nzType="database" nzTheme="outline"></i>
+            Retrieve workspace candidates
+          </button>
+        </div>
+        <nz-empty *ngIf="!anythingLLMLoading && anythingLLMStatus?.configured && !anythingLLMResults.length" nzNotFoundContent="Enter one approved workspace slug only when its local index may contain relevant evidence. HAI will not add anything until you select a chunk."></nz-empty>
+        <div class="research-results" *ngIf="anythingLLMResults.length">
+          <article class="research-result" *ngFor="let candidate of anythingLLMResults">
+            <div>
+              <strong>{{ candidate.title || 'AnythingLLM workspace candidate' }}</strong>
+              <p>{{ candidate.content }}</p>
+              <span class="candidate-provenance">Workspace {{ candidate.workspaceSlug }} &middot; chunk {{ candidate.chunkId }}<ng-container *ngIf="candidate.score !== undefined"> &middot; score {{ candidate.score | number: '1.2-2' }}</ng-container></span>
+            </div>
+            <button nz-button nzSize="small" nzType="default" (click)="useAnythingLLMResult(candidate)">Use as unverified evidence</button>
+          </article>
+        </div>
+      </nz-card>
+
       <div class="answer-grid" *ngIf="result as r">
         <nz-card nzSize="small" nzTitle="Answer">
           <p><strong>Status:</strong> {{ r.run.status }}</p>

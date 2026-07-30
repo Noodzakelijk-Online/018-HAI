@@ -1,4 +1,11 @@
 .rl {
+  --rl-surface: var(--hai-surface);
+  --rl-text: var(--hai-text);
+  --rl-muted: var(--hai-text-muted);
+  --rl-border: var(--hai-border);
+  --rl-warning: var(--hai-gold);
+
+  color: var(--rl-text);
   padding: 24px;
   max-width: 1200px;
   margin: 0 auto;
@@ -19,7 +26,7 @@
 
   &__subtitle {
     max-width: 720px;
-    color: rgba(0, 0, 0, 0.55);
+    color: var(--rl-muted);
     margin: 0;
   }
 
@@ -47,12 +54,12 @@
   }
 
   &__kind {
-    color: rgba(0, 0, 0, 0.4);
+    color: var(--rl-muted);
     font-size: 12px;
   }
 
   &__desc {
-    color: rgba(0, 0, 0, 0.6);
+    color: var(--rl-muted);
     font-size: 13px;
     margin: 0 0 12px;
   }
@@ -65,7 +72,7 @@
   }
 
   &__label {
-    color: rgba(0, 0, 0, 0.45);
+    color: var(--rl-muted);
     min-width: 96px;
     display: inline-block;
   }
@@ -84,7 +91,7 @@
     ol {
       margin: 6px 0 0;
       padding-left: 18px;
-      color: rgba(0, 0, 0, 0.6);
+      color: var(--rl-muted);
 
       li {
         margin-bottom: 4px;
@@ -101,7 +108,7 @@
     font-size: 12px;
 
     &-detail {
-      color: rgba(0, 0, 0, 0.55);
+      color: var(--rl-muted);
     }
   }
 
@@ -109,5 +116,61 @@
     display: flex;
     gap: 8px;
     margin-top: 12px;
+  }
+
+  &__mcp {
+    background: var(--rl-surface);
+    border: 1px solid var(--rl-border);
+    border-radius: 8px;
+    margin-top: 16px;
+    padding: 14px 16px;
+
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    p {
+      color: var(--rl-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+  }
+
+  &__mcp-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  &__mcp-server {
+    align-items: center;
+    border: 1px solid var(--rl-border);
+    border-radius: 8px;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    padding: 10px 12px;
+
+    strong,
+    span,
+    small {
+      display: block;
+    }
+
+    span,
+    small {
+      color: var(--rl-muted);
+      font-size: 12px;
+      margin-top: 3px;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  &__muted {
+    color: var(--rl-muted);
+  }
+
+  &__warning {
+    color: var(--rl-warning) !important;
   }
 }

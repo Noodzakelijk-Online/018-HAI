@@ -5,6 +5,7 @@ import {
   IMemoryExport,
   IMemoryRetrieveRequest,
   IMemoryRetrieveResult,
+  ISemanticMemoryReindexResult,
 } from '../models/context-memory.model.interface';
 
 export interface IContextMemoryService {
@@ -15,5 +16,6 @@ export interface IContextMemoryService {
   restore(id: string): Observable<IContextMemory>;
   delete(id: string): Observable<void>;
   retrieve(request: IMemoryRetrieveRequest): Observable<IMemoryRetrieveResult>;
+  reindexSemantic(limit?: number): Observable<ISemanticMemoryReindexResult>;
   exportMemories(projectKey?: string): Observable<IMemoryExport>;
 }

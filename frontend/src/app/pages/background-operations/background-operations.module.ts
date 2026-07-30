@@ -14,6 +14,7 @@ import { NzTableModule } from 'ng-zorro-antd/table'
 import { NzTagModule } from 'ng-zorro-antd/tag'
 import { NzTimelineModule } from 'ng-zorro-antd/timeline'
 import { BackgroundOperationsComponent } from './background-operations.component'
+import { ControlRoomModule } from '../../control-room/control-room.module'
 
 const routes: Routes = [{ path: '', component: BackgroundOperationsComponent }]
 
@@ -34,6 +35,7 @@ const routes: Routes = [{ path: '', component: BackgroundOperationsComponent }]
     NzTableModule,
     NzTagModule,
     NzTimelineModule,
+    ControlRoomModule,
   ],
 })
 export class BackgroundOperationsModule {}

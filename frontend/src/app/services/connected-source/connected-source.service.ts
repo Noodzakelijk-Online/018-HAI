@@ -59,6 +59,10 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.post<ISourceSyncResult>(`${this.apiUrl}/${sourceId}/sync`, request);
   }
 
+  transcribe(sourceId: string): Observable<ISourceSyncResult> {
+    return this.http.post<ISourceSyncResult>(`${this.apiUrl}/${sourceId}/transcribe`, null);
+  }
+
   runDueScheduledSyncs(): Observable<IScheduledSyncRun> {
     return this.http.post<IScheduledSyncRun>(`${this.apiUrl}/sync-due`, {});
   }

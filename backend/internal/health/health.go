@@ -162,11 +162,31 @@ func LLMProviderProbe() doctor.Probe {
 			endpoint := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
 			label := "OLLAMA_BASE_URL"
 			if endpoint == "" {
+				endpoint = strings.TrimSpace(os.Getenv("LLAMA_CPP_BASE_URL"))
+				label = "LLAMA_CPP_BASE_URL"
+			}
+			if endpoint == "" {
+				endpoint = strings.TrimSpace(os.Getenv("LOCALAI_BASE_URL"))
+				label = "LOCALAI_BASE_URL"
+			}
+			if endpoint == "" {
+				endpoint = strings.TrimSpace(os.Getenv("VLLM_BASE_URL"))
+				label = "VLLM_BASE_URL"
+			}
+			if endpoint == "" {
+				endpoint = strings.TrimSpace(os.Getenv("MISTRAL_RS_BASE_URL"))
+				label = "MISTRAL_RS_BASE_URL"
+			}
+			if endpoint == "" && strings.EqualFold(strings.TrimSpace(os.Getenv("LITELLM_ENABLED")), "true") {
+				endpoint = strings.TrimSpace(os.Getenv("LITELLM_BASE_URL"))
+				label = "LITELLM_BASE_URL"
+			}
+			if endpoint == "" {
 				endpoint = strings.TrimSpace(os.Getenv("FREE_CLOUD_OPENAI_BASE_URL"))
 				label = "FREE_CLOUD_OPENAI_BASE_URL"
 			}
 			if endpoint == "" {
-				return fmt.Errorf("no provider configured (OLLAMA_BASE_URL / FREE_CLOUD_OPENAI_BASE_URL unset); generation is unavailable")
+				return fmt.Errorf("no provider configured (OLLAMA_BASE_URL / LLAMA_CPP_BASE_URL / LOCALAI_BASE_URL / VLLM_BASE_URL / MISTRAL_RS_BASE_URL / enabled LITELLM_BASE_URL / FREE_CLOUD_OPENAI_BASE_URL unset); generation is unavailable")
 			}
 
 			request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(endpoint, "/"), nil)

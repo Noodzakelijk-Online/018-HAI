@@ -4,7 +4,9 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/workflow"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -76,6 +78,205 @@ func TestSyncLocalFolderExtractsReadableFilesWithProvenance(t *testing.T) {
 	}
 	if !repo.hasAudit("source.local_folder_scanned") || !repo.hasAudit("source.synced") {
 		t.Fatalf("expected scan and sync audit records")
+	}
+}
+
+func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "whisper-audio",
+		Name:         "Owner voice notes",
+		Category:     "audio",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+		SyncTarget:   "voice-notes",
+	})
+
+	_, err := NewService(repo, nil).Sync(sourceID, ImportRequest{Mode: ModeManualImport, Items: []ImportItem{{ExternalID: "forged", Title: "Forged transcript", Content: "This must not be accepted."}}})
+	if err == nil || !strings.Contains(err.Error(), "controlled transcription route") {
+		t.Fatalf("Sync error = %v, want controlled transcription route error", err)
+	}
+	if due, reason := scheduledSourceDue(*repo.sources[sourceID], time.Now().UTC()); due || !strings.Contains(reason, "operator-triggered") {
+		t.Fatalf("scheduledSourceDue = %v, %q; whisper audio must never be scheduled", due, reason)
+	}
+}
+
+func TestSyncCloudQuerySummaryReadsOnlyBoundedIncrementalSummaries(t *testing.T) {
+	root := t.TempDir()
+	summaryPath := root + "/summary.jsonl"
+	writeTestFile(t, summaryPath, `{"sync_id":"sync-1","sync_time":"2026-07-20T10:00:00Z","sync_duration_ms":123,"resources":4,"sources":[{"name":"aws","errors":[]}],"destinations":[{"name":"postgres","tables":[{"name":"aws_ec2_instances","resources":4}]}],"api_key":"must-not-be-ingested"}`+"\n")
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_ENABLED", "true")
+	t.Setenv("HAI_CLOUDQUERY_ALLOWED_ROOT", root)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_PATH", summaryPath)
+	t.Setenv("HAI_CLOUDQUERY_MAX_ENTRIES", "10")
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      cloudQuerySummaryConnectorKey,
+		Name:              "CloudQuery local summary",
+		Category:          "cloud_inventory",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		DefaultProjectKey: "018-HAI",
+	})
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeManualImport})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 || result.Job.ItemsAdded != 1 || !strings.HasPrefix(result.Job.CursorAfter, cloudQuerySummaryCursorPrefix) {
+		t.Fatalf("unexpected CloudQuery sync result: %#v", result.Job)
+	}
+	if len(result.Extractions) != 1 || result.Extractions[0].ContentType != "cloudquery_sync_summary" {
+		t.Fatalf("unexpected CloudQuery extraction: %#v", result.Extractions)
+	}
+	if strings.Contains(result.Extractions[0].Text, "must-not-be-ingested") {
+		t.Fatalf("unexpected unknown CloudQuery JSON field leaked into extraction: %q", result.Extractions[0].Text)
+	}
+	if !repo.hasAudit("source.cloudquery_summary_read") || !repo.hasAudit("source.synced") {
+		t.Fatalf("expected CloudQuery summary and completed sync audits")
+	}
+
+	file, err := os.OpenFile(summaryPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if _, err := file.WriteString(`{"sync_id":"sync-2","resources":2,"sources":[{"name":"github"}],"destinations":[{"name":"postgres"}]}` + "\n"); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = file.Close()
+	result, err = NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err != nil {
+		t.Fatalf("incremental Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 || result.Job.ItemsAdded != 1 {
+		t.Fatalf("incremental sync reread prior records: %#v", result.Job)
+	}
+}
+
+func TestCloudQuerySummaryConfigurationStaysInsideConfiguredRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir() + "/summary.jsonl"
+	writeTestFile(t, outside, "{}\n")
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_ENABLED", "true")
+	t.Setenv("HAI_CLOUDQUERY_ALLOWED_ROOT", root)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_PATH", outside)
+	if _, err := cloudQuerySummaryConfigFromEnv(); err == nil || !strings.Contains(err.Error(), "remain inside") {
+		t.Fatalf("cloudQuerySummaryConfigFromEnv error = %v, want allowed-root rejection", err)
+	}
+}
+
+func TestSyncCloudQuerySummaryRejectsLegacyOrManualBypasses(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: cloudQuerySummaryConnectorKey,
+		Name:         "Invalid legacy CloudQuery source",
+		Category:     "cloud_inventory",
+		Enabled:      true,
+		LocalOnly:    false,
+		Status:       "active",
+	})
+	if _, err := NewService(repo, nil).Sync(sourceID, ImportRequest{}); err == nil || !strings.Contains(err.Error(), "must remain local-only") {
+		t.Fatalf("legacy CloudQuery source error = %v, want local-only rejection", err)
+	}
+	repo.sources[sourceID].LocalOnly = true
+	if _, err := NewService(repo, nil).Sync(sourceID, ImportRequest{Items: []ImportItem{{ExternalID: "forged", Title: "Forged", Content: "must not enter CloudQuery source"}}}); err == nil || !strings.Contains(err.Error(), "manual items") {
+		t.Fatalf("manual CloudQuery item error = %v, want manual-item rejection", err)
+	}
+}
+
+func TestCloudQuerySummaryRejectsIncompleteAndMalformedRecords(t *testing.T) {
+	root := t.TempDir()
+	summaryPath := root + "/summary.jsonl"
+	writeTestFile(t, summaryPath, `{"sync_id":"complete"}`+"\n"+`{"sync_id":"partial"`)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_ENABLED", "true")
+	t.Setenv("HAI_CLOUDQUERY_ALLOWED_ROOT", root)
+	t.Setenv("HAI_CLOUDQUERY_SUMMARY_PATH", summaryPath)
+	items, cursor, err := fetchCloudQuerySummary(&models.ConnectedSource{})
+	if err != nil || len(items) != 1 || !strings.HasPrefix(cursor, cloudQuerySummaryCursorPrefix) {
+		t.Fatalf("incomplete final record must be deferred: items=%#v cursor=%q err=%v", items, cursor, err)
+	}
+	writeTestFile(t, summaryPath, "not-json\n")
+	if _, _, err := fetchCloudQuerySummary(&models.ConnectedSource{}); err == nil || !strings.Contains(err.Error(), "invalid JSONL") {
+		t.Fatalf("malformed complete record error = %v, want invalid JSONL", err)
+	}
+	writeTestFile(t, summaryPath, strings.Repeat("x", cloudQuerySummaryMaxLineBytes+1)+"\n")
+	if _, _, err := fetchCloudQuerySummary(&models.ConnectedSource{}); err == nil || !strings.Contains(err.Error(), "16 KiB") {
+		t.Fatalf("oversized summary record error = %v, want line-size rejection", err)
+	}
+}
+
+func TestSyncOpenSpecArtifactsReadsOnlyChangePlanningFiles(t *testing.T) {
+	root := t.TempDir()
+	project := root + "/project"
+	change := project + "/openspec/changes/add-local-routing"
+	if err := os.MkdirAll(change+"/specs", 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	writeTestFile(t, change+"/proposal.md", "# Proposal\nThe router must select local models first.\n")
+	writeTestFile(t, change+"/design.md", "# Design\nUse an allowlisted local endpoint.\n")
+	writeTestFile(t, change+"/tasks.md", "# Tasks\n- [ ] Add the local routing policy.\n")
+	writeTestFile(t, change+"/specs/routing.md", "## ADDED Requirements\n### Requirement: Local routing\nThe system SHALL prefer local models.\n")
+	writeTestFile(t, project+"/main.go", "package ignored\n// code outside OpenSpec must not be read\n")
+	if err := os.MkdirAll(project+"/openspec/changes/archive/old-change", 0755); err != nil {
+		t.Fatalf("MkdirAll archive: %v", err)
+	}
+	writeTestFile(t, project+"/openspec/changes/archive/old-change/proposal.md", "Archived change must not be imported.")
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      openSpecArtifactConnectorKey,
+		Name:              "Project OpenSpec",
+		Category:          "code_spec",
+		Enabled:           true,
+		LocalOnly:         true,
+		Status:            "active",
+		SyncTarget:        "project",
+		DefaultProjectKey: "018-HAI",
+	})
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeManualImport})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.Job.ItemsSeen != 1 || result.Job.ItemsAdded != 1 || len(result.Extractions) != 1 {
+		t.Fatalf("unexpected OpenSpec sync result: %#v", result)
+	}
+	extraction := result.Extractions[0]
+	if extraction.ContentType != "openspec_change" || extraction.ProjectKey != "018-HAI" || !strings.Contains(extraction.Text, "ADDED Requirements") {
+		t.Fatalf("OpenSpec extraction = %#v", extraction)
+	}
+	if strings.Contains(extraction.Text, "code outside OpenSpec") || strings.Contains(extraction.Text, "Archived change") {
+		t.Fatalf("OpenSpec connector read out-of-scope files: %q", extraction.Text)
+	}
+	if !repo.hasAudit("source.openspec_artifacts_read") || !repo.hasAudit("source.synced") {
+		t.Fatalf("expected OpenSpec source audits")
+	}
+}
+
+func TestSyncOpenSpecArtifactsRejectsManualAndFolderOverride(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: openSpecArtifactConnectorKey,
+		Name:         "OpenSpec",
+		Category:     "code_spec",
+		Enabled:      true,
+		LocalOnly:    true,
+		Status:       "active",
+		SyncTarget:   "approved-project",
+	})
+	service := NewService(repo, nil)
+	if _, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{ExternalID: "forged", Content: "forged planning artifact"}}}); err == nil || !strings.Contains(err.Error(), "manual items") {
+		t.Fatalf("manual OpenSpec import error = %v, want rejection", err)
+	}
+	if _, err := service.Sync(sourceID, ImportRequest{FolderPath: "another-project"}); err == nil || !strings.Contains(err.Error(), "registered project folder") {
+		t.Fatalf("OpenSpec folder override error = %v, want rejection", err)
 	}
 }
 
@@ -391,6 +592,7 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 		"project-board":   AdapterLocalOnly,
 		"local-folder":    AdapterLocalOnly,
 		"whatsapp-export": AdapterLocalOnly,
+		"whisper-audio":   AdapterLocalOnly,
 		"odoo-herp":       AdapterModeled,
 	}
 	seen := map[string]bool{}
@@ -809,6 +1011,34 @@ func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
 		if sourceID == bobID {
 			t.Fatalf("search repository query included Bob's private source")
 		}
+	}
+}
+
+func TestSearchUsesSemanticResultsWithoutLoadingEveryExtraction(t *testing.T) {
+	sourceID := uuid.New()
+	extraction := models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Text: "Semantic evidence from a local source"}
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"})
+	if _, err := repo.SaveExtraction(&extraction); err != nil {
+		t.Fatalf("SaveExtraction: %v", err)
+	}
+	semanticService := &fakeSemanticService{matches: []semantic.Match{{Extraction: extraction, Similarity: 0.92}}}
+	service := NewServiceWithWorkflowPursuitAndSemantic(repo, nil, nil, nil, semanticService)
+
+	result, err := service.Search(SearchRequest{OwnerIdentity: "alice", Query: "local source", Limit: 5})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.UsedContext) != 1 || result.UsedContext[0].Score != 0.92 {
+		t.Fatalf("semantic search result = %#v", result)
+	}
+	if !strings.Contains(result.Explanation, "pgvector") {
+		t.Fatalf("semantic retrieval explanation missing: %q", result.Explanation)
+	}
+	if len(repo.lastExtractionSourceIDs) != 0 {
+		t.Fatalf("semantic search should not preload all extractions: %#v", repo.lastExtractionSourceIDs)
+	}
+	if semanticService.request.OwnerIdentity != "alice" || semanticService.request.Query != "local source" {
+		t.Fatalf("semantic search request = %#v", semanticService.request)
 	}
 }
 
@@ -1561,6 +1791,27 @@ type fakeSourceRepo struct {
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
+}
+
+type fakeSemanticService struct {
+	matches []semantic.Match
+	err     error
+	request semantic.SearchRequest
+}
+
+func (s *fakeSemanticService) Enabled() bool  { return true }
+func (s *fakeSemanticService) Reason() string { return "test semantic service" }
+func (s *fakeSemanticService) Index(context.Context, *models.SourceExtraction) error {
+	return nil
+}
+func (s *fakeSemanticService) Search(_ context.Context, request semantic.SearchRequest) ([]semantic.Match, error) {
+	s.request = request
+	return s.matches, s.err
+}
+func (s *fakeSemanticService) IndexMemory(context.Context, *models.ContextMemory) error { return nil }
+func (s *fakeSemanticService) DeleteMemory(context.Context, uuid.UUID) error            { return nil }
+func (s *fakeSemanticService) SearchMemory(context.Context, semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error) {
+	return nil, nil
 }
 
 func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {

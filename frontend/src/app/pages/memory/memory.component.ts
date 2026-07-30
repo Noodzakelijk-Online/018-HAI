@@ -6,6 +6,7 @@ import { timeout } from 'rxjs/operators';
 import {
   IContextMemory,
   IMemoryRetrieveResult,
+  ISemanticMemoryReindexResult,
 } from '../../models/context-memory.model.interface';
 import { IAIConversationImportResult } from '../../models/memory-engine.model.interface';
 import { CONTEXT_MEMORY_SERVICE_TOKEN } from '../../services/context-memory/context-memory.service.token';
@@ -37,11 +38,13 @@ export class MemoryComponent implements OnInit {
   saving = false;
   retrieving = false;
   importing = false;
+  reindexingSemantic = false;
   includeArchived = false;
   editingId?: string;
   selectedAction: MemoryAction = 'retrieve';
   memoryActions: MemoryActionCard[] = [];
   importResult?: IAIConversationImportResult;
+  semanticReindexResult?: ISemanticMemoryReindexResult;
   selectedMemoryId?: string;
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
@@ -279,6 +282,29 @@ export class MemoryComponent implements OnInit {
         window.URL.revokeObjectURL(url);
       },
       error: () => this.notification.error('Error', 'Failed to export memories.'),
+    });
+  }
+
+  reindexSemantic(): void {
+    this.reindexingSemantic = true;
+    this.memoryService.reindexSemantic(100).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: (result) => {
+        this.semanticReindexResult = result;
+        this.reindexingSemantic = false;
+        if (!result.enabled) {
+          this.notification.info('Local semantic index unavailable', result.explanation);
+          return;
+        }
+        const outcome = `${result.indexed} indexed, ${result.deferred} deferred, ${result.failed} failed.`;
+        this.notification.success('Local semantic memory refreshed', outcome);
+      },
+      error: (error) => {
+        this.reindexingSemantic = false;
+        this.notification.error(
+          'Local semantic index failed',
+          error?.error?.error || 'No memory records were changed. Check the local embedding configuration and try again.'
+        );
+      },
     });
   }
 
