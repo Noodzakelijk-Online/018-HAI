@@ -3,6 +3,8 @@ package automation
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"mime/multipart"
 	"net"
@@ -571,6 +573,7 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	target := writeExecutableScriptFixture(t, dir, "ok")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
 
 	id := uuid.New()
 	repo := newFakeAutomationRepo(&models.Automation{
@@ -631,6 +634,7 @@ func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
 	target := writeExecutableScriptFixture(t, dir, "clean-environment")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
 	t.Setenv("SECRET_TOKEN", "must-not-leak")
 
 	id := uuid.New()
@@ -662,6 +666,7 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 	target := writeExecutableScriptFixture(t, dir, "redact")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
 
 	id := uuid.New()
 	repo := newFakeAutomationRepo(&models.Automation{
@@ -726,6 +731,16 @@ func writeExecutableScriptFixture(t *testing.T, dir, mode string) string {
 		t.Fatalf("write script fixture: %v", err)
 	}
 	return filepath.Base(target)
+}
+
+func scriptPin(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	sum := sha256.Sum256(contents)
+	return filepath.Base(path) + "=" + hex.EncodeToString(sum[:])
 }
 
 func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
