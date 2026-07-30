@@ -30,6 +30,7 @@ type Runner struct {
 	repo     Repository
 	policy   backoff.Policy
 	workerID string
+	queue    string
 	lease    time.Duration
 	batch    int
 	// now is injectable so retry scheduling is deterministic in tests.
@@ -42,6 +43,7 @@ type Runner struct {
 // Options configures a Runner. Zero values fall back to sane defaults.
 type Options struct {
 	WorkerID string
+	Queue    string
 	Policy   backoff.Policy
 	Lease    time.Duration
 	Batch    int
@@ -52,6 +54,9 @@ type Options struct {
 func NewRunner(repo Repository, opts Options) *Runner {
 	if opts.WorkerID == "" {
 		opts.WorkerID = fmt.Sprintf("worker-%d", time.Now().UnixNano())
+	}
+	if opts.Queue == "" {
+		opts.Queue = "default"
 	}
 	if opts.Policy == (backoff.Policy{}) {
 		opts.Policy = backoff.DefaultPolicy()
@@ -69,6 +74,7 @@ func NewRunner(repo Repository, opts Options) *Runner {
 		repo:     repo,
 		policy:   opts.Policy,
 		workerID: opts.WorkerID,
+		queue:    opts.Queue,
 		lease:    opts.Lease,
 		batch:    opts.Batch,
 		now:      opts.Now,
@@ -96,6 +102,7 @@ func (r *Runner) Enqueue(kind, payload string, runAt time.Time, maxAttempts int)
 		runAt = r.now()
 	}
 	return r.repo.Enqueue(&models.DurableJob{
+		Queue:       r.queue,
 		Kind:        kind,
 		Payload:     payload,
 		RunAt:       runAt.UTC(),
@@ -109,17 +116,21 @@ func (r *Runner) Enqueue(kind, payload string, runAt time.Time, maxAttempts int)
 // uses this at startup so restarts do not pile up duplicate schedules.
 // It reports whether a new job was created.
 func (r *Runner) EnsureScheduled(kind, payload string, runAt time.Time, maxAttempts int) (bool, error) {
-	active, err := r.repo.CountActiveByKind(kind)
+	if runAt.IsZero() {
+		runAt = r.now()
+	}
+	created, err := r.repo.EnqueueIfNoActive(&models.DurableJob{
+		Queue:       r.queue,
+		Kind:        kind,
+		Payload:     payload,
+		RunAt:       runAt.UTC(),
+		MaxAttempts: maxAttempts,
+		Status:      models.DurableJobPending,
+	})
 	if err != nil {
-		return false, fmt.Errorf("count active %s jobs: %w", kind, err)
+		return false, fmt.Errorf("ensure singleton %s job: %w", kind, err)
 	}
-	if active > 0 {
-		return false, nil
-	}
-	if _, err := r.Enqueue(kind, payload, runAt, maxAttempts); err != nil {
-		return false, err
-	}
-	return true, nil
+	return created, nil
 }
 
 // RegisterRecurring turns a periodic task into a durable, self-rescheduling
@@ -163,40 +174,87 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 	if _, err := r.repo.ReapExpiredLeases(now, r.lease); err != nil {
 		return 0, fmt.Errorf("reap expired leases: %w", err)
 	}
-	jobs, err := r.repo.ClaimDue(r.workerID, now, r.batch)
+	jobs, err := r.repo.ClaimDue(r.workerID, r.queue, now, r.batch)
 	if err != nil {
 		return 0, fmt.Errorf("claim due jobs: %w", err)
 	}
 	processed := 0
+	var firstErr error
 	for _, job := range jobs {
-		r.execute(ctx, job)
+		if err := r.execute(ctx, job); err != nil && firstErr == nil {
+			firstErr = err
+		}
 		processed++
 	}
-	return processed, nil
+	return processed, firstErr
 }
 
 // execute runs one claimed job and records the outcome.
-func (r *Runner) execute(ctx context.Context, job models.DurableJob) {
+func (r *Runner) execute(ctx context.Context, job models.DurableJob) error {
 	attempt := job.Attempts + 1
 	handler, ok := r.handlerFor(job.Kind)
 	if !ok {
 		// An unregistered kind is a deployment error, not a transient fault:
 		// fail it straight to the dead letter rather than retrying forever.
-		_ = r.repo.MarkDead(job.ID, r.now(), attempt, fmt.Sprintf("no handler registered for kind %q", job.Kind))
-		return
+		_, err := r.repo.MarkDead(job.ID, r.workerID, job.LeaseGeneration, r.now(), attempt, fmt.Sprintf("no handler registered for kind %q", job.Kind))
+		return err
 	}
 
-	err := r.safeInvoke(ctx, handler, job)
+	err, ownsLease, heartbeatErr := r.safeInvokeWithHeartbeat(ctx, handler, job)
+	if heartbeatErr != nil {
+		return heartbeatErr
+	}
+	if !ownsLease {
+		// Another worker reclaimed the job. The stale result is intentionally
+		// discarded; handlers remain responsible for idempotent side effects.
+		return nil
+	}
 	if err == nil {
-		_ = r.repo.MarkSucceeded(job.ID, r.now())
-		return
+		_, markErr := r.repo.MarkSucceeded(job.ID, r.workerID, job.LeaseGeneration, r.now())
+		return markErr
 	}
 	if attempt >= job.MaxAttempts {
-		_ = r.repo.MarkDead(job.ID, r.now(), attempt, err.Error())
-		return
+		_, markErr := r.repo.MarkDead(job.ID, r.workerID, job.LeaseGeneration, r.now(), attempt, err.Error())
+		return markErr
 	}
 	retryAt := r.now().Add(r.policy.Delay(attempt))
-	_ = r.repo.MarkForRetry(job.ID, retryAt, attempt, err.Error())
+	_, markErr := r.repo.MarkForRetry(job.ID, r.workerID, job.LeaseGeneration, retryAt, attempt, err.Error())
+	return markErr
+}
+
+func (r *Runner) safeInvokeWithHeartbeat(ctx context.Context, handler Handler, job models.DurableJob) (error, bool, error) {
+	handlerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- r.safeInvoke(handlerCtx, handler, job)
+	}()
+
+	interval := r.lease / 3
+	if interval <= 0 {
+		return <-result, true, nil
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-result:
+			return err, true, nil
+		case <-ctx.Done():
+			cancel()
+			return ctx.Err(), true, nil
+		case <-ticker.C:
+			owned, err := r.repo.ExtendLease(job.ID, r.workerID, job.LeaseGeneration, r.now())
+			if err != nil {
+				cancel()
+				return nil, true, fmt.Errorf("extend lease for %s: %w", job.ID, err)
+			}
+			if !owned {
+				cancel()
+				return nil, false, nil
+			}
+		}
+	}
 }
 
 // safeInvoke turns a panicking handler into a normal error so one bad job can

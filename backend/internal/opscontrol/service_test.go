@@ -2,11 +2,15 @@ package opscontrol
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/operations"
+	"automation-hub-backend/internal/safety"
 )
 
 func newTestService(t *testing.T) *Service {
@@ -21,7 +25,9 @@ func TestEmergencyStopEngageDisengageAndControl(t *testing.T) {
 	if s.Control().EmergencyStop() {
 		t.Fatalf("emergency stop must default to disengaged")
 	}
-	s.EngageEmergencyStop("test", "op")
+	if _, err := s.EngageEmergencyStop("test", "op"); err != nil {
+		t.Fatalf("engage: %v", err)
+	}
 	if !s.Control().EmergencyStop() {
 		t.Fatalf("engage must set the stop")
 	}
@@ -29,7 +35,9 @@ func TestEmergencyStopEngageDisengageAndControl(t *testing.T) {
 	if s.Control().Mode() != autonomypolicy.ModeEmergencyStopped {
 		t.Fatalf("engaged control mode must be emergency_stopped, got %s", s.Control().Mode())
 	}
-	s.DisengageEmergencyStop("op")
+	if _, err := s.DisengageEmergencyStop("op"); err != nil {
+		t.Fatalf("disengage: %v", err)
+	}
 	if s.Control().EmergencyStop() {
 		t.Fatalf("disengage must clear the stop")
 	}
@@ -40,7 +48,9 @@ func TestEmergencyStopSurvivesRestart(t *testing.T) {
 	broker := executionbroker.NewBroker(t.TempDir())
 	ops := operations.NewService(operations.NewMemoryRepository())
 	s1 := NewService(dir, broker, ops, "u", "local")
-	s1.EngageEmergencyStop("halt for maintenance", "op")
+	if _, err := s1.EngageEmergencyStop("halt for maintenance", "op"); err != nil {
+		t.Fatalf("engage: %v", err)
+	}
 
 	// A fresh service rooted at the same dir must load the persisted stop.
 	s2 := NewService(dir, broker, ops, "u", "local")
@@ -50,6 +60,56 @@ func TestEmergencyStopSurvivesRestart(t *testing.T) {
 	if s2.Control().EmergencyState().Reason != "halt for maintenance" {
 		t.Fatalf("persisted reason must survive restart")
 	}
+}
+
+func TestPersistedEmergencyStopDrivesSharedSafetyProvider(t *testing.T) {
+	dir := t.TempDir()
+	broker := executionbroker.NewBroker(t.TempDir())
+	ops := operations.NewService(operations.NewMemoryRepository())
+	s1 := NewService(dir, broker, ops, "u", "local")
+	if _, err := s1.EngageEmergencyStop("operator maintenance", "op"); err != nil {
+		t.Fatalf("engage: %v", err)
+	}
+
+	s2 := NewService(dir, broker, ops, "u", "local")
+	restore := safety.SetEmergencyStopProvider(s2.Control())
+	defer restore()
+
+	decision := safety.EvaluateEmergencyStop()
+	if !decision.Active || decision.Source != "persisted_control" || decision.Reason != "operator maintenance" {
+		t.Fatalf("shared decision = %#v", decision)
+	}
+}
+
+func TestUnreadablePersistedStateFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(stateDir, []byte("occupied"), 0o600); err != nil {
+		t.Fatalf("create invalid state root: %v", err)
+	}
+	broker := executionbroker.NewBroker(t.TempDir())
+	ops := operations.NewService(operations.NewMemoryRepository())
+	s := NewService(stateDir, broker, ops, "u", "local")
+	restore := safety.SetEmergencyStopProvider(s.Control())
+	defer restore()
+
+	if !s.Control().EmergencyStop() {
+		t.Fatalf("unreadable persisted state must engage the fail-closed stop")
+	}
+	decision := safety.EvaluateEmergencyStop()
+	if !decision.Active || decision.Source != "persisted_control_error" {
+		t.Fatalf("shared decision = %#v, want fail-closed provider error", decision)
+	}
+	readiness := s.Readiness(context.Background())
+	for _, gate := range readiness.Gates {
+		if gate.Name == "emergency_stop_works" {
+			if gate.Status != GateFail || !strings.Contains(gate.Evidence, "unavailable") {
+				t.Fatalf("readiness gate = %#v, want explicit failure", gate)
+			}
+			return
+		}
+	}
+	t.Fatalf("readiness omitted emergency_stop_works gate")
 }
 
 func TestVerifyEmergencyStopHaltsProcessing(t *testing.T) {

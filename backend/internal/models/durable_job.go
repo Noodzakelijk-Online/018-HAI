@@ -41,6 +41,10 @@ type DurableJob struct {
 	// holding it is presumed dead and the job is reclaimable.
 	LockedBy string     `gorm:"type:text" json:"lockedBy,omitempty"`
 	LockedAt *time.Time `json:"lockedAt,omitempty"`
+	// LeaseGeneration is a fencing token. Every successful claim increments it,
+	// and outcome writes must present the same generation and worker identity.
+	// A stale worker therefore cannot overwrite a job reclaimed after expiry.
+	LeaseGeneration int64 `gorm:"not null;default:0" json:"leaseGeneration"`
 
 	LastError   string     `gorm:"type:text" json:"lastError,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`

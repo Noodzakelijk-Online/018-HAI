@@ -5,6 +5,8 @@
 package durablejob
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"time"
 
 	"automation-hub-backend/internal/infra"
@@ -19,12 +21,18 @@ import (
 // without a database.
 type Repository interface {
 	Enqueue(job *models.DurableJob) (*models.DurableJob, error)
+	// EnqueueIfNoActive atomically creates a job only when no pending or
+	// running job of the same kind exists.
+	EnqueueIfNoActive(job *models.DurableJob) (bool, error)
 	// ClaimDue atomically leases up to limit jobs that are due at now.
-	ClaimDue(workerID string, now time.Time, limit int) ([]models.DurableJob, error)
-	MarkSucceeded(id uuid.UUID, now time.Time) error
+	ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error)
+	MarkSucceeded(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error)
 	// MarkForRetry returns a job to pending with a future RunAt.
-	MarkForRetry(id uuid.UUID, runAt time.Time, attempts int, lastErr string) error
-	MarkDead(id uuid.UUID, now time.Time, attempts int, lastErr string) error
+	MarkForRetry(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, attempts int, lastErr string) (bool, error)
+	MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error)
+	// ExtendLease heartbeats a running job only while the caller still owns its
+	// current lease generation.
+	ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error)
 	// ReapExpiredLeases returns jobs whose worker died back to pending.
 	ReapExpiredLeases(now time.Time, lease time.Duration) (int, error)
 	Find(id uuid.UUID) (*models.DurableJob, error)
@@ -48,6 +56,14 @@ func DefaultRepository() (Repository, error) {
 }
 
 func (r *gormRepository) Enqueue(job *models.DurableJob) (*models.DurableJob, error) {
+	normalizeJob(job)
+	if err := r.db.Create(job).Error; err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+func normalizeJob(job *models.DurableJob) {
 	if job.Queue == "" {
 		job.Queue = "default"
 	}
@@ -63,37 +79,66 @@ func (r *gormRepository) Enqueue(job *models.DurableJob) (*models.DurableJob, er
 	if job.Payload == "" {
 		job.Payload = "{}"
 	}
-	if err := r.db.Create(job).Error; err != nil {
-		return nil, err
-	}
-	return job, nil
+}
+
+func (r *gormRepository) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
+	normalizeJob(job)
+	created := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// Serialize singleton creation per queue and kind without holding a
+		// table lock. PostgreSQL text values cannot contain NUL bytes, so use a
+		// fixed-width digest instead of the in-memory composite-key separator.
+		lockKey := fmt.Sprintf("%x", sha256.Sum256([]byte(job.Queue+"\x00"+job.Kind)))
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Error; err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&models.DurableJob{}).
+			Where("queue = ? AND kind = ? AND status IN ?", job.Queue, job.Kind, []string{models.DurableJobPending, models.DurableJobRunning}).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil
+		}
+		if err := tx.Create(job).Error; err != nil {
+			return err
+		}
+		created = true
+		return nil
+	})
+	return created, err
 }
 
 // ClaimDue uses SELECT ... FOR UPDATE SKIP LOCKED so multiple workers can poll
 // the same queue concurrently without ever claiming the same job twice.
-func (r *gormRepository) ClaimDue(workerID string, now time.Time, limit int) ([]models.DurableJob, error) {
+func (r *gormRepository) ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error) {
 	if limit <= 0 {
 		limit = 10
+	}
+	if queue == "" {
+		queue = "default"
 	}
 	claimed := []models.DurableJob{}
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var candidates []models.DurableJob
 		if err := tx.Raw(`
 			SELECT * FROM durable_jobs
-			WHERE status = ? AND run_at <= ?
+			WHERE status = ? AND queue = ? AND run_at <= ?
 			ORDER BY run_at
 			LIMIT ?
 			FOR UPDATE SKIP LOCKED`,
-			models.DurableJobPending, now, limit).Scan(&candidates).Error; err != nil {
+			models.DurableJobPending, queue, now, limit).Scan(&candidates).Error; err != nil {
 			return err
 		}
 		for i := range candidates {
 			if err := tx.Model(&models.DurableJob{}).
 				Where("id = ?", candidates[i].ID).
 				Updates(map[string]any{
-					"status":    models.DurableJobRunning,
-					"locked_by": workerID,
-					"locked_at": now,
+					"status":           models.DurableJobRunning,
+					"locked_by":        workerID,
+					"locked_at":        now,
+					"lease_generation": gorm.Expr("lease_generation + 1"),
 				}).Error; err != nil {
 				return err
 			}
@@ -101,6 +146,7 @@ func (r *gormRepository) ClaimDue(workerID string, now time.Time, limit int) ([]
 			candidates[i].LockedBy = workerID
 			lockedAt := now
 			candidates[i].LockedAt = &lockedAt
+			candidates[i].LeaseGeneration++
 		}
 		claimed = candidates
 		return nil
@@ -108,36 +154,55 @@ func (r *gormRepository) ClaimDue(workerID string, now time.Time, limit int) ([]
 	return claimed, err
 }
 
-func (r *gormRepository) MarkSucceeded(id uuid.UUID, now time.Time) error {
-	return r.db.Model(&models.DurableJob{}).Where("id = ?", id).Updates(map[string]any{
+func (r *gormRepository) MarkSucceeded(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
+	result := r.ownedLease(id, workerID, leaseGeneration).Updates(map[string]any{
 		"status":       models.DurableJobSucceeded,
 		"completed_at": now,
 		"locked_by":    "",
 		"locked_at":    nil,
 		"last_error":   "",
-	}).Error
+	})
+	return result.RowsAffected == 1, result.Error
 }
 
-func (r *gormRepository) MarkForRetry(id uuid.UUID, runAt time.Time, attempts int, lastErr string) error {
-	return r.db.Model(&models.DurableJob{}).Where("id = ?", id).Updates(map[string]any{
+func (r *gormRepository) MarkForRetry(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, attempts int, lastErr string) (bool, error) {
+	result := r.ownedLease(id, workerID, leaseGeneration).Updates(map[string]any{
 		"status":     models.DurableJobPending,
 		"run_at":     runAt,
 		"attempts":   attempts,
 		"last_error": lastErr,
 		"locked_by":  "",
 		"locked_at":  nil,
-	}).Error
+	})
+	return result.RowsAffected == 1, result.Error
 }
 
-func (r *gormRepository) MarkDead(id uuid.UUID, now time.Time, attempts int, lastErr string) error {
-	return r.db.Model(&models.DurableJob{}).Where("id = ?", id).Updates(map[string]any{
+func (r *gormRepository) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error) {
+	result := r.ownedLease(id, workerID, leaseGeneration).Updates(map[string]any{
 		"status":       models.DurableJobDead,
 		"attempts":     attempts,
 		"last_error":   lastErr,
 		"completed_at": now,
 		"locked_by":    "",
 		"locked_at":    nil,
-	}).Error
+	})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *gormRepository) ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
+	result := r.ownedLease(id, workerID, leaseGeneration).Update("locked_at", now)
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *gormRepository) ownedLease(id uuid.UUID, workerID string, leaseGeneration int64) *gorm.DB {
+	return r.db.Model(&models.DurableJob{}).
+		Where(
+			"id = ? AND status = ? AND locked_by = ? AND lease_generation = ?",
+			id,
+			models.DurableJobRunning,
+			workerID,
+			leaseGeneration,
+		)
 }
 
 // ReapExpiredLeases recovers jobs whose worker died while holding the lease.

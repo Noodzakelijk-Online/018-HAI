@@ -12,6 +12,7 @@ import (
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/verification"
 
@@ -560,6 +561,30 @@ func TestRunBlocksExecutionWhenEmergencyStopActive(t *testing.T) {
 	}
 	if plan.ReviewQueueItem == nil {
 		t.Fatalf("expected review queue item")
+	}
+}
+
+func TestRunBlocksExecutionWhenPersistedEmergencyStopActive(t *testing.T) {
+	restore := safety.SetEmergencyStopProvider(safety.EmergencyStopProviderFunc(func() (bool, string, error) {
+		return true, "operator paused execution", nil
+	}))
+	defer restore()
+
+	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t))
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Create a low-risk admin checklist",
+		ProjectKey:     "018-HAI",
+		ExecuteAllowed: true,
+		HumanApproved:  true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "review_required" || plan.ExecutionResult == nil {
+		t.Fatalf("persisted stop did not block task execution: %#v", plan)
+	}
+	if plan.ExecutionResult.BlockedReason != "operator paused execution" {
+		t.Fatalf("blocked reason = %q", plan.ExecutionResult.BlockedReason)
 	}
 }
 

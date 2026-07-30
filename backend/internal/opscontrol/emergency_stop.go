@@ -8,6 +8,7 @@ package opscontrol
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -30,6 +31,7 @@ type EmergencyStopStore struct {
 	mu    sync.Mutex
 	path  string
 	state EmergencyStopState
+	err   error
 }
 
 // NewEmergencyStopStore loads (or initializes) the store rooted at dir.
@@ -42,52 +44,74 @@ func NewEmergencyStopStore(dir string) *EmergencyStopStore {
 func (s *EmergencyStopStore) load() {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
-		return // no prior state; default disengaged
-	}
-	var st EmergencyStopState
-	if json.Unmarshal(data, &st) == nil {
-		s.state = st
-	}
-}
-
-func (s *EmergencyStopStore) persist() {
-	data, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
+		if !os.IsNotExist(err) {
+			s.err = fmt.Errorf("read persisted emergency-stop state: %w", err)
+		}
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(s.path), 0o755)
-	_ = os.WriteFile(s.path, data, 0o600)
+	var st EmergencyStopState
+	if err := json.Unmarshal(data, &st); err != nil {
+		s.err = fmt.Errorf("decode persisted emergency-stop state: %w", err)
+		return
+	}
+	s.state = st
 }
 
-// State returns the current emergency-stop state.
-func (s *EmergencyStopStore) State() EmergencyStopState {
+func (s *EmergencyStopStore) persist() error {
+	data, err := json.MarshalIndent(s.state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode emergency-stop state: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return fmt.Errorf("create emergency-stop state directory: %w", err)
+	}
+	if err := os.WriteFile(s.path, data, 0o600); err != nil {
+		return fmt.Errorf("write emergency-stop state: %w", err)
+	}
+	return nil
+}
+
+// Status returns the persisted state and any error that prevents the state from
+// being trusted. Callers must treat an error as engaged.
+func (s *EmergencyStopStore) Status() (EmergencyStopState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state
+	return s.state, s.err
+}
+
+// State returns the effective fail-closed state for operator-facing status.
+func (s *EmergencyStopStore) State() EmergencyStopState {
+	state, err := s.Status()
+	if err == nil {
+		return state
+	}
+	state.Engaged = true
+	state.Reason = "persisted emergency-stop state is unavailable; execution remains blocked"
+	state.Actor = "system"
+	return state
 }
 
 // Engaged reports whether the emergency stop is active.
 func (s *EmergencyStopStore) Engaged() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.state.Engaged
+	state, err := s.Status()
+	return err != nil || state.Engaged
 }
 
 // Engage activates the emergency stop and persists it.
-func (s *EmergencyStopStore) Engage(reason, actor string, now time.Time) EmergencyStopState {
+func (s *EmergencyStopStore) Engage(reason, actor string, now time.Time) (EmergencyStopState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := now.UTC()
 	s.state = EmergencyStopState{Engaged: true, Reason: reason, Actor: actor, EngagedAt: &t, UpdatedAt: t}
-	s.persist()
-	return s.state
+	s.err = s.persist()
+	return s.state, s.err
 }
 
 // Disengage clears the emergency stop and persists it.
-func (s *EmergencyStopStore) Disengage(actor string, now time.Time) EmergencyStopState {
+func (s *EmergencyStopStore) Disengage(actor string, now time.Time) (EmergencyStopState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = EmergencyStopState{Engaged: false, Actor: actor, UpdatedAt: now.UTC()}
-	s.persist()
-	return s.state
+	s.err = s.persist()
+	return s.state, s.err
 }

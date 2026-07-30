@@ -15,7 +15,22 @@ import (
 // fakeRepo is an in-memory Repository so retry, lease, and scheduling logic is
 // verifiable without a database.
 type fakeRepo struct {
-	jobs map[uuid.UUID]*models.DurableJob
+	jobs        map[uuid.UUID]*models.DurableJob
+	extendCalls int
+}
+
+type leaseLosingRepo struct {
+	*fakeRepo
+}
+
+func (r *leaseLosingRepo) ExtendLease(
+	_ uuid.UUID,
+	_ string,
+	_ int64,
+	_ time.Time,
+) (bool, error) {
+	r.extendCalls++
+	return false, nil
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{jobs: map[uuid.UUID]*models.DurableJob{}} }
@@ -27,6 +42,9 @@ func (f *fakeRepo) Enqueue(job *models.DurableJob) (*models.DurableJob, error) {
 	if job.Status == "" {
 		job.Status = models.DurableJobPending
 	}
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
 	if job.MaxAttempts <= 0 {
 		job.MaxAttempts = 5
 	}
@@ -35,17 +53,35 @@ func (f *fakeRepo) Enqueue(job *models.DurableJob) (*models.DurableJob, error) {
 	return &copyJob, nil
 }
 
-func (f *fakeRepo) ClaimDue(workerID string, now time.Time, limit int) ([]models.DurableJob, error) {
+func (f *fakeRepo) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
+func (f *fakeRepo) ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error) {
+	if queue == "" {
+		queue = "default"
+	}
 	claimed := []models.DurableJob{}
 	for _, job := range f.jobs {
 		if len(claimed) >= limit {
 			break
 		}
-		if job.Status != models.DurableJobPending || job.RunAt.After(now) {
+		if job.Queue != queue || job.Status != models.DurableJobPending || job.RunAt.After(now) {
 			continue
 		}
 		job.Status = models.DurableJobRunning
 		job.LockedBy = workerID
+		job.LeaseGeneration++
 		lockedAt := now
 		job.LockedAt = &lockedAt
 		claimed = append(claimed, *job)
@@ -53,35 +89,61 @@ func (f *fakeRepo) ClaimDue(workerID string, now time.Time, limit int) ([]models
 	return claimed, nil
 }
 
-func (f *fakeRepo) MarkSucceeded(id uuid.UUID, now time.Time) error {
+func (f *fakeRepo) MarkSucceeded(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
 	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
 	job.Status = models.DurableJobSucceeded
 	job.CompletedAt = &now
 	job.LockedBy = ""
 	job.LockedAt = nil
-	return nil
+	return true, nil
 }
 
-func (f *fakeRepo) MarkForRetry(id uuid.UUID, runAt time.Time, attempts int, lastErr string) error {
+func (f *fakeRepo) MarkForRetry(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, attempts int, lastErr string) (bool, error) {
 	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
 	job.Status = models.DurableJobPending
 	job.RunAt = runAt
 	job.Attempts = attempts
 	job.LastError = lastErr
 	job.LockedBy = ""
 	job.LockedAt = nil
-	return nil
+	return true, nil
 }
 
-func (f *fakeRepo) MarkDead(id uuid.UUID, now time.Time, attempts int, lastErr string) error {
+func (f *fakeRepo) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error) {
 	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
 	job.Status = models.DurableJobDead
 	job.Attempts = attempts
 	job.LastError = lastErr
 	job.CompletedAt = &now
 	job.LockedBy = ""
 	job.LockedAt = nil
-	return nil
+	return true, nil
+}
+
+func (f *fakeRepo) ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
+	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
+	job.LockedAt = &now
+	f.extendCalls++
+	return true, nil
+}
+
+func fakeLeaseOwned(job *models.DurableJob, workerID string, leaseGeneration int64) bool {
+	return job != nil &&
+		job.Status == models.DurableJobRunning &&
+		job.LockedBy == workerID &&
+		job.LeaseGeneration == leaseGeneration
 }
 
 func (f *fakeRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {
@@ -216,7 +278,7 @@ func TestRunnerReclaimsJobAfterWorkerCrash(t *testing.T) {
 	job, _ := repo.Enqueue(&models.DurableJob{
 		Kind: "demo", Payload: "{}", RunAt: now, MaxAttempts: 3, Status: models.DurableJobPending,
 	})
-	if _, err := repo.ClaimDue("dead-worker", now, 10); err != nil {
+	if _, err := repo.ClaimDue("dead-worker", "default", now, 10); err != nil {
 		t.Fatalf("ClaimDue: %v", err)
 	}
 	if stored, _ := repo.Find(job.ID); stored.Status != models.DurableJobRunning {
@@ -238,6 +300,146 @@ func TestRunnerReclaimsJobAfterWorkerCrash(t *testing.T) {
 	stored, _ := repo.Find(job.ID)
 	if stored.Status != models.DurableJobSucceeded {
 		t.Fatalf("status = %q, want succeeded after recovery", stored.Status)
+	}
+}
+
+func TestLeaseGenerationRejectsStaleWorkerCompletion(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	job, _ := repo.Enqueue(&models.DurableJob{
+		Kind: "demo", Payload: "{}", RunAt: now, MaxAttempts: 3,
+	})
+	first, err := repo.ClaimDue("w1", "default", now, 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first claim = %#v, %v", first, err)
+	}
+	now = now.Add(time.Minute)
+	if reaped, err := repo.ReapExpiredLeases(now, 30*time.Second); err != nil || reaped != 1 {
+		t.Fatalf("reap = %d, %v", reaped, err)
+	}
+	second, err := repo.ClaimDue("w2", "default", now, 1)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second claim = %#v, %v", second, err)
+	}
+	if second[0].LeaseGeneration <= first[0].LeaseGeneration {
+		t.Fatalf("lease generation did not advance: first=%d second=%d", first[0].LeaseGeneration, second[0].LeaseGeneration)
+	}
+
+	updated, err := repo.MarkSucceeded(job.ID, "w1", first[0].LeaseGeneration, now)
+	if err != nil {
+		t.Fatalf("stale completion: %v", err)
+	}
+	if updated {
+		t.Fatal("stale worker completion must be rejected")
+	}
+	stored, _ := repo.Find(job.ID)
+	if stored.Status != models.DurableJobRunning || stored.LockedBy != "w2" {
+		t.Fatalf("stale worker changed current lease: %#v", stored)
+	}
+
+	updated, err = repo.MarkSucceeded(job.ID, "w2", second[0].LeaseGeneration, now)
+	if err != nil || !updated {
+		t.Fatalf("current completion = %v, %v", updated, err)
+	}
+}
+
+func TestRunnerOnlyClaimsItsConfiguredQueue(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	sourceRunner := NewRunner(repo, Options{WorkerID: "source-worker", Queue: "source", Now: fixedClock(&now)})
+	workflowRunner := NewRunner(repo, Options{WorkerID: "workflow-worker", Queue: "workflow", Now: fixedClock(&now)})
+	sourceRan := false
+	workflowRan := false
+	sourceRunner.Register("scan", func(context.Context, models.DurableJob) error {
+		sourceRan = true
+		return nil
+	})
+	workflowRunner.Register("sweep", func(context.Context, models.DurableJob) error {
+		workflowRan = true
+		return nil
+	})
+	if _, err := sourceRunner.Enqueue("scan", "{}", now, 2); err != nil {
+		t.Fatalf("enqueue source: %v", err)
+	}
+	if _, err := workflowRunner.Enqueue("sweep", "{}", now, 2); err != nil {
+		t.Fatalf("enqueue workflow: %v", err)
+	}
+
+	if processed, err := sourceRunner.RunOnce(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("source run = %d, %v", processed, err)
+	}
+	if !sourceRan || workflowRan {
+		t.Fatalf("queue isolation failed: source=%v workflow=%v", sourceRan, workflowRan)
+	}
+	if processed, err := workflowRunner.RunOnce(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("workflow run = %d, %v", processed, err)
+	}
+	if !workflowRan {
+		t.Fatal("workflow queue was not processed")
+	}
+}
+
+func TestRunnerHeartbeatsLongRunningHandler(t *testing.T) {
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{
+		WorkerID: "w1",
+		Lease:    15 * time.Millisecond,
+		Now:      func() time.Time { return time.Now().UTC() },
+	})
+	runner.Register("slow", func(context.Context, models.DurableJob) error {
+		time.Sleep(45 * time.Millisecond)
+		return nil
+	})
+	if _, err := runner.Enqueue("slow", "{}", time.Now().UTC(), 2); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if processed, err := runner.RunOnce(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("run = %d, %v", processed, err)
+	}
+	if repo.extendCalls == 0 {
+		t.Fatal("long-running handler did not heartbeat its lease")
+	}
+}
+
+func TestRunnerReturnsPromptlyWhenHandlerLosesLease(t *testing.T) {
+	repo := &leaseLosingRepo{fakeRepo: newFakeRepo()}
+	runner := NewRunner(repo, Options{
+		WorkerID: "w1",
+		Lease:    15 * time.Millisecond,
+		Now:      func() time.Time { return time.Now().UTC() },
+	})
+	release := make(chan struct{})
+	runner.Register("stuck", func(context.Context, models.DurableJob) error {
+		<-release
+		return nil
+	})
+	if _, err := runner.Enqueue("stuck", "{}", time.Now().UTC(), 2); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	type result struct {
+		processed int
+		err       error
+	}
+	done := make(chan result, 1)
+	go func() {
+		processed, err := runner.RunOnce(context.Background())
+		done <- result{processed: processed, err: err}
+	}()
+
+	select {
+	case run := <-done:
+		close(release)
+		if run.err != nil || run.processed != 1 {
+			t.Fatalf("run = %d, %v", run.processed, run.err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		<-done
+		t.Fatal("runner waited for a stale handler after lease ownership was lost")
+	}
+	if repo.extendCalls == 0 {
+		t.Fatal("test did not reach lease renewal")
 	}
 }
 
