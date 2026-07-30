@@ -11,10 +11,11 @@ type Repository interface {
 	Get(context.Context, string, string) (Agent, error)
 	List(context.Context, string) ([]Agent, error)
 	CompareAndSwap(context.Context, Agent, uint64) (Agent, error)
-	AppendTransition(context.Context, string, string, Transition) error
+	Transition(context.Context, Agent, uint64, Transition) (Agent, error)
 	ListTransitions(context.Context, string, string) ([]Transition, error)
-	CreateAssignment(context.Context, Assignment) error
+	CreateAssignment(context.Context, Assignment) (Agent, error)
 	GetAssignment(context.Context, string, string) (Assignment, error)
+	RecordAssignmentOutcome(context.Context, AssignmentOutcome, Agent, uint64) (Agent, error)
 }
 
 type MemoryRepository struct {
@@ -22,6 +23,7 @@ type MemoryRepository struct {
 	agents      map[string]Agent
 	transitions map[string][]Transition
 	assignments map[string]Assignment
+	outcomes    map[string]AssignmentOutcome
 }
 
 func NewMemoryRepository() *MemoryRepository {
@@ -29,6 +31,7 @@ func NewMemoryRepository() *MemoryRepository {
 		agents:      make(map[string]Agent),
 		transitions: make(map[string][]Transition),
 		assignments: make(map[string]Assignment),
+		outcomes:    make(map[string]AssignmentOutcome),
 	}
 }
 
@@ -84,15 +87,29 @@ func (r *MemoryRepository) CompareAndSwap(_ context.Context, agent Agent, expect
 	return cloneAgent(agent), nil
 }
 
-func (r *MemoryRepository) AppendTransition(_ context.Context, owner, id string, transition Transition) error {
+func (r *MemoryRepository) Transition(
+	_ context.Context,
+	agent Agent,
+	expected uint64,
+	transition Transition,
+) (Agent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.agents[ownerKey(owner, id)]; !exists {
-		return ErrNotFound
+	key := ownerKey(agent.OwnerIdentity, agent.ID)
+	current, exists := r.agents[key]
+	if !exists {
+		return Agent{}, ErrNotFound
 	}
-	key := ownerKey(owner, id)
+	if current.Revision != expected ||
+		agent.Revision != expected+1 ||
+		transition.Revision != agent.Revision ||
+		transition.From != current.State ||
+		transition.To != agent.State {
+		return Agent{}, ErrConflict
+	}
+	r.agents[key] = cloneAgent(agent)
 	r.transitions[key] = append(r.transitions[key], transition)
-	return nil
+	return cloneAgent(agent), nil
 }
 
 func (r *MemoryRepository) ListTransitions(_ context.Context, owner, id string) ([]Transition, error) {
@@ -105,15 +122,31 @@ func (r *MemoryRepository) ListTransitions(_ context.Context, owner, id string) 
 	return append([]Transition(nil), values...), nil
 }
 
-func (r *MemoryRepository) CreateAssignment(_ context.Context, assignment Assignment) error {
+func (r *MemoryRepository) CreateAssignment(
+	_ context.Context,
+	assignment Assignment,
+) (Agent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := ownerKey(assignment.OwnerIdentity, assignment.ID)
 	if _, exists := r.assignments[key]; exists {
-		return ErrAssignmentExists
+		return Agent{}, ErrAssignmentExists
+	}
+	agentKey := ownerKey(assignment.OwnerIdentity, assignment.AgentID)
+	agent, exists := r.agents[agentKey]
+	if !exists {
+		return Agent{}, ErrNotFound
+	}
+	if agent.Revision != assignment.AgentRevision ||
+		agent.Availability.ActiveAssignments >= agent.Availability.MaxConcurrent {
+		return Agent{}, ErrConflict
 	}
 	r.assignments[key] = cloneAssignment(assignment)
-	return nil
+	agent.Availability.ActiveAssignments++
+	agent.Revision++
+	agent.UpdatedAt = assignment.AssignedAt.UTC()
+	r.agents[agentKey] = cloneAgent(agent)
+	return cloneAgent(agent), nil
 }
 
 func (r *MemoryRepository) GetAssignment(_ context.Context, owner, id string) (Assignment, error) {
@@ -124,6 +157,39 @@ func (r *MemoryRepository) GetAssignment(_ context.Context, owner, id string) (A
 		return Assignment{}, ErrNotFound
 	}
 	return cloneAssignment(assignment), nil
+}
+
+func (r *MemoryRepository) RecordAssignmentOutcome(
+	_ context.Context,
+	outcome AssignmentOutcome,
+	updated Agent,
+	expected uint64,
+) (Agent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	assignmentKey := ownerKey(outcome.OwnerIdentity, outcome.AssignmentID)
+	assignment, exists := r.assignments[assignmentKey]
+	if !exists {
+		return Agent{}, ErrNotFound
+	}
+	if _, exists := r.outcomes[assignmentKey]; exists {
+		return Agent{}, ErrConflict
+	}
+	agentKey := ownerKey(outcome.OwnerIdentity, assignment.AgentID)
+	current, exists := r.agents[agentKey]
+	if !exists {
+		return Agent{}, ErrNotFound
+	}
+	if current.Revision != expected ||
+		updated.Revision != expected+1 ||
+		updated.ID != assignment.AgentID ||
+		updated.OwnerIdentity != outcome.OwnerIdentity ||
+		outcome.AgentID != assignment.AgentID {
+		return Agent{}, ErrConflict
+	}
+	r.outcomes[assignmentKey] = outcome
+	r.agents[agentKey] = cloneAgent(updated)
+	return cloneAgent(updated), nil
 }
 
 func ownerKey(owner, id string) string {

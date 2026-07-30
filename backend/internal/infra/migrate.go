@@ -18,7 +18,10 @@ import (
 // runs after it, which lets us retire AutoMigrate incrementally without
 // reordering table-dependent DDL.
 
-const schemaMigrationsTable = "schema_migrations"
+const (
+	schemaMigrationsTable    = "schema_migrations"
+	migrationAdvisoryLockKey = int64(0x4841494d494752)
+)
 
 // Migration is one versioned change loaded from an embedded directory.
 type Migration struct {
@@ -145,9 +148,21 @@ func splitSQLStatements(script string) []string {
 }
 
 func ensureSchemaMigrationsTable(db *gorm.DB) error {
-	return db.Exec(fmt.Sprintf(
-		`CREATE TABLE IF NOT EXISTS %s (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
-		schemaMigrationsTable)).Error
+	// PostgreSQL's CREATE TABLE IF NOT EXISTS can still race while two fresh
+	// processes concurrently create the table's implicit row type. Serialize
+	// first boot before touching the table, using a transaction-scoped lock so
+	// a failed process cannot strand the lock.
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(
+			"SELECT pg_advisory_xact_lock(?)",
+			migrationAdvisoryLockKey,
+		).Error; err != nil {
+			return fmt.Errorf("lock schema migration bootstrap: %w", err)
+		}
+		return tx.Exec(fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %s (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
+			schemaMigrationsTable)).Error
+	})
 }
 
 func appliedVersions(db *gorm.DB) (map[string]bool, error) {
@@ -179,17 +194,49 @@ func ApplyMigrations(db *gorm.DB, fsys fs.FS, dir string) (int, error) {
 	}
 	count := 0
 	for _, migration := range pendingMigrations(all, applied) {
+		appliedNow := false
 		if err := db.Transaction(func(tx *gorm.DB) error {
+			// Serialize each migration across backend instances, then recheck
+			// under the lock. The initial applied-version snapshot is only an
+			// optimization and must never be the concurrency authority.
+			if err := tx.Exec(
+				"SELECT pg_advisory_xact_lock(?)",
+				migrationAdvisoryLockKey,
+			).Error; err != nil {
+				return fmt.Errorf("lock schema migrations: %w", err)
+			}
+			var alreadyApplied bool
+			if err := tx.Raw(
+				fmt.Sprintf(
+					"SELECT EXISTS (SELECT 1 FROM %s WHERE version = ?)",
+					schemaMigrationsTable,
+				),
+				migration.Version,
+			).Row().Scan(&alreadyApplied); err != nil {
+				return fmt.Errorf("recheck migration %s: %w", migration.Version, err)
+			}
+			if alreadyApplied {
+				return nil
+			}
 			for _, statement := range splitSQLStatements(migration.UpSQL) {
 				if err := tx.Exec(statement).Error; err != nil {
 					return fmt.Errorf("apply %s: %w", migration.Version, err)
 				}
 			}
-			return tx.Exec(fmt.Sprintf("INSERT INTO %s (version) VALUES (?)", schemaMigrationsTable), migration.Version).Error
+			if err := tx.Exec(
+				fmt.Sprintf("INSERT INTO %s (version) VALUES (?)", schemaMigrationsTable),
+				migration.Version,
+			).Error; err != nil {
+				return err
+			}
+			appliedNow = true
+			return nil
 		}); err != nil {
 			return count, err
 		}
-		count++
+		if appliedNow {
+			count++
+		}
 	}
 	return count, nil
 }

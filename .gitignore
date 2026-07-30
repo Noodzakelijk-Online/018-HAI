@@ -1,4 +1,5 @@
 # Local operator configuration. Keep committed examples only.
+.env
 .env.local
 .env.*.local
 

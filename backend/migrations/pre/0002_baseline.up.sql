@@ -838,147 +838,507 @@ CREATE TABLE IF NOT EXISTS public.workflow_transitions (
 DO $$ BEGIN
 ALTER TABLE ONLY public.ai_conversation_archives
     ADD CONSTRAINT ai_conversation_archives_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.ai_conversation_archives'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.ai_memory_insights
     ADD CONSTRAINT ai_memory_insights_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.ai_memory_insights'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.ambient_need_overrides
     ADD CONSTRAINT ambient_need_overrides_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.ambient_need_overrides'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.ambient_needs
     ADD CONSTRAINT ambient_needs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.ambient_needs'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.ambient_opportunities
     ADD CONSTRAINT ambient_opportunities_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.ambient_opportunities'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.ambient_scans
     ADD CONSTRAINT ambient_scans_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.ambient_scans'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automation_alerts
     ADD CONSTRAINT automation_alerts_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automation_alerts'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automation_dependencies
     ADD CONSTRAINT automation_dependencies_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automation_dependencies'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automation_health_events
     ADD CONSTRAINT automation_health_events_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automation_health_events'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automation_incidents
     ADD CONSTRAINT automation_incidents_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automation_incidents'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automation_launch_events
     ADD CONSTRAINT automation_launch_events_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automation_launch_events'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automation_route_checks
     ADD CONSTRAINT automation_route_checks_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automation_route_checks'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automation_slos
     ADD CONSTRAINT automation_slos_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automation_slos'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automations
     ADD CONSTRAINT automations_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.automations'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.autonomy_action_traces
     ADD CONSTRAINT autonomy_action_traces_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.autonomy_action_traces'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.autonomy_evaluations
     ADD CONSTRAINT autonomy_evaluations_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.autonomy_evaluations'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.autonomy_stress_runs
     ADD CONSTRAINT autonomy_stress_runs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.autonomy_stress_runs'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.autonomy_world_states
     ADD CONSTRAINT autonomy_world_states_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.autonomy_world_states'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.connected_sources
     ADD CONSTRAINT connected_sources_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.connected_sources'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.context_memories
     ADD CONSTRAINT context_memories_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.context_memories'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.durable_jobs
     ADD CONSTRAINT durable_jobs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.durable_jobs'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.llm_provider_probes
     ADD CONSTRAINT llm_provider_probes_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.llm_provider_probes'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.model_run_telemetries
     ADD CONSTRAINT model_run_telemetries_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.model_run_telemetries'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.operation_events
     ADD CONSTRAINT operation_events_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.operation_events'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.operations
     ADD CONSTRAINT operations_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.operations'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.pursuit_activities
     ADD CONSTRAINT pursuit_activities_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.pursuit_activities'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.pursuit_links
     ADD CONSTRAINT pursuit_links_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.pursuit_links'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.pursuit_task_attempts
     ADD CONSTRAINT pursuit_task_attempts_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.pursuit_task_attempts'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.pursuits
     ADD CONSTRAINT pursuits_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.pursuits'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.source_audit_logs
     ADD CONSTRAINT source_audit_logs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.source_audit_logs'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.source_connectors
     ADD CONSTRAINT source_connectors_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.source_connectors'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.source_extractions
     ADD CONSTRAINT source_extractions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.source_extractions'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.source_index_entries
     ADD CONSTRAINT source_index_entries_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.source_index_entries'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.source_o_auth_tokens
     ADD CONSTRAINT source_o_auth_tokens_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.source_o_auth_tokens'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.source_raw_items
     ADD CONSTRAINT source_raw_items_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.source_raw_items'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.source_sync_jobs
     ADD CONSTRAINT source_sync_jobs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.source_sync_jobs'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.automations
     ADD CONSTRAINT uni_automations_name UNIQUE (name);
@@ -994,71 +1354,241 @@ EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $
 DO $$ BEGIN
 ALTER TABLE ONLY public.verification_audit_logs
     ADD CONSTRAINT verification_audit_logs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.verification_audit_logs'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.verification_claims
     ADD CONSTRAINT verification_claims_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.verification_claims'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.verification_evidences
     ADD CONSTRAINT verification_evidences_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.verification_evidences'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.verification_runs
     ADD CONSTRAINT verification_runs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.verification_runs'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_checklist_items
     ADD CONSTRAINT workflow_checklist_items_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_checklist_items'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_decisions
     ADD CONSTRAINT workflow_decisions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_decisions'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_events
     ADD CONSTRAINT workflow_events_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_events'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_evidence_claims
     ADD CONSTRAINT workflow_evidence_claims_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_evidence_claims'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_intake_records
     ADD CONSTRAINT workflow_intake_records_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_intake_records'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_items
     ADD CONSTRAINT workflow_items_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_items'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_open_loops
     ADD CONSTRAINT workflow_open_loops_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_open_loops'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_project_matches
     ADD CONSTRAINT workflow_project_matches_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_project_matches'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_proposals
     ADD CONSTRAINT workflow_proposals_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_proposals'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_quality_gates
     ADD CONSTRAINT workflow_quality_gates_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_quality_gates'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_rules
     ADD CONSTRAINT workflow_rules_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_rules'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_source_links
     ADD CONSTRAINT workflow_source_links_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_source_links'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 DO $$ BEGIN
 ALTER TABLE ONLY public.workflow_transitions
     ADD CONSTRAINT workflow_transitions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.workflow_transitions'::regclass
+          AND contype = 'p'
+          AND regexp_replace(pg_get_constraintdef(oid), '\s+', '', 'g')
+              = regexp_replace('PRIMARY KEY (id)', '\s+', '', 'g')
+    ) THEN
+        RAISE;
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_ai_conversation_archives_archived ON public.ai_conversation_archives USING btree (archived);
 CREATE INDEX IF NOT EXISTS idx_ai_conversation_archives_captured_at ON public.ai_conversation_archives USING btree (captured_at);
 CREATE INDEX IF NOT EXISTS idx_ai_conversation_archives_content_hash ON public.ai_conversation_archives USING btree (content_hash);

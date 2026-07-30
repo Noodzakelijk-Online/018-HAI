@@ -206,6 +206,17 @@ func TestAssignmentIsDeterministicExplainedAndImmutable(t *testing.T) {
 		assignment.GrantedAutonomy != request.RequiredAutonomy {
 		t.Fatalf("assignment granted broader authority: %#v", assignment)
 	}
+	if assignment.Score < 0 || assignment.Score > 1 {
+		t.Fatalf("assignment score = %f, want normalized score", assignment.Score)
+	}
+	reservedAgent, err := service.Get(context.Background(), request.OwnerIdentity, assignment.AgentID)
+	if err != nil {
+		t.Fatalf("get reserved agent: %v", err)
+	}
+	if reservedAgent.Availability.ActiveAssignments != 1 ||
+		reservedAgent.Revision != assignment.AgentRevision+1 {
+		t.Fatalf("assignment did not atomically reserve capacity: %#v", reservedAgent)
+	}
 
 	repeated, err := service.Assign(context.Background(), request)
 	if err != nil {
@@ -241,15 +252,65 @@ func TestAssignmentTieBreaksByAgentID(t *testing.T) {
 	}
 }
 
-func TestRecordOutcomeOnlyChangesBoundedReliabilityEvidence(t *testing.T) {
+func TestAssignmentCapacityIsReservedUntilOutcome(t *testing.T) {
+	service, _ := newTestService(t)
+	agent := testAgent("alice@example.com", "single-slot")
+	agent.Availability.MaxConcurrent = 1
+	enableAgent(t, service, registerAgent(t, service, agent))
+
+	firstRequest := testRequest()
+	first, err := service.Assign(context.Background(), firstRequest)
+	if err != nil {
+		t.Fatalf("first assignment: %v", err)
+	}
+	secondRequest := testRequest()
+	secondRequest.TaskID = "task-2"
+	if _, err := service.Assign(context.Background(), secondRequest); !errors.Is(err, ErrNoEligibleAgent) {
+		t.Fatalf("second assignment error = %v, want ErrNoEligibleAgent while at capacity", err)
+	}
+	reserved, err := service.Get(context.Background(), first.OwnerIdentity, first.AgentID)
+	if err != nil {
+		t.Fatalf("get reserved agent: %v", err)
+	}
+	if _, err := service.RecordAssignmentOutcome(
+		context.Background(),
+		first.OwnerIdentity,
+		first.ID,
+		reserved.Revision,
+		Outcome{Success: true, RecordedAt: testNow},
+	); err != nil {
+		t.Fatalf("release first assignment: %v", err)
+	}
+	if _, err := service.Assign(context.Background(), secondRequest); err != nil {
+		t.Fatalf("second assignment after release: %v", err)
+	}
+}
+
+func TestAssignmentOutcomeReleasesCapacityAndOnlyChangesBoundedEvidence(t *testing.T) {
 	service, _ := newTestService(t)
 	registered := registerAgent(t, service, testAgent("alice@example.com", "worker"))
-	agent := enableAgent(t, service, registered)
-	before := cloneAgent(agent)
+	enableAgent(t, service, registered)
+	assignment, err := service.Assign(context.Background(), testRequest())
+	if err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	before, err := service.Get(context.Background(), assignment.OwnerIdentity, assignment.AgentID)
+	if err != nil {
+		t.Fatalf("get reserved agent: %v", err)
+	}
+	if before.Availability.ActiveAssignments != 1 {
+		t.Fatalf("active assignments before outcome = %d, want 1", before.Availability.ActiveAssignments)
+	}
 
-	updated, err := service.RecordOutcome(context.Background(), agent.OwnerIdentity, agent.ID, agent.Revision, Outcome{
-		Success: true, Latency: 250 * time.Millisecond, RecordedAt: testNow,
-	})
+	updated, err := service.RecordAssignmentOutcome(
+		context.Background(),
+		assignment.OwnerIdentity,
+		assignment.ID,
+		before.Revision,
+		Outcome{
+			Success: true, Latency: 250 * time.Millisecond, RecordedAt: testNow,
+		},
+	)
 	if err != nil {
 		t.Fatalf("record outcome: %v", err)
 	}
@@ -267,8 +328,49 @@ func TestRecordOutcomeOnlyChangesBoundedReliabilityEvidence(t *testing.T) {
 	if updated.Reliability.Score() < 0 || updated.Reliability.Score() > 1 {
 		t.Fatalf("reliability score out of bounds: %f", updated.Reliability.Score())
 	}
-	if _, err := service.RecordOutcome(context.Background(), agent.OwnerIdentity, agent.ID, agent.Revision, Outcome{Success: true}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("stale outcome error = %v, want ErrConflict", err)
+	if updated.Availability.ActiveAssignments != 0 {
+		t.Fatalf("active assignments after outcome = %d, want 0", updated.Availability.ActiveAssignments)
+	}
+	if _, err := service.RecordAssignmentOutcome(
+		context.Background(),
+		assignment.OwnerIdentity,
+		assignment.ID,
+		updated.Revision,
+		Outcome{Success: true},
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate outcome error = %v, want ErrConflict", err)
+	}
+}
+
+func TestConfigurationUpdateCannotForgeActiveAssignmentCount(t *testing.T) {
+	service, _ := newTestService(t)
+	registered := registerAgent(t, service, testAgent("alice@example.com", "worker"))
+	enableAgent(t, service, registered)
+	assignment, err := service.Assign(context.Background(), testRequest())
+	if err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	current, err := service.Get(context.Background(), assignment.OwnerIdentity, assignment.AgentID)
+	if err != nil {
+		t.Fatalf("get assigned agent: %v", err)
+	}
+	replacement := cloneAgent(current)
+	replacement.Availability.ActiveAssignments = 0
+	replacement.Availability.MaxConcurrent = 3
+	updated, err := service.Update(
+		context.Background(),
+		current.OwnerIdentity,
+		replacement,
+		current.Revision,
+	)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Availability.ActiveAssignments != 1 {
+		t.Fatalf("configuration update forged active assignment count: %#v", updated.Availability)
+	}
+	if updated.Availability.MaxConcurrent != 3 {
+		t.Fatalf("configured maximum capacity = %d, want 3", updated.Availability.MaxConcurrent)
 	}
 }
 

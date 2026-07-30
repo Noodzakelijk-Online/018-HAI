@@ -13,6 +13,7 @@ import (
 	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/agentcycle"
 	"automation-hub-backend/internal/agentframework"
+	"automation-hub-backend/internal/agentregistry"
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
 	"automation-hub-backend/internal/anythingllm"
@@ -232,6 +233,19 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		lifeOpsService := lifeops.NewService(lifeOpsRepository)
 		initializeLifeOpsRoutes(v1, lifeops.NewHandler(lifeOpsService))
+		agentRepository, err := agentregistry.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		agentRegistryService, err := agentregistry.NewService(agentRepository, nil)
+		if err != nil {
+			return err
+		}
+		initializeAgentRegistryRoutes(v1, agentregistry.NewHandler(agentRegistryService))
+		agentContext, err := task.NewAgentContextProvider(agentRepository)
+		if err != nil {
+			return err
+		}
 		mandateRepository, err := standingmandate.DefaultRepository()
 		if err != nil {
 			return err
@@ -258,7 +272,7 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
-		taskService := task.NewServiceWithDependencies(
+		taskService := task.NewServiceWithDependenciesAndAgentContext(
 			memoryService,
 			llmService,
 			sourceService,
@@ -268,6 +282,7 @@ func initializeRoutes(router *gin.Engine) error {
 			frameworkService,
 			taskStateRepository,
 			task.NewLifeOpsContextProvider(lifeOpsService),
+			agentContext,
 		)
 		planningPreview, _ := taskService.(task.PreviewService)
 		a2aBridgeHandler := a2abridge.NewHandler(a2abridge.NewServiceFromEnv(planningPreview))
@@ -381,6 +396,31 @@ func initializeLifeOpsRoutes(apiVersion *gin.RouterGroup, handler *lifeops.Handl
 		routes.PATCH("/goals/:id", requirePermission(rbac.PermWrite), handler.UpdateGoal)
 		routes.POST("/priority/assess", requirePermission(rbac.PermWrite), handler.AssessPriority)
 		routes.GET("/priority/assessments", requirePermission(rbac.PermRead), handler.PriorityHistory)
+	}
+}
+
+func initializeAgentRegistryRoutes(apiVersion *gin.RouterGroup, handler *agentregistry.Handler) {
+	routes := apiVersion.Group("/agents")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("", requirePermission(rbac.PermRead), handler.List)
+		routes.POST("", requirePermission(rbac.PermAdmin), handler.Register)
+		routes.GET("/assignments/:id", requirePermission(rbac.PermRead), handler.GetAssignment)
+		// Assignment changes which runtime receives delegated authority. Keep
+		// that administrative until the canonical execution-authorization
+		// boundary can mint policy-derived assignment requests internally.
+		routes.POST("/assignments", requirePermission(rbac.PermAdmin), handler.Assign)
+		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
+		routes.PUT("/:id", requirePermission(rbac.PermAdmin), handler.Update)
+		routes.GET("/:id/transitions", requirePermission(rbac.PermRead), handler.ListTransitions)
+		routes.POST("/:id/transitions", requirePermission(rbac.PermAdmin), handler.Transition)
+		// Outcomes mutate routing evidence and release reserved capacity. Until
+		// the execution broker can attest them internally, keep this owner-only.
+		routes.POST(
+			"/assignments/:id/outcome",
+			requirePermission(rbac.PermAdmin),
+			handler.RecordAssignmentOutcome,
+		)
 	}
 }
 

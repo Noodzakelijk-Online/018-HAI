@@ -348,6 +348,7 @@ type service struct {
 	frameworkSelector   FrameworkSelector
 	stateRepository     TaskStateRepository
 	operatingContext    OperatingContextProvider
+	agentContext        AgentContextProvider
 	mu                  sync.Mutex
 	logs                []CompletionPlan
 	reviewQueue         []ReviewQueueItem
@@ -422,9 +423,72 @@ func NewServiceWithDependencies(
 		stateRepository = NewMemoryTaskStateRepository()
 	}
 	var operatingContext OperatingContextProvider
+	var agentContext AgentContextProvider
 	if len(operatingContextProviders) > 0 {
 		operatingContext = operatingContextProviders[0]
+		agentContext, _ = operatingContext.(AgentContextProvider)
 	}
+	return newServiceWithDependencies(
+		memoryService,
+		llmService,
+		sourceService,
+		verificationService,
+		toolExecutor,
+		pursuitAttempts,
+		frameworkSelector,
+		stateRepository,
+		operatingContext,
+		agentContext,
+	)
+}
+
+// NewServiceWithDependenciesAndAgentContext keeps the existing operating
+// context contract intact while allowing a durable agent registry to supply
+// owner-scoped agent cards to framework selection.
+func NewServiceWithDependenciesAndAgentContext(
+	memoryService memory.Service,
+	llmService *llm.Service,
+	sourceService source.Service,
+	verificationService verification.Service,
+	toolExecutor ToolExecutor,
+	pursuitAttempts PursuitAttemptRecorder,
+	frameworkSelector FrameworkSelector,
+	stateRepository TaskStateRepository,
+	operatingContext OperatingContextProvider,
+	agentContext AgentContextProvider,
+) Service {
+	if frameworkSelector == nil {
+		frameworkSelector = defaultFrameworkSelector()
+	}
+	if stateRepository == nil {
+		stateRepository = NewMemoryTaskStateRepository()
+	}
+	return newServiceWithDependencies(
+		memoryService,
+		llmService,
+		sourceService,
+		verificationService,
+		toolExecutor,
+		pursuitAttempts,
+		frameworkSelector,
+		stateRepository,
+		operatingContext,
+		agentContext,
+	)
+}
+
+func newServiceWithDependencies(
+	memoryService memory.Service,
+	llmService *llm.Service,
+	sourceService source.Service,
+	verificationService verification.Service,
+	toolExecutor ToolExecutor,
+	pursuitAttempts PursuitAttemptRecorder,
+	frameworkSelector FrameworkSelector,
+	stateRepository TaskStateRepository,
+	operatingContext OperatingContextProvider,
+	agentContext AgentContextProvider,
+) Service {
 	return &service{
 		memoryService:       memoryService,
 		sourceService:       sourceService,
@@ -435,6 +499,7 @@ func NewServiceWithDependencies(
 		frameworkSelector:   frameworkSelector,
 		stateRepository:     stateRepository,
 		operatingContext:    operatingContext,
+		agentContext:        agentContext,
 		logs:                []CompletionPlan{},
 		reviewQueue:         []ReviewQueueItem{},
 	}
@@ -765,7 +830,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	var err error
 	request, err = s.loadOperatingContext(request)
 	if err != nil {
-		return nil, fmt.Errorf("load current needs and capacity: %w", err)
+		return nil, fmt.Errorf("load current operating context: %w", err)
 	}
 	intake := analyzeIntake(request)
 	if s.llmService == nil {
@@ -902,23 +967,30 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 }
 
 func (s *service) loadOperatingContext(request IntakeRequest) (IntakeRequest, error) {
-	if s.operatingContext == nil || strings.TrimSpace(request.OwnerIdentity) == "" {
+	if strings.TrimSpace(request.OwnerIdentity) == "" {
 		return request, nil
 	}
 	now := time.Now().UTC()
-	if len(request.ObservedNeeds) == 0 {
+	if s.operatingContext != nil && len(request.ObservedNeeds) == 0 {
 		needs, err := s.operatingContext.LatestNeeds(request.OwnerIdentity, now)
 		if err != nil {
 			return request, fmt.Errorf("load needs state: %w", err)
 		}
 		request.ObservedNeeds = append([]frameworkregistry.NeedStateAssessment(nil), needs...)
 	}
-	if request.Capacity == nil {
+	if s.operatingContext != nil && request.Capacity == nil {
 		capacity, err := s.operatingContext.LatestCapacity(request.OwnerIdentity, now)
 		if err != nil {
 			return request, fmt.Errorf("load capacity state: %w", err)
 		}
 		request.Capacity = capacity
+	}
+	if s.agentContext != nil && len(request.AvailableAgents) == 0 {
+		agents, err := s.agentContext.LatestAgents(request.OwnerIdentity, now)
+		if err != nil {
+			return request, fmt.Errorf("load available agents: %w", err)
+		}
+		request.AvailableAgents = append([]frameworkregistry.AgentCard(nil), agents...)
 	}
 	return request, nil
 }

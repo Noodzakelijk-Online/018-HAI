@@ -562,7 +562,7 @@ func BuiltinCatalog() []Framework {
 			maxAutonomy: 3, riskCeiling: "high",
 			evidence:        []string{"upstream license and maintenance review", "capability test", "sandbox and policy contract"},
 			evaluation:      []string{"adapter cannot bypass HAI governance", "real integration test proves claimed capability"},
-			implementations: []string{"LangGraph", "Microsoft AutoGen", "Microsoft Agent Framework", "Semantic Kernel", "OpenAI Agents SDK", "Google ADK", "CrewAI", "PydanticAI", "LlamaIndex", "Haystack", "smolagents", "Agno", "BeeAI", "Mastra", "LangChain", "DSPy", "Letta", "CAMEL", "MetaGPT"},
+			implementations: []string{"LangGraph", "Microsoft AutoGen", "Microsoft Agent Framework", "Semantic Kernel", "OpenAI Agents SDK", "Google Agent Development Kit", "CrewAI", "PydanticAI", "LlamaIndex Agents", "Haystack Agents", "Hugging Face smolagents", "Agno", "BeeAI", "Mastra", "LangChain", "DSPy", "Letta", "CAMEL", "MetaGPT", "AutoGPT", "SuperAGI", "Flowise", "Langflow"},
 			status:          StatusExperimental,
 		},
 		{
@@ -598,7 +598,7 @@ func BuiltinCatalog() []Framework {
 			maxAutonomy: 2, riskCeiling: "high",
 			evidence:        []string{"threat model", "license and maintenance status", "migration and recovery plan"},
 			evaluation:      []string{"integration fails closed", "new component reduces rather than expands attack surface"},
-			implementations: []string{"Open Policy Agent", "Cedar", "Casbin", "SpiceDB", "OpenFGA", "Keycloak", "Authentik", "Vault", "SOPS", "Sigstore", "in-toto", "TUF", "SLSA", "CycloneDX", "SPDX", "AIBOM", "gVisor", "Firecracker", "WebAssembly sandboxes", "seccomp", "AppArmor"},
+			implementations: []string{"Open Policy Agent", "Cedar", "Casbin", "SpiceDB", "OpenFGA", "Keycloak", "Authentik", "HashiCorp Vault", "SOPS", "Sigstore", "in-toto", "TUF", "SLSA", "CycloneDX", "SPDX", "AIBOM", "gVisor", "Firecracker", "WebAssembly sandboxes", "container isolation", "seccomp", "AppArmor"},
 			status:          StatusExperimental,
 		},
 		{

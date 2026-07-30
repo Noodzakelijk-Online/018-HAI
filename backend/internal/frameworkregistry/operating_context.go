@@ -363,45 +363,56 @@ func buildAgentCards(required []string, available []AgentCard, ceiling int, now 
 		if err != nil {
 			return nil, err
 		}
-		availableByRole[normalized.ID] = normalized
-		if normalized.Role != "" {
-			availableByRole[normalized.Role] = normalized
+		keys := []string{normalized.ID, normalized.Role}
+		for _, capability := range normalized.Capabilities {
+			keys = append(keys, strings.SplitN(capability, "@", 2)[0])
+		}
+		keys = append(keys, normalized.DomainCompetence...)
+		for _, key := range sortedUnique(keys) {
+			key = normalizeIdentifier(key)
+			if key == "" {
+				continue
+			}
+			current, exists := availableByRole[key]
+			if !exists || preferAgentCard(normalized, current) {
+				availableByRole[key] = normalized
+			}
 		}
 	}
 
 	roles := sortedUnique(required)
 	result := make([]AgentCard, 0, len(roles)+1)
 	result = append(result, AgentCard{
-		ID:                   "hai_task_engine",
-		Name:                 "HAI task engine",
-		Owner:                "authenticated_owner_scope",
-		Purpose:              "coordinate governed task planning, routing, validation, and audit",
-		Role:                 "coordinator",
-		Capabilities:         []string{"classify", "plan", "route", "validate", "audit"},
-		DomainCompetence:     []string{"cross_domain_operational_coordination"},
-		AllowedTools:         []string{"registered allowlisted tools"},
-		RequiredPermissions:  []string{"owner-scoped task and framework read"},
-		DataAccessBoundaries: []string{"current authorized task context only"},
-		CostProfile:          "local_control_plane_no_spend_authority",
-		ModelRequirements:    []string{"none for deterministic contract construction"},
-		ReliabilityHistory:   []string{"repository contract tests pass; production effectiveness is not inferred"},
-		AllowedActions:       allowedActionsForAuthority(ceiling),
-		ProhibitedActions:    protectedAgentProhibitions(),
-		InputSchema:          "framework-selection-request-v4",
-		OutputSchema:         "framework-selection-decision-v4",
-		ExpectedEvidence:     []string{"framework selection and validation audit records"},
-		EscalationRoute:      "owner-scoped review queue",
-		Availability:         "local process",
-		Version:              "selector-v4",
-		Dependencies:         []string{"framework registry", "task state", "approval policy"},
-		HealthStatus:         "available",
-		EvaluationScore:      0,
+		ID:                    "hai_task_engine",
+		Name:                  "HAI task engine",
+		Owner:                 "authenticated_owner_scope",
+		Purpose:               "coordinate governed task planning, routing, validation, and audit",
+		Role:                  "coordinator",
+		Capabilities:          []string{"classify", "plan", "route", "validate", "audit"},
+		DomainCompetence:      []string{"cross_domain_operational_coordination"},
+		AllowedTools:          []string{"registered allowlisted tools"},
+		RequiredPermissions:   []string{"owner-scoped task and framework read"},
+		DataAccessBoundaries:  []string{"current authorized task context only"},
+		CostProfile:           "local_control_plane_no_spend_authority",
+		ModelRequirements:     []string{"none for deterministic contract construction"},
+		ReliabilityHistory:    []string{"repository contract tests pass; production effectiveness is not inferred"},
+		AllowedActions:        allowedActionsForAuthority(ceiling),
+		ProhibitedActions:     protectedAgentProhibitions(),
+		InputSchema:           "framework-selection-request-v4",
+		OutputSchema:          "framework-selection-decision-v4",
+		ExpectedEvidence:      []string{"framework selection and validation audit records"},
+		EscalationRoute:       "owner-scoped review queue",
+		Availability:          "local process",
+		Version:               "selector-v4",
+		Dependencies:          []string{"framework registry", "task state", "approval policy"},
+		HealthStatus:          "available",
+		EvaluationScore:       0,
 		EvaluationScoreSource: "not calibrated against production outcomes",
-		AuthorityCeiling:     ceiling,
-		Status:               "available",
-		Verified:             true,
-		Revoked:              false,
-		Provenance:           "embedded_canonical_go_engine",
+		AuthorityCeiling:      ceiling,
+		Status:                "available",
+		Verified:              true,
+		Revoked:               false,
+		Provenance:            "embedded_canonical_go_engine",
 	})
 	for _, role := range roles {
 		key := normalizeIdentifier(role)
@@ -410,39 +421,52 @@ func buildAgentCards(required []string, available []AgentCard, ceiling int, now 
 			continue
 		}
 		result = append(result, AgentCard{
-			ID:                   key,
-			Name:                 humanizeIdentifier(key),
-			Owner:                "unassigned",
-			Purpose:              "satisfy required specialist role " + key,
-			Role:                 key,
-			Capabilities:         []string{"required capability: " + key},
-			DomainCompetence:     []string{key},
-			AllowedTools:         []string{},
-			RequiredPermissions:  []string{},
-			DataAccessBoundaries: []string{"no data access until assigned and verified"},
-			CostProfile:          "unknown_no_spend_authorized",
-			ModelRequirements:    []string{},
-			ReliabilityHistory:   []string{"no verified runtime history"},
-			AllowedActions:       []string{},
-			ProhibitedActions:    protectedAgentProhibitions(),
-			InputSchema:          "hai-agent-message-v1",
-			OutputSchema:         "hai-agent-message-v1",
-			ExpectedEvidence:     []string{"fresh runtime capability and health evidence"},
-			EscalationRoute:      "hai_task_engine then owner-scoped review queue",
-			Availability:         "unassigned",
-			Version:              "unreported",
-			Dependencies:         []string{},
-			HealthStatus:         "unknown",
-			EvaluationScore:      0,
+			ID:                    key,
+			Name:                  humanizeIdentifier(key),
+			Owner:                 "unassigned",
+			Purpose:               "satisfy required specialist role " + key,
+			Role:                  key,
+			Capabilities:          []string{"required capability: " + key},
+			DomainCompetence:      []string{key},
+			AllowedTools:          []string{},
+			RequiredPermissions:   []string{},
+			DataAccessBoundaries:  []string{"no data access until assigned and verified"},
+			CostProfile:           "unknown_no_spend_authorized",
+			ModelRequirements:     []string{},
+			ReliabilityHistory:    []string{"no verified runtime history"},
+			AllowedActions:        []string{},
+			ProhibitedActions:     protectedAgentProhibitions(),
+			InputSchema:           "hai-agent-message-v1",
+			OutputSchema:          "hai-agent-message-v1",
+			ExpectedEvidence:      []string{"fresh runtime capability and health evidence"},
+			EscalationRoute:       "hai_task_engine then owner-scoped review queue",
+			Availability:          "unassigned",
+			Version:               "unreported",
+			Dependencies:          []string{},
+			HealthStatus:          "unknown",
+			EvaluationScore:       0,
 			EvaluationScoreSource: "no verified evaluation",
-			AuthorityCeiling:     ceiling,
-			Status:               "required_unassigned",
-			Verified:             false,
-			Revoked:              false,
-			Provenance:           "framework_requirement_not_runtime_evidence",
+			AuthorityCeiling:      ceiling,
+			Status:                "required_unassigned",
+			Verified:              false,
+			Revoked:               false,
+			Provenance:            "framework_requirement_not_runtime_evidence",
 		})
 	}
 	return result, nil
+}
+
+func preferAgentCard(candidate, current AgentCard) bool {
+	if candidate.Verified != current.Verified {
+		return candidate.Verified
+	}
+	if candidate.Revoked != current.Revoked {
+		return !candidate.Revoked
+	}
+	if candidate.EvaluationScore != current.EvaluationScore {
+		return candidate.EvaluationScore > current.EvaluationScore
+	}
+	return candidate.ID < current.ID
 }
 
 func normalizeAvailableAgentCard(card AgentCard, selectionCeiling int, now time.Time) (AgentCard, error) {
@@ -549,8 +573,6 @@ func normalizeAvailableAgentCard(card AgentCard, selectionCeiling int, now time.
 		}
 		card.AllowedTools = []string{}
 		card.AllowedActions = []string{}
-	} else {
-		card.AllowedActions = allowedActionsForAuthority(card.AuthorityCeiling)
 	}
 	return card, nil
 }
@@ -651,7 +673,7 @@ func buildDelegationContracts(
 			Delegator:          "chief_of_staff",
 			Delegatee:          card.ID,
 			Objective:          compactContractText(request.Request),
-			AllowedActions:     allowedActionsForAuthority(authority),
+			AllowedActions:     append([]string(nil), card.AllowedActions...),
 			ProhibitedActions:  append([]string(nil), card.ProhibitedActions...),
 			BudgetLimitEUR:     0,
 			BudgetPolicy:       "no_spend_authorized",

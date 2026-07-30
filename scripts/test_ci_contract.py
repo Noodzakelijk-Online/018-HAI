@@ -232,6 +232,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "hai_migration_runner_test",
             "hai_framework_registry_test",
             "hai_task_state_test",
+            "hai_agent_registry_test",
             "createdb",
             'HAI_ALLOW_DESTRUCTIVE_DATABASE_TESTS: "true"',
             'HAI_REQUIRE_POSTGRES_INTEGRATION: "true"',
@@ -240,10 +241,14 @@ class CIWorkflowContractTest(unittest.TestCase):
             'HAI_TEST_DATABASE_DSN="$task_dsn" go test -count=1 -tags integration',
             "^--- PASS: TestRunMigrationsAppliesAndIsIdempotent",
             "^--- PASS: TestRollbackMigrationReversesPostMigration",
+            "^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck",
+            "^--- PASS: TestLegacyBaselineRejectsDifferentExistingPrimaryKey",
             "^--- PASS: TestFrameworkRegistryPostgresIntegrationRequiredEnvironment",
             "^--- PASS: TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun",
             "^--- PASS: TestFrameworkRegistryPostgresConstraintsAndImmutability",
             "^--- PASS: TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability",
+            "^--- PASS: TestPostgresRepositoryRoundTripOwnerIsolationCASAndImmutableLedgers",
+            "^--- PASS: TestPostgresAgentRegistryMigrationCanReplayAgainstExistingSchema",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, migrations)
@@ -253,7 +258,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         )
         database_assignments = dict(
             re.findall(
-                r'^\s*(migration|registry|task)_dsn="[^"]*dbname=([^ "\n]+)',
+                r'^\s*(migration|registry|task|agent_registry)_dsn="[^"]*dbname=([^ "\n]+)',
                 migrations,
                 re.MULTILINE,
             )
@@ -264,9 +269,10 @@ class CIWorkflowContractTest(unittest.TestCase):
                 "migration": "hai_migration_runner_test",
                 "registry": "hai_framework_registry_test",
                 "task": "hai_task_state_test",
+                "agent_registry": "hai_agent_registry_test",
             },
         )
-        self.assertEqual(len(set(database_assignments.values())), 3)
+        self.assertEqual(len(set(database_assignments.values())), 4)
 
     def test_running_stack_must_be_live_before_acceptance_test(self) -> None:
         isolation = job_block("isolation-acceptance")

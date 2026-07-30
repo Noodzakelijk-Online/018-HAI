@@ -12,7 +12,7 @@ import (
 
 var semanticVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
-const expectedBuiltinCatalogV1Digest = "5335a9898266a639137cff147f21f4297f7d08570cd1a35a3688eff85572a190"
+const expectedBuiltinCatalogV1Digest = "6bc1c0e0f77e761e132e16e52224715579c910684f150506727043130d303dd0"
 
 var expectedFrameworkIDsBySection = []string{
 	"human-sovereignty",
@@ -546,6 +546,79 @@ func TestBuiltinCatalogImplementationEntriesRemainExperimentalMetadata(t *testin
 	}
 	if !reflect.DeepEqual(actualIDs, expectedIDs) {
 		t.Errorf("implementation framework IDs = %v, want %v", actualIDs, expectedIDs)
+	}
+}
+
+func TestBuiltinCatalogMatchesSpecifiedImplementationCandidatesExactly(t *testing.T) {
+	t.Parallel()
+
+	expected := map[string][]string{
+		"agent-development-adapters": {
+			"LangGraph",
+			"Microsoft AutoGen",
+			"Microsoft Agent Framework",
+			"Semantic Kernel",
+			"OpenAI Agents SDK",
+			"Google Agent Development Kit",
+			"CrewAI",
+			"PydanticAI",
+			"LlamaIndex Agents",
+			"Haystack Agents",
+			"Hugging Face smolagents",
+			"Agno",
+			"BeeAI",
+			"Mastra",
+			"LangChain",
+			"DSPy",
+			"Letta",
+			"CAMEL",
+			"MetaGPT",
+			"AutoGPT",
+			"SuperAGI",
+			"Flowise",
+			"Langflow",
+		},
+		"policy-security-implementations": {
+			"Open Policy Agent",
+			"Cedar",
+			"Casbin",
+			"SpiceDB",
+			"OpenFGA",
+			"Keycloak",
+			"Authentik",
+			"HashiCorp Vault",
+			"SOPS",
+			"Sigstore",
+			"in-toto",
+			"TUF",
+			"SLSA",
+			"CycloneDX",
+			"SPDX",
+			"AIBOM",
+			"gVisor",
+			"Firecracker",
+			"WebAssembly sandboxes",
+			"container isolation",
+			"seccomp",
+			"AppArmor",
+		},
+	}
+
+	byID := frameworksByID(BuiltinCatalog())
+	for frameworkID, want := range expected {
+		framework, exists := byID[frameworkID]
+		if !exists {
+			t.Errorf("implementation framework %q is missing", frameworkID)
+			continue
+		}
+		if !reflect.DeepEqual(framework.CandidateImplementations, want) {
+			t.Errorf(
+				"framework %q candidates = %#v, want exact specification list %#v",
+				frameworkID,
+				framework.CandidateImplementations,
+				want,
+			)
+		}
 	}
 }
 

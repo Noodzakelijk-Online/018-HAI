@@ -79,6 +79,10 @@ func (s *Service) Update(ctx context.Context, owner string, replacement Agent, e
 	replacement.ID = current.ID
 	replacement.State = current.State
 	replacement.Reliability = current.Reliability
+	// Capacity consumption is execution evidence, not user-editable
+	// configuration. Preserve it while still allowing an owner to change the
+	// availability switch and maximum capacity.
+	replacement.Availability.ActiveAssignments = current.Availability.ActiveAssignments
 	replacement.Revision = current.Revision + 1
 	replacement.CreatedAt = current.CreatedAt
 	replacement.UpdatedAt = s.clock().UTC()
@@ -117,25 +121,11 @@ func (s *Service) Transition(
 	updated.State = to
 	updated.Revision++
 	updated.UpdatedAt = now
-	saved, err := s.repository.CompareAndSwap(ctx, updated, expectedRevision)
-	if err != nil {
-		return Agent{}, err
-	}
 	event := Transition{
 		From: current.State, To: to, Reason: strings.TrimSpace(reason),
-		OccurredAt: now, Revision: saved.Revision,
+		OccurredAt: now, Revision: updated.Revision,
 	}
-	if err := s.repository.AppendTransition(ctx, owner, id, event); err != nil {
-		// The agent state is already persisted. Fail closed by quarantining it
-		// where possible rather than claiming an unaudited transition succeeded.
-		quarantined := cloneAgent(saved)
-		quarantined.State = StateQuarantined
-		quarantined.Revision++
-		quarantined.UpdatedAt = now
-		_, _ = s.repository.CompareAndSwap(ctx, quarantined, saved.Revision)
-		return Agent{}, fmt.Errorf("record lifecycle transition: %w", err)
-	}
-	return saved, nil
+	return s.repository.Transition(ctx, updated, expectedRevision, event)
 }
 
 func (s *Service) ListTransitions(ctx context.Context, owner, id string) ([]Transition, error) {
@@ -150,6 +140,30 @@ func (s *Service) Assign(ctx context.Context, request AssignmentRequest) (Assign
 		return Assignment{}, err
 	}
 	now := s.clock().UTC()
+	requestDigest, err := digestValue(request)
+	if err != nil {
+		return Assignment{}, fmt.Errorf("digest assignment request: %w", err)
+	}
+	// The assignment identity is based on the requested work, not on the
+	// selected agent's mutable revision. This makes retried requests
+	// idempotent and prevents a client retry from reserving another slot.
+	idInput := strings.Join([]string{
+		request.OwnerIdentity,
+		request.TaskID,
+		requestDigest,
+	}, "\x00")
+	idHash := sha256.Sum256([]byte(idInput))
+	assignmentID := hex.EncodeToString(idHash[:16])
+	if existing, err := s.repository.GetAssignment(
+		ctx,
+		request.OwnerIdentity,
+		assignmentID,
+	); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return Assignment{}, err
+	}
+
 	agents, err := s.repository.List(ctx, request.OwnerIdentity)
 	if err != nil {
 		return Assignment{}, err
@@ -176,20 +190,8 @@ func (s *Service) Assign(ctx context.Context, request AssignmentRequest) (Assign
 		return candidates[i].score > candidates[j].score
 	})
 	selected := candidates[0]
-	requestDigest, err := digestValue(request)
-	if err != nil {
-		return Assignment{}, fmt.Errorf("digest assignment request: %w", err)
-	}
-	idInput := strings.Join([]string{
-		request.OwnerIdentity,
-		request.TaskID,
-		selected.agent.ID,
-		fmt.Sprintf("%d", selected.agent.Revision),
-		requestDigest,
-	}, "\x00")
-	idHash := sha256.Sum256([]byte(idInput))
 	assignment := Assignment{
-		ID:               hex.EncodeToString(idHash[:16]),
+		ID:               assignmentID,
 		OwnerIdentity:    request.OwnerIdentity,
 		TaskID:           request.TaskID,
 		AgentID:          selected.agent.ID,
@@ -201,7 +203,7 @@ func (s *Service) Assign(ctx context.Context, request AssignmentRequest) (Assign
 		RequestDigest:    requestDigest,
 		AssignedAt:       now,
 	}
-	if err := s.repository.CreateAssignment(ctx, assignment); err != nil {
+	if _, err := s.repository.CreateAssignment(ctx, assignment); err != nil {
 		if errors.Is(err, ErrAssignmentExists) {
 			return s.repository.GetAssignment(ctx, request.OwnerIdentity, assignment.ID)
 		}
@@ -220,13 +222,17 @@ func (s *Service) GetAssignment(ctx context.Context, owner, id string) (Assignme
 	return s.repository.GetAssignment(ctx, owner, id)
 }
 
-func (s *Service) RecordOutcome(
+func (s *Service) RecordAssignmentOutcome(
 	ctx context.Context,
-	owner, id string,
+	owner, assignmentID string,
 	expectedRevision uint64,
 	outcome Outcome,
 ) (Agent, error) {
-	current, err := s.Get(ctx, owner, id)
+	assignment, err := s.GetAssignment(ctx, owner, assignmentID)
+	if err != nil {
+		return Agent{}, err
+	}
+	current, err := s.Get(ctx, owner, assignment.AgentID)
 	if err != nil {
 		return Agent{}, err
 	}
@@ -244,6 +250,10 @@ func (s *Service) RecordOutcome(
 		return Agent{}, fmt.Errorf("outcome timestamp cannot be in the future")
 	}
 	updated := cloneAgent(current)
+	if updated.Availability.ActiveAssignments <= 0 {
+		return Agent{}, ErrConflict
+	}
+	updated.Availability.ActiveAssignments--
 	evidence := updated.Reliability
 	totalBefore := evidence.Successes + evidence.Failures
 	latencyMs := float64(outcome.Latency.Milliseconds())
@@ -266,7 +276,14 @@ func (s *Service) RecordOutcome(
 	if err := ValidateAgent(updated, now); err != nil {
 		return Agent{}, err
 	}
-	return s.repository.CompareAndSwap(ctx, updated, expectedRevision)
+	return s.repository.RecordAssignmentOutcome(ctx, AssignmentOutcome{
+		AssignmentID:  assignment.ID,
+		OwnerIdentity: assignment.OwnerIdentity,
+		AgentID:       assignment.AgentID,
+		Success:       outcome.Success,
+		Latency:       outcome.Latency,
+		RecordedAt:    outcome.RecordedAt.UTC(),
+	}, updated, expectedRevision)
 }
 
 func scoreAgent(agent Agent, request AssignmentRequest, now time.Time) (float64, AssignmentExplanation) {
@@ -351,7 +368,7 @@ func scoreAgent(agent Agent, request AssignmentRequest, now time.Time) (float64,
 		"allowlists satisfied",
 		"authority and policy ceilings satisfied",
 	}
-	return roundScore(total), explanation
+	return roundScore(total / 90), explanation
 }
 
 func agentReady(agent Agent, now time.Time, allowDegraded bool) bool {

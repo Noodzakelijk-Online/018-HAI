@@ -41,19 +41,26 @@ http {
             proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
         }
 
-        # Backend route groups. Anything not listed here falls through to the
-        # IDP below and 404s. Keep this list aligned with backend router groups;
-        # background operations need operations, background and account-feeds.
-        location ~ ^/api/v1/(a2a|account-feeds|agent-cycle|agent-runtimes|ambient|anythingllm|assistant|automation|autonomy|background|brain-catalog|browser-verification|deepeval|deepteam|evidence-packs|evidently|flags|framework-registry|garak|guardrails|hardware|langfuse|llm|lm-eval|mcp-bridge|mcp-preflight|memory|memory-engine|model-intelligence|operations|os|planning-optimizer|power|presidio|privacy|promptfoo|pursuits|pydantic-ai|ragflow|research|runtime-lab|serena|sources|system|task|temporal|verification|wasi|windows-runtime|workflow)(/|$) {
-            auth_request /auth-verify;
-            auth_request_set $hai_refreshed_access_cookie $upstream_http_set_cookie;
-            auth_request_set $hai_verified_access_token $upstream_http_x_hai_verified_access_token;
-            add_header Set-Cookie $hai_refreshed_access_cookie always;
-            proxy_pass http://$backend_upstream;
+        # Authentication and account-management endpoints belong to the IDP.
+        # Keep these explicit so every other product API can use the scalable
+        # authenticated backend catch-all below without a route allowlist that
+        # silently turns newly added modules into gateway 404s.
+        location ^~ /api/v1/auth/ {
+            proxy_pass http://$idp_upstream;
+            proxy_set_header Host $host;
             proxy_set_header X-Original-URI $request_uri;
-            proxy_set_header Authorization "Bearer $hai_verified_access_token";
             proxy_set_header Cookie $http_cookie;
-            proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
+            proxy_set_header X-HAI-Auth-Subrequest "";
+            proxy_hide_header X-HAI-Verified-Access-Token;
+        }
+
+        location ^~ /api/v1/user/ {
+            proxy_pass http://$idp_upstream;
+            proxy_set_header Host $host;
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header Cookie $http_cookie;
+            proxy_set_header X-HAI-Auth-Subrequest "";
+            proxy_hide_header X-HAI-Verified-Access-Token;
         }
 
         # OAuth callback: Google redirects the user's browser here after
@@ -66,15 +73,19 @@ http {
             proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
         }
 
-        # Liveness: no authentication, and it reveals nothing beyond "the
-        # process is up" — safe for an uptime check to poll.
+        # All non-IDP APIs are backend APIs. Authentication is checked by the
+        # IDP subrequest and only its verified token is forwarded as identity.
+        # The backend still enforces its own owner and RBAC checks.
         location /api/v1 {
-            proxy_pass http://$idp_upstream;
-            proxy_set_header Host $host;
+            auth_request /auth-verify;
+            auth_request_set $hai_refreshed_access_cookie $upstream_http_set_cookie;
+            auth_request_set $hai_verified_access_token $upstream_http_x_hai_verified_access_token;
+            add_header Set-Cookie $hai_refreshed_access_cookie always;
+            proxy_pass http://$backend_upstream;
             proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header Authorization "Bearer $hai_verified_access_token";
             proxy_set_header Cookie $http_cookie;
-            proxy_set_header X-HAI-Auth-Subrequest "";
-            proxy_hide_header X-HAI-Verified-Access-Token;
+            proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
         }
 
         location /auth-verify {

@@ -177,6 +177,15 @@ type Outcome struct {
 	RecordedAt time.Time     `json:"recordedAt"`
 }
 
+type AssignmentOutcome struct {
+	AssignmentID  string        `json:"assignmentId"`
+	OwnerIdentity string        `json:"ownerIdentity"`
+	AgentID       string        `json:"agentId"`
+	Success       bool          `json:"success"`
+	Latency       time.Duration `json:"latency"`
+	RecordedAt    time.Time     `json:"recordedAt"`
+}
+
 type Transition struct {
 	From       LifecycleState `json:"from"`
 	To         LifecycleState `json:"to"`

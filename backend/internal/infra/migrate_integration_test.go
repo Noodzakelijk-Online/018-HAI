@@ -8,6 +8,7 @@ package infra
 
 import (
 	"os"
+	"sync"
 	"testing"
 
 	"automation-hub-backend/migrations"
@@ -26,11 +27,73 @@ func integrationDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
 	}
-	// Start from a clean schema so the run is reproducible.
-	if err := db.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error; err != nil {
+	// Start from a clean schema so the run is reproducible. Extensions must be
+	// removed before their schema; otherwise PostgreSQL retains an extension
+	// catalog entry after CASCADE drops its functions, and IF NOT EXISTS cannot
+	// recreate those functions on the next migration pass.
+	if err := db.Exec(`
+		DROP EXTENSION IF EXISTS "uuid-ossp" CASCADE;
+		DROP SCHEMA public CASCADE;
+		CREATE SCHEMA public;
+	`).Error; err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
 	return db
+}
+
+func TestConcurrentMigrationRunnersSerializeAndRecheck(t *testing.T) {
+	db := integrationDB(t)
+	start := make(chan struct{})
+	errors := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for range 2 {
+		go func() {
+			ready.Done()
+			<-start
+			_, err := ApplyMigrations(db, migrations.Files, "pre")
+			errors <- err
+		}()
+	}
+	ready.Wait()
+	close(start)
+	for range 2 {
+		if err := <-errors; err != nil {
+			t.Fatalf("concurrent migration runner failed: %v", err)
+		}
+	}
+	status, err := Status(db, migrations.Files, "pre")
+	if err != nil {
+		t.Fatalf("pre migration status: %v", err)
+	}
+	if len(status.Pending) != 0 {
+		t.Fatalf("pending migrations after concurrent apply: %#v", status.Pending)
+	}
+}
+
+func TestLegacyBaselineRejectsDifferentExistingPrimaryKey(t *testing.T) {
+	db := integrationDB(t)
+	if err := db.Exec(`
+		CREATE TABLE public.ai_conversation_archives (
+			id uuid NOT NULL,
+			wrong_key bigint PRIMARY KEY
+		)`).Error; err != nil {
+		t.Fatalf("create drifted legacy table: %v", err)
+	}
+	if _, err := ApplyMigrations(db, migrations.Files, "pre"); err == nil {
+		t.Fatal("baseline accepted a different existing primary key")
+	}
+	var recorded bool
+	if err := db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM schema_migrations
+			WHERE version = 'pre/0002_baseline'
+		)`).Row().Scan(&recorded); err != nil {
+		t.Fatalf("check migration ledger: %v", err)
+	}
+	if recorded {
+		t.Fatal("drifted baseline was recorded as applied")
+	}
 }
 
 func indexExists(t *testing.T, db *gorm.DB, name string) bool {

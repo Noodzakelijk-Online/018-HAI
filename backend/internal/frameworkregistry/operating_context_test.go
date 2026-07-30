@@ -2,6 +2,7 @@ package frameworkregistry
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +167,55 @@ func TestBuildSelectionClampsAgentAuthorityAndUsesOnlyFreshVerifiedAgents(t *tes
 	}
 }
 
+func TestBuildAgentCardsResolvesSpecialistRolesByVerifiedCapability(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
+	verifiedAt := now.Add(-time.Minute)
+	cards, err := buildAgentCards(
+		[]string{"legal_specialist"},
+		[]AgentCard{
+			{
+				ID:                    "specialist-b",
+				Name:                  "Specialist B",
+				Role:                  "specialist",
+				Capabilities:          []string{"legal_specialist@1.2.0"},
+				AuthorityCeiling:      3,
+				Status:                "available",
+				HealthStatus:          "available",
+				EvaluationScore:       0.7,
+				EvaluationScoreSource: "verified evaluation",
+				Provenance:            "agent_registry:specialist-b",
+				LastVerifiedAt:        &verifiedAt,
+			},
+			{
+				ID:                    "specialist-a",
+				Name:                  "Specialist A",
+				Role:                  "specialist",
+				DomainCompetence:      []string{"legal_specialist"},
+				AuthorityCeiling:      3,
+				Status:                "available",
+				HealthStatus:          "available",
+				EvaluationScore:       0.9,
+				EvaluationScoreSource: "verified evaluation",
+				Provenance:            "agent_registry:specialist-a",
+				LastVerifiedAt:        &verifiedAt,
+			},
+		},
+		3,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("build agent cards: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("cards = %#v, want coordinator and one specialist", cards)
+	}
+	if cards[1].ID != "specialist_a" || !cards[1].Verified {
+		t.Fatalf("specialist role did not use best verified capability match: %#v", cards[1])
+	}
+}
+
 func TestBuildSelectionNeverLeaksSecretsIntoOperatingContract(t *testing.T) {
 	decision, err := BuildSelection(
 		testCatalog(t),
@@ -199,9 +249,9 @@ func TestBuildSelectionNeverLeaksSecretsIntoOperatingContract(t *testing.T) {
 				ReliabilityHistory:   []string{"token=agent-history-secret"},
 				ExpectedEvidence:     []string{"password=agent-evidence-secret"},
 				EscalationRoute:      "token=agent-escalation-secret",
-				AuthorityCeiling: 3,
-				Status:           "available",
-				Provenance:       "token=agent-provenance-secret",
+				AuthorityCeiling:     3,
+				Status:               "available",
+				Provenance:           "token=agent-provenance-secret",
 			}},
 		},
 		time.Date(2026, time.July, 30, 15, 0, 0, 0, time.UTC),
@@ -313,6 +363,67 @@ func TestDelegationContractCarriesBudgetDeadlineAndConstraints(t *testing.T) {
 	if !containsStringFragment(delegation.Constraints, "one work session") ||
 		!containsStringFragment(delegation.Constraints, "no financial expenditure") {
 		t.Fatalf("delegation constraints are incomplete: %#v", delegation.Constraints)
+	}
+}
+
+func TestDelegationPreservesDeclaredAllowedActionsWithoutAuthorityExpansion(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 30, 17, 0, 0, 0, time.UTC)
+	verifiedAt := now.Add(-time.Minute)
+	cards, err := buildAgentCards(
+		[]string{"legal_specialist"},
+		[]AgentCard{{
+			ID:                    "legal-specialist",
+			Name:                  "Legal specialist",
+			Role:                  "legal_specialist",
+			Capabilities:          []string{"legal_specialist@1.0.0"},
+			DomainCompetence:      []string{"legal_specialist"},
+			AllowedActions:        []string{"read source records", "draft chronology"},
+			AuthorityCeiling:      6,
+			Status:                "available",
+			HealthStatus:          "available",
+			EvaluationScore:       0.9,
+			EvaluationScoreSource: "verified evaluation",
+			Provenance:            "agent_registry:legal-specialist",
+			LastVerifiedAt:        &verifiedAt,
+		}},
+		6,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("buildAgentCards: %v", err)
+	}
+	delegations := buildDelegationContracts(
+		SelectionRequest{
+			TaskPlanID: "plan-1",
+			Request:    "Prepare a source-backed legal chronology.",
+		},
+		cards,
+		CapacitySnapshot{},
+		6,
+		true,
+		[]string{"source links"},
+		[]string{"chronology reviewed"},
+	)
+	if len(delegations) != 2 {
+		t.Fatalf("delegations = %#v, want coordinator and legal specialist", delegations)
+	}
+	specialist := delegations[1]
+	want := []string{"draft chronology", "read source records"}
+	if !reflect.DeepEqual(specialist.AllowedActions, want) {
+		t.Fatalf(
+			"delegation actions = %#v, want exact declared actions %#v",
+			specialist.AllowedActions,
+			want,
+		)
+	}
+	for _, expanded := range allowedActionsForAuthority(specialist.AuthorityCeiling) {
+		if containsStringFragment(specialist.AllowedActions, expanded) &&
+			expanded != "read source records" &&
+			expanded != "draft chronology" {
+			t.Fatalf("delegation manufactured authority action %q", expanded)
+		}
 	}
 }
 

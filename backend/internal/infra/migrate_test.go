@@ -86,3 +86,40 @@ func TestLoadMigrationsFromEmbeddedFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyBaselineGuardsExistingPrimaryKeys(t *testing.T) {
+	loaded, err := loadMigrations(migrations.Files, "pre")
+	if err != nil {
+		t.Fatalf("load pre migrations: %v", err)
+	}
+
+	var baseline string
+	for _, migration := range loaded {
+		if migration.Version == "pre/0002_baseline" {
+			baseline = migration.UpSQL
+			break
+		}
+	}
+	if baseline == "" {
+		t.Fatal("pre/0002_baseline migration not found")
+	}
+	if strings.Contains(baseline, ";;") {
+		t.Fatal("baseline contains a duplicated statement terminator")
+	}
+
+	primaryKeyBlocks := 0
+	for _, statement := range splitSQLStatements(baseline) {
+		if !strings.Contains(statement, " PRIMARY KEY ") {
+			continue
+		}
+		primaryKeyBlocks++
+		if strings.Contains(statement, "WHEN invalid_table_definition THEN NULL") ||
+			!strings.Contains(statement, "pg_get_constraintdef") ||
+			!strings.Contains(statement, "RAISE;") {
+			t.Fatalf("primary-key replay block lacks exact PostgreSQL catalog validation:\n%s", statement)
+		}
+	}
+	if primaryKeyBlocks == 0 {
+		t.Fatal("baseline contains no primary-key blocks to validate")
+	}
+}

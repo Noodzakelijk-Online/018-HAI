@@ -219,7 +219,7 @@ The selector:
    the exact smallest non-conflicting optional set covering every applicable
    task capability;
 8. uses score, pin, status, and framework ID as deterministic tie-breakers;
-9. resolves declared conflicts and returns at most 12 selected frameworks
+9. resolves declared conflicts and returns at most 16 selected frameworks
    without padding the result with redundant positive-score candidates.
 
 Transparent relevance scoring is additive:

@@ -23,14 +23,16 @@ def location_block(marker: str) -> str:
 
 
 class GatewayAuthContractTest(unittest.TestCase):
-    def test_backend_allowlist_includes_framework_registry(self) -> None:
-        backend = location_block("location ~ ^/api/v1/")
-        self.assertIn("|framework-registry|", backend)
+    def test_backend_routes_use_authenticated_catch_all(self) -> None:
+        backend = location_block("location /api/v1 {")
+        self.assertIn("auth_request /auth-verify;", backend)
+        self.assertIn("proxy_pass http://$backend_upstream;", backend)
+        self.assertNotIn("location ~", backend)
 
     def test_protected_backend_routes_forward_verified_refreshed_identity(self) -> None:
         markers = (
             "location = /api/v1/agent-runtimes/openclaw/ecosystem/upload",
-            "location ~ ^/api/v1/",
+            "location /api/v1 {",
         )
         for marker in markers:
             with self.subTest(marker=marker):
@@ -59,11 +61,17 @@ class GatewayAuthContractTest(unittest.TestCase):
         self.assertIn("internal;", block)
         self.assertIn('proxy_set_header X-HAI-Auth-Subrequest "1";', block)
 
-    def test_public_auth_namespace_cannot_request_or_receive_verified_token_header(self) -> None:
-        block = location_block("location /api/v1 {")
-        self.assertIn("proxy_pass http://$idp_upstream;", block)
-        self.assertIn('proxy_set_header X-HAI-Auth-Subrequest "";', block)
-        self.assertIn("proxy_hide_header X-HAI-Verified-Access-Token;", block)
+    def test_idp_namespaces_cannot_request_or_receive_verified_token_header(self) -> None:
+        for marker in (
+            "location ^~ /api/v1/auth/",
+            "location ^~ /api/v1/user/",
+        ):
+            with self.subTest(marker=marker):
+                block = location_block(marker)
+                self.assertIn("proxy_pass http://$idp_upstream;", block)
+                self.assertIn('proxy_set_header X-HAI-Auth-Subrequest "";', block)
+                self.assertIn("proxy_hide_header X-HAI-Verified-Access-Token;", block)
+                self.assertNotIn("auth_request /auth-verify;", block)
 
     def test_compose_passes_the_same_gateway_bind_to_idp_and_gateway(self) -> None:
         self.assertIn(

@@ -36,6 +36,7 @@ HEADER
 docker exec "$PG_CONTAINER" pg_dump -U "$PG_USER" -d "$PG_DB" \
     --schema-only --no-owner --no-privileges -T schema_migrations \
 | awk '
+  BEGIN { q=sprintf("%c", 39) }
   /^--/       {next}
   /^SET /     {next}
   /^SELECT pg_catalog\./ {next}
@@ -50,7 +51,28 @@ docker exec "$PG_CONTAINER" pg_dump -U "$PG_USER" -d "$PG_DB" \
         sub(/;[[:space:]]*$/, "", buf)
         print "DO $$ BEGIN"
         print buf ";"
-        print "EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;"
+        if (buf ~ /PRIMARY KEY/) {
+          table_name=buf
+          sub(/^ALTER TABLE ONLY /, "", table_name)
+          sub(/\n.*/, "", table_name)
+          definition=buf
+          gsub(/\n/, " ", definition)
+          gsub(/[[:space:]]+/, " ", definition)
+          sub(/.* PRIMARY KEY /, "PRIMARY KEY ", definition)
+          print "EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN"
+          print "    IF NOT EXISTS ("
+          print "        SELECT 1 FROM pg_constraint"
+          print "        WHERE conrelid = " q table_name q "::regclass"
+          print "          AND contype = " q "p" q
+          print "          AND regexp_replace(pg_get_constraintdef(oid), " q "\\s+" q ", " q q ", " q "g" q ")"
+          print "              = regexp_replace(" q definition q ", " q "\\s+" q ", " q q ", " q "g" q ")"
+          print "    ) THEN"
+          print "        RAISE;"
+          print "    END IF;"
+          print "END $$;"
+        } else {
+          print "EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; END $$;"
+        }
         inalter=0; buf=""
       }
       next

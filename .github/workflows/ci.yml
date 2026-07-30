@@ -201,7 +201,8 @@ jobs:
           for database in \
             hai_migration_runner_test \
             hai_framework_registry_test \
-            hai_task_state_test
+            hai_task_state_test \
+            hai_agent_registry_test
           do
             createdb \
               --host=127.0.0.1 \
@@ -218,12 +219,16 @@ jobs:
           infra_log="$RUNNER_TEMP/migration-infra.log"
           registry_log="$RUNNER_TEMP/framework-registry-postgres.log"
           task_log="$RUNNER_TEMP/task-state-postgres.log"
+          agent_registry_log="$RUNNER_TEMP/agent-registry-postgres.log"
           migration_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_runner_test port=5432 sslmode=disable TimeZone=UTC"
           registry_dsn="host=localhost user=postgres password=postgres dbname=hai_framework_registry_test port=5432 sslmode=disable TimeZone=UTC"
           task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
+          agent_registry_dsn="host=localhost user=postgres password=postgres dbname=hai_agent_registry_test port=5432 sslmode=disable TimeZone=UTC"
           HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 -tags integration \
-            -run '^(TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration)$' \
+            -run '^(TestConcurrentMigrationRunnersSerializeAndRecheck|TestLegacyBaselineRejectsDifferentExistingPrimaryKey|TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration)$' \
             ./internal/infra/ -v | tee "$infra_log"
+          grep -q -- '^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck' "$infra_log"
+          grep -q -- '^--- PASS: TestLegacyBaselineRejectsDifferentExistingPrimaryKey' "$infra_log"
           grep -q -- '^--- PASS: TestRunMigrationsAppliesAndIsIdempotent' "$infra_log"
           grep -q -- '^--- PASS: TestRollbackMigrationReversesPostMigration' "$infra_log"
           HAI_TEST_DATABASE_DSN="$registry_dsn" go test -count=1 -tags integration \
@@ -235,6 +240,11 @@ jobs:
             -run '^TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability$' \
             ./internal/task/ -v | tee "$task_log"
           grep -q -- '^--- PASS: TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability' "$task_log"
+          HAI_TEST_DATABASE_DSN="$agent_registry_dsn" go test -count=1 \
+            -run '^(TestPostgresRepositoryRoundTripOwnerIsolationCASAndImmutableLedgers|TestPostgresAgentRegistryMigrationCanReplayAgainstExistingSchema)$' \
+            ./internal/agentregistry/ -v | tee "$agent_registry_log"
+          grep -q -- '^--- PASS: TestPostgresRepositoryRoundTripOwnerIsolationCASAndImmutableLedgers' "$agent_registry_log"
+          grep -q -- '^--- PASS: TestPostgresAgentRegistryMigrationCanReplayAgainstExistingSchema' "$agent_registry_log"
 
   # Boots the real backend against a real Postgres + Redis and runs the
   # two-account isolation acceptance test over HTTP: two authenticated owners
