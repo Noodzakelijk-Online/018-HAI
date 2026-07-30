@@ -74,6 +74,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 
 	m := r.Group("/api/v1").Group("/memory")
 	m.GET("/", mark("memoryList"))
+	m.GET("/health", mark("memoryHealth"))
 	m.POST("/", mark("memoryCreate"))
 	m.POST("/retrieve", mark("memoryRetrieve"))
 	m.GET("/export", mark("memoryExport"))
@@ -91,9 +92,72 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	llmRoutes := r.Group("/api/v1").Group("/llm")
 	llmRoutes.GET("/policy", mark("llmPolicy"))
 	llmRoutes.GET("/probes", mark("llmProbes"))
+	llmRoutes.GET("/probes/history", mark("llmProbeHistory"))
+	llmRoutes.GET("/model-maintenance", mark("llmModelMaintenance"))
+	llmRoutes.POST("/model-maintenance/run", mark("llmModelMaintenanceRun"))
+	llmRoutes.GET("/generations", mark("llmGenerations"))
 	llmRoutes.POST("/route", mark("llmRoute"))
 	llmRoutes.POST("/generate", mark("llmGenerate"))
 	llmRoutes.GET("/logs", mark("llmLogs"))
+
+	brainCatalog := r.Group("/api/v1").Group("/brain-catalog")
+	brainCatalog.GET("/revalidation-history", mark("brainCatalogRevalidationHistory"))
+	brainCatalog.GET("/collection-revalidation-history", mark("brainCatalogCollectionHistory"))
+	brainCatalog.GET("/repository-discovery-revalidation-history", mark("brainCatalogDiscoveryHistory"))
+	brainCatalog.POST("/revalidation/run", mark("brainCatalogRevalidationRun"))
+	brainCatalog.POST("/collection-revalidation/run", mark("brainCatalogCollectionRun"))
+	brainCatalog.POST("/repository-discovery-revalidation/run", mark("brainCatalogDiscoveryRun"))
+
+	agentFramework := r.Group("/api/v1").Group("/agent-framework")
+	agentFramework.GET("/status", mark("agentFrameworkStatus"))
+	agentFramework.POST("/probe", mark("agentFrameworkProbe"))
+	agentFramework.POST("/proposals", mark("agentFrameworkProposal"))
+
+	autoGenCompat := r.Group("/api/v1").Group("/autogen-compat")
+	autoGenCompat.GET("/status", mark("autoGenCompatStatus"))
+	autoGenCompat.POST("/preview", mark("autoGenCompatPreview"))
+	autoGenCompat.POST("/migration-plan", mark("autoGenCompatMigrationPlan"))
+
+	crewAI := r.Group("/api/v1").Group("/crewai")
+	crewAI.GET("/status", mark("crewAIStatus"))
+	crewAI.POST("/probe", mark("crewAIProbe"))
+	crewAI.POST("/proposals", mark("crewAIProposal"))
+
+	doclingRoutes := r.Group("/api/v1").Group("/docling")
+	doclingRoutes.GET("/status", mark("doclingStatus"))
+	doclingRoutes.POST("/probe", mark("doclingProbe"))
+
+	for path, prefix := range map[string]string{
+		"/gitleaks": "gitleaks",
+		"/gosec":    "gosec",
+		"/grype":    "grype",
+		"/trivy":    "trivy",
+	} {
+		group := r.Group("/api/v1").Group(path)
+		group.GET("/status", mark(prefix+"Status"))
+		group.POST("/probe", mark(prefix+"Probe"))
+		group.POST("/scan", mark(prefix+"Scan"))
+	}
+
+	miniSWE := r.Group("/api/v1").Group("/mini-swe")
+	miniSWE.GET("/status", mark("miniSWEStatus"))
+	miniSWE.POST("/probe", mark("miniSWEProbe"))
+	miniSWE.GET("/jobs", mark("miniSWEJobs"))
+	miniSWE.POST("/workflows/:id/propose-patch", mark("miniSWEProposal"))
+
+	mlflowRoutes := r.Group("/api/v1").Group("/mlflow")
+	mlflowRoutes.GET("/status", mark("mlflowStatus"))
+	mlflowRoutes.POST("/probe", mark("mlflowProbe"))
+	mlflowRoutes.GET("/runs", mark("mlflowRuns"))
+
+	openLITRoutes := r.Group("/api/v1").Group("/openlit")
+	openLITRoutes.GET("/status", mark("openLITStatus"))
+	openLITRoutes.POST("/export/operational-snapshot", mark("openLITExport"))
+
+	syftRoutes := r.Group("/api/v1").Group("/syft")
+	syftRoutes.GET("/status", mark("syftStatus"))
+	syftRoutes.POST("/probe", mark("syftProbe"))
+	syftRoutes.POST("/inventory", mark("syftInventory"))
 
 	tasks := r.Group("/api/v1").Group("/task")
 	tasks.POST("/plan", mark("taskPlan"))
@@ -277,6 +341,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/assistant/command", "assistantCommand"},
 		{"GET", "/api/v1/assistant/logs", "assistantLogs"},
 		{"POST", "/api/v1/memory/retrieve", "memoryRetrieve"},
+		{"GET", "/api/v1/memory/health", "memoryHealth"},
 		{"GET", "/api/v1/memory/export", "memoryExport"},
 		{"GET", "/api/v1/memory/abc", "memoryGet"},
 		{"POST", "/api/v1/memory-engine/import", "memoryEngineImport"},
@@ -288,9 +353,54 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/memory-engine/insights", "memoryEngineInsights"},
 		{"GET", "/api/v1/llm/policy", "llmPolicy"},
 		{"GET", "/api/v1/llm/probes", "llmProbes"},
+		{"GET", "/api/v1/llm/probes/history", "llmProbeHistory"},
+		{"GET", "/api/v1/llm/model-maintenance", "llmModelMaintenance"},
+		{"POST", "/api/v1/llm/model-maintenance/run", "llmModelMaintenanceRun"},
+		{"GET", "/api/v1/llm/generations", "llmGenerations"},
 		{"POST", "/api/v1/llm/route", "llmRoute"},
 		{"POST", "/api/v1/llm/generate", "llmGenerate"},
 		{"GET", "/api/v1/llm/logs", "llmLogs"},
+		{"GET", "/api/v1/brain-catalog/revalidation-history", "brainCatalogRevalidationHistory"},
+		{"GET", "/api/v1/brain-catalog/collection-revalidation-history", "brainCatalogCollectionHistory"},
+		{"GET", "/api/v1/brain-catalog/repository-discovery-revalidation-history", "brainCatalogDiscoveryHistory"},
+		{"POST", "/api/v1/brain-catalog/revalidation/run", "brainCatalogRevalidationRun"},
+		{"POST", "/api/v1/brain-catalog/collection-revalidation/run", "brainCatalogCollectionRun"},
+		{"POST", "/api/v1/brain-catalog/repository-discovery-revalidation/run", "brainCatalogDiscoveryRun"},
+		{"GET", "/api/v1/agent-framework/status", "agentFrameworkStatus"},
+		{"POST", "/api/v1/agent-framework/probe", "agentFrameworkProbe"},
+		{"POST", "/api/v1/agent-framework/proposals", "agentFrameworkProposal"},
+		{"GET", "/api/v1/autogen-compat/status", "autoGenCompatStatus"},
+		{"POST", "/api/v1/autogen-compat/preview", "autoGenCompatPreview"},
+		{"POST", "/api/v1/autogen-compat/migration-plan", "autoGenCompatMigrationPlan"},
+		{"GET", "/api/v1/crewai/status", "crewAIStatus"},
+		{"POST", "/api/v1/crewai/probe", "crewAIProbe"},
+		{"POST", "/api/v1/crewai/proposals", "crewAIProposal"},
+		{"GET", "/api/v1/docling/status", "doclingStatus"},
+		{"POST", "/api/v1/docling/probe", "doclingProbe"},
+		{"GET", "/api/v1/gitleaks/status", "gitleaksStatus"},
+		{"POST", "/api/v1/gitleaks/probe", "gitleaksProbe"},
+		{"POST", "/api/v1/gitleaks/scan", "gitleaksScan"},
+		{"GET", "/api/v1/gosec/status", "gosecStatus"},
+		{"POST", "/api/v1/gosec/probe", "gosecProbe"},
+		{"POST", "/api/v1/gosec/scan", "gosecScan"},
+		{"GET", "/api/v1/grype/status", "grypeStatus"},
+		{"POST", "/api/v1/grype/probe", "grypeProbe"},
+		{"POST", "/api/v1/grype/scan", "grypeScan"},
+		{"GET", "/api/v1/trivy/status", "trivyStatus"},
+		{"POST", "/api/v1/trivy/probe", "trivyProbe"},
+		{"POST", "/api/v1/trivy/scan", "trivyScan"},
+		{"GET", "/api/v1/mini-swe/status", "miniSWEStatus"},
+		{"POST", "/api/v1/mini-swe/probe", "miniSWEProbe"},
+		{"GET", "/api/v1/mini-swe/jobs", "miniSWEJobs"},
+		{"POST", "/api/v1/mini-swe/workflows/abc/propose-patch", "miniSWEProposal"},
+		{"GET", "/api/v1/mlflow/status", "mlflowStatus"},
+		{"POST", "/api/v1/mlflow/probe", "mlflowProbe"},
+		{"GET", "/api/v1/mlflow/runs", "mlflowRuns"},
+		{"GET", "/api/v1/openlit/status", "openLITStatus"},
+		{"POST", "/api/v1/openlit/export/operational-snapshot", "openLITExport"},
+		{"GET", "/api/v1/syft/status", "syftStatus"},
+		{"POST", "/api/v1/syft/probe", "syftProbe"},
+		{"POST", "/api/v1/syft/inventory", "syftInventory"},
 		{"POST", "/api/v1/task/plan", "taskPlan"},
 		{"POST", "/api/v1/task/run", "taskRun"},
 		{"POST", "/api/v1/task/success", "taskRun"},
