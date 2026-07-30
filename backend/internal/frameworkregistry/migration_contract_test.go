@@ -56,3 +56,62 @@ func TestFrameworkRegistryMigrationDeclaresVersionedImmutableConstitutionContrac
 		}
 	}
 }
+
+func TestFrameworkOperatingContractMigrationIsTypedIndexedAndReversible(t *testing.T) {
+	t.Parallel()
+
+	upBytes, err := migrations.Files.ReadFile("pre/0005_framework_operating_contract.up.sql")
+	if err != nil {
+		t.Fatalf("read operating contract migration: %v", err)
+	}
+	downBytes, err := migrations.Files.ReadFile("pre/0005_framework_operating_contract.down.sql")
+	if err != nil {
+		t.Fatalf("read operating contract rollback: %v", err)
+	}
+
+	up := strings.ToLower(string(upBytes))
+	down := strings.ToLower(string(downBytes))
+	jsonColumns := []string{
+		"life_domains_json",
+		"needs_state_json",
+		"capacity_json",
+		"agent_cards_json",
+		"delegations_json",
+		"communication_json",
+		"coordination_json",
+		"action_autonomy_json",
+		"stop_conditions_json",
+		"outcome_monitoring_json",
+		"chief_of_staff_json",
+	}
+	for _, column := range jsonColumns {
+		if !strings.Contains(up, "add column if not exists "+column+" jsonb") {
+			t.Errorf("up migration does not add typed JSON column %q", column)
+		}
+		if !strings.Contains(up, "jsonb_typeof("+column+")") {
+			t.Errorf("up migration does not constrain JSON shape for %q", column)
+		}
+		if !strings.Contains(down, "drop column if exists "+column) {
+			t.Errorf("down migration does not remove %q", column)
+		}
+	}
+	for _, fragment := range []string{
+		"operating_contract_digest character(64)",
+		"operating_contract_digest ~ '^[0-9a-f]{64}$'",
+		"selector_algorithm_version <> 'selector-v4'",
+		"create index if not exists idx_framework_selection_records_operating_digest",
+	} {
+		if !strings.Contains(up, fragment) {
+			t.Errorf("up migration missing %q", fragment)
+		}
+	}
+	for _, fragment := range []string{
+		"drop index if exists public.idx_framework_selection_records_operating_digest",
+		"drop constraint if exists chk_framework_selection_records_operating_digest",
+		"drop column if exists operating_contract_digest",
+	} {
+		if !strings.Contains(down, fragment) {
+			t.Errorf("down migration missing %q", fragment)
+		}
+	}
+}

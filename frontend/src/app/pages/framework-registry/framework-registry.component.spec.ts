@@ -100,7 +100,7 @@ describe('FrameworkRegistryComponent', () => {
     createdAt: '2026-07-30T10:00:00Z',
     catalogVersion: 'v1',
     catalogDigest: 'a'.repeat(64),
-    selectorAlgorithmVersion: 'selector-v3',
+    selectorAlgorithmVersion: 'selector-v4',
     effectivePreferenceDigest: 'b'.repeat(64),
     constitutionDigest: 'c'.repeat(64),
     lifeDomain: 'legal',

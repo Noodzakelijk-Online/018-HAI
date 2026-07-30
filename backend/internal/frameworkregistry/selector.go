@@ -109,6 +109,90 @@ var domainRules = []domainRule{
 		need:     "personal productivity commitment",
 		boostIDs: []string{"productivity-attention", "habit-behavior-change", "capacity-state"},
 	},
+	{
+		name:     "identity_roles",
+		signals:  []string{"identity document", "passport", "personal role", "profile", "biography", "who i am"},
+		need:     "identity or role commitment",
+		boostIDs: []string{"whole-life-ontology", "human-sovereignty"},
+	},
+	{
+		name:     "family_household",
+		signals:  []string{"household member", "family plan", "family appointment", "family responsibility", "household schedule"},
+		need:     "family or household commitment",
+		boostIDs: []string{"relationships-care", "whole-life-ontology"},
+	},
+	{
+		name:     "food_nutrition",
+		signals:  []string{"food", "nutrition", "meal", "groceries", "diet", "cook", "recipe"},
+		need:     "food or nutrition need",
+		boostIDs: []string{"health-personal-care", "needs-wellbeing"},
+	},
+	{
+		name:     "communication_correspondence",
+		signals:  []string{"email", "letter", "message", "reply", "correspondence", "inbox", "draft response"},
+		need:     "communication or correspondence commitment",
+		boostIDs: []string{"communication", "truth-evidence"},
+	},
+	{
+		name:     "digital_accounts",
+		signals:  []string{"online account", "login", "password reset", "oauth", "digital profile", "cloud account", "subscription"},
+		need:     "digital account or access commitment",
+		boostIDs: []string{"security-zero-trust", "privacy-protection"},
+	},
+	{
+		name:     "possessions_inventory",
+		signals:  []string{"inventory", "possession", "equipment", "tool list", "serial number", "storage box"},
+		need:     "possession, equipment, or inventory commitment",
+		boostIDs: []string{"home-garden-assets", "whole-life-ontology"},
+	},
+	{
+		name:     "animals_dependants",
+		signals:  []string{"pet", "animal", "dog", "cat", "veterinarian", "dependant care"},
+		need:     "animal or dependant-care commitment",
+		boostIDs: []string{"relationships-care", "formal-planning"},
+	},
+	{
+		name:     "community_civic",
+		signals:  []string{"community", "neighbourhood", "politics", "election", "volunteer", "civic", "public consultation"},
+		need:     "community or civic commitment",
+		boostIDs: []string{"whole-life-ontology", "communication"},
+	},
+	{
+		name:     "leisure_recreation",
+		signals:  []string{"leisure", "recreation", "hobby", "game night", "day out", "vacation activity"},
+		need:     "leisure or recovery need",
+		boostIDs: []string{"needs-wellbeing", "formal-planning"},
+	},
+	{
+		name:     "creativity_expression",
+		signals:  []string{"creative", "art", "music", "write a story", "photography", "design project"},
+		need:     "creative-expression commitment",
+		boostIDs: []string{"goal-hierarchy", "learning-competence"},
+	},
+	{
+		name:     "meaning_values",
+		signals:  []string{"meaning", "purpose in life", "spiritual", "values reflection", "legacy value"},
+		need:     "meaning, values, or spiritual need",
+		boostIDs: []string{"human-sovereignty", "needs-wellbeing"},
+	},
+	{
+		name:     "environment_sustainability",
+		signals:  []string{"environment", "sustainability", "energy use", "recycling", "carbon", "biodiversity"},
+		need:     "environmental or sustainability commitment",
+		boostIDs: []string{"whole-life-ontology", "formal-planning"},
+	},
+	{
+		name:     "legacy_long_term",
+		signals:  []string{"legacy", "estate plan", "long-term archive", "succession", "future generations"},
+		need:     "long-term legacy commitment",
+		boostIDs: []string{"goal-hierarchy", "truth-evidence"},
+	},
+	{
+		name:     "safety_security",
+		signals:  []string{"personal safety", "security incident", "burglary", "threat", "unsafe", "protective measure"},
+		need:     "safety or security need",
+		boostIDs: []string{"safety-engineering", "security-zero-trust", "emergency-continuity"},
+	},
 }
 
 // BuildSelection returns a deterministic, auditable framework recommendation.
@@ -121,6 +205,7 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 	if len(catalog) == 0 {
 		return SelectionDecision{}, fmt.Errorf("framework catalog is required")
 	}
+	request.SuccessCriteria = redactContractStrings(request.SuccessCriteria)
 	effectiveConstitution, err := compileEffectiveConstitutionRules(constitution)
 	if err != nil {
 		return SelectionDecision{}, fmt.Errorf("compile active Constitution rules: %w", err)
@@ -132,6 +217,7 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 	}
 
 	taskText := selectionTaskText(request)
+	lifeDomains := classifyLifeDomains(taskText)
 	lifeDomain, domainNeed, domainBoosts := classifyLifeDomain(taskText)
 	needOrCommitment := classifyNeedOrCommitment(request, taskText, domainNeed)
 	highRisk := isHighRisk(request, taskText, lifeDomain)
@@ -278,7 +364,28 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 		"review framework fit, exceptions, and corrections without changing policy or authority automatically",
 	}
 
+	requiredAgents = sortedUnique(requiredAgents)
+	evidenceRequirements = sortedUnique(evidenceRequirements)
+	completionCriteria = sortedUnique(completionCriteria)
+	contextRequirements = sortedUnique(contextRequirements)
+	approvalReasons = sortedUnique(approvalReasons)
+
 	createdAt := now.UTC()
+	operating, err := buildOperatingContract(
+		request,
+		lifeDomains,
+		requiredAgents,
+		maximumAutonomy,
+		requiresApproval,
+		approvalReasons,
+		evidenceRequirements,
+		completionCriteria,
+		contextRequirements,
+		createdAt,
+	)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("build chief-of-staff operating contract: %w", err)
+	}
 	decision := SelectionDecision{
 		TaskPlanID:           strings.TrimSpace(request.TaskPlanID),
 		CreatedAt:            createdAt,
@@ -286,7 +393,7 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 		NeedOrCommitment:     needOrCommitment,
 		Selected:             selected,
 		Conflicts:            conflicts,
-		RequiredAgents:       sortedUnique(requiredAgents),
+		RequiredAgents:       requiredAgents,
 		MaximumAutonomyLevel: maximumAutonomy,
 		AuthoritySummary: fmt.Sprintf(
 			"Requested operation requires autonomy level %d/10; its least-authority ceiling is %d/10 after applicable framework and Constitution limits. Selection and approval do not raise a framework ceiling or grant authority; tool, evidence, risk, and runtime controls remain binding.",
@@ -294,17 +401,29 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 			maximumAutonomy,
 		),
 		RequiresApproval:     requiresApproval,
-		ApprovalReasons:      sortedUnique(approvalReasons),
-		EvidenceRequirements: sortedUnique(evidenceRequirements),
-		CompletionCriteria:   sortedUnique(completionCriteria),
+		ApprovalReasons:      approvalReasons,
+		EvidenceRequirements: evidenceRequirements,
+		CompletionCriteria:   completionCriteria,
 		LearningPlan:         learningPlan,
-		ContextRequirements:  sortedUnique(contextRequirements),
+		ContextRequirements:  contextRequirements,
 		SelectionReason: fmt.Sprintf(
 			"Selected %d enabled frameworks for %s and %s; mandatory policies were retained and optional frameworks form the deterministic smallest non-conflicting capability cover.",
 			len(selected), lifeDomain, needOrCommitment,
 		),
-		ConstitutionVersion: constitution.Version,
-		ConstitutionSource:  constitutionSource(constitution),
+		ConstitutionVersion:     constitution.Version,
+		ConstitutionSource:      constitutionSource(constitution),
+		LifeDomains:             operating.LifeDomains,
+		NeedsState:              operating.NeedsState,
+		Capacity:                operating.Capacity,
+		AgentCards:              operating.AgentCards,
+		Delegations:             operating.Delegations,
+		Communication:           operating.Communication,
+		Coordination:            operating.Coordination,
+		ActionAutonomy:          operating.ActionAutonomy,
+		StopConditions:          operating.StopConditions,
+		OutcomeMonitoring:       operating.OutcomeMonitoring,
+		ChiefOfStaff:            operating.ChiefOfStaff,
+		OperatingContractDigest: operating.Digest,
 	}
 	decision.ID = deterministicSelectionID(decision, request)
 	return decision, nil
@@ -360,29 +479,19 @@ func selectionTaskText(request SelectionRequest) string {
 }
 
 func classifyLifeDomain(text string) (string, string, map[string]float64) {
-	bestRule := domainRule{
-		name: "general_operations",
-		need: "operator request or operational commitment",
-	}
-	bestScore := 0
+	assignments := classifyLifeDomains(text)
+	primary := assignments[0]
+	boosts := map[string]float64{}
 	for _, rule := range domainRules {
-		score := 0
-		for _, signal := range rule.signals {
-			if containsPhrase(text, signal) {
-				score++
-			}
+		if rule.name != primary.ID {
+			continue
 		}
-		if score > bestScore {
-			bestScore = score
-			bestRule = rule
+		for index, id := range rule.boostIDs {
+			boosts[id] = float64(6 - index)
 		}
+		break
 	}
-
-	boosts := make(map[string]float64, len(bestRule.boostIDs))
-	for index, id := range bestRule.boostIDs {
-		boosts[id] = float64(6 - index)
-	}
-	return bestRule.name, bestRule.need, boosts
+	return primary.ID, primary.Need, boosts
 }
 
 func classifyNeedOrCommitment(request SelectionRequest, text, domainNeed string) string {
@@ -626,12 +735,16 @@ func candidatePrecedes(left, right selectionCandidate) bool {
 }
 
 const (
-	planAndSimulateAutonomyLevel       = 4
-	caseApprovedExecutionAutonomyLevel = 6
+	planAndSimulateAutonomyLevel              = 4
+	caseApprovedExecutionAutonomyLevel        = 6
+	reversibleAutomaticExecutionAutonomyLevel = 8
 )
 
 func requiredAutonomyLevel(request SelectionRequest) int {
 	if request.ExecuteRequested {
+		if !request.HumanApproved && !request.NeedsApproval {
+			return reversibleAutomaticExecutionAutonomyLevel
+		}
 		return caseApprovedExecutionAutonomyLevel
 	}
 	return planAndSimulateAutonomyLevel
@@ -1186,6 +1299,7 @@ func deterministicSelectionID(decision SelectionDecision, request SelectionReque
 		normalizeText(request.Request),
 		decision.LifeDomain,
 		decision.NeedOrCommitment,
+		decision.OperatingContractDigest,
 		strconv.Itoa(decision.ConstitutionVersion),
 		strconv.FormatBool(decision.RequiresApproval),
 		strconv.Itoa(decision.MaximumAutonomyLevel),

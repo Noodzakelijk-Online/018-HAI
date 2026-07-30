@@ -396,9 +396,15 @@ separate from the dated 2026-07-14 host evidence above.
 
 - A code-owned Framework Registry catalog with exactly 55 version `1.0.0`
   records: 50 `active`, five `experimental`, and zero `deprecated`.
-- A deterministic `selector-v3` contract with required overlays, conflict
+- A deterministic `selector-v4` contract with required overlays, conflict
   handling, a 12-framework limit, authority ceilings, and evidence/completion
   requirements.
+- A durable operating contract containing multi-domain classification,
+  needs-state and capacity constraints, fresh verified agent cards, explicit
+  unassigned roles, complete identity/capability/access/health/revocation
+  metadata, zero-spend delegation contracts, typed replay-resistant
+  communication, coordination, exact 0-10 per-action autonomy, stop
+  conditions, outcome monitoring, and eight Chief-of-Staff answers.
 - Owner-scoped preferences. `disabled` is an effective preference, not a catalog
   lifecycle status; protected overlays reject disable attempts.
 - Owner-scoped Constitution drafts and activation. Activation requires the exact
@@ -413,8 +419,8 @@ separate from the dated 2026-07-14 host evidence above.
 - Authenticated registry API routes and Angular `/framework-registry` UI.
   Viewers read, operators read and request selections, and owners administer
   preferences and Constitution lifecycle.
-- Pre-phase migrations `0003_framework_registry` and
-  `0004_task_state_storage`.
+- Pre-phase migrations `0003_framework_registry`,
+  `0004_task_state_storage`, and `0005_framework_operating_contract`.
 - Owner-scoped task completion logs, review items, and immutable decisions.
   Approved execution is bound to the stored owner, request digest, review
   revision, task/project/automation context, and `task-review:<id>` source.
@@ -469,6 +475,13 @@ therefore not green and remains an explicit release gate; see
 - A two-real-account owner-isolation browser exercise remains required.
 - Named implementation candidates in the 55-record catalog are not installed
   or trusted merely because the catalog references them.
+- Agent cards prove only the freshness and provenance supplied by a trusted
+  runtime health source. Missing specialists remain `required_unassigned`;
+  HAI does not invent live workers from catalog role names.
+- Typed communication validates idempotency, expiry, confidentiality,
+  provenance, payload digest, and optional signature-digest shape, but a
+  distributed A2A transport, cryptographic signature authority, live consensus
+  service, and durable standing-mandate workflow are not claimed.
 - Real LLM providers, connected accounts, and external agent runtimes require
   their own configuration, authorization, bounded probe, approved task, audit,
   and verification evidence.

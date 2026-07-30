@@ -154,6 +154,58 @@ func TestFrameworkAutonomyCeilingBlocksExecutionEvenWhenApprovalIsReported(t *te
 	}
 }
 
+func TestFrameworkOperatingContractBlocksUnavailableCapacityAndUnassignedTeamExecution(t *testing.T) {
+	risk := applyFrameworkRisk(
+		RiskAssessment{AllowedNow: true},
+		&frameworkregistry.SelectionDecision{
+			MaximumAutonomyLevel: 6,
+			Capacity: frameworkregistry.CapacitySnapshot{
+				Status: "unavailable",
+			},
+			Coordination: frameworkregistry.CoordinationPlan{
+				Mode: "hierarchical",
+			},
+			Delegations: []frameworkregistry.DelegationContract{{
+				Delegatee: "specialist",
+				State:     "requires_assignment",
+			}},
+			ActionAutonomy: []frameworkregistry.ActionAutonomyDecision{{
+				Action:           "execute_case_approved_action",
+				RequiredLevel:    6,
+				EffectiveCeiling: 6,
+				Allowed:          true,
+			}},
+		},
+		IntakeAnalysis{NeedsTools: true},
+		IntakeRequest{ExecuteAllowed: true},
+	)
+
+	if risk.AllowedNow {
+		t.Fatalf("unavailable capacity and unassigned multi-agent execution were allowed: %#v", risk)
+	}
+	reasons := strings.Join(risk.Reasons, "\n")
+	for _, fragment := range []string{"capacity is unavailable", "fresh verified agent card"} {
+		if !strings.Contains(reasons, fragment) {
+			t.Errorf("risk reasons %v do not contain %q", risk.Reasons, fragment)
+		}
+	}
+}
+
+func TestRequiredFrameworkAutonomyDistinguishesApprovedAndAutomaticExecution(t *testing.T) {
+	intake := IntakeAnalysis{NeedsTools: true}
+	if got := requiredFrameworkAutonomy(intake, IntakeRequest{
+		ExecuteAllowed: true,
+		HumanApproved:  true,
+	}); got != 6 {
+		t.Fatalf("case-approved execution requires level %d, want 6", got)
+	}
+	if got := requiredFrameworkAutonomy(intake, IntakeRequest{
+		ExecuteAllowed: true,
+	}); got != 8 {
+		t.Fatalf("automatic reversible execution requires level %d, want 8", got)
+	}
+}
+
 func TestAnalyzeIntakeDoesNotRequireRuntimeForAPIExplanation(t *testing.T) {
 	analysis := analyzeIntake(IntakeRequest{Request: "Explain the API architecture and compare routing options"})
 	if analysis.NeedsTools || analysis.NeedsLocalExecution {

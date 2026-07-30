@@ -111,12 +111,16 @@ return to `DB_AUTOMIGRATE=false`.
 The exact rollback command is:
 
 ```text
+backend migrate down pre/0005_framework_operating_contract
+backend migrate down pre/0004_task_state_storage
 backend migrate down pre/0003_framework_registry
 ```
 
 This removes all three tables and their history. It is a destructive rollback,
 not a feature toggle. Back up the database, stop code that depends on the
-registry, and deploy a compatible previous application version first.
+registry, and deploy a compatible previous application version first. The
+migration runner rejects an out-of-order rollback while either later pre-phase
+migration remains applied.
 
 ## Task-State Storage Migration
 
@@ -138,26 +142,47 @@ This removes task completion history, review items, and decisions. Treat it as
 a destructive recovery operation: stop task workers, back up the database, and
 deploy a compatible application before rolling it back.
 
+## Framework Operating Contract Migration
+
+`pre/0005_framework_operating_contract` extends immutable framework-selection
+history with JSONB columns for life domains, needs state, capacity, agent
+cards, delegations, communication, coordination, per-action autonomy, stop
+conditions, outcome monitoring, and the Chief-of-Staff summary. JSON shape
+constraints reject arrays where objects are required and vice versa. A
+validated SHA-256 operating-contract digest is indexed for trace inspection.
+
+The exact rollback command is:
+
+```text
+backend migrate down pre/0005_framework_operating_contract
+```
+
+This removes selector-v4 operating context from stored selections. Stop
+selection and task writers, back up the registry, and deploy a compatible
+selector-v3 application before rollback.
+
 ## Rules
 
 1. **Additive first.** Add columns, tables, and indexes before code depends on
    them. Delay destructive changes until the new path is proven.
 2. **Every up has a down.** `migrate down` refuses a migration without its down
    file.
-3. **Backfill safely.** Large backfills run in bounded batches outside the
+3. **Reverse order only.** `migrate down` rejects an unapplied target and any
+   target with a later applied migration in the same phase.
+4. **Backfill safely.** Large backfills run in bounded batches outside the
    request hot path.
-4. **Use explicit phases.** Production rollback commands should say `pre/...`
+5. **Use explicit phases.** Production rollback commands should say `pre/...`
    or `post/...`.
-5. **Guard startup.** Startup configuration and `/readyz` expose a schema or
+6. **Guard startup.** Startup configuration and `/readyz` expose a schema or
    dependency state the running binary cannot use.
-6. **Protect evidence.** Back up owner preferences, selection audit history,
+7. **Protect evidence.** Back up owner preferences, selection audit history,
    and Constitution records before a registry rollback.
 
 ## Rollback Procedure
 
 1. Stop new writes and capture a database backup.
 2. Deploy or prepare the previous compatible binary/tag.
-3. Run the exact phase-qualified rollback command.
+3. Run phase-qualified rollback commands in reverse migration order.
 4. Run `backend migrate status` and confirm the intended version is pending.
 5. Start the compatible application.
 6. Confirm public `/healthz` and `/readyz` probes and run

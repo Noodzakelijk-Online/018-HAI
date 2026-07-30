@@ -194,17 +194,24 @@ func ApplyMigrations(db *gorm.DB, fsys fs.FS, dir string) (int, error) {
 	return count, nil
 }
 
-// RollbackMigration reverses a single applied migration by running its down SQL
-// and removing its schema_migrations row, in one transaction.
+// RollbackMigration reverses the latest applied migration in a phase by running
+// its down SQL and removing its schema_migrations row in one transaction.
+// Refusing out-of-order rollback keeps the migration ledger aligned with the
+// schema when later migrations depend on earlier tables or columns.
 func RollbackMigration(db *gorm.DB, fsys fs.FS, dir, version string) error {
+	if err := ensureSchemaMigrationsTable(db); err != nil {
+		return fmt.Errorf("ensure schema_migrations: %w", err)
+	}
 	all, err := loadMigrations(fsys, dir)
 	if err != nil {
 		return err
 	}
 	var target *Migration
+	targetIndex := -1
 	for i := range all {
 		if all[i].Version == version {
 			target = &all[i]
+			targetIndex = i
 			break
 		}
 	}
@@ -213,6 +220,22 @@ func RollbackMigration(db *gorm.DB, fsys fs.FS, dir, version string) error {
 	}
 	if strings.TrimSpace(target.DownSQL) == "" {
 		return fmt.Errorf("migration %q has no down file; refusing to rollback", version)
+	}
+	applied, err := appliedVersions(db)
+	if err != nil {
+		return fmt.Errorf("load applied versions: %w", err)
+	}
+	if !applied[version] {
+		return fmt.Errorf("migration %q is not applied; refusing to rollback", version)
+	}
+	for i := len(all) - 1; i > targetIndex; i-- {
+		if applied[all[i].Version] {
+			return fmt.Errorf(
+				"migration %q cannot be rolled back while later migration %q is applied; rollback later migrations first",
+				version,
+				all[i].Version,
+			)
+		}
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		for _, statement := range splitSQLStatements(target.DownSQL) {

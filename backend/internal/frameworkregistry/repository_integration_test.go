@@ -48,6 +48,7 @@ func frameworkRegistryIntegrationRepository(t *testing.T) (*GormRepository, *gor
 	for _, path := range []string{
 		"pre/0001_extensions.up.sql",
 		"pre/0003_framework_registry.up.sql",
+		"pre/0005_framework_operating_contract.up.sql",
 	} {
 		sql, err := migrations.Files.ReadFile(path)
 		if err != nil {
@@ -128,6 +129,7 @@ func TestFrameworkRegistryPostgresConstraintsAndImmutability(t *testing.T) {
 		SelectorAlgorithmVersion:  "framework-selector-v1",
 		EffectivePreferenceDigest: repositoryTestDigest("preferences"),
 		ConstitutionDigest:        repositoryTestDigest("constitution"),
+		OperatingContractDigest:   repositoryTestDigest("operating-contract"),
 		LifeDomain:                "work",
 		NeedOrCommitment:          "Verify evidence",
 		Selected:                  []SelectedFramework{{ID: "truth-evidence", Version: "1.0.0"}},

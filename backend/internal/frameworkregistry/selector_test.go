@@ -155,11 +155,11 @@ func TestBuildSelectionRequiresExecutionAndUntrustedContentOverlays(t *testing.T
 	if len(decision.Selected) > maxSelectedFrameworks {
 		t.Fatalf("selected %d frameworks, want at most %d", len(decision.Selected), maxSelectedFrameworks)
 	}
-	if decision.MaximumAutonomyLevel != caseApprovedExecutionAutonomyLevel {
+	if decision.MaximumAutonomyLevel != reversibleAutomaticExecutionAutonomyLevel {
 		t.Fatalf(
 			"mandatory intake/evidence/security ceilings capped execution: got %d, want %d; selected=%v",
 			decision.MaximumAutonomyLevel,
-			caseApprovedExecutionAutonomyLevel,
+			reversibleAutomaticExecutionAutonomyLevel,
 			selectedIDs(decision),
 		)
 	}

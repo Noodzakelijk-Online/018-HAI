@@ -30,15 +30,20 @@ type IntakeRequest struct {
 	PursuitID     string `json:"pursuitId,omitempty"`
 	// WorkflowID is internal worker context. It prevents the workflow-owned
 	// task run from being duplicated in the direct pursuit task-attempt ledger.
-	WorkflowID       string   `json:"-"`
-	Request          string   `json:"request"`
-	ProjectKey       string   `json:"projectKey,omitempty"`
-	AutomationID     string   `json:"automationId,omitempty"`
-	SuccessCriteria  []string `json:"successCriteria,omitempty"`
-	ExecuteAllowed   bool     `json:"executeAllowed,omitempty"`
-	HumanApproved    bool     `json:"humanApproved,omitempty"`
-	ApprovalNote     string   `json:"approvalNote,omitempty"`
-	ApprovalSourceID string   `json:"-"`
+	WorkflowID       string                                  `json:"-"`
+	Request          string                                  `json:"request"`
+	ProjectKey       string                                  `json:"projectKey,omitempty"`
+	AutomationID     string                                  `json:"automationId,omitempty"`
+	SuccessCriteria  []string                                `json:"successCriteria,omitempty"`
+	ExecuteAllowed   bool                                    `json:"executeAllowed,omitempty"`
+	HumanApproved    bool                                    `json:"humanApproved,omitempty"`
+	ApprovalNote     string                                  `json:"approvalNote,omitempty"`
+	ApprovalSourceID string                                  `json:"-"`
+	ObservedNeeds    []frameworkregistry.NeedStateAssessment `json:"-"`
+	Capacity         *frameworkregistry.CapacitySnapshot     `json:"-"`
+	AvailableAgents  []frameworkregistry.AgentCard           `json:"-"`
+	CoordinationMode string                                  `json:"-"`
+	Deadline         *time.Time                              `json:"-"`
 	reviewItemID     string
 }
 
@@ -77,10 +82,18 @@ type ValidationPlan struct {
 }
 
 type ExecutionPlan struct {
-	PlanningSeparatedFromExecution bool     `json:"planningSeparatedFromExecution"`
-	ControlledExecutionMode        string   `json:"controlledExecutionMode"`
-	ApprovalRequiredFor            []string `json:"approvalRequiredFor"`
-	AuditEvents                    []string `json:"auditEvents"`
+	PlanningSeparatedFromExecution bool                                       `json:"planningSeparatedFromExecution"`
+	ControlledExecutionMode        string                                     `json:"controlledExecutionMode"`
+	ApprovalRequiredFor            []string                                   `json:"approvalRequiredFor"`
+	AuditEvents                    []string                                   `json:"auditEvents"`
+	CapacityConstraints            []string                                   `json:"capacityConstraints"`
+	AgentCards                     []frameworkregistry.AgentCard              `json:"agentCards"`
+	Delegations                    []frameworkregistry.DelegationContract     `json:"delegations"`
+	Communication                  frameworkregistry.CommunicationContract    `json:"communication"`
+	Coordination                   frameworkregistry.CoordinationPlan         `json:"coordination"`
+	ActionAutonomy                 []frameworkregistry.ActionAutonomyDecision `json:"actionAutonomy"`
+	StopConditions                 []string                                   `json:"stopConditions"`
+	OutcomeMonitoring              []string                                   `json:"outcomeMonitoring"`
 }
 
 type ToolRouteDecision struct {
@@ -706,24 +719,29 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	}
 	planID := uuid.New().String()
 	frameworkDecision, err := s.frameworkSelector.PlanSelection(frameworkregistry.SelectionRequest{
-		OwnerIdentity:       request.OwnerIdentity,
-		TaskPlanID:          planID,
-		Request:             request.Request,
-		ProjectKey:          request.ProjectKey,
-		PursuitID:           request.PursuitID,
-		TaskType:            intake.TaskType,
-		RiskLevel:           intake.RiskLevel,
-		Difficulty:          intake.Difficulty,
-		RequiredReasoning:   intake.RequiredReasoning,
-		SuccessCriteria:     intake.SuccessCriteria,
-		NeedsMemory:         intake.NeedsMemory,
-		NeedsTools:          intake.NeedsTools,
-		NeedsDocuments:      intake.NeedsDocuments,
-		NeedsWebAccess:      intake.NeedsWebAccess,
-		NeedsLocalExecution: intake.NeedsLocalExecution,
-		NeedsApproval:       intake.NeedsApproval,
-		ExecuteRequested:    request.ExecuteAllowed,
-		HumanApproved:       request.HumanApproved,
+		OwnerIdentity:             request.OwnerIdentity,
+		TaskPlanID:                planID,
+		Request:                   request.Request,
+		ProjectKey:                request.ProjectKey,
+		PursuitID:                 request.PursuitID,
+		TaskType:                  intake.TaskType,
+		RiskLevel:                 intake.RiskLevel,
+		Difficulty:                intake.Difficulty,
+		RequiredReasoning:         intake.RequiredReasoning,
+		SuccessCriteria:           intake.SuccessCriteria,
+		NeedsMemory:               intake.NeedsMemory,
+		NeedsTools:                intake.NeedsTools,
+		NeedsDocuments:            intake.NeedsDocuments,
+		NeedsWebAccess:            intake.NeedsWebAccess,
+		NeedsLocalExecution:       intake.NeedsLocalExecution,
+		NeedsApproval:             intake.NeedsApproval,
+		ExecuteRequested:          request.ExecuteAllowed,
+		HumanApproved:             request.HumanApproved,
+		ObservedNeeds:             request.ObservedNeeds,
+		Capacity:                  request.Capacity,
+		AvailableAgents:           request.AvailableAgents,
+		PreferredCoordinationMode: request.CoordinationMode,
+		Deadline:                  request.Deadline,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("select planning frameworks: %w", err)
@@ -1849,9 +1867,21 @@ func applyFrameworkExecution(plan ExecutionPlan, decision *frameworkregistry.Sel
 		plan.ApprovalRequiredFor = append(plan.ApprovalRequiredFor, decision.ApprovalReasons...)
 	}
 	plan.ApprovalRequiredFor = uniqueStrings(plan.ApprovalRequiredFor)
+	plan.CapacityConstraints = append([]string(nil), decision.Capacity.Constraints...)
+	plan.AgentCards = append([]frameworkregistry.AgentCard(nil), decision.AgentCards...)
+	plan.Delegations = append([]frameworkregistry.DelegationContract(nil), decision.Delegations...)
+	plan.Communication = decision.Communication
+	plan.Coordination = decision.Coordination
+	plan.ActionAutonomy = append([]frameworkregistry.ActionAutonomyDecision(nil), decision.ActionAutonomy...)
+	plan.StopConditions = append([]string(nil), decision.StopConditions...)
+	plan.OutcomeMonitoring = append([]string(nil), decision.OutcomeMonitoring...)
 	plan.AuditEvents = uniqueStrings(append(plan.AuditEvents,
 		"framework combination selected",
 		"framework authority ceiling evaluated",
+		"human capacity and needs state evaluated",
+		"agent cards and delegation authority evaluated",
+		"coordination and typed communication contract evaluated",
+		"per-action autonomy and stop conditions evaluated",
 		"framework evidence and completion gates evaluated",
 	))
 	return plan
@@ -1990,16 +2020,53 @@ func applyFrameworkRisk(
 			),
 		)
 	}
+	if request.ExecuteAllowed &&
+		(decision.Capacity.Status == "unavailable" || decision.Capacity.Status == "overloaded") {
+		risk.AllowedNow = false
+		risk.Reasons = append(
+			risk.Reasons,
+			"current human capacity is unavailable; execution must be rescheduled or explicitly re-planned without creating new operator commitments",
+		)
+	}
+	if request.ExecuteAllowed && decision.Coordination.Mode != "single_engine" {
+		for _, delegation := range decision.Delegations {
+			if delegation.State != "ready" {
+				risk.AllowedNow = false
+				risk.Reasons = append(
+					risk.Reasons,
+					"multi-agent execution is blocked until every delegated participant has a fresh verified agent card",
+				)
+				break
+			}
+		}
+	}
+	executionAction := "execute_reversible_low_risk_action"
+	if request.HumanApproved || decision.RequiresApproval {
+		executionAction = "execute_case_approved_action"
+	}
+	for _, action := range decision.ActionAutonomy {
+		if !request.ExecuteAllowed || action.Action != executionAction {
+			continue
+		}
+		if !action.Allowed {
+			risk.AllowedNow = false
+			risk.Reasons = append(risk.Reasons, "per-action autonomy contract blocks execution: "+action.Reason)
+		}
+	}
 	risk.Reasons = uniqueStrings(risk.Reasons)
 	return risk
 }
 
 func requiredFrameworkAutonomy(intake IntakeAnalysis, request IntakeRequest) int {
 	if request.ExecuteAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
-		// Level 6 is the first Constitution tier that permits execution:
-		// execute after case-specific approval. Approval can authorize a
-		// scoped action but cannot raise a framework's own authority ceiling.
-		return 6
+		if request.HumanApproved {
+			// Level 6 permits only the exact case-approved action. Approval can
+			// authorize scope but cannot raise the framework authority ceiling.
+			return 6
+		}
+		// Without case-specific approval, only level 8 permits automatic
+		// execution, and only for reversible, low-risk, allowlisted actions.
+		return 8
 	}
 	// Planning and simulation use level 4. Draft-only work remains a lower
 	// capability inside this ceiling and does not imply permission to execute.

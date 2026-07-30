@@ -287,8 +287,14 @@ func TestRequiredFrameworkAutonomyMatchesConstitutionAuthorityLadder(t *testing.
 	if got := requiredFrameworkAutonomy(intake, IntakeRequest{}); got != 4 {
 		t.Fatalf("planning autonomy = %d, want level 4", got)
 	}
-	if got := requiredFrameworkAutonomy(intake, IntakeRequest{ExecuteAllowed: true}); got != 6 {
-		t.Fatalf("execution autonomy = %d, want level 6", got)
+	if got := requiredFrameworkAutonomy(intake, IntakeRequest{ExecuteAllowed: true}); got != 8 {
+		t.Fatalf("automatic reversible execution autonomy = %d, want level 8", got)
+	}
+	if got := requiredFrameworkAutonomy(intake, IntakeRequest{
+		ExecuteAllowed: true,
+		HumanApproved:  true,
+	}); got != 6 {
+		t.Fatalf("case-approved execution autonomy = %d, want level 6", got)
 	}
 }
 

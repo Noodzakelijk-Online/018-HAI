@@ -43,6 +43,28 @@
     </div>
   </div>
 
+  <section class="chief-of-staff" *ngIf="decision.chiefOfStaff as chief">
+    <div>
+      <span class="section-label">What needs attention</span>
+      <strong>{{ chief.needsAttention }}</strong>
+      <p>{{ chief.whyNow }}</p>
+    </div>
+    <dl>
+      <div>
+        <dt>Who acts</dt>
+        <dd>{{ humanize(chief.whoShouldAct) }}</dd>
+      </div>
+      <div>
+        <dt>May proceed</dt>
+        <dd>{{ chief.mayProceedNow }}</dd>
+      </div>
+      <div *ngIf="decision.requiresApproval">
+        <dt>Approval gate</dt>
+        <dd>{{ chief.needsApproval }}</dd>
+      </div>
+    </dl>
+  </section>
+
   <dl class="decision-meta">
     <div>
       <dt>Life domain</dt>
@@ -63,6 +85,17 @@
     <div>
       <dt>Recorded</dt>
       <dd>{{ decision.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC</dd>
+    </div>
+    <div *ngIf="decision.capacity as capacity">
+      <dt>Capacity</dt>
+      <dd>
+        {{ humanize(capacity.status) }} &middot;
+        {{ capacity.planningStepLimit }}-step plan
+      </dd>
+    </div>
+    <div *ngIf="decision.coordination as coordination">
+      <dt>Coordination</dt>
+      <dd>{{ humanize(coordination.mode) }}</dd>
     </div>
   </dl>
 
@@ -97,6 +130,145 @@
   </div>
 
   <div class="recommendation-detail" *ngIf="advanced">
+    <section class="recommendation-detail__wide" *ngIf="decision.lifeDomains?.length">
+      <h4>Whole-life scope</h4>
+      <div class="domain-grid">
+        <article *ngFor="let domain of decision.lifeDomains; trackBy: trackDomain">
+          <div>
+            <strong>{{ humanize(domain.id) }}</strong>
+            <nz-tag *ngIf="domain.primary" nzColor="blue">Primary</nz-tag>
+          </div>
+          <p>{{ domain.need }}</p>
+          <small>
+            Confidence {{ domain.confidence | percent: '1.0-0' }} &middot;
+            {{ domain.source }}
+          </small>
+        </article>
+      </div>
+    </section>
+    <section *ngIf="decision.capacity as capacity">
+      <h4>Human capacity</h4>
+      <p>
+        <strong>{{ humanize(capacity.status) }}</strong>
+        &middot; plan limit {{ capacity.planningStepLimit }} steps
+      </p>
+      <ul *ngIf="capacity.constraints.length">
+        <li *ngFor="let constraint of capacity.constraints; trackBy: trackString">
+          {{ constraint }}
+        </li>
+      </ul>
+      <p class="empty-copy" *ngIf="capacity.needsReview">
+        This capacity snapshot needs operator review before it should create new commitments.
+      </p>
+    </section>
+    <section *ngIf="decision.needsState?.length">
+      <h4>Needs state</h4>
+      <ul class="needs-list">
+        <li *ngFor="let need of decision.needsState; trackBy: trackNeed">
+          <strong>{{ humanize(need.level) }}</strong>
+          <span>{{ humanize(need.state) }} &middot; priority {{ need.priority }}</span>
+          <small>{{ need.source }}</small>
+        </li>
+      </ul>
+    </section>
+    <section class="recommendation-detail__wide" *ngIf="decision.agentCards?.length">
+      <h4>Agent cards and delegation readiness</h4>
+      <div class="agent-grid">
+        <article *ngFor="let agent of decision.agentCards; trackBy: trackAgent">
+          <div>
+            <strong>{{ agent.name }}</strong>
+            <nz-tag [nzColor]="agent.verified ? 'green' : 'gold'">
+              {{ agent.verified ? 'Verified' : humanize(agent.status) }}
+            </nz-tag>
+          </div>
+          <p>{{ agent.purpose }}</p>
+          <small>
+            {{ humanize(agent.role) }} &middot;
+            {{ humanize(agent.healthStatus) }} &middot;
+            ceiling {{ agent.authorityCeiling }}/10 &middot;
+            evaluation {{ agent.evaluationScore | percent: '1.0-0' }}
+          </small>
+          <small>{{ agent.evaluationScoreSource }}</small>
+          <small>{{ agent.owner }} &middot; {{ agent.provenance }}</small>
+        </article>
+      </div>
+    </section>
+    <section class="recommendation-detail__wide" *ngIf="decision.delegations?.length">
+      <h4>Delegation contracts</h4>
+      <div class="delegation-grid">
+        <article *ngFor="let delegation of decision.delegations">
+          <div>
+            <strong>{{ humanize(delegation.delegatee) }}</strong>
+            <nz-tag [nzColor]="delegation.state === 'ready' ? 'green' : 'gold'">
+              {{ humanize(delegation.state) }}
+            </nz-tag>
+          </div>
+          <p>
+            Ceiling {{ delegation.authorityCeiling }}/10 &middot;
+            {{ humanize(delegation.budgetPolicy) }} &middot;
+            {{ delegation.deadline ? (delegation.deadline | date:'medium') : 'No deadline set' }}
+          </p>
+          <small>{{ delegation.constraints[0] }}</small>
+        </article>
+      </div>
+    </section>
+    <section *ngIf="decision.coordination as coordination">
+      <h4>Coordination</h4>
+      <p><strong>{{ humanize(coordination.mode) }}</strong></p>
+      <p>{{ coordination.rationale }}</p>
+      <p>{{ coordination.consensusRule }}</p>
+    </section>
+    <section *ngIf="decision.communication as communication">
+      <h4>Typed communication</h4>
+      <p>
+        <code>{{ communication.schemaVersion }}</code>
+        &middot; ceiling {{ communication.maximumAuthority }}/10
+      </p>
+      <p>
+        {{ communication.redactionRequired ? 'Secret redaction required.' : 'No redaction rule returned.' }}
+        Idempotency and provenance are
+        {{ communication.idempotencyRequired && communication.provenanceRequired ? 'required' : 'not fully required' }}.
+      </p>
+      <p>
+        Maximum {{ communication.maximumPayloadChars }} characters &middot;
+        TTL {{ communication.maximumTtlSeconds / 3600 | number: '1.0-1' }} hours
+      </p>
+      <small>Correlation <code>{{ communication.correlationId }}</code></small>
+    </section>
+    <section class="recommendation-detail__wide" *ngIf="decision.actionAutonomy?.length">
+      <h4>Per-action autonomy</h4>
+      <div class="autonomy-list">
+        <article
+          *ngFor="let action of decision.actionAutonomy; trackBy: trackAutonomy"
+          [class.autonomy-list__item--blocked]="!action.allowed"
+        >
+          <div>
+            <strong>{{ humanize(action.action) }}</strong>
+            <nz-tag [nzColor]="action.allowed ? 'green' : 'default'">
+              {{ action.allowed ? 'Allowed' : 'Not allowed now' }}
+            </nz-tag>
+          </div>
+          <p>
+            {{ humanize(action.levelName) }} &middot;
+            requires {{ action.requiredLevel }}/10 &middot;
+            ceiling {{ action.effectiveCeiling }}/10
+          </p>
+          <small>{{ action.reason }}</small>
+        </article>
+      </div>
+    </section>
+    <section *ngIf="decision.stopConditions?.length">
+      <h4>Stop conditions</h4>
+      <ul>
+        <li *ngFor="let item of decision.stopConditions; trackBy: trackString">{{ item }}</li>
+      </ul>
+    </section>
+    <section *ngIf="decision.outcomeMonitoring?.length">
+      <h4>Outcome monitoring</h4>
+      <ul>
+        <li *ngFor="let item of decision.outcomeMonitoring; trackBy: trackString">{{ item }}</li>
+      </ul>
+    </section>
     <section>
       <h4>Required agents</h4>
       <div class="tag-list">
@@ -229,6 +401,10 @@
         <div>
           <dt>Constitution source</dt>
           <dd><code>{{ decision.constitutionSource }}</code></dd>
+        </div>
+        <div *ngIf="decision.operatingContractDigest">
+          <dt>Operating contract digest</dt>
+          <dd><code>{{ decision.operatingContractDigest }}</code></dd>
         </div>
       </dl>
     </section>

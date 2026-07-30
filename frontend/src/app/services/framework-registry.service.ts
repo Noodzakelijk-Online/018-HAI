@@ -441,6 +441,466 @@ export class FrameworkRegistryService {
     if (record['taskPlanId'] !== undefined) {
       result.taskPlanId = this.requireString(record, 'taskPlanId', resource, true);
     }
+    Object.assign(result, this.normalizeOperatingContract(record, resource));
+    return result;
+  }
+
+  private normalizeOperatingContract(
+    record: Record<string, unknown>,
+    resource: string
+  ): Partial<IFrameworkSelectionDecision> {
+    const result: Partial<IFrameworkSelectionDecision> = {};
+    if (record['operatingContractDigest'] === undefined) {
+      return result;
+    }
+    result.operatingContractDigest = this.requireDigest(
+      record,
+      'operatingContractDigest',
+      resource
+    );
+    result.lifeDomains = this.requireArray(record, 'lifeDomains', resource).map(
+      (entry, index) => {
+        const itemResource = `${resource} life domain ${index + 1}`;
+        const item = this.requireRecord(entry, itemResource);
+        return {
+          id: this.requireString(item, 'id', itemResource),
+          need: this.requireString(item, 'need', itemResource),
+          score: this.requireInteger(item, 'score', itemResource),
+          confidence: this.requireNumber(item, 'confidence', itemResource),
+          signals: this.requireStringArray(item, 'signals', itemResource),
+          primary: this.requireBoolean(item, 'primary', itemResource),
+          source: this.requireString(item, 'source', itemResource),
+        };
+      }
+    );
+    result.needsState = this.requireArray(record, 'needsState', resource).map(
+      (entry, index) => {
+        const itemResource = `${resource} needs state ${index + 1}`;
+        const item = this.requireRecord(entry, itemResource);
+        return {
+          id: this.requireString(item, 'id', itemResource),
+          domainId:
+            item['domainId'] === undefined
+              ? undefined
+              : this.requireString(item, 'domainId', itemResource, true),
+          level: this.requireString(item, 'level', itemResource),
+          state: this.requireString(item, 'state', itemResource),
+          priority: this.requireInteger(item, 'priority', itemResource, 0, 100),
+          confidence: this.requireNumber(item, 'confidence', itemResource),
+          evidence: this.requireStringArray(item, 'evidence', itemResource),
+          source: this.requireString(item, 'source', itemResource),
+          needsReview: this.requireBoolean(item, 'needsReview', itemResource),
+        };
+      }
+    );
+    result.capacity = this.normalizeCapacity(
+      this.requireRecord(record['capacity'], `${resource} capacity`),
+      `${resource} capacity`
+    );
+    result.agentCards = this.requireArray(record, 'agentCards', resource).map(
+      (entry, index) =>
+        this.normalizeAgentCard(
+          this.requireRecord(entry, `${resource} agent card ${index + 1}`),
+          `${resource} agent card ${index + 1}`
+        )
+    );
+    result.delegations = this.requireArray(record, 'delegations', resource).map(
+      (entry, index) => {
+        const itemResource = `${resource} delegation ${index + 1}`;
+        const item = this.requireRecord(entry, itemResource);
+        return {
+          id: this.requireString(item, 'id', itemResource),
+          delegator: this.requireString(item, 'delegator', itemResource),
+          delegatee: this.requireString(item, 'delegatee', itemResource),
+          objective: this.requireString(item, 'objective', itemResource),
+          allowedActions: this.requireStringArray(item, 'allowedActions', itemResource),
+          prohibitedActions: this.requireStringArray(
+            item,
+            'prohibitedActions',
+            itemResource
+          ),
+          budgetLimitEur: this.requireNonNegativeNumber(
+            item,
+            'budgetLimitEur',
+            itemResource
+          ),
+          budgetPolicy: this.requireString(item, 'budgetPolicy', itemResource),
+          deadline:
+            item['deadline'] === undefined
+              ? undefined
+              : this.requireDateString(item, 'deadline', itemResource),
+          deadlineStatus: this.requireString(item, 'deadlineStatus', itemResource),
+          constraints: this.requireStringArray(item, 'constraints', itemResource),
+          authorityCeiling: this.requireInteger(
+            item,
+            'authorityCeiling',
+            itemResource,
+            0,
+            10
+          ),
+          requiresApproval: this.requireBoolean(
+            item,
+            'requiresApproval',
+            itemResource
+          ),
+          evidenceRequired: this.requireStringArray(
+            item,
+            'evidenceRequired',
+            itemResource
+          ),
+          completionCriteria: this.requireStringArray(
+            item,
+            'completionCriteria',
+            itemResource
+          ),
+          escalationTriggers: this.requireStringArray(
+            item,
+            'escalationTriggers',
+            itemResource
+          ),
+          state: this.requireString(item, 'state', itemResource),
+        };
+      }
+    );
+    const communication = this.requireRecord(
+      record['communication'],
+      `${resource} communication`
+    );
+    result.communication = {
+      schemaVersion: this.requireString(
+        communication,
+        'schemaVersion',
+        `${resource} communication`
+      ),
+      allowedMessageTypes: this.requireStringArray(
+        communication,
+        'allowedMessageTypes',
+        `${resource} communication`
+      ),
+      allowedConfidentiality: this.requireStringArray(
+        communication,
+        'allowedConfidentiality',
+        `${resource} communication`
+      ),
+      requiredFields: this.requireStringArray(
+        communication,
+        'requiredFields',
+        `${resource} communication`
+      ),
+      forbiddenContent: this.requireStringArray(
+        communication,
+        'forbiddenContent',
+        `${resource} communication`
+      ),
+      maximumAuthority: this.requireInteger(
+        communication,
+        'maximumAuthority',
+        `${resource} communication`,
+        0,
+        10
+      ),
+      maximumPayloadChars: this.requireInteger(
+        communication,
+        'maximumPayloadChars',
+        `${resource} communication`,
+        1
+      ),
+      maximumTtlSeconds: this.requireInteger(
+        communication,
+        'maximumTtlSeconds',
+        `${resource} communication`,
+        1
+      ),
+      redactionRequired: this.requireBoolean(
+        communication,
+        'redactionRequired',
+        `${resource} communication`
+      ),
+      idempotencyRequired: this.requireBoolean(
+        communication,
+        'idempotencyRequired',
+        `${resource} communication`
+      ),
+      provenanceRequired: this.requireBoolean(
+        communication,
+        'provenanceRequired',
+        `${resource} communication`
+      ),
+      signaturePolicy: this.requireString(
+        communication,
+        'signaturePolicy',
+        `${resource} communication`
+      ),
+      correlationId: this.requireString(
+        communication,
+        'correlationId',
+        `${resource} communication`
+      ),
+    };
+    const coordination = this.requireRecord(
+      record['coordination'],
+      `${resource} coordination`
+    );
+    result.coordination = {
+      mode: this.requireString(coordination, 'mode', `${resource} coordination`),
+      allowedModes: this.requireStringArray(
+        coordination,
+        'allowedModes',
+        `${resource} coordination`
+      ),
+      coordinator: this.requireString(
+        coordination,
+        'coordinator',
+        `${resource} coordination`
+      ),
+      participants: this.requireStringArray(
+        coordination,
+        'participants',
+        `${resource} coordination`
+      ),
+      handoffOrder: this.requireStringArray(
+        coordination,
+        'handoffOrder',
+        `${resource} coordination`
+      ),
+      consensusRule: this.requireString(
+        coordination,
+        'consensusRule',
+        `${resource} coordination`
+      ),
+      escalationRule: this.requireString(
+        coordination,
+        'escalationRule',
+        `${resource} coordination`
+      ),
+      rationale: this.requireString(
+        coordination,
+        'rationale',
+        `${resource} coordination`
+      ),
+    };
+    result.actionAutonomy = this.requireArray(
+      record,
+      'actionAutonomy',
+      resource
+    ).map((entry, index) => {
+      const itemResource = `${resource} action autonomy ${index + 1}`;
+      const item = this.requireRecord(entry, itemResource);
+      return {
+        action: this.requireString(item, 'action', itemResource),
+        requiredLevel: this.requireInteger(
+          item,
+          'requiredLevel',
+          itemResource,
+          0,
+          10
+        ),
+        effectiveCeiling: this.requireInteger(
+          item,
+          'effectiveCeiling',
+          itemResource,
+          0,
+          10
+        ),
+        levelName: this.requireString(item, 'levelName', itemResource),
+        allowed: this.requireBoolean(item, 'allowed', itemResource),
+        requiresApproval: this.requireBoolean(
+          item,
+          'requiresApproval',
+          itemResource
+        ),
+        reason: this.requireString(item, 'reason', itemResource),
+      };
+    });
+    result.stopConditions = this.requireStringArray(
+      record,
+      'stopConditions',
+      resource
+    );
+    result.outcomeMonitoring = this.requireStringArray(
+      record,
+      'outcomeMonitoring',
+      resource
+    );
+    const chief = this.requireRecord(
+      record['chiefOfStaff'],
+      `${resource} chief of staff`
+    );
+    result.chiefOfStaff = {
+      needsAttention: this.requireString(
+        chief,
+        'needsAttention',
+        `${resource} chief of staff`
+      ),
+      whyNow: this.requireString(chief, 'whyNow', `${resource} chief of staff`),
+      contextNeeded: this.requireString(
+        chief,
+        'contextNeeded',
+        `${resource} chief of staff`
+      ),
+      whoShouldAct: this.requireString(
+        chief,
+        'whoShouldAct',
+        `${resource} chief of staff`
+      ),
+      howToProceed: this.requireString(
+        chief,
+        'howToProceed',
+        `${resource} chief of staff`
+      ),
+      mayProceedNow: this.requireString(
+        chief,
+        'mayProceedNow',
+        `${resource} chief of staff`
+      ),
+      needsApproval: this.requireString(
+        chief,
+        'needsApproval',
+        `${resource} chief of staff`
+      ),
+      completionProof: this.requireString(
+        chief,
+        'completionProof',
+        `${resource} chief of staff`
+      ),
+    };
+    return result;
+  }
+
+  private normalizeCapacity(
+    record: Record<string, unknown>,
+    resource: string
+  ): NonNullable<IFrameworkSelectionDecision['capacity']> {
+    const result: NonNullable<IFrameworkSelectionDecision['capacity']> = {
+      status: this.requireString(record, 'status', resource),
+      planningStepLimit: this.requireInteger(
+        record,
+        'planningStepLimit',
+        resource,
+        1,
+        20
+      ),
+      constraints: this.requireStringArray(record, 'constraints', resource),
+      confidence: this.requireNumber(record, 'confidence', resource),
+      fresh: this.requireBoolean(record, 'fresh', resource),
+      needsReview: this.requireBoolean(record, 'needsReview', resource),
+    };
+    for (const key of [
+      'energy',
+      'attention',
+      'timeAvailableMinutes',
+      'concurrentWorkLimit',
+      'currentLoad',
+    ] as const) {
+      if (record[key] !== undefined) {
+        result[key] = this.requireInteger(record, key, resource);
+      }
+    }
+    if (record['sourceUri'] !== undefined) {
+      result.sourceUri = this.requireString(record, 'sourceUri', resource, true);
+    }
+    if (record['sourceLabel'] !== undefined) {
+      result.sourceLabel = this.requireString(record, 'sourceLabel', resource, true);
+    }
+    if (record['capturedAt'] !== undefined) {
+      result.capturedAt = this.requireDateString(record, 'capturedAt', resource);
+    }
+    return result;
+  }
+
+  private normalizeAgentCard(
+    record: Record<string, unknown>,
+    resource: string
+  ): NonNullable<IFrameworkSelectionDecision['agentCards']>[number] {
+    const evaluationScore = this.requireNumber(record, 'evaluationScore', resource);
+    if (evaluationScore < 0 || evaluationScore > 1) {
+      throw this.contractError(resource);
+    }
+    const result: NonNullable<IFrameworkSelectionDecision['agentCards']>[number] = {
+      id: this.requireString(record, 'id', resource),
+      name: this.requireString(record, 'name', resource),
+      owner: this.requireString(record, 'owner', resource),
+      purpose: this.requireString(record, 'purpose', resource),
+      role: this.requireString(record, 'role', resource),
+      capabilities: this.requireStringArray(record, 'capabilities', resource),
+      domainCompetence: this.requireStringArray(
+        record,
+        'domainCompetence',
+        resource
+      ),
+      allowedTools: this.requireStringArray(record, 'allowedTools', resource),
+      requiredPermissions: this.requireStringArray(
+        record,
+        'requiredPermissions',
+        resource
+      ),
+      dataAccessBoundaries: this.requireStringArray(
+        record,
+        'dataAccessBoundaries',
+        resource
+      ),
+      costProfile: this.requireString(record, 'costProfile', resource),
+      modelRequirements: this.requireStringArray(
+        record,
+        'modelRequirements',
+        resource
+      ),
+      reliabilityHistory: this.requireStringArray(
+        record,
+        'reliabilityHistory',
+        resource
+      ),
+      allowedActions: this.requireStringArray(record, 'allowedActions', resource),
+      prohibitedActions: this.requireStringArray(
+        record,
+        'prohibitedActions',
+        resource
+      ),
+      inputSchema: this.requireString(record, 'inputSchema', resource),
+      outputSchema: this.requireString(record, 'outputSchema', resource),
+      expectedEvidence: this.requireStringArray(
+        record,
+        'expectedEvidence',
+        resource
+      ),
+      escalationRoute: this.requireString(record, 'escalationRoute', resource),
+      availability: this.requireString(record, 'availability', resource),
+      version: this.requireString(record, 'version', resource),
+      dependencies: this.requireStringArray(record, 'dependencies', resource),
+      healthStatus: this.requireString(record, 'healthStatus', resource),
+      evaluationScore,
+      evaluationScoreSource: this.requireString(
+        record,
+        'evaluationScoreSource',
+        resource
+      ),
+      authorityCeiling: this.requireInteger(
+        record,
+        'authorityCeiling',
+        resource,
+        0,
+        10
+      ),
+      status: this.requireString(record, 'status', resource),
+      verified: this.requireBoolean(record, 'verified', resource),
+      revoked: this.requireBoolean(record, 'revoked', resource),
+      provenance: this.requireString(record, 'provenance', resource),
+    };
+    if (record['revocationReason'] !== undefined) {
+      result.revocationReason = this.requireString(
+        record,
+        'revocationReason',
+        resource,
+        true
+      );
+    }
+    if (record['lastVerifiedAt'] !== undefined) {
+      result.lastVerifiedAt = this.requireDateString(
+        record,
+        'lastVerifiedAt',
+        resource
+      );
+    }
     return result;
   }
 
@@ -634,6 +1094,18 @@ export class FrameworkRegistryService {
   ): number {
     const value = record[key];
     if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw this.contractError(resource);
+    }
+    return value;
+  }
+
+  private requireNonNegativeNumber(
+    record: Record<string, unknown>,
+    key: string,
+    resource: string
+  ): number {
+    const value = this.requireNumber(record, key, resource);
+    if (value < 0) {
       throw this.contractError(resource);
     }
     return value;

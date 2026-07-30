@@ -132,6 +132,7 @@ func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.Tas
 		HumanApproved:    request.HumanApproved,
 		ApprovalNote:     request.ApprovalNote,
 		ApprovalSourceID: request.ApprovalSourceID,
+		Deadline:         request.Deadline,
 	})
 	if err != nil {
 		return nil, err
@@ -235,6 +236,7 @@ func frameworkSelectionFromPlan(plan *task.CompletionPlan) (*workflow.FrameworkS
 		ConstitutionVersion:       decision.ConstitutionVersion,
 		ConstitutionDigest:        strings.TrimSpace(decision.ConstitutionDigest),
 		ConstitutionSource:        strings.TrimSpace(decision.ConstitutionSource),
+		OperatingContractDigest:   strings.TrimSpace(decision.OperatingContractDigest),
 	}
 	if err := provenance.Validate(plan.ID); err != nil {
 		return nil, err

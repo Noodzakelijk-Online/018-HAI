@@ -97,6 +97,54 @@
   border-radius: 8px;
 }
 
+.chief-of-staff {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
+  gap: 14px;
+  margin: 0 18px 14px;
+  padding: 14px;
+  background: var(--hai-surface-muted);
+  border: 1px solid var(--hai-border);
+  border-radius: 8px;
+
+  strong,
+  p {
+    margin: 0;
+  }
+
+  strong {
+    color: var(--hai-text);
+    font-size: 13px;
+  }
+
+  p {
+    margin-top: 5px;
+    color: var(--hai-text-soft);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  dl {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+  }
+
+  dt {
+    color: var(--hai-muted);
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  dd {
+    margin: 2px 0 0;
+    color: var(--hai-text-soft);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+}
+
 .section-label {
   display: block;
   margin-bottom: 5px;
@@ -287,6 +335,85 @@
   margin-top: 9px;
 }
 
+.domain-grid,
+.agent-grid,
+.delegation-grid,
+.autonomy-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+
+  article {
+    min-width: 0;
+    padding: 10px;
+    background: var(--hai-surface);
+    border: 1px solid var(--hai-border);
+    border-radius: 8px;
+  }
+
+  article > div {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  strong {
+    color: var(--hai-text);
+    font-size: 11px;
+  }
+
+  p,
+  small {
+    display: block;
+    margin: 5px 0 0;
+    overflow-wrap: anywhere;
+    color: var(--hai-muted);
+    font-size: 10px;
+    line-height: 1.45;
+  }
+}
+
+.autonomy-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.autonomy-list__item--blocked {
+  opacity: 0.78;
+}
+
+.needs-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 0 !important;
+  list-style: none;
+
+  li,
+  strong,
+  span,
+  small {
+    display: block;
+  }
+
+  li {
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--hai-border);
+  }
+
+  li:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  span,
+  small {
+    margin-top: 2px;
+    color: var(--hai-muted);
+    font-size: 10px;
+  }
+}
+
 .selection-contract {
   padding: 11px;
   background: var(--hai-surface);
@@ -380,6 +507,14 @@
 
 @media (max-width: 780px) {
   .recommendation-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .chief-of-staff,
+  .domain-grid,
+  .agent-grid,
+  .delegation-grid,
+  .autonomy-list {
     grid-template-columns: 1fr;
   }
 }

@@ -100,15 +100,16 @@ type ProposalResolutionRequest struct {
 }
 
 type TaskRunRequest struct {
-	OwnerIdentity    string `json:"-"`
-	PursuitID        string `json:"pursuitId,omitempty"`
-	WorkflowID       string `json:"workflowId"`
-	Request          string `json:"request"`
-	ProjectKey       string `json:"projectKey,omitempty"`
-	AutomationID     string `json:"automationId,omitempty"`
-	HumanApproved    bool   `json:"humanApproved"`
-	ApprovalNote     string `json:"approvalNote,omitempty"`
-	ApprovalSourceID string `json:"-"`
+	OwnerIdentity    string     `json:"-"`
+	PursuitID        string     `json:"pursuitId,omitempty"`
+	WorkflowID       string     `json:"workflowId"`
+	Request          string     `json:"request"`
+	ProjectKey       string     `json:"projectKey,omitempty"`
+	AutomationID     string     `json:"automationId,omitempty"`
+	HumanApproved    bool       `json:"humanApproved"`
+	ApprovalNote     string     `json:"approvalNote,omitempty"`
+	ApprovalSourceID string     `json:"-"`
+	Deadline         *time.Time `json:"-"`
 }
 
 type FrameworkSelectionProvenance struct {
@@ -121,6 +122,7 @@ type FrameworkSelectionProvenance struct {
 	ConstitutionVersion       int    `json:"constitutionVersion"`
 	ConstitutionDigest        string `json:"constitutionDigest"`
 	ConstitutionSource        string `json:"constitutionSource"`
+	OperatingContractDigest   string `json:"operatingContractDigest,omitempty"`
 }
 
 func (p FrameworkSelectionProvenance) Validate(taskPlanID string) error {
@@ -160,6 +162,14 @@ func (p FrameworkSelectionProvenance) Validate(taskPlanID string) error {
 		}
 		if _, err := hex.DecodeString(value); err != nil {
 			return fmt.Errorf("%s must be a SHA-256 digest: %w", digest.label, err)
+		}
+	}
+	if value := strings.TrimSpace(p.OperatingContractDigest); value != "" {
+		if len(value) != sha256.Size*2 {
+			return fmt.Errorf("operating contract digest must be a SHA-256 digest")
+		}
+		if _, err := hex.DecodeString(value); err != nil {
+			return fmt.Errorf("operating contract digest must be a SHA-256 digest: %w", err)
 		}
 	}
 	if p.ConstitutionVersion < 1 {
@@ -1966,6 +1976,7 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		HumanApproved:    humanApproved,
 		ApprovalNote:     item.ApprovalReason,
 		ApprovalSourceID: approvalSourceID,
+		Deadline:         item.DueAt,
 	})
 	if err != nil {
 		return s.handleRunFailure(&item, claimID, "task engine failed: "+err.Error(), "")
@@ -2100,16 +2111,18 @@ func normalizeFrameworkSelection(selection FrameworkSelectionProvenance) Framewo
 	selection.EffectivePreferenceDigest = strings.ToLower(strings.TrimSpace(selection.EffectivePreferenceDigest))
 	selection.ConstitutionDigest = strings.ToLower(strings.TrimSpace(selection.ConstitutionDigest))
 	selection.ConstitutionSource = strings.TrimSpace(selection.ConstitutionSource)
+	selection.OperatingContractDigest = strings.ToLower(strings.TrimSpace(selection.OperatingContractDigest))
 	return selection
 }
 
 func frameworkSelectionRule(selection FrameworkSelectionProvenance) string {
 	return fmt.Sprintf(
-		"catalog=%s selector=%s constitution_version=%d constitution_source=%s",
+		"catalog=%s selector=%s constitution_version=%d constitution_source=%s operating_contract=%s",
 		selection.CatalogVersion,
 		selection.SelectorAlgorithmVersion,
 		selection.ConstitutionVersion,
 		selection.ConstitutionSource,
+		selection.OperatingContractDigest,
 	)
 }
 

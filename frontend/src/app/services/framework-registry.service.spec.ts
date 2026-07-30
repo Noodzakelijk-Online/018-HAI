@@ -50,7 +50,7 @@ describe('FrameworkRegistryService', () => {
     createdAt: '2026-07-30T10:00:00Z',
     catalogVersion: 'v1',
     catalogDigest: 'a'.repeat(64),
-    selectorAlgorithmVersion: 'selector-v3',
+    selectorAlgorithmVersion: 'selector-v4',
     effectivePreferenceDigest: 'b'.repeat(64),
     constitutionDigest: 'c'.repeat(64),
     lifeDomain: 'legal',
@@ -199,6 +199,147 @@ describe('FrameworkRegistryService', () => {
     const request = http.expectOne('/api/v1/framework-registry/selections');
     expect(request.request.method).toBe('GET');
     request.flush({ selections: [selection] });
+  });
+
+  it('normalizes the chief-of-staff operating contract', () => {
+    const operatingSelection = {
+      ...selection,
+      operatingContractDigest: 'd'.repeat(64),
+      lifeDomains: [{
+        id: 'legal_government',
+        need: 'legal obligation',
+        score: 2,
+        confidence: 0.8,
+        signals: ['lawyer'],
+        primary: true,
+        source: 'deterministic_request_classification',
+      }],
+      needsState: [{
+        id: 'derived-legal',
+        domainId: 'legal_government',
+        level: 'rights_and_security',
+        state: 'attention_required',
+        priority: 90,
+        confidence: 0.8,
+        evidence: ['lawyer'],
+        source: 'derived_from_request_not_operator_confirmed',
+        needsReview: true,
+      }],
+      capacity: {
+        status: 'unknown',
+        planningStepLimit: 5,
+        constraints: ['current human capacity was not provided'],
+        confidence: 0,
+        fresh: false,
+        needsReview: true,
+      },
+      agentCards: [{
+        id: 'hai_task_engine',
+        name: 'HAI task engine',
+        owner: 'authenticated_owner_scope',
+        purpose: 'coordinate governed work',
+        role: 'coordinator',
+        capabilities: ['plan'],
+        domainCompetence: ['operations'],
+        allowedTools: ['allowlisted tools'],
+        requiredPermissions: ['owner-scoped task read'],
+        dataAccessBoundaries: ['current task'],
+        costProfile: 'local no-spend',
+        modelRequirements: [],
+        reliabilityHistory: ['contract tests'],
+        allowedActions: ['plan and simulate'],
+        prohibitedActions: ['self-approval'],
+        inputSchema: 'framework_selection_request_v4',
+        outputSchema: 'framework_selection_decision_v4',
+        expectedEvidence: ['audit record'],
+        escalationRoute: 'operator review',
+        availability: 'local process',
+        version: 'selector-v4',
+        dependencies: ['framework registry'],
+        healthStatus: 'available',
+        evaluationScore: 1,
+        evaluationScoreSource: 'contract fixture',
+        authorityCeiling: 2,
+        status: 'available',
+        verified: true,
+        revoked: false,
+        provenance: 'embedded_canonical_go_engine',
+      }],
+      delegations: [{
+        id: 'delegation-1',
+        delegator: 'chief_of_staff',
+        delegatee: 'hai_task_engine',
+        objective: 'Prepare a plan',
+        allowedActions: ['plan'],
+        prohibitedActions: ['self-approval'],
+        budgetLimitEur: 0,
+        budgetPolicy: 'no_spend_authorized',
+        deadlineStatus: 'not_set',
+        constraints: ['no financial expenditure is authorized'],
+        authorityCeiling: 2,
+        requiresApproval: true,
+        evidenceRequired: ['source'],
+        completionCriteria: ['verified'],
+        escalationTriggers: ['conflict'],
+        state: 'ready',
+      }],
+      communication: {
+        schemaVersion: 'hai-agent-message-v1',
+        allowedMessageTypes: ['request'],
+        allowedConfidentiality: ['internal'],
+        requiredFields: ['correlationId'],
+        forbiddenContent: ['secrets'],
+        maximumAuthority: 2,
+        maximumPayloadChars: 4000,
+        maximumTtlSeconds: 86400,
+        redactionRequired: true,
+        idempotencyRequired: true,
+        provenanceRequired: true,
+        signaturePolicy: 'optional_digest_requires_external_verification',
+        correlationId: 'correlation-1',
+      },
+      coordination: {
+        mode: 'single_engine',
+        allowedModes: ['single_engine'],
+        coordinator: 'hai_task_engine',
+        participants: ['hai_task_engine'],
+        handoffOrder: ['hai_task_engine'],
+        consensusRule: 'No vote grants authority.',
+        escalationRule: 'Escalate on conflict.',
+        rationale: 'Only one verified engine is available.',
+      },
+      actionAutonomy: [{
+        action: 'create_plan_or_draft',
+        requiredLevel: 4,
+        effectiveCeiling: 2,
+        levelName: 'plan_and_draft',
+        allowed: false,
+        requiresApproval: false,
+        reason: 'ceiling too low',
+      }],
+      stopConditions: ['stop when authority is missing'],
+      outcomeMonitoring: ['verify completion'],
+      chiefOfStaff: {
+        needsAttention: 'Legal reply',
+        whyNow: 'Deadline',
+        contextNeeded: 'Case file',
+        whoShouldAct: 'hai_task_engine',
+        howToProceed: 'Plan first',
+        mayProceedNow: 'Read context',
+        needsApproval: 'Sending requires approval',
+        completionProof: 'Verified draft',
+      },
+    };
+
+    service.selections().subscribe((result) => {
+      expect(result[0].operatingContractDigest).toBe('d'.repeat(64));
+      expect(result[0].chiefOfStaff?.needsAttention).toBe('Legal reply');
+      expect(result[0].agentCards?.[0].verified).toBeTrue();
+      expect(result[0].actionAutonomy?.[0].allowed).toBeFalse();
+    });
+
+    const request = http.expectOne('/api/v1/framework-registry/selections');
+    request.flush({ selections: [operatingSelection] });
   });
 
   it('loads the active Constitution', () => {

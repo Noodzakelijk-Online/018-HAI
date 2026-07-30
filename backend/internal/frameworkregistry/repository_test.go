@@ -67,6 +67,7 @@ func TestMemoryRepositorySelectionAuditIsTypedRedactedAndImmutableByCopy(t *test
 		SelectorAlgorithmVersion:  "framework-selector-v1",
 		EffectivePreferenceDigest: repositoryTestDigest("preferences"),
 		ConstitutionDigest:        repositoryTestDigest("constitution"),
+		OperatingContractDigest:   repositoryTestDigest("operating-contract"),
 		LifeDomain:                "work",
 		NeedOrCommitment:          "Review source evidence",
 		Selected: []SelectedFramework{{
@@ -134,6 +135,27 @@ func TestMemoryRepositorySelectionAuditIsTypedRedactedAndImmutableByCopy(t *test
 	}
 	if again[0].Selected[0].Reasons[0] != `Matches "source" review` {
 		t.Fatal("selection audit was mutated through a returned nested slice")
+	}
+	legacyRow, err := selectionToModel(
+		"alice",
+		decision,
+		fmt.Sprintf("%x", hash),
+		"historical selection",
+	)
+	if err != nil {
+		t.Fatalf("selectionToModel legacy fixture: %v", err)
+	}
+	legacyRow.SelectorAlgorithmVersion = "selector-v3"
+	legacyRow.OperatingContractDigest = strings.Repeat("0", sha256.Size*2)
+	legacyDecision, err := selectionFromModel(legacyRow)
+	if err != nil {
+		t.Fatalf("selectionFromModel legacy row: %v", err)
+	}
+	if legacyDecision.OperatingContractDigest != "" {
+		t.Fatalf(
+			"legacy row fabricated operating contract digest %q",
+			legacyDecision.OperatingContractDigest,
+		)
 	}
 	if bob, err := repo.ListSelections("bob", 20); err != nil || len(bob) != 0 {
 		t.Fatalf("selection audit leaked to bob: %#v, %v", bob, err)

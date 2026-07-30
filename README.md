@@ -61,10 +61,24 @@ owner-scoped contract for selecting the smallest suitable set of planning,
 reasoning, governance, domain, and evaluation frameworks for a task. Its
 implemented catalog contains 55 records at version `1.0.0` (50 active and five
 experimental, with no deprecated catalog records in v1), mandatory safety
-overlays, deterministic `selector-v3`
+overlays, deterministic `selector-v4`
 selection, owner-scoped preferences, Constitution lifecycle, authority
 ceilings, reproducibility digests, API/UI/task integration, and a reversible
 pre-phase migration.
+
+The [Framework Operating Contract Matrix](docs/framework-operating-contract-matrix.md)
+maps all 55 research families to enforced, structured, or catalog-only
+behavior and states the remaining live-system boundary for each.
+
+Selector v4 also produces a durable Chief-of-Staff operating contract: all
+matched life domains, needs state, freshness-aware human capacity, verified
+agent cards with explicit identity/capability/access/cost/health/revocation
+fields, authority-bounded delegation contracts, replay-resistant typed
+communication, coordination mode, exact per-action autonomy decisions, stop conditions,
+outcome monitoring, and an operating-contract digest. Workflow due dates flow
+into delegation deadlines; every delegation defaults to zero financial
+authority. The Advanced registry view exposes these details without turning
+the Basic view into a diagnostic wall.
 
 Catalog lifecycle and owner-effective state are separate. `active` records are
 enabled by default; `experimental` records are disabled by default and need an

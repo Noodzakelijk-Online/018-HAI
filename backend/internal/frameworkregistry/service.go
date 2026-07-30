@@ -16,7 +16,7 @@ import (
 
 const (
 	frameworkCatalogVersion           = "v1"
-	frameworkSelectorAlgorithmVersion = "selector-v3"
+	frameworkSelectorAlgorithmVersion = "selector-v4"
 )
 
 type Repository interface {
@@ -290,6 +290,7 @@ func (s *Service) planSelection(request SelectionRequest, persist bool) (*Select
 	if err := validateSelectionRequest(request); err != nil {
 		return nil, err
 	}
+	request.SuccessCriteria = redactContractStrings(request.SuccessCriteria)
 	views, err := s.List(request.OwnerIdentity)
 	if err != nil {
 		return nil, err
@@ -319,6 +320,17 @@ func (s *Service) planSelection(request SelectionRequest, persist bool) (*Select
 		}
 	}
 	return &decision, nil
+}
+
+func redactContractStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.Join(strings.Fields(strings.TrimSpace(safety.RedactSecrets(value))), " ")
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	return uniqueStrings(result)
 }
 
 type selectionReproducibilityMetadata struct {
@@ -487,6 +499,20 @@ func validateSelectionRequest(request SelectionRequest) error {
 }
 
 func selectionRequestAudit(request SelectionRequest) (string, string) {
+	operatingInputs, _ := json.Marshal(struct {
+		ObservedNeeds             []NeedStateAssessment `json:"observedNeeds"`
+		Capacity                  *CapacitySnapshot     `json:"capacity"`
+		AvailableAgents           []AgentCard           `json:"availableAgents"`
+		PreferredCoordinationMode string                `json:"preferredCoordinationMode"`
+		Deadline                  *time.Time            `json:"deadline"`
+	}{
+		ObservedNeeds:             request.ObservedNeeds,
+		Capacity:                  request.Capacity,
+		AvailableAgents:           request.AvailableAgents,
+		PreferredCoordinationMode: request.PreferredCoordinationMode,
+		Deadline:                  request.Deadline,
+	})
+	operatingInputHash := sha256.Sum256(operatingInputs)
 	normalized := strings.Join([]string{
 		strings.ToLower(strings.TrimSpace(request.OwnerIdentity)),
 		strings.ToLower(strings.Join(strings.Fields(request.Request), " ")),
@@ -508,6 +534,7 @@ func selectionRequestAudit(request SelectionRequest) (string, string) {
 			request.ExecuteRequested,
 			request.HumanApproved,
 		),
+		fmt.Sprintf("operating_inputs=%x", operatingInputHash[:]),
 	}, "\n")
 	sum := sha256.Sum256([]byte(normalized))
 	flags := make([]string, 0, 8)

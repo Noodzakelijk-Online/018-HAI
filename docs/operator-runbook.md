@@ -94,10 +94,21 @@ For any consequential recommendation, record or inspect:
 - selected framework IDs and versions;
 - reasons, conflicts, required agents, authority ceiling, approval reasons;
 - evidence requirements and completion criteria.
+- operating-contract digest, matched life domains, needs and capacity state;
+- verified/unassigned agent cards, delegation budget/deadline/constraints;
+- communication/coordination contract and per-action autonomy decision;
+- stop conditions, outcome monitoring, and Chief-of-Staff summary.
 
-The current selector version is `selector-v3`. Do not compare selection UUIDs
+The current selector version is `selector-v4`. Do not compare selection UUIDs
 to prove replay: the selection time contributes to the decision identity. Use
 the version and digest envelope.
+
+Autonomy uses the exact per-action ladder: 0 observe only, 1 inform,
+2 recommend, 3 draft, 4 plan and simulate, 5 prepare action, 6 execute after
+case-specific approval, 7 execute under standing approval, 8 execute a
+reversible low-risk action automatically, 9 execute and notify, and 10 operate
+fully autonomously inside a tightly bounded mandate. An approval may authorize
+scope but never raises a framework, Constitution, tool, or runtime ceiling.
 
 The public selection preview accepts planning hints, not trusted approval,
 owner, or risk assertions. A preview cannot authorize execution.
@@ -215,15 +226,19 @@ Relevant pre-phase migrations:
 | --- | --- |
 | `pre/0003_framework_registry` | Preferences, immutable selection records, Constitution versions/lifecycle |
 | `pre/0004_task_state_storage` | Completion logs, review items, immutable decisions |
+| `pre/0005_framework_operating_contract` | Immutable selector-v4 operating context, digest, and Chief-of-Staff trace |
 
 Explicit rollback targets:
 
 ```text
+backend migrate down pre/0005_framework_operating_contract
 backend migrate down pre/0004_task_state_storage
 backend migrate down pre/0003_framework_registry
 ```
 
-Both rollbacks delete operator and audit history. Before either rollback:
+These rollbacks delete operator and audit history. The runner requires reverse
+order and rejects older targets while a later migration in the phase remains
+applied. Before any rollback:
 
 1. stop task execution and dependent application versions;
 2. take and verify a PostgreSQL backup;

@@ -109,6 +109,148 @@ export interface IFrameworkConflict {
   reason: string;
 }
 
+export interface ILifeDomainAssignment {
+  id: string;
+  need: string;
+  score: number;
+  confidence: number;
+  signals: string[];
+  primary: boolean;
+  source: string;
+}
+
+export interface INeedStateAssessment {
+  id: string;
+  domainId?: string;
+  level: string;
+  state: string;
+  priority: number;
+  confidence: number;
+  evidence: string[];
+  source: string;
+  needsReview: boolean;
+}
+
+export interface ICapacitySnapshot {
+  status: string;
+  energy?: number;
+  attention?: number;
+  timeAvailableMinutes?: number;
+  concurrentWorkLimit?: number;
+  currentLoad?: number;
+  planningStepLimit: number;
+  constraints: string[];
+  sourceUri?: string;
+  sourceLabel?: string;
+  capturedAt?: string;
+  confidence: number;
+  fresh: boolean;
+  needsReview: boolean;
+}
+
+export interface IAgentCard {
+  id: string;
+  name: string;
+  owner: string;
+  purpose: string;
+  role: string;
+  capabilities: string[];
+  domainCompetence: string[];
+  allowedTools: string[];
+  requiredPermissions: string[];
+  dataAccessBoundaries: string[];
+  costProfile: string;
+  modelRequirements: string[];
+  reliabilityHistory: string[];
+  allowedActions: string[];
+  prohibitedActions: string[];
+  inputSchema: string;
+  outputSchema: string;
+  expectedEvidence: string[];
+  escalationRoute: string;
+  availability: string;
+  version: string;
+  dependencies: string[];
+  healthStatus: string;
+  evaluationScore: number;
+  evaluationScoreSource: string;
+  authorityCeiling: number;
+  status: string;
+  verified: boolean;
+  revoked: boolean;
+  revocationReason?: string;
+  provenance: string;
+  lastVerifiedAt?: string;
+}
+
+export interface IDelegationContract {
+  id: string;
+  delegator: string;
+  delegatee: string;
+  objective: string;
+  allowedActions: string[];
+  prohibitedActions: string[];
+  budgetLimitEur: number;
+  budgetPolicy: string;
+  deadline?: string;
+  deadlineStatus: string;
+  constraints: string[];
+  authorityCeiling: number;
+  requiresApproval: boolean;
+  evidenceRequired: string[];
+  completionCriteria: string[];
+  escalationTriggers: string[];
+  state: string;
+}
+
+export interface ICommunicationContract {
+  schemaVersion: string;
+  allowedMessageTypes: string[];
+  allowedConfidentiality: string[];
+  requiredFields: string[];
+  forbiddenContent: string[];
+  maximumAuthority: number;
+  maximumPayloadChars: number;
+  maximumTtlSeconds: number;
+  redactionRequired: boolean;
+  idempotencyRequired: boolean;
+  provenanceRequired: boolean;
+  signaturePolicy: string;
+  correlationId: string;
+}
+
+export interface ICoordinationPlan {
+  mode: string;
+  allowedModes: string[];
+  coordinator: string;
+  participants: string[];
+  handoffOrder: string[];
+  consensusRule: string;
+  escalationRule: string;
+  rationale: string;
+}
+
+export interface IActionAutonomyDecision {
+  action: string;
+  requiredLevel: number;
+  effectiveCeiling: number;
+  levelName: string;
+  allowed: boolean;
+  requiresApproval: boolean;
+  reason: string;
+}
+
+export interface IChiefOfStaffDecision {
+  needsAttention: string;
+  whyNow: string;
+  contextNeeded: string;
+  whoShouldAct: string;
+  howToProceed: string;
+  mayProceedNow: string;
+  needsApproval: string;
+  completionProof: string;
+}
+
 export interface IFrameworkSelectionDecision {
   id: string;
   taskPlanId?: string;
@@ -134,6 +276,18 @@ export interface IFrameworkSelectionDecision {
   selectionReason: string;
   constitutionVersion: number;
   constitutionSource: string;
+  lifeDomains?: ILifeDomainAssignment[];
+  needsState?: INeedStateAssessment[];
+  capacity?: ICapacitySnapshot;
+  agentCards?: IAgentCard[];
+  delegations?: IDelegationContract[];
+  communication?: ICommunicationContract;
+  coordination?: ICoordinationPlan;
+  actionAutonomy?: IActionAutonomyDecision[];
+  stopConditions?: string[];
+  outcomeMonitoring?: string[];
+  chiefOfStaff?: IChiefOfStaffDecision;
+  operatingContractDigest?: string;
 }
 
 export interface IConstitution {

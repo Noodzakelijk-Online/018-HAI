@@ -9,12 +9,15 @@ This document describes the implementation currently present in this
 repository worktree. It distinguishes repository behavior from
 environment-dependent deployment and external-product validation.
 
+See the [Framework Operating Contract Matrix](framework-operating-contract-matrix.md)
+for a one-to-one status and boundary statement across all 55 families.
+
 ## Status
 
 | Surface | Current status | Boundary |
 | --- | --- | --- |
 | Catalog | Implemented: 55 records at version `1.0.0`; catalog contract `v1` | Records 51-55 describe candidate implementation families. They do not install or trust those products. |
-| Selector | Implemented: deterministic `selector-v3` scoring, exact minimum capability coverage, conflicts, required overlays, and a 12-framework cap | The selector retains every applicable mandatory overlay, then uses bounded branch-and-bound search to find the smallest non-conflicting optional capability cover. A new call has a new timestamp, so its selection ID can differ even when the normalized request is otherwise identical. |
+| Selector | Implemented: deterministic `selector-v4` scoring, exact minimum capability coverage, conflicts, required overlays, a 12-framework cap, and a Chief-of-Staff operating contract | The selector retains every applicable mandatory overlay, then uses bounded branch-and-bound search to find the smallest non-conflicting optional capability cover. A new call has a new timestamp, so its selection ID can differ even when the normalized request is otherwise identical. |
 | Preferences | Implemented and owner-scoped | Preferences can enable experimental records, pin relevant records, lower autonomy, and add bounded adaptations. They cannot raise autonomy or disable protected overlays. |
 | Constitution | Implemented with an exact built-in source, owner-scoped drafts, explicit activation, and immutable history | A draft has no authority until the authenticated owner activates it. |
 | Persistence | Implemented in PostgreSQL with versioned SQL and immutable selection/Constitution controls | Applying the migration still requires the target database and the normal migration process. |
@@ -37,8 +40,10 @@ authenticated operator or task planner
      -> 55-record built-in catalog
      -> owner preferences
      -> active owner Constitution or built-in fallback
-     -> selector-v3
+     -> selector-v4
      -> immutable selection record and reproducibility metadata
+     -> whole-life, capacity, agent, delegation, communication, coordination,
+        per-action autonomy, stop-condition, and outcome-monitoring contract
   -> task context, model, tool, approval, execution, and verification layers
 ```
 
@@ -146,14 +151,17 @@ catalog mention of AutoGen, LangGraph, Temporal, pgvector, RAG stores, policy
 engines, sandboxes, or observability products is not an installed adapter,
 capability test, security approval, or production dependency.
 
-## Selector v3
+## Selector v4
 
 ### Accepted Inputs
 
 The internal selector can receive task plan ID, request, project/pursuit
 context, task type, risk, difficulty, required reasoning, success criteria, and
 signals for memory, tools, documents, web, local execution, approval, requested
-execution, and recorded human approval.
+execution, and recorded human approval. Trusted in-process callers can also
+provide sourced needs-state observations, a timestamped capacity snapshot,
+fresh runtime agent cards, a coordination preference, and a deadline. Those
+fields are not accepted from the browser preview.
 
 The public `POST /select` preview accepts only untrusted planning hints. It does
 not accept client-asserted risk level, approval requirement, human approval, or
@@ -350,11 +358,25 @@ Every persisted selection includes:
 
 - catalog version `v1`;
 - canonical SHA-256 catalog digest;
-- selector algorithm version `selector-v3`;
+- selector algorithm version `selector-v4`;
 - canonical SHA-256 effective-preference digest;
 - canonical SHA-256 Constitution digest;
 - exact Constitution source;
 - selected framework versions and decision output.
+- a SHA-256 digest over the complete Chief-of-Staff operating contract.
+
+The operating contract includes all matched life domains rather than only the
+legacy primary label; sourced or explicitly review-marked needs state; capacity
+freshness and plan-size constraints; fresh verified agent cards and explicit
+unassigned roles, including identity, ownership, purpose, capabilities,
+permissions, data boundaries, cost, model requirements, reliability,
+input/output schemas, health, evaluation, version, and revocation state;
+zero-spend delegation contracts with deadline, constraints, evidence,
+completion, and escalation rules; typed communication with correlation,
+idempotency, expiry, confidentiality, provenance, payload integrity, and
+optional externally verified signature digests; and
+coordination contracts; per-action 0-10 autonomy decisions; stop conditions;
+outcome monitoring; and eight concise Chief-of-Staff answers.
 
 The audit row stores a SHA-256 hash of the normalized request plus a bounded,
 typed summary. It does not store the raw request in the selection table.
@@ -411,6 +433,21 @@ backend migrate down pre/0004_task_state_storage
 This removes completion logs, review items, and review decisions. Stop task
 execution, take a database backup, and deploy a compatible application version
 before using it.
+
+Migration `backend/migrations/pre/0005_framework_operating_contract.up.sql`
+adds the typed JSONB operating-contract columns and indexed 64-character
+digest to immutable framework selections. Existing rows receive a zero digest
+sentinel because they predate selector v4; repository reads omit the v4
+contract for those rows instead of fabricating evidence from empty migration
+defaults. New selector-v4 records must contain the real computed digest. Its
+exact destructive rollback command is:
+
+```text
+backend migrate down pre/0005_framework_operating_contract
+```
+
+Rollback removes only the selector-v4 operating-contract columns and index.
+Stop writers and deploy a selector-v3-compatible binary before using it.
 
 ## API
 
@@ -585,6 +622,11 @@ Current limitations:
 - digest and redacted audit persistence;
 - authenticated route/RBAC contracts;
 - task-plan and Angular integration;
+- selector-v4 whole-life, needs, capacity, agent-card, delegation,
+  communication, coordination, exact autonomy-ladder, stop-condition, and
+  outcome-monitoring contracts;
+- typed agent-message envelope validation for schema, correlation, authority,
+  timestamp, message type, and secret redaction;
 - pre-phase migration and targeted rollback parsing;
 - owner-scoped task completion/review persistence and immutable decision
   contracts;
@@ -597,6 +639,11 @@ Current limitations:
 - two-real-account owner-isolation exercise;
 - any candidate external product named in the catalog;
 - any real LLM provider, connected account, or external agent runtime;
+- a live multi-agent team lifecycle or A2A transport; unverified required roles
+  remain visibly unassigned and block multi-agent execution;
+- a complete personal knowledge graph that assigns every non-task entity to a
+  life domain;
+- a standing-mandate issuance workflow for autonomy level 7 or above;
 - durable or distributed approval-proof consumption;
 - automatic recovery of a task review left `approved` by process failure;
 - production load, high availability, and multi-worker operation.

@@ -1,6 +1,7 @@
 package frameworkregistry
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -867,6 +868,57 @@ func selectionToModel(
 	if err != nil {
 		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode context requirements: %w", err)
 	}
+	lifeDomains, err := encodeJSONArray(decision.LifeDomains)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode life domains: %w", err)
+	}
+	needsState, err := encodeJSONArray(decision.NeedsState)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode needs state: %w", err)
+	}
+	capacity, err := encodeJSONObject(decision.Capacity)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode capacity snapshot: %w", err)
+	}
+	agentCards, err := encodeJSONArray(decision.AgentCards)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode agent cards: %w", err)
+	}
+	delegations, err := encodeJSONArray(decision.Delegations)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode delegations: %w", err)
+	}
+	communication, err := encodeJSONObject(decision.Communication)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode communication contract: %w", err)
+	}
+	coordination, err := encodeJSONObject(decision.Coordination)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode coordination plan: %w", err)
+	}
+	actionAutonomy, err := encodeJSONArray(decision.ActionAutonomy)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode action autonomy: %w", err)
+	}
+	stopConditions, err := encodeJSONArray(decision.StopConditions)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode stop conditions: %w", err)
+	}
+	outcomeMonitoring, err := encodeJSONArray(decision.OutcomeMonitoring)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode outcome monitoring: %w", err)
+	}
+	chiefOfStaff, err := encodeJSONObject(decision.ChiefOfStaff)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, fmt.Errorf("encode chief-of-staff decision: %w", err)
+	}
+	operatingContractDigest, err := normalizeSHA256Digest(
+		"operating contract digest",
+		decision.OperatingContractDigest,
+	)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, err
+	}
 
 	return models.FrameworkSelectionRecord{
 		ID:                        id,
@@ -892,6 +944,18 @@ func selectionToModel(
 		CompletionCriteriaJSON:    completion,
 		LearningPlanJSON:          learning,
 		ContextRequirementsJSON:   contextRequirements,
+		LifeDomainsJSON:           lifeDomains,
+		NeedsStateJSON:            needsState,
+		CapacityJSON:              capacity,
+		AgentCardsJSON:            agentCards,
+		DelegationsJSON:           delegations,
+		CommunicationJSON:         communication,
+		CoordinationJSON:          coordination,
+		ActionAutonomyJSON:        actionAutonomy,
+		StopConditionsJSON:        stopConditions,
+		OutcomeMonitoringJSON:     outcomeMonitoring,
+		ChiefOfStaffJSON:          chiefOfStaff,
+		OperatingContractDigest:   operatingContractDigest,
 		SelectionReason:           strings.TrimSpace(decision.SelectionReason),
 		ConstitutionVersion:       decision.ConstitutionVersion,
 		ConstitutionSource:        constitutionSource,
@@ -932,6 +996,56 @@ func selectionFromModel(row models.FrameworkSelectionRecord) (SelectionDecision,
 	if err != nil {
 		return SelectionDecision{}, fmt.Errorf("decode context requirements: %w", err)
 	}
+	lifeDomains, err := decodeJSONArray[LifeDomainAssignment](row.LifeDomainsJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode life domains: %w", err)
+	}
+	needsState, err := decodeJSONArray[NeedStateAssessment](row.NeedsStateJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode needs state: %w", err)
+	}
+	capacity, err := decodeJSONObject[CapacitySnapshot](row.CapacityJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode capacity snapshot: %w", err)
+	}
+	agentCards, err := decodeJSONArray[AgentCard](row.AgentCardsJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode agent cards: %w", err)
+	}
+	delegations, err := decodeJSONArray[DelegationContract](row.DelegationsJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode delegations: %w", err)
+	}
+	communication, err := decodeJSONObject[CommunicationContract](row.CommunicationJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode communication contract: %w", err)
+	}
+	coordination, err := decodeJSONObject[CoordinationPlan](row.CoordinationJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode coordination plan: %w", err)
+	}
+	actionAutonomy, err := decodeJSONArray[ActionAutonomyDecision](row.ActionAutonomyJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode action autonomy: %w", err)
+	}
+	stopConditions, err := decodeJSONArray[string](row.StopConditionsJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode stop conditions: %w", err)
+	}
+	outcomeMonitoring, err := decodeJSONArray[string](row.OutcomeMonitoringJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode outcome monitoring: %w", err)
+	}
+	chiefOfStaff, err := decodeJSONObject[ChiefOfStaffDecision](row.ChiefOfStaffJSON)
+	if err != nil {
+		return SelectionDecision{}, fmt.Errorf("decode chief-of-staff decision: %w", err)
+	}
+	operatingContractDigest := strings.TrimSpace(row.OperatingContractDigest)
+	if operatingContractDigest == strings.Repeat("0", sha256.Size*2) {
+		// Rows written before selector-v4 keep their immutable audit history but
+		// do not gain fabricated operating evidence from migration defaults.
+		operatingContractDigest = ""
+	}
 
 	return SelectionDecision{
 		ID:                        row.ID.String(),
@@ -955,6 +1069,18 @@ func selectionFromModel(row models.FrameworkSelectionRecord) (SelectionDecision,
 		CompletionCriteria:        completion,
 		LearningPlan:              learning,
 		ContextRequirements:       contextRequirements,
+		LifeDomains:               lifeDomains,
+		NeedsState:                needsState,
+		Capacity:                  capacity,
+		AgentCards:                agentCards,
+		Delegations:               delegations,
+		Communication:             communication,
+		Coordination:              coordination,
+		ActionAutonomy:            actionAutonomy,
+		StopConditions:            stopConditions,
+		OutcomeMonitoring:         outcomeMonitoring,
+		ChiefOfStaff:              chiefOfStaff,
+		OperatingContractDigest:   operatingContractDigest,
 		SelectionReason:           row.SelectionReason,
 		ConstitutionVersion:       row.ConstitutionVersion,
 		ConstitutionSource:        row.ConstitutionSource,
@@ -1256,6 +1382,29 @@ func decodeJSONArray[T any](value string) ([]T, error) {
 	}
 	if decoded == nil {
 		decoded = make([]T, 0)
+	}
+	return decoded, nil
+}
+
+func encodeJSONObject[T any](value T) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	if len(encoded) == 0 || encoded[0] != '{' {
+		return "", errors.New("JSON value is not an object")
+	}
+	return string(encoded), nil
+}
+
+func decodeJSONObject[T any](value string) (T, error) {
+	var decoded T
+	value = strings.TrimSpace(value)
+	if value == "" || value == "null" {
+		return decoded, nil
+	}
+	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+		return decoded, err
 	}
 	return decoded, nil
 }

@@ -180,8 +180,34 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 		migrations.Files,
 		"pre",
 		frameworkRegistryMigrationVersion,
-	); err != nil {
-		t.Fatalf("rollback framework registry migration: %v", err)
+	); err == nil || !strings.Contains(err.Error(), "rollback later migrations first") {
+		t.Fatalf("out-of-order rollback error = %v, want later-migration rejection", err)
+	}
+	if !relationExists(t, db, "framework_selection_records") {
+		t.Fatal("rejected out-of-order rollback changed the registry schema")
+	}
+
+	for _, version := range []string{
+		"pre/0005_framework_operating_contract",
+		"pre/0004_task_state_storage",
+		frameworkRegistryMigrationVersion,
+	} {
+		if err := infra.RollbackMigration(
+			db,
+			migrations.Files,
+			"pre",
+			version,
+		); err != nil {
+			t.Fatalf("rollback %s: %v", version, err)
+		}
+	}
+	if err := infra.RollbackMigration(
+		db,
+		migrations.Files,
+		"pre",
+		frameworkRegistryMigrationVersion,
+	); err == nil || !strings.Contains(err.Error(), "is not applied") {
+		t.Fatalf("repeated rollback error = %v, want not-applied rejection", err)
 	}
 	for _, table := range []string{
 		"framework_preferences",
@@ -213,8 +239,8 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reapply framework registry migration: %v", err)
 	}
-	if reapplied != 1 {
-		t.Fatalf("reapplied %d migrations, want 1", reapplied)
+	if reapplied != 3 {
+		t.Fatalf("reapplied %d migrations, want 3", reapplied)
 	}
 	if !relationExists(t, db, "framework_selection_records") {
 		t.Fatal("framework registry schema was not restored")
@@ -225,6 +251,7 @@ func TestFrameworkRegistryPostgresOwnerScopeConstraintsAndHistory(t *testing.T) 
 	db := openFrameworkRegistryPostgresTestDB(t)
 	executeEmbeddedMigration(t, db, "pre/0001_extensions.up.sql")
 	executeEmbeddedMigration(t, db, "pre/0003_framework_registry.up.sql")
+	executeEmbeddedMigration(t, db, "pre/0005_framework_operating_contract.up.sql")
 	repo := NewGormRepository(db)
 
 	t.Run("preferences are owner scoped and unique per owner and framework", func(t *testing.T) {
@@ -646,6 +673,7 @@ func postgresSelectionDecision(taskPlanID string) SelectionDecision {
 		SelectorAlgorithmVersion:  "selector-v2",
 		EffectivePreferenceDigest: postgresDigest("preferences"),
 		ConstitutionDigest:        postgresDigest("constitution"),
+		OperatingContractDigest:   postgresDigest("operating-contract"),
 		LifeDomain:                "work",
 		NeedOrCommitment:          "Verify source evidence",
 		Selected: []SelectedFramework{{

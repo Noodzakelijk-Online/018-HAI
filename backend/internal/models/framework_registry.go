@@ -49,6 +49,18 @@ type FrameworkSelectionRecord struct {
 	CompletionCriteriaJSON    string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
 	LearningPlanJSON          string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
 	ContextRequirementsJSON   string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	LifeDomainsJSON           string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	NeedsStateJSON            string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	CapacityJSON              string    `gorm:"type:jsonb;not null;default:'{}'" json:"-"`
+	AgentCardsJSON            string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	DelegationsJSON           string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	CommunicationJSON         string    `gorm:"type:jsonb;not null;default:'{}'" json:"-"`
+	CoordinationJSON          string    `gorm:"type:jsonb;not null;default:'{}'" json:"-"`
+	ActionAutonomyJSON        string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	StopConditionsJSON        string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	OutcomeMonitoringJSON     string    `gorm:"type:jsonb;not null;default:'[]'" json:"-"`
+	ChiefOfStaffJSON          string    `gorm:"type:jsonb;not null;default:'{}'" json:"-"`
+	OperatingContractDigest   string    `gorm:"type:char(64);not null;default:'0000000000000000000000000000000000000000000000000000000000000000';index" json:"operatingContractDigest"`
 	SelectionReason           string    `gorm:"type:text;not null" json:"selectionReason"`
 	ConstitutionVersion       int       `gorm:"not null;default:0;index" json:"constitutionVersion"`
 	ConstitutionSource        string    `gorm:"type:text;not null" json:"constitutionSource"`

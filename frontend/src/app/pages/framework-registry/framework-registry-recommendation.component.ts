@@ -55,4 +55,20 @@ export class FrameworkRegistryRecommendationComponent {
   ): string {
     return `${conflict.selectedId}:${conflict.skippedId}:${conflict.reason}`;
   }
+
+  trackDomain(_index: number, domain: { id: string }): string {
+    return domain.id;
+  }
+
+  trackNeed(_index: number, need: { id: string }): string {
+    return need.id;
+  }
+
+  trackAgent(_index: number, agent: { id: string }): string {
+    return agent.id;
+  }
+
+  trackAutonomy(_index: number, action: { action: string }): string {
+    return action.action;
+  }
 }
