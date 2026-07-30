@@ -186,6 +186,9 @@ export class ConnectedSourcesComponent implements OnInit {
         syncFrequency: this.sourceForm.value.syncFrequency,
         syncTarget: this.sourceForm.value.syncTarget,
         defaultProjectKey: this.sourceForm.value.defaultProjectKey,
+        permissions: this.sourceForm.value.connectorKey === 'whisper-audio'
+          ? ['metadata:read', 'audio:read', 'selected-audio-folder-read', 'explicit-consent']
+          : undefined,
         excludePatterns: String(this.sourceForm.value.excludePatterns || '')
           .split(',')
           .map((item) => item.trim())
@@ -569,6 +572,17 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
+    if (connectorKey === 'whisper-audio') {
+      this.sourceForm.patchValue({
+        name: 'Selected voice-note folder',
+        syncFrequency: 'manual',
+        syncTarget: 'voice-notes',
+        defaultProjectKey: 'Robert-life-os',
+        localOnly: true,
+        excludePatterns: 'private,do-not-transcribe',
+      });
+      return;
+    }
     if (connectorKey === 'odoo-herp') {
       this.sourceForm.patchValue({
         name: 'Odoo / HERP workspace',
@@ -587,6 +601,9 @@ export class ConnectedSourcesComponent implements OnInit {
     }
     if (this.sourceForm.value.connectorKey === 'whatsapp-export') {
       return 'Folder under connected-source root, e.g. whatsapp';
+    }
+    if (this.sourceForm.value.connectorKey === 'whisper-audio') {
+      return 'Explicit audio subfolder, e.g. voice-notes/2026-07';
     }
     if (this.sourceForm.value.connectorKey === 'email') {
       return 'Folder under connected-source root containing .mbox or .eml exports';
@@ -610,6 +627,10 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   syncSource(source: IConnectedSource): void {
+	if (source.connectorKey === 'whisper-audio') {
+		this.transcribeSource(source);
+		return;
+	}
     this.syncing = true;
     this.sourceService
       .sync(source.id, {
@@ -627,6 +648,27 @@ export class ConnectedSourcesComponent implements OnInit {
         error: (error) => {
           this.syncing = false;
           this.notification.error('Source sync failed', error?.error?.error || 'The connector could not retrieve records.');
+        },
+      });
+  }
+
+  transcribeSource(source: IConnectedSource): void {
+    this.syncing = true;
+    this.sourceService
+      .transcribe(source.id)
+      .pipe(timeout(Math.max(this.operationTimeoutMs, 300000)))
+      .subscribe({
+        next: (result) => {
+          this.syncing = false;
+          this.notifySyncResult('Local transcription', result);
+          this.refresh();
+        },
+        error: (error) => {
+          this.syncing = false;
+          this.notification.error(
+            'Local transcription failed',
+            error?.error?.error || 'Check the local runner, reviewed GGML model, and selected audio folder.'
+          );
         },
       });
   }

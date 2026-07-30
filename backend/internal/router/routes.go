@@ -9,34 +9,60 @@ import (
 	"strings"
 
 	"automation-hub-backend/docs"
+	"automation-hub-backend/internal/a2abridge"
 	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/agentcycle"
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
+	"automation-hub-backend/internal/anythingllm"
 	"automation-hub-backend/internal/assistant"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
+	"automation-hub-backend/internal/braincatalog"
+	"automation-hub-backend/internal/browserverify"
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/deepeval"
+	"automation-hub-backend/internal/deepteam"
 	"automation-hub-backend/internal/doctor"
+	"automation-hub-backend/internal/events"
+	"automation-hub-backend/internal/evidently"
 	"automation-hub-backend/internal/featureflags"
 	"automation-hub-backend/internal/frameworkregistry"
+	"automation-hub-backend/internal/garak"
+	"automation-hub-backend/internal/guardrails"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
+	"automation-hub-backend/internal/langfuse"
 	"automation-hub-backend/internal/llm"
+	"automation-hub-backend/internal/lmeval"
+	"automation-hub-backend/internal/mcpbridge"
+	"automation-hub-backend/internal/mcppreflight"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/opscontrol"
 	"automation-hub-backend/internal/phase2"
+	"automation-hub-backend/internal/planningoptimizer"
+	"automation-hub-backend/internal/presidio"
 	"automation-hub-backend/internal/privacyfilter"
+	"automation-hub-backend/internal/promptfoo"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/pydanticai"
+	"automation-hub-backend/internal/ragflow"
 	"automation-hub-backend/internal/rbac"
+	"automation-hub-backend/internal/research"
 	"automation-hub-backend/internal/runtimelab"
+	"automation-hub-backend/internal/safety"
+	"automation-hub-backend/internal/semantic"
+	"automation-hub-backend/internal/serena"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/task"
+	"automation-hub-backend/internal/temporalbridge"
 	"automation-hub-backend/internal/verification"
+	"automation-hub-backend/internal/wasiexec"
+	"automation-hub-backend/internal/whispercpp"
 	"automation-hub-backend/internal/workflow"
 	"automation-hub-backend/internal/workflowtask"
 
@@ -64,10 +90,41 @@ func initializeRoutes(router *gin.Engine) error {
 	v1.Use(backendAPIKeyMiddleware())
 	v1.Use(identityMiddleware())
 	{
-		automationService := automation.DefaultService()
+		modelIntelService := modelintelligence.DefaultService()
+		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
+		opsControlService := phase2Module.OpsControl()
+		safety.SetEmergencyStopProvider(opsControlService.Control())
 		runtimeRegistry := agentruntime.DefaultRegistry()
+		// The automation executor and runtime-control routes must share one
+		// registry so an approved task can be cancelled by its actual owner.
+		automationService := automation.NewServiceWithRuntimeRegistry(
+			automation.DefaultRepository(),
+			*events.DefaultPublisher(),
+			runtimeRegistry,
+		)
 		runtimeHandler := agentruntime.NewHandler(runtimeRegistry)
 		initializeAgentRuntimeRoutes(v1, runtimeHandler)
+		initializeBrainCatalogRoutes(v1, braincatalog.NewHandler())
+		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
+		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
+		initializePydanticAIRoutes(v1, pydanticai.NewHandler(pydanticai.DefaultService()))
+		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
+		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
+		initializeRAGFlowRoutes(v1, ragflow.NewHandler(ragflow.DefaultService()))
+		initializeAnythingLLMRoutes(v1, anythingllm.NewHandler(anythingllm.DefaultService()))
+		initializeSerenaRoutes(v1, serena.NewHandler(serena.DefaultService()))
+		initializePresidioRoutes(v1, presidio.NewHandler(presidio.DefaultService()))
+		initializeEvidentlyRoutes(v1, evidently.NewHandler(evidently.DefaultService()))
+		initializeGuardrailsRoutes(v1, guardrails.NewHandler(guardrails.DefaultService()))
+		initializeLMEvalRoutes(v1, lmeval.NewHandler(lmeval.DefaultService()))
+		initializePromptfooRoutes(v1, promptfoo.NewHandler(promptfoo.DefaultService()))
+		initializeDeepEvalRoutes(v1, deepeval.NewHandler(deepeval.DefaultService()))
+		initializeDeepTeamRoutes(v1, deepteam.NewHandler(deepteam.DefaultService()))
+		initializeGarakRoutes(v1, garak.NewHandler(garak.DefaultService()))
+		initializeLangfuseRoutes(v1, langfuse.NewHandler(langfuse.DefaultService()))
+		whisperService := whispercpp.DefaultService()
+		initializeWhisperCPPRoutes(v1, whispercpp.NewHandler(whisperService))
+		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
 		autoHandler := automation.NewHandler(automationService)
 		err := initializeAutomationsRoutes(v1, autoHandler)
 		if err != nil {
@@ -83,12 +140,16 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		llmHandler := llm.NewHandler(llmService)
 		initializeLLMRoutes(v1, llmHandler)
-		memoryService := memory.DefaultService()
+		semanticService := semantic.NewServiceFromEnv()
+		memoryService := memory.NewServiceWithSemantic(memory.DefaultRepository(), semanticService)
 		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
 		workflowRunner := workflowtask.NewDeferredRunner()
 		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner, memoryService)
+		temporalService := temporalbridge.NewServiceFromEnv(workflowService)
+		temporalService.StartWorkerEventually(context.Background())
+		initializeTemporalRoutes(v1, temporalbridge.NewHandler(temporalService))
 		pursuitService := pursuit.NewService(pursuit.DefaultRepository(), workflowService)
-		sourceService := source.NewServiceWithWorkflowAndPursuitLinker(source.DefaultRepository(), memoryService, workflowService, pursuitService)
+		sourceService := source.NewServiceWithWorkflowPursuitAndSemantic(source.DefaultRepository(), memoryService, workflowService, pursuitService, semanticService)
 		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService, pursuitService)
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
 		frameworkService, err := frameworkregistry.DefaultService()
@@ -110,10 +171,17 @@ func initializeRoutes(router *gin.Engine) error {
 			frameworkService,
 			taskStateRepository,
 		)
+		planningPreview, _ := taskService.(task.PreviewService)
+		a2aBridgeHandler := a2abridge.NewHandler(a2abridge.NewServiceFromEnv(planningPreview))
+		initializeA2ABridgeStatusRoutes(v1, a2aBridgeHandler)
+		initializeA2ABridgeRoutes(router, relativePathV1, a2aBridgeHandler)
 		workflowRunner.Set(workflowtask.NewRunner(taskService, automationService))
 		source.StartScheduler(context.Background(), sourceService)
 		workflow.StartScheduler(context.Background(), workflowService)
-		initializeSourceRoutes(v1, source.NewHandler(sourceService))
+		mcpBridgeHandler := mcpbridge.NewHandler(mcpbridge.NewServiceFromEnv(workflowService))
+		initializeMCPBridgeStatusRoutes(v1, mcpBridgeHandler)
+		initializeMCPAgentRoutes(router, relativePathV1, mcpBridgeHandler)
+		initializeSourceRoutes(v1, source.NewHandler(sourceService, whisperService))
 		initializeWorkflowRoutes(v1, workflow.NewHandlerWithPursuitIntakeRouter(workflowService, pursuitService))
 		initializePursuitRoutes(v1, pursuit.NewHandler(pursuitService))
 		memoryEngineSecret := config.AppConfig.MemoryEngineKey
@@ -141,12 +209,10 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeHAIOSRoutes(v1, osHandler)
 		initializeTaskRoutes(v1, task.NewHandler(taskService))
-		modelIntelService := modelintelligence.DefaultService()
 		initializeModelIntelligenceRoutes(v1, modelintelligence.NewHandler(modelIntelService))
 		initializeHardwareRoutes(v1, hardwareprofile.NewHandler(hardwareprofile.DefaultService()))
 		privacyService := privacyfilter.DefaultService()
 		initializePrivacyRoutes(v1, privacyfilter.NewHandler(privacyService))
-		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
 		initializePhase2Routes(v1, phase2Module.Handler())
 		runtimeLabService := runtimelab.NewService(phase2Module.Broker(), phase2Module.Service(), phase2Module.OwnerUserID(), phase2Module.WorkspaceID())
 		initializeRuntimeLabRoutes(v1, runtimelab.NewHandler(runtimeLabService))
@@ -156,7 +222,7 @@ func initializeRoutes(router *gin.Engine) error {
 		})
 		seedAccountFeeds(feedRegistry, phase2Module)
 		initializeAccountFeedRoutes(v1, accountfeed.NewHandler(feedRegistry, phase2Module.OwnerUserID(), phase2Module.WorkspaceID()))
-		initializeOpsControlRoutes(v1, opscontrol.NewHandler(phase2Module.OpsControl()))
+		initializeOpsControlRoutes(v1, opscontrol.NewHandler(opsControlService))
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
@@ -242,6 +308,22 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 		routes.PATCH("/openclaw/ecosystem", requirePermission(rbac.PermAdmin), handler.SetOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/refresh", requirePermission(rbac.PermAdmin), handler.RefreshOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/upload", requirePermission(rbac.PermAdmin), handler.UploadOpenClawEcosystem)
+	}
+}
+
+func initializeBrainCatalogRoutes(apiVersion *gin.RouterGroup, handler *braincatalog.Handler) {
+	routes := apiVersion.Group("/brain-catalog")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/", requirePermission(rbac.PermRead), handler.List)
+		routes.GET("/adoption-plan", requirePermission(rbac.PermRead), handler.AdoptionPlan)
+		routes.POST("/ossinsight/revalidate", requirePermission(rbac.PermAdmin), handler.RevalidateCollections)
+		routes.POST("/ossinsight/discover", requirePermission(rbac.PermAdmin), handler.DiscoverRepositories)
+		routes.POST("/ossinsight/discover/reviewable", requirePermission(rbac.PermAdmin), handler.DiscoverReviewableRepositories)
+		routes.POST("/ossinsight/discoveries/revalidate", requirePermission(rbac.PermAdmin), handler.RevalidateDiscovery)
+		routes.POST("/recommend", requirePermission(rbac.PermRead), handler.RecommendCapabilities)
+		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
+		routes.POST("/:id/revalidate", requirePermission(rbac.PermAdmin), handler.Revalidate)
 	}
 }
 
@@ -335,6 +417,7 @@ func initializeMemoryRoutes(apiVersion *gin.RouterGroup, memoryHandler *memory.H
 		memoryRoutes.GET("/query", requirePermission(rbac.PermRead), memoryHandler.Query)
 		memoryRoutes.POST("/", requirePermission(rbac.PermWrite), memoryHandler.Create)
 		memoryRoutes.POST("/retrieve", requirePermission(rbac.PermRead), memoryHandler.Retrieve)
+		memoryRoutes.POST("/semantic/reindex", requirePermission(rbac.PermWrite), memoryHandler.ReindexSemantic)
 		memoryRoutes.GET("/export", requirePermission(rbac.PermRead), memoryHandler.Export)
 		memoryRoutes.GET("/:id", requirePermission(rbac.PermRead), memoryHandler.Get)
 		memoryRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), memoryHandler.Update)
@@ -377,6 +460,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.DELETE("/extractions/:id", requirePermission(rbac.PermWrite), sourceHandler.DeleteExtraction)
 		sourceRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), sourceHandler.UpdateSource)
 		sourceRoutes.POST("/:id/sync", requirePermission(rbac.PermWrite), sourceHandler.Sync)
+		sourceRoutes.POST("/:id/transcribe", requirePermission(rbac.PermWrite), sourceHandler.Transcribe)
 		sourceRoutes.POST("/:id/reindex", requirePermission(rbac.PermWrite), sourceHandler.Reindex)
 		sourceRoutes.POST("/:id/pause", requirePermission(rbac.PermWrite), sourceHandler.Pause)
 		sourceRoutes.POST("/:id/resume", requirePermission(rbac.PermWrite), sourceHandler.Resume)
@@ -391,6 +475,15 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 	{
 		sourceOAuth.GET("/oauth/google/start", requirePermission(rbac.PermWrite), sourceHandler.StartGoogleOAuth)
 		sourceOAuth.GET("/oauth/google/callback", requirePermission(rbac.PermRead), sourceHandler.GoogleOAuthCallback)
+	}
+}
+
+func initializeWhisperCPPRoutes(apiVersion *gin.RouterGroup, handler *whispercpp.Handler) {
+	routes := apiVersion.Group("/whispercpp")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermWrite), handler.Probe)
 	}
 }
 
@@ -414,6 +507,139 @@ func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandl
 		verificationRoutes.POST("/answer", requirePermission(rbac.PermWrite), verificationHandler.Answer)
 		verificationRoutes.GET("/runs", requirePermission(rbac.PermRead), verificationHandler.Runs)
 		verificationRoutes.GET("/runs/:id", requirePermission(rbac.PermRead), verificationHandler.RunDetails)
+	}
+}
+
+func initializeResearchRoutes(apiVersion *gin.RouterGroup, handler *research.Handler) {
+	routes := apiVersion.Group("/research")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/search", requirePermission(rbac.PermWrite), handler.Search)
+	}
+}
+
+func initializeRAGFlowRoutes(apiVersion *gin.RouterGroup, handler *ragflow.Handler) {
+	routes := apiVersion.Group("/ragflow")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/retrieve", requirePermission(rbac.PermWrite), handler.Retrieve)
+	}
+}
+
+func initializeAnythingLLMRoutes(apiVersion *gin.RouterGroup, handler *anythingllm.Handler) {
+	routes := apiVersion.Group("/anythingllm")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/retrieve", requirePermission(rbac.PermWrite), handler.Retrieve)
+	}
+}
+
+// initializeSerenaRoutes exposes one bounded read-only semantic lookup. The
+// service never launches Serena or forwards a generic MCP call surface.
+func initializeSerenaRoutes(apiVersion *gin.RouterGroup, handler *serena.Handler) {
+	routes := apiVersion.Group("/serena")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/symbols", requirePermission(rbac.PermWrite), handler.FindSymbols)
+	}
+}
+
+func initializePresidioRoutes(apiVersion *gin.RouterGroup, handler *presidio.Handler) {
+	routes := apiVersion.Group("/presidio")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		// Text leaves the request process only for the explicitly configured local
+		// analyzer; analysis has no persistence or external-action capability.
+		routes.POST("/analyze", requirePermission(rbac.PermWrite), handler.Analyze)
+	}
+}
+
+func initializeEvidentlyRoutes(apiVersion *gin.RouterGroup, handler *evidently.Handler) {
+	routes := apiVersion.Group("/evidently")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/evaluate", requirePermission(rbac.PermWrite), handler.Evaluate)
+	}
+}
+
+func initializeGuardrailsRoutes(apiVersion *gin.RouterGroup, handler *guardrails.Handler) {
+	routes := apiVersion.Group("/guardrails")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/validate", requirePermission(rbac.PermWrite), handler.Validate)
+	}
+}
+
+func initializeLMEvalRoutes(apiVersion *gin.RouterGroup, handler *lmeval.Handler) {
+	routes := apiVersion.Group("/lm-eval")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializePromptfooRoutes(apiVersion *gin.RouterGroup, handler *promptfoo.Handler) {
+	routes := apiVersion.Group("/promptfoo")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializeDeepEvalRoutes(apiVersion *gin.RouterGroup, handler *deepeval.Handler) {
+	routes := apiVersion.Group("/deepeval")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializeDeepTeamRoutes(apiVersion *gin.RouterGroup, handler *deepteam.Handler) {
+	routes := apiVersion.Group("/deepteam")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializeGarakRoutes(apiVersion *gin.RouterGroup, handler *garak.Handler) {
+	routes := apiVersion.Group("/garak")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+func initializeLangfuseRoutes(apiVersion *gin.RouterGroup, handler *langfuse.Handler) {
+	routes := apiVersion.Group("/langfuse")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/export/operational-snapshot", requirePermission(rbac.PermAdmin), handler.ExportOperationalSnapshot)
 	}
 }
 
@@ -554,6 +780,113 @@ func initializeRuntimeLabRoutes(apiVersion *gin.RouterGroup, handler *runtimelab
 		rl.POST("/:runtimeId/probe", requirePermission(rbac.PermWrite), handler.Probe)
 		rl.POST("/:runtimeId/self-test", requirePermission(rbac.PermExecute), handler.SelfTest)
 		rl.GET("/:runtimeId/attempts", requirePermission(rbac.PermRead), handler.Attempts)
+	}
+}
+
+func initializeMCPPreflightRoutes(apiVersion *gin.RouterGroup, handler *mcppreflight.Handler) {
+	routes := apiVersion.Group("/mcp-preflight")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		routes.POST("/:serverId/run", requirePermission(rbac.PermAdmin), handler.Run)
+	}
+}
+
+// initializeA2ABridgeStatusRoutes stays inside HAI's normal authenticated
+// owner API. It exposes configuration only, never peer tokens or task input.
+func initializeA2ABridgeStatusRoutes(apiVersion *gin.RouterGroup, handler *a2abridge.Handler) {
+	routes := apiVersion.Group("/a2a")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+	}
+}
+
+// initializeA2ABridgeRoutes implements a small local A2A compatibility
+// boundary. The Agent Card carries no user context, and the JSON-RPC endpoint
+// requires a separate bridge token rather than browser identity or API keys.
+func initializeA2ABridgeRoutes(router *gin.Engine, relativePathV1 string, handler *a2abridge.Handler) {
+	router.GET("/.well-known/agent-card.json", handler.AgentCard)
+	router.POST(relativePathV1+"/a2a", handler.Send)
+}
+
+// initializeMCPBridgeStatusRoutes is part of the normal owner-authenticated
+// API. It reports configuration only; the data surface below uses a separate
+// narrow bridge token for the local FastMCP process.
+func initializeMCPBridgeStatusRoutes(apiVersion *gin.RouterGroup, handler *mcpbridge.Handler) {
+	routes := apiVersion.Group("/mcp-bridge")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+	}
+}
+
+// initializeMCPAgentRoutes intentionally avoids the browser identity and
+// backend API-key middleware. It is reachable only with the dedicated bridge
+// token, serves aggregate/sanitized read models, and is not a general API.
+func initializeMCPAgentRoutes(router *gin.Engine, relativePathV1 string, handler *mcpbridge.Handler) {
+	routes := router.Group(relativePathV1 + "/mcp-agent")
+	{
+		routes.GET("/overview", handler.Overview)
+		routes.GET("/actionable", handler.Actionable)
+	}
+}
+
+func initializePlanningOptimizerRoutes(apiVersion *gin.RouterGroup, handler *planningoptimizer.Handler) {
+	routes := apiVersion.Group("/planning-optimizer")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
+		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
+	}
+}
+
+func initializePydanticAIRoutes(apiVersion *gin.RouterGroup, handler *pydanticai.Handler) {
+	routes := apiVersion.Group("/pydantic-ai")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
+		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
+	}
+}
+
+func initializeBrowserVerificationRoutes(apiVersion *gin.RouterGroup, handler *browserverify.Handler) {
+	routes := apiVersion.Group("/browser-verification")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.GET("/profiles", requirePermission(rbac.PermRead), handler.Profiles)
+		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
+		// A browser check is read-only but still approval-gated: it may expose an
+		// application route's current state, so it is never an autonomous scan.
+		routes.POST("/profiles/:id/run", requirePermission(rbac.PermApprove), handler.Run)
+	}
+}
+
+func initializeWASIRoutes(apiVersion *gin.RouterGroup, handler *wasiexec.Handler) {
+	routes := apiVersion.Group("/wasi")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.GET("/modules", requirePermission(rbac.PermRead), handler.Modules)
+		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
+		routes.POST("/modules/:id/run", requirePermission(rbac.PermApprove), handler.Run)
+	}
+}
+
+func initializeTemporalRoutes(apiVersion *gin.RouterGroup, handler *temporalbridge.Handler) {
+	routes := apiVersion.Group("/temporal")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		routes.GET("/follow-up-runs", requirePermission(rbac.PermRead), handler.Runs)
+		// A worker start only connects to a local, validated Temporal endpoint and
+		// registers the proposal-only workflow. Scheduling it remains approval-gated.
+		routes.POST("/worker/start", requirePermission(rbac.PermAdmin), handler.StartWorker)
+		routes.POST("/follow-up-runs", requirePermission(rbac.PermApprove), handler.ScheduleFollowUp)
 	}
 }
 

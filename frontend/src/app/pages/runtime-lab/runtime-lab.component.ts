@@ -1,7 +1,9 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
+import { IMCPPreflightOverview, IMCPPreflightResult, IMCPPreflightServer } from '../../models/mcp-preflight.model.interface'
 import { IRuntimeSummary } from '../../models/runtime-lab.model.interface'
+import { MCPPreflightService } from '../../services/mcp-preflight.service'
 import { RuntimeLabService } from '../../services/runtime-lab.service'
 
 @Component({
@@ -11,11 +13,15 @@ import { RuntimeLabService } from '../../services/runtime-lab.service'
 })
 export class RuntimeLabComponent implements OnInit {
   runtimes: IRuntimeSummary[] = []
+  mcpOverview?: IMCPPreflightOverview
   loading = false
+  mcpLoading = false
   busy: Record<string, boolean> = {}
+  mcpBusy: Record<string, boolean> = {}
 
   constructor(
     private service: RuntimeLabService,
+    private mcpPreflight: MCPPreflightService,
     private notification: NzNotificationService,
     private router: Router
   ) {}
@@ -26,6 +32,7 @@ export class RuntimeLabComponent implements OnInit {
 
   refresh(): void {
     this.loading = true
+    this.refreshMCPPreflight()
     this.service.overview().subscribe({
       next: (res) => {
         this.runtimes = res.runtimes ?? []
@@ -36,6 +43,45 @@ export class RuntimeLabComponent implements OnInit {
         this.notification.error('Error', 'Failed to load the runtime lab.')
       },
     })
+  }
+
+  refreshMCPPreflight(): void {
+    this.mcpLoading = true
+    this.mcpPreflight.overview().subscribe({
+      next: (overview) => {
+        this.mcpOverview = overview
+        this.mcpLoading = false
+      },
+      error: () => {
+        this.mcpOverview = undefined
+        this.mcpLoading = false
+      },
+    })
+  }
+
+  runMCPPreflight(server: IMCPPreflightServer): void {
+    if (this.mcpBusy[server.id] || !server.configured) return
+    this.mcpBusy[server.id] = true
+    this.mcpPreflight.run(server.id).subscribe({
+      next: (result) => {
+        this.mcpBusy[server.id] = false
+        this.notifyMCPPreflight(server, result)
+        this.refreshMCPPreflight()
+      },
+      error: () => {
+        this.mcpBusy[server.id] = false
+        this.notification.error('MCP readiness check failed', 'HAI could not complete the local handshake. No MCP tool was called or enabled.')
+        this.refreshMCPPreflight()
+      },
+    })
+  }
+
+  private notifyMCPPreflight(server: IMCPPreflightServer, result: IMCPPreflightResult): void {
+    if (result.status === 'ready') {
+      this.notification.success('MCP server ready', `${server.catalogName || server.id}: ${result.toolCount} declared tool(s) inspected. No tool was called.`)
+      return
+    }
+    this.notification.warning('MCP server not ready', `${server.catalogName || server.id}: ${result.detail}`)
   }
 
   probe(r: IRuntimeSummary): void {
@@ -61,7 +107,7 @@ export class RuntimeLabComponent implements OnInit {
         if (attempt.status === 'succeeded') {
           this.notification.success('Self-test passed', `${r.info.displayName} verified through the ledger.`)
         } else if (attempt.status === 'setup_required') {
-          this.notification.warning('Setup required', `${r.info.displayName} is not configured — no fake execution.`)
+          this.notification.warning('Setup required', `${r.info.displayName} is not configured - no fake execution.`)
         } else {
           this.notification.warning('Self-test', `${r.info.displayName}: ${attempt.status}`)
         }

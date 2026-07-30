@@ -10,6 +10,7 @@ import (
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/idempotency"
+	"automation-hub-backend/internal/metrics"
 	"automation-hub-backend/internal/ratelimit"
 
 	"github.com/gin-gonic/gin"
@@ -33,11 +34,19 @@ func Initialize() error {
 	router.Use(rateLimitMiddleware(newRateLimitEnforcer()))
 	router.Use(idempotencyMiddleware(idempotency.New(10 * time.Minute)))
 	router.Use(localCaptureCORSMiddleware())
-
-	// initialize routes
-	err := initializeRoutes(router)
+	metricsExporter, err := metrics.NewFromEnv()
 	if err != nil {
 		return err
+	}
+	router.Use(metricsExporter.Middleware())
+
+	// initialize routes
+	err = initializeRoutes(router)
+	if err != nil {
+		return err
+	}
+	if metricsExporter.Enabled() {
+		router.GET("/metrics", metricsExporter.RequireBearerToken(), gin.WrapH(metricsExporter.Handler()))
 	}
 
 	// run server

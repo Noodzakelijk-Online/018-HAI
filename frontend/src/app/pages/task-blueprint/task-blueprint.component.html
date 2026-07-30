@@ -218,6 +218,10 @@
             <i nz-icon nzType="database" nzTheme="outline"></i>
             Sources
           </button>
+          <button type="button" class="chip-button" title="Optional local, schema-validated draft from PydanticAI. It cannot use tools or execute work." (click)="requestTypedProposal()" [disabled]="typedProposalLoading">
+            <i nz-icon nzType="file-search" nzTheme="outline"></i>
+            Typed draft
+          </button>
           <span class="chip-button chip-button--status" title="Controlled runtime execution uses automation ID when configured">
             <i nz-icon nzType="deployment-unit" nzTheme="outline"></i>
             Runtime
@@ -298,6 +302,7 @@
         <button type="button" [class.active]="inspectorMode === 'overview'" (click)="inspectorMode = 'overview'">Overview</button>
         <button type="button" [class.active]="inspectorMode === 'plan'" (click)="inspectorMode = 'plan'">Plan</button>
         <button type="button" [class.active]="inspectorMode === 'evidence'" (click)="inspectorMode = 'evidence'">Evidence</button>
+        <button type="button" *ngIf="typedProposal" [class.active]="inspectorMode === 'typed-proposal'" (click)="inspectorMode = 'typed-proposal'">Typed draft</button>
         <button type="button" [class.active]="inspectorMode === 'logs'" (click)="inspectorMode = 'logs'">Logs</button>
       </nav>
 
@@ -539,6 +544,28 @@
         </article>
       </section>
 
+      <section class="inspector-body" *ngIf="inspectorMode === 'typed-proposal' && typedProposal as typed">
+        <article class="inspector-card">
+          <h3>Local typed draft <span title="A local model returned this Pydantic schema-validated draft. It is not a completed task or an execution instruction.">?</span></h3>
+          <p>{{ typed.proposal.goal }}</p>
+          <dl>
+            <div><dt>Model</dt><dd>{{ typed.modelId }}</dd></div>
+            <div><dt>Risk</dt><dd>{{ typed.proposal.risk }}</dd></div>
+            <div><dt>Approval</dt><dd>{{ typed.proposal.requiresApproval ? 'Required before an external or high-risk action' : 'Still subject to HAI policy' }}</dd></div>
+          </dl>
+        </article>
+        <article class="inspector-card">
+          <h3>Suggested success criteria</h3>
+          <ul><li *ngFor="let criterion of typed.proposal.successCriteria">{{ criterion }}</li></ul>
+          <button nz-button nzType="default" (click)="useTypedProposalCriteria()" title="Copies criteria into the editable task form only. It does not run, approve, or save work.">Use criteria in task</button>
+        </article>
+        <article class="inspector-card">
+          <h3>Next steps</h3>
+          <ol><li *ngFor="let step of typed.proposal.nextSteps">{{ step }}</li></ol>
+          <p *ngIf="typed.proposal.uncertainties.length"><strong>Uncertainties:</strong> {{ typed.proposal.uncertainties.join('; ') }}</p>
+        </article>
+      </section>
+
       <section class="inspector-body" *ngIf="inspectorMode === 'plan'">
         <article class="inspector-card">
           <h3>Universal Task Loop</h3>
@@ -640,6 +667,25 @@
           <div class="mini-table" *ngFor="let gate of plan?.minimalityDecision?.ladder || []">
             <strong>{{ gate.label }}</strong>
             <span>{{ gate.status }}</span>
+          </div>
+        </article>
+
+        <article class="inspector-card" *ngIf="plan?.toolDecision?.capabilityRecommendations?.length">
+          <h3>Reviewed capability options <span title="Catalog matches are planning context only. HAI still requires a configured adapter, health evidence, and any required approval before it can use one.">?</span></h3>
+          <p>Matched from the reviewed HAI catalog. No external project was installed, configured, or executed.</p>
+          <div class="mini-table task-capability-option" *ngFor="let option of plan?.toolDecision?.capabilityRecommendations || []">
+            <div>
+              <strong>{{ option.name }}</strong>
+              <small>{{ option.role }} - {{ option.status }}</small>
+              <small>Direct matches: {{ option.matchedTerms.join(', ') }}</small>
+              <small>{{ option.reasons.join('; ') }}</small>
+              <small *ngIf="option.sourceCollection">Reviewed {{ option.verifiedAt }} from {{ option.sourceCollection }}.</small>
+            </div>
+            <div>
+              <span>{{ option.nextStep }}</span>
+              <a *ngIf="option.upstreamUrl" [href]="option.upstreamUrl" target="_blank" rel="noopener noreferrer">Inspect upstream</a>
+              <a *ngIf="option.sourceCatalogUrl" [href]="option.sourceCatalogUrl" target="_blank" rel="noopener noreferrer">Inspect source</a>
+            </div>
           </div>
         </article>
       </section>

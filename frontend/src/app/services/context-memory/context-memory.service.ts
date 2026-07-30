@@ -8,6 +8,7 @@ import {
   IMemoryExport,
   IMemoryRetrieveRequest,
   IMemoryRetrieveResult,
+  ISemanticMemoryReindexResult,
 } from '../../models/context-memory.model.interface';
 
 @Injectable({
@@ -48,6 +49,11 @@ export class ContextMemoryService implements IContextMemoryService {
 
   retrieve(request: IMemoryRetrieveRequest): Observable<IMemoryRetrieveResult> {
     return this.http.post<IMemoryRetrieveResult>(`${this.apiUrl}/retrieve`, request);
+  }
+
+  reindexSemantic(limit: number = 100): Observable<ISemanticMemoryReindexResult> {
+    const params = new HttpParams().set('limit', String(Math.min(Math.max(limit, 1), 100)));
+    return this.http.post<ISemanticMemoryReindexResult>(`${this.apiUrl}/semantic/reindex`, {}, { params });
   }
 
   exportMemories(projectKey?: string): Observable<IMemoryExport> {

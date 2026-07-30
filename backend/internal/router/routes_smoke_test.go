@@ -3,12 +3,27 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/mcppreflight"
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/planningoptimizer"
+	"automation-hub-backend/internal/serena"
 
 	"github.com/gin-gonic/gin"
 )
+
+type optimizerRouteRepository struct{}
+
+func (optimizerRouteRepository) Create(run *models.OptimizationProposalRun) (*models.OptimizationProposalRun, error) {
+	return run, nil
+}
+
+func (optimizerRouteRepository) List(string, int) ([]models.OptimizationProposalRun, error) {
+	return nil, nil
+}
 
 // Mirrors the exact path set registered in initializeAutomationsRoutes to
 // confirm gin builds the route tree without panicking (static + param at the
@@ -360,6 +375,147 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		if hit != tc.want {
 			t.Fatalf("%s %s -> handler %q, want %q", tc.method, tc.path, hit, tc.want)
 		}
+	}
+}
+
+func TestMCPPreflightRoutesRequireOwnerAndAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := mcppreflight.NewService(mcppreflight.Config{
+		Enabled: false,
+		Servers: []mcppreflight.Server{{ID: "local", URL: "http://127.0.0.1:3000/mcp"}},
+	})
+
+	unauthenticated := gin.New()
+	initializeMCPPreflightRoutes(unauthenticated.Group("/api/v1"), mcppreflight.NewHandler(service))
+	response := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/mcp-preflight/overview", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("overview without an owner must be unauthorized, got %d", response.Code)
+	}
+
+	operator := gin.New()
+	operator.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "operator@example.test")
+		c.Set(contextRoleKey, "operator")
+		c.Next()
+	})
+	initializeMCPPreflightRoutes(operator.Group("/api/v1"), mcppreflight.NewHandler(service))
+	response = httptest.NewRecorder()
+	operator.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/mcp-preflight/local/run", nil))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("operator must not run a preflight, got %d", response.Code)
+	}
+
+	owner := gin.New()
+	owner.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "owner@example.test")
+		c.Set(contextRoleKey, "owner")
+		c.Next()
+	})
+	initializeMCPPreflightRoutes(owner.Group("/api/v1"), mcppreflight.NewHandler(service))
+	response = httptest.NewRecorder()
+	owner.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/mcp-preflight/local/run", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("owner must receive the truthful disabled status, got %d", response.Code)
+	}
+}
+
+func TestSerenaRoutesRequireOwnerAndPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := serena.NewService(false, "", "", nil)
+
+	unauthenticated := gin.New()
+	initializeSerenaRoutes(unauthenticated.Group("/api/v1"), serena.NewHandler(service))
+	response := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/serena/status", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status without an owner must be unauthorized, got %d", response.Code)
+	}
+
+	viewer := gin.New()
+	viewer.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "viewer@example.test")
+		c.Set(contextRoleKey, "viewer")
+		c.Next()
+	})
+	initializeSerenaRoutes(viewer.Group("/api/v1"), serena.NewHandler(service))
+	response = httptest.NewRecorder()
+	viewer.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/serena/symbols", strings.NewReader(`{"pattern":"Service"}`)))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer must not request semantic code context, got %d", response.Code)
+	}
+
+	owner := gin.New()
+	owner.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "owner@example.test")
+		c.Set(contextRoleKey, "owner")
+		c.Next()
+	})
+	initializeSerenaRoutes(owner.Group("/api/v1"), serena.NewHandler(service))
+	response = httptest.NewRecorder()
+	owner.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/serena/probe", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("owner must receive truthful disabled state, got %d", response.Code)
+	}
+}
+
+func TestPlanningOptimizerRoutesRequireOwnerAndWritePermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := planningoptimizer.NewService(optimizerRouteRepository{}, false, "http://127.0.0.1:8080", 0)
+	payload := `{"dayStartMinute":540,"dayEndMinute":600,"jobs":[{"id":"job","durationMinutes":60,"priority":50}]}`
+
+	unauthenticated := gin.New()
+	initializePlanningOptimizerRoutes(unauthenticated.Group("/api/v1"), planningoptimizer.NewHandler(service))
+	response := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/planning-optimizer/status", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("optimizer status without an owner must be unauthorized, got %d", response.Code)
+	}
+
+	viewer := gin.New()
+	viewer.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "viewer@example.test")
+		c.Set(contextRoleKey, "viewer")
+		c.Next()
+	})
+	initializePlanningOptimizerRoutes(viewer.Group("/api/v1"), planningoptimizer.NewHandler(service))
+	response = httptest.NewRecorder()
+	viewer.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/planning-optimizer/proposals", strings.NewReader(payload)))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer must not request a proposal, got %d", response.Code)
+	}
+
+	operator := gin.New()
+	operator.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "operator@example.test")
+		c.Set(contextRoleKey, "operator")
+		c.Next()
+	})
+	initializePlanningOptimizerRoutes(operator.Group("/api/v1"), planningoptimizer.NewHandler(service))
+	response = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/planning-optimizer/proposals", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	operator.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("operator must receive the truthful disabled status, got %d: %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	operator.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/planning-optimizer/probe", nil))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("operator must not run an optimizer probe, got %d", response.Code)
+	}
+
+	owner := gin.New()
+	owner.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "owner@example.test")
+		c.Set(contextRoleKey, "owner")
+		c.Next()
+	})
+	initializePlanningOptimizerRoutes(owner.Group("/api/v1"), planningoptimizer.NewHandler(service))
+	response = httptest.NewRecorder()
+	owner.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/planning-optimizer/probe", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("owner must receive truthful disabled probe state, got %d", response.Code)
 	}
 }
 

@@ -26,6 +26,19 @@ Connected-source search runs first for project, account, file, and history
 questions. Public/current questions can include external evidence records now;
 web-search workers can later feed the same evidence schema.
 
+## Optional Local Retrieval Candidates
+
+An operator-managed RAGFlow deployment can be queried from **Grounded Answers**
+only when its local endpoint, API key, and fixed dataset allowlist have been
+configured. HAI displays returned chunks as *unverified local retrieval
+candidates*. A user must explicitly select one before it is attached to the
+verification request with a `ragflow_candidate_evidence` provenance record.
+
+RAGFlow candidate selection does not establish authority, source precision, or
+truth. It does not automatically change an answer, create memory, complete a
+workflow, or authorize external work. The normal evidence-quality and
+claim-verification checks remain the deciding path.
+
 ## Memory and Action Controls
 
 Memory updates are disabled unless explicitly requested by the caller. Even then,

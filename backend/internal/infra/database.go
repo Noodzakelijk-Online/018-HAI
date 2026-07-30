@@ -66,6 +66,15 @@ func RunMigrations(db *gorm.DB) error {
 	if _, err := ApplyMigrations(db, migrations.Files, "pre"); err != nil {
 		return fmt.Errorf("apply pre migrations: %w", err)
 	}
+	// pgvector is opt-in. Normal Postgres deployments remain usable when no
+	// local embedding endpoint has been reviewed; an enabled deployment fails
+	// early if its database image does not contain the extension.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("HAI_SEMANTIC_RETRIEVAL_ENABLED")), "true") {
+		if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS vector`).Error; err != nil {
+			return fmt.Errorf("enable pgvector extension: %w", err)
+		}
+	}
+
 	// Phase 2: optional dev-only table sync. The baseline migration already
 	// created every table, so this is opt-in (DB_AUTOMIGRATE=true) and exists
 	// only to materialise a newly-added model before its migration is generated.
@@ -125,6 +134,10 @@ func RunMigrations(db *gorm.DB) error {
 			&models.OperationEvent{},
 			// Phase 2 — durable model telemetry (§18/§10.9).
 			&models.ModelRunTelemetry{},
+			&models.OptimizationProposalRun{},
+			&models.TemporalWorkflowRun{},
+			&models.BrowserVerificationRun{},
+			&models.WASIRun{},
 			// Durable worker: background jobs that survive a restart.
 			&models.DurableJob{},
 			// Owner-scoped Framework Registry preferences, immutable selection

@@ -12,6 +12,7 @@ import (
 	"automation-hub-backend/internal/actionresolver"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomygate"
+	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
@@ -62,6 +63,14 @@ type IntakeAnalysis struct {
 	Reason              string   `json:"reason"`
 }
 
+// OperatingContextProvider supplies owner-scoped, source-backed personal state
+// to the task planner. Browser requests cannot set these values directly; the
+// provider is the trust boundary that resolves the latest reviewed records.
+type OperatingContextProvider interface {
+	LatestNeeds(ownerIdentity string, at time.Time) ([]frameworkregistry.NeedStateAssessment, error)
+	LatestCapacity(ownerIdentity string, at time.Time) (*frameworkregistry.CapacitySnapshot, error)
+}
+
 type ContextPlan struct {
 	Strategy                 []string                  `json:"strategy"`
 	UsedContext              []memory.RankedMemory     `json:"usedContext"`
@@ -97,10 +106,12 @@ type ExecutionPlan struct {
 }
 
 type ToolRouteDecision struct {
-	SelectedTools []string `json:"selectedTools"`
-	SkippedTools  []string `json:"skippedTools"`
-	BlockedTools  []string `json:"blockedTools"`
-	Reason        string   `json:"reason"`
+	SelectedTools             []string                                `json:"selectedTools"`
+	SkippedTools              []string                                `json:"skippedTools"`
+	BlockedTools              []string                                `json:"blockedTools"`
+	CatalogRecommendations    []braincatalog.Recommendation           `json:"catalogRecommendations,omitempty"`
+	CapabilityRecommendations []braincatalog.CapabilityRecommendation `json:"capabilityRecommendations,omitempty"`
+	Reason                    string                                  `json:"reason"`
 }
 
 type TaskStep struct {
@@ -310,6 +321,14 @@ type DurableOwnerScopedService interface {
 
 const internalTaskStateOwnerIdentity = "urn:hai:internal:task-system"
 
+// PreviewService is the side-effect-free planning boundary used by reviewed
+// local interoperability adapters. A preview may read owner-scoped context but
+// must not refresh sources, persist task attempts, create review items, or
+// execute work.
+type PreviewService interface {
+	Preview(request IntakeRequest) (*CompletionPlan, error)
+}
+
 type service struct {
 	memoryService       memory.Service
 	sourceService       source.Service
@@ -319,6 +338,7 @@ type service struct {
 	pursuitAttempts     PursuitAttemptRecorder
 	frameworkSelector   FrameworkSelector
 	stateRepository     TaskStateRepository
+	operatingContext    OperatingContextProvider
 	mu                  sync.Mutex
 	logs                []CompletionPlan
 	reviewQueue         []ReviewQueueItem
@@ -384,12 +404,17 @@ func NewServiceWithDependencies(
 	pursuitAttempts PursuitAttemptRecorder,
 	frameworkSelector FrameworkSelector,
 	stateRepository TaskStateRepository,
+	operatingContextProviders ...OperatingContextProvider,
 ) Service {
 	if frameworkSelector == nil {
 		frameworkSelector = defaultFrameworkSelector()
 	}
 	if stateRepository == nil {
 		stateRepository = NewMemoryTaskStateRepository()
+	}
+	var operatingContext OperatingContextProvider
+	if len(operatingContextProviders) > 0 {
+		operatingContext = operatingContextProviders[0]
 	}
 	return &service{
 		memoryService:       memoryService,
@@ -400,6 +425,7 @@ func NewServiceWithDependencies(
 		pursuitAttempts:     pursuitAttempts,
 		frameworkSelector:   frameworkSelector,
 		stateRepository:     stateRepository,
+		operatingContext:    operatingContext,
 		logs:                []CompletionPlan{},
 		reviewQueue:         []ReviewQueueItem{},
 	}
@@ -443,7 +469,7 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
-	plan, err := s.buildPlan(request, false)
+	plan, err := s.buildPlan(request, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -456,6 +482,20 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	return plan, nil
 }
 
+// Preview returns a planning draft without adding task logs, refreshing a
+// connector, persisting a pursuit attempt, queueing approval, or executing an
+// action. It is deliberately separate from Plan so an external protocol peer
+// can never turn a request into durable operational work by accident.
+func (s *service) Preview(request IntakeRequest) (*CompletionPlan, error) {
+	if err := s.validatePursuitAttemptRequest(request); err != nil {
+		return nil, err
+	}
+	request.ExecuteAllowed = false
+	request.HumanApproved = false
+	request.ApprovalNote = ""
+	return s.buildPlan(request, false, false)
+}
+
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
@@ -464,7 +504,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	if safety.EmergencyStopActive() {
 		request.ExecuteAllowed = false
 		request.HumanApproved = false
-		plan, err := s.buildPlan(request, false)
+		plan, err := s.buildPlan(request, false, true)
 		if err != nil {
 			return nil, err
 		}
@@ -496,7 +536,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		}
 		return plan, nil
 	}
-	plan, err := s.buildPlan(request, true)
+	plan, err := s.buildPlan(request, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -712,7 +752,12 @@ func planLaunchEventID(plan *CompletionPlan) string {
 	return strings.TrimSpace(plan.ExecutionResult.ToolExecution.LaunchEventID)
 }
 
-func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
+func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh bool) (*CompletionPlan, error) {
+	var err error
+	request, err = s.loadOperatingContext(request)
+	if err != nil {
+		return nil, fmt.Errorf("load current needs and capacity: %w", err)
+	}
 	intake := analyzeIntake(request)
 	if s.llmService == nil {
 		return nil, ErrTaskLLMRouterNotConfigured
@@ -746,7 +791,13 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	if err != nil {
 		return nil, fmt.Errorf("select planning frameworks: %w", err)
 	}
-	sourceRefresh, sourceRefreshExplanation := s.refreshSourcesForTask(request, intake)
+	var sourceRefresh *source.ScheduledSyncRun
+	var sourceRefreshExplanation string
+	if allowSourceRefresh {
+		sourceRefresh, sourceRefreshExplanation = s.refreshSourcesForTask(request, intake)
+	} else {
+		sourceRefreshExplanation = "Source refresh is disabled for this planning preview."
+	}
 	contextResult, err := memory.RetrieveForOwner(s.memoryService, request.OwnerIdentity, memory.RetrieveRequest{
 		Query:      request.Request,
 		ProjectKey: request.ProjectKey,
@@ -766,7 +817,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 		return nil, err
 	}
 
-	toolDecision := routeTools(intake)
+	toolDecision := routeTools(intake, request.Request)
 	minimalityDecision := decideMinimality(request, intake)
 	risk := assessRisk(intake, request)
 	risk = applyFrameworkRisk(risk, frameworkDecision, intake, request)
@@ -829,6 +880,28 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 
 	_ = runMode
 	return plan, nil
+}
+
+func (s *service) loadOperatingContext(request IntakeRequest) (IntakeRequest, error) {
+	if s.operatingContext == nil || strings.TrimSpace(request.OwnerIdentity) == "" {
+		return request, nil
+	}
+	now := time.Now().UTC()
+	if len(request.ObservedNeeds) == 0 {
+		needs, err := s.operatingContext.LatestNeeds(request.OwnerIdentity, now)
+		if err != nil {
+			return request, fmt.Errorf("load needs state: %w", err)
+		}
+		request.ObservedNeeds = append([]frameworkregistry.NeedStateAssessment(nil), needs...)
+	}
+	if request.Capacity == nil {
+		capacity, err := s.operatingContext.LatestCapacity(request.OwnerIdentity, now)
+		if err != nil {
+			return request, fmt.Errorf("load capacity state: %w", err)
+		}
+		request.Capacity = capacity
+	}
+	return request, nil
 }
 
 func (s *service) Logs() []CompletionPlan {
@@ -1887,7 +1960,7 @@ func applyFrameworkExecution(plan ExecutionPlan, decision *frameworkregistry.Sel
 	return plan
 }
 
-func routeTools(intake IntakeAnalysis) ToolRouteDecision {
+func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
 	selected := []string{"memory.retrieve", "llm.route", "validator.criteria"}
 	skipped := []string{}
 	blocked := []string{}
@@ -1916,12 +1989,40 @@ func routeTools(intake IntakeAnalysis) ToolRouteDecision {
 		reasons = append(reasons, "high-risk tools blocked until human approval")
 	}
 
-	return ToolRouteDecision{
-		SelectedTools: uniqueStrings(selected),
-		SkippedTools:  uniqueStrings(skipped),
-		BlockedTools:  uniqueStrings(blocked),
-		Reason:        strings.Join(reasons, "; "),
+	catalogRecommendations := braincatalog.Recommend(intake.TaskType, request)
+	capabilityRecommendations, capabilityRecommendationErr := braincatalog.RecommendForNeed(request)
+	if len(catalogRecommendations) > 0 || (capabilityRecommendationErr == nil && len(capabilityRecommendations.Recommendations) > 0) {
+		reasons = append(reasons, "external agent capabilities are recommendations only until a reviewed adapter is configured")
+		for _, recommendation := range catalogRecommendations {
+			skipped, blocked = applyCatalogBoundary(recommendation.ID, recommendation.Status, skipped, blocked)
+		}
+		for _, recommendation := range capabilityRecommendations.Recommendations {
+			skipped, blocked = applyCatalogBoundary(recommendation.ID, recommendation.Status, skipped, blocked)
+		}
 	}
+
+	return ToolRouteDecision{
+		SelectedTools:             uniqueStrings(selected),
+		SkippedTools:              uniqueStrings(skipped),
+		BlockedTools:              uniqueStrings(blocked),
+		CatalogRecommendations:    catalogRecommendations,
+		CapabilityRecommendations: capabilityRecommendations.Recommendations,
+		Reason:                    strings.Join(reasons, "; "),
+	}
+}
+
+func applyCatalogBoundary(id string, status braincatalog.Status, skipped, blocked []string) ([]string, []string) {
+	switch status {
+	case braincatalog.StatusIntegrated:
+		skipped = append(skipped, "agent-catalog."+id+": integrated profile requires local configuration and live health")
+	case braincatalog.StatusCandidate:
+		skipped = append(skipped, "agent-catalog."+id+": operator-configured adapter required")
+	case braincatalog.StatusCompatibility:
+		blocked = append(blocked, "agent-catalog."+id+": compatibility bridge and approval required")
+	default:
+		blocked = append(blocked, "agent-catalog."+id+": "+string(status))
+	}
+	return skipped, blocked
 }
 
 func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {

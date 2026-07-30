@@ -188,6 +188,7 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 	}
 
 	for _, version := range []string{
+		"pre/0006_durable_job_fencing",
 		"pre/0005_framework_operating_contract",
 		"pre/0004_task_state_storage",
 		frameworkRegistryMigrationVersion,
@@ -239,8 +240,8 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reapply framework registry migration: %v", err)
 	}
-	if reapplied != 3 {
-		t.Fatalf("reapplied %d migrations, want 3", reapplied)
+	if reapplied != 4 {
+		t.Fatalf("reapplied %d migrations, want 4", reapplied)
 	}
 	if !relationExists(t, db, "framework_selection_records") {
 		t.Fatal("framework registry schema was not restored")

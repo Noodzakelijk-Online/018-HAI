@@ -24,6 +24,7 @@ describe('TaskBlueprintComponent pursuit context', () => {
         router,
         route,
         { mode: () => 'light' } as any,
+        {} as any,
       ),
       router,
     };

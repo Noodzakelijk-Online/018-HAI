@@ -75,6 +75,16 @@ func (c *Controller) StoredMode() autonomypolicy.Mode {
 // Control contract).
 func (c *Controller) EmergencyStop() bool { return c.emergency.Engaged() }
 
+// EmergencyStopStatus implements safety.EmergencyStopProvider without
+// importing safety and creating a package cycle.
+func (c *Controller) EmergencyStopStatus() (bool, string, error) {
+	state, err := c.emergency.Status()
+	if err != nil {
+		return true, "", err
+	}
+	return state.Engaged, state.Reason, nil
+}
+
 // SetMode updates + persists the autonomy mode.
 func (c *Controller) SetMode(m autonomypolicy.Mode) (autonomypolicy.Mode, error) {
 	if _, err := autonomypolicy.ParseMode(string(m)); err != nil {
@@ -88,12 +98,12 @@ func (c *Controller) SetMode(m autonomypolicy.Mode) (autonomypolicy.Mode, error)
 }
 
 // Engage activates the emergency stop.
-func (c *Controller) Engage(reason, actor string, now time.Time) EmergencyStopState {
+func (c *Controller) Engage(reason, actor string, now time.Time) (EmergencyStopState, error) {
 	return c.emergency.Engage(reason, actor, now)
 }
 
 // Disengage clears the emergency stop.
-func (c *Controller) Disengage(actor string, now time.Time) EmergencyStopState {
+func (c *Controller) Disengage(actor string, now time.Time) (EmergencyStopState, error) {
 	return c.emergency.Disengage(actor, now)
 }
 

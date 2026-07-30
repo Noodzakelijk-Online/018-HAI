@@ -88,7 +88,7 @@ func startDurableScheduler(ctx context.Context, service ScheduledWorkflowService
 	if err != nil {
 		return err
 	}
-	runner := durablejob.NewRunner(repo, durablejob.Options{})
+	runner := durablejob.NewRunner(repo, durablejob.Options{Queue: "workflow"})
 	if err := RegisterDurableScheduling(runner, service, interval, limit); err != nil {
 		return err
 	}

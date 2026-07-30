@@ -578,6 +578,19 @@
   }
 }
 
+.semantic-index-control {
+  background: var(--surface-muted);
+  flex: 1 1 100%;
+
+  button {
+    margin-top: 10px;
+  }
+
+  .semantic-index-result {
+    color: var(--text-soft);
+  }
+}
+
 .memory-detail {
   display: grid;
   gap: 14px;

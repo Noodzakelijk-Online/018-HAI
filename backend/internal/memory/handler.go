@@ -153,6 +153,21 @@ func (h *Handler) Retrieve(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *Handler) ReindexSemantic(c *gin.Context) {
+	reindex, ok := h.service.(SemanticReindexService)
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "local semantic memory indexing is unavailable"})
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	result, err := reindex.ReindexSemanticForOwner(memoryOwner(c), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "local semantic memory indexing failed"})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *Handler) Export(c *gin.Context) {
 	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), true)
 	if err != nil {

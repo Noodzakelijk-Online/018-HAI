@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/safety"
+	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/workflow"
 	"bytes"
 	"context"
@@ -79,9 +80,12 @@ type ImportRequest struct {
 	Mode       string       `json:"mode,omitempty"`
 	Items      []ImportItem `json:"items"`
 	FolderPath string       `json:"folderPath,omitempty"`
-	ProjectKey string       `json:"projectKey,omitempty"`
-	Limit      int          `json:"limit,omitempty"`
-	MaxBytes   int64        `json:"maxBytes,omitempty"`
+	// controlledTranscription is deliberately package-private. Only the
+	// server-side whisper handler can mark runner output as audio-derived.
+	controlledTranscription bool
+	ProjectKey              string `json:"projectKey,omitempty"`
+	Limit                   int    `json:"limit,omitempty"`
+	MaxBytes                int64  `json:"maxBytes,omitempty"`
 }
 
 type SyncResult struct {
@@ -163,6 +167,7 @@ type service struct {
 	memoryService   memory.Service
 	workflowService workflow.Service
 	pursuitLinker   pursuitAutoLinker
+	semanticService semantic.Service
 	syncMu          sync.Mutex
 	activeSyncs     map[uuid.UUID]bool
 }
@@ -198,7 +203,14 @@ func NewServiceWithWorkflow(repo Repository, memoryService memory.Service, workf
 }
 
 func NewServiceWithWorkflowAndPursuitLinker(repo Repository, memoryService memory.Service, workflowService workflow.Service, pursuitLinker pursuitAutoLinker) Service {
-	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService, pursuitLinker: pursuitLinker, activeSyncs: map[uuid.UUID]bool{}}
+	return NewServiceWithWorkflowPursuitAndSemantic(repo, memoryService, workflowService, pursuitLinker, nil)
+}
+
+// NewServiceWithWorkflowPursuitAndSemantic keeps semantic search optional. A
+// missing or unhealthy local embedding server never removes source ingestion or
+// the provenance-preserving keyword search path.
+func NewServiceWithWorkflowPursuitAndSemantic(repo Repository, memoryService memory.Service, workflowService workflow.Service, pursuitLinker pursuitAutoLinker, semanticService semantic.Service) Service {
+	return &service{repo: repo, memoryService: memoryService, workflowService: workflowService, pursuitLinker: pursuitLinker, semanticService: semanticService, activeSyncs: map[uuid.UUID]bool{}}
 }
 
 func DefaultService() Service {
@@ -251,6 +263,30 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 			}
 		}
 	}
+	if _, err := odooJSON2ConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == odooJSON2ConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "live read-only Odoo JSON-2 adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
+	if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == cloudQuerySummaryConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "local CloudQuery sync-summary adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
+	if _, err := airbyteInventoryConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == airbyteInventoryConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "live read-only Airbyte inventory adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
 	return connectors, nil
 }
 
@@ -269,6 +305,59 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 	connector, err := s.connectorByKey(connectorKey)
 	if err != nil {
 		return nil, err
+	}
+	if connectorKey == odooJSON2ConnectorKey {
+		if _, err := odooJSON2ConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("Odoo JSON-2 connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly {
+			return nil, fmt.Errorf("Odoo JSON-2 is a remote account bridge; localOnly must be false")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("Odoo JSON-2 endpoint is configured only through HAI_ODOO_BASE_URL; syncTarget must be empty")
+		}
+	}
+	if connectorKey == cloudQuerySummaryConnectorKey {
+		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("CloudQuery sync-summary connector requires explicit configuration: %w", err)
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("CloudQuery sync summaries must use the cloud_inventory category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("CloudQuery sync summaries are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must be empty")
+		}
+	}
+	if connectorKey == airbyteInventoryConnectorKey {
+		if _, err := airbyteInventoryConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("Airbyte inventory connector requires explicit configuration: %w", err)
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("Airbyte inventory must use the connector_inventory category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("Airbyte inventory is local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("Airbyte inventory endpoint is configured only through HAI_AIRBYTE_BASE_URL; syncTarget must be empty")
+		}
+	}
+	if connectorKey == openSpecArtifactConnectorKey {
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("OpenSpec artifacts must use the code_spec category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("OpenSpec artifacts are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("OpenSpec artifacts require a selected project folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
+		}
 	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
@@ -309,6 +398,41 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 	source, err := s.repo.FindSource(id)
 	if err != nil {
 		return nil, err
+	}
+	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
+		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("CloudQuery sync-summary connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("CloudQuery sync summaries are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
+			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must remain empty")
+		}
+	}
+	if source.ConnectorKey == airbyteInventoryConnectorKey {
+		if _, err := airbyteInventoryConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("Airbyte inventory connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("Airbyte inventory is local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
+			return nil, fmt.Errorf("Airbyte inventory endpoint is configured only through HAI_AIRBYTE_BASE_URL; syncTarget must remain empty")
+		}
+	}
+	if source.ConnectorKey == openSpecArtifactConnectorKey {
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("OpenSpec artifacts are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil {
+			if strings.TrimSpace(*request.SyncTarget) == "" {
+				return nil, fmt.Errorf("OpenSpec artifacts require a selected project folder")
+			}
+			if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), *request.SyncTarget); err != nil {
+				return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
+			}
+		}
 	}
 	if strings.TrimSpace(request.Name) != "" {
 		source.Name = strings.TrimSpace(request.Name)
@@ -366,6 +490,38 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
+	}
+	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
+		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")
+	}
+	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) != "" {
+			return nil, fmt.Errorf("CloudQuery sync summaries must remain local-only with the environment-configured summary path")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("CloudQuery sync summaries must be read from the configured local summary file; manual items are not accepted")
+		}
+	}
+	if source.ConnectorKey == airbyteInventoryConnectorKey {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) != "" {
+			return nil, fmt.Errorf("Airbyte inventory must remain local-only with the environment-configured endpoint")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("Airbyte inventory must be read from the configured local API; manual items are not accepted")
+		}
+	}
+	if source.ConnectorKey == openSpecArtifactConnectorKey {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) == "" {
+			return nil, fmt.Errorf("OpenSpec artifacts must remain local-only with a selected project folder")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("OpenSpec artifacts must be read from the selected project folder; manual items are not accepted")
+		}
+		if requested := strings.TrimSpace(request.FolderPath); requested != "" && requested != strings.TrimSpace(source.SyncTarget) {
+			return nil, fmt.Errorf("OpenSpec sync must use its registered project folder")
+		}
+		request.FolderPath = source.SyncTarget
+		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
 	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) && len(request.Items) == 0 {
 		return nil, fmt.Errorf("connector %s has no real sync adapter yet; provide explicit manual import items or use local-folder", source.ConnectorKey)
@@ -463,6 +619,58 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			s.audit(sourceID, "source.sync_failed", err.Error())
 			return nil, err
 		}
+	}
+	if len(items) == 0 && source.ConnectorKey == odooJSON2ConnectorKey {
+		items, adapterCursor, err = fetchOdooJSON2Source(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == cloudQuerySummaryConnectorKey {
+		items, adapterCursor, err = fetchCloudQuerySummary(source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == airbyteInventoryConnectorKey {
+		items, adapterCursor, err = fetchAirbyteInventory(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == openSpecArtifactConnectorKey {
+		items, err = s.openSpecArtifactItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
 		items, err = s.whatsAppExportItems(source, request)
@@ -751,6 +959,25 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	visibleSourceIDs, err := s.visibleSourceIDs(request.OwnerIdentity)
 	if err != nil {
 		return nil, err
+	}
+	if s.semanticService != nil && s.semanticService.Enabled() {
+		matches, semanticErr := s.semanticService.Search(context.Background(), semantic.SearchRequest{
+			OwnerIdentity: request.OwnerIdentity, Query: request.Query, ProjectKey: request.ProjectKey,
+			Limit: limit, IncludeSensitive: request.IncludeSensitive,
+		})
+		if semanticErr == nil && len(matches) > 0 {
+			ranked := make([]RankedExtraction, 0, len(matches))
+			for _, match := range matches {
+				ranked = append(ranked, RankedExtraction{
+					Extraction: match.Extraction, Score: match.Similarity,
+					Explanation: "local pgvector cosine similarity; source ownership and sensitivity filters applied",
+				})
+			}
+			return &SearchResult{Query: request.Query, ProjectKey: request.ProjectKey, UsedContext: ranked,
+				Explanation: fmt.Sprintf("Retrieved %d source-backed records through local pgvector semantic retrieval; owner, project, archive, and sensitivity filters were enforced in the database query.", len(ranked))}, nil
+		}
+		// A semantic failure falls back to the existing bounded keyword search.
+		// It is deliberately not attached to an arbitrary source audit record.
 	}
 	extractions, err := s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), strings.TrimSpace(request.ProjectKey), false)
 	if err != nil {
@@ -1626,7 +1853,20 @@ func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	if err := s.repo.DeletePendingVectorIndex(extraction.ID); err != nil {
 		return err
 	}
-	return nil
+	if s.semanticService == nil || !s.semanticService.Enabled() {
+		return nil
+	}
+	if err := s.semanticService.Index(context.Background(), extraction); err != nil {
+		// Semantic indexing is optional enrichment. Preserve the extracted record
+		// and keyword index, then expose the degraded state in the source audit.
+		s.audit(extraction.SourceID, "semantic.index_failed", "local semantic index was not updated: "+compact(err.Error(), 240))
+		return nil
+	}
+	_, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
+		SourceID: extraction.SourceID, ExtractionID: extraction.ID, ProjectKey: extraction.ProjectKey,
+		IndexType: "pgvector", VectorRef: "pgvector:local-embedding",
+	})
+	return err
 }
 
 func (s *service) beginSync(sourceID uuid.UUID) bool {
@@ -1671,14 +1911,16 @@ func (s *service) audit(sourceID uuid.UUID, action, message string) {
 //	                     than reading a real source.
 //	AdapterNotImplemented — registered as a contract only; no working adapter.
 //
-// All but AdapterNotImplemented are "usable" (see adapterIsUsable): a source can
-// be created and will ingest. The distinction exists so the UI can stop
-// reporting a local-folder reader as a live Gmail/Trello/Drive connector.
+// Only operational, local-only, and modeled adapters are usable (see
+// adapterIsUsable). The distinction lets the UI avoid reporting a local-folder
+// reader as a live Gmail/Trello/Drive connector or a disabled remote adapter as
+// ready to connect.
 const (
-	AdapterOperational    = "operational"
-	AdapterLocalOnly      = "local_only"
-	AdapterModeled        = "modeled"
-	AdapterNotImplemented = "not_implemented"
+	AdapterOperational           = "operational"
+	AdapterLocalOnly             = "local_only"
+	AdapterModeled               = "modeled"
+	AdapterConfigurationRequired = "configuration_required"
+	AdapterNotImplemented        = "not_implemented"
 )
 
 // adapterIsUsable reports whether a connector with the given status can back a
@@ -1705,7 +1947,12 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "manual and scheduled ingestion of an allowlisted local folder"},
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
+		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
+		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
+		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
+		{ConnectorKey: airbyteInventoryConnectorKey, Name: "Airbyte source and connection inventory (local read only)", Category: "connector_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "airbyte-api-key,approved-workspace:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded source and connection metadata from a configured local Airbyte API and fixed workspace allowlist; never reads credentials/configuration/records or creates, changes, starts, stops, or deletes a sync"},
+		{ConnectorKey: openSpecArtifactConnectorKey, Name: "OpenSpec change artifacts (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only proposal.md, design.md, tasks.md, and specs Markdown below a selected local openspec/changes folder; never installs or runs OpenSpec, edits a repository, or authorizes code changes"},
 	}
 }
 
@@ -1735,7 +1982,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "odoo-herp"
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
@@ -1770,7 +2017,7 @@ func minimalPermissions(category string, requested []string) []string {
 	if len(requested) == 0 {
 		return []string{"metadata:read", category + ":read"}
 	}
-	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "herp:read": true, "odoo:read": true}
+	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
 	result := []string{}
 	for _, value := range requested {
 		value = strings.TrimSpace(value)
@@ -1809,6 +2056,9 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 }
 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
+	if source.ConnectorKey == "whisper-audio" {
+		return false, "whisper-audio transcription is operator-triggered only"
+	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
 	}

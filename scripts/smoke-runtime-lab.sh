@@ -4,9 +4,9 @@
 #
 # Boots a throwaway PostgreSQL + the real backend and proves HAI is the truthful
 # control plane above external runtimes: the local safe worker self-tests through
-# the Operation Ledger (real execute + verify), while Hermes/OpenClaw/Odysseus
-# are not_configured with exact setup requirements and NEVER report a successful
-# self-test or execution. Browser/script runtimes are contracts only.
+# the Operation Ledger (real execute + verify), while Hermes/OpenClaw/Odysseus/
+# OpenHands are not_configured with exact setup requirements and NEVER report a
+# successful self-test or execution. Browser/script runtimes are contracts only.
 #
 # Requires: postgres/initdb/pg_ctl/createdb, Go, curl, jq. No Docker.
 # Usage: scripts/smoke-runtime-lab.sh
@@ -95,8 +95,8 @@ check "hermes is not executable" 'true' \
   "$(echo "${ov}" | jq -r '[.runtimes[]|select(.info.id=="hermes")][0].canExecute==false')"
 check "hermes exposes exact setup requirements" 'true' \
   "$(echo "${ov}" | jq -r '([.runtimes[]|select(.info.id=="hermes")][0].setupRequirements|length)>0')"
-check "openclaw + odysseus present as agent runtimes" 'true' \
-  "$(echo "${ov}" | jq -r '([.runtimes[]|select(.info.kind=="agent_runtime")]|length)==3')"
+check "all configured external agent runtimes are present" 'true' \
+  "$(echo "${ov}" | jq -r '([.runtimes[]|select(.info.kind=="agent_runtime")]|length)==4')"
 check "browser runtime is a contract only" 'true' \
   "$(echo "${ov}" | jq -r '[.runtimes[]|select(.info.id=="browser-runtime")][0].canExecute==false')"
 check "browser contract publishes forbidden boundary" 'forbidden:send_message' \
@@ -113,7 +113,7 @@ check "the ledger operation is completed" 'completed' \
   "$(curl -sS "${hdr[@]}" "${BASE}/operations/${op_id}" | jq -r '.status')"
 
 echo "==> External runtimes NEVER fake a self-test or execution"
-for rt in hermes openclaw odysseus; do
+for rt in hermes openclaw odysseus openhands; do
   res="$(curl -sS "${hdr[@]}" -X POST "${BASE}/runtime-lab/${rt}/self-test")"
   check "${rt} self-test is setup_required (never succeeded)" 'setup_required' "$(echo "${res}" | jq -r '.status')"
 done

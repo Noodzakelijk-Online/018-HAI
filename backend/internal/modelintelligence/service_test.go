@@ -2,6 +2,8 @@ package modelintelligence
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -25,10 +27,211 @@ func TestRegistryTruthfulProviderStates(t *testing.T) {
 	if byID[ProviderTestFastTriage].Status != ProviderActive {
 		t.Fatalf("test-fast-triage must be active, got %s", byID[ProviderTestFastTriage].Status)
 	}
-	for _, id := range []string{"dspark", "ollama", "lm-studio", "custom-openai-compatible"} {
+	for _, id := range []string{"dspark", "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "mistral-rs", "litellm", "custom-openai-compatible"} {
 		if byID[id].Status != ProviderNotConfigured {
 			t.Fatalf("%s must be not_configured without env config, got %s", id, byID[id].Status)
 		}
+	}
+}
+
+func TestNamedLocalProviderProfilesRejectRemoteEndpoints(t *testing.T) {
+	for _, providerConfig := range []struct {
+		providerID string
+		envName    string
+	}{
+		{providerID: "ollama", envName: "OLLAMA_BASE_URL"},
+		{providerID: "lm-studio", envName: "LM_STUDIO_BASE_URL"},
+		{providerID: "llama-cpp", envName: "LLAMA_CPP_BASE_URL"},
+		{providerID: "localai", envName: "LOCALAI_BASE_URL"},
+		{providerID: "vllm", envName: "VLLM_BASE_URL"},
+		{providerID: "mistral-rs", envName: "MISTRAL_RS_BASE_URL"},
+	} {
+		t.Run(providerConfig.providerID, func(t *testing.T) {
+			t.Setenv(providerConfig.envName, "https://models.example.test")
+			provider, ok := NewRegistryFromEnv().Provider(providerConfig.providerID)
+			if !ok {
+				t.Fatalf("%s provider is not registered", providerConfig.providerID)
+			}
+			if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+				t.Fatalf("remote endpoint must stay unconfigured, got %#v", probe)
+			}
+		})
+	}
+}
+
+func TestLocalAIRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testing.T) {
+	t.Setenv("LOCALAI_BASE_URL", "https://models.example.test")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("localai")
+	if !ok {
+		t.Fatal("LocalAI provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote LocalAI endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-localai"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("LOCALAI_BASE_URL", server.URL)
+	t.Setenv("LOCALAI_MODEL_ID", "qwen-localai")
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("localai")
+	if !ok {
+		t.Fatal("LocalAI provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "qwen-localai" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured qwen-localai", profile)
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active LocalAI provider", probe)
+	}
+}
+
+func TestVLLMRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testing.T) {
+	t.Setenv("VLLM_BASE_URL", "https://models.example.test")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("vllm")
+	if !ok {
+		t.Fatal("vLLM provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote vLLM endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-vllm"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("VLLM_BASE_URL", server.URL)
+	t.Setenv("VLLM_MODEL_ID", "qwen-vllm")
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("vllm")
+	if !ok {
+		t.Fatal("vLLM provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "qwen-vllm" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured qwen-vllm", profile)
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active vLLM provider", probe)
+	}
+}
+
+func TestMistralRSRegistryRequiresLoopbackEndpointAndUsesConfiguredModel(t *testing.T) {
+	t.Setenv("MISTRAL_RS_BASE_URL", "https://models.example.test")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("mistral-rs")
+	if !ok {
+		t.Fatal("mistral.rs provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote mistral.rs endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-mistralrs"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("MISTRAL_RS_BASE_URL", server.URL)
+	t.Setenv("MISTRAL_RS_MODEL_ID", "qwen-mistralrs")
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("mistral-rs")
+	if !ok {
+		t.Fatal("mistral.rs provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "qwen-mistralrs" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured qwen-mistralrs", profile)
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active mistral.rs provider", probe)
+	}
+}
+
+func TestLlamaCPPRegistryRequiresLocalEndpointAndUsesConfiguredModel(t *testing.T) {
+	t.Setenv("LLAMA_CPP_BASE_URL", "https://models.example.test")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("llama-cpp")
+	if !ok {
+		t.Fatal("llama.cpp provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote llama.cpp endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen3-gguf"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("LLAMA_CPP_BASE_URL", server.URL)
+	t.Setenv("LLAMA_CPP_MODEL_ID", "qwen3-gguf")
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("llama-cpp")
+	if !ok {
+		t.Fatal("llama.cpp provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "qwen3-gguf" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured qwen3-gguf", profile)
+	}
+	probe := provider.Probe(context.Background(), time.Now().UTC())
+	if probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active llama.cpp provider", probe)
+	}
+}
+
+func TestLiteLLMRegistryRequiresExplicitLocalAuthenticatedGateway(t *testing.T) {
+	t.Setenv("LITELLM_ENABLED", "true")
+	t.Setenv("LITELLM_BASE_URL", "https://models.example.test")
+	t.Setenv("LITELLM_MODEL_ID", "local-qwen")
+	t.Setenv("LITELLM_API_KEY", "gateway-secret")
+	registry := NewRegistryFromEnv()
+	provider, ok := registry.Provider("litellm")
+	if !ok {
+		t.Fatal("LiteLLM provider is not registered")
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderNotConfigured {
+		t.Fatalf("remote LiteLLM endpoint must stay unconfigured, got %#v", probe)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer gateway-secret" {
+			t.Fatalf("authorization = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"local-qwen"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("LITELLM_BASE_URL", server.URL)
+	registry = NewRegistryFromEnv()
+	provider, ok = registry.Provider("litellm")
+	if !ok {
+		t.Fatal("LiteLLM provider is not registered after configuration")
+	}
+	profile := provider.Profiles()[0]
+	if profile.ModelID != "local-qwen" || profile.Status != ProviderConfigured {
+		t.Fatalf("profile = %#v, want configured local-qwen", profile)
+	}
+	if probe := provider.Probe(context.Background(), time.Now().UTC()); probe.Status != ProviderActive || probe.ModelsSeen != 1 {
+		t.Fatalf("probe = %#v, want active LiteLLM provider", probe)
 	}
 }
 

@@ -81,6 +81,7 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 		t.Fatalf("RunMigrations: %v", err)
 	}
 	for _, version := range []string{
+		"post/0003_durable_jobs_queue_index",
 		"post/0002_durable_jobs_indexes",
 		"post/0001_conversation_owner_identity",
 	} {
@@ -101,13 +102,16 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 	if applied["post/0002_durable_jobs_indexes"] {
 		t.Fatal("later rolled-back migration should not remain recorded")
 	}
+	if applied["post/0003_durable_jobs_queue_index"] {
+		t.Fatal("queue-index migration should not remain recorded")
+	}
 	// Re-apply cleanly.
 	count, err := ApplyMigrations(db, migrations.Files, "post")
 	if err != nil {
 		t.Fatalf("re-apply post: %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("re-applied %d post migrations, want 2", count)
+	if count != 3 {
+		t.Fatalf("re-applied %d post migrations, want 3", count)
 	}
 	if !indexExists(t, db, "idx_ai_conversation_owner_identity") {
 		t.Fatal("index should be restored after re-apply")

@@ -148,7 +148,7 @@ func TestExpiredLeaseIsReclaimed(t *testing.T) {
 		t.Fatalf("Enqueue: %v", err)
 	}
 	// Claim it, then abandon it (as if the worker crashed).
-	if _, err := repo.ClaimDue("dead-worker", now, 10); err != nil {
+	if _, err := repo.ClaimDue("dead-worker", "default", now, 10); err != nil {
 		t.Fatalf("ClaimDue: %v", err)
 	}
 	// Backdate the lease so it is expired.
@@ -169,5 +169,165 @@ func TestExpiredLeaseIsReclaimed(t *testing.T) {
 	stored, _ := repo.Find(job.ID)
 	if stored.Status != models.DurableJobSucceeded {
 		t.Fatalf("status=%q, want succeeded after lease recovery", stored.Status)
+	}
+}
+
+func TestQueuesAreClaimedIndependently(t *testing.T) {
+	repo, _ := integrationRepo(t)
+	now := time.Now().UTC()
+
+	for _, queue := range []string{"source", "workflow"} {
+		job := &models.DurableJob{
+			Queue:       queue,
+			Kind:        "shared-kind",
+			Payload:     "{}",
+			Status:      models.DurableJobPending,
+			RunAt:       now,
+			MaxAttempts: 3,
+		}
+		if _, err := repo.Enqueue(job); err != nil {
+			t.Fatalf("enqueue %s job: %v", queue, err)
+		}
+	}
+
+	claimed, err := repo.ClaimDue("source-worker", "source", now, 10)
+	if err != nil {
+		t.Fatalf("claim source queue: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].Queue != "source" {
+		t.Fatalf("claimed %#v, want only source queue", claimed)
+	}
+
+	workflowClaimed, err := repo.ClaimDue("workflow-worker", "workflow", now, 10)
+	if err != nil {
+		t.Fatalf("claim workflow queue: %v", err)
+	}
+	if len(workflowClaimed) != 1 || workflowClaimed[0].Queue != "workflow" {
+		t.Fatalf("claimed %#v, want only workflow queue", workflowClaimed)
+	}
+}
+
+func TestReclaimedLeaseFencesStaleWorkerCompletion(t *testing.T) {
+	repo, db := integrationRepo(t)
+	now := time.Now().UTC()
+	lease := 30 * time.Second
+
+	job, err := repo.Enqueue(&models.DurableJob{
+		Queue:       "workflow",
+		Kind:        "fenced",
+		Payload:     "{}",
+		Status:      models.DurableJobPending,
+		RunAt:       now,
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	firstLease, err := repo.ClaimDue("worker-one", "workflow", now, 1)
+	if err != nil || len(firstLease) != 1 {
+		t.Fatalf("first claim: jobs=%d err=%v", len(firstLease), err)
+	}
+	if err := db.Model(&models.DurableJob{}).Where("id = ?", job.ID).
+		Update("locked_at", now.Add(-2*lease)).Error; err != nil {
+		t.Fatalf("expire first lease: %v", err)
+	}
+	if reaped, err := repo.ReapExpiredLeases(now, lease); err != nil || reaped != 1 {
+		t.Fatalf("reap: count=%d err=%v", reaped, err)
+	}
+
+	secondLease, err := repo.ClaimDue("worker-two", "workflow", now, 1)
+	if err != nil || len(secondLease) != 1 {
+		t.Fatalf("second claim: jobs=%d err=%v", len(secondLease), err)
+	}
+	if secondLease[0].LeaseGeneration <= firstLease[0].LeaseGeneration {
+		t.Fatalf(
+			"lease generation did not advance: first=%d second=%d",
+			firstLease[0].LeaseGeneration,
+			secondLease[0].LeaseGeneration,
+		)
+	}
+
+	updated, err := repo.MarkSucceeded(
+		job.ID,
+		"worker-one",
+		firstLease[0].LeaseGeneration,
+		now.Add(time.Second),
+	)
+	if err != nil {
+		t.Fatalf("stale completion returned error: %v", err)
+	}
+	if updated {
+		t.Fatal("stale worker completed a reclaimed job")
+	}
+
+	updated, err = repo.MarkSucceeded(
+		job.ID,
+		"worker-two",
+		secondLease[0].LeaseGeneration,
+		now.Add(2*time.Second),
+	)
+	if err != nil || !updated {
+		t.Fatalf("current worker completion: updated=%t err=%v", updated, err)
+	}
+}
+
+func TestSingletonSchedulingIsAtomicPerQueueAndKind(t *testing.T) {
+	repo, db := integrationRepo(t)
+	now := time.Now().UTC()
+	const contenderCount = 16
+
+	var wg sync.WaitGroup
+	results := make(chan bool, contenderCount)
+	errorsCh := make(chan error, contenderCount)
+	for i := 0; i < contenderCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			created, err := repo.EnqueueIfNoActive(&models.DurableJob{
+				Queue:       "ambient",
+				Kind:        "singleton-scan",
+				Payload:     "{}",
+				Status:      models.DurableJobPending,
+				RunAt:       now,
+				MaxAttempts: 3,
+			})
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			results <- created
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errorsCh)
+
+	for err := range errorsCh {
+		t.Fatalf("singleton scheduling: %v", err)
+	}
+	createdCount := 0
+	for created := range results {
+		if created {
+			createdCount++
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("created %d singleton jobs, want exactly 1", createdCount)
+	}
+
+	var storedCount int64
+	if err := db.Model(&models.DurableJob{}).
+		Where(
+			"queue = ? AND kind = ? AND status IN ?",
+			"ambient",
+			"singleton-scan",
+			[]string{models.DurableJobPending, models.DurableJobRunning},
+		).
+		Count(&storedCount).Error; err != nil {
+		t.Fatalf("count singleton jobs: %v", err)
+	}
+	if storedCount != 1 {
+		t.Fatalf("stored %d singleton jobs, want 1", storedCount)
 	}
 }

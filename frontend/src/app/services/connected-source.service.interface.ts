@@ -20,6 +20,7 @@ export interface IConnectedSourceService {
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource>;
   startGoogleOAuth(sourceId: string): Observable<{ authorizeUrl: string }>;
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult>;
+  transcribe(sourceId: string): Observable<ISourceSyncResult>;
   runDueScheduledSyncs(): Observable<IScheduledSyncRun>;
   reindex(sourceId: string): Observable<ISourceSyncResult>;
   pause(sourceId: string): Observable<IConnectedSource>;

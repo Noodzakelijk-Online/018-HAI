@@ -7,6 +7,7 @@ import (
 
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -1968,6 +1969,35 @@ func TestRunDueBlocksWorkflowWhenEmergencyStopActive(t *testing.T) {
 	}
 	if updated.Item.CurrentState != StateReady {
 		t.Fatalf("state = %q, want ready because emergency stop should not consume the item", updated.Item.CurrentState)
+	}
+}
+
+func TestRunDueBlocksWorkflowWhenPersistedEmergencyStopActive(t *testing.T) {
+	restore := safety.SetEmergencyStopProvider(safety.EmergencyStopProviderFunc(func() (bool, string, error) {
+		return true, "operator paused execution", nil
+	}))
+	defer restore()
+
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{Passed: true}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Blocked != 1 || len(runner.requests) != 0 {
+		t.Fatalf("persisted stop did not block workflow: summary=%#v calls=%d", summary, len(runner.requests))
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateReady {
+		t.Fatalf("state = %q, want ready", updated.Item.CurrentState)
 	}
 }
 

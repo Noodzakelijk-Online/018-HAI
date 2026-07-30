@@ -3,6 +3,8 @@ package automation
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"mime/multipart"
 	"net"
@@ -20,6 +22,7 @@ import (
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -570,6 +573,7 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	target := writeExecutableScriptFixture(t, dir, "ok")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
 
 	id := uuid.New()
 	repo := newFakeAutomationRepo(&models.Automation{
@@ -630,6 +634,7 @@ func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
 	target := writeExecutableScriptFixture(t, dir, "clean-environment")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
 	t.Setenv("SECRET_TOKEN", "must-not-leak")
 
 	id := uuid.New()
@@ -661,6 +666,7 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 	target := writeExecutableScriptFixture(t, dir, "redact")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
 
 	id := uuid.New()
 	repo := newFakeAutomationRepo(&models.Automation{
@@ -725,6 +731,16 @@ func writeExecutableScriptFixture(t *testing.T, dir, mode string) string {
 		t.Fatalf("write script fixture: %v", err)
 	}
 	return filepath.Base(target)
+}
+
+func scriptPin(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	sum := sha256.Sum256(contents)
+	return filepath.Base(path) + "=" + hex.EncodeToString(sum[:])
 }
 
 func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
@@ -880,6 +896,32 @@ func TestLaunchBlocksWhenEmergencyStopActive(t *testing.T) {
 	}
 	if len(repo.launchEvents) != 1 || repo.launchEvents[0].Status != "blocked" {
 		t.Fatalf("expected blocked launch event, got %#v", repo.launchEvents)
+	}
+}
+
+func TestLaunchBlocksWhenPersistedEmergencyStopActive(t *testing.T) {
+	restore := safety.SetEmergencyStopProvider(safety.EmergencyStopProviderFunc(func() (bool, string, error) {
+		return true, "operator paused execution", nil
+	}))
+	defer restore()
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Persisted Stop Automation",
+		URLPath:      "persisted-stop-automation",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "browser_url",
+		LaunchTarget: "http://localhost:8080",
+	})
+	service := NewService(repo, events.Publisher{})
+	result, err := service.Launch(id)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "blocked" || result.Message != "operator paused execution" {
+		t.Fatalf("persisted stop did not block automation launch: %#v", result)
 	}
 }
 

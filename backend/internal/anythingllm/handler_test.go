@@ -1,0 +1,40 @@
+package anythingllm
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+type fakeService struct{ err error }
+
+func (f fakeService) Status() Status                                       { return Status{} }
+func (f fakeService) Probe(context.Context) (*ProbeResult, error)          { return nil, f.err }
+func (f fakeService) Retrieve(context.Context, Request) (*Response, error) { return nil, f.err }
+
+func TestHandlerDoesNotLeakLocalAnythingLLMErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/retrieve", NewHandler(fakeService{err: errors.New("local-token secret internal error")}).Retrieve)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/retrieve", strings.NewReader(`{"query":"test","workspaceSlug":"approved"}`)))
+	if response.Code != http.StatusBadGateway || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("unexpected error response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHandlerReturnsInvalidRequestSeparately(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/retrieve", NewHandler(fakeService{err: ErrInvalidRequest}).Retrieve)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/retrieve", strings.NewReader(`{"query":"test","workspaceSlug":"other"}`)))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "approved workspace") {
+		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}

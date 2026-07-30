@@ -110,14 +110,131 @@ services:
       # be enabled regardless of .env.
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE}
       RUN_MODE: ${RUN_MODE}
+      HAI_PROMETHEUS_ENABLED: ${HAI_PROMETHEUS_ENABLED}
+      HAI_PROMETHEUS_TOKEN: ${HAI_PROMETHEUS_TOKEN}
       LLM_POLICY_JSON: ${LLM_POLICY_JSON}
       LLM_PROVIDERS_JSON: ${LLM_PROVIDERS_JSON}
       LLM_REQUIRE_RECENT_LIVE_PROBE: ${LLM_REQUIRE_RECENT_LIVE_PROBE}
       LLM_PROVIDER_PROBE_MAX_AGE_SECONDS: ${LLM_PROVIDER_PROBE_MAX_AGE_SECONDS}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
       LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL}
+      LLAMA_CPP_BASE_URL: ${LLAMA_CPP_BASE_URL}
+      LLAMA_CPP_MODEL_ID: ${LLAMA_CPP_MODEL_ID}
+      LOCALAI_BASE_URL: ${LOCALAI_BASE_URL}
+      LOCALAI_MODEL_ID: ${LOCALAI_MODEL_ID}
+      VLLM_BASE_URL: ${VLLM_BASE_URL}
+      VLLM_MODEL_ID: ${VLLM_MODEL_ID}
+      MISTRAL_RS_BASE_URL: ${MISTRAL_RS_BASE_URL}
+      MISTRAL_RS_MODEL_ID: ${MISTRAL_RS_MODEL_ID}
+      LITELLM_ENABLED: ${LITELLM_ENABLED}
+      LITELLM_BASE_URL: ${LITELLM_BASE_URL}
+      LITELLM_MODEL_ID: ${LITELLM_MODEL_ID}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      HAI_SEMANTIC_RETRIEVAL_ENABLED: ${HAI_SEMANTIC_RETRIEVAL_ENABLED}
+      HAI_EMBEDDING_BASE_URL: ${HAI_EMBEDDING_BASE_URL}
+      HAI_EMBEDDING_MODEL: ${HAI_EMBEDDING_MODEL}
+      HAI_EMBEDDING_API_KEY: ${HAI_EMBEDDING_API_KEY:-}
+      HAI_EMBEDDING_INPUT_LIMIT: ${HAI_EMBEDDING_INPUT_LIMIT}
+      HAI_EMBEDDING_TIMEOUT_SECONDS: ${HAI_EMBEDDING_TIMEOUT_SECONDS}
+      # Optional internal-only OR-Tools planner. It emits proposals only and
+      # cannot apply workflow, calendar, filesystem, or external changes.
+      HAI_PLANNING_OPTIMIZER_ENABLED: ${HAI_PLANNING_OPTIMIZER_ENABLED}
+      HAI_PLANNING_OPTIMIZER_BASE_URL: ${HAI_PLANNING_OPTIMIZER_BASE_URL}
+      HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS: ${HAI_PLANNING_OPTIMIZER_TIMEOUT_SECONDS}
+      HAI_TEMPORAL_ENABLED: ${HAI_TEMPORAL_ENABLED}
+      HAI_TEMPORAL_ADDRESS: ${HAI_TEMPORAL_ADDRESS}
+      HAI_TEMPORAL_NAMESPACE: ${HAI_TEMPORAL_NAMESPACE}
+      HAI_TEMPORAL_TASK_QUEUE: ${HAI_TEMPORAL_TASK_QUEUE}
+      HAI_PLAYWRIGHT_ENABLED: ${HAI_PLAYWRIGHT_ENABLED}
+      HAI_PLAYWRIGHT_RUNNER_URL: ${HAI_PLAYWRIGHT_RUNNER_URL}
+      HAI_PLAYWRIGHT_RUNNER_TOKEN: ${HAI_PLAYWRIGHT_RUNNER_TOKEN:-}
+      HAI_PLAYWRIGHT_PROFILES: ${HAI_PLAYWRIGHT_PROFILES}
+      HAI_SEARXNG_ENABLED: ${HAI_SEARXNG_ENABLED}
+      HAI_SEARXNG_BASE_URL: ${HAI_SEARXNG_BASE_URL}
+      HAI_RAGFLOW_ENABLED: ${HAI_RAGFLOW_ENABLED}
+      HAI_RAGFLOW_BASE_URL: ${HAI_RAGFLOW_BASE_URL}
+      HAI_RAGFLOW_API_KEY: ${HAI_RAGFLOW_API_KEY:-}
+      HAI_RAGFLOW_DATASET_IDS: ${HAI_RAGFLOW_DATASET_IDS:-}
+      HAI_ANYTHINGLLM_ENABLED: ${HAI_ANYTHINGLLM_ENABLED:-false}
+      HAI_ANYTHINGLLM_BASE_URL: ${HAI_ANYTHINGLLM_BASE_URL:-http://host.docker.internal:3001}
+      HAI_ANYTHINGLLM_API_KEY: ${HAI_ANYTHINGLLM_API_KEY:-}
+      HAI_ANYTHINGLLM_WORKSPACE_SLUGS: ${HAI_ANYTHINGLLM_WORKSPACE_SLUGS:-}
+      HAI_ANYTHINGLLM_LOCAL_EMBEDDINGS_CONFIRMED: ${HAI_ANYTHINGLLM_LOCAL_EMBEDDINGS_CONFIRMED:-false}
+      HAI_SERENA_ENABLED: ${HAI_SERENA_ENABLED:-false}
+      HAI_SERENA_BASE_URL: ${HAI_SERENA_BASE_URL:-http://host.docker.internal:9121/mcp}
+      HAI_SERENA_PROJECT_ID: ${HAI_SERENA_PROJECT_ID:-}
+      HAI_ODOO_ENABLED: ${HAI_ODOO_ENABLED:-false}
+      HAI_ODOO_BASE_URL: ${HAI_ODOO_BASE_URL:-}
+      HAI_ODOO_DATABASE: ${HAI_ODOO_DATABASE:-}
+      HAI_ODOO_API_KEY: ${HAI_ODOO_API_KEY:-}
+      HAI_ODOO_ALLOWED_MODELS: ${HAI_ODOO_ALLOWED_MODELS:-crm.lead,project.task}
+      HAI_ODOO_SYNC_LIMIT: ${HAI_ODOO_SYNC_LIMIT:-20}
+      HAI_AIRBYTE_ENABLED: ${HAI_AIRBYTE_ENABLED:-false}
+      HAI_AIRBYTE_BASE_URL: ${HAI_AIRBYTE_BASE_URL:-}
+      HAI_AIRBYTE_API_KEY: ${HAI_AIRBYTE_API_KEY:-}
+      HAI_AIRBYTE_WORKSPACE_IDS: ${HAI_AIRBYTE_WORKSPACE_IDS:-}
+      HAI_CLOUDQUERY_SUMMARY_ENABLED: ${HAI_CLOUDQUERY_SUMMARY_ENABLED:-false}
+      HAI_CLOUDQUERY_ALLOWED_ROOT: ${HAI_CLOUDQUERY_ALLOWED_ROOT:-/cloudquery-summary}
+      HAI_CLOUDQUERY_SUMMARY_PATH: ${HAI_CLOUDQUERY_SUMMARY_PATH:-/cloudquery-summary/summary.jsonl}
+      HAI_CLOUDQUERY_MAX_ENTRIES: ${HAI_CLOUDQUERY_MAX_ENTRIES:-50}
+      HAI_PRESIDIO_ENABLED: ${HAI_PRESIDIO_ENABLED}
+      HAI_PRESIDIO_BASE_URL: ${HAI_PRESIDIO_BASE_URL}
+      HAI_PRESIDIO_LANGUAGE: ${HAI_PRESIDIO_LANGUAGE}
+      HAI_PRESIDIO_ENTITIES: ${HAI_PRESIDIO_ENTITIES}
+      HAI_EVIDENTLY_ENABLED: ${HAI_EVIDENTLY_ENABLED}
+      HAI_EVIDENTLY_BASE_URL: ${HAI_EVIDENTLY_BASE_URL}
+      HAI_EVIDENTLY_TIMEOUT_SECONDS: ${HAI_EVIDENTLY_TIMEOUT_SECONDS}
+      HAI_GUARDRAILS_ENABLED: ${HAI_GUARDRAILS_ENABLED}
+      HAI_GUARDRAILS_BASE_URL: ${HAI_GUARDRAILS_BASE_URL}
+      HAI_GUARDRAILS_TIMEOUT_SECONDS: ${HAI_GUARDRAILS_TIMEOUT_SECONDS}
+      HAI_PYDANTIC_AI_ENABLED: ${HAI_PYDANTIC_AI_ENABLED:-false}
+      HAI_PYDANTIC_AI_BASE_URL: ${HAI_PYDANTIC_AI_BASE_URL:-http://pydantic-ai-runner:8080}
+      HAI_PYDANTIC_AI_TIMEOUT_SECONDS: ${HAI_PYDANTIC_AI_TIMEOUT_SECONDS:-20}
+      # Optional FastMCP read-only context bridge. The backend never receives
+      # the MCP client token; it accepts only this separate service token and
+      # returns bounded workflow summaries for one explicitly configured owner.
+      HAI_FASTMCP_BRIDGE_ENABLED: ${HAI_FASTMCP_BRIDGE_ENABLED:-false}
+      HAI_FASTMCP_BRIDGE_TOKEN: ${HAI_FASTMCP_BRIDGE_TOKEN:-}
+      HAI_FASTMCP_BRIDGE_OWNER_ID: ${HAI_FASTMCP_BRIDGE_OWNER_ID:-}
+      # Local A2A planning protocol subset. This token protects the direct
+      # JSON-RPC endpoint; no browser session or generic backend API key is
+      # accepted, and the endpoint can only return a planning draft.
+      HAI_A2A_BRIDGE_ENABLED: ${HAI_A2A_BRIDGE_ENABLED:-false}
+      HAI_A2A_BRIDGE_TOKEN: ${HAI_A2A_BRIDGE_TOKEN:-}
+      HAI_A2A_BRIDGE_OWNER_ID: ${HAI_A2A_BRIDGE_OWNER_ID:-}
+      HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1/api/v1/a2a}
+      HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
+      HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
+      HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}
+      HAI_PROMPTFOO_ENABLED: ${HAI_PROMPTFOO_ENABLED:-false}
+      HAI_PROMPTFOO_BASE_URL: ${HAI_PROMPTFOO_BASE_URL:-http://promptfoo-runner:8080}
+      HAI_PROMPTFOO_TIMEOUT_SECONDS: ${HAI_PROMPTFOO_TIMEOUT_SECONDS:-130}
+      HAI_DEEPTEAM_ENABLED: ${HAI_DEEPTEAM_ENABLED:-false}
+      HAI_DEEPTEAM_BASE_URL: ${HAI_DEEPTEAM_BASE_URL:-http://deepteam-runner:8080}
+      HAI_DEEPTEAM_TIMEOUT_SECONDS: ${HAI_DEEPTEAM_TIMEOUT_SECONDS:-180}
+      HAI_DEEPEVAL_ENABLED: ${HAI_DEEPEVAL_ENABLED:-false}
+      HAI_DEEPEVAL_BASE_URL: ${HAI_DEEPEVAL_BASE_URL:-http://deepeval-runner:8080}
+      HAI_DEEPEVAL_TIMEOUT_SECONDS: ${HAI_DEEPEVAL_TIMEOUT_SECONDS:-180}
+      HAI_GARAK_ENABLED: ${HAI_GARAK_ENABLED:-false}
+      HAI_GARAK_BASE_URL: ${HAI_GARAK_BASE_URL:-http://garak-runner:8080}
+      HAI_GARAK_TIMEOUT_SECONDS: ${HAI_GARAK_TIMEOUT_SECONDS:-150}
+      HAI_WHISPER_CPP_ENABLED: ${HAI_WHISPER_CPP_ENABLED:-false}
+      HAI_WHISPER_CPP_BASE_URL: ${HAI_WHISPER_CPP_BASE_URL:-http://whispercpp-runner:8080}
+      HAI_WHISPER_CPP_TIMEOUT_SECONDS: ${HAI_WHISPER_CPP_TIMEOUT_SECONDS:-300}
+      HAI_WASI_ENABLED: ${HAI_WASI_ENABLED}
+      HAI_WASI_RUNNER_URL: ${HAI_WASI_RUNNER_URL}
+      HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
+      HAI_WASI_MODULES: ${HAI_WASI_MODULES}
       ODYSSEUS_BASE_URL: ${ODYSSEUS_BASE_URL}
       ODYSSEUS_API_TOKEN: ${ODYSSEUS_API_TOKEN}
+      RUNTIME_LAB_ALLOWED_HOSTS: ${RUNTIME_LAB_ALLOWED_HOSTS}
+      HERMES_BASE_URL: ${HERMES_BASE_URL}
+      HERMES_HEALTH_PATH: ${HERMES_HEALTH_PATH}
+      OPENCLAW_BASE_URL: ${OPENCLAW_BASE_URL}
+      OPENCLAW_HEALTH_PATH: ${OPENCLAW_HEALTH_PATH}
+      ODYSSEUS_HEALTH_PATH: ${ODYSSEUS_HEALTH_PATH}
+      OPENHANDS_BASE_URL: ${OPENHANDS_BASE_URL}
+      OPENHANDS_HEALTH_PATH: ${OPENHANDS_HEALTH_PATH}
       AGENT_RUNTIME_ALLOWED_HOSTS: ${AGENT_RUNTIME_ALLOWED_HOSTS}
       AGENT_RUNTIME_OUTPUT_LIMIT_BYTES: ${AGENT_RUNTIME_OUTPUT_LIMIT_BYTES}
       AGENT_RUNTIME_WORKSPACE_ROOT: ${AGENT_RUNTIME_WORKSPACE_ROOT}
@@ -218,6 +335,9 @@ services:
       FREE_CLOUD_OPENAI_BASE_URL: ${FREE_CLOUD_OPENAI_BASE_URL}
       FREE_CLOUD_API_KEY: ${FREE_CLOUD_API_KEY}
       LLM_GENERATION_TIMEOUT_SECONDS: ${LLM_GENERATION_TIMEOUT_SECONDS}
+      HAI_MCP_PREFLIGHT_ENABLED: ${HAI_MCP_PREFLIGHT_ENABLED}
+      HAI_MCP_PREFLIGHT_SERVERS: ${HAI_MCP_PREFLIGHT_SERVERS}
+      HAI_MCP_PREFLIGHT_TIMEOUT_SECONDS: ${HAI_MCP_PREFLIGHT_TIMEOUT_SECONDS}
       LLM_ALLOW_LINK_LOCAL_ENDPOINTS: ${LLM_ALLOW_LINK_LOCAL_ENDPOINTS}
       AUTOMATION_API_ALLOWED_HOSTS: ${AUTOMATION_API_ALLOWED_HOSTS}
       AUTOMATION_API_ALLOW_LINK_LOCAL: ${AUTOMATION_API_ALLOW_LINK_LOCAL}
@@ -227,6 +347,7 @@ services:
       AUTOMATION_SCRIPT_DIR: ${AUTOMATION_SCRIPT_DIR}
       AUTOMATION_SCRIPT_TIMEOUT_SECONDS: ${AUTOMATION_SCRIPT_TIMEOUT_SECONDS}
       AUTOMATION_SCRIPT_ENV_ALLOWLIST: ${AUTOMATION_SCRIPT_ENV_ALLOWLIST}
+      AUTOMATION_SCRIPT_SHA256_ALLOWLIST: ${AUTOMATION_SCRIPT_SHA256_ALLOWLIST}
       AUTOMATION_DOCKER_CONTROL_ENABLED: ${AUTOMATION_DOCKER_CONTROL_ENABLED}
       AUTOMATION_DOCKER_SOCKET: ${AUTOMATION_DOCKER_SOCKET}
       AUTOMATION_DOCKER_ALLOWED_CONTAINERS: ${AUTOMATION_DOCKER_ALLOWED_CONTAINERS}
@@ -269,6 +390,7 @@ services:
       - ./automation-scripts:/root/automation-scripts:ro
       - ./connected-sources:/root/connected-sources:ro
       - ./agent-workspaces:/root/agent-workspaces
+      - ${CLOUDQUERY_SUMMARY_HOST_DIR:-./cloudquery-summary}:/cloudquery-summary:ro
     # /readyz, not a TCP probe: an open socket only proves the process is
     # listening. curl -f fails on the 503 that /readyz returns when a critical
     # dependency is unreachable, so `docker ps` stops reporting a backend with a
@@ -285,6 +407,16 @@ services:
     networks:
       - service-hub
       - automation-hub-network
+      - evidently-internal
+      - guardrails-internal
+      - lm-eval-internal
+      - promptfoo-internal
+      - deepteam-internal
+      - deepeval-internal
+      - garak-internal
+      - whispercpp-internal
+      - pydantic-ai-internal
+      - fastmcp-internal
 
   frontend:
     build:
@@ -302,6 +434,30 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    networks:
+      - service-hub
+
+  browser-verifier:
+    build:
+      context: ./services/browser-verifier
+      dockerfile: Dockerfile
+    profiles: ["verification"]
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+    environment:
+      HAI_PLAYWRIGHT_RUNNER_TOKEN: ${HAI_PLAYWRIGHT_RUNNER_TOKEN:-}
+      HAI_PLAYWRIGHT_ALLOWED_ORIGINS: ${HAI_PLAYWRIGHT_ALLOWED_ORIGINS}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e 'fetch("http://127.0.0.1:8080/healthz").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     networks:
       - service-hub
 
@@ -359,6 +515,473 @@ services:
     networks:
       - service-hub
 
+  ortools-solver:
+    build:
+      context: ./services/ortools-solver
+    profiles: ["optimization"]
+    restart: unless-stopped
+    environment:
+      MAX_SOLVE_SECONDS: ${HAI_PLANNING_OPTIMIZER_MAX_SOLVE_SECONDS:-2}
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - service-hub
+
+  evidently-runner:
+    build:
+      context: ./services/evidently-runner
+    profiles: ["evaluation"]
+    restart: unless-stopped
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - evidently-internal
+
+  guardrails-runner:
+    build:
+      context: ./services/guardrails-runner
+    profiles: ["validation"]
+    restart: unless-stopped
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - guardrails-internal
+
+  pydantic-ai-runner:
+    build:
+      context: ./services/pydantic-ai-runner
+    profiles: ["typed-planning"]
+    restart: unless-stopped
+    environment:
+      HAI_PYDANTIC_AI_LOCAL_BASE_URL: ${HAI_PYDANTIC_AI_LOCAL_BASE_URL:-}
+      HAI_PYDANTIC_AI_LOCAL_MODEL_ID: ${HAI_PYDANTIC_AI_LOCAL_MODEL_ID:-}
+      HAI_PYDANTIC_AI_LOCAL_API_KEY: ${HAI_PYDANTIC_AI_LOCAL_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - pydantic-ai-internal
+
+  # An optional Streamable HTTP MCP endpoint for a reviewed local client. It
+  # exposes exactly two read-only tools and is bound to the host loopback only.
+  # It does not make HAI's normal API or any write/action endpoint available.
+  fastmcp-bridge:
+    build:
+      context: ./services/fastmcp-bridge
+    profiles: ["mcp-bridge"]
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      HAI_FASTMCP_BRIDGE_ENABLED: ${HAI_FASTMCP_BRIDGE_ENABLED:-false}
+      HAI_FASTMCP_BRIDGE_TOKEN: ${HAI_FASTMCP_BRIDGE_TOKEN:-}
+      HAI_FASTMCP_CLIENT_TOKEN: ${HAI_FASTMCP_CLIENT_TOKEN:-}
+      HAI_FASTMCP_BRIDGE_API_BASE_URL: ${HAI_FASTMCP_BRIDGE_API_BASE_URL:-http://backend:8080/api/v1/mcp-agent}
+    ports:
+      - "127.0.0.1:${HAI_FASTMCP_PORT:-8090}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - fastmcp-internal
+
+  lm-eval-runner:
+    build:
+      context: ./services/lm-eval-runner
+    profiles: ["model-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_LM_EVAL_MODEL_ID: ${HAI_LM_EVAL_MODEL_ID:-}
+      HAI_LM_EVAL_MODEL_BASE_URL: ${HAI_LM_EVAL_MODEL_BASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - lm-eval-internal
+
+  promptfoo-runner:
+    build:
+      context: ./services/promptfoo-runner
+    profiles: ["safety-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_PROMPTFOO_MODEL_ID: ${HAI_PROMPTFOO_MODEL_ID:-}
+      HAI_PROMPTFOO_MODEL_BASE_URL: ${HAI_PROMPTFOO_MODEL_BASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - promptfoo-internal
+
+  deepteam-runner:
+    build:
+      context: ./services/deepteam-runner
+    profiles: ["deepteam-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_DEEPTEAM_MODEL_ID: ${HAI_DEEPTEAM_MODEL_ID:-}
+      HAI_DEEPTEAM_MODEL_BASE_URL: ${HAI_DEEPTEAM_MODEL_BASE_URL:-}
+      HAI_DEEPTEAM_MODEL_API_KEY: ${HAI_DEEPTEAM_MODEL_API_KEY:-}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    mem_limit: 768m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - deepteam-internal
+
+  deepeval-runner:
+    build:
+      context: ./services/deepeval-runner
+    profiles: ["deepeval-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_DEEPEVAL_MODEL_ID: ${HAI_DEEPEVAL_MODEL_ID:-}
+      HAI_DEEPEVAL_MODEL_BASE_URL: ${HAI_DEEPEVAL_MODEL_BASE_URL:-}
+      HAI_DEEPEVAL_MODEL_API_KEY: ${HAI_DEEPEVAL_MODEL_API_KEY:-}
+      DEEPEVAL_DISABLE_DOTENV: "1"
+      DEEPEVAL_DISABLE_LEGACY_KEYFILE: "1"
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    mem_limit: 1024m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    networks:
+      - deepeval-internal
+
+  garak-runner:
+    build:
+      context: ./services/garak-runner
+    profiles: ["garak-evaluation"]
+    restart: unless-stopped
+    environment:
+      HAI_GARAK_MODEL_ID: ${HAI_GARAK_MODEL_ID:-}
+      HAI_GARAK_MODEL_BASE_URL: ${HAI_GARAK_MODEL_BASE_URL:-}
+      HAI_GARAK_MODEL_API_KEY: ${HAI_GARAK_MODEL_API_KEY:-}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    mem_limit: 1024m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - garak-internal
+
+  whispercpp-runner:
+    build:
+      context: ./services/whispercpp-runner
+    profiles: ["local-transcription"]
+    restart: unless-stopped
+    environment:
+      WHISPER_CPP_MODEL_FILE: ${WHISPER_CPP_MODEL_FILE:-}
+      WHISPER_CPP_LANGUAGE: ${WHISPER_CPP_LANGUAGE:-auto}
+      WHISPER_CPP_FILE_LIMIT: ${WHISPER_CPP_FILE_LIMIT:-25}
+      WHISPER_CPP_MAX_AUDIO_BYTES: ${WHISPER_CPP_MAX_AUDIO_BYTES:-67108864}
+      WHISPER_CPP_TIMEOUT_SECONDS: ${WHISPER_CPP_TIMEOUT_SECONDS:-180}
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=768m
+    volumes:
+      - ./connected-sources:/intake:ro
+      - ./whisper-models:/models:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - whispercpp-internal
+
+  wasi-runner:
+    build:
+      context: ./services/wasi-runner
+    profiles: ["wasi"]
+    restart: unless-stopped
+    environment:
+      HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
+    volumes:
+      - ./wasi-modules:/modules:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - service-hub
+
+  # Optional, internal-only durable orchestration. It is intentionally split
+  # from HAI's primary Postgres instance and is enabled only with
+  # `--profile durability`. No Temporal port is exposed to the host.
+  temporal-postgres:
+    image: postgres:17-alpine
+    profiles: ["durability"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+      POSTGRES_DB: temporal
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - service-hub
+
+  temporal-schema:
+    image: temporalio/admin-tools:1.31.2
+    profiles: ["durability"]
+    restart: "no"
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    environment:
+      DB_PORT: 5432
+      POSTGRES_SEEDS: temporal-postgres
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+      SQL_PASSWORD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+    volumes:
+      - ./services/temporal/setup-postgres.sh:/scripts/setup-postgres.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/setup-postgres.sh"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - service-hub
+
+  temporal:
+    image: temporalio/server:1.31.2
+    profiles: ["durability"]
+    restart: unless-stopped
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${HAI_TEMPORAL_POSTGRES_PASSWORD:-temporal-local-only}
+      POSTGRES_SEEDS: temporal-postgres
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    expose:
+      - "7233"
+    volumes:
+      - ./services/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - service-hub
+
+  temporal-namespace:
+    image: temporalio/admin-tools:1.31.2
+    profiles: ["durability"]
+    restart: "no"
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      DEFAULT_NAMESPACE: ${HAI_TEMPORAL_NAMESPACE:-default}
+    volumes:
+      - ./services/temporal/create-namespace.sh:/scripts/create-namespace.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/create-namespace.sh"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - service-hub
+
   postgres-idp:
     image: postgres:17-alpine
     container_name: 018-hai-postgres-idp
@@ -383,7 +1006,9 @@ services:
       - idp-network
 
   postgres-automation:
-    image: postgres:17-alpine
+    # Pinned upstream pgvector Postgres 17 image. Existing data stays in the
+    # named volume; take a backup before changing a live database image.
+    image: pgvector/pgvector:0.8.5-pg17-bookworm
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped
@@ -499,9 +1124,51 @@ networks:
   service-hub:
     name: 018-hai-service-hub
     driver: bridge
+  evidently-internal:
+    name: 018-hai-evidently-internal
+    driver: bridge
+    internal: true
+  guardrails-internal:
+    name: 018-hai-guardrails-internal
+    driver: bridge
+    internal: true
+  lm-eval-internal:
+    name: 018-hai-lm-eval-internal
+    driver: bridge
+    internal: true
+  promptfoo-internal:
+    name: 018-hai-promptfoo-internal
+    driver: bridge
+    internal: true
+  deepteam-internal:
+    name: 018-hai-deepteam-internal
+    driver: bridge
+    internal: true
+  deepeval-internal:
+    name: 018-hai-deepeval-internal
+    driver: bridge
+    internal: true
+  garak-internal:
+    name: 018-hai-garak-internal
+    driver: bridge
+    internal: true
+  whispercpp-internal:
+    name: 018-hai-whispercpp-internal
+    driver: bridge
+    internal: true
+  pydantic-ai-internal:
+    name: 018-hai-pydantic-ai-internal
+    driver: bridge
+    internal: true
+  fastmcp-internal:
+    name: 018-hai-fastmcp-internal
+    driver: bridge
+    internal: true
 
 volumes:
   postgres-idp-data:
     name: 018-hai-postgres-idp-data
   postgres-automation-data:
     name: 018-hai-postgres-automation-data
+  temporal-postgres-data:
+    name: 018-hai-temporal-postgres-data
