@@ -149,6 +149,16 @@ func RunMigrations(db *gorm.DB) error {
 			&models.TaskCompletionPlanLog{},
 			&models.TaskReviewItemRecord{},
 			&models.TaskReviewDecisionRecord{},
+			// Owner-scoped whole-life ontology, append-only need/capacity
+			// observations, and durable goal hierarchy.
+			&models.LifeEntityDomainLink{},
+			&models.LifeNeedObservation{},
+			&models.LifeCapacitySnapshot{},
+			&models.LifeGoalNode{},
+			&models.LifePriorityAssessment{},
+			&models.StandingMandate{},
+			&models.StandingMandateDecision{},
+			&models.DomainPackPreference{},
 		); err != nil {
 			return err
 		}

@@ -71,6 +71,15 @@ type OperatingContextProvider interface {
 	LatestCapacity(ownerIdentity string, at time.Time) (*frameworkregistry.CapacitySnapshot, error)
 }
 
+type OperatingContextRecorder interface {
+	RecordTaskDomains(
+		ownerIdentity string,
+		taskPlanID string,
+		assignments []frameworkregistry.LifeDomainAssignment,
+		selectionID string,
+	) error
+}
+
 type ContextPlan struct {
 	Strategy                 []string                  `json:"strategy"`
 	UsedContext              []memory.RankedMemory     `json:"usedContext"`
@@ -790,6 +799,16 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	})
 	if err != nil {
 		return nil, fmt.Errorf("select planning frameworks: %w", err)
+	}
+	if recorder, ok := s.operatingContext.(OperatingContextRecorder); ok {
+		if err := recorder.RecordTaskDomains(
+			request.OwnerIdentity,
+			planID,
+			frameworkDecision.LifeDomains,
+			frameworkDecision.ID,
+		); err != nil {
+			return nil, fmt.Errorf("record task life-domain context: %w", err)
+		}
 	}
 	var sourceRefresh *source.ScheduledSyncRun
 	var sourceRefreshExplanation string

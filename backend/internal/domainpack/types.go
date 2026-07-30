@@ -2,7 +2,7 @@ package domainpack
 
 import "time"
 
-const CatalogVersion = "1.0.0"
+const CatalogVersion = "1.1.0"
 
 type PackID string
 
@@ -17,6 +17,7 @@ const (
 	PackLearningGrowth            PackID = "learning_growth"
 	PackTravelMobility            PackID = "travel_mobility"
 	PackPersonalProductivity      PackID = "personal_productivity"
+	PackIdentityRoles             PackID = "identity_roles"
 	PackFamilyHousehold           PackID = "family_household"
 	PackFoodNutrition             PackID = "food_nutrition"
 	PackCommunication             PackID = "communication_correspondence"
@@ -24,8 +25,8 @@ const (
 	PackPossessionsInventory      PackID = "possessions_inventory"
 	PackAnimalsDependants         PackID = "animals_dependants"
 	PackCommunityCivic            PackID = "community_civic"
-	PackLeisure                   PackID = "leisure"
-	PackCreativity                PackID = "creativity"
+	PackLeisure                   PackID = "leisure_recreation"
+	PackCreativity                PackID = "creativity_expression"
 	PackMeaningValues             PackID = "meaning_values"
 	PackEnvironmentSustainability PackID = "environment_sustainability"
 	PackLegacyLongTerm            PackID = "legacy_long_term"
@@ -148,13 +149,41 @@ type CatalogMetadata struct {
 	PackCount int    `json:"packCount"`
 }
 
+type PreferenceStatus string
+
+const (
+	PreferenceStatusDraft    PreferenceStatus = "draft"
+	PreferenceStatusActive   PreferenceStatus = "active"
+	PreferenceStatusArchived PreferenceStatus = "archived"
+)
+
+// PackAdaptation is deliberately additive. It can improve owner-specific
+// intake, classification and safeguards, but cannot remove or weaken any
+// catalog-owned rule.
+type PackAdaptation struct {
+	Notes                           string                   `json:"notes,omitempty"`
+	AdditionalClassificationSignals []ClassificationSignal   `json:"additionalClassificationSignals,omitempty"`
+	AdditionalIntakeQuestions       []IntakeQuestion         `json:"additionalIntakeQuestions,omitempty"`
+	AdditionalRiskTriggers          []RiskTrigger            `json:"additionalRiskTriggers,omitempty"`
+	AdditionalApprovalRules         []ApprovalRule           `json:"additionalApprovalRules,omitempty"`
+	AdditionalEvidenceRequirements  []EvidenceRequirement    `json:"additionalEvidenceRequirements,omitempty"`
+	AdditionalValidators            []DeterministicValidator `json:"additionalValidators,omitempty"`
+	AdditionalStopConditions        []StopCondition          `json:"additionalStopConditions,omitempty"`
+	AdditionalAgentCapabilities     []string                 `json:"additionalAgentCapabilities,omitempty"`
+}
+
 type PackPreference struct {
-	OwnerIdentity       string    `json:"ownerIdentity"`
-	PackID              PackID    `json:"packId"`
-	Enabled             *bool     `json:"enabled,omitempty"`
-	ClassificationBoost int       `json:"classificationBoost"`
-	ForceLocalOnly      bool      `json:"forceLocalOnly"`
-	UpdatedAt           time.Time `json:"updatedAt"`
+	OwnerIdentity       string           `json:"ownerIdentity"`
+	PackID              PackID           `json:"packId"`
+	CatalogVersion      string           `json:"catalogVersion"`
+	Revision            int64            `json:"revision"`
+	Status              PreferenceStatus `json:"status"`
+	Enabled             *bool            `json:"enabled,omitempty"`
+	ClassificationBoost int              `json:"classificationBoost"`
+	ForceLocalOnly      bool             `json:"forceLocalOnly"`
+	Adaptation          PackAdaptation   `json:"adaptation"`
+	CreatedAt           time.Time        `json:"createdAt"`
+	UpdatedAt           time.Time        `json:"updatedAt"`
 }
 
 type PackView struct {

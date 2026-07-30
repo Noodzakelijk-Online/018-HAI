@@ -332,6 +332,18 @@ func TestPriorityAssessmentUsesAllCriteriaAndExplainsScore(t *testing.T) {
 	if high.Factors.DeadlinePressure != 95 || high.AlgorithmVersion != priorityAlgorithmVersion {
 		t.Fatalf("deadline/version not applied: %#v", high)
 	}
+	history, err := service.PriorityHistory("alice", "task", "high", 10)
+	if err != nil {
+		t.Fatalf("PriorityHistory: %v", err)
+	}
+	if len(history) != 1 || history[0].ID != high.ID ||
+		history[0].SourceLabel != "lifeops:priority_input" {
+		t.Fatalf("priority history = %#v", history)
+	}
+	bobHistory, err := service.PriorityHistory("bob", "", "", 10)
+	if err != nil || len(bobHistory) != 0 {
+		t.Fatalf("cross-owner priority history = %#v, %v", bobHistory, err)
+	}
 }
 
 func TestPriorityAssessmentAppliesCapacityWithoutCrossOwnerLeak(t *testing.T) {

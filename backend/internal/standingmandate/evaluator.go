@@ -32,7 +32,14 @@ func (s *Service) Authorize(
 	if err != nil {
 		return nil, err
 	}
-	return evaluate(*mandate, request, now)
+	decision, err := evaluate(*mandate, request, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repository.CreateDecision(ctx, *decision); err != nil {
+		return nil, fmt.Errorf("persist authorization decision: %w", err)
+	}
+	return decision, nil
 }
 
 func evaluate(mandate StandingMandate, request ActionRequest, now time.Time) (*AuthorizationDecision, error) {

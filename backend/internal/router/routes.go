@@ -24,6 +24,7 @@ import (
 	"automation-hub-backend/internal/deepeval"
 	"automation-hub-backend/internal/deepteam"
 	"automation-hub-backend/internal/doctor"
+	"automation-hub-backend/internal/domainpack"
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/evidently"
 	"automation-hub-backend/internal/featureflags"
@@ -35,6 +36,7 @@ import (
 	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/langfuse"
+	"automation-hub-backend/internal/lifeops"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/lmeval"
 	"automation-hub-backend/internal/mcpbridge"
@@ -58,6 +60,7 @@ import (
 	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/serena"
 	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/standingmandate"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/temporalbridge"
 	"automation-hub-backend/internal/verification"
@@ -157,6 +160,34 @@ func initializeRoutes(router *gin.Engine) error {
 			return err
 		}
 		initializeFrameworkRegistryRoutes(v1, frameworkregistry.NewHandler(frameworkService))
+		lifeOpsRepository, err := lifeops.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		lifeOpsService := lifeops.NewService(lifeOpsRepository)
+		initializeLifeOpsRoutes(v1, lifeops.NewHandler(lifeOpsService))
+		mandateRepository, err := standingmandate.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		mandateService, err := standingmandate.NewService(mandateRepository, nil)
+		if err != nil {
+			return err
+		}
+		initializeStandingMandateRoutes(v1, standingmandate.NewHandler(mandateService))
+		domainPackRegistry, err := domainpack.NewBuiltinRegistry()
+		if err != nil {
+			return err
+		}
+		domainPackPreferences, err := domainpack.DefaultPreferenceRepository()
+		if err != nil {
+			return err
+		}
+		domainPackHandler, err := domainpack.NewHandler(domainPackRegistry, domainPackPreferences)
+		if err != nil {
+			return err
+		}
+		initializeDomainPackRoutes(v1, domainPackHandler)
 		taskStateRepository, err := task.DefaultTaskStateRepository()
 		if err != nil {
 			return err
@@ -170,6 +201,7 @@ func initializeRoutes(router *gin.Engine) error {
 			pursuitService,
 			frameworkService,
 			taskStateRepository,
+			task.NewLifeOpsContextProvider(lifeOpsService),
 		)
 		planningPreview, _ := taskService.(task.PreviewService)
 		a2aBridgeHandler := a2abridge.NewHandler(a2abridge.NewServiceFromEnv(planningPreview))
@@ -235,6 +267,55 @@ func initializeRoutes(router *gin.Engine) error {
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+func initializeStandingMandateRoutes(apiVersion *gin.RouterGroup, handler *standingmandate.Handler) {
+	routes := apiVersion.Group("/standing-mandates")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("", requirePermission(rbac.PermRead), handler.List)
+		routes.POST("", requirePermission(rbac.PermAdmin), handler.Create)
+		routes.GET("/decisions", requirePermission(rbac.PermRead), handler.Decisions)
+		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
+		routes.POST("/:id/activate", requirePermission(rbac.PermAdmin), handler.Activate)
+		routes.POST("/:id/revoke", requirePermission(rbac.PermAdmin), handler.Revoke)
+		routes.POST("/:id/authorize", requirePermission(rbac.PermExecute), handler.Authorize)
+	}
+}
+
+func initializeDomainPackRoutes(apiVersion *gin.RouterGroup, handler *domainpack.Handler) {
+	routes := apiVersion.Group("/domain-packs")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("", requirePermission(rbac.PermRead), handler.Catalog)
+		routes.GET("/preferences", requirePermission(rbac.PermRead), handler.Preferences)
+		routes.POST("/classify", requirePermission(rbac.PermRead), handler.Classify)
+		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Detail)
+		routes.GET("/:id/effective", requirePermission(rbac.PermRead), handler.Effective)
+		routes.PUT("/:id/preference", requirePermission(rbac.PermAdmin), handler.UpsertPreference)
+	}
+}
+
+func initializeLifeOpsRoutes(apiVersion *gin.RouterGroup, handler *lifeops.Handler) {
+	routes := apiVersion.Group("/life")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/domains", requirePermission(rbac.PermRead), handler.Domains)
+		routes.POST("/entities/link", requirePermission(rbac.PermWrite), handler.LinkEntity)
+		routes.GET("/entities/:entityType/:entityId/domains", requirePermission(rbac.PermRead), handler.EntityDomains)
+		routes.POST("/needs", requirePermission(rbac.PermWrite), handler.RecordNeed)
+		routes.GET("/needs", requirePermission(rbac.PermRead), handler.Needs)
+		routes.POST("/capacity", requirePermission(rbac.PermWrite), handler.RecordCapacity)
+		routes.GET("/capacity", requirePermission(rbac.PermRead), handler.CapacityHistory)
+		routes.GET("/capacity/latest", requirePermission(rbac.PermRead), handler.LatestCapacity)
+		routes.POST("/goals", requirePermission(rbac.PermWrite), handler.CreateGoal)
+		routes.GET("/goals", requirePermission(rbac.PermRead), handler.Goals)
+		routes.GET("/goals/forest", requirePermission(rbac.PermRead), handler.GoalForest)
+		routes.GET("/goals/:id", requirePermission(rbac.PermRead), handler.Goal)
+		routes.PATCH("/goals/:id", requirePermission(rbac.PermWrite), handler.UpdateGoal)
+		routes.POST("/priority/assess", requirePermission(rbac.PermWrite), handler.AssessPriority)
+		routes.GET("/priority/assessments", requirePermission(rbac.PermRead), handler.PriorityHistory)
+	}
 }
 
 func initializeFrameworkRegistryRoutes(apiVersion *gin.RouterGroup, handler *frameworkregistry.Handler) {

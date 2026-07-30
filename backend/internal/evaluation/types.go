@@ -1,9 +1,8 @@
 // Package evaluation defines a bounded, provider-neutral evaluation contract.
 //
-// It deliberately owns no HTTP routes, database models, model calls, or
-// promotion side effects. Integrators execute an Evaluator, construct an
-// immutable RunRecord, persist it through Repository, and separately apply a
-// fail-closed PromotionDecision.
+// It deliberately owns no HTTP routes, model calls, or promotion side effects.
+// Integrators execute an Evaluator, construct immutable records, persist them
+// through Repository, and separately apply a fail-closed PromotionDecision.
 package evaluation
 
 import (
@@ -13,8 +12,10 @@ import (
 )
 
 const (
-	DatasetSchemaVersion uint32 = 1
-	RunSchemaVersion     uint32 = 1
+	DatasetSchemaVersion           uint32 = 1
+	RunSchemaVersion               uint32 = 1
+	ComparisonReceiptSchemaVersion uint32 = 1
+	PromotionReceiptSchemaVersion  uint32 = 1
 )
 
 type RunMode string
@@ -198,4 +199,52 @@ type RunRecord struct {
 	Reproducibility       ReproducibilityManifest `json:"reproducibility"`
 	ReproducibilityDigest string                  `json:"reproducibilityDigest"`
 	RecordDigest          string                  `json:"recordDigest"`
+}
+
+// BaselineComparisonReceipt is immutable evidence of a deterministic
+// comparison. It binds the policy and result to exact run record digests.
+type BaselineComparisonReceipt struct {
+	SchemaVersion         uint32               `json:"schemaVersion"`
+	ID                    string               `json:"id"`
+	CandidateRunID        string               `json:"candidateRunId"`
+	CandidateRecordDigest string               `json:"candidateRecordDigest"`
+	BaselineRunID         string               `json:"baselineRunId"`
+	BaselineRecordDigest  string               `json:"baselineRecordDigest"`
+	Thresholds            RegressionThresholds `json:"thresholds"`
+	Comparison            BaselineComparison   `json:"comparison"`
+	CreatedAt             time.Time            `json:"createdAt"`
+	ReceiptDigest         string               `json:"receiptDigest"`
+}
+
+type BaselineComparisonReceiptSpec struct {
+	ID         string
+	Candidate  RunRecord
+	Baseline   RunRecord
+	Thresholds RegressionThresholds
+	CreatedAt  time.Time
+}
+
+// PromotionDecisionReceipt records a fail-closed decision but never applies a
+// deployment, routing, or configuration side effect.
+type PromotionDecisionReceipt struct {
+	SchemaVersion         uint32               `json:"schemaVersion"`
+	ID                    string               `json:"id"`
+	CandidateRunID        string               `json:"candidateRunId"`
+	CandidateRecordDigest string               `json:"candidateRecordDigest"`
+	BaselineRunID         string               `json:"baselineRunId,omitempty"`
+	BaselineRecordDigest  string               `json:"baselineRecordDigest,omitempty"`
+	ComparisonReceiptID   string               `json:"comparisonReceiptId,omitempty"`
+	Thresholds            RegressionThresholds `json:"thresholds"`
+	Decision              PromotionDecision    `json:"decision"`
+	CreatedAt             time.Time            `json:"createdAt"`
+	ReceiptDigest         string               `json:"receiptDigest"`
+}
+
+type PromotionDecisionReceiptSpec struct {
+	ID                  string
+	Candidate           RunRecord
+	Baseline            *RunRecord
+	ComparisonReceiptID string
+	Thresholds          RegressionThresholds
+	CreatedAt           time.Time
 }

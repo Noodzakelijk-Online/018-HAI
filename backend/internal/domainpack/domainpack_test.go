@@ -1,6 +1,7 @@
 package domainpack
 
 import (
+	"errors"
 	"reflect"
 	"sort"
 	"strings"
@@ -14,7 +15,7 @@ func TestBuiltinCatalogCompletenessAndUniqueness(t *testing.T) {
 	expected := []PackID{
 		PackLegalGovernment, PackEmergencyContinuity, PackHealthWellbeing, PackFinancial,
 		PackWorkVenture, PackHomeAssets, PackRelationshipsCare, PackLearningGrowth,
-		PackTravelMobility, PackPersonalProductivity, PackFamilyHousehold, PackFoodNutrition,
+		PackTravelMobility, PackPersonalProductivity, PackIdentityRoles, PackFamilyHousehold, PackFoodNutrition,
 		PackCommunication, PackDigitalAccounts, PackPossessionsInventory, PackAnimalsDependants,
 		PackCommunityCivic, PackLeisure, PackCreativity, PackMeaningValues,
 		PackEnvironmentSustainability, PackLegacyLongTerm, PackSafetySecurity,
@@ -50,6 +51,33 @@ func TestBuiltinCatalogCompletenessAndUniqueness(t *testing.T) {
 		if !seen[id] {
 			t.Errorf("missing pack %q", id)
 		}
+	}
+}
+
+func TestBuiltinCatalogMatchesCanonicalWholeLifeDomainIDs(t *testing.T) {
+	t.Parallel()
+	expected := map[PackID]struct{}{
+		"legal_government": {}, "emergency_continuity": {}, "health_wellbeing": {},
+		"financial": {}, "work_venture": {}, "home_assets": {}, "relationships_care": {},
+		"learning_growth": {}, "travel_mobility": {}, "personal_productivity": {},
+		"identity_roles": {}, "family_household": {}, "food_nutrition": {},
+		"communication_correspondence": {}, "digital_accounts": {},
+		"possessions_inventory": {}, "animals_dependants": {}, "community_civic": {},
+		"leisure_recreation": {}, "creativity_expression": {}, "meaning_values": {},
+		"environment_sustainability": {}, "legacy_long_term": {}, "safety_security": {},
+	}
+	packs := BuiltinPacks()
+	if len(packs) != len(expected) {
+		t.Fatalf("pack count = %d, want canonical %d", len(packs), len(expected))
+	}
+	for _, pack := range packs {
+		if _, exists := expected[pack.ID]; !exists {
+			t.Fatalf("non-canonical or duplicate domain pack id %q", pack.ID)
+		}
+		delete(expected, pack.ID)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("missing canonical pack ids: %#v", expected)
 	}
 }
 
@@ -299,6 +327,89 @@ func TestResolveAppliesConservativePreferenceOverlay(t *testing.T) {
 	again, _ := registry.Resolve("alice", PackWorkVenture, repository)
 	if again.Pack.Name == "mutated" {
 		t.Fatal("resolved view exposed registry state")
+	}
+}
+
+func TestActiveAdaptationAffectsClassificationAndDraftDoesNot(t *testing.T) {
+	t.Parallel()
+	registry := mustBuiltinRegistry(t)
+	repository := NewMemoryPreferenceRepository(nil)
+	adaptation := PackAdaptation{
+		AdditionalClassificationSignals: []ClassificationSignal{{
+			Phrase: "north star review", Strength: SignalStrong, Reason: "owner-specific planning phrase",
+		}},
+		AdditionalIntakeQuestions: []IntakeQuestion{{
+			ID: "owner_outcome", Question: "What owner outcome is expected?", Required: true,
+		}},
+		AdditionalStopConditions: []StopCondition{{
+			ID: "owner_stop", Condition: "owner pauses the work", EscalateTo: "owner_review", Level: RiskHigh,
+		}},
+	}
+	if _, err := repository.Upsert(PackPreference{
+		OwnerIdentity: "alice", PackID: PackPersonalProductivity,
+		Status: PreferenceStatusDraft, Adaptation: adaptation,
+	}); err != nil {
+		t.Fatalf("Upsert draft: %v", err)
+	}
+	draft, err := registry.Classify(ClassificationRequest{
+		OwnerIdentity: "alice", Text: "Run my north star review.",
+	}, repository)
+	if err != nil {
+		t.Fatalf("Classify draft: %v", err)
+	}
+	if _, exists := findMatch(draft.Matches, PackPersonalProductivity); exists {
+		t.Fatal("draft adaptation affected classification")
+	}
+	stored, _, err := repository.Get("alice", PackPersonalProductivity)
+	if err != nil {
+		t.Fatalf("Get draft: %v", err)
+	}
+	stored.Status = PreferenceStatusActive
+	if _, err := repository.Upsert(stored); err != nil {
+		t.Fatalf("activate adaptation: %v", err)
+	}
+	active, err := registry.Classify(ClassificationRequest{
+		OwnerIdentity: "alice", Text: "Run my north star review.",
+	}, repository)
+	if err != nil {
+		t.Fatalf("Classify active: %v", err)
+	}
+	match, exists := findMatch(active.Matches, PackPersonalProductivity)
+	if !exists || match.Score < 70 {
+		t.Fatalf("active adaptation match = %#v", match)
+	}
+	view, err := registry.Resolve("alice", PackPersonalProductivity, repository)
+	if err != nil {
+		t.Fatalf("Resolve active: %v", err)
+	}
+	if len(view.Pack.IntakeQuestions) != len(BuiltinPacks()[9].IntakeQuestions)+1 {
+		t.Fatalf("effective intake questions were not adapted: %#v", view.Pack.IntakeQuestions)
+	}
+}
+
+func TestPreferenceRevisionConflictAndRoundTrip(t *testing.T) {
+	t.Parallel()
+	repository := NewMemoryPreferenceRepository(nil)
+	first, err := repository.Upsert(PackPreference{
+		OwnerIdentity: "alice", PackID: PackWorkVenture,
+		Status:     PreferenceStatusActive,
+		Adaptation: PackAdaptation{Notes: "owner-reviewed"},
+	})
+	if err != nil {
+		t.Fatalf("first Upsert: %v", err)
+	}
+	if first.Revision != 1 || first.CatalogVersion != CatalogVersion ||
+		first.CreatedAt.IsZero() || first.UpdatedAt.IsZero() {
+		t.Fatalf("first preference metadata = %#v", first)
+	}
+	stale := first
+	stale.Revision = first.Revision + 1
+	if _, err := repository.Upsert(stale); !errors.Is(err, ErrPreferenceConflict) {
+		t.Fatalf("stale Upsert error = %v, want ErrPreferenceConflict", err)
+	}
+	current, ok, err := repository.Get("alice", PackWorkVenture)
+	if err != nil || !ok || current.Adaptation.Notes != "owner-reviewed" {
+		t.Fatalf("round trip = %#v, ok=%v, err=%v", current, ok, err)
 	}
 }
 

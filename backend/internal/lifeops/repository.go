@@ -21,6 +21,8 @@ type Repository interface {
 	FindGoal(ownerIdentity string, id uuid.UUID) (*GoalNode, error)
 	ListGoals(ownerIdentity string) ([]GoalNode, error)
 	SaveGoal(goal GoalNode) error
+	SavePriorityAssessment(assessment PriorityAssessment) error
+	PriorityAssessments(ownerIdentity, entityType, entityID string, limit int) ([]PriorityAssessment, error)
 }
 
 type MemoryRepository struct {
@@ -29,6 +31,7 @@ type MemoryRepository struct {
 	needs      map[string][]NeedObservation
 	capacities map[string][]CapacitySnapshot
 	goals      map[string]map[uuid.UUID]GoalNode
+	priorities map[string][]PriorityAssessment
 }
 
 func NewMemoryRepository() *MemoryRepository {
@@ -37,7 +40,40 @@ func NewMemoryRepository() *MemoryRepository {
 		needs:      map[string][]NeedObservation{},
 		capacities: map[string][]CapacitySnapshot{},
 		goals:      map[string]map[uuid.UUID]GoalNode{},
+		priorities: map[string][]PriorityAssessment{},
 	}
+}
+
+func (r *MemoryRepository) SavePriorityAssessment(assessment PriorityAssessment) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.priorities[assessment.OwnerIdentity] = append(
+		r.priorities[assessment.OwnerIdentity],
+		clonePriorityAssessment(assessment),
+	)
+	return nil
+}
+
+func (r *MemoryRepository) PriorityAssessments(ownerIdentity, entityType, entityID string, limit int) ([]PriorityAssessment, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]PriorityAssessment, 0)
+	for _, assessment := range r.priorities[ownerIdentity] {
+		if entityType != "" && assessment.EntityType != entityType {
+			continue
+		}
+		if entityID != "" && assessment.EntityID != entityID {
+			continue
+		}
+		result = append(result, clonePriorityAssessment(assessment))
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].AssessedAt.After(result[j].AssessedAt)
+	})
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 
 func (r *MemoryRepository) EntityDomainLinks(ownerIdentity, entityType, entityID string) ([]EntityDomainLink, error) {
@@ -170,6 +206,12 @@ func cloneGoal(input GoalNode) GoalNode {
 	input.DomainIDs = append([]DomainID(nil), input.DomainIDs...)
 	input.SuccessCriteria = append([]string(nil), input.SuccessCriteria...)
 	input.StopConditions = append([]string(nil), input.StopConditions...)
+	return input
+}
+
+func clonePriorityAssessment(input PriorityAssessment) PriorityAssessment {
+	input.Contributions = append([]FactorContribution(nil), input.Contributions...)
+	input.Reasons = append([]string(nil), input.Reasons...)
 	return input
 }
 

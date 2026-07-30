@@ -38,6 +38,16 @@ func (registry *Registry) Classify(request ClassificationRequest, preferences Pr
 	for _, id := range registry.ids {
 		pack := registry.packs[id]
 		preference, hasPreference := ownerPreferences[id]
+		if hasPreference && preference.Status != "" && preference.Status != PreferenceStatusActive {
+			hasPreference = false
+		}
+		if hasPreference {
+			var err error
+			pack, err = applyAdaptation(pack, preference.Adaptation)
+			if err != nil {
+				return ClassificationResult{}, fmt.Errorf("apply domain pack preference %q: %w", id, err)
+			}
+		}
 		enabled := pack.DefaultEnabled
 		if hasPreference && preference.Enabled != nil {
 			enabled = *preference.Enabled

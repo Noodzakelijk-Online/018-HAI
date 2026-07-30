@@ -138,6 +138,18 @@ func BuiltinPacks() []DomainPack {
 			intakeFocus:  "the desired outcome, available capacity, due date, dependencies, and review cadence",
 		},
 		{
+			id: PackIdentityRoles, name: "Identity and roles", sensitive: true, localOnly: true, retention: 3650,
+			description: "Personal identity records, roles, responsibilities, profiles, representation, and role transitions.",
+			signals: []ClassificationSignal{
+				strong("identity document", "identity record explicitly named"), strong("role responsibility", "personal role responsibility explicitly named"),
+				strong("act on my behalf", "representation authority explicitly requested"), moderate("profile change", "identity profile change named"),
+				weak("identity", "identity alone is ambiguous and sensitive"),
+			},
+			entities:     []string{"person", "identity-record", "role", "responsibility", "profile", "authority", "representation", "transition"},
+			capabilities: []string{"identity-record-organization", "role-mapping", "authority-review", "responsibility-tracking"},
+			intakeFocus:  "the identity or role, affected person, source record, authority, responsibilities, consent, and desired transition",
+		},
+		{
 			id: PackFamilyHousehold, name: "Family and household", sensitive: true, localOnly: true, retention: 1825,
 			description: "Family responsibilities, household schedules, shared decisions, dependants, and domestic coordination.",
 			signals: []ClassificationSignal{

@@ -71,7 +71,7 @@ func (s *Service) Activate(
 	if mandate.Status != StatusDraft {
 		return nil, fmt.Errorf("only draft mandates can be activated")
 	}
-	now := s.now().UTC()
+	now := monotonicTime(s.now(), mandate.UpdatedAt)
 	if mandate.ExpiresAt != nil && !now.Before(*mandate.ExpiresAt) {
 		return nil, fmt.Errorf("expired mandate cannot be activated")
 	}
@@ -108,7 +108,7 @@ func (s *Service) Revoke(
 	if mandate.Status == StatusRevoked {
 		return nil, fmt.Errorf("mandate is already revoked")
 	}
-	now := s.now().UTC()
+	now := monotonicTime(s.now(), mandate.UpdatedAt)
 	mandate.Status = StatusRevoked
 	mandate.RevokedAt = &now
 	mandate.RevokedBy = revokedBy
@@ -127,6 +127,28 @@ func (s *Service) Get(ctx context.Context, ownerIdentity string, id uuid.UUID) (
 
 func (s *Service) List(ctx context.Context, ownerIdentity string) ([]StandingMandate, error) {
 	return s.repository.List(ctx, strings.TrimSpace(ownerIdentity))
+}
+
+func (s *Service) GetDecision(
+	ctx context.Context,
+	ownerIdentity string,
+	id uuid.UUID,
+) (*AuthorizationDecision, error) {
+	return s.repository.GetDecision(ctx, strings.TrimSpace(ownerIdentity), id)
+}
+
+func (s *Service) ListDecisions(
+	ctx context.Context,
+	ownerIdentity string,
+	mandateID *uuid.UUID,
+	limit int,
+) ([]AuthorizationDecision, error) {
+	return s.repository.ListDecisions(
+		ctx,
+		strings.TrimSpace(ownerIdentity),
+		mandateID,
+		limit,
+	)
 }
 
 func firstNonEmpty(values ...string) string {

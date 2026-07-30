@@ -7,6 +7,11 @@ export interface HaiModuleDefinition {
   title: string
   description: string
   icon: string
+  primaryAction?: {
+    label: string
+    capability: string
+  }
+  advancedSectionIds?: readonly string[]
 }
 
 export const HAI_MODULES: HaiModuleDefinition[] = [
@@ -23,10 +28,48 @@ export const HAI_MODULES: HaiModuleDefinition[] = [
   { id: 'memory', route: '/memory', group: 'intelligence', title: 'Memory', description: 'Review useful, source-linked context.', icon: 'database' },
   { id: 'grounded-answers', route: '/grounded-answers', group: 'intelligence', title: 'Verified answers', description: 'Evidence, claims, and verification.', icon: 'safety-certificate' },
   { id: 'ambient-brain', route: '/ambient-brain', group: 'intelligence', title: 'Brain settings', description: 'Priorities, safeguards, and proactive work.', icon: 'compass' },
+  {
+    id: 'life-ops',
+    route: '/life-ops',
+    group: 'intelligence',
+    title: 'Life Ops',
+    description: 'Needs, capacity, goals, and whole-life priority.',
+    icon: 'heart',
+    primaryAction: {
+      label: 'Record current context',
+      capability: 'life-ops:write',
+    },
+    advancedSectionIds: [
+      'need-observations',
+      'capacity-record',
+      'entity-domains',
+      'goal-hierarchy',
+      'priority-assessment',
+      'provenance',
+    ],
+  },
   { id: 'brain-catalog', route: '/brain-catalog', group: 'intelligence', title: 'Brain catalog', description: 'Reviewed external capabilities and activation gates.', icon: 'book' },
   { id: 'hai-os', route: '/hai-os', group: 'intelligence', title: 'HAI OS', description: 'Operating-system architecture and readiness.', icon: 'deployment-unit' },
   { id: 'llm-policy', route: '/llm-policy', group: 'system', title: 'Models', description: 'Local-first routing, providers, and budget.', icon: 'deployment-unit' },
   { id: 'model-intelligence', route: '/model-intelligence', group: 'system', title: 'Model intelligence', description: 'Provider and capability health.', icon: 'experiment' },
+  {
+    id: 'framework-registry',
+    route: '/framework-registry',
+    group: 'system',
+    title: 'Framework registry',
+    description: 'Governed framework selection, owner preferences, and Constitution.',
+    icon: 'apartment',
+    primaryAction: {
+      label: 'Select frameworks',
+      capability: 'framework-registry:select',
+    },
+    advancedSectionIds: [
+      'selection-context',
+      'selection-history',
+      'constitution-history',
+      'constitution-governance',
+    ],
+  },
   { id: 'runtime-control', route: '/runtime-control', group: 'system', title: 'Runtime control', description: 'Controlled execution and safety gates.', icon: 'poweroff' },
   { id: 'runtime-lab', route: '/runtime-lab', group: 'system', title: 'Runtime lab', description: 'Runtime adapters and capability checks.', icon: 'api' },
   { id: 'system-status', route: '/system-status', group: 'system', title: 'System status', description: 'Services, dependencies, and health.', icon: 'heart' },

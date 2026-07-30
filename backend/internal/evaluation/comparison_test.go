@@ -1,8 +1,10 @@
 package evaluation
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompareToBaselineAppliesAbsoluteAndRegressionThresholds(t *testing.T) {
@@ -101,5 +103,59 @@ func TestInvalidThresholdsRejectPromotion(t *testing.T) {
 	if decision.Code != PromotionReject || decision.Allowed ||
 		len(decision.Reasons) != 1 || !strings.Contains(decision.Reasons[0], "policy") {
 		t.Fatalf("invalid thresholds did not fail closed: %#v", decision)
+	}
+}
+
+func TestComparisonAndPromotionReceiptsBindExactRunDigests(t *testing.T) {
+	dataset := testDataset(t, 1, []byte(`{"prompt":"hello"}`))
+	baseline := testRun(t, dataset, RunModeShadow, "", 1, CriterionPassed, 0.9)
+	baseline.ID = "baseline"
+	baseline.RecordDigest = runDigest(baseline)
+	candidate := testRun(t, dataset, RunModeCanary, baseline.ID, 2, CriterionPassed, 0.95)
+	thresholds := RegressionThresholds{
+		MinOverallScore: 0.8, MinCasePassRate: 1,
+		MaxOverallScoreDrop: 0.05, MaxCasePassRateDrop: 0,
+		MaxRequiredFailures: 0, MaxCriterionErrors: 0,
+	}
+	comparison, err := NewBaselineComparisonReceipt(BaselineComparisonReceiptSpec{
+		ID: "comparison", Candidate: candidate, Baseline: baseline,
+		Thresholds: thresholds, CreatedAt: time.Date(2026, 7, 30, 12, 2, 0, 123, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("new comparison receipt: %v", err)
+	}
+	if err := ValidateBaselineComparisonReceipt(comparison); err != nil {
+		t.Fatalf("valid comparison receipt rejected: %v", err)
+	}
+	tamperedComparison := cloneBaselineComparisonReceipt(comparison)
+	tamperedComparison.Comparison.OverallScoreDelta = 1
+	if err := ValidateBaselineComparisonReceipt(tamperedComparison); err == nil {
+		t.Fatal("tampered comparison receipt accepted")
+	}
+
+	promotion, err := NewPromotionDecisionReceipt(PromotionDecisionReceiptSpec{
+		ID: "promotion", Candidate: candidate, Baseline: &baseline,
+		ComparisonReceiptID: comparison.ID,
+		Thresholds:          thresholds,
+		CreatedAt:           time.Date(2026, 7, 30, 12, 3, 0, 456, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("new promotion receipt: %v", err)
+	}
+	if err := ValidatePromotionDecisionReceipt(promotion); err != nil {
+		t.Fatalf("valid promotion receipt rejected: %v", err)
+	}
+	tamperedPromotion := clonePromotionDecisionReceipt(promotion)
+	tamperedPromotion.Decision.Allowed = false
+	if err := ValidatePromotionDecisionReceipt(tamperedPromotion); err == nil {
+		t.Fatal("tampered promotion receipt accepted")
+	}
+
+	_, err = NewPromotionDecisionReceipt(PromotionDecisionReceiptSpec{
+		ID: "missing-comparison", Candidate: candidate, Baseline: &baseline,
+		Thresholds: thresholds, CreatedAt: time.Now(),
+	})
+	if err == nil || errors.Is(err, ErrInvalidRun) {
+		t.Fatalf("compared decision without comparison receipt returned %v", err)
 	}
 }

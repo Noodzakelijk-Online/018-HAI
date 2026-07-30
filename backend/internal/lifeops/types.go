@@ -8,6 +8,8 @@ import (
 
 type DomainID string
 
+func (id DomainID) String() string { return string(id) }
+
 const (
 	DomainLegalGovernment           DomainID = "legal_government"
 	DomainEmergencyContinuity       DomainID = "emergency_continuity"
@@ -287,6 +289,8 @@ type PriorityAssessmentRequest struct {
 	Deadline      *time.Time        `json:"deadline,omitempty"`
 	Factors       PriorityFactors   `json:"factors"`
 	Capacity      *CapacitySnapshot `json:"capacity,omitempty"`
+	SourceLabel   string            `json:"sourceLabel,omitempty"`
+	SourceURI     string            `json:"sourceUri,omitempty"`
 }
 
 type FactorContribution struct {
@@ -312,5 +316,7 @@ type PriorityAssessment struct {
 	Reasons          []string             `json:"reasons"`
 	CapacityApplied  bool                 `json:"capacityApplied"`
 	AlgorithmVersion string               `json:"algorithmVersion"`
+	SourceLabel      string               `json:"sourceLabel"`
+	SourceURI        string               `json:"sourceUri,omitempty"`
 	AssessedAt       time.Time            `json:"assessedAt"`
 }
