@@ -4,6 +4,7 @@ import {
   IWorkflowChecklistUpdateRequest,
   IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
+  IWorkflowFrameworkSelectionDecision,
   IWorkflowIntakeRequest,
   IWorkflowInterruptedExecutionResolutionRequest,
   IWorkflowItem,
@@ -23,6 +24,7 @@ export interface IWorkflowService {
   approvals(): Observable<IWorkflowItem[]>;
   intake(request: IWorkflowIntakeRequest): Observable<IWorkflowRecord>;
   get(id: string): Observable<IWorkflowRecord>;
+  frameworkSelection(selectionDecisionId: string): Observable<IWorkflowFrameworkSelectionDecision | undefined>;
   transition(id: string, request: IWorkflowTransitionRequest): Observable<IWorkflowRecord>;
   resolveApproval(id: string, request: IWorkflowApprovalResolutionRequest): Observable<IWorkflowRecord>;
   resolveInterruptedExecution(id: string, request: IWorkflowInterruptedExecutionResolutionRequest): Observable<IWorkflowRecord>;

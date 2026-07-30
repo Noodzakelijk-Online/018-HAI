@@ -40,6 +40,10 @@ services:
       FIRST_RUN_ADMIN_PASSWORD: ${FIRST_RUN_ADMIN_PASSWORD}
       IDP_COOKIE_SECURE: ${IDP_COOKIE_SECURE}
       LOCAL_LOGIN_BYPASS_ENABLED: ${LOCAL_LOGIN_BYPASS_ENABLED:-false}
+      # The IDP validates this bind at startup whenever local preview is enabled.
+      # Missing, wildcard, LAN, and public binds fail closed before a session can
+      # be issued; request Host headers are not part of the trust decision.
+      GATEWAY_HOST_BIND: ${GATEWAY_HOST_BIND:-127.0.0.1}
       # "Sign in with Google": the client id/secret are shared with the backend's
       # Gmail connector, but the login redirect is a distinct path routed to the
       # IDP, so it needs its own registered redirect URI on the Google app.
@@ -343,7 +347,6 @@ services:
       BROKERS_ADDR: ${BROKERS_ADDR}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
-      NGINX_CONTAINER: ${NGINX_CONTAINER}
       CONFIG_DIR: ${CONFIG_DIR}
       NGINX_RELOAD_ENABLED: ${NGINX_RELOAD_ENABLED}
     depends_on:

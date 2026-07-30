@@ -2,6 +2,7 @@ package task
 
 import (
 	"automation-hub-backend/internal/identity"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -44,7 +45,7 @@ func (h *Handler) Plan(c *gin.Context) {
 	request.ApprovalNote = ""
 	plan, err := h.service.Plan(request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "task plan could not be created"})
 		return
 	}
 	c.JSON(http.StatusOK, plan)
@@ -70,7 +71,7 @@ func (h *Handler) Run(c *gin.Context) {
 	request.ApprovalNote = ""
 	plan, err := h.service.Run(request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "task run could not be completed"})
 		return
 	}
 	c.JSON(http.StatusOK, plan)
@@ -103,6 +104,15 @@ func (h *Handler) Logs(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if durable, ok := h.service.(DurableOwnerScopedService); ok {
+		logs, err := durable.LogsForOwnerWithError(ownerIdentity)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "task history is temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, logs)
+		return
+	}
 	scoped, ok := h.service.(OwnerScopedService)
 	if !ok {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "owner-scoped task history is unavailable"})
@@ -114,6 +124,15 @@ func (h *Handler) Logs(c *gin.Context) {
 func (h *Handler) ReviewQueue(c *gin.Context) {
 	ownerIdentity, ok := requireTaskOwner(c)
 	if !ok {
+		return
+	}
+	if durable, ok := h.service.(DurableOwnerScopedService); ok {
+		items, err := durable.ReviewQueueForOwnerWithError(ownerIdentity)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "task review queue is temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, items)
 		return
 	}
 	scoped, ok := h.service.(OwnerScopedService)
@@ -146,7 +165,16 @@ func (h *Handler) ResolveReviewItem(c *gin.Context) {
 	}
 	result, err := scoped.ResolveReviewItemForOwner(ownerIdentity, id, decision)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "review item not found"})
+		switch {
+		case errors.Is(err, ErrTaskStateNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "review item not found"})
+		case errors.Is(err, ErrTaskReviewAlreadyResolved),
+			errors.Is(err, ErrTaskStateConflict),
+			errors.Is(err, ErrTaskReviewInvalidTransition):
+			c.JSON(http.StatusConflict, gin.H{"error": "review item can no longer be resolved from its current state"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "review decision could not be completed"})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, result)

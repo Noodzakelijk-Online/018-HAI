@@ -38,7 +38,10 @@ func Setup() error {
 		return err
 	}
 	MailConfig = newMailConfig()
-	LocalPreviewConfig = newLocalPreviewConfig()
+	LocalPreviewConfig, err = newLocalPreviewConfig()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

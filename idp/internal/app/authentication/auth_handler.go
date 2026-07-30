@@ -2,12 +2,21 @@ package authentication
 
 import (
 	"automation-hub-idp/internal/app/dto"
+	"crypto/subtle"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
+)
+
+const (
+	authSubrequestHeader         = "X-HAI-Auth-Subrequest"
+	verifiedAccessTokenHeader    = "X-HAI-Verified-Access-Token"
+	authSubrequestHeaderExpected = "1"
+	authenticatedTokenContextKey = "hai.authenticated-access-token"
 )
 
 type Handler struct {
@@ -101,12 +110,23 @@ func (h *Handler) Login(c *gin.Context) {
 // GoogleLogin redirects the browser to Google's consent screen. The user picks
 // their Google account there; nothing sensitive is handled here.
 func (h *Handler) GoogleLogin(c *gin.Context) {
-	url, err := h.authService.GoogleAuthURL()
+	loginURL, err := h.authService.GoogleAuthURL()
 	if err != nil {
 		c.Redirect(http.StatusFound, "/login?error=google_unavailable")
 		return
 	}
-	c.Redirect(http.StatusFound, url)
+	parsedURL, err := neturl.Parse(loginURL)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/login?error=google_unavailable")
+		return
+	}
+	state := parsedURL.Query().Get("state")
+	if state == "" {
+		c.Redirect(http.StatusFound, "/login?error=google_unavailable")
+		return
+	}
+	setGoogleOAuthStateCookie(c.Writer, state, time.Now().Add(10*time.Minute))
+	c.Redirect(http.StatusFound, loginURL)
 }
 
 // GoogleCallback is where Google returns after consent. It runs without a HAI
@@ -114,10 +134,18 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 // it sets the same session cookies as a password login and lands on the app.
 func (h *Handler) GoogleCallback(c *gin.Context) {
 	if c.Query("error") != "" {
+		clearGoogleOAuthStateCookie(c.Writer)
 		c.Redirect(http.StatusFound, "/login?error=google_denied")
 		return
 	}
-	tokenDetails, err := h.authService.LoginWithGoogle(c.Request.Context(), c.Query("code"), c.Query("state"))
+	state := c.Query("state")
+	cookieState, err := c.Cookie(googleOAuthStateCookie)
+	clearGoogleOAuthStateCookie(c.Writer)
+	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(cookieState), []byte(state)) != 1 {
+		c.Redirect(http.StatusFound, "/login?error=google_failed")
+		return
+	}
+	tokenDetails, err := h.authService.LoginWithGoogle(c.Request.Context(), c.Query("code"), state)
 	if err != nil {
 		c.Redirect(http.StatusFound, "/login?error=google_failed")
 		return
@@ -128,8 +156,9 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 }
 
 // LocalPreview establishes an ordinary signed owner session for the explicit
-// local-preview mode. It is never active by default and refuses non-loopback
-// Host headers even when the flag was accidentally enabled.
+// local-preview mode. Startup requires an explicit loopback gateway bind; this
+// additional Host check is deny-only defense in depth against rebinding and is
+// not the trust root for enabling local preview.
 func (h *Handler) LocalPreview(c *gin.Context) {
 	if !isLoopbackHost(c.Request.Host) {
 		c.Status(http.StatusNotFound)
@@ -163,13 +192,15 @@ func isLoopbackHost(requestHost string) bool {
 // @Failure 500 "Internal Server Error"
 // @Router /auth/logout [get]
 func (h *Handler) Logout(c *gin.Context) {
-	accessToken, err := c.Cookie("access_token")
-	if err != nil {
+	value, ok := c.Get(authenticatedTokenContextKey)
+	accessToken, tokenOK := value.(string)
+	if !ok || !tokenOK || accessToken == "" {
 		c.Status(http.StatusUnauthorized)
 		return
 	}
 
-	err = h.authService.Logout(accessToken)
+	err := h.authService.Logout(accessToken)
+	clearAuthCookies(c.Writer)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
@@ -187,36 +218,57 @@ func (h *Handler) Logout(c *gin.Context) {
 // @Failure 500 "Internal Server Error"
 // @Router /auth/is-user-authenticated [get]
 func (h *Handler) IsUserAuthenticated(c *gin.Context) {
-	accessToken, err := c.Cookie("access_token")
-	if err != nil {
+	accessToken, ok := h.resolveAuthenticatedAccessToken(c)
+	if !ok {
 		c.Status(http.StatusUnauthorized)
 		return
 	}
 
-	isAuthenticated, err := h.authService.IsUserAuthenticated(accessToken)
-	if err != nil || !isAuthenticated {
-		// If the access token is not valid, try to refresh it
-		refreshToken, err := c.Cookie("refresh_token")
-		if err != nil {
-			c.Status(http.StatusUnauthorized)
-			return
-		}
+	// Only nginx's internal auth subrequest asks for the verified token. The
+	// public IDP proxy clears this request header and hides the response header.
+	if c.GetHeader(authSubrequestHeader) == authSubrequestHeaderExpected {
+		c.Header(verifiedAccessTokenHeader, accessToken)
+	}
+	c.Status(http.StatusOK)
+}
 
-		newAccessToken, err := h.authService.RefreshToken(refreshToken)
-		if err != nil {
-			c.Status(http.StatusUnauthorized)
-			return
-		}
-
-		atExpiresTime := time.Unix(newAccessToken.AtExpires, 0)
-
-		setAccessTokenCookie(c.Writer, newAccessToken.AccessToken, atExpiresTime)
-
-		c.Status(http.StatusOK)
+// CurrentSession returns only authorization state needed by the dashboard.
+// The token comes from AuthMiddleware context after signature, expiry, blocklist,
+// and refresh validation; request identity headers are never consulted.
+func (h *Handler) CurrentSession(c *gin.Context) {
+	value, ok := c.Get(authenticatedTokenContextKey)
+	accessToken, tokenOK := value.(string)
+	if !ok || !tokenOK || accessToken == "" {
+		c.Status(http.StatusUnauthorized)
 		return
 	}
+	session, err := h.authService.GetSessionFromToken(accessToken)
+	if err != nil {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, session)
+}
 
-	c.Status(http.StatusOK)
+func (h *Handler) resolveAuthenticatedAccessToken(c *gin.Context) (string, bool) {
+	if accessToken, err := c.Cookie("access_token"); err == nil && accessToken != "" {
+		if isAuthenticated, authErr := h.authService.IsUserAuthenticated(accessToken); authErr == nil && isAuthenticated {
+			return accessToken, true
+		}
+	}
+
+	refreshToken, err := c.Cookie("refresh_token")
+	if err != nil || refreshToken == "" {
+		return "", false
+	}
+	newAccessToken, err := h.authService.RefreshToken(refreshToken)
+	if err != nil || newAccessToken == nil || newAccessToken.AccessToken == "" {
+		return "", false
+	}
+
+	setAccessTokenCookie(c.Writer, newAccessToken.AccessToken, time.Unix(newAccessToken.AtExpires, 0))
+	return newAccessToken.AccessToken, true
 }
 
 // RequestPasswordReset

@@ -1,0 +1,27 @@
+DROP INDEX IF EXISTS public.idx_framework_selection_records_operating_digest;
+
+ALTER TABLE public.framework_selection_records
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_operating_digest,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_chief_of_staff_object,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_outcome_monitoring_array,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_stop_conditions_array,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_action_autonomy_array,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_coordination_object,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_communication_object,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_delegations_array,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_agent_cards_array,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_capacity_object,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_needs_state_array,
+    DROP CONSTRAINT IF EXISTS chk_framework_selection_records_life_domains_array,
+    DROP COLUMN IF EXISTS operating_contract_digest,
+    DROP COLUMN IF EXISTS chief_of_staff_json,
+    DROP COLUMN IF EXISTS outcome_monitoring_json,
+    DROP COLUMN IF EXISTS stop_conditions_json,
+    DROP COLUMN IF EXISTS action_autonomy_json,
+    DROP COLUMN IF EXISTS coordination_json,
+    DROP COLUMN IF EXISTS communication_json,
+    DROP COLUMN IF EXISTS delegations_json,
+    DROP COLUMN IF EXISTS agent_cards_json,
+    DROP COLUMN IF EXISTS capacity_json,
+    DROP COLUMN IF EXISTS needs_state_json,
+    DROP COLUMN IF EXISTS life_domains_json;

@@ -2,11 +2,13 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
@@ -47,6 +49,160 @@ func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 	}
 	if len(plan.ToolDecision.SelectedTools) == 0 {
 		t.Fatalf("expected tool routing decision")
+	}
+	if plan.FrameworkDecision == nil || len(plan.FrameworkDecision.Selected) == 0 {
+		t.Fatalf("expected an explicit operating-framework decision")
+	}
+	if plan.FrameworkDecision.ConstitutionVersion == 0 {
+		t.Fatalf("expected framework decision to identify its Constitution version")
+	}
+}
+
+func TestPlanReturnsConfigurationErrorWhenLLMRouterIsMissing(t *testing.T) {
+	service := NewService(&fakeMemoryService{}, nil)
+
+	_, err := service.Plan(IntakeRequest{Request: "Prepare a bounded task plan"})
+	if !errors.Is(err, ErrTaskLLMRouterNotConfigured) {
+		t.Fatalf("Plan error = %v, want %v", err, ErrTaskLLMRouterNotConfigured)
+	}
+}
+
+func TestFrameworkDecisionCanTightenButNotBypassTaskRisk(t *testing.T) {
+	selector := &fakeFrameworkSelector{decision: &frameworkregistry.SelectionDecision{
+		ID:                   "selection-1",
+		LifeDomain:           "communication",
+		NeedOrCommitment:     "external commitment",
+		MaximumAutonomyLevel: 3,
+		RequiresApproval:     true,
+		ApprovalReasons:      []string{"communication framework requires approval"},
+		Selected: []frameworkregistry.SelectedFramework{{
+			ID: "communication", Version: "1.0.0", Name: "Communication pack",
+		}},
+		CompletionCriteria:   []string{"approved communication matches the draft"},
+		EvidenceRequirements: []string{"recipient and purpose"},
+		ConstitutionVersion:  1,
+	}}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		nil,
+		selector,
+	)
+
+	plan, err := service.Plan(IntakeRequest{Request: "Prepare a short internal summary"})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if selector.calls != 1 {
+		t.Fatalf("framework selector calls = %d, want 1", selector.calls)
+	}
+	if !plan.RiskAssessment.ApprovalRequired || plan.RiskAssessment.AllowedNow {
+		t.Fatalf("framework decision did not tighten risk: %#v", plan.RiskAssessment)
+	}
+	if plan.RiskAssessment.ApprovalGranted {
+		t.Fatalf("framework selection must not manufacture approval")
+	}
+}
+
+func TestFrameworkAutonomyCeilingBlocksExecutionEvenWhenApprovalIsReported(t *testing.T) {
+	selector := &fakeFrameworkSelector{decision: &frameworkregistry.SelectionDecision{
+		ID:                   "selection-constraint",
+		LifeDomain:           "relationships_care",
+		NeedOrCommitment:     "relationship support",
+		MaximumAutonomyLevel: 1,
+		Selected: []frameworkregistry.SelectedFramework{{
+			ID: "relationships-care", Version: "1.0.0", Name: "Relationship and care pack",
+		}},
+		CompletionCriteria:  []string{"operator reviews the proposed action"},
+		ConstitutionVersion: 1,
+	}}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		nil,
+		selector,
+	)
+
+	plan, err := service.Plan(IntakeRequest{
+		Request:        "Implement the local change and run repository tests",
+		AutomationID:   "controlled-runtime",
+		ExecuteAllowed: true,
+		HumanApproved:  true,
+		ApprovalNote:   "Approved for this test only.",
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	risk := plan.RiskAssessment
+	if risk.AllowedNow {
+		t.Fatalf("framework ceiling did not block execution: %#v", risk)
+	}
+	if risk.FrameworkAutonomyCeiling != 1 || risk.RequiredFrameworkAutonomy != 6 {
+		t.Fatalf("framework authority intersection = ceiling %d / required %d", risk.FrameworkAutonomyCeiling, risk.RequiredFrameworkAutonomy)
+	}
+	if !strings.Contains(
+		strings.Join(risk.Reasons, "\n"),
+		"selected framework ceiling level 1 is below the level 6 required for this action",
+	) {
+		t.Fatalf("framework ceiling reason missing: %#v", risk.Reasons)
+	}
+}
+
+func TestFrameworkOperatingContractBlocksUnavailableCapacityAndUnassignedTeamExecution(t *testing.T) {
+	risk := applyFrameworkRisk(
+		RiskAssessment{AllowedNow: true},
+		&frameworkregistry.SelectionDecision{
+			MaximumAutonomyLevel: 6,
+			Capacity: frameworkregistry.CapacitySnapshot{
+				Status: "unavailable",
+			},
+			Coordination: frameworkregistry.CoordinationPlan{
+				Mode: "hierarchical",
+			},
+			Delegations: []frameworkregistry.DelegationContract{{
+				Delegatee: "specialist",
+				State:     "requires_assignment",
+			}},
+			ActionAutonomy: []frameworkregistry.ActionAutonomyDecision{{
+				Action:           "execute_case_approved_action",
+				RequiredLevel:    6,
+				EffectiveCeiling: 6,
+				Allowed:          true,
+			}},
+		},
+		IntakeAnalysis{NeedsTools: true},
+		IntakeRequest{ExecuteAllowed: true},
+	)
+
+	if risk.AllowedNow {
+		t.Fatalf("unavailable capacity and unassigned multi-agent execution were allowed: %#v", risk)
+	}
+	reasons := strings.Join(risk.Reasons, "\n")
+	for _, fragment := range []string{"capacity is unavailable", "fresh verified agent card"} {
+		if !strings.Contains(reasons, fragment) {
+			t.Errorf("risk reasons %v do not contain %q", risk.Reasons, fragment)
+		}
+	}
+}
+
+func TestRequiredFrameworkAutonomyDistinguishesApprovedAndAutomaticExecution(t *testing.T) {
+	intake := IntakeAnalysis{NeedsTools: true}
+	if got := requiredFrameworkAutonomy(intake, IntakeRequest{
+		ExecuteAllowed: true,
+		HumanApproved:  true,
+	}); got != 6 {
+		t.Fatalf("case-approved execution requires level %d, want 6", got)
+	}
+	if got := requiredFrameworkAutonomy(intake, IntakeRequest{
+		ExecuteAllowed: true,
+	}); got != 8 {
+		t.Fatalf("automatic reversible execution requires level %d, want 8", got)
 	}
 }
 
@@ -273,14 +429,15 @@ func TestPursuitScopedTaskRunPersistsExactRuntimeLaunchEvidence(t *testing.T) {
 		recorder,
 	)
 	pursuitID := uuid.NewString()
-	if _, err := service.Run(IntakeRequest{
+	plan, err := service.Run(IntakeRequest{
 		OwnerIdentity:  "alice",
 		PursuitID:      pursuitID,
 		Request:        "Run local script tests for the project",
 		ProjectKey:     "018-HAI",
 		AutomationID:   executor.result.AutomationID,
 		ExecuteAllowed: true,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(recorder.attempts) != 2 {
@@ -290,7 +447,7 @@ func TestPursuitScopedTaskRunPersistsExactRuntimeLaunchEvidence(t *testing.T) {
 		t.Fatalf("launch evidence = %q, want %q", got, executor.result.LaunchEventID)
 	}
 	if len(verifier.requests) != 1 || verifier.requests[0].PursuitID != pursuitID {
-		t.Fatalf("verification request pursuit id = %#v, want %q", verifier.requests, pursuitID)
+		t.Fatalf("verification request pursuit id = %#v, want %q; validation=%#v", verifier.requests, pursuitID, plan.ValidationResult)
 	}
 }
 
@@ -455,12 +612,12 @@ func TestRunQueuesMissingAutomationBeforeRuntimeExecution(t *testing.T) {
 	}
 }
 
-func TestResolveReviewItemApprovesAndRunsTask(t *testing.T) {
+func TestResolveReviewItemRecordsOneShotApprovalAndReopensBlockedTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)
-	service := NewService(mem, llmService)
+	taskService := NewService(mem, llmService)
 
-	plan, err := service.Run(IntakeRequest{
+	plan, err := taskService.Run(IntakeRequest{
 		Request:    "Send a public posting after approval",
 		ProjectKey: "018-HAI",
 	})
@@ -471,21 +628,39 @@ func TestResolveReviewItemApprovesAndRunsTask(t *testing.T) {
 		t.Fatalf("expected review queue item")
 	}
 
-	result, err := service.ResolveReviewItem(plan.ReviewQueueItem.ID, ApprovalDecision{
+	result, err := taskService.ResolveReviewItem(plan.ReviewQueueItem.ID, ApprovalDecision{
 		Approved: true,
 		Note:     "Operator approved controlled internal execution only.",
 	})
 	if err != nil {
 		t.Fatalf("ResolveReviewItem: %v", err)
 	}
-	if result.Item.Decision != "approved" {
-		t.Fatalf("decision = %q, want approved", result.Item.Decision)
-	}
 	if result.Plan == nil {
 		t.Fatalf("expected approved item to rerun task")
 	}
 	if !result.Plan.RiskAssessment.ApprovalGranted {
 		t.Fatalf("expected approval to be reflected in risk assessment")
+	}
+	if result.Plan.CompletionStatus != "review_required" {
+		t.Fatalf("completion status = %q, want review_required after authority gate", result.Plan.CompletionStatus)
+	}
+	if result.Item.Status != "needs_review" || result.Item.Decision != "" || result.Item.ResolvedAt != nil {
+		t.Fatalf("blocked one-shot approval did not reopen for a new decision: %#v", result.Item)
+	}
+
+	implementation := taskService.(*service)
+	decisions, err := implementation.stateRepository.ListReviewDecisions(
+		internalTaskStateOwnerIdentity,
+		plan.ReviewQueueItem.ID,
+		50,
+	)
+	if err != nil {
+		t.Fatalf("ListReviewDecisions: %v", err)
+	}
+	if len(decisions) != 1 ||
+		decisions[0].Decision != "approved" ||
+		decisions[0].ApprovalSourceID != "task-review:"+plan.ReviewQueueItem.ID {
+		t.Fatalf("immutable approval provenance = %#v", decisions)
 	}
 }
 
@@ -503,7 +678,7 @@ func TestRunValidatedTaskStoresLesson(t *testing.T) {
 	}
 
 	if plan.CompletionStatus != "validated" {
-		t.Fatalf("status = %q, want validated", plan.CompletionStatus)
+		t.Fatalf("status = %q, want validated: %#v", plan.CompletionStatus, plan.ValidationResult)
 	}
 	if !plan.ValidationResult.Passed {
 		t.Fatalf("expected validation to pass")
@@ -559,6 +734,9 @@ func TestRunToolTaskExecutesConfiguredAutomation(t *testing.T) {
 	if executor.calls != 1 {
 		t.Fatalf("runtime calls = %d, want 1", executor.calls)
 	}
+	if len(executor.requests) != 1 || executor.requests[0].ApprovalSourceID != "" {
+		t.Fatalf("low-risk classification synthesized approval provenance: %#v", executor.requests)
+	}
 	if plan.ExecutionResult == nil || plan.ExecutionResult.ToolExecution == nil {
 		t.Fatalf("expected persisted runtime evidence")
 	}
@@ -581,7 +759,7 @@ func TestRunToolTaskUsesLaunchEventURIAsRuntimeEvidence(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if plan.CompletionStatus != "validated" {
-		t.Fatalf("status = %q, want validated", plan.CompletionStatus)
+		t.Fatalf("status = %q, want validated: %#v", plan.CompletionStatus, plan.ValidationResult)
 	}
 	if len(verifier.requests) == 0 {
 		t.Fatalf("verification service was not called")
@@ -645,13 +823,44 @@ func TestValidationRetryReusesSuccessfulRuntimeExecution(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if plan.CompletionStatus != "validated" || plan.RetryPolicy.CurrentAttempt != 2 {
-		t.Fatalf("retry did not validate: status=%q retry=%#v", plan.CompletionStatus, plan.RetryPolicy)
+		t.Fatalf("retry did not validate: status=%q retry=%#v validation=%#v", plan.CompletionStatus, plan.RetryPolicy, plan.ValidationResult)
 	}
 	if executor.calls != 1 {
 		t.Fatalf("runtime executed %d times, want exactly once", executor.calls)
 	}
 	if !hasTaskAction(plan.ExecutionResult.Actions, "automation.launch", "reused") {
 		t.Fatalf("expected retry to record reused runtime evidence")
+	}
+}
+
+func TestValidationRetrySkipsFallbackRoutingWhenRouterBecomesUnavailable(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	verifier := &sequencedVerificationService{
+		statuses: []string{verification.StatusNeedsReview, verification.StatusSourceSupported},
+	}
+	taskService := NewServiceWithEngines(mem, llmService, nil, verifier, executor).(*service)
+	verifier.onAnswer = func(call int) {
+		if call == 1 {
+			taskService.llmService = nil
+		}
+	}
+
+	plan, err := taskService.Run(IntakeRequest{
+		Request:        "Run local script tests and verify the result",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.CompletionStatus != "validated" || plan.RetryPolicy.CurrentAttempt != 2 {
+		t.Fatalf("retry did not finish safely: status=%q retry=%#v validation=%#v", plan.CompletionStatus, plan.RetryPolicy, plan.ValidationResult)
+	}
+	if !hasTaskEvent(plan.Events, "routing", "fallback model route skipped because the task LLM router is not configured") {
+		t.Fatalf("missing fallback-skip audit event: %#v", plan.Events)
 	}
 }
 
@@ -689,6 +898,41 @@ func TestApprovedReviewIsNotFalselyCompletedWhenRuntimeStillBlocked(t *testing.T
 	}
 }
 
+func TestApprovedReviewPassesExactReviewItemAsApprovalSource(t *testing.T) {
+	mem := &fakeMemoryService{}
+	llmService := newTaskTestLLMService(t)
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		Request:        "Delete account data by running a local script",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.ReviewQueueItem == nil || executor.calls != 0 {
+		t.Fatalf("initial run bypassed review: item=%#v calls=%d", plan.ReviewQueueItem, executor.calls)
+	}
+
+	result, err := service.ResolveReviewItem(plan.ReviewQueueItem.ID, ApprovalDecision{
+		Approved: true,
+		Note:     "Approved this exact controlled action.",
+	})
+	if err != nil {
+		t.Fatalf("ResolveReviewItem: %v", err)
+	}
+	if result.Plan == nil || executor.calls != 1 || len(executor.requests) != 1 {
+		t.Fatalf("approved review did not execute exactly once: result=%#v calls=%d requests=%#v", result, executor.calls, executor.requests)
+	}
+	expectedSource := "task-review:" + plan.ReviewQueueItem.ID
+	if executor.requests[0].ApprovalSourceID != expectedSource {
+		t.Fatalf("approval source = %q, want %q", executor.requests[0].ApprovalSourceID, expectedSource)
+	}
+}
+
 func newTaskTestLLMService(t *testing.T) *llm.Service {
 	t.Helper()
 	t.Setenv("LLM_PROVIDERS_JSON", "")
@@ -701,6 +945,25 @@ func newTaskTestLLMService(t *testing.T) *llm.Service {
 		t.Fatalf("NewServiceFromEnv: %v", err)
 	}
 	return llmService
+}
+
+type fakeFrameworkSelector struct {
+	decision *frameworkregistry.SelectionDecision
+	err      error
+	calls    int
+}
+
+func (f *fakeFrameworkSelector) PlanSelection(request frameworkregistry.SelectionRequest) (*frameworkregistry.SelectionDecision, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.decision == nil {
+		return nil, fmt.Errorf("fake framework decision is not configured")
+	}
+	copied := *f.decision
+	copied.TaskPlanID = request.TaskPlanID
+	return &copied, nil
 }
 
 type fakeMemoryService struct {
@@ -750,17 +1013,21 @@ func completedToolResult() *ToolExecutionResult {
 type sequencedVerificationService struct {
 	statuses         []string
 	pursuitLinkError string
+	onAnswer         func(call int)
 	calls            int
 	requests         []verification.AnswerRequest
 }
 
 func (s *sequencedVerificationService) Answer(request verification.AnswerRequest) (*verification.VerificationResult, error) {
 	s.requests = append(s.requests, request)
-	status := verification.StatusSourceSupported
-	if s.calls < len(s.statuses) {
-		status = s.statuses[s.calls]
-	}
 	s.calls++
+	if s.onAnswer != nil {
+		s.onAnswer(s.calls)
+	}
+	status := verification.StatusSourceSupported
+	if s.calls <= len(s.statuses) {
+		status = s.statuses[s.calls-1]
+	}
 	run := models.VerificationRun{
 		ID:       uuid.New(),
 		Answer:   "controlled runtime evidence checked",
@@ -800,6 +1067,15 @@ func (s *sequencedVerificationService) RunDetailsForOwner(string, uuid.UUID) (*v
 func hasTaskAction(actions []ExecutedAction, name, status string) bool {
 	for _, action := range actions {
 		if action.Name == name && action.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTaskEvent(events []TaskEvent, stage, message string) bool {
+	for _, item := range events {
+		if item.Stage == stage && item.Message == message {
 			return true
 		}
 	}

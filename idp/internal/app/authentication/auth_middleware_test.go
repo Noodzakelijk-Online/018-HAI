@@ -14,42 +14,53 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestAuthMiddlewareRefreshesBeforeResolvingExpiredAccessIdentity(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	userID := uuid.New()
-	service := &middlewareAuthService{
-		valid:         false,
-		refreshResult: &dto.TokenDetails{AccessToken: "refreshed-access", AtExpires: time.Now().Add(time.Hour).Unix()},
-		userID:        userID,
-	}
-	handler := NewHandler(service)
-	router := gin.New()
-	router.GET("/protected", AuthMiddleware(handler), func(c *gin.Context) {
-		value, ok := c.Get("userID")
-		if !ok || value != userID {
-			c.Status(http.StatusInternalServerError)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
+func TestAuthMiddlewareRefreshesBeforeResolvingIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		accessToken string
+	}{
+		{name: "expired access cookie", accessToken: "expired-access"},
+		{name: "refresh-only session"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			userID := uuid.New()
+			service := &middlewareAuthService{
+				refreshResult: &dto.TokenDetails{AccessToken: "refreshed-access", AtExpires: time.Now().Add(time.Hour).Unix()},
+				userID:        userID,
+			}
+			handler := NewHandler(service)
+			router := gin.New()
+			router.GET("/protected", AuthMiddleware(handler), func(c *gin.Context) {
+				value, ok := c.Get("userID")
+				if !ok || value != userID {
+					c.Status(http.StatusInternalServerError)
+					return
+				}
+				c.Status(http.StatusNoContent)
+			})
 
-	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
-	request.AddCookie(&http.Cookie{Name: "access_token", Value: "expired-access"})
-	request.AddCookie(&http.Cookie{Name: "refresh_token", Value: "valid-refresh"})
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
+			request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			if test.accessToken != "" {
+				request.AddCookie(&http.Cookie{Name: "access_token", Value: test.accessToken})
+			}
+			request.AddCookie(&http.Cookie{Name: "refresh_token", Value: "valid-refresh"})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusNoContent, recorder.Body.String())
-	}
-	if service.refreshCalls != 1 {
-		t.Fatalf("refresh calls = %d, want 1", service.refreshCalls)
-	}
-	if service.lastIdentityToken != "refreshed-access" {
-		t.Fatalf("identity token = %q, want refreshed access token", service.lastIdentityToken)
-	}
-	if got := recorder.Header().Get("Set-Cookie"); got == "" {
-		t.Fatal("expected refreshed access-token cookie")
+			if recorder.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusNoContent, recorder.Body.String())
+			}
+			if service.refreshCalls != 1 {
+				t.Fatalf("refresh calls = %d, want 1", service.refreshCalls)
+			}
+			if service.lastIdentityToken != "refreshed-access" {
+				t.Fatalf("identity token = %q, want refreshed access token", service.lastIdentityToken)
+			}
+			if got := recorder.Header().Get("Set-Cookie"); got == "" {
+				t.Fatal("expected refreshed access-token cookie")
+			}
+		})
 	}
 }
 
@@ -75,6 +86,14 @@ type middlewareAuthService struct {
 	userID            uuid.UUID
 	refreshCalls      int
 	lastIdentityToken string
+	identityToken     string
+	sessionResult     *dto.AuthSession
+	lastSessionToken  string
+	logoutToken       string
+	logoutErr         error
+	googleAuthURL     string
+	googleTokens      *dto.TokenDetails
+	googleLoginCalls  int
 }
 
 func (s *middlewareAuthService) Capabilities() dto.AuthCapabilities { return dto.AuthCapabilities{} }
@@ -86,15 +105,25 @@ func (s *middlewareAuthService) Login(string, string) (*dto.TokenDetails, error)
 	return nil, errors.New("not implemented")
 }
 func (s *middlewareAuthService) GoogleAuthURL() (string, error) {
-	return "", errors.New("not implemented")
+	if s.googleAuthURL == "" {
+		return "", errors.New("not implemented")
+	}
+	return s.googleAuthURL, nil
 }
 func (s *middlewareAuthService) LoginWithGoogle(context.Context, string, string) (*dto.TokenDetails, error) {
-	return nil, errors.New("not implemented")
+	s.googleLoginCalls++
+	if s.googleTokens == nil {
+		return nil, errors.New("not implemented")
+	}
+	return s.googleTokens, nil
 }
 func (s *middlewareAuthService) LocalPreviewLogin() (*dto.TokenDetails, error) {
 	return nil, errors.New("not implemented")
 }
-func (s *middlewareAuthService) Logout(string) error { return errors.New("not implemented") }
+func (s *middlewareAuthService) Logout(token string) error {
+	s.logoutToken = token
+	return s.logoutErr
+}
 func (s *middlewareAuthService) RefreshToken(string) (*dto.TokenDetails, error) {
 	s.refreshCalls++
 	return s.refreshResult, nil
@@ -111,8 +140,29 @@ func (s *middlewareAuthService) ChangePassword(string, string) error {
 }
 func (s *middlewareAuthService) GetIdFromToken(token string) (uuid.UUID, error) {
 	s.lastIdentityToken = token
-	if token != "refreshed-access" {
+	expected := s.identityToken
+	if expected == "" {
+		expected = "refreshed-access"
+	}
+	if token != expected {
 		return uuid.Nil, errors.New("expired access token was used")
 	}
 	return s.userID, nil
+}
+func (s *middlewareAuthService) GetSessionFromToken(token string) (*dto.AuthSession, error) {
+	s.lastSessionToken = token
+	if s.sessionResult != nil {
+		return s.sessionResult, nil
+	}
+	return &dto.AuthSession{
+		Authenticated: true,
+		Subject:       s.userID.String(),
+		Role:          "owner",
+		Permissions: dto.AuthSessionPermissions{
+			CanRead:       true,
+			CanOperate:    true,
+			CanApprove:    true,
+			CanAdminister: true,
+		},
+	}, nil
 }

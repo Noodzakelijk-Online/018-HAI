@@ -10,10 +10,39 @@
         survives restart; Windows-specific readiness is honestly pending until verified on the target machine.
       </p>
     </div>
-    <button nz-button nzType="text" (click)="refresh()">
+    <button nz-button nzType="text" [nzLoading]="loading" (click)="refresh()">
       <span nz-icon nzType="reload"></span> Refresh
     </button>
   </header>
+
+  <section
+    class="rc__authority"
+    [attr.data-role]="actorRole"
+    role="status"
+    aria-live="polite"
+  >
+    <nz-tag [nzColor]="authorityTagColor">{{ actorRole === 'unknown' ? 'locked' : actorRole }}</nz-tag>
+    <div>
+      <strong>{{ authorityTitle }}</strong>
+      <span>{{ authorityDescription }}</span>
+    </div>
+  </section>
+
+  <nz-alert
+    *ngIf="sessionUnavailable || (authSession && !canReadRuntime)"
+    nzType="warning"
+    nzShowIcon
+    nzMessage="Runtime controls locked"
+    [nzDescription]="authorityDescription"
+  ></nz-alert>
+
+  <nz-alert
+    *ngIf="runtimeLoadError"
+    nzType="error"
+    nzShowIcon
+    nzMessage="Runtime state unavailable"
+    [nzDescription]="runtimeLoadError"
+  ></nz-alert>
 
   <section class="rc__control" *ngIf="status as s">
     <nz-card
@@ -33,22 +62,76 @@
         </div>
       </div>
       <div class="rc__estop-actions">
-        <button nz-button nzDanger *ngIf="!s.emergencyStop.engaged" [nzLoading]="busy" (click)="pause()">
+        <button
+          nz-button
+          nzDanger
+          *ngIf="!s.emergencyStop.engaged"
+          [disabled]="!canApproveRuntimeActions"
+          [attr.aria-describedby]="!canApproveRuntimeActions ? 'runtime-authority-summary' : null"
+          [nzLoading]="busy"
+          (click)="pause()"
+        >
           Engage emergency stop
         </button>
-        <button nz-button nzType="primary" *ngIf="s.emergencyStop.engaged" [nzLoading]="busy" (click)="resume()">
+        <button
+          nz-button
+          nzType="primary"
+          *ngIf="s.emergencyStop.engaged"
+          [disabled]="!canAdministerRuntime"
+          [attr.aria-describedby]="!canAdministerRuntime ? 'runtime-owner-explanation' : null"
+          [nzLoading]="busy"
+          (click)="resume()"
+        >
           Resume
         </button>
-        <button nz-button [nzLoading]="busy" (click)="verify()">Verify emergency stop</button>
-        <button nz-button [nzLoading]="busy" (click)="recover()">Run recovery</button>
+        <button
+          nz-button
+          [disabled]="!canApproveRuntimeActions"
+          [attr.aria-describedby]="!canApproveRuntimeActions ? 'runtime-authority-summary' : null"
+          [nzLoading]="busy"
+          (click)="verify()"
+        >
+          Verify emergency stop
+        </button>
+        <button
+          nz-button
+          [disabled]="!canApproveRuntimeActions"
+          [attr.aria-describedby]="!canApproveRuntimeActions ? 'runtime-authority-summary' : null"
+          [nzLoading]="busy"
+          (click)="recover()"
+        >
+          Run recovery
+        </button>
       </div>
+      <p
+        id="runtime-owner-explanation"
+        class="rc__permission-note"
+        *ngIf="s.emergencyStop.engaged && !canAdministerRuntime"
+      >
+        {{ ownerControlExplanation }}
+      </p>
     </nz-card>
 
     <nz-card nzTitle="Autonomy mode" nzSize="small" class="rc__mode">
       <div class="rc__muted">Current: <strong>{{ s.storedMode }}</strong> (effective: {{ s.mode }})</div>
       <nz-radio-group [ngModel]="s.storedMode" (ngModelChange)="setMode($event)">
-        <label nz-radio-button *ngFor="let m of modes" [nzValue]="m">{{ m }}</label>
+        <label
+          nz-radio-button
+          *ngFor="let m of modes"
+          [nzValue]="m"
+          [nzDisabled]="!canAdministerRuntime"
+          [attr.aria-describedby]="!canAdministerRuntime ? 'runtime-mode-explanation' : null"
+        >
+          {{ m }}
+        </label>
       </nz-radio-group>
+      <p
+        id="runtime-mode-explanation"
+        class="rc__permission-note"
+        *ngIf="!canAdministerRuntime"
+      >
+        {{ ownerControlExplanation }}
+      </p>
       <div class="rc__meta">
         <div><span class="rc__muted">Done while away</span><span>{{ s.completedOperations }}</span></div>
         <div><span class="rc__muted">Awaiting approval</span><span>{{ s.awaitingApproval }}</span></div>
@@ -77,4 +160,8 @@
       </tbody>
     </nz-table>
   </nz-card>
+
+  <p id="runtime-authority-summary" class="rc__sr-only">
+    {{ authorityDescription }}
+  </p>
 </div>

@@ -1,5 +1,5 @@
 # Stage 1: Compiling the application
-FROM golang:1.21.13 AS builder
+FROM golang:1.25.12 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
@@ -14,7 +14,7 @@ WORKDIR /app/cmd
 RUN CGO_ENABLED=1 GOOS=linux go build -o app ./main.go
 
 # Stage 2: Build the minimal docker image
-FROM ubuntu:latest
+FROM ubuntu:24.04
 
 # curl backs the container healthcheck, which polls /readyz. It has to live in
 # the runtime image, not just the builder.

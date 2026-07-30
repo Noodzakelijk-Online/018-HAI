@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
@@ -65,7 +66,8 @@ func runReconcile() int {
 //
 //	migrate status          show applied/pending migrations without changing anything
 //	migrate up              apply all pending migrations (pre + AutoMigrate + post)
-//	migrate down <version>  roll back a single post migration by version
+//	migrate down [pre|post/]<version>
+//	                        roll back a single migration (post by default)
 func runMigrate(args []string) int {
 	config.Init()
 	action := "status"
@@ -103,7 +105,12 @@ func runMigrate(args []string) int {
 		return 0
 	case "down":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "migrate down requires a version, e.g. post/0001_conversation_owner_identity")
+			fmt.Fprintln(os.Stderr, "migrate down requires a target, e.g. pre/0003_framework_registry")
+			return 1
+		}
+		dir, version, err := parseMigrationTarget(args[1])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "migrate down failed:", err)
 			return 1
 		}
 		db, err := infra.OpenDefaultDB()
@@ -111,14 +118,39 @@ func runMigrate(args []string) int {
 			fmt.Fprintln(os.Stderr, "migrate down requires a database connection:", err)
 			return 1
 		}
-		if err := infra.RollbackMigration(db, migrations.Files, "post", args[1]); err != nil {
+		if err := infra.RollbackMigration(db, migrations.Files, dir, version); err != nil {
 			fmt.Fprintln(os.Stderr, "migrate down failed:", err)
 			return 1
 		}
-		fmt.Printf("migrate down: rolled back %s\n", args[1])
+		fmt.Printf("migrate down: rolled back %s/%s\n", dir, version)
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "unknown migrate action %q; use status|up|down\n", action)
 		return 1
 	}
+}
+
+func parseMigrationTarget(target string) (string, string, error) {
+	target = strings.TrimSpace(strings.ReplaceAll(target, "\\", "/"))
+	if target == "" {
+		return "", "", fmt.Errorf("migration target is required")
+	}
+	dir := "post"
+	version := target
+	if strings.Contains(target, "/") {
+		parts := strings.SplitN(target, "/", 2)
+		dir = parts[0]
+		version = parts[1]
+	}
+	if dir != "pre" && dir != "post" {
+		return "", "", fmt.Errorf("migration phase must be pre or post")
+	}
+	if version == "" ||
+		strings.Contains(version, "/") ||
+		version == "." ||
+		version == ".." ||
+		strings.Contains(version, "\x00") {
+		return "", "", fmt.Errorf("invalid migration version")
+	}
+	return dir, version, nil
 }

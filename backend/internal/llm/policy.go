@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -562,7 +563,7 @@ func (s *Service) callProvider(ctx context.Context, provider Provider, model Mod
 	case "ollama":
 		return callOllama(ctx, endpoint, model.ID, prompt, request)
 	case "odysseus":
-		return "", fmt.Errorf(odysseusExecutionBlockedReason())
+		return "", errors.New(odysseusExecutionBlockedReason())
 	default:
 		return callOpenAICompatible(ctx, endpoint, provider, model.ID, prompt, request)
 	}

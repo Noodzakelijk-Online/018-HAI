@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"automation-hub-backend/internal/identity"
@@ -215,14 +216,15 @@ func TestAgentRuntimeSkillsAndStopHandlers(t *testing.T) {
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/agent-runtimes/openclaw/tasks/task-123/stop", nil)
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
+	if w.Code != http.StatusBadRequest {
 		t.Fatalf("POST stop task status = %d, body=%s", w.Code, w.Body.String())
 	}
 	var stop StopResult
 	if err := json.Unmarshal(w.Body.Bytes(), &stop); err != nil {
 		t.Fatalf("decode stop result: %v", err)
 	}
-	if stop.RuntimeID != "openclaw" || stop.TaskID != "task-123" || stop.Status != "stopped" {
+	if stop.RuntimeID != "openclaw" || stop.TaskID != "task-123" || stop.Status != "blocked" ||
+		!strings.Contains(stop.Message, "owner-bound") {
 		t.Fatalf("stop result = %#v", stop)
 	}
 

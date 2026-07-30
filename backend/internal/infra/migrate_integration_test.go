@@ -80,8 +80,13 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
 	}
-	if err := RollbackMigration(db, migrations.Files, "post", "post/0001_conversation_owner_identity"); err != nil {
-		t.Fatalf("RollbackMigration: %v", err)
+	for _, version := range []string{
+		"post/0002_durable_jobs_indexes",
+		"post/0001_conversation_owner_identity",
+	} {
+		if err := RollbackMigration(db, migrations.Files, "post", version); err != nil {
+			t.Fatalf("RollbackMigration(%s): %v", version, err)
+		}
 	}
 	if indexExists(t, db, "idx_ai_conversation_owner_identity") {
 		t.Fatal("owner-scoped index should be gone after rollback")
@@ -93,9 +98,16 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 	if applied["post/0001_conversation_owner_identity"] {
 		t.Fatal("rolled-back migration should not remain recorded")
 	}
+	if applied["post/0002_durable_jobs_indexes"] {
+		t.Fatal("later rolled-back migration should not remain recorded")
+	}
 	// Re-apply cleanly.
-	if _, err := ApplyMigrations(db, migrations.Files, "post"); err != nil {
+	count, err := ApplyMigrations(db, migrations.Files, "post")
+	if err != nil {
 		t.Fatalf("re-apply post: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("re-applied %d post migrations, want 2", count)
 	}
 	if !indexExists(t, db, "idx_ai_conversation_owner_identity") {
 		t.Fatal("index should be restored after re-apply")

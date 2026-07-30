@@ -164,21 +164,26 @@
             <ng-container *ngIf="removeImage">
               <div class="ant-upload-text__information">
                 <span nz-icon nzType="clear" nzTheme="outline"></span>
-                <span
+                <button
+                  type="button"
                   class="ant-button-remove-image"
                   (click)="deleteImage()"
                   style="color: green"
                 >
                   Image Removed
-                </span>
+                </button>
               </div>
             </ng-container>
             <ng-container *ngIf="!removeImage">
               <div class="ant-upload-text__information">
                 <span nz-icon nzType="delete" nzTheme="outline"></span>
-                <span class="ant-button-remove-image" (click)="deleteImage()"
-                  >Remove Image</span
+                <button
+                  type="button"
+                  class="ant-button-remove-image"
+                  (click)="deleteImage()"
                 >
+                  Remove Image
+                </button>
               </div>
             </ng-container>
           </nz-form-control>

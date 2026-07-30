@@ -51,7 +51,12 @@ func newGoogleOAuth(jwtSecret string) *googleOAuth {
 		authEndpoint:  googleDefaultAuthEndpoint,
 		tokenEndpoint: googleDefaultTokenEndpoint,
 		userInfoURL:   googleDefaultUserInfoURL,
-		httpClient:    &http.Client{Timeout: 20 * time.Second},
+		httpClient: &http.Client{
+			Timeout: 20 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
@@ -88,6 +93,9 @@ func (g *googleOAuth) verifyState(state string) error {
 		return fmt.Errorf("state decode: %w", err)
 	}
 	fields := strings.SplitN(string(raw), "|", 2)
+	if len(fields) != 2 || fields[1] == "" {
+		return fmt.Errorf("malformed state")
+	}
 	exp, err := strconv.ParseInt(fields[0], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
 		return fmt.Errorf("state expired")
@@ -137,7 +145,10 @@ func (g *googleOAuth) Exchange(ctx context.Context, code, state string) (string,
 		return "", fmt.Errorf("token exchange failed: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("read token response: %w", err)
+	}
 
 	var tok struct {
 		AccessToken string `json:"access_token"`
@@ -149,6 +160,9 @@ func (g *googleOAuth) Exchange(ctx context.Context, code, state string) (string,
 	}
 	if tok.Error != "" {
 		return "", fmt.Errorf("google oauth error %q: %s", tok.Error, tok.ErrorDesc)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("token exchange returned HTTP %d", resp.StatusCode)
 	}
 	if tok.AccessToken == "" {
 		return "", fmt.Errorf("no access token returned")
@@ -168,7 +182,10 @@ func (g *googleOAuth) fetchEmail(ctx context.Context, accessToken string) (strin
 		return "", fmt.Errorf("userinfo request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("read userinfo response: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("userinfo returned HTTP %d", resp.StatusCode)
 	}
@@ -183,6 +200,9 @@ func (g *googleOAuth) fetchEmail(ctx context.Context, accessToken string) (strin
 	email := strings.ToLower(strings.TrimSpace(info.Email))
 	if email == "" {
 		return "", fmt.Errorf("google did not return an email address")
+	}
+	if !info.VerifiedEmail {
+		return "", fmt.Errorf("google email address is not verified")
 	}
 	return email, nil
 }

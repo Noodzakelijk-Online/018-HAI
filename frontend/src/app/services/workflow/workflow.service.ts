@@ -1,12 +1,13 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, map } from 'rxjs';
 import { IWorkflowService } from '../workflow.service.interface';
 import {
   IWorkflowApprovalResolutionRequest,
   IWorkflowChecklistUpdateRequest,
   IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
+  IWorkflowFrameworkSelectionDecision,
   IWorkflowIntakeRequest,
   IWorkflowInterruptedExecutionResolutionRequest,
   IWorkflowItem,
@@ -18,6 +19,10 @@ import {
   IWorkflowRunSummary,
   IWorkflowTransitionRequest,
 } from '../../models/workflow.model.interface';
+
+type WorkflowFrameworkSelectionListResponse =
+  | IWorkflowFrameworkSelectionDecision[]
+  | { selections: IWorkflowFrameworkSelectionDecision[] };
 
 @Injectable({
   providedIn: 'root',
@@ -51,6 +56,21 @@ export class WorkflowService implements IWorkflowService {
 
   get(id: string): Observable<IWorkflowRecord> {
     return this.http.get<IWorkflowRecord>(`${this.apiUrl}/${id}`);
+  }
+
+  frameworkSelection(
+    selectionDecisionId: string
+  ): Observable<IWorkflowFrameworkSelectionDecision | undefined> {
+    const expectedId = selectionDecisionId.trim();
+    return this.http.get<WorkflowFrameworkSelectionListResponse>(
+      '/api/v1/framework-registry/selections',
+      { params: new HttpParams().set('limit', 200) }
+    ).pipe(
+      map((response) => {
+        const selections = Array.isArray(response) ? response : response.selections ?? [];
+        return selections.find((selection) => selection.id === expectedId);
+      })
+    );
   }
 
   transition(id: string, request: IWorkflowTransitionRequest): Observable<IWorkflowRecord> {

@@ -11,7 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"math"
 	"net/mail"
@@ -24,6 +24,13 @@ var (
 	ErrRegistrationEmailInvalid = errors.New("enter a valid email address")
 	ErrRegistrationPasswordWeak = errors.New("password must contain at least 12 characters")
 	ErrRegistrationEmailInUse   = errors.New("an account with this email already exists")
+)
+
+const (
+	tokenTypeAccess  = "access"
+	tokenTypeRefresh = "refresh"
+	tokenIssuer      = "hai-idp"
+	tokenAudience    = "hai"
 )
 
 type service struct {
@@ -56,9 +63,6 @@ func NewService(userService users.UserService, hasher utils.PasswordHasher, send
 
 func GetDefaultAuthService() (IService, error) {
 	logger, err := services.NewKafkaLogger(config.KafkaConfig.BrokersAddr, config.KafkaConfig.LoggerTopic)
-	if err != nil {
-		return nil, err
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -141,15 +145,15 @@ func (a *service) Register(userDTO dto.UserDTO) (*dto.UserResponse, error) {
 }
 
 func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
 	user, err := a.userService.GetUserByEmail(email)
-	if err != nil {
+	if err != nil || user == nil || !user.IsActive {
 		a.logger.Error("Error fetching user by email: %v", err)
 		return nil, errors.New("invalid credentials")
 	}
 
-	// Check if account is blocked and if the block time hasn't expired
 	now := time.Now()
-	if user.IsBlocked && user.BlockedUntil != nil && now.Before(*user.BlockedUntil) {
+	if user.IsBlocked && (user.BlockedUntil == nil || now.Before(*user.BlockedUntil)) {
 		a.logger.Warn("Login attempt for blocked user: %s", email)
 		return nil, errors.New("account is blocked")
 	}
@@ -160,8 +164,7 @@ func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
 		return nil, errors.New("please wait a moment before trying again")
 	}
 
-	// If the account was blocked but the block time has expired, unblock the account
-	if user.IsBlocked && (user.BlockedUntil == nil || now.After(*user.BlockedUntil)) {
+	if user.IsBlocked && user.BlockedUntil != nil && !now.Before(*user.BlockedUntil) {
 		user.IsBlocked = false
 		user.FailedAttempts = 0
 		user.BlockedUntil = nil
@@ -188,7 +191,9 @@ func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
 				Email:        email,
 				BlockedUntil: blockedUntil,
 			}
-			err = a.sender.Send(config.AuthenticationConfig.AccountBlockedTopic, msg)
+			if sendErr := a.sender.Send(config.AuthenticationConfig.AccountBlockedTopic, msg); sendErr != nil {
+				a.logger.Error("Failed to send account blocked message: %v", sendErr)
+			}
 		}
 		_, updateErr := a.userService.UpdateUser(*user)
 		if updateErr != nil {
@@ -262,13 +267,20 @@ func (a *service) LoginWithGoogle(ctx context.Context, code, state string) (*dto
 	}
 
 	user, err := a.userService.GetUserByEmail(email)
-	if err != nil || user == nil {
+	if errors.Is(err, users.ErrUserNotFound) {
 		user, err = a.createGoogleUser(email)
 		if err != nil {
 			a.logger.Error("Failed to provision Google user %s: %v", email, err)
 			return nil, errors.New("failed to provision account")
 		}
 		a.logger.Info("Provisioned new user via Google sign-in: %s", email)
+	} else if err != nil || user == nil {
+		a.logger.Error("Failed to resolve Google user %s: %v", email, err)
+		return nil, errors.New("failed to resolve account")
+	}
+	if !user.IsActive || (user.IsBlocked && (user.BlockedUntil == nil || time.Now().Before(*user.BlockedUntil))) {
+		a.logger.Warn("Unavailable user attempted Google sign-in: %s", email)
+		return nil, errors.New("account is unavailable")
 	}
 
 	a.logger.Info("Successfully logged in user via Google: %s", email)
@@ -276,14 +288,17 @@ func (a *service) LoginWithGoogle(ctx context.Context, code, state string) (*dto
 }
 
 // LocalPreviewLogin issues a normal owner session only when the administrator
-// explicitly enabled the local-preview flag. The handler adds a loopback host
-// check; Compose binds the gateway to 127.0.0.1 by default for this mode.
+// explicitly enabled the local-preview flag. IDP startup rejects that flag
+// unless GATEWAY_HOST_BIND is an explicit loopback address. The handler also
+// denies non-loopback Host values as defense in depth, but Host is not trusted
+// as the boundary that enables this mode.
 func (a *service) LocalPreviewLogin() (*dto.TokenDetails, error) {
 	if config.LocalPreviewConfig == nil || !config.LocalPreviewConfig.Enabled || config.LocalPreviewConfig.OwnerEmail == "" {
 		return nil, errors.New("local preview is not enabled")
 	}
 	user, err := a.userService.GetUserByEmail(config.LocalPreviewConfig.OwnerEmail)
-	if err != nil || user == nil || user.Role != "owner" || !user.IsActive {
+	if err != nil || user == nil || user.Role != "owner" || !user.IsActive ||
+		(user.IsBlocked && (user.BlockedUntil == nil || time.Now().Before(*user.BlockedUntil))) {
 		a.logger.Warn("Local preview owner session was unavailable")
 		return nil, errors.New("local preview owner session is unavailable")
 	}
@@ -311,6 +326,9 @@ func (a *service) Logout(accessToken string) error {
 	_, claims, err := a.parseAndValidateToken(accessToken)
 	if err != nil {
 		a.logger.Error("Error parsing access token: %v", err)
+		return errors.New("invalid access token")
+	}
+	if !hasTokenType(claims, tokenTypeAccess) {
 		return errors.New("invalid access token")
 	}
 
@@ -349,16 +367,19 @@ func (a *service) Logout(accessToken string) error {
 	atExpires := int64(atExpiresFloat)
 	atDuration := time.Until(time.Unix(atExpires, 0))
 
-	// Add the access token and refresh token UUIDs to the block list
-	err = a.blockListService.AddToBlockList(accessUUID, atDuration)
-	if err != nil {
-		a.logger.Error("Failed to add access token to block list for user: %s, Error: %v", userID, err)
-		return err
+	// Attempt both revocations even when one backing-store operation fails.
+	// Refresh is blocked first because it can mint new access tokens.
+	var revokeErrors []error
+	if refreshErr := a.blockListService.AddToBlockList(refreshUUID, rtDuration); refreshErr != nil {
+		a.logger.Error("Failed to add refresh token to block list for user: %s, Error: %v", userID, refreshErr)
+		revokeErrors = append(revokeErrors, fmt.Errorf("revoke refresh token: %w", refreshErr))
 	}
-	err = a.blockListService.AddToBlockList(refreshUUID, rtDuration)
-	if err != nil {
-		a.logger.Error("Failed to add refresh token to block list for user: %s, Error: %v", userID, err)
-		return err
+	if accessErr := a.blockListService.AddToBlockList(accessUUID, atDuration); accessErr != nil {
+		a.logger.Error("Failed to add access token to block list for user: %s, Error: %v", userID, accessErr)
+		revokeErrors = append(revokeErrors, fmt.Errorf("revoke access token: %w", accessErr))
+	}
+	if len(revokeErrors) > 0 {
+		return errors.Join(revokeErrors...)
 	}
 
 	a.logger.Info("Successfully logged out and blocked tokens for user: %s with accessUUID: %s and refreshUUID: %s", userID, accessUUID, refreshUUID)
@@ -369,6 +390,9 @@ func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 	_, claims, err := a.parseAndValidateToken(refreshToken)
 	if err != nil {
 		a.logger.Error("Error parsing refresh token: %v", err)
+		return nil, errors.New("invalid refresh token")
+	}
+	if !hasTokenType(claims, tokenTypeRefresh) {
 		return nil, errors.New("invalid refresh token")
 	}
 
@@ -406,10 +430,10 @@ func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 		a.logger.Warn("Refresh expiration time not found in the token for user: %s", userID)
 		return nil, errors.New("refresh expiration time not found in the token")
 	}
-	user, err := a.userService.GetUserByID(userID)
-	if err != nil || user == nil {
+	user, err := a.activeUser(userID)
+	if err != nil {
 		a.logger.Warn("User is unavailable while refreshing an access token: %s", userID)
-		return nil, errors.New("user is unavailable")
+		return nil, err
 	}
 	newAccessToken, atExpires, err := a.generateAccessToken(userID, userRole(user.Role), refreshUUID, refreshExp)
 	if err != nil {
@@ -436,6 +460,9 @@ func (a *service) IsUserAuthenticated(accessToken string) (bool, error) {
 		a.logger.Error("Error parsing accessToken: %v", err)
 		return false, err
 	}
+	if !hasTokenType(claims, tokenTypeAccess) {
+		return false, errors.New("invalid accessToken")
+	}
 	// Check if the accessToken is in the blockList
 	accessUUID, ok := claims["access_uuid"].(string)
 	if !ok {
@@ -452,6 +479,9 @@ func (a *service) IsUserAuthenticated(accessToken string) (bool, error) {
 	if isBlocked {
 		a.logger.Warn("Token is blocked")
 		return false, errors.New("accessToken is blocked")
+	}
+	if _, err := a.activeUserFromClaims(claims); err != nil {
+		return false, err
 	}
 
 	return true, nil
@@ -557,6 +587,9 @@ func (a *service) ChangePassword(accessToken string, newPassword string) error {
 		a.logger.Error("Error parsing accessToken: %v", err)
 		return errors.New("invalid accessToken")
 	}
+	if !hasTokenType(claims, tokenTypeAccess) {
+		return errors.New("invalid accessToken")
+	}
 	userIDStr, ok := claims["user_id"].(string)
 	if !ok {
 		a.logger.Warn("User ID not found in the accessToken")
@@ -597,6 +630,9 @@ func (a *service) GetIdFromToken(accessToken string) (uuid.UUID, error) {
 		a.logger.Error("Error parsing accessToken: %v", err)
 		return uuid.UUID{}, errors.New("invalid accessToken")
 	}
+	if !hasTokenType(claims, tokenTypeAccess) {
+		return uuid.UUID{}, errors.New("invalid accessToken")
+	}
 	userIDStr, ok := claims["user_id"].(string)
 	if !ok {
 		a.logger.Warn("User ID not found in the accessToken")
@@ -610,12 +646,50 @@ func (a *service) GetIdFromToken(accessToken string) (uuid.UUID, error) {
 	return userID, nil
 }
 
+func (a *service) GetSessionFromToken(accessToken string) (*dto.AuthSession, error) {
+	_, claims, err := a.parseAndValidateToken(accessToken)
+	if err != nil {
+		return nil, errors.New("invalid accessToken")
+	}
+	if !hasTokenType(claims, tokenTypeAccess) {
+		return nil, errors.New("invalid accessToken")
+	}
+
+	user, err := a.activeUserFromClaims(claims)
+	if err != nil {
+		return nil, err
+	}
+	role := userRole(user.Role)
+	permissions := dto.AuthSessionPermissions{CanRead: true}
+	switch role {
+	case "owner":
+		permissions.CanOperate = true
+		permissions.CanApprove = true
+		permissions.CanAdminister = true
+	case "operator":
+		permissions.CanOperate = true
+	case "viewer":
+	}
+
+	return &dto.AuthSession{
+		Authenticated: true,
+		Subject:       user.ID.String(),
+		Role:          role,
+		Permissions:   permissions,
+	}, nil
+}
+
 func (a *service) generateAccessToken(userID uuid.UUID, role, refreshUUID string, refreshExp int64) (string, int64, error) {
-	expires := time.Now().Add(time.Minute * config.AuthenticationConfig.AccessTokenDurationMinutes).Unix()
+	now := time.Now()
+	expires := now.Add(time.Minute * config.AuthenticationConfig.AccessTokenDurationMinutes).Unix()
 
 	claims := jwt.MapClaims{}
+	claims["iss"] = tokenIssuer
+	claims["aud"] = tokenAudience
+	claims["iat"] = now.Unix()
 	claims["user_id"] = userID.String()
 	claims["role"] = userRole(role)
+	claims["token_type"] = tokenTypeAccess
 	claims["access_uuid"] = uuid.New().String()
 	claims["refresh_uuid"] = refreshUUID
 	claims["refresh_exp"] = refreshExp
@@ -631,17 +705,22 @@ func userRole(role string) string {
 	case "owner", "operator", "viewer":
 		return strings.ToLower(strings.TrimSpace(role))
 	default:
-		return "operator"
+		return "viewer"
 	}
 }
 
 func (a *service) generateRefreshToken(userID uuid.UUID) (string, string, int64, error) {
 	refreshUUID := uuid.New().String()
-	expires := time.Now().Add(config.AuthenticationConfig.RefreshTokenDurationDays).Unix()
+	now := time.Now()
+	expires := now.Add(config.AuthenticationConfig.RefreshTokenDurationDays).Unix()
 
 	claims := jwt.MapClaims{}
+	claims["iss"] = tokenIssuer
+	claims["aud"] = tokenAudience
+	claims["iat"] = now.Unix()
 	claims["refresh_uuid"] = refreshUUID
 	claims["user_id"] = userID.String()
+	claims["token_type"] = tokenTypeRefresh
 	claims["exp"] = expires
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -651,12 +730,18 @@ func (a *service) generateRefreshToken(userID uuid.UUID) (string, string, int64,
 
 func (a *service) parseAndValidateToken(tokenString string) (*jwt.Token, jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		if token.Method != jwt.SigningMethodHS256 {
 			a.logger.Error("Unexpected signing method: %v", token.Header["alg"])
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(a.jwtSecret), nil
-	})
+	},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(tokenIssuer),
+		jwt.WithAudience(tokenAudience),
+		jwt.WithIssuedAt(),
+		jwt.WithLeeway(30*time.Second),
+	)
 
 	if err != nil {
 		return nil, nil, err
@@ -668,6 +753,34 @@ func (a *service) parseAndValidateToken(tokenString string) (*jwt.Token, jwt.Map
 	}
 
 	return token, claims, nil
+}
+
+func (a *service) activeUserFromClaims(claims jwt.MapClaims) (*models.User, error) {
+	userIDValue, ok := claims["user_id"].(string)
+	if !ok {
+		return nil, errors.New("invalid accessToken")
+	}
+	userID, err := uuid.Parse(userIDValue)
+	if err != nil {
+		return nil, errors.New("invalid accessToken")
+	}
+	return a.activeUser(userID)
+}
+
+func (a *service) activeUser(userID uuid.UUID) (*models.User, error) {
+	user, err := a.userService.GetUserByID(userID)
+	if err != nil || user == nil || !user.IsActive {
+		return nil, errors.New("user is unavailable")
+	}
+	if user.IsBlocked && (user.BlockedUntil == nil || time.Now().Before(*user.BlockedUntil)) {
+		return nil, errors.New("user is unavailable")
+	}
+	return user, nil
+}
+
+func hasTokenType(claims jwt.MapClaims, expected string) bool {
+	tokenType, ok := claims["token_type"].(string)
+	return ok && tokenType == expected
 }
 
 func unixClaim(claims jwt.MapClaims, key string) (int64, bool) {

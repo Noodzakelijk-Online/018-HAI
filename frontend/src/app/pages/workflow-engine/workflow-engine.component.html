@@ -318,6 +318,117 @@
             <div><dt>Autonomy</dt><dd>{{ readable(record.item.autonomyLevel) }}</dd></div>
             <div><dt>Verification</dt><dd>{{ readable(record.item.verificationStatus || '-') }}</dd></div>
           </dl>
+          <section
+            class="governance-summary"
+            [ngClass]="frameworkGovernanceClass"
+            aria-live="polite"
+            data-testid="workflow-framework-summary"
+          >
+            <div class="governance-summary__heading">
+              <span class="governance-summary__icon" aria-hidden="true">
+                <i
+                  nz-icon
+                  [nzType]="frameworkProvenanceState === 'verified' ? 'safety-certificate' : frameworkProvenanceState === 'invalid' ? 'warning' : 'audit'"
+                  nzTheme="outline"
+                ></i>
+              </span>
+              <span class="governance-summary__copy">
+                <strong>{{ frameworkGovernanceLabel }}</strong>
+                <small
+                  [title]="frameworkProvenance?.selectionDecisionId || frameworkGovernanceLabel"
+                  data-testid="workflow-framework-selection-id"
+                >
+                  {{ frameworkSelectionLoading ? 'Checking registry decision...' : frameworkSelectionLabel }}
+                </small>
+              </span>
+              <button
+                type="button"
+                nz-button
+                nzSize="small"
+                nzType="default"
+                data-testid="workflow-open-framework-registry"
+                (click)="openFrameworkRegistry()"
+              >
+                Registry
+              </button>
+            </div>
+            <p>{{ frameworkGovernanceSummary }}</p>
+          </section>
+        </article>
+
+        <article
+          class="detail-box interruption-review"
+          *ngIf="selected?.item?.recoveryStatus === 'needs_review'"
+          role="alert"
+          aria-labelledby="interruption-review-title"
+          data-testid="workflow-interruption-review"
+        >
+          <div class="box-title">
+            <strong id="interruption-review-title">Interrupted execution needs a decision</strong>
+            <span>Unknown effects</span>
+          </div>
+          <p>
+            The worker stopped before it could record a terminal result. Check the external system
+            before retrying so HAI does not repeat an action that may already have happened.
+          </p>
+          <p class="interruption-review__reason">
+            {{ selected?.item?.blockedReason || selected?.item?.lastWorkerError || 'Execution outcome is unknown.' }}
+          </p>
+
+          <form [formGroup]="interruptionForm" class="interruption-form">
+            <label for="workflow-interruption-decision">
+              <span>Reviewed outcome</span>
+              <select id="workflow-interruption-decision" formControlName="decision">
+                <option value="retry">No effect occurred, retry safely</option>
+                <option value="confirm_completed">Expected effect occurred, confirm completion</option>
+                <option value="keep_blocked">Still uncertain, keep blocked</option>
+              </select>
+            </label>
+
+            <label for="workflow-interruption-note">
+              <span>Review note</span>
+              <textarea
+                nz-input
+                id="workflow-interruption-note"
+                rows="4"
+                formControlName="note"
+                placeholder="Record what you checked and what you observed."
+              ></textarea>
+            </label>
+
+            <ng-container *ngIf="interruptionRequiresEvidence">
+              <label for="workflow-interruption-evidence-uri">
+                <span>Completion evidence URI</span>
+                <input
+                  nz-input
+                  id="workflow-interruption-evidence-uri"
+                  formControlName="evidenceUri"
+                  placeholder="https://... or local://..."
+                />
+              </label>
+              <label for="workflow-interruption-evidence-label">
+                <span>Evidence label</span>
+                <input
+                  nz-input
+                  id="workflow-interruption-evidence-label"
+                  formControlName="evidenceLabel"
+                  placeholder="What the source proves"
+                />
+              </label>
+            </ng-container>
+
+            <button
+              type="button"
+              nz-button
+              nzType="primary"
+              data-testid="workflow-resolve-interruption"
+              [nzLoading]="saving"
+              [disabled]="saving || interruptionForm.invalid"
+              (click)="resolveInterruptedExecution()"
+            >
+              Record recovery decision
+            </button>
+          </form>
         </article>
 
         <article class="detail-box pursuit-context" *ngIf="selected?.pursuits?.length">
@@ -350,6 +461,262 @@
             <p>Select a workflow from the inbox to see controls, timeline, evidence, and audit trail.</p>
           </article>
         </ng-template>
+
+        <details
+          class="inspector-section framework-provenance-section"
+          *ngIf="selected as record"
+          data-testid="workflow-framework-provenance"
+        >
+          <summary>
+            <span>Framework provenance</span>
+            <em>{{ frameworkGovernanceLabel }}</em>
+          </summary>
+
+          <div class="framework-provenance">
+            <div class="framework-provenance__state" [ngClass]="frameworkGovernanceClass">
+              <strong>{{ frameworkGovernanceLabel }}</strong>
+              <p>{{ frameworkGovernanceSummary }}</p>
+            </div>
+
+            <ul
+              class="framework-provenance__issues"
+              *ngIf="frameworkProvenanceIssues.length"
+              aria-label="Framework provenance validation issues"
+              data-testid="workflow-framework-provenance-issues"
+            >
+              <li *ngFor="let issue of frameworkProvenanceIssues">{{ issue }}</li>
+            </ul>
+
+            <p
+              class="framework-provenance__notice"
+              *ngIf="frameworkSelectionLoading"
+              data-testid="workflow-framework-selection-loading"
+            >
+              <i nz-icon nzType="loading" nzTheme="outline" aria-hidden="true"></i>
+              Checking the compact workflow record against the owner-scoped registry decision.
+            </p>
+
+            <p
+              class="framework-provenance__notice"
+              *ngIf="frameworkSelectionUnavailable && frameworkProvenanceState === 'recorded'"
+              data-testid="workflow-framework-selection-unavailable"
+            >
+              The compact provenance is valid, but the full selection is unavailable in current registry history.
+              Selected framework IDs and versions cannot be confirmed here.
+            </p>
+
+            <section
+              class="framework-provenance__frameworks"
+              *ngIf="frameworkSelectionDecision as decision"
+              data-testid="workflow-selected-frameworks"
+            >
+              <div class="box-title">
+                <strong>Selected frameworks</strong>
+                <span>{{ decision.selected.length }} selected</span>
+              </div>
+              <ul>
+                <li *ngFor="let framework of decision.selected">
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy full framework reference: ' + framework.id + '@' + framework.version"
+                    [attr.aria-label]="'Copy framework ' + framework.id + ' version ' + framework.version"
+                    (click)="copyProvenanceValue('Framework reference', framework.id + '@' + framework.version)"
+                  >
+                    <code>{{ framework.id }}&#64;{{ framework.version }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                  <small>{{ framework.name }} / {{ framework.family }}</small>
+                </li>
+              </ul>
+            </section>
+
+            <section
+              class="framework-decision-contract"
+              *ngIf="frameworkSelectionDecision as decision"
+              data-testid="workflow-framework-decision-contract"
+            >
+              <div>
+                <strong>Why this combination</strong>
+                <p>{{ decision.selectionReason }}</p>
+              </div>
+              <div>
+                <strong>Context required</strong>
+                <ul *ngIf="decision.contextRequirements.length; else noFrameworkContext">
+                  <li *ngFor="let requirement of decision.contextRequirements">{{ requirement }}</li>
+                </ul>
+                <ng-template #noFrameworkContext><p>No extra context requirement recorded.</p></ng-template>
+              </div>
+              <div>
+                <strong>Completion evidence</strong>
+                <ul *ngIf="decision.evidenceRequirements.length; else noFrameworkEvidence">
+                  <li *ngFor="let requirement of decision.evidenceRequirements">{{ requirement }}</li>
+                </ul>
+                <ng-template #noFrameworkEvidence><p>No framework evidence requirement recorded.</p></ng-template>
+              </div>
+              <div>
+                <strong>Learning boundary</strong>
+                <ul *ngIf="decision.learningPlan.length; else noFrameworkLearning">
+                  <li *ngFor="let item of decision.learningPlan">{{ item }}</li>
+                </ul>
+                <ng-template #noFrameworkLearning><p>No learning update was authorized.</p></ng-template>
+              </div>
+              <div class="framework-decision-contract__wide">
+                <strong>Conflict decisions</strong>
+                <ul *ngIf="decision.conflicts.length; else noFrameworkConflicts">
+                  <li *ngFor="let conflict of decision.conflicts">
+                    Kept <code>{{ conflict.selectedId }}</code>; skipped
+                    <code>{{ conflict.skippedId }}</code>: {{ conflict.reason }}
+                  </li>
+                </ul>
+                <ng-template #noFrameworkConflicts><p>No framework conflicts were recorded.</p></ng-template>
+              </div>
+            </section>
+
+            <dl class="framework-provenance__metadata" *ngIf="frameworkProvenance as provenance">
+              <div>
+                <dt>Selection ID</dt>
+                <dd>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy full selection ID: ' + provenance.selectionDecisionId"
+                    [attr.aria-label]="'Copy selection ID ' + provenance.selectionDecisionId"
+                    (click)="copyProvenanceValue('Selection ID', provenance.selectionDecisionId)"
+                  >
+                    <code>{{ provenance.selectionDecisionId }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Task plan</dt>
+                <dd>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy full task plan ID: ' + provenance.taskPlanId"
+                    [attr.aria-label]="'Copy task plan ID ' + provenance.taskPlanId"
+                    (click)="copyProvenanceValue('Task plan ID', provenance.taskPlanId)"
+                  >
+                    <code>{{ provenance.taskPlanId }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Catalog</dt>
+                <dd>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy catalog version: ' + provenance.catalogVersion"
+                    [attr.aria-label]="'Copy catalog version ' + provenance.catalogVersion"
+                    (click)="copyProvenanceValue('Catalog version', provenance.catalogVersion)"
+                  >
+                    <code>{{ provenance.catalogVersion }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Selector</dt>
+                <dd>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy selector version: ' + provenance.selectorAlgorithmVersion"
+                    [attr.aria-label]="'Copy selector version ' + provenance.selectorAlgorithmVersion"
+                    (click)="copyProvenanceValue('Selector version', provenance.selectorAlgorithmVersion)"
+                  >
+                    <code>{{ provenance.selectorAlgorithmVersion }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Constitution</dt>
+                <dd class="provenance-pair">
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy Constitution version: ' + provenance.constitutionVersion"
+                    [attr.aria-label]="'Copy Constitution version ' + provenance.constitutionVersion"
+                    (click)="copyProvenanceValue('Constitution version', provenance.constitutionVersion)"
+                  >
+                    <code>v{{ provenance.constitutionVersion }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy Constitution source: ' + provenance.constitutionSource"
+                    [attr.aria-label]="'Copy Constitution source ' + provenance.constitutionSource"
+                    (click)="copyProvenanceValue('Constitution source', provenance.constitutionSource)"
+                  >
+                    <code>{{ provenance.constitutionSource }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Catalog digest</dt>
+                <dd>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy full catalog digest: ' + provenance.catalogDigest"
+                    [attr.aria-label]="'Copy catalog digest ' + provenance.catalogDigest"
+                    (click)="copyProvenanceValue('Catalog digest', provenance.catalogDigest)"
+                  >
+                    <code>{{ provenance.catalogDigest }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Preference digest</dt>
+                <dd>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy full preference digest: ' + provenance.effectivePreferenceDigest"
+                    [attr.aria-label]="'Copy preference digest ' + provenance.effectivePreferenceDigest"
+                    (click)="copyProvenanceValue('Preference digest', provenance.effectivePreferenceDigest)"
+                  >
+                    <code>{{ provenance.effectivePreferenceDigest }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Constitution digest</dt>
+                <dd>
+                  <button
+                    type="button"
+                    class="provenance-value"
+                    [title]="'Copy full Constitution digest: ' + provenance.constitutionDigest"
+                    [attr.aria-label]="'Copy Constitution digest ' + provenance.constitutionDigest"
+                    (click)="copyProvenanceValue('Constitution digest', provenance.constitutionDigest)"
+                  >
+                    <code>{{ provenance.constitutionDigest }}</code>
+                    <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
+                  </button>
+                </dd>
+              </div>
+            </dl>
+
+            <button
+              type="button"
+              nz-button
+              nzType="default"
+              class="framework-provenance__registry-link"
+              (click)="openFrameworkRegistry()"
+            >
+              Open Framework Registry
+            </button>
+          </div>
+        </details>
 
         <details class="inspector-section" *ngIf="selected as record" open>
           <summary>Workflow controls</summary>

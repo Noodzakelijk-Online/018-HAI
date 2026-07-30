@@ -5,6 +5,7 @@ import (
 	"automation-hub-idp/internal/app/repositories/irepository"
 	"automation-hub-idp/internal/app/utils"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -34,7 +35,10 @@ func (r *GormUserRepository) FindByID(id uuid.UUID) (*models.User, error) {
 	err := r.DB.First(&user, "id = ? AND is_active = ?", id, true).Error
 	if err != nil {
 		r.logger.Error("Failed to fetch user by ID: %s", err)
-		return nil, errors.New("user not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, irepository.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("find user by ID: %w", err)
 	}
 	return &user, nil
 }
@@ -44,7 +48,10 @@ func (r *GormUserRepository) FindByEmail(email string) (*models.User, error) {
 	err := r.DB.First(&user, "email = ? AND is_active = ?", email, true).Error
 	if err != nil {
 		r.logger.Error("Failed to fetch user by email: %s", err)
-		return nil, errors.New("user not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, irepository.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("find user by email: %w", err)
 	}
 	return &user, nil
 }
@@ -96,7 +103,10 @@ func (r *GormUserRepository) FindByResetToken(token string) (*models.User, error
 	err := r.DB.First(&user, "reset_password_token = ? AND is_active = ?", token, true).Error
 	if err != nil {
 		r.logger.Error("Failed to fetch user by reset token: %s", err)
-		return nil, errors.New("user not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, irepository.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("find user by reset token: %w", err)
 	}
 	return &user, nil
 }

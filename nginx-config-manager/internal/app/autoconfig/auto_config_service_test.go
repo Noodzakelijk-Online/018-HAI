@@ -68,3 +68,23 @@ func TestProcessMessageIgnoresMissingAutomationPayload(t *testing.T) {
 
 	processMessage(&sarama.ConsumerMessage{Value: []byte(`{"type":"create"}`)})
 }
+
+func TestReloadNginxSkipsWhenDisabled(t *testing.T) {
+	config.AppConfig = config.Configuration{ReloadEnabled: false}
+
+	if err := reloadNginx(); err != nil {
+		t.Fatalf("reloadNginx() error = %v, want nil", err)
+	}
+}
+
+func TestReloadNginxFailsClosedWithoutDockerSocketControl(t *testing.T) {
+	config.AppConfig = config.Configuration{ReloadEnabled: true}
+
+	err := reloadNginx()
+	if err == nil {
+		t.Fatal("reloadNginx() error = nil, want fail-closed error")
+	}
+	if !strings.Contains(err.Error(), "Docker socket control is disabled") {
+		t.Fatalf("reloadNginx() error = %q", err)
+	}
+}

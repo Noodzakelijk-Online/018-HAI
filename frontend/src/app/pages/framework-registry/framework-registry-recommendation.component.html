@@ -1,0 +1,412 @@
+<div class="recommendation-empty" role="status" aria-live="polite" *ngIf="loading && !selection">
+  <nz-spin nzSimple></nz-spin>
+  <div>
+    <strong>Loading the latest recommendation</strong>
+    <p>HAI is retrieving the owner-scoped selection history.</p>
+  </div>
+</div>
+
+<div class="recommendation-empty recommendation-empty--error" role="alert" *ngIf="!loading && !selection && unavailableMessage">
+  <span nz-icon nzType="warning"></span>
+  <div>
+    <strong>Recommendation history unavailable</strong>
+    <p>{{ unavailableMessage }}</p>
+  </div>
+</div>
+
+<div
+  class="recommendation-empty"
+  role="status"
+  *ngIf="!loading && !selection && !unavailableMessage"
+>
+  <span nz-icon nzType="compass" aria-hidden="true"></span>
+  <div>
+    <strong>No recommendation yet</strong>
+    <p>Describe the work to receive a source-aware framework and governance contract.</p>
+  </div>
+</div>
+
+<ng-container *ngIf="selection as decision">
+  <div class="recommendation-stale" role="status" *ngIf="staleMessage">
+    <span nz-icon nzType="warning" aria-hidden="true"></span>
+    <span>{{ staleMessage }} Showing the last successfully loaded recommendation.</span>
+  </div>
+
+  <div class="recommendation-summary">
+    <div class="recommendation-summary__icon">
+      <span nz-icon nzType="branches" aria-hidden="true"></span>
+    </div>
+    <div>
+      <span class="section-label">Primary framework</span>
+      <h3>{{ primaryFrameworkName }}</h3>
+      <p>{{ decision.selectionReason }}</p>
+    </div>
+  </div>
+
+  <section class="chief-of-staff" *ngIf="decision.chiefOfStaff as chief">
+    <div>
+      <span class="section-label">What needs attention</span>
+      <strong>{{ chief.needsAttention }}</strong>
+      <p>{{ chief.whyNow }}</p>
+    </div>
+    <dl>
+      <div>
+        <dt>Who acts</dt>
+        <dd>{{ humanize(chief.whoShouldAct) }}</dd>
+      </div>
+      <div>
+        <dt>May proceed</dt>
+        <dd>{{ chief.mayProceedNow }}</dd>
+      </div>
+      <div *ngIf="decision.requiresApproval">
+        <dt>Approval gate</dt>
+        <dd>{{ chief.needsApproval }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <dl class="decision-meta">
+    <div>
+      <dt>Life domain</dt>
+      <dd>{{ humanize(decision.lifeDomain) }}</dd>
+    </div>
+    <div>
+      <dt>Need or commitment</dt>
+      <dd>{{ decision.needOrCommitment || 'Not classified' }}</dd>
+    </div>
+    <div>
+      <dt>Autonomy ceiling</dt>
+      <dd>Level {{ decision.maximumAutonomyLevel }} of 10</dd>
+    </div>
+    <div>
+      <dt>Constitution</dt>
+      <dd>Version {{ decision.constitutionVersion }} &middot; {{ decision.constitutionSource }}</dd>
+    </div>
+    <div>
+      <dt>Recorded</dt>
+      <dd>{{ decision.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC</dd>
+    </div>
+    <div *ngIf="decision.capacity as capacity">
+      <dt>Capacity</dt>
+      <dd>
+        {{ humanize(capacity.status) }} &middot;
+        {{ capacity.planningStepLimit }}-step plan
+      </dd>
+    </div>
+    <div *ngIf="decision.coordination as coordination">
+      <dt>Coordination</dt>
+      <dd>{{ humanize(coordination.mode) }}</dd>
+    </div>
+  </dl>
+
+  <div class="selected-frameworks" *ngIf="decision.selected.length">
+    <button
+      type="button"
+      class="selected-framework"
+      *ngFor="let framework of visibleFrameworks; trackBy: trackFramework"
+      [attr.aria-label]="'Inspect ' + framework.name + ' framework'"
+      (click)="inspectFramework.emit(framework.id)"
+    >
+      <span>
+        <strong>{{ framework.name }}</strong>
+        <small>{{ humanize(framework.family) }} &middot; score {{ framework.score | number: '1.1-2' }}</small>
+      </span>
+      <span nz-icon nzType="right" aria-hidden="true"></span>
+    </button>
+    <p class="selected-frameworks__more" *ngIf="hiddenFrameworkCount">
+      {{ hiddenFrameworkCount }} more selected framework{{ hiddenFrameworkCount === 1 ? '' : 's' }}
+      available in Advanced view.
+    </p>
+  </div>
+
+  <div class="approval-callout" role="status" *ngIf="decision.requiresApproval">
+    <span nz-icon nzType="safety-certificate" aria-hidden="true"></span>
+    <div>
+      <strong>Approval remains required</strong>
+      <ul>
+        <li *ngFor="let reason of decision.approvalReasons; trackBy: trackString">{{ reason }}</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="recommendation-detail" *ngIf="advanced">
+    <section class="recommendation-detail__wide" *ngIf="decision.lifeDomains?.length">
+      <h4>Whole-life scope</h4>
+      <div class="domain-grid">
+        <article *ngFor="let domain of decision.lifeDomains; trackBy: trackDomain">
+          <div>
+            <strong>{{ humanize(domain.id) }}</strong>
+            <nz-tag *ngIf="domain.primary" nzColor="blue">Primary</nz-tag>
+          </div>
+          <p>{{ domain.need }}</p>
+          <small>
+            Confidence {{ domain.confidence | percent: '1.0-0' }} &middot;
+            {{ domain.source }}
+          </small>
+        </article>
+      </div>
+    </section>
+    <section *ngIf="decision.capacity as capacity">
+      <h4>Human capacity</h4>
+      <p>
+        <strong>{{ humanize(capacity.status) }}</strong>
+        &middot; plan limit {{ capacity.planningStepLimit }} steps
+      </p>
+      <ul *ngIf="capacity.constraints.length">
+        <li *ngFor="let constraint of capacity.constraints; trackBy: trackString">
+          {{ constraint }}
+        </li>
+      </ul>
+      <p class="empty-copy" *ngIf="capacity.needsReview">
+        This capacity snapshot needs operator review before it should create new commitments.
+      </p>
+    </section>
+    <section *ngIf="decision.needsState?.length">
+      <h4>Needs state</h4>
+      <ul class="needs-list">
+        <li *ngFor="let need of decision.needsState; trackBy: trackNeed">
+          <strong>{{ humanize(need.level) }}</strong>
+          <span>{{ humanize(need.state) }} &middot; priority {{ need.priority }}</span>
+          <small>{{ need.source }}</small>
+        </li>
+      </ul>
+    </section>
+    <section class="recommendation-detail__wide" *ngIf="decision.agentCards?.length">
+      <h4>Agent cards and delegation readiness</h4>
+      <div class="agent-grid">
+        <article *ngFor="let agent of decision.agentCards; trackBy: trackAgent">
+          <div>
+            <strong>{{ agent.name }}</strong>
+            <nz-tag [nzColor]="agent.verified ? 'green' : 'gold'">
+              {{ agent.verified ? 'Verified' : humanize(agent.status) }}
+            </nz-tag>
+          </div>
+          <p>{{ agent.purpose }}</p>
+          <small>
+            {{ humanize(agent.role) }} &middot;
+            {{ humanize(agent.healthStatus) }} &middot;
+            ceiling {{ agent.authorityCeiling }}/10 &middot;
+            evaluation {{ agent.evaluationScore | percent: '1.0-0' }}
+          </small>
+          <small>{{ agent.evaluationScoreSource }}</small>
+          <small>{{ agent.owner }} &middot; {{ agent.provenance }}</small>
+        </article>
+      </div>
+    </section>
+    <section class="recommendation-detail__wide" *ngIf="decision.delegations?.length">
+      <h4>Delegation contracts</h4>
+      <div class="delegation-grid">
+        <article *ngFor="let delegation of decision.delegations">
+          <div>
+            <strong>{{ humanize(delegation.delegatee) }}</strong>
+            <nz-tag [nzColor]="delegation.state === 'ready' ? 'green' : 'gold'">
+              {{ humanize(delegation.state) }}
+            </nz-tag>
+          </div>
+          <p>
+            Ceiling {{ delegation.authorityCeiling }}/10 &middot;
+            {{ humanize(delegation.budgetPolicy) }} &middot;
+            {{ delegation.deadline ? (delegation.deadline | date:'medium') : 'No deadline set' }}
+          </p>
+          <small>{{ delegation.constraints[0] }}</small>
+        </article>
+      </div>
+    </section>
+    <section *ngIf="decision.coordination as coordination">
+      <h4>Coordination</h4>
+      <p><strong>{{ humanize(coordination.mode) }}</strong></p>
+      <p>{{ coordination.rationale }}</p>
+      <p>{{ coordination.consensusRule }}</p>
+    </section>
+    <section *ngIf="decision.communication as communication">
+      <h4>Typed communication</h4>
+      <p>
+        <code>{{ communication.schemaVersion }}</code>
+        &middot; ceiling {{ communication.maximumAuthority }}/10
+      </p>
+      <p>
+        {{ communication.redactionRequired ? 'Secret redaction required.' : 'No redaction rule returned.' }}
+        Idempotency and provenance are
+        {{ communication.idempotencyRequired && communication.provenanceRequired ? 'required' : 'not fully required' }}.
+      </p>
+      <p>
+        Maximum {{ communication.maximumPayloadChars }} characters &middot;
+        TTL {{ communication.maximumTtlSeconds / 3600 | number: '1.0-1' }} hours
+      </p>
+      <small>Correlation <code>{{ communication.correlationId }}</code></small>
+    </section>
+    <section class="recommendation-detail__wide" *ngIf="decision.actionAutonomy?.length">
+      <h4>Per-action autonomy</h4>
+      <div class="autonomy-list">
+        <article
+          *ngFor="let action of decision.actionAutonomy; trackBy: trackAutonomy"
+          [class.autonomy-list__item--blocked]="!action.allowed"
+        >
+          <div>
+            <strong>{{ humanize(action.action) }}</strong>
+            <nz-tag [nzColor]="action.allowed ? 'green' : 'default'">
+              {{ action.allowed ? 'Allowed' : 'Not allowed now' }}
+            </nz-tag>
+          </div>
+          <p>
+            {{ humanize(action.levelName) }} &middot;
+            requires {{ action.requiredLevel }}/10 &middot;
+            ceiling {{ action.effectiveCeiling }}/10
+          </p>
+          <small>{{ action.reason }}</small>
+        </article>
+      </div>
+    </section>
+    <section *ngIf="decision.stopConditions?.length">
+      <h4>Stop conditions</h4>
+      <ul>
+        <li *ngFor="let item of decision.stopConditions; trackBy: trackString">{{ item }}</li>
+      </ul>
+    </section>
+    <section *ngIf="decision.outcomeMonitoring?.length">
+      <h4>Outcome monitoring</h4>
+      <ul>
+        <li *ngFor="let item of decision.outcomeMonitoring; trackBy: trackString">{{ item }}</li>
+      </ul>
+    </section>
+    <section>
+      <h4>Required agents</h4>
+      <div class="tag-list">
+        <nz-tag *ngFor="let agent of decision.requiredAgents; trackBy: trackString">
+          {{ humanize(agent) }}
+        </nz-tag>
+      </div>
+      <p class="empty-copy" *ngIf="!decision.requiredAgents.length">No specialist agents required.</p>
+    </section>
+    <section>
+      <h4>Completion criteria</h4>
+      <ul *ngIf="decision.completionCriteria.length; else noCompletionCriteria">
+        <li *ngFor="let criterion of decision.completionCriteria; trackBy: trackString">{{ criterion }}</li>
+      </ul>
+      <ng-template #noCompletionCriteria><p class="empty-copy">No completion criteria returned.</p></ng-template>
+    </section>
+    <section>
+      <h4>Evidence requirements</h4>
+      <ul *ngIf="decision.evidenceRequirements.length; else noEvidenceRequirements">
+        <li *ngFor="let evidence of decision.evidenceRequirements; trackBy: trackString">{{ evidence }}</li>
+      </ul>
+      <ng-template #noEvidenceRequirements><p class="empty-copy">No evidence requirements returned.</p></ng-template>
+    </section>
+    <section>
+      <h4>Authority</h4>
+      <p>{{ decision.authoritySummary }}</p>
+    </section>
+    <section>
+      <h4>Context requirements</h4>
+      <ul *ngIf="decision.contextRequirements.length; else noContextRequirements">
+        <li *ngFor="let context of decision.contextRequirements; trackBy: trackString">{{ context }}</li>
+      </ul>
+      <ng-template #noContextRequirements><p class="empty-copy">No additional context required.</p></ng-template>
+    </section>
+    <section>
+      <h4>Learning plan</h4>
+      <ul *ngIf="decision.learningPlan.length; else noLearningPlan">
+        <li *ngFor="let item of decision.learningPlan; trackBy: trackString">{{ item }}</li>
+      </ul>
+      <ng-template #noLearningPlan><p class="empty-copy">No post-verification learning proposed.</p></ng-template>
+    </section>
+    <section class="recommendation-detail__wide">
+      <h4>Selected framework contracts</h4>
+      <div class="selection-contract-list">
+        <article
+          class="selection-contract"
+          *ngFor="let framework of decision.selected; trackBy: trackFramework"
+        >
+          <div>
+            <strong>{{ framework.name }}</strong>
+            <code>{{ framework.id }}:{{ framework.version }}</code>
+          </div>
+          <p>
+            Level {{ framework.maximumAutonomyLevel }} &middot;
+            {{ framework.authorityRequirement }}
+          </p>
+          <dl>
+            <div>
+              <dt>Selection reasons</dt>
+              <dd>
+                <ul *ngIf="framework.reasons.length; else noSelectionReasons">
+                  <li *ngFor="let reason of framework.reasons; trackBy: trackString">{{ reason }}</li>
+                </ul>
+                <ng-template #noSelectionReasons>None returned.</ng-template>
+              </dd>
+            </div>
+            <div>
+              <dt>Framework evidence</dt>
+              <dd>
+                <ul *ngIf="framework.evidenceRequirements.length; else noFrameworkEvidence">
+                  <li *ngFor="let item of framework.evidenceRequirements; trackBy: trackString">{{ item }}</li>
+                </ul>
+                <ng-template #noFrameworkEvidence>None returned.</ng-template>
+              </dd>
+            </div>
+            <div>
+              <dt>Evaluation method</dt>
+              <dd>
+                <ul *ngIf="framework.evaluationMethod.length; else noFrameworkEvaluation">
+                  <li *ngFor="let item of framework.evaluationMethod; trackBy: trackString">{{ item }}</li>
+                </ul>
+                <ng-template #noFrameworkEvaluation>None returned.</ng-template>
+              </dd>
+            </div>
+          </dl>
+        </article>
+      </div>
+    </section>
+    <section class="recommendation-detail__wide">
+      <h4>Conflict resolution</h4>
+      <ul *ngIf="decision.conflicts.length; else noConflicts">
+        <li *ngFor="let conflict of decision.conflicts; trackBy: trackConflict">
+          Kept <code>{{ conflict.selectedId }}</code>; skipped
+          <code>{{ conflict.skippedId }}</code>: {{ conflict.reason }}
+        </li>
+      </ul>
+      <ng-template #noConflicts><p class="empty-copy">No framework conflicts were recorded.</p></ng-template>
+    </section>
+    <section class="recommendation-detail__wide audit-contract">
+      <h4>Reproducibility and audit contract</h4>
+      <dl>
+        <div>
+          <dt>Selection ID</dt>
+          <dd><code>{{ decision.id }}</code></dd>
+        </div>
+        <div>
+          <dt>Task plan ID</dt>
+          <dd><code>{{ decision.taskPlanId || 'Not linked' }}</code></dd>
+        </div>
+        <div>
+          <dt>Catalog</dt>
+          <dd><code>{{ decision.catalogVersion }}</code></dd>
+        </div>
+        <div>
+          <dt>Selector</dt>
+          <dd><code>{{ decision.selectorAlgorithmVersion }}</code></dd>
+        </div>
+        <div>
+          <dt>Catalog digest</dt>
+          <dd><code>{{ decision.catalogDigest }}</code></dd>
+        </div>
+        <div>
+          <dt>Preference digest</dt>
+          <dd><code>{{ decision.effectivePreferenceDigest }}</code></dd>
+        </div>
+        <div>
+          <dt>Constitution digest</dt>
+          <dd><code>{{ decision.constitutionDigest }}</code></dd>
+        </div>
+        <div>
+          <dt>Constitution source</dt>
+          <dd><code>{{ decision.constitutionSource }}</code></dd>
+        </div>
+        <div *ngIf="decision.operatingContractDigest">
+          <dt>Operating contract digest</dt>
+          <dd><code>{{ decision.operatingContractDigest }}</code></dd>
+        </div>
+      </dl>
+    </section>
+  </div>
+</ng-container>

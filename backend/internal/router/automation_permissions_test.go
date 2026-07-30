@@ -129,6 +129,9 @@ func (automationRouteServiceStub) Launch(id uuid.UUID) (*automation.LaunchResult
 func (automationRouteServiceStub) LaunchTask(id uuid.UUID, _ automation.TaskLaunchRequest) (*automation.LaunchResult, error) {
 	return &automation.LaunchResult{AutomationID: id, Status: "completed"}, nil
 }
+func (automationRouteServiceStub) PrepareWorkflowApprovalBinding(uuid.UUID, automation.TaskLaunchRequest) (string, error) {
+	return "", nil
+}
 func (automationRouteServiceStub) StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error) {
 	return &agentruntime.StopResult{TaskID: id.String(), Status: "stopped"}, nil
 }

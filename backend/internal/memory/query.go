@@ -3,6 +3,7 @@ package memory
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"automation-hub-backend/internal/models"
 )
@@ -142,38 +143,80 @@ func Query(items []models.ContextMemory, params QueryParams) PageResult {
 func sortMemories(items []models.ContextMemory, p QueryParams, searchTokens []string) {
 	asc := p.Order == "asc"
 	sort.SliceStable(items, func(i, j int) bool {
-		left, right := items[i], items[j]
-		var less bool
-		switch p.Sort {
-		case "createdAt":
-			less = left.CreatedAt.Before(right.CreatedAt)
-		case "confidence":
-			if left.Confidence == right.Confidence {
-				less = left.UpdatedAt.Before(right.UpdatedAt)
-			} else {
-				less = left.Confidence < right.Confidence
-			}
-		case "kind":
-			if strings.EqualFold(left.Kind, right.Kind) {
-				less = left.UpdatedAt.Before(right.UpdatedAt)
-			} else {
-				less = strings.ToLower(left.Kind) < strings.ToLower(right.Kind)
-			}
-		case "relevance":
-			ls, rs := relevanceScore(left, searchTokens), relevanceScore(right, searchTokens)
-			if ls == rs {
-				less = left.UpdatedAt.Before(right.UpdatedAt)
-			} else {
-				less = ls < rs
-			}
-		default: // updatedAt
-			less = left.UpdatedAt.Before(right.UpdatedAt)
-		}
+		comparison := compareMemories(items[i], items[j], p.Sort, searchTokens)
 		if asc {
-			return less
+			return comparison < 0
 		}
-		return !less
+		return comparison > 0
 	})
+}
+
+// compareMemories returns a strict total ordering. In particular, equal primary
+// keys must return zero instead of treating both (i,j) and (j,i) as "less";
+// otherwise map-backed repository input can move records between pages.
+func compareMemories(left, right models.ContextMemory, sortField string, searchTokens []string) int {
+	var comparison int
+	switch sortField {
+	case "createdAt":
+		comparison = compareTime(left.CreatedAt, right.CreatedAt)
+		if comparison == 0 {
+			comparison = compareTime(left.UpdatedAt, right.UpdatedAt)
+		}
+	case "confidence":
+		comparison = compareFloat(left.Confidence, right.Confidence)
+		if comparison == 0 {
+			comparison = compareTime(left.UpdatedAt, right.UpdatedAt)
+		}
+	case "kind":
+		comparison = strings.Compare(strings.ToLower(left.Kind), strings.ToLower(right.Kind))
+		if comparison == 0 {
+			comparison = compareTime(left.UpdatedAt, right.UpdatedAt)
+		}
+	case "relevance":
+		comparison = compareInt(relevanceScore(left, searchTokens), relevanceScore(right, searchTokens))
+		if comparison == 0 {
+			comparison = compareTime(left.UpdatedAt, right.UpdatedAt)
+		}
+	default: // updatedAt
+		comparison = compareTime(left.UpdatedAt, right.UpdatedAt)
+		if comparison == 0 {
+			comparison = compareTime(left.CreatedAt, right.CreatedAt)
+		}
+	}
+	if comparison != 0 {
+		return comparison
+	}
+	return strings.Compare(left.ID.String(), right.ID.String())
+}
+
+func compareTime(left, right time.Time) int {
+	if left.Before(right) {
+		return -1
+	}
+	if left.After(right) {
+		return 1
+	}
+	return 0
+}
+
+func compareFloat(left, right float64) int {
+	if left < right {
+		return -1
+	}
+	if left > right {
+		return 1
+	}
+	return 0
+}
+
+func compareInt(left, right int) int {
+	if left < right {
+		return -1
+	}
+	if left > right {
+		return 1
+	}
+	return 0
 }
 
 // relevanceScore counts how many distinct search tokens appear in the memory's

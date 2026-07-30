@@ -7,19 +7,17 @@ import (
 )
 
 const (
-	nginxContainer string = "NGINX_CONTAINER"
-	configDir      string = "CONFIG_DIR"
-	kafkaBrokers   string = "KAFKA_BROKERS"
-	kafkaTopic     string = "KAFKA_TOPIC"
-	reloadEnabled  string = "NGINX_RELOAD_ENABLED"
+	configDir     string = "CONFIG_DIR"
+	kafkaBrokers  string = "KAFKA_BROKERS"
+	kafkaTopic    string = "KAFKA_TOPIC"
+	reloadEnabled string = "NGINX_RELOAD_ENABLED"
 )
 
 type Configuration struct {
-	ConfigDir      string
-	NginxContainer string
-	Brokers        []string
-	Topic          string
-	ReloadEnabled  bool
+	ConfigDir     string
+	Brokers       []string
+	Topic         string
+	ReloadEnabled bool
 }
 
 var AppConfig Configuration
@@ -27,11 +25,10 @@ var AppConfig Configuration
 func Init() {
 	kafkaBrokersList := getStringListFromEnv(kafkaBrokers, "kafka1:9092,kafka2:9093,kafka3:9094")
 	AppConfig = Configuration{
-		ConfigDir:      getEnvString(configDir, "/app/sites-enabled"),
-		NginxContainer: getEnvString(nginxContainer, "gateway"),
-		Brokers:        kafkaBrokersList,
-		Topic:          getEnvString(kafkaTopic, "automation-events"),
-		ReloadEnabled:  getEnvBool(reloadEnabled, false),
+		ConfigDir:     getEnvString(configDir, "/app/sites-enabled"),
+		Brokers:       kafkaBrokersList,
+		Topic:         getEnvString(kafkaTopic, "automation-events"),
+		ReloadEnabled: getEnvBool(reloadEnabled, false),
 	}
 }
 

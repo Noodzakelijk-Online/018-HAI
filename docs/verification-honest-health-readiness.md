@@ -1,10 +1,11 @@
 # Verification evidence — honest health, readiness, and boot
 
-This document records exactly what was run and what happened, on a real machine,
-for the `feat/honest-health-readiness` change set. It follows the project rule of
-separating **verified by the developer locally** from **verified on the client
-laptop**. Everything below is the former; the laptop column is filled in during
-the remote (TeamViewer/AnyDesk) session.
+This document is a historical verification record for the health-readiness work
+that was later merged into `main`. It records exactly what was run and what
+happened on the dated host below. It is not a claim that the current branch has
+the same package count, connector catalog, or external-service configuration.
+Current release evidence comes from the CI jobs and operator checks documented
+in `docs/operator-runbook.md`.
 
 - Date: 2026-07-14
 - Host: Linux 6.8, Docker 29.1.3, Docker Compose 2.40.3
@@ -155,9 +156,11 @@ via the gateway: `agent-cycle`, `flags`, `system`.
 # after:  GET http://localhost:8088/api/v1/flags -> HTTP 401 (reaches backend, gated by gateway login)
 ```
 
-The 401 is correct: the route now maps to the backend, which the gateway guards
-with its `auth_request` login check. `/healthz` and `/readyz` are now routable
-through the gateway too (`/healthz` open, `/readyz` behind auth).
+The 401 is correct for protected `/api/v1/*` engine routes: the route now maps
+to the backend, which the gateway guards with its `auth_request` login check.
+`/healthz` and `/readyz` are separate, intentionally public gateway probes.
+Neither requires an IDP session. `/healthz` reports liveness; `/readyz` returns
+the current readiness JSON with HTTP 200 or 503.
 
 ## 8. Two bugs the new probe surfaced immediately
 
@@ -178,7 +181,7 @@ misconfigurations, both now fixed:
 ```
 go build ./...      # clean
 go vet ./...        # clean
-go test ./...       # ok: 55 packages, 0 failures
+go test ./...       # clean at the time of this dated verification
 ```
 
 New tests: `internal/doctor/probe_test.go` (probe severity/criticality, timeout
@@ -209,9 +212,15 @@ user, through the gateway on :8088):
   red "Not ready — a critical dependency is down", 17 ok / 1 warn / 1 fail; the
   Database card sorts to the top and shows the real driver error. Everything
   else stays green. Screenshot: `docs/evidence/system-status-db-down.png`.
-- **Unauthenticated** — `/readyz` through the gateway returns 401 with no body,
-  so infrastructure detail (hostnames, brokers, which secrets are placeholders)
-  is not exposed to anonymous callers.
+- **Unauthenticated readiness probe** - `/readyz` through the gateway is
+  intentionally public and returns the readiness payload and 200/503 semantics
+  without an IDP session. Protected `/api/v1/*` engine routes still return 401
+  when the session is absent.
+
+Because readiness includes subsystem status, deployment operators must treat
+network exposure of the public gateway as an explicit operational decision.
+Authentication must not be added to `/readyz` without also updating container
+health checks and monitoring clients that rely on a public probe.
 
 Note: the browser check registered a throwaway local account
 (`verify@local.test`) via the open `/api/v1/auth/register` endpoint. It exists
@@ -300,13 +309,14 @@ POST /api/v1/sources {connectorKey: "email"} -> HTTP 201
 The dashboard now reads **"2 live · 6 local · 1 modeled of 9 connectors"** instead
 of "9 operational", and each connector in the picker is labelled honestly
 ("… — local files only", "… — live", "… — built-in model"). Screenshot:
-`docs/evidence/connectors-honest-status.png`. All 55 backend test packages pass;
-the catalog test now asserts the honest statuses.
+`docs/evidence/connectors-honest-status.png`. The backend test suite passed at
+the time of this dated verification, and the catalog test asserted the honest
+statuses.
 
 This is deliberately a downward change in the headline number — it removes an
 overstatement, which is the point. No connector lost any real capability.
 
-## 13. RBAC is now enforced (was built but wired to nothing)
+## 13. Authenticated and role-aware API boundary
 
 The `rbac` package (roles owner/operator/viewer; permissions read/write/approve/
 admin) was fully implemented and unit-tested but attached to **zero** routes —
@@ -315,32 +325,26 @@ backend: the gateway forwarded only the cookie and shared key, so every caller
 defaulted to `viewer`, which meant wiring write-gates naively would have 403'd
 the entire UI.
 
-This wires it end to end:
+The current contract does not trust a caller-supplied role header:
 
-- `enforcePermissions()` gates the whole `/api/v1` group by HTTP method — reads
-  need `viewer`, mutations need `operator`/`owner`.
-- The gateway injects `X-HAI-Role: owner` for a request that passed
-  `auth_verify` (an authenticated session is the local operator). It is set, not
-  added, so a client cannot forge its own role.
-- An unauthenticated caller still resolves to `viewer`, so a leaked shared key
-  can read but cannot mutate.
+- Protected engine routes require the backend shared key and a verified identity
+  token. The shared key alone is not user identity and receives HTTP 401.
+- The gateway obtains a verified token from the IDP auth subrequest and forwards
+  that token to the backend. The backend derives the subject and role from the
+  signed token.
+- Route-specific permission middleware then applies read, write, approve, or
+  admin requirements. Sensitive owner-only routes retain explicit owner gates.
+- A client-provided `X-HAI-Role` value is not an authentication mechanism.
 
-Verified on the running stack:
+The authenticated smoke tests exercise representative boundaries:
 
-| Caller | GET | POST/DELETE |
-| --- | --- | --- |
-| UI through the gateway (authenticated) | 200 | 201 — UI unaffected |
-| Direct backend, shared key only (viewer) | 200 | **403** — mutation blocked |
-| Direct backend, explicit `X-HAI-Role: owner` | 200 | 201 |
+- shared key without identity token: HTTP 401 on protected routes;
+- signed viewer identity: HTTP 403 on an admin route;
+- signed owner identity: HTTP 200 on the same admin route.
 
-So a bare shared key on the local network can no longer create, update, or
-delete — mutations now require an authenticated session. Unit tests cover the
-method→permission mapping and the viewer/operator/owner outcomes.
-
-Honest limitation: because the IDP does not issue per-user roles, an
-authenticated session maps to a single `owner` role rather than distinct
-per-user roles. True multi-user RBAC needs the IDP to carry a role claim; the
-enforcement and role-resolution path are now in place for when it does.
+These tests prove the local authentication and authorization contract. They do
+not prove an external identity provider, OAuth consent, or production secret
+rotation until those environment-specific steps are completed.
 
 ## 14. First real OAuth connector: Gmail (read-only)
 
@@ -383,16 +387,122 @@ messages — requires the OAuth app's real credentials and a human consent, and 
 performed with the operator during the live/remote session. It is deliberately
 not claimed as done here.
 
+## 15. Framework Registry and durable task state (2026-07-30 addendum)
+
+This section describes the current branch implementation boundary. It is
+separate from the dated 2026-07-14 host evidence above.
+
+### Present in the repository
+
+- A code-owned Framework Registry catalog with exactly 55 version `1.0.0`
+  records: 50 `active`, five `experimental`, and zero `deprecated`.
+- A deterministic `selector-v4` contract with required overlays, conflict
+  handling, a 12-framework limit, authority ceilings, and evidence/completion
+  requirements.
+- A durable operating contract containing multi-domain classification,
+  needs-state and capacity constraints, fresh verified agent cards, explicit
+  unassigned roles, complete identity/capability/access/health/revocation
+  metadata, zero-spend delegation contracts, typed replay-resistant
+  communication, coordination, exact 0-10 per-action autonomy, stop
+  conditions, outcome monitoring, and eight Chief-of-Staff answers.
+- Owner-scoped preferences. `disabled` is an effective preference, not a catalog
+  lifecycle status; protected overlays reject disable attempts.
+- Owner-scoped Constitution drafts and activation. Activation requires the exact
+  case- and whitespace-sensitive phrase `ACTIVATE CONSTITUTION` and a redacted
+  approval note of at least 10 characters.
+- Restrictive typed Constitution rules for deny-capability, require-approval,
+  and authority-ceiling. Ordinary prose is versioned context, not executable
+  authority, and no typed rule can grant capability.
+- Reproducibility metadata containing catalog, selector, effective-preference,
+  and Constitution versions/digests plus selected framework versions and exact
+  Constitution source.
+- Authenticated registry API routes and Angular `/framework-registry` UI.
+  Viewers read, operators read and request selections, and owners administer
+  preferences and Constitution lifecycle.
+- Pre-phase migrations `0003_framework_registry`,
+  `0004_task_state_storage`, and `0005_framework_operating_contract`.
+- Owner-scoped task completion logs, review items, and immutable decisions.
+  Approved execution is bound to the stored owner, request digest, review
+  revision, task/project/automation context, and `task-review:<id>` source.
+- HTTP task-history/review reads return an error when the durable repository
+  fails instead of showing an empty ledger.
+
+These are implementation statements, not live-provider or production-readiness
+statements.
+
+### Verification boundary for this addendum
+
+The repository contains focused unit, route, frontend, in-memory repository, and
+PostgreSQL integration tests for these contracts. CI is configured to run
+Framework Registry and task-state database tests in isolated PostgreSQL
+databases and to exercise signed-session and Windows shell contracts.
+
+On 2026-07-30, a fresh local verification pass completed the backend unit
+suite, vet, and build; the IDP unit suite, vet, and build; the frontend's 126
+headless unit tests and production build; the Python CI, authentication, and
+gateway contract suites; Compose configuration validation; and Bash syntax
+checks for the smoke scripts. All three Go modules, container builders, and CI
+runners are pinned to the same Go 1.25.12 toolchain by an executable CI
+contract test. Refreshed `govulncheck` v1.6.0 scans report 0 vulnerabilities
+affecting backend, IDP, or nginx configuration manager code; all three pinned
+scans are blocking CI gates. The nginx manager no longer imports the Docker SDK
+or receives a Docker-socket mount.
+
+This is source and local-build evidence, not a production deployment receipt.
+PostgreSQL integration jobs, race tests, authenticated stack smoke, real
+connected accounts, and target-machine acceptance remain release gates. Treat
+the next completed CI run and the target-machine acceptance run as the
+authoritative evidence for those environments.
+
+The same pass also ran the production-dependency frontend audit. It reported 12
+high and 1 moderate advisory in the Angular 16 dependency family. The audit is
+therefore not green and remains an explicit release gate; see
+`docs/dependency-vulnerabilities.md`. No breaking automatic upgrade was applied.
+
+### Known recovery and deployment gaps
+
+- The action approval proof signing state and consumed-nonce set are
+  process-local and are not coordinated across backend instances.
+- A durable task review can remain `approved` if the backend stops after the
+  decision is committed but before the execution outcome is committed.
+- There is no automatic review-reconciliation worker and no public recovery
+  endpoint for that indeterminate state. Operators must inspect external
+  effects and audit evidence before any retry.
+- PostgreSQL persistence and immutable constraints do not prove exactly-once
+  external side effects.
+- Migration files exist, but a clean-clone migration/rollback/restore exercise
+  on the target Windows host remains required.
+- A two-real-account owner-isolation browser exercise remains required.
+- Named implementation candidates in the 55-record catalog are not installed
+  or trusted merely because the catalog references them.
+- Agent cards prove only the freshness and provenance supplied by a trusted
+  runtime health source. Missing specialists remain `required_unassigned`;
+  HAI does not invent live workers from catalog role names.
+- Typed communication validates idempotency, expiry, confidentiality,
+  provenance, payload digest, and optional signature-digest shape, but a
+  distributed A2A transport, cryptographic signature authority, live consensus
+  service, and durable standing-mandate workflow are not claimed.
+- Real LLM providers, connected accounts, and external agent runtimes require
+  their own configuration, authorization, bounded probe, approved task, audit,
+  and verification evidence.
+
 ## What is NOT claimed here
 
 - A real Gmail OAuth connector now exists and is verified to the consent
   boundary (section 14); the live pull of real mail awaits real credentials and
-  consent. Drive/Calendar/Trello adapters are still outstanding.
-- Redis now backs rate-limit counters, but the LLM usage/budget accounting in
-  `internal/llm` is still an in-process map. Persisting that is the natural next
-  step; it was left out here because it cannot be exercised end to end until an
-  LLM provider is configured, and this change set only ships what was verified.
-- RBAC is now enforced across the API (section 13), but as a single owner role
-  per authenticated session, not per-user roles — that needs IDP role support.
+  consent. This historical record does not assert the current readiness of
+  other connectors; use the current connector catalog and its live health
+  checks for that decision.
+- This verification did not exercise provider-backed LLM generation, paid
+  provider billing, or external quota accounting. The local smoke suites must
+  not be presented as evidence for those external behaviors.
+- The signed-JWT smoke fixtures prove route enforcement, not production identity
+  provisioning. Production readiness still requires configured IDP secrets,
+  real sessions, and operator-owned external authorization.
+- The Framework Registry does not prove that all named agent frameworks,
+  workflow platforms, memory stores, policy engines, or evaluation products
+  power HAI.
+- Durable approval records do not prove crash-safe or exactly-once external
+  execution.
 
 These are called out honestly rather than presented as done.

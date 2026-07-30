@@ -184,6 +184,18 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	osRoutes := r.Group("/api/v1").Group("/os")
 	osRoutes.GET("/overview", mark("osOverview"))
 
+	frameworkRoutes := r.Group("/api/v1").Group("/framework-registry")
+	frameworkRoutes.GET("/overview", mark("frameworkOverview"))
+	frameworkRoutes.GET("/frameworks", mark("frameworkList"))
+	frameworkRoutes.GET("/frameworks/:id", mark("frameworkGet"))
+	frameworkRoutes.POST("/select", mark("frameworkSelect"))
+	frameworkRoutes.PATCH("/frameworks/:id/preference", mark("frameworkPreference"))
+	frameworkRoutes.GET("/selections", mark("frameworkSelections"))
+	frameworkRoutes.GET("/constitution", mark("frameworkConstitution"))
+	frameworkRoutes.GET("/constitution/history", mark("frameworkConstitutionHistory"))
+	frameworkRoutes.POST("/constitution/drafts", mark("frameworkConstitutionDraft"))
+	frameworkRoutes.POST("/constitution/:id/activate", mark("frameworkConstitutionActivate"))
+
 	workflowRoutes := r.Group("/api/v1").Group("/workflow")
 	workflowRoutes.GET("/overview", mark("workflowOverview"))
 	workflowRoutes.GET("/approvals", mark("workflowApprovals"))
@@ -290,6 +302,16 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/verification/runs", "verificationRuns"},
 		{"GET", "/api/v1/verification/runs/abc", "verificationRunDetails"},
 		{"GET", "/api/v1/os/overview", "osOverview"},
+		{"GET", "/api/v1/framework-registry/overview", "frameworkOverview"},
+		{"GET", "/api/v1/framework-registry/frameworks", "frameworkList"},
+		{"GET", "/api/v1/framework-registry/frameworks/human-sovereignty", "frameworkGet"},
+		{"POST", "/api/v1/framework-registry/select", "frameworkSelect"},
+		{"PATCH", "/api/v1/framework-registry/frameworks/human-sovereignty/preference", "frameworkPreference"},
+		{"GET", "/api/v1/framework-registry/selections", "frameworkSelections"},
+		{"GET", "/api/v1/framework-registry/constitution", "frameworkConstitution"},
+		{"GET", "/api/v1/framework-registry/constitution/history", "frameworkConstitutionHistory"},
+		{"POST", "/api/v1/framework-registry/constitution/drafts", "frameworkConstitutionDraft"},
+		{"POST", "/api/v1/framework-registry/constitution/custom-v2/activate", "frameworkConstitutionActivate"},
 		{"GET", "/api/v1/workflow/overview", "workflowOverview"},
 		{"GET", "/api/v1/workflow/approvals", "workflowApprovals"},
 		{"GET", "/api/v1/workflow/dashboard", "workflowDashboard"},

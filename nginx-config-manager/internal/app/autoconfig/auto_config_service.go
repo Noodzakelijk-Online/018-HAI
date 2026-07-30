@@ -3,11 +3,9 @@ package autoconfig
 import (
 	"automation-hub-nginxconfigmanager/internal/app/config"
 	"automation-hub-nginxconfigmanager/internal/app/entities"
-	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/IBM/sarama"
-	"github.com/docker/docker/client"
 	"log"
 	"os"
 	"path/filepath"
@@ -99,13 +97,7 @@ func reloadNginx() error {
 		log.Println("NGINX_RELOAD_ENABLED=false; config written but nginx reload skipped")
 		return nil
 	}
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	return cli.ContainerKill(context.Background(), config.AppConfig.NginxContainer, "HUP")
+	return fmt.Errorf("NGINX_RELOAD_ENABLED=true is unsupported because Docker socket control is disabled; reload the gateway through an approved deployment operation")
 }
 
 func configPath(name string) (string, error) {

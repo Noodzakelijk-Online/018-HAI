@@ -341,7 +341,7 @@ func TestCandidateAcceptanceUsesExplicitApprovalEndpoint(t *testing.T) {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(identity.ContextSubjectKey, "alice")
-		c.Set(identity.ContextRoleKey, "operator")
+		c.Set(identity.ContextRoleKey, "owner")
 		c.Next()
 	})
 	handler := NewHandler(service)
@@ -419,7 +419,7 @@ func TestCandidateAcceptanceEndpointRejectsActivePursuit(t *testing.T) {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(identity.ContextSubjectKey, "alice")
-		c.Set(identity.ContextRoleKey, "operator")
+		c.Set(identity.ContextRoleKey, "owner")
 		c.Next()
 	})
 	router.POST("/pursuits/:id/candidate/accept", NewHandler(service).AcceptCandidate)
@@ -465,7 +465,7 @@ func TestResolveDecisionEndpointRejectsHiddenCrossOwnerCompletionEvidence(t *tes
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(identity.ContextSubjectKey, "alice")
-		c.Set(identity.ContextRoleKey, "operator")
+		c.Set(identity.ContextRoleKey, "owner")
 		c.Next()
 	})
 	router.POST("/pursuits/:id/decisions/resolve", NewHandler(service).ResolveDecision)

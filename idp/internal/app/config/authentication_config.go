@@ -2,8 +2,10 @@ package config
 
 import (
 	"automation-hub-idp/internal/app/utils"
-	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,41 +37,81 @@ type authenticationConfig struct {
 }
 
 func newAuthenticationConfig() (*authenticationConfig, error) {
-	passwordResetTopicValue := getEnvString(passwordResetTopic, "NULL")
-	accountBlockedTopicValue := getEnvString(accountBlockedTopic, "NULL")
-	accountCreatedTopicValue := getEnvString(accountCreatedTopic, "NULL")
-	if passwordResetTopicValue == "NULL" || accountBlockedTopicValue == "NULL" || accountCreatedTopicValue == "NULL" {
-		errorMessage := fmt.Sprintf("error: One or more topics are not set, please check the environment variables: %s, %s, %s", passwordResetTopic, accountBlockedTopic, accountCreatedTopic)
-		return nil, errors.New(errorMessage)
-	}
-	baseBlockDurationMinutesValue := getEnvInt(baseBlockDurationMinutes, 0)
-	if baseBlockDurationMinutesValue == 0 {
-		errorMessage := fmt.Sprintf("error: Base block duration minutes should be greater than 0, please check the environment variable: %s", baseBlockDurationMinutes)
-		return nil, errors.New(errorMessage)
-	}
-	maxLoginAttemptsBeforeBlockValue := getEnvInt(maxLoginAttemptsBeforeBlock, 0)
-	if maxLoginAttemptsBeforeBlockValue == 0 {
-		errorMessage := fmt.Sprintf("error: Max login attempts before block should be greater than 0, please check the environment variable: %s", maxLoginAttemptsBeforeBlock)
-		return nil, errors.New(errorMessage)
+	passwordResetTopicValue := strings.TrimSpace(getEnvString(passwordResetTopic, ""))
+	accountBlockedTopicValue := strings.TrimSpace(getEnvString(accountBlockedTopic, ""))
+	accountCreatedTopicValue := strings.TrimSpace(getEnvString(accountCreatedTopic, ""))
+	for name, value := range map[string]string{
+		passwordResetTopic:  passwordResetTopicValue,
+		accountBlockedTopic: accountBlockedTopicValue,
+		accountCreatedTopic: accountCreatedTopicValue,
+	} {
+		if value == "" {
+			return nil, fmt.Errorf("authentication topic is required: set %s", name)
+		}
 	}
 
-	jwtSecret := getEnvString(jwtSecret, "NULL")
-	if jwtSecret == "NULL" {
-		errorMessage := fmt.Sprintf("error: JWT secret is not set, please check the environment variable: %s", jwtSecret)
-		return nil, errors.New(errorMessage)
+	baseBlockDurationMinutesValue, err := authenticationIntSetting(baseBlockDurationMinutes, 0, true)
+	if err != nil {
+		return nil, err
+	}
+	maxLoginAttemptsBeforeBlockValue, err := authenticationIntSetting(maxLoginAttemptsBeforeBlock, 0, true)
+	if err != nil {
+		return nil, err
+	}
+	minTimeBetweenAttemptsValue, err := authenticationIntSetting(minTimeBetweenAttemptsInSeconds, 0, false)
+	if err != nil {
+		return nil, err
+	}
+	resetTokenHoursValue, err := authenticationIntSetting(expirationTimeResetTokenInHours, 24, true)
+	if err != nil {
+		return nil, err
+	}
+	accessTokenMinutesValue, err := authenticationIntSetting(accessTokenDurationMinutes, 15, true)
+	if err != nil {
+		return nil, err
+	}
+	refreshTokenDaysValue, err := authenticationIntSetting(refreshTokenDurationDays, 4, true)
+	if err != nil {
+		return nil, err
+	}
+
+	jwtSecretValue := getEnvString(jwtSecret, "")
+	if strings.TrimSpace(jwtSecretValue) == "" {
+		return nil, fmt.Errorf("JWT signing secret is required: set %s", jwtSecret)
+	}
+	if len([]byte(jwtSecretValue)) < 32 {
+		return nil, fmt.Errorf("%s must contain at least 32 bytes", jwtSecret)
 	}
 
 	return &authenticationConfig{
 		BaseBlockDurationMinutes:      baseBlockDurationMinutesValue,
 		MaxLoginAttemptsBeforeBlock:   maxLoginAttemptsBeforeBlockValue,
-		MinTimeBetweenAttemptsSeconds: time.Duration(getEnvInt(minTimeBetweenAttemptsInSeconds, 0)),
-		ExpirationTimeResetTokenHours: time.Duration(getEnvInt(expirationTimeResetTokenInHours, 24)),
-		AccessTokenDurationMinutes:    time.Duration(getEnvInt(accessTokenDurationMinutes, 15)),
-		RefreshTokenDurationDays:      time.Duration(24*getEnvInt(refreshTokenDurationDays, 4)) * time.Hour,
+		MinTimeBetweenAttemptsSeconds: time.Duration(minTimeBetweenAttemptsValue),
+		ExpirationTimeResetTokenHours: time.Duration(resetTokenHoursValue),
+		AccessTokenDurationMinutes:    time.Duration(accessTokenMinutesValue),
+		RefreshTokenDurationDays:      time.Duration(24*refreshTokenDaysValue) * time.Hour,
 		PasswordResetTopic:            passwordResetTopicValue,
 		AccountBlockedTopic:           accountBlockedTopicValue,
 		AccountCreatedTopic:           accountCreatedTopicValue,
-		JwtSecret:                     jwtSecret,
+		JwtSecret:                     jwtSecretValue,
 		PasswordHasher:                utils.DefaultBcryptHasher(),
 	}, nil
+}
+
+func authenticationIntSetting(name string, defaultValue int, mustBePositive bool) (int, error) {
+	value := defaultValue
+	if raw, exists := os.LookupEnv(name); exists {
+		parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		value = parsed
+	}
+	if mustBePositive && value <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", name)
+	}
+	if !mustBePositive && value < 0 {
+		return 0, fmt.Errorf("%s must not be negative", name)
+	}
+	return value, nil
 }

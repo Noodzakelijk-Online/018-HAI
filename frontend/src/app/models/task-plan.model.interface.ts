@@ -3,6 +3,7 @@ import { IRankedMemory } from './context-memory.model.interface';
 import { IRankedExtraction, IScheduledSyncRun } from './connected-source.model.interface';
 import { IVerificationClaim } from './verification.model.interface';
 import { IAutomationRuntimeRouteTrace } from './automation.model.interface';
+import { IFrameworkSelectionDecision } from './framework-registry.model.interface';
 
 export interface ITaskPlanRequest {
   request: string;
@@ -41,6 +42,10 @@ export interface IContextPlan {
 
 export interface IValidationPlan {
   steps: string[];
+  successCriteria: string[];
+  frameworkEvidenceRequirements: string[];
+  frameworkCompletionCriteria: string[];
+  frameworkAssuranceCriteria: string[];
   failurePolicy: string;
   completionGate: string;
 }
@@ -135,8 +140,19 @@ export interface IRiskAssessment {
   approvalGranted: boolean;
   actionResolution?: 'proceed' | 'clarify' | 'block';
   missingParameters?: string[];
+  frameworkAutonomyCeiling?: number;
+  requiredFrameworkAutonomy?: number;
   reasons: string[];
   allowedNow: boolean;
+}
+
+export interface IValidationCriterionResult {
+  criterion: string;
+  kind: 'task_success' | 'framework_evidence' | 'framework_completion' | 'framework_assurance' | 'system_check' | string;
+  status: 'not_run' | 'passed' | 'failed' | 'not_applicable' | string;
+  evidence: string[];
+  applicabilityReason?: string;
+  failure?: string;
 }
 
 export interface IValidationResult {
@@ -144,6 +160,7 @@ export interface IValidationResult {
   status: string;
   checked: string[];
   failures: string[];
+  criteria: IValidationCriterionResult[];
   nextAction: string;
   attemptNumber: number;
 }
@@ -201,6 +218,7 @@ export interface ICompletionPlan {
   pursuitId?: string;
   realGoal: string;
   intake: IIntakeAnalysis;
+  frameworkDecision?: IFrameworkSelectionDecision;
   contextPlan: IContextPlan;
   minimalityDecision: IMinimalityDecision;
   modelDecision: ILLMRouteDecision;

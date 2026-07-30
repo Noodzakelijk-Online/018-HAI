@@ -139,6 +139,9 @@ func TestOwnerScopedIntakeDoesNotReuseForeignOrLegacySourceWorkflows(t *testing.
 	if owned.Item.ID == legacy.Item.ID || owned.Item.OwnerIdentity != "alice" {
 		t.Fatalf("authenticated intake adopted ownerless workflow: owned=%#v legacy=%#v", owned.Item, legacy.Item)
 	}
+	if _, err := service.GetForOwner("alice", legacy.Item.ID); err == nil {
+		t.Fatal("authenticated owner could read an ownerless legacy workflow")
+	}
 
 	storedBob, err := repo.FindItem(bob.Item.ID)
 	if err != nil || storedBob.OwnerIdentity != "bob" || storedBob.Archived {
@@ -1004,6 +1007,7 @@ func TestChecklistUpdateAuditsProgress(t *testing.T) {
 
 func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	repo := newFakeWorkflowRepo()
+	selection := testFrameworkSelection("plan-1")
 	runner := &fakeTaskRunner{result: &TaskRunResult{
 		PlanID:               "plan-1",
 		CompletionStatus:     "validated",
@@ -1019,7 +1023,8 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 			RecommendedSkills: []string{"autoreview", "gitcrawl"},
 			BlockedSurfaces:   []string{"external_message_sending"},
 		},
-		Passed: true,
+		Passed:             true,
+		FrameworkSelection: &selection,
 	}}
 	service := NewServiceWithTaskRunner(repo, runner)
 	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
@@ -1035,6 +1040,11 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 	if summary.Completed != 1 {
 		t.Fatalf("completed = %d, want 1: %#v", summary.Completed, summary)
+	}
+	if len(summary.Results) != 1 ||
+		summary.Results[0].FrameworkSelection == nil ||
+		summary.Results[0].FrameworkSelection.SelectionDecisionID != selection.SelectionDecisionID {
+		t.Fatalf("workflow run summary omitted framework selection provenance: %#v", summary.Results)
 	}
 	updated, err := service.Get(record.Item.ID)
 	if err != nil {
@@ -1063,6 +1073,110 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 	if !foundRuntimeEvidence {
 		t.Fatalf("runtime evidence claim missing from workflow detail: %#v", updated.Evidence)
+	}
+	if len(updated.FrameworkSelections) != 1 || updated.FrameworkSelections[0] != selection {
+		t.Fatalf("workflow detail framework selections = %#v, want %#v", updated.FrameworkSelections, selection)
+	}
+	foundDecision := false
+	for _, decision := range updated.Decisions {
+		if decision.DecisionType == frameworkSelectionDecisionType &&
+			decision.Decision == selection.SelectionDecisionID &&
+			strings.Contains(decision.Reason, selection.CatalogDigest) &&
+			strings.Contains(decision.Reason, selection.ConstitutionDigest) {
+			foundDecision = true
+			break
+		}
+	}
+	if !foundDecision {
+		t.Fatalf("durable framework selection decision missing: %#v", updated.Decisions)
+	}
+	foundEvent := false
+	for _, event := range updated.Events {
+		if event.EventType == frameworkSelectionEventType &&
+			event.SourceURI == "framework-selection://"+selection.SelectionDecisionID &&
+			strings.Contains(event.Message, selection.SelectorAlgorithmVersion) {
+			foundEvent = true
+			break
+		}
+	}
+	if !foundEvent {
+		t.Fatalf("framework selection audit event missing: %#v", updated.Events)
+	}
+}
+
+func TestFrameworkSelectionProvenanceSurvivesRepositoryRoundTrip(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	engine := NewService(repo)
+	record, err := engine.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Create a low-risk administrative checklist.",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	selection := testFrameworkSelection("round-trip-plan")
+	runResult := &TaskRunResult{
+		PlanID:             "round-trip-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+		FrameworkSelection: &selection,
+	}
+	implementation, ok := engine.(*service)
+	if !ok {
+		t.Fatalf("unexpected workflow service implementation %T", engine)
+	}
+	if err := implementation.storeTaskFrameworkSelection(record.Item.ID, runResult); err != nil {
+		t.Fatalf("storeTaskFrameworkSelection: %v", err)
+	}
+	if err := implementation.storeTaskFrameworkSelection(record.Item.ID, runResult); err != nil {
+		t.Fatalf("idempotent storeTaskFrameworkSelection: %v", err)
+	}
+
+	decisions, err := repo.FindDecisions(record.Item.ID)
+	if err != nil {
+		t.Fatalf("FindDecisions: %v", err)
+	}
+	selectionDecisionCount := 0
+	for _, decision := range decisions {
+		if decision.DecisionType != frameworkSelectionDecisionType {
+			continue
+		}
+		selectionDecisionCount++
+		decoded, err := decodeFrameworkSelectionDecision(decision)
+		if err != nil {
+			t.Fatalf("decodeFrameworkSelectionDecision: %v", err)
+		}
+		if decoded != selection {
+			t.Fatalf("repository round trip = %#v, want %#v", decoded, selection)
+		}
+	}
+	if selectionDecisionCount != 1 {
+		t.Fatalf("framework selection decision count = %d, want 1: %#v", selectionDecisionCount, decisions)
+	}
+	events, err := repo.FindEvents(record.Item.ID)
+	if err != nil {
+		t.Fatalf("FindEvents: %v", err)
+	}
+	selectionEventCount := 0
+	for _, event := range events {
+		if event.EventType == frameworkSelectionEventType &&
+			event.SourceURI == "framework-selection://"+selection.SelectionDecisionID {
+			selectionEventCount++
+		}
+	}
+	if selectionEventCount != 1 {
+		t.Fatalf("framework selection event count = %d, want 1: %#v", selectionEventCount, events)
+	}
+	detail, err := engine.GetForOwner("alice", record.Item.ID)
+	if err != nil {
+		t.Fatalf("GetForOwner: %v", err)
+	}
+	if len(detail.FrameworkSelections) != 1 || detail.FrameworkSelections[0] != selection {
+		t.Fatalf("owner-scoped workflow detail = %#v", detail.FrameworkSelections)
+	}
+	if _, err := engine.GetForOwner("bob", record.Item.ID); err == nil {
+		t.Fatalf("foreign owner could retrieve framework selection provenance")
 	}
 }
 
@@ -1570,11 +1684,13 @@ func TestRunDuePassesWorkflowOwnerToTaskRunner(t *testing.T) {
 
 func TestOwnerScopedRunDueExecutesOnlyOwnedWorkflow(t *testing.T) {
 	repo := newFakeWorkflowRepo()
+	selection := testFrameworkSelection("owner-scoped-plan")
 	runner := &fakeTaskRunner{result: &TaskRunResult{
 		PlanID:             "owner-scoped-plan",
 		CompletionStatus:   "validated",
 		VerificationStatus: "verified",
 		Passed:             true,
+		FrameworkSelection: &selection,
 	}}
 	service := NewServiceWithTaskRunner(repo, runner)
 	alice, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create Alice's low-risk admin checklist."})
@@ -1596,11 +1712,197 @@ func TestOwnerScopedRunDueExecutesOnlyOwnedWorkflow(t *testing.T) {
 	if runner.requests[0].OwnerIdentity != "alice" {
 		t.Fatalf("runner owner = %q, want alice", runner.requests[0].OwnerIdentity)
 	}
+	if runner.requests[0].HumanApproved || runner.requests[0].ApprovalSourceID != "" {
+		t.Fatalf("low-risk workflow synthesized approval provenance: %#v", runner.requests[0])
+	}
 	if repo.items[alice.Item.ID].CurrentState != StateCompleted {
 		t.Fatalf("Alice workflow was not completed by Alice worker run: %#v", repo.items[alice.Item.ID])
 	}
 	if repo.items[bob.Item.ID].CurrentState != StateReady {
 		t.Fatalf("Bob workflow was executed by Alice worker run: %#v", repo.items[bob.Item.ID])
+	}
+	aliceDetail, err := service.GetForOwner("alice", alice.Item.ID)
+	if err != nil {
+		t.Fatalf("GetForOwner Alice: %v", err)
+	}
+	if len(aliceDetail.FrameworkSelections) != 1 ||
+		aliceDetail.FrameworkSelections[0].SelectionDecisionID != selection.SelectionDecisionID {
+		t.Fatalf("Alice selection provenance = %#v", aliceDetail.FrameworkSelections)
+	}
+	if _, err := service.GetForOwner("bob", alice.Item.ID); err == nil {
+		t.Fatalf("Bob could read Alice's workflow framework selection provenance")
+	}
+}
+
+func TestApprovedWorkflowPassesExactWorkflowReviewAsApprovalSource(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "approved-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Email the lawyer with the approved evidence summary.",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if _, err := service.ResolveApproval(record.Item.ID, ApprovalResolutionRequest{
+		Approved: true,
+		Note:     "Approved this exact workflow action.",
+		Actor:    "alice",
+	}); err != nil {
+		t.Fatalf("ResolveApproval: %v", err)
+	}
+	if _, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1}); err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("runner requests = %d, want one", len(runner.requests))
+	}
+	request := runner.requests[0]
+	if !request.HumanApproved || !strings.HasPrefix(request.ApprovalSourceID, "workflow-decision:") {
+		t.Fatalf("workflow approval provenance = %#v, want durable workflow decision", request)
+	}
+	decisionID, err := uuid.Parse(strings.TrimPrefix(request.ApprovalSourceID, "workflow-decision:"))
+	if err != nil {
+		t.Fatalf("approval source is not a decision UUID: %v", err)
+	}
+	decisions, err := repo.FindDecisions(record.Item.ID)
+	if err != nil {
+		t.Fatalf("FindDecisions: %v", err)
+	}
+	found := false
+	for _, decision := range decisions {
+		if decision.ID == decisionID && decision.DecisionType == "approval" && decision.Decision == "approved" && decision.Approved {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("approval source %s does not identify the durable approved decision: %#v", decisionID, decisions)
+	}
+}
+
+func TestAutomationWorkflowApprovalStoresExactActionBinding(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	binding := "automation-action:script:" + strings.Repeat("d", 64)
+	runner := &bindingTaskRunner{
+		fakeTaskRunner: &fakeTaskRunner{},
+		binding:        binding,
+	}
+	service := NewServiceWithTaskRunner(repo, runner)
+	automationID := uuid.NewString()
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Email the lawyer with the approved evidence summary.",
+		ProjectKey:    "018-hai",
+		AutomationID:  automationID,
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	approved, err := service.ResolveApproval(record.Item.ID, ApprovalResolutionRequest{
+		Approved: true,
+		Note:     "Approve this exact automation action.",
+		Actor:    "alice",
+	})
+	if err != nil {
+		t.Fatalf("ResolveApproval: %v", err)
+	}
+	if len(runner.bindingRequests) != 1 {
+		t.Fatalf("approval binding requests = %d, want one", len(runner.bindingRequests))
+	}
+	request := runner.bindingRequests[0]
+	if request.OwnerIdentity != "alice" ||
+		request.WorkflowID != record.Item.ID.String() ||
+		request.AutomationID != automationID ||
+		request.ProjectKey != "018-hai" ||
+		request.Request != record.Item.Description {
+		t.Fatalf("approval binding request = %#v", request)
+	}
+	found := false
+	for _, decision := range approved.Decisions {
+		if decision.DecisionType == "approval" &&
+			decision.Decision == "approved" &&
+			decision.Approved &&
+			decision.RuleApplied == binding {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("approved workflow decision has no exact automation binding: %#v", approved.Decisions)
+	}
+}
+
+func TestApprovedWorkflowWithoutDurableDecisionFailsClosed(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{Passed: true}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Create a low-risk admin checklist.",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	item := repo.items[record.Item.ID]
+	item.ApprovalStatus = "approved"
+	repo.items[record.Item.ID] = item
+
+	summary, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if summary.Blocked != 1 || len(runner.requests) != 0 {
+		t.Fatalf("missing durable approval was not blocked before task execution: summary=%#v requests=%#v", summary, runner.requests)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateNeedsApproval || updated.Item.ApprovalStatus != "pending" {
+		t.Fatalf("missing durable approval did not return to approval queue: %#v", updated.Item)
+	}
+}
+
+func TestRuntimeApprovalRequirementMovesLowRiskWorkflowToApprovalQueue(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		CompletionStatus:   "review_required",
+		VerificationStatus: "needs_review",
+		ReviewRequired:     true,
+		ApprovalRequired:   true,
+		FailureReason:      "action-bound human approval is required at the launcher boundary",
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Create a low-risk admin checklist using the configured automation.",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	summary, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("summary = %#v, want one approval block", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateNeedsApproval ||
+		!updated.Item.RequiresApproval ||
+		updated.Item.ApprovalStatus != "pending" {
+		t.Fatalf("runtime approval requirement was not queued correctly: %#v", updated.Item)
 	}
 }
 
@@ -1702,6 +2004,47 @@ func TestRunDueBlocksTechnicalWorkflowWhenQualityEvidenceMissing(t *testing.T) {
 	}
 	if !hasGateStatus(updated.QualityGates, "tests or build evidence", "needs_review") {
 		t.Fatalf("expected tests/build gate to need review")
+	}
+}
+
+func TestRunDueDoesNotCompleteWhenFrameworkSelectionProvenanceIsInvalid(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	selection := testFrameworkSelection("invalid-selection-plan")
+	selection.CatalogDigest = "not-a-digest"
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "invalid-selection-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "completed",
+		Passed:             true,
+		FrameworkSelection: &selection,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Completed != 0 || summary.Blocked != 1 || len(summary.Results) != 1 {
+		t.Fatalf("invalid selection was described as complete: %#v", summary)
+	}
+	if summary.Results[0].Status == "completed" || summary.Results[0].FrameworkSelection != nil {
+		t.Fatalf("invalid selection leaked as completed provenance: %#v", summary.Results[0])
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked ||
+		!strings.Contains(updated.Item.BlockedReason, "framework selection provenance could not be stored") {
+		t.Fatalf("invalid framework selection state = %#v", updated.Item)
+	}
+	if len(updated.FrameworkSelections) != 0 {
+		t.Fatalf("invalid framework selection was persisted: %#v", updated.FrameworkSelections)
 	}
 }
 
@@ -2246,6 +2589,20 @@ func findRule(rules []models.WorkflowRule, ruleKey string) (models.WorkflowRule,
 
 func timePtr(value time.Time) *time.Time {
 	return &value
+}
+
+func testFrameworkSelection(planID string) FrameworkSelectionProvenance {
+	return FrameworkSelectionProvenance{
+		SelectionDecisionID:       uuid.NewString(),
+		TaskPlanID:                planID,
+		CatalogVersion:            "v1",
+		CatalogDigest:             strings.Repeat("a", 64),
+		SelectorAlgorithmVersion:  "chief-of-staff-v1",
+		EffectivePreferenceDigest: strings.Repeat("b", 64),
+		ConstitutionVersion:       1,
+		ConstitutionDigest:        strings.Repeat("c", 64),
+		ConstitutionSource:        "builtin-robert-constitution-v1:v1",
+	}
 }
 
 type fakeWorkflowRepo struct {
@@ -3032,5 +3389,28 @@ func (r *fakeTaskRunner) RunWorkflowTask(request TaskRunRequest) (*TaskRunResult
 	if r.panicValue != nil {
 		panic(r.panicValue)
 	}
-	return r.result, r.err
+	if r.result == nil {
+		return nil, r.err
+	}
+	result := *r.result
+	if result.FrameworkSelection == nil {
+		if strings.TrimSpace(result.PlanID) == "" {
+			result.PlanID = "fake-workflow-plan"
+		}
+		selection := testFrameworkSelection(result.PlanID)
+		result.FrameworkSelection = &selection
+	}
+	return &result, r.err
+}
+
+type bindingTaskRunner struct {
+	*fakeTaskRunner
+	binding         string
+	bindingErr      error
+	bindingRequests []WorkflowApprovalBindingRequest
+}
+
+func (r *bindingTaskRunner) PrepareWorkflowApprovalBinding(request WorkflowApprovalBindingRequest) (string, error) {
+	r.bindingRequests = append(r.bindingRequests, request)
+	return r.binding, r.bindingErr
 }

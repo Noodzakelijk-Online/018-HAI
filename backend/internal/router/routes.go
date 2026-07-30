@@ -19,6 +19,7 @@ import (
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/featureflags"
+	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/health"
@@ -90,15 +91,26 @@ func initializeRoutes(router *gin.Engine) error {
 		sourceService := source.NewServiceWithWorkflowAndPursuitLinker(source.DefaultRepository(), memoryService, workflowService, pursuitService)
 		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService, pursuitService)
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
-		taskService := task.NewServiceWithEnginesAndPursuitAttempts(
+		frameworkService, err := frameworkregistry.DefaultService()
+		if err != nil {
+			return err
+		}
+		initializeFrameworkRegistryRoutes(v1, frameworkregistry.NewHandler(frameworkService))
+		taskStateRepository, err := task.DefaultTaskStateRepository()
+		if err != nil {
+			return err
+		}
+		taskService := task.NewServiceWithDependencies(
 			memoryService,
 			llmService,
 			sourceService,
 			verificationService,
 			task.NewAutomationToolExecutor(automationService),
 			pursuitService,
+			frameworkService,
+			taskStateRepository,
 		)
-		workflowRunner.Set(workflowtask.NewRunner(taskService))
+		workflowRunner.Set(workflowtask.NewRunner(taskService, automationService))
 		source.StartScheduler(context.Background(), sourceService)
 		workflow.StartScheduler(context.Background(), workflowService)
 		initializeSourceRoutes(v1, source.NewHandler(sourceService))
@@ -159,6 +171,23 @@ func initializeRoutes(router *gin.Engine) error {
 	return nil
 }
 
+func initializeFrameworkRegistryRoutes(apiVersion *gin.RouterGroup, handler *frameworkregistry.Handler) {
+	routes := apiVersion.Group("/framework-registry")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		routes.GET("/frameworks", requirePermission(rbac.PermRead), handler.List)
+		routes.GET("/frameworks/:id", requirePermission(rbac.PermRead), handler.Get)
+		routes.POST("/select", requirePermission(rbac.PermWrite), handler.Select)
+		routes.PATCH("/frameworks/:id/preference", requirePermission(rbac.PermAdmin), handler.UpdatePreference)
+		routes.GET("/selections", requirePermission(rbac.PermRead), handler.Selections)
+		routes.GET("/constitution", requirePermission(rbac.PermRead), handler.Constitution)
+		routes.GET("/constitution/history", requirePermission(rbac.PermRead), handler.ConstitutionHistory)
+		routes.POST("/constitution/drafts", requirePermission(rbac.PermAdmin), handler.CreateConstitutionDraft)
+		routes.POST("/constitution/:id/activate", requirePermission(rbac.PermAdmin), handler.ActivateConstitution)
+	}
+}
+
 func initializeAssistantRoutes(apiVersion *gin.RouterGroup, handler *assistant.Handler) {
 	routes := apiVersion.Group("/assistant")
 	routes.Use(assistant.RequireAuthenticatedOwner())
@@ -208,7 +237,7 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 		routes.GET("/", requirePermission(rbac.PermRead), handler.Registry)
 		routes.GET("/health", requirePermission(rbac.PermRead), handler.Health)
 		routes.GET("/:id/skills", requirePermission(rbac.PermRead), handler.Skills)
-		routes.POST("/:id/tasks/:taskId/stop", requirePermission(rbac.PermApprove), handler.StopTask)
+		routes.POST("/:id/tasks/:taskId/stop", requirePermission(rbac.PermExecute), handler.StopTask)
 		routes.GET("/openclaw/ecosystem", requirePermission(rbac.PermRead), handler.OpenClawEcosystem)
 		routes.PATCH("/openclaw/ecosystem", requirePermission(rbac.PermAdmin), handler.SetOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/refresh", requirePermission(rbac.PermAdmin), handler.RefreshOpenClawEcosystem)
@@ -273,8 +302,8 @@ func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *autom
 		automations.GET("/health-summary", requirePermission(rbac.PermRead), autoHandler.HealthSummary)
 		automations.GET("/images/:imageName", requirePermission(rbac.PermRead), autoHandler.ImageHandler)
 		automations.GET("/:id", requirePermission(rbac.PermRead), autoHandler.GetByID)
-		automations.POST("/:id/launch", requirePermission(rbac.PermApprove), autoHandler.Launch)
-		automations.POST("/:id/stop-runtime", requirePermission(rbac.PermApprove), autoHandler.StopRuntimeTask)
+		automations.POST("/:id/launch", requirePermission(rbac.PermExecute), autoHandler.Launch)
+		automations.POST("/:id/stop-runtime", requirePermission(rbac.PermExecute), autoHandler.StopRuntimeTask)
 		automations.POST("/:id/health-check", requirePermission(rbac.PermWrite), autoHandler.RunHealthCheck)
 		automations.GET("/:id/diagnostics", requirePermission(rbac.PermRead), autoHandler.Diagnostics)
 		automations.POST("/", requirePermission(rbac.PermAdmin), autoHandler.Create)
@@ -293,7 +322,7 @@ func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {
 		llmRoutes.GET("/probes", requirePermission(rbac.PermRead), llmHandler.ProviderProbes)
 		llmRoutes.GET("/probes/history", requirePermission(rbac.PermRead), llmHandler.ProviderProbeHistory)
 		llmRoutes.POST("/route", requirePermission(rbac.PermWrite), llmHandler.Route)
-		llmRoutes.POST("/generate", requirePermission(rbac.PermApprove), llmHandler.Generate)
+		llmRoutes.POST("/generate", requirePermission(rbac.PermExecute), llmHandler.Generate)
 		llmRoutes.GET("/logs", requirePermission(rbac.PermRead), llmHandler.Logs)
 	}
 }
@@ -390,35 +419,45 @@ func initializeVerificationRoutes(apiVersion *gin.RouterGroup, verificationHandl
 
 func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler) {
 	ops := apiVersion.Group("/operations")
+	ops.Use(requireAuthenticatedOwner())
 	{
-		ops.GET("", handler.ListOperations)
-		ops.GET("/dashboard", handler.Dashboard)
-		ops.GET("/:id", handler.GetOperation)
-		ops.GET("/:id/events", handler.OperationEvents)
-		ops.GET("/:id/approvals", handler.Approvals)
-		ops.POST("/:id/approve", handler.Approve)
-		ops.POST("/:id/reject", handler.Reject)
-		ops.POST("/:id/later", handler.Later)
-		ops.POST("/:id/block-similar", handler.BlockSimilar)
-		ops.POST("/:id/run", handler.RunOperation)
-		ops.POST("/:id/evidence-pack", handler.GenerateEvidencePack)
+		ops.GET("", requirePermission(rbac.PermRead), handler.ListOperations)
+		ops.GET("/dashboard", requirePermission(rbac.PermRead), handler.Dashboard)
+		ops.GET("/:id", requirePermission(rbac.PermRead), handler.GetOperation)
+		ops.GET("/:id/events", requirePermission(rbac.PermRead), handler.OperationEvents)
+		ops.GET("/:id/approvals", requirePermission(rbac.PermRead), handler.Approvals)
+		ops.POST("/:id/approve", requirePermission(rbac.PermApprove), handler.Approve)
+		ops.POST("/:id/reject", requirePermission(rbac.PermApprove), handler.Reject)
+		ops.POST("/:id/later", requirePermission(rbac.PermWrite), handler.Later)
+		ops.POST("/:id/block-similar", requirePermission(rbac.PermApprove), handler.BlockSimilar)
+		ops.POST("/:id/run", requirePermission(rbac.PermExecute), handler.RunOperation)
+		ops.POST("/:id/evidence-pack", requirePermission(rbac.PermWrite), handler.GenerateEvidencePack)
 	}
-	apiVersion.GET("/evidence-packs/:id", handler.GetEvidencePack)
-	apiVersion.POST("/background/run", handler.RunBackground)
+	evidencePacks := apiVersion.Group("/evidence-packs")
+	evidencePacks.Use(requireAuthenticatedOwner())
+	{
+		evidencePacks.GET("/:id", requirePermission(rbac.PermRead), handler.GetEvidencePack)
+	}
+	backgroundRuns := apiVersion.Group("/background")
+	backgroundRuns.Use(requireAuthenticatedOwner())
+	{
+		backgroundRuns.POST("/run", requirePermission(rbac.PermExecute), handler.RunBackground)
+	}
 }
 
 func initializeAccountFeedRoutes(apiVersion *gin.RouterGroup, handler *accountfeed.Handler) {
 	af := apiVersion.Group("/account-feeds")
+	af.Use(requireAuthenticatedOwner())
 	{
-		af.GET("", handler.List)
-		af.POST("", handler.Create)
-		af.GET("/bridges", handler.Bridges)
-		af.GET("/permissions", handler.Permissions)
-		af.POST("/sync-due", handler.SyncDue)
-		af.GET("/:id", handler.Get)
-		af.PATCH("/:id", handler.Patch)
-		af.POST("/:id/sync", handler.Sync)
-		af.GET("/:id/audit", handler.Audit)
+		af.GET("", requirePermission(rbac.PermRead), handler.List)
+		af.POST("", requirePermission(rbac.PermAdmin), handler.Create)
+		af.GET("/bridges", requirePermission(rbac.PermRead), handler.Bridges)
+		af.GET("/permissions", requirePermission(rbac.PermRead), handler.Permissions)
+		af.POST("/sync-due", requirePermission(rbac.PermWrite), handler.SyncDue)
+		af.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
+		af.PATCH("/:id", requirePermission(rbac.PermAdmin), handler.Patch)
+		af.POST("/:id/sync", requirePermission(rbac.PermWrite), handler.Sync)
+		af.GET("/:id/audit", requirePermission(rbac.PermRead), handler.Audit)
 	}
 }
 
@@ -445,67 +484,76 @@ func seedAccountFeeds(reg *accountfeed.Registry, m *phase2.Module) {
 
 func initializeModelIntelligenceRoutes(apiVersion *gin.RouterGroup, handler *modelintelligence.Handler) {
 	mi := apiVersion.Group("/model-intelligence")
+	mi.Use(requireAuthenticatedOwner())
 	{
-		mi.GET("/overview", handler.Overview)
-		mi.GET("/profiles", handler.Profiles)
-		mi.GET("/profiles/:providerId/:modelId", handler.Profile)
-		mi.POST("/profiles/:providerId/:modelId/benchmark", handler.Benchmark)
-		mi.GET("/benchmarks", handler.Benchmarks)
-		mi.GET("/telemetry", handler.Telemetry)
-		mi.GET("/lane-winners", handler.LaneWinners)
-		mi.GET("/cache", handler.Cache)
-		mi.DELETE("/cache/:id", handler.DeleteCache)
-		mi.GET("/token-budgets", handler.TokenBudgets)
-		mi.PATCH("/token-budgets", handler.UpdateTokenBudgets)
+		mi.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		mi.GET("/profiles", requirePermission(rbac.PermRead), handler.Profiles)
+		mi.GET("/profiles/:providerId/:modelId", requirePermission(rbac.PermRead), handler.Profile)
+		mi.POST("/profiles/:providerId/:modelId/benchmark", requirePermission(rbac.PermExecute), handler.Benchmark)
+		mi.GET("/benchmarks", requirePermission(rbac.PermRead), handler.Benchmarks)
+		mi.GET("/telemetry", requirePermission(rbac.PermRead), handler.Telemetry)
+		mi.GET("/lane-winners", requirePermission(rbac.PermRead), handler.LaneWinners)
+		mi.GET("/cache", requirePermission(rbac.PermRead), handler.Cache)
+		mi.DELETE("/cache/:id", requirePermission(rbac.PermWrite), handler.DeleteCache)
+		mi.GET("/token-budgets", requirePermission(rbac.PermRead), handler.TokenBudgets)
+		mi.PATCH("/token-budgets", requirePermission(rbac.PermAdmin), handler.UpdateTokenBudgets)
 	}
 }
 
 func initializeHardwareRoutes(apiVersion *gin.RouterGroup, handler *hardwareprofile.Handler) {
 	hw := apiVersion.Group("/hardware")
+	hw.Use(requireAuthenticatedOwner())
 	{
-		hw.GET("/profile", handler.Profile)
-		hw.POST("/detect", handler.Detect)
-		hw.PATCH("/profile", handler.Patch)
+		hw.GET("/profile", requirePermission(rbac.PermRead), handler.Profile)
+		hw.POST("/detect", requirePermission(rbac.PermWrite), handler.Detect)
+		hw.PATCH("/profile", requirePermission(rbac.PermAdmin), handler.Patch)
 	}
 	power := apiVersion.Group("/power")
+	power.Use(requireAuthenticatedOwner())
 	{
-		power.GET("/policy", handler.PowerPolicy)
-		power.PATCH("/policy", handler.UpdatePowerPolicy)
+		power.GET("/policy", requirePermission(rbac.PermRead), handler.PowerPolicy)
+		power.PATCH("/policy", requirePermission(rbac.PermAdmin), handler.UpdatePowerPolicy)
 	}
 }
 
 func initializePrivacyRoutes(apiVersion *gin.RouterGroup, handler *privacyfilter.Handler) {
 	privacy := apiVersion.Group("/privacy")
+	privacy.Use(requireAuthenticatedOwner())
 	{
-		privacy.POST("/scan", handler.ScanContent)
-		privacy.GET("/scans", handler.Scans)
-		privacy.GET("/scans/:id", handler.ScanByID)
+		privacy.POST("/scan", requirePermission(rbac.PermWrite), handler.ScanContent)
+		privacy.GET("/scans", requirePermission(rbac.PermRead), handler.Scans)
+		privacy.GET("/scans/:id", requirePermission(rbac.PermRead), handler.ScanByID)
 	}
 }
 
 func initializeOpsControlRoutes(apiVersion *gin.RouterGroup, handler *opscontrol.Handler) {
 	bg := apiVersion.Group("/background")
+	bg.Use(requireAuthenticatedOwner())
 	{
-		bg.GET("/status", handler.Status)
-		bg.POST("/pause", handler.Pause)
-		bg.POST("/resume", handler.Resume)
-		bg.PATCH("/mode", handler.SetMode)
+		bg.GET("/status", requirePermission(rbac.PermRead), handler.Status)
+		// Operators may always halt work. Only an owner may resume it or change
+		// the autonomy mode.
+		bg.POST("/pause", requirePermission(rbac.PermExecute), handler.Pause)
+		bg.POST("/resume", requirePermission(rbac.PermAdmin), handler.Resume)
+		bg.PATCH("/mode", requirePermission(rbac.PermAdmin), handler.SetMode)
 	}
 	wr := apiVersion.Group("/windows-runtime")
+	wr.Use(requireAuthenticatedOwner())
 	{
-		wr.GET("/readiness", handler.Readiness)
-		wr.POST("/recovery", handler.Recovery)
-		wr.POST("/emergency-stop/verify", handler.VerifyEmergencyStop)
+		wr.GET("/readiness", requirePermission(rbac.PermRead), handler.Readiness)
+		wr.POST("/recovery", requirePermission(rbac.PermExecute), handler.Recovery)
+		wr.POST("/emergency-stop/verify", requirePermission(rbac.PermExecute), handler.VerifyEmergencyStop)
 	}
 }
 
 func initializeRuntimeLabRoutes(apiVersion *gin.RouterGroup, handler *runtimelab.Handler) {
 	rl := apiVersion.Group("/runtime-lab")
+	rl.Use(requireAuthenticatedOwner())
 	{
-		rl.GET("/overview", handler.Overview)
-		rl.POST("/:runtimeId/probe", handler.Probe)
-		rl.POST("/:runtimeId/self-test", handler.SelfTest)
-		rl.GET("/:runtimeId/attempts", handler.Attempts)
+		rl.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		rl.POST("/:runtimeId/probe", requirePermission(rbac.PermWrite), handler.Probe)
+		rl.POST("/:runtimeId/self-test", requirePermission(rbac.PermExecute), handler.SelfTest)
+		rl.GET("/:runtimeId/attempts", requirePermission(rbac.PermRead), handler.Attempts)
 	}
 }
 
@@ -517,8 +565,10 @@ func defaultFeatureFlags() *featureflags.Store {
 }
 
 func initializeFeatureFlagRoutes(apiVersion *gin.RouterGroup, store *featureflags.Store) {
-	apiVersion.GET("/flags", func(c *gin.Context) {
-		c.JSON(200, gin.H{"flags": store.List()})
+	flags := apiVersion.Group("/flags")
+	flags.Use(requireAuthenticatedOwner())
+	flags.GET("", requirePermission(rbac.PermRead), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"flags": store.List()})
 	})
 }
 
@@ -539,11 +589,11 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.GET("/dashboard", requirePermission(rbac.PermRead), workflowHandler.Dashboard)
 		workflowRoutes.GET("/", requirePermission(rbac.PermRead), workflowHandler.Items)
 		workflowRoutes.POST("/intake", requirePermission(rbac.PermWrite), workflowHandler.Intake)
-		// These HTTP worker controls are owner-scoped. They can advance work, so
-		// operators need approval capability; global scheduler work stays internal.
-		workflowRoutes.POST("/recover-stale", requirePermission(rbac.PermApprove), workflowHandler.RecoverStaleClaims)
-		workflowRoutes.POST("/run-due", requirePermission(rbac.PermApprove), workflowHandler.RunDue)
-		workflowRoutes.POST("/open-loops/run-due", requirePermission(rbac.PermApprove), workflowHandler.RunDueOpenLoops)
+		// These HTTP worker controls run already-governed, owner-scoped work.
+		// Operators may execute them, but only an owner may resolve decisions.
+		workflowRoutes.POST("/recover-stale", requirePermission(rbac.PermExecute), workflowHandler.RecoverStaleClaims)
+		workflowRoutes.POST("/run-due", requirePermission(rbac.PermExecute), workflowHandler.RunDue)
+		workflowRoutes.POST("/open-loops/run-due", requirePermission(rbac.PermExecute), workflowHandler.RunDueOpenLoops)
 		workflowRoutes.GET("/:id", requirePermission(rbac.PermRead), workflowHandler.Get)
 		workflowRoutes.POST("/:id/transition", requirePermission(rbac.PermWrite), workflowHandler.Transition)
 		workflowRoutes.POST("/:id/approval", requirePermission(rbac.PermApprove), workflowHandler.ResolveApproval)

@@ -17,8 +17,10 @@ set -euo pipefail
 PG_PORT="${PG_PORT:-55434}"
 API_PORT="${API_PORT:-18082}"
 API_KEY="${API_KEY:-smoke-key}"
+JWT_SECRET="${JWT_SECRET:-smoke-jwt-secret}"
 BASE="http://127.0.0.1:${API_PORT}/api/v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "${ROOT}/scripts/smoke-auth.sh"
 
 WORKDIR="$(mktemp -d)"
 PGDATA="${WORKDIR}/pgdata"
@@ -57,7 +59,7 @@ JSON
 
 echo "==> Starting throwaway PostgreSQL on :${PG_PORT}"
 initdb -D "${PGDATA}" -U "$(whoami)" --auth=trust --locale=C --encoding=UTF8 >/dev/null
-pg_ctl -D "${PGDATA}" -o "-p ${PG_PORT} -h 127.0.0.1" -l "${PGDATA}/server.log" start >/dev/null
+pg_ctl -D "${PGDATA}" -o "-p ${PG_PORT} -h 127.0.0.1 -k ${WORKDIR}" -l "${PGDATA}/server.log" start >/dev/null
 for i in $(seq 1 30); do
   pg_isready -h 127.0.0.1 -p "${PG_PORT}" >/dev/null 2>&1 && break
   sleep 1
@@ -72,7 +74,7 @@ start_backend() {
   DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
     DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
     BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
-    RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="smoke-jwt-secret" \
+    RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="${JWT_SECRET}" \
     HAI_PHASE2_FEEDS_DIR="${FEEDS}" HAI_PHASE2_WORKSPACE_DIR="${WORKSPACE}" \
     HAI_PHASE2_FEED_FILES="inbox.json" HAI_PHASE2_MODE="autonomous_safe" \
     "${BIN}" > "${WORKDIR}/backend.log" 2>&1 &
@@ -95,7 +97,13 @@ start_backend
 echo "==> Waiting for liveness"
 wait_live
 
-hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
+owner_jwt="$(hai_smoke_mint_jwt owner "${JWT_SECRET}")"
+key_hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
+hdr=("${key_hdr[@]}" -H "Authorization: Bearer ${owner_jwt}")
+
+echo "==> Authentication boundary"
+check "API key alone is rejected" '401' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" "${BASE}/model-intelligence/overview")"
 
 echo "==> Truthful provider/model states"
 overview="$(curl -sS "${hdr[@]}" "${BASE}/model-intelligence/overview")"

@@ -5,6 +5,9 @@ import (
 	"automation-hub-backend/internal/models"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -20,8 +23,11 @@ type Repository interface {
 	Transaction(txFunc func(tx *gorm.DB) error) (err error)
 	SaveHealthEvent(event *models.AutomationHealthEvent) error
 	FindHealthEvents(automationID uuid.UUID, limit int) ([]models.AutomationHealthEvent, error)
+	SaveLaunchIntent(event *models.AutomationLaunchEvent) error
 	SaveLaunchEvent(event *models.AutomationLaunchEvent) error
 	FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error)
+	SaveApprovalDecision(record *ApprovalDecisionRecord) error
+	FindApprovalDecision(sourceID string) (*ApprovalDecisionRecord, error)
 }
 
 type GormUserRepository struct {
@@ -141,6 +147,15 @@ func (r *GormUserRepository) SaveLaunchEvent(event *models.AutomationLaunchEvent
 	return r.DB.Create(event).Error
 }
 
+func (r *GormUserRepository) SaveLaunchIntent(event *models.AutomationLaunchEvent) error {
+	if event == nil ||
+		!strings.HasSuffix(strings.TrimSpace(event.LaunchType), "_intent") ||
+		strings.TrimSpace(event.Status) != "pending" {
+		return fmt.Errorf("launch intent must be an immutable pending intent event")
+	}
+	return r.DB.Create(event).Error
+}
+
 func (r *GormUserRepository) FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error) {
 	var events []models.AutomationLaunchEvent
 	if limit <= 0 {
@@ -148,6 +163,7 @@ func (r *GormUserRepository) FindLaunchEvents(automationID uuid.UUID, limit int)
 	}
 	err := r.DB.
 		Where("automation_id = ?", automationID).
+		Where("launch_type <> ? AND launch_type NOT LIKE ?", "approval_decision", "%_intent").
 		Order("started_at desc").
 		Limit(limit).
 		Find(&events).Error
@@ -155,6 +171,129 @@ func (r *GormUserRepository) FindLaunchEvents(automationID uuid.UUID, limit int)
 		return nil, err
 	}
 	return events, nil
+}
+
+func (r *GormUserRepository) SaveApprovalDecision(record *ApprovalDecisionRecord) error {
+	if err := validateApprovalDecisionRecord(record); err != nil {
+		return err
+	}
+	kind, sourceUUID, err := approvalSourceKind(record.SourceID)
+	if err != nil {
+		return err
+	}
+	if kind != "task-review" {
+		return fmt.Errorf("only task-review decisions can be registered through the automation service")
+	}
+	if existing, findErr := r.FindApprovalDecision(record.SourceID); findErr == nil {
+		if sameApprovalDecision(existing, record) {
+			return nil
+		}
+		return fmt.Errorf("approval decision conflicts with the recorded action binding")
+	} else if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+		return findErr
+	}
+	event := &models.AutomationLaunchEvent{
+		ID:            sourceUUID,
+		AutomationID:  record.AutomationID,
+		OwnerIdentity: record.OwnerIdentity,
+		RuntimeType:   string(record.Scope),
+		LaunchType:    "approval_decision",
+		Target:        record.ActionDigest,
+		Status:        "approved",
+		Message:       "owner-scoped task review approved one exact automation action",
+		AuditEvents: []string{
+			"task review decision verified before registration",
+			"approval action digest recorded",
+		},
+		StartedAt:   record.ApprovedAt.UTC(),
+		CompletedAt: record.ApprovedAt.UTC(),
+	}
+	return r.DB.Create(event).Error
+}
+
+func (r *GormUserRepository) FindApprovalDecision(sourceID string) (*ApprovalDecisionRecord, error) {
+	kind, sourceUUID, err := approvalSourceKind(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case "task-review":
+		var event models.AutomationLaunchEvent
+		err := r.DB.
+			Where(
+				"id = ? AND launch_type = ? AND status = ?",
+				sourceUUID,
+				"approval_decision",
+				"approved",
+			).
+			First(&event).Error
+		if err != nil {
+			return nil, err
+		}
+		record := &ApprovalDecisionRecord{
+			SourceID:      sourceID,
+			DecisionType:  kind,
+			OwnerIdentity: event.OwnerIdentity,
+			AutomationID:  event.AutomationID,
+			ActionDigest:  event.Target,
+			Scope:         ApprovalScope(event.RuntimeType),
+			ApprovedAt:    event.StartedAt,
+		}
+		if err := validateApprovalDecisionRecord(record); err != nil {
+			return nil, err
+		}
+		return record, nil
+	case "workflow-decision":
+		var row struct {
+			WorkflowID    uuid.UUID
+			OwnerIdentity string
+			AutomationID  string
+			RuleApplied   string
+			CreatedAt     time.Time
+		}
+		err := r.DB.
+			Table("workflow_decisions AS decisions").
+			Select(
+				"decisions.workflow_id, items.owner_identity, items.automation_id, decisions.rule_applied, decisions.created_at",
+			).
+			Joins("JOIN workflow_items AS items ON items.id = decisions.workflow_id").
+			Where(
+				"decisions.id = ? AND decisions.decision_type = ? AND decisions.decision = ? AND decisions.approved = ?",
+				sourceUUID,
+				"approval",
+				"approved",
+				true,
+			).
+			Where("items.requires_approval = ? AND items.approval_status = ?", true, "approved").
+			Take(&row).Error
+		if err != nil {
+			return nil, err
+		}
+		automationID, err := uuid.Parse(row.AutomationID)
+		if err != nil {
+			return nil, fmt.Errorf("workflow approval decision has an invalid automation binding")
+		}
+		scope, digest, err := parseWorkflowApprovalBinding(row.RuleApplied)
+		if err != nil {
+			return nil, err
+		}
+		record := &ApprovalDecisionRecord{
+			SourceID:      sourceID,
+			DecisionType:  kind,
+			OwnerIdentity: row.OwnerIdentity,
+			AutomationID:  automationID,
+			WorkflowID:    row.WorkflowID,
+			ActionDigest:  digest,
+			Scope:         scope,
+			ApprovedAt:    row.CreatedAt,
+		}
+		if err := validateApprovalDecisionRecord(record); err != nil {
+			return nil, err
+		}
+		return record, nil
+	default:
+		return nil, ErrApprovalDecisionMissing
+	}
 }
 
 func (r *GormUserRepository) GetByURLPath(urlPath string) (*models.Automation, error) {

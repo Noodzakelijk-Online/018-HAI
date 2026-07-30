@@ -210,6 +210,64 @@ export interface IWorkflowEvent {
   createdAt: string;
 }
 
+export interface IWorkflowFrameworkSelectionProvenance {
+  selectionDecisionId: string;
+  taskPlanId: string;
+  catalogVersion: string;
+  catalogDigest: string;
+  selectorAlgorithmVersion: string;
+  effectivePreferenceDigest: string;
+  constitutionVersion: number;
+  constitutionDigest: string;
+  constitutionSource: string;
+}
+
+export interface IWorkflowSelectedFramework {
+  id: string;
+  version: string;
+  name: string;
+  family: string;
+  score: number;
+  reasons: string[];
+  maximumAutonomyLevel: number;
+  authorityRequirement: string;
+  evidenceRequirements: string[];
+  evaluationMethod: string[];
+}
+
+export interface IWorkflowFrameworkConflict {
+  selectedId: string;
+  skippedId: string;
+  reason: string;
+}
+
+export interface IWorkflowFrameworkSelectionDecision {
+  id: string;
+  taskPlanId?: string;
+  createdAt: string;
+  catalogVersion: string;
+  catalogDigest: string;
+  selectorAlgorithmVersion: string;
+  effectivePreferenceDigest: string;
+  constitutionDigest: string;
+  lifeDomain: string;
+  needOrCommitment: string;
+  selected: IWorkflowSelectedFramework[];
+  conflicts: IWorkflowFrameworkConflict[];
+  requiredAgents: string[];
+  maximumAutonomyLevel: number;
+  authoritySummary: string;
+  requiresApproval: boolean;
+  approvalReasons: string[];
+  evidenceRequirements: string[];
+  completionCriteria: string[];
+  learningPlan: string[];
+  contextRequirements: string[];
+  selectionReason: string;
+  constitutionVersion: number;
+  constitutionSource: string;
+}
+
 export interface IWorkflowRecord {
   item: IWorkflowItem;
   checklist: IWorkflowChecklistItem[];
@@ -224,6 +282,7 @@ export interface IWorkflowRecord {
   sourceLinks: IWorkflowSourceLink[];
   decisions: IWorkflowDecision[];
   events: IWorkflowEvent[];
+  frameworkSelections: IWorkflowFrameworkSelectionProvenance[];
 }
 
 export interface IWorkflowIntakeRequest {
@@ -289,6 +348,7 @@ export interface IWorkflowRunResult {
   verificationStatus?: string;
   nextRunAt?: string;
   message?: string;
+  frameworkSelection?: IWorkflowFrameworkSelectionProvenance;
 }
 
 export interface IWorkflowRunSummary {

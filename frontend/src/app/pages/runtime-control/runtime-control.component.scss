@@ -19,8 +19,37 @@
 
   &__subtitle {
     max-width: 720px;
-    color: rgba(0, 0, 0, 0.55);
+    color: var(--hai-muted);
     margin: 0;
+  }
+
+  &__authority {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 58px;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    color: var(--hai-text);
+    background: var(--hai-surface);
+    border: 1px solid var(--hai-border);
+    border-radius: 8px;
+
+    strong,
+    span {
+      display: block;
+    }
+
+    strong {
+      font-size: 14px;
+    }
+
+    span {
+      margin-top: 2px;
+      color: var(--hai-muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
   }
 
   &__control {
@@ -36,8 +65,8 @@
 
   &__estop {
     &--engaged {
-      border-color: #cf1322;
-      background: rgba(207, 19, 34, 0.04);
+      border-color: var(--hai-red);
+      background: var(--hai-red-soft);
     }
 
     &-head {
@@ -75,14 +104,33 @@
       display: flex;
       justify-content: space-between;
       padding: 4px 0;
-      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      border-bottom: 1px solid var(--hai-border);
       font-size: 13px;
     }
   }
 
   &__muted {
-    color: rgba(0, 0, 0, 0.45);
+    color: var(--hai-muted);
     font-size: 13px;
+  }
+
+  &__permission-note {
+    margin: 10px 0 0;
+    color: var(--hai-muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  &__sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   &__readiness {
@@ -95,6 +143,35 @@
     gap: 10px;
     margin-bottom: 12px;
   }
+}
+
+:host {
+  display: block;
+  min-height: 100vh;
+  color: var(--hai-text);
+  background: var(--hai-page-bg);
+}
+
+:host ::ng-deep .ant-card,
+:host ::ng-deep .ant-card-head,
+:host ::ng-deep .ant-card-body,
+:host ::ng-deep .ant-table,
+:host ::ng-deep .ant-table-thead > tr > th,
+:host ::ng-deep .ant-table-tbody > tr > td {
+  color: var(--hai-text);
+  background: var(--hai-surface);
+  border-color: var(--hai-border);
+}
+
+:host ::ng-deep .ant-radio-button-wrapper {
+  color: var(--hai-text-soft);
+  background: var(--hai-surface);
+  border-color: var(--hai-border);
+}
+
+:host ::ng-deep .ant-radio-button-wrapper-disabled {
+  color: var(--hai-muted);
+  background: var(--hai-surface-muted);
 }
 
 code {

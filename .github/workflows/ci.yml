@@ -9,6 +9,7 @@ jobs:
   backend:
     name: Backend build and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -16,20 +17,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.21.13"
+          go-version: "1.25.12"
           cache-dependency-path: backend/go.sum
       - run: go vet ./...
       - run: go test ./...
+      - name: Execution-boundary race tests
+        run: go test -count=1 -race ./internal/automation ./internal/task
       - run: go build ./...
-      - name: Vulnerability scan (advisory)
-        continue-on-error: true
+      - name: Vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
 
   idp:
     name: IDP build and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: idp
@@ -37,15 +40,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.21.13"
+          go-version: "1.25.12"
           cache-dependency-path: idp/go.sum
-      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config
+      - run: go vet ./...
       - run: go test ./...
       - run: go build ./...
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          govulncheck ./...
 
   nginx-config-manager:
     name: Nginx config manager build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: nginx-config-manager
@@ -53,14 +61,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.21.13"
+          go-version: "1.25.12"
           cache-dependency-path: nginx-config-manager/go.sum
+      - run: go vet ./...
       - run: go test ./...
       - run: go build ./...
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          govulncheck ./...
 
   frontend:
     name: Frontend build and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: frontend
@@ -74,8 +88,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       # Unit tests run in headless Chrome (preinstalled on ubuntu-latest) via the
-      # sandbox-free launcher in karma.conf.js. This is the same suite verified
-      # locally at 20/20.
+      # sandbox-free launcher in karma.conf.js.
       - name: Unit tests (headless Chrome)
         run: npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
       # Advisory dependency scan — surfaces known frontend advisories without
@@ -85,19 +98,76 @@ jobs:
         run: npm audit --audit-level=high
 
   compose:
-    name: Local Compose validation
+    name: Gateway and local Compose validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: CI workflow contract
+        run: python3 scripts/test_ci_contract.py
+      - name: Gateway authentication contract
+        run: python3 nginx-config/test_gateway_contract.py
       - run: docker compose --env-file .env.example -f docker-compose.local.yml config
+      - name: Nginx syntax
+        run: |
+          python3 - "$RUNNER_TEMP/hai-nginx.conf" <<'PY'
+          from pathlib import Path
+          import sys
+          source = Path("nginx-config/nginx.conf.template").read_text(encoding="utf-8")
+          Path(sys.argv[1]).write_text(
+              source.replace("${BACKEND_API_SHARED_KEY}", "ci-test-key"),
+              encoding="utf-8",
+          )
+          PY
+          docker run --rm \
+            -v "$RUNNER_TEMP/hai-nginx.conf:/etc/nginx/nginx.conf:ro" \
+            -v "$PWD/nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro" \
+            nginx:alpine nginx -t
 
-  # Runs the versioned migration runner against a REAL Postgres 17 (not a mock):
-  # full schema apply, idempotency, and post-migration rollback+re-apply. These
-  # live behind `-tags integration` so the default `go test ./...` skips them;
-  # this job is what actually exercises them. Verified locally: 4/4 pass.
+  authenticated-smoke:
+    name: Authenticated control-plane smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.12"
+          cache-dependency-path: backend/go.sum
+      - name: Smoke authentication contract
+        run: python3 scripts/test_smoke_auth_contract.py
+      - name: Install smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq postgresql postgresql-client
+          echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
+      - name: Run authenticated smoke suites
+        run: |
+          set -euo pipefail
+          smoke_log="$RUNNER_TEMP/authenticated-smoke.log"
+          bash scripts/smoke-all.sh | tee "$smoke_log"
+          expected_suites=(
+            smoke-background-operations
+            smoke-model-intelligence
+            smoke-runtime-lab
+            smoke-account-bridges
+            smoke-windows-runtime
+          )
+          for suite in "${expected_suites[@]}"; do
+            if ! grep -Eq "^  PASS  ${suite}  \(Result: [1-9][0-9]* passed, 0 failed\)$" "$smoke_log"; then
+              echo "::error::Authenticated smoke suite ${suite} did not emit passing result evidence."
+              exit 1
+            fi
+          done
+          grep -qx '==> ALL PHASE 2 SMOKE SUITES PASSED' "$smoke_log"
+
+  # Runs the versioned migration runner and Framework Registry persistence tests
+  # against a real Postgres 17 service. Integration-tagged checks do not run as
+  # part of the default backend unit-test job.
   migrations-integration:
     name: Migration integration (real Postgres 17)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -107,7 +177,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: automation_hub
+          POSTGRES_DB: postgres
         ports:
           - 5432:5432
         options: >-
@@ -119,21 +189,61 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.21.13"
+          go-version: "1.25.12"
           cache-dependency-path: backend/go.sum
-      - name: Migration runner integration tests
+      - name: Create isolated integration databases
         env:
-          HAI_TEST_DATABASE_DSN: "host=localhost user=postgres password=postgres dbname=automation_hub port=5432 sslmode=disable TimeZone=UTC"
-        run: go test -tags integration -run 'Migrat|Rollback' ./internal/infra/ -v
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          for database in \
+            hai_migration_runner_test \
+            hai_framework_registry_test \
+            hai_task_state_test
+          do
+            createdb \
+              --host=127.0.0.1 \
+              --port=5432 \
+              --username=postgres \
+              "${database}"
+          done
+      - name: Migration, Framework Registry, and task-state persistence tests
+        env:
+          HAI_ALLOW_DESTRUCTIVE_DATABASE_TESTS: "true"
+          HAI_REQUIRE_POSTGRES_INTEGRATION: "true"
+        run: |
+          set -euo pipefail
+          infra_log="$RUNNER_TEMP/migration-infra.log"
+          registry_log="$RUNNER_TEMP/framework-registry-postgres.log"
+          task_log="$RUNNER_TEMP/task-state-postgres.log"
+          migration_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_runner_test port=5432 sslmode=disable TimeZone=UTC"
+          registry_dsn="host=localhost user=postgres password=postgres dbname=hai_framework_registry_test port=5432 sslmode=disable TimeZone=UTC"
+          task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
+          HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 -tags integration \
+            -run '^(TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration)$' \
+            ./internal/infra/ -v | tee "$infra_log"
+          grep -q -- '^--- PASS: TestRunMigrationsAppliesAndIsIdempotent' "$infra_log"
+          grep -q -- '^--- PASS: TestRollbackMigrationReversesPostMigration' "$infra_log"
+          HAI_TEST_DATABASE_DSN="$registry_dsn" go test -count=1 -tags integration \
+            ./internal/frameworkregistry/ -v | tee "$registry_log"
+          grep -q -- '^--- PASS: TestFrameworkRegistryPostgresIntegrationRequiredEnvironment' "$registry_log"
+          grep -q -- '^--- PASS: TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun' "$registry_log"
+          grep -q -- '^--- PASS: TestFrameworkRegistryPostgresConstraintsAndImmutability' "$registry_log"
+          HAI_TEST_DATABASE_DSN="$task_dsn" go test -count=1 -tags integration \
+            -run '^TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability$' \
+            ./internal/task/ -v | tee "$task_log"
+          grep -q -- '^--- PASS: TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability' "$task_log"
 
   # Boots the real backend against a real Postgres + Redis and runs the
   # two-account isolation acceptance test over HTTP: two authenticated owners
   # must not see, retrieve, or act on each other's sources or extracted content.
-  # This is the running-stack proof (not an in-process fake). Verified locally:
-  # 9/9 assertions pass.
+  # This is a running-stack proof, not an in-process fake.
   isolation-acceptance:
     name: Two-account isolation (running stack)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine
@@ -161,7 +271,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.21.13"
+          go-version: "1.25.12"
           cache-dependency-path: backend/go.sum
       - name: Build backend
         working-directory: backend
@@ -186,13 +296,40 @@ jobs:
         run: |
           ./hai-backend > backend.log 2>&1 &
           echo $! > backend.pid
+          backend_live=""
           for i in $(seq 1 60); do
             if curl -sf http://localhost:8080/healthz >/dev/null; then
-              echo "backend ready after ${i}s"; break
+              backend_live=1
+              echo "backend live after ${i}s"
+              break
+            fi
+            if ! kill -0 "$(cat backend.pid)" 2>/dev/null; then
+              echo "backend exited before becoming live"
+              cat backend.log
+              exit 1
             fi
             sleep 1
           done
-          curl -s http://localhost:8080/readyz || true
+          [ -n "${backend_live}" ] || {
+            echo "backend never became live"
+            cat backend.log
+            exit 1
+          }
+          readyz_http="$(curl -sS -o readyz.json -w '%{http_code}' http://localhost:8080/readyz)"
+          echo "readyz HTTP ${readyz_http}"
+          cat readyz.json
+          [ "${readyz_http}" = "200" ] || {
+            echo "backend readiness endpoint did not return HTTP 200"
+            exit 1
+          }
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          status = json.loads(Path("readyz.json").read_text(encoding="utf-8")).get("status")
+          if status not in {"ready", "degraded"}:
+              raise SystemExit(f"backend readiness status is not operational: {status!r}")
+          PY
       - name: Two-account isolation acceptance test
         env:
           HAI_BASE_URL: http://localhost:8080
@@ -201,3 +338,46 @@ jobs:
       - name: Backend log (on failure)
         if: failure()
         run: cat backend/backend.log || true
+
+  windows-contract:
+    name: Windows CI and smoke path contract
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python CI and authentication contracts
+        shell: pwsh
+        run: |
+          python scripts/test_ci_contract.py
+          python scripts/test_smoke_auth_contract.py
+          python nginx-config/test_gateway_contract.py
+      - name: Git Bash syntax and space-containing path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bash = "C:\Program Files\Git\bin\bash.exe"
+          if (-not (Test-Path -LiteralPath $bash)) {
+            throw "Git Bash is unavailable at $bash"
+          }
+          $scripts = Get-ChildItem -LiteralPath scripts -Filter "*.sh"
+          foreach ($script in $scripts) {
+            & $bash -n -- $script.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Bash syntax failed for $($script.FullName)"
+            }
+          }
+          $spacedDirectory = Join-Path $env:RUNNER_TEMP "HAI smoke path with spaces"
+          New-Item -ItemType Directory -Force -Path $spacedDirectory | Out-Null
+          $spacedHelper = Join-Path $spacedDirectory "smoke-auth.sh"
+          Copy-Item -LiteralPath "scripts\smoke-auth.sh" -Destination $spacedHelper
+          $helperForBash = (& $bash -lc "cygpath -u '$spacedHelper'").Trim()
+          $bashCommand = 'python3() { python "$@"; }; source ' +
+            "'$helperForBash'" +
+            '; hai_smoke_mint_jwt owner ci-secret windows-owner >/dev/null'
+          & $bash -lc $bashCommand
+          if ($LASTEXITCODE -ne 0) {
+            throw "Signed-session helper failed from a space-containing Windows path"
+          }

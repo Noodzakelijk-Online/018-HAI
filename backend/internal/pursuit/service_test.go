@@ -4399,6 +4399,13 @@ func TestDashboardRecentlyChangedRanksLinkedOperationalActivity(t *testing.T) {
 		record := repo.pursuits[link.pursuitID]
 		record.LastActivityAt = &staleAt
 		repo.pursuits[link.pursuitID] = record
+		// Link creation is itself audited at wall-clock time. Move that fixture
+		// activity behind the linked workflow timestamps so this test isolates
+		// the ranking signal named in its assertion instead of depending on
+		// Windows clock resolution or the order of the Link calls above.
+		for index := range repo.activity[link.pursuitID] {
+			repo.activity[link.pursuitID][index].CreatedAt = staleAt
+		}
 	}
 
 	dashboard, err := service.DashboardForOwner("alice")
@@ -4410,6 +4417,37 @@ func TestDashboardRecentlyChangedRanksLinkedOperationalActivity(t *testing.T) {
 	}
 	if dashboard.RecentlyChanged[0].Pursuit.ID != newer.ID || dashboard.RecentlyChanged[1].Pursuit.ID != older.ID {
 		t.Fatalf("recently changed order = %#v, want newest linked activity first", dashboard.RecentlyChanged)
+	}
+}
+
+func TestSortListItemsByEffectiveActivityUsesIDAsFinalTieBreaker(t *testing.T) {
+	at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	lowID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	highID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	items := []PursuitListItem{
+		{
+			Pursuit: models.Pursuit{
+				ID:            highID,
+				Title:         "Same title",
+				PriorityScore: 50,
+				UpdatedAt:     at,
+			},
+			EffectiveLastActivityAt: &at,
+		},
+		{
+			Pursuit: models.Pursuit{
+				ID:            lowID,
+				Title:         "Same title",
+				PriorityScore: 50,
+				UpdatedAt:     at,
+			},
+			EffectiveLastActivityAt: &at,
+		},
+	}
+
+	sortListItemsByEffectiveActivity(items)
+	if items[0].Pursuit.ID != lowID || items[1].Pursuit.ID != highID {
+		t.Fatalf("IDs = %s/%s, want %s/%s", items[0].Pursuit.ID, items[1].Pursuit.ID, lowID, highID)
 	}
 }
 

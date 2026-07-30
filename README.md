@@ -9,7 +9,7 @@ Compose stack. It is not an unrestricted desktop agent: planning, execution,
 verification, and approval are separate; external effects remain blocked until a
 reviewed runtime, policy, and evidence path are configured.
 
-> **Current repository state, evidence reviewed 2026-07-14:** this repository
+> **Current repository state, evidence reviewed through 2026-07-30:** this repository
 > implements a governed local operating layer, including the Angular dashboard,
 > Go engines, IDP, Compose topology, pursuit/workflow routing, persistence, and
 > safety gates. On the development workspace used for this review, the Compose
@@ -54,17 +54,82 @@ than maintained in parallel.
 See [ADR 0001](docs/architecture-decision-records/0001-canonical-stack-and-readiness.md)
 for the canonical-stack decision.
 
+## Framework Registry
+
+The [Framework Registry](docs/framework-registry.md) defines HAI's versioned,
+owner-scoped contract for selecting the smallest suitable set of planning,
+reasoning, governance, domain, and evaluation frameworks for a task. Its
+implemented catalog contains 55 records at version `1.0.0` (50 active and five
+experimental, with no deprecated catalog records in v1), mandatory safety
+overlays, deterministic `selector-v4`
+selection, owner-scoped preferences, Constitution lifecycle, authority
+ceilings, reproducibility digests, API/UI/task integration, and a reversible
+pre-phase migration.
+
+The [Framework Operating Contract Matrix](docs/framework-operating-contract-matrix.md)
+maps all 55 research families to enforced, structured, or catalog-only
+behavior and states the remaining live-system boundary for each.
+
+Selector v4 also produces a durable Chief-of-Staff operating contract: all
+matched life domains, needs state, freshness-aware human capacity, verified
+agent cards with explicit identity/capability/access/cost/health/revocation
+fields, authority-bounded delegation contracts, replay-resistant typed
+communication, coordination mode, exact per-action autonomy decisions, stop conditions,
+outcome monitoring, and an operating-contract digest. Workflow due dates flow
+into delegation deadlines; every delegation defaults to zero financial
+authority. The Advanced registry view exposes these details without turning
+the Basic view into a diagnostic wall.
+
+Catalog lifecycle and owner-effective state are separate. `active` records are
+enabled by default; `experimental` records are disabled by default and need an
+owner opt-in plus a direct match; `deprecated` records are excluded from
+selection. `disabled` is an owner preference, not a fourth catalog lifecycle
+status. An owner can enable an experimental record or disable an ordinary
+active record, but cannot disable a protected safety overlay.
+
+The built-in fallback Constitution has the exact source
+`builtin-robert-constitution-v1:v1`. Registry selection records retain the
+catalog version/digest, selector version, effective-preference digest,
+Constitution digest/source, selected framework versions, reasons, evidence
+requirements, and authority ceiling. Protected overlays cannot be disabled;
+owner preferences may only enable an experimental record, pin a relevant
+record, lower autonomy, or add bounded safe adaptations.
+
+Constitution activation is owner-only and requires the exact, case-sensitive
+confirmation `ACTIVATE CONSTITUTION` with no leading or trailing whitespace,
+plus a redacted approval note of at least 10 characters. Ordinary Constitution
+prose is immutable, versioned governance context; it is not executable policy.
+Only code-owned protected controls and valid restrictive `HAI-RULE v1`
+`deny-capability`, `require-approval`, or `authority-ceiling` entries are
+machine-enforced. No Constitution entry can grant authority.
+
+Framework records are decision metadata, not installed tools or granted
+authority. A named agent framework, workflow platform, memory store, policy
+engine, or evaluation product is only a candidate implementation until its
+adapter is configured and passes security, capability, integration, audit, and
+real-world verification gates.
+
+The Go routes, Angular `/framework-registry` page, and nginx authenticated API
+allowlist are wired together. Repository tests cover the component, service,
+route, permission, and static gateway contracts. A clean-machine signed-in
+browser exercise remains environment-dependent acceptance evidence.
+
+Viewers can inspect the owner-scoped registry and selection history. Operators
+can also request and persist a selection recommendation. Only an owner can
+change framework preferences, create a Constitution draft, activate a
+Constitution, run an approval-gated task, or resolve a task review item.
+
 ## What Is Implemented
 
 | Area | Implemented capability | Important operating boundary |
 | --- | --- | --- |
-| Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, and task planning. | A dashboard card is operational visibility, not proof that an external action occurred. |
+| Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, task planning, and the Framework Registry. | A dashboard card is operational visibility, not proof that an external action occurred. |
 | Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, ambient opportunity routing, and navigable related-pursuit links. | In the canonical routed stack, new source, assistant, or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Links, evidence, and operational summaries stay owner-scoped; completion still needs workflow, verification, source, runtime, and approval evidence where applicable. |
 | Memory and knowledge | Compact memory, retrieval, deduplication, correction, export/deletion planning, provenance, encrypted user-authorized conversation capture, and source/extraction links. | Raw imported conversations are not automatically promoted to trusted facts. |
 | Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, read-only GitHub sync, read-only Gmail (Google OAuth), and read-only Trello REST sync. | Gmail and Trello have bounded live acceptance evidence but are unconfigured by default. Calendar, Drive, WhatsApp, and browser accounts remain export/local-folder paths, not live connectors. |
 | LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
 | Verification | Source-grounded answers, claim/evidence status, schema/deterministic validation, review routing, and verification-gated task completion. | Model confidence alone never authorizes a factual claim or consequential action. |
-| Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, and emergency stop. | Script/Docker control and external runtimes are disabled until explicitly configured; high-risk actions need approval. |
+| Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, emergency stop, and an internal action-bound approval proof before mutating side effects. | Direct mutating HTTP launches cannot create the proof and fail closed. The approved task-review path issues a short-lived, single-use proof; its signing key and consumption state are currently process-local. External runtimes remain disabled until explicitly configured and validated. |
 | Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. |
 | Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. This is a single-node worker, not a distributed or HA platform. |
 
@@ -95,7 +160,7 @@ target-machine checks before relying on a path for real work.
 
 | Surface | Current evidence | Still required before operational trust |
 | --- | --- | --- |
-| Local Compose and gateway | The local services are running; `/`, `/control-center`, `/healthz`, and `/readyz` are served through nginx. Angular deep links return the application shell. | Fresh-clone Windows 11 run with a newly created `.env.local`. |
+| Local Compose and gateway | The local services are running; `/`, `/control-center`, `/healthz`, and `/readyz` are served through nginx. Both health probes are intentionally public; protected `/api/v1/*` engine routes still require a signed session. Angular deep links return the application shell. | Fresh-clone Windows 11 run with a newly created `.env.local`. |
 | Browser session | The unauthenticated session check returns `401`; Angular routes a browser without a refreshable session to `/login`. | Sign in as the first-run owner, open each primary screen, create and review one bounded low-risk workflow, and confirm session refresh in a real browser. |
 | Go and Angular code | Backend and IDP unit tests, backend vet/build, frontend production build and headless unit tests, plus Compose config validation have been run. | End-to-end browser coverage and a two-real-account authorization exercise. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
@@ -142,12 +207,22 @@ visible for repair. This fail-closed compatibility state creates no workflow;
 it is not supported production wiring.
 
 Direct `/task/*` planning and run sessions are useful for bounded operator
-work, but their full plan/review history is process-local. When explicitly
-scoped to a valid pursuit, HAI also persists a compact task-attempt projection;
-the workflow remains the restart-safe execution ledger. Workflow-owned runs
-retain the same pursuit context through planning and verification, but write
-only that canonical workflow ledger rather than a duplicate task-attempt
-record.
+work. Owner-scoped completion-plan snapshots, review items, and review
+decisions are persisted by `pre/0004_task_state_storage`; completion snapshots
+and decisions are append-only, while review-item provenance is immutable and
+only its governed state may advance. An approved review replays the exact
+stored action; a validated result becomes `completed`, while an execution error
+or failed validation returns the item to `needs_review`.
+
+When a direct task is explicitly scoped to a valid pursuit, HAI also persists
+a compact task-attempt projection. The pursuit/workflow ledger remains the
+canonical restart-safe record for workflow-owned runs; those runs retain the
+same pursuit context through planning and verification without writing a
+duplicate direct task-attempt projection. Durable review storage does not yet
+provide an automatic recovery worker for an item left `approved` by a process
+failure, so operators must follow the recovery procedure in the
+[operator runbook](docs/operator-runbook.md) rather than retrying a side effect
+blindly.
 
 Refreshing a pursuit summary is documentation activity, not operational
 progress. It cannot reset the pursuit's last-activity signal or remove stale
@@ -224,6 +299,17 @@ work from the command dashboard.
 - Runtime execution is constrained by enablement flags, allowlisted tools,
   hosts, paths, workspaces, timeouts, output limits, redacted audit records,
   and verification before completion.
+- Mutating API, script, Docker-start, and agent-runtime actions additionally
+  require an internal HMAC-signed approval proof bound to the owner, automation,
+  exact action digest, scope, and recorded approval source. Proofs default to a
+  five-minute lifetime, are single-use, and are issued only by the trusted
+  approved task-review path. Read-only API `GET`/`HEAD` probes are exempt from
+  the proof but not from ordinary authentication, enablement, allowlists, audit,
+  or safety policy.
+- Approval-proof signing and consumption state are currently in memory. They
+  are not restart-durable or coordinated across multiple backend instances, so
+  this boundary is locally implemented rather than distributed-production
+  ready.
 - Stopping a runtime task requires an approval-capable role. Uploading,
   selecting, or refreshing the shared OpenClaw ecosystem requires an owner
   role because it changes the host-wide runtime configuration.
@@ -244,17 +330,19 @@ threat model, see [threat model](docs/threat-model.md).
 
 These capabilities are not bundled or live-proven by this repository:
 
-- Gmail, Google Calendar, Google Drive, Trello, WhatsApp, browser, and other
-  account OAuth/API integrations. Use authorized exports or a scoped bridge
-  until a connector has its own live validation.
+- Live Google Calendar, Google Drive, WhatsApp, browser, and other unlisted
+  account OAuth/API integrations. Gmail OAuth and Trello REST connectors exist
+  but remain unconfigured by default; every configured account still needs its
+  own bounded acceptance evidence before operational trust.
 - Provider webhooks, local file watchers, a dedicated vector database, generic
   MCP, QwenPaw, browser automation, and desktop-agent execution.
 - Hermes, Odysseus, and OpenClaw upstream installations. HAI provides guarded
   adapters, not the upstream software or unrestricted credentials.
 - Paid LLM use, public posting, financial commitments, account changes,
   deletion, and unrestricted device control.
-- A production migration framework, distributed workers, leader election,
-  worker heartbeats, or high availability.
+- Distributed workers, leader election, worker heartbeats, or high
+  availability. Versioned pre/post SQL migrations are implemented, but
+  clean-clone and rollback acceptance still belong in each target release.
 - Verified multi-user isolation on two real accounts. Owner scoping is covered
   in code and focused tests, but a real two-account exercise remains required
   before shared operation is trusted.
@@ -282,10 +370,15 @@ Go API and operating engines
 Postgres + Redis + Kafka
 ```
 
-The local deployment targets Windows 11 with Docker Desktop. The backend uses
-Go 1.21, Gin, Gorm, Postgres, and Sarama/Kafka; the frontend uses Angular 16
-and ng-zorro-antd. The current data model relies on Gorm `AutoMigrate` and
-`init.sql`; a production migration system remains future work.
+The local deployment targets Windows 11 with Docker Desktop. The control-plane
+backend, IDP, and nginx configuration manager use Go 1.25.12 and share an
+executable CI alignment contract. They use Gin, Gorm, Postgres, and
+Sarama/Kafka where applicable. The frontend uses Angular 16 and ng-zorro-antd.
+Versioned SQL migrations are the schema source of truth and `DB_AUTOMIGRATE`
+defaults to `false`. Startup applies pre-phase migrations, optionally runs
+development-only AutoMigrate when explicitly enabled, then applies
+post-phase migrations. See
+[migration safety](docs/migrations.md).
 
 ## Quick Start
 
@@ -294,7 +387,9 @@ and ng-zorro-antd. The current data model relies on Gorm `AutoMigrate` and
 - Windows 11 with Docker Desktop, or another Docker Compose-capable environment.
 - Git.
 - Node.js 20 for frontend development outside Docker.
-- Go 1.21 for backend development outside Docker. The Docker/CI toolchain is pinned to Go 1.21.13.
+- Go 1.25.12 for control-plane backend, IDP, and nginx-config-manager
+  development outside Docker. Their modules, Docker builders, and CI toolchains
+  are checked for version alignment.
 
 ### Start the local stack
 
@@ -369,7 +464,9 @@ curl.exe -i http://localhost/api/v1/llm/policy
 Expected behavior:
 
 - `/` serves the Angular shell.
-- `/healthz` and `/readyz` reach the backend through nginx.
+- `/healthz` and `/readyz` reach the backend through nginx without a session.
+  They are intentionally public liveness/readiness probes and return backend
+  health JSON (`/readyz` uses HTTP `200` or `503` according to readiness).
 - Protected engine routes such as `/api/v1/llm/policy` return `401` without a
   signed session, not anonymous application data.
 
@@ -406,6 +503,7 @@ and `.ics` within the same allowlisted root.
 | `/llm-policy` | Provider/model configuration, budget/policy visibility, probes, routing, and fallback history. |
 | `/ambient-brain` | Proactive opportunities, scan history, need-profile preferences, and decision handoffs. |
 | `/task-blueprint` | Explicit bounded task planning, execution, validation, and review. |
+| `/framework-registry` | Versioned decision frameworks, owner preferences, selection evidence, and Constitution controls. |
 
 These screens are authenticated operator surfaces. Technical logs and deep
 diagnostics remain behind their relevant detail or audit views.
@@ -422,12 +520,19 @@ areas are:
 - `/sources`: source registry, connectors, sync, extraction management, search, and audit records.
 - `/pursuits`: high-level objectives, matching, intake, navigable related-pursuit links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
 - `/workflow`: intake, state transitions, approvals, due work, follow-ups, quality/review state, and dashboard data.
-- `/task`: bounded plans/runs, logs, and review queue.
+- `/task`: bounded plans/runs, durable owner-scoped completion logs, review
+  queue, and exact-action review resolution.
 - `/verification`: grounded answers and verification run history.
+- `/framework-registry`: catalog, owner-effective preferences, selection
+  history, and Constitution lifecycle.
 - `/ambient`, `/agent-cycle`, `/assistant`, and `/os`: proactive planning, controlled refreshes, command bridge, and operating-system summary.
 
-Use [Swagger](docs/swagger.yaml) and the route tests in
-`backend/internal/router/` for exact request/response contracts.
+Use the route tests in `backend/internal/router/` and each subsystem's
+documentation for the current Go API contracts. In particular, the
+[Framework Registry API table](docs/framework-registry.md#api) lists every
+registry endpoint and permission. [docs/swagger.yaml](docs/swagger.yaml) is a
+legacy IDP authentication specification; it does not describe the Go control
+plane and must not be used as evidence that those routes exist.
 
 ## Controlled Models and Runtimes
 
@@ -456,21 +561,31 @@ or HAI's security boundaries.
 
 API, script, and Docker adapters have the same default posture: disabled until
 explicitly allowlisted and configured. The emergency stop blocks runtime
-registry execution even when an adapter is invoked directly.
+registry execution even when an adapter is invoked directly. Mutating API,
+script, Docker-start, and agent-runtime actions also require the internal
+action-bound approval proof described above. The proof is issued only from an
+approved task review and is validated before network, process/filesystem,
+Docker-socket, or agent-runtime access. Direct mutating launch requests
+therefore block; read-only API `GET`/`HEAD` probes remain available within the
+normal access and allowlist policy.
 
 ## Developer Checks
 
 ```powershell
 # Backend (use Docker when Go is not installed locally)
-docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go test ./...
-docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go vet ./...
-docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.21.13 go build ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.12 go test ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.12 go vet ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.12 go build ./...
 
-# Identity and nginx configuration services
+# Identity service (Go 1.25.12)
 Set-Location idp
+go vet ./...
 go test ./...
 go build ./...
+
+# Nginx configuration service (Go 1.25.12)
 Set-Location ..\nginx-config-manager
+go vet ./...
 go test ./...
 go build ./...
 
@@ -485,10 +600,11 @@ Set-Location ..
 docker compose --env-file .env.example -f docker-compose.local.yml config --quiet
 ```
 
-With local Go installed, run the backend commands from `backend/`, and the IDP
-and nginx-config-manager commands from their respective directories. These are
-the same build-and-test surfaces required by CI. The critical-path smoke is
-`scripts/smoke-critical-path.sh` from a Bash-capable shell with its prerequisites.
+With the matching local Go toolchains installed, run the backend commands from
+`backend/`, and the IDP and nginx-config-manager commands from their respective
+directories. These are the same build-and-test surfaces required by CI. The
+critical-path smoke is `scripts/smoke-critical-path.sh` from a Bash-capable
+shell with its prerequisites.
 
 The repository's verification evidence is in:
 
@@ -525,6 +641,7 @@ gate/                    Legacy gateway/config area; local Compose uses nginx-co
 ## Further Documentation
 
 - [Operator runbook](docs/operator-runbook.md)
+- [Framework Registry and task approval contract](docs/framework-registry.md)
 - [User guide](docs/user-guide.md)
 - [HAI Personal AI Operating System blueprint](docs/hai-personal-ai-operating-system.md)
 - [Universal task success engine](docs/universal-task-success-engine.md)

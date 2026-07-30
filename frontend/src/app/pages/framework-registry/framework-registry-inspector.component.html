@@ -1,0 +1,418 @@
+<div class="inspector-loading" role="status" aria-live="polite" *ngIf="loading">
+  <nz-spin nzSimple></nz-spin>
+  <span>Loading the current framework contract...</span>
+</div>
+
+<div
+  class="inspector-state inspector-state--error"
+  role="alert"
+  *ngIf="!loading && !framework && errorMessage"
+>
+  <span nz-icon nzType="warning" aria-hidden="true"></span>
+  <div>
+    <strong>Framework contract unavailable</strong>
+    <p>{{ errorMessage }}</p>
+    <button nz-button (click)="retry.emit()">Retry framework</button>
+  </div>
+</div>
+
+<div
+  class="inspector-state"
+  role="status"
+  *ngIf="!loading && !framework && !errorMessage"
+>
+  <span nz-icon nzType="inbox" aria-hidden="true"></span>
+  <div>
+    <strong>No framework selected</strong>
+    <p>Close this inspector and choose a framework from the catalogue or recommendation.</p>
+  </div>
+</div>
+
+<article class="framework-inspector" *ngIf="!loading && framework as item">
+  <header class="framework-inspector__header">
+    <span class="section-label">{{ humanize(item.family) }}</span>
+    <h2>{{ item.name }}</h2>
+    <p>{{ item.purpose }}</p>
+    <div class="tag-list">
+      <nz-tag [nzColor]="statusColor(item.status)">{{ humanize(item.status) }}</nz-tag>
+      <nz-tag [nzColor]="riskColor(item.riskCeiling)">
+        {{ humanize(item.riskCeiling) }} risk ceiling
+      </nz-tag>
+      <nz-tag [nzColor]="item.enabled ? 'green' : 'red'">
+        {{ item.enabled ? 'Enabled' : 'Disabled' }}
+      </nz-tag>
+      <nz-tag *ngIf="isProtectedSafetyOverlay" nzColor="blue">
+        Protected safety overlay
+      </nz-tag>
+    </div>
+  </header>
+
+  <nz-alert
+    class="lifecycle-alert"
+    *ngIf="lifecycleGuidance"
+    [nzType]="item.status === 'deprecated' ? 'warning' : 'info'"
+    nzShowIcon
+    [nzMessage]="item.status === 'deprecated' ? 'Deprecated contract' : 'Experimental contract'"
+    [nzDescription]="lifecycleGuidance"
+  ></nz-alert>
+
+  <nz-alert
+    class="lifecycle-alert"
+    *ngIf="isProtectedSafetyOverlay"
+    nzType="info"
+    nzShowIcon
+    nzMessage="Protected safety overlay"
+    nzDescription="This required framework cannot be disabled. Owner preferences may pin it, lower its autonomy ceiling, or add non-authoritative adaptations."
+  ></nz-alert>
+
+  <dl class="framework-contract" aria-label="Framework contract summary">
+    <div>
+      <dt>Framework ID</dt>
+      <dd><code>{{ item.id }}</code></dd>
+    </div>
+    <div>
+      <dt>Contract version</dt>
+      <dd><code>{{ item.version }}</code></dd>
+    </div>
+    <div>
+      <dt>Family</dt>
+      <dd>{{ humanize(item.family) }}</dd>
+    </div>
+    <div>
+      <dt>Catalog lifecycle</dt>
+      <dd>{{ humanize(item.status) }}</dd>
+    </div>
+    <div>
+      <dt>Effective lifecycle</dt>
+      <dd>{{ humanize(item.effectiveStatus) }}</dd>
+    </div>
+    <div>
+      <dt>Selection eligibility</dt>
+      <dd>{{ item.enabled && item.status !== 'deprecated' ? 'Enabled' : 'Not eligible' }}</dd>
+    </div>
+    <div>
+      <dt>Authority requirement</dt>
+      <dd>{{ item.authorityRequirement }}</dd>
+    </div>
+    <div>
+      <dt>Autonomy ceiling</dt>
+      <dd>
+        Level {{ item.effectiveAutonomyLevel }} effective;
+        level {{ item.maximumAutonomyLevel }} catalog maximum
+      </dd>
+    </div>
+    <div>
+      <dt>Risk ceiling</dt>
+      <dd>{{ humanize(item.riskCeiling) }}</dd>
+    </div>
+    <div>
+      <dt>Effective availability state</dt>
+      <dd>{{ humanize(effectivePreferenceState) }}</dd>
+    </div>
+    <div>
+      <dt>Pinned</dt>
+      <dd>{{ item.pinned ? 'Yes' : 'No' }}</dd>
+    </div>
+    <div>
+      <dt>Preference updated</dt>
+      <dd>
+        {{ item.preferenceUpdatedAt
+          ? (item.preferenceUpdatedAt | date: 'yyyy-MM-dd HH:mm': 'UTC') + ' UTC'
+          : 'No stored owner preference' }}
+      </dd>
+    </div>
+    <div>
+      <dt>Source</dt>
+      <dd>{{ item.source }}</dd>
+    </div>
+    <div>
+      <dt>Provenance</dt>
+      <dd>{{ item.provenance }}</dd>
+    </div>
+  </dl>
+
+  <section class="preference-panel">
+    <nz-alert
+      *ngIf="!canManagePreferences"
+      id="framework-preference-owner-notice"
+      nzType="info"
+      nzShowIcon
+      nzMessage="Owner-only controls"
+      [nzDescription]="preferenceAccessExplanation"
+    ></nz-alert>
+
+    <fieldset
+      class="preference-controls"
+      [disabled]="!canManagePreferences"
+      [attr.aria-describedby]="canManagePreferences ? null : 'framework-preference-owner-notice'"
+    >
+      <legend class="preference-controls__legend">Framework preference controls</legend>
+      <div class="preference-panel__heading">
+        <div>
+          <h3>Owner preference</h3>
+          <p>Preferences can narrow this contract. They cannot increase its built-in authority ceiling.</p>
+        </div>
+        <label class="pin-control">
+          <span>Pin for owner</span>
+          <input
+            type="checkbox"
+            role="switch"
+            class="pin-control__switch"
+            [(ngModel)]="editor.pinned"
+            [disabled]="!canManagePreferences"
+            aria-label="Pin framework for this owner"
+          />
+        </label>
+      </div>
+
+      <div class="preference-grid">
+        <div class="preference-field">
+          <label for="framework-availability">Availability</label>
+          <nz-select
+            nzId="framework-availability"
+            [(ngModel)]="editor.state"
+            [nzDisabled]="!canManagePreferences"
+          >
+            <nz-option
+              *ngFor="let state of preferenceStates"
+              [nzValue]="state.value"
+              [nzLabel]="state.label"
+              [nzDisabled]="isProtectedSafetyOverlay && state.value === 'disabled'"
+            ></nz-option>
+          </nz-select>
+        </div>
+        <div class="preference-field">
+          <label for="framework-autonomy-override">Autonomy ceiling override</label>
+          <div class="inline-number">
+            <nz-input-number
+              nzId="framework-autonomy-override"
+              [(ngModel)]="editor.maximumAutonomyLevel"
+              [nzDisabled]="!canManagePreferences"
+              [nzMin]="0"
+              [nzMax]="item.maximumAutonomyLevel"
+              [nzStep]="1"
+            ></nz-input-number>
+            <button
+              nz-button
+              nzSize="small"
+              type="button"
+              nz-tooltip
+              nzTooltipTitle="Clear the override and use the catalog ceiling"
+              [disabled]="!canManagePreferences"
+              (click)="editor.maximumAutonomyLevel = null"
+            >
+              Use default
+            </button>
+          </div>
+          <small>Catalog maximum: level {{ item.maximumAutonomyLevel }}</small>
+        </div>
+      </div>
+
+      <label class="full-field">
+        <span>Owner adaptations, one per line</span>
+        <textarea
+          nz-input
+          rows="4"
+          [(ngModel)]="editor.adaptationsText"
+          placeholder="Add an owner-specific constraint or operating preference"
+          aria-label="Owner adaptations, one per line"
+        ></textarea>
+      </label>
+
+      <div class="form-actions">
+        <button
+          nz-button
+          nzType="primary"
+          [nzLoading]="saving"
+          [disabled]="!canManagePreferences || saving"
+          (click)="save.emit()"
+        >
+          Save preference
+        </button>
+      </div>
+    </fieldset>
+  </section>
+
+  <section class="contract-disclosure">
+    <button
+      type="button"
+      class="contract-disclosure__summary"
+      id="framework-full-contract-summary"
+      [attr.aria-expanded]="fullContractExpanded"
+      aria-controls="framework-full-contract"
+      (click)="toggleFullContract()"
+    >
+      <span class="contract-disclosure__copy">
+        <strong>Full versioned contract</strong>
+        <small>Inputs, outputs, agents, rules, evidence, conflicts, and adaptations</small>
+      </span>
+      <span class="contract-disclosure__state">
+        {{ fullContractExpanded ? 'Hide advanced details' : 'Show advanced details' }}
+        <span nz-icon [nzType]="fullContractExpanded ? 'up' : 'down'" aria-hidden="true"></span>
+      </span>
+    </button>
+
+    <div
+      class="contract-disclosure__body"
+      id="framework-full-contract"
+      role="region"
+      aria-labelledby="framework-full-contract-summary"
+      *ngIf="fullContractExpanded"
+    >
+      <section class="contract-group" aria-labelledby="framework-problem-fit-heading">
+        <div class="contract-group__heading">
+          <span class="section-label">Problem fit</span>
+          <h3 id="framework-problem-fit-heading">When this framework applies</h3>
+        </div>
+        <div class="contract-grid">
+          <div class="contract-field">
+            <h4>Suitable problem types</h4>
+            <ul *ngIf="item.suitableProblemTypes.length; else noSuitableProblems">
+              <li *ngFor="let value of item.suitableProblemTypes">{{ value }}</li>
+            </ul>
+            <ng-template #noSuitableProblems><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>Trigger conditions</h4>
+            <ul *ngIf="item.triggerConditions.length; else noTriggerConditions">
+              <li *ngFor="let value of item.triggerConditions">{{ value }}</li>
+            </ul>
+            <ng-template #noTriggerConditions><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+        </div>
+      </section>
+
+      <section class="contract-group" aria-labelledby="framework-io-heading">
+        <div class="contract-group__heading">
+          <span class="section-label">Information contract</span>
+          <h3 id="framework-io-heading">Required inputs and produced outputs</h3>
+        </div>
+        <div class="contract-grid">
+          <div class="contract-field">
+            <h4>Required inputs</h4>
+            <ul *ngIf="item.requiredInputs.length; else noRequiredInputs">
+              <li *ngFor="let value of item.requiredInputs">{{ value }}</li>
+            </ul>
+            <ng-template #noRequiredInputs><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>Produced outputs</h4>
+            <ul *ngIf="item.producedOutputs.length; else noProducedOutputs">
+              <li *ngFor="let value of item.producedOutputs">{{ value }}</li>
+            </ul>
+            <ng-template #noProducedOutputs><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+        </div>
+      </section>
+
+      <section class="contract-group" aria-labelledby="framework-orchestration-heading">
+        <div class="contract-group__heading">
+          <span class="section-label">Orchestration</span>
+          <h3 id="framework-orchestration-heading">Agents and workflow</h3>
+        </div>
+        <div class="contract-grid">
+          <div class="contract-field">
+            <h4>Required agents</h4>
+            <ul *ngIf="item.requiredAgents.length; else noRequiredAgents">
+              <li *ngFor="let value of item.requiredAgents"><code>{{ value }}</code></li>
+            </ul>
+            <ng-template #noRequiredAgents><p class="empty-copy">No specialist agents required.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>Workflow template</h4>
+            <ol *ngIf="item.workflowTemplate.length; else noWorkflowTemplate">
+              <li *ngFor="let value of item.workflowTemplate">{{ value }}</li>
+            </ol>
+            <ng-template #noWorkflowTemplate><p class="empty-copy">No workflow steps declared.</p></ng-template>
+          </div>
+        </div>
+      </section>
+
+      <section class="contract-group contract-group--governance" aria-labelledby="framework-governance-heading">
+        <div class="contract-group__heading">
+          <span class="section-label">Governance</span>
+          <h3 id="framework-governance-heading">Decision and safety rules</h3>
+        </div>
+        <div class="contract-grid">
+          <div class="contract-field">
+            <h4>Decision rules</h4>
+            <ul *ngIf="item.decisionRules.length; else noDecisionRules">
+              <li *ngFor="let value of item.decisionRules">{{ value }}</li>
+            </ul>
+            <ng-template #noDecisionRules><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>Safety invariants</h4>
+            <ul *ngIf="item.safetyInvariants.length; else noSafetyInvariants">
+              <li *ngFor="let value of item.safetyInvariants">{{ value }}</li>
+            </ul>
+            <ng-template #noSafetyInvariants><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+        </div>
+      </section>
+
+      <section class="contract-group" aria-labelledby="framework-verification-heading">
+        <div class="contract-group__heading">
+          <span class="section-label">Verification</span>
+          <h3 id="framework-verification-heading">Evidence and evaluation</h3>
+        </div>
+        <div class="contract-grid">
+          <div class="contract-field">
+            <h4>Evidence requirements</h4>
+            <ul *ngIf="item.evidenceRequirements.length; else noEvidenceRequirements">
+              <li *ngFor="let value of item.evidenceRequirements">{{ value }}</li>
+            </ul>
+            <ng-template #noEvidenceRequirements><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>Evaluation method</h4>
+            <ul *ngIf="item.evaluationMethod.length; else noEvaluationMethod">
+              <li *ngFor="let value of item.evaluationMethod">{{ value }}</li>
+            </ul>
+            <ng-template #noEvaluationMethod><p class="empty-copy">None declared.</p></ng-template>
+          </div>
+        </div>
+      </section>
+
+      <section class="contract-group" aria-labelledby="framework-compatibility-heading">
+        <div class="contract-group__heading">
+          <span class="section-label">Compatibility</span>
+          <h3 id="framework-compatibility-heading">Conflicts and adaptations</h3>
+        </div>
+        <div class="contract-grid">
+          <div class="contract-field">
+            <h4>Conflicts with</h4>
+            <ul *ngIf="item.conflictsWith.length; else noConflicts">
+              <li *ngFor="let value of item.conflictsWith"><code>{{ value }}</code></li>
+            </ul>
+            <ng-template #noConflicts><p class="empty-copy">No catalog conflicts declared.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>User-specific adaptations</h4>
+            <ul *ngIf="item.userSpecificAdaptations.length; else noUserAdaptations">
+              <li *ngFor="let value of item.userSpecificAdaptations">{{ value }}</li>
+            </ul>
+            <ng-template #noUserAdaptations><p class="empty-copy">No built-in user adaptations.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>Effective owner adaptations</h4>
+            <ul *ngIf="item.adaptations.length; else noEffectiveAdaptations">
+              <li *ngFor="let value of item.adaptations">{{ value }}</li>
+            </ul>
+            <ng-template #noEffectiveAdaptations><p class="empty-copy">No owner preference overlays applied.</p></ng-template>
+          </div>
+          <div class="contract-field">
+            <h4>Candidate implementations</h4>
+            <ul *ngIf="item.candidateImplementations?.length; else noCandidateImplementations">
+              <li *ngFor="let value of item.candidateImplementations">{{ value }}</li>
+            </ul>
+            <ng-template #noCandidateImplementations><p class="empty-copy">No candidates listed.</p></ng-template>
+            <p class="muted-copy" *ngIf="item.candidateImplementations?.length">
+              Candidates are not represented as installed or trusted dependencies.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+</article>

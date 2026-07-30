@@ -101,10 +101,11 @@ type launchExecution struct {
 }
 
 type TaskLaunchRequest struct {
-	OwnerIdentity string `json:"-"`
-	Task          string
-	ProjectKey    string
-	HumanApproved bool
+	OwnerIdentity    string         `json:"-"`
+	Task             string         `json:"task,omitempty"`
+	ProjectKey       string         `json:"projectKey,omitempty"`
+	ApprovalSourceID string         `json:"-"`
+	ApprovalProof    *ApprovalProof `json:"-"`
 }
 
 type Service interface {
@@ -118,6 +119,7 @@ type Service interface {
 	HealthSummary() (*HealthSummary, error)
 	Launch(id uuid.UUID) (*LaunchResult, error)
 	LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error)
+	PrepareWorkflowApprovalBinding(id uuid.UUID, request TaskLaunchRequest) (string, error)
 	StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error)
 	StopRuntimeTaskForOwner(id uuid.UUID, ownerIdentity string) (*agentruntime.StopResult, error)
 	Diagnostics(id uuid.UUID) (*DiagnosticResult, error)
@@ -127,6 +129,7 @@ type service struct {
 	repo            Repository
 	publisher       events.Publisher
 	runtimeRegistry *agentruntime.Registry
+	approvalProofs  ApprovalProofService
 }
 
 func NewService(repo Repository, publisher events.Publisher) Service {
@@ -134,10 +137,28 @@ func NewService(repo Repository, publisher events.Publisher) Service {
 }
 
 func NewServiceWithRuntimeRegistry(repo Repository, publisher events.Publisher, runtimeRegistry *agentruntime.Registry) Service {
+	return NewServiceWithRuntimeRegistryAndApprovalProofs(
+		repo,
+		publisher,
+		runtimeRegistry,
+		newDefaultApprovalProofService(),
+	)
+}
+
+func NewServiceWithRuntimeRegistryAndApprovalProofs(
+	repo Repository,
+	publisher events.Publisher,
+	runtimeRegistry *agentruntime.Registry,
+	approvalProofs ApprovalProofService,
+) Service {
+	if approvalProofs == nil {
+		approvalProofs = unavailableApprovalProofService{err: errors.New("approval proof service was not configured")}
+	}
 	return &service{
 		repo:            repo,
 		publisher:       publisher,
 		runtimeRegistry: runtimeRegistry,
+		approvalProofs:  approvalProofs,
 	}
 }
 
@@ -473,6 +494,151 @@ func (s *service) LaunchTask(id uuid.UUID, request TaskLaunchRequest) (*LaunchRe
 	return s.launch(id, request)
 }
 
+func (s *service) PrepareWorkflowApprovalBinding(id uuid.UUID, request TaskLaunchRequest) (string, error) {
+	if s.repo == nil {
+		return "", fmt.Errorf("automation repository is unavailable")
+	}
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return "", err
+	}
+	s.applyAutomationDefaults(automation)
+	scope, required := approvalScopeForAutomation(automation)
+	if !required {
+		return "", fmt.Errorf("automation action does not have a supported approval scope")
+	}
+	request = TaskLaunchRequest{
+		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
+		Task:          strings.TrimSpace(request.Task),
+		ProjectKey:    strings.TrimSpace(request.ProjectKey),
+	}
+	if request.OwnerIdentity == "" {
+		return "", fmt.Errorf("workflow approval binding requires an owner identity")
+	}
+	digest := automationActionDigest(automation, request)
+	return "automation-action:" + string(scope) + ":" + digest, nil
+}
+
+func (s *service) RecordApprovalDecision(id uuid.UUID, request TaskApprovalDecisionRequest) error {
+	if s.repo == nil {
+		return fmt.Errorf("automation repository is unavailable")
+	}
+	kind, _, err := approvalSourceKind(request.ApprovalSourceID)
+	if err != nil {
+		return err
+	}
+	if kind != "task-review" {
+		return fmt.Errorf("only a verified task-review decision can be registered")
+	}
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	s.applyAutomationDefaults(automation)
+	scope, required := approvalScopeForAutomation(automation)
+	if !required {
+		return fmt.Errorf("automation action does not have a supported approval scope")
+	}
+	approvedAt := request.ApprovedAt.UTC()
+	if request.ApprovedAt.IsZero() {
+		return fmt.Errorf("approval decision time is required")
+	}
+	launchRequest := TaskLaunchRequest{
+		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
+		Task:             strings.TrimSpace(request.Task),
+		ProjectKey:       strings.TrimSpace(request.ProjectKey),
+		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
+	}
+	record := &ApprovalDecisionRecord{
+		SourceID:      launchRequest.ApprovalSourceID,
+		DecisionType:  kind,
+		OwnerIdentity: launchRequest.OwnerIdentity,
+		AutomationID:  automation.ID,
+		ActionDigest:  automationActionDigest(automation, launchRequest),
+		Scope:         scope,
+		ApprovedAt:    approvedAt,
+	}
+	if err := validateApprovalDecisionFreshness(record, time.Now().UTC()); err != nil {
+		return err
+	}
+	return s.repo.SaveApprovalDecision(record)
+}
+
+func (s *service) IssueApprovalProof(id uuid.UUID, request TaskApprovalProofRequest) (*ApprovalProof, error) {
+	if s.repo == nil {
+		return nil, fmt.Errorf("automation repository is unavailable")
+	}
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	s.applyAutomationDefaults(automation)
+	scope, required := approvalScopeForAutomation(automation)
+	if !required {
+		return nil, fmt.Errorf("automation action does not require an execution approval proof")
+	}
+	launchRequest := TaskLaunchRequest{
+		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
+		Task:             strings.TrimSpace(request.Task),
+		ProjectKey:       strings.TrimSpace(request.ProjectKey),
+		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
+	}
+	kind, _, err := approvalSourceKind(launchRequest.ApprovalSourceID)
+	if err != nil {
+		return nil, err
+	}
+	record, err := s.repo.FindApprovalDecision(launchRequest.ApprovalSourceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrApprovalDecisionMissing
+		}
+		return nil, fmt.Errorf("verify recorded approval decision: %w", err)
+	}
+	expectedDigest := automationActionDigest(automation, launchRequest)
+	decisionNow := time.Now().UTC()
+	if err := validateApprovalDecisionFreshness(record, decisionNow); err != nil {
+		return nil, fmt.Errorf("verify recorded approval decision: %w", err)
+	}
+	if record.SourceID != launchRequest.ApprovalSourceID ||
+		record.DecisionType != kind ||
+		record.OwnerIdentity != launchRequest.OwnerIdentity ||
+		record.AutomationID != automation.ID ||
+		record.ActionDigest != expectedDigest ||
+		record.Scope != scope {
+		return nil, fmt.Errorf("recorded approval decision does not match the exact requested action")
+	}
+	if kind == "workflow-decision" {
+		workflowID, parseErr := uuid.Parse(strings.TrimSpace(request.WorkflowID))
+		if parseErr != nil || workflowID != record.WorkflowID {
+			return nil, fmt.Errorf("recorded workflow approval decision does not match the workflow")
+		}
+	}
+	proofTTL := request.TTL
+	if proofTTL == 0 {
+		proofTTL = defaultApprovalProofTTL
+	}
+	if proofTTL <= 0 || proofTTL > maximumApprovalProofTTL {
+		return nil, fmt.Errorf("approval proof TTL must be between 1ns and %s", maximumApprovalProofTTL)
+	}
+	remainingDecisionLifetime := record.ApprovedAt.UTC().
+		Add(maximumApprovalDecisionAge).
+		Sub(decisionNow)
+	if remainingDecisionLifetime <= 0 {
+		return nil, fmt.Errorf("verify recorded approval decision: approval decision is stale")
+	}
+	if proofTTL > remainingDecisionLifetime {
+		proofTTL = remainingDecisionLifetime
+	}
+	return s.approvalProofs.Issue(ApprovalProofIssueRequest{
+		OwnerIdentity:    launchRequest.OwnerIdentity,
+		AutomationID:     automation.ID,
+		ActionDigest:     expectedDigest,
+		Scope:            scope,
+		ApprovalSourceID: launchRequest.ApprovalSourceID,
+		TTL:              proofTTL,
+	})
+}
+
 func (s *service) StopRuntimeTask(id uuid.UUID) (*agentruntime.StopResult, error) {
 	return s.stopRuntimeTask(id, "")
 }
@@ -501,7 +667,7 @@ func (s *service) stopRuntimeTask(id uuid.UUID, ownerIdentity string) (*agentrun
 				"launch type is not agent_runtime or runtime type is unsupported",
 			},
 		}
-		s.persistRuntimeStopEvent(automation, result, started, ownerIdentity)
+		_, _ = s.persistRuntimeStopEvent(automation, result, started, ownerIdentity)
 		return result, nil
 	}
 	if s.runtimeRegistry == nil {
@@ -512,17 +678,45 @@ func (s *service) stopRuntimeTask(id uuid.UUID, ownerIdentity string) (*agentrun
 			Message:     "agent runtime registry is not configured",
 			AuditEvents: []string{"agent runtime registry unavailable"},
 		}
-		s.persistRuntimeStopEvent(automation, result, started, ownerIdentity)
+		_, _ = s.persistRuntimeStopEvent(automation, result, started, ownerIdentity)
 		return result, nil
 	}
-	result := s.runtimeRegistry.StopTask(context.Background(), runtimeID, taskID)
-	s.persistRuntimeStopEvent(automation, &result, started, ownerIdentity)
+	intent := &models.AutomationLaunchEvent{
+		ID:            uuid.New(),
+		AutomationID:  automation.ID,
+		OwnerIdentity: strings.TrimSpace(ownerIdentity),
+		RuntimeType:   runtimeID,
+		LaunchType:    "agent_runtime_stop_intent",
+		RuntimeTaskID: taskID,
+		Target:        redactLaunchTarget(automation.LaunchTarget),
+		Status:        "pending",
+		Message:       "immutable runtime stop intent recorded",
+		AuditEvents: []string{
+			"owner-bound runtime stop intent persisted before cancellation",
+		},
+		StartedAt:   started,
+		CompletedAt: started,
+	}
+	if errIntent := s.repo.SaveLaunchIntent(intent); errIntent != nil {
+		return nil, fmt.Errorf("persist runtime stop intent: %w", errIntent)
+	}
+	result := s.runtimeRegistry.StopTask(context.Background(), runtimeID, taskID, ownerIdentity)
+	if _, errEvent := s.persistRuntimeStopEvent(automation, &result, started, ownerIdentity); errEvent != nil {
+		result.Status = "indeterminate"
+		result.Message = "runtime stop outcome audit could not be persisted; inspect the immutable stop intent before retrying"
+		result.EvidenceURI = "automation-launch://" + intent.ID.String()
+		result.AuditEvents = append(
+			result.AuditEvents,
+			"runtime stop outcome audit persistence failed",
+			"stop completion was not claimed",
+		)
+	}
 	return &result, nil
 }
 
-func (s *service) persistRuntimeStopEvent(automation *models.Automation, result *agentruntime.StopResult, started time.Time, ownerIdentity string) {
+func (s *service) persistRuntimeStopEvent(automation *models.Automation, result *agentruntime.StopResult, started time.Time, ownerIdentity string) (uuid.UUID, error) {
 	if automation == nil || result == nil {
-		return
+		return uuid.Nil, fmt.Errorf("runtime stop audit requires automation and result")
 	}
 	audit := append([]string{"runtime stop requested"}, result.AuditEvents...)
 	exitCode := 0
@@ -551,9 +745,10 @@ func (s *service) persistRuntimeStopEvent(automation *models.Automation, result 
 	}
 	if errEvent := s.repo.SaveLaunchEvent(event); errEvent != nil {
 		log.Printf("Failed to persist runtime stop event for automation %s: %v", automation.ID, errEvent)
-		return
+		return uuid.Nil, errEvent
 	}
 	result.EvidenceURI = "automation-launch://" + event.ID.String()
+	return event.ID, nil
 }
 
 func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult, error) {
@@ -563,13 +758,34 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 	}
 	s.applyAutomationDefaults(automation)
 	launchedAt := time.Now().UTC()
+	intent := &models.AutomationLaunchEvent{
+		ID:            uuid.New(),
+		AutomationID:  automation.ID,
+		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
+		RuntimeType:   automation.RuntimeType,
+		LaunchType:    strings.ToLower(strings.TrimSpace(automation.LaunchType)) + "_intent",
+		RuntimeTaskID: automationRuntimeTaskID(automation),
+		Target:        redactLaunchTarget(automation.LaunchTarget),
+		Status:        "pending",
+		Message:       "immutable pre-execution intent recorded",
+		AuditEvents: redactAuditEvents([]string{
+			"controlled launch intent persisted before approval consumption or external access",
+			"exact action digest " + automationActionDigest(automation, request),
+		}),
+		StartedAt:   launchedAt,
+		CompletedAt: launchedAt,
+	}
+	if errIntent := s.repo.SaveLaunchIntent(intent); errIntent != nil {
+		return nil, fmt.Errorf("persist pre-execution launch intent: %w", errIntent)
+	}
 	execution := s.executeLaunch(automation, request, launchedAt)
+	execution.AuditEvents = append(
+		[]string{"immutable pre-execution intent " + intent.ID.String() + " persisted"},
+		execution.AuditEvents...,
+	)
 	automation.LastLaunchAt = &launchedAt
 	if execution.Status == "failed" || execution.Status == "blocked" {
 		automation.LastFailureReason = safety.RedactSecrets(execution.Message)
-	}
-	if _, errUpdate := s.repo.Update(automation); errUpdate != nil {
-		return nil, errUpdate
 	}
 	event := &models.AutomationLaunchEvent{
 		ID:            uuid.New(),
@@ -591,15 +807,34 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 		StartedAt:   launchedAt,
 		CompletedAt: time.Now().UTC(),
 	}
-	launchEventID := uuid.Nil
 	if errEvent := s.repo.SaveLaunchEvent(event); errEvent != nil {
 		log.Printf("Failed to persist launch event for automation %s: %v", automation.ID, errEvent)
-	} else {
-		launchEventID = event.ID
+		return &LaunchResult{
+			AutomationID:     automation.ID,
+			LaunchEventID:    intent.ID,
+			RuntimeTaskID:    execution.RuntimeTaskID,
+			RuntimeType:      automation.RuntimeType,
+			LaunchType:       automation.LaunchType,
+			Target:           redactLaunchTarget(automation.LaunchTarget),
+			Status:           "indeterminate",
+			Message:          "execution outcome audit could not be persisted; inspect the immutable pre-execution intent before retrying",
+			ExitCode:         -1,
+			DurationMs:       execution.DurationMs,
+			RequiresApproval: execution.RequiresApproval,
+			AuditEvents: redactAuditEvents(append(
+				execution.AuditEvents,
+				"execution outcome audit persistence failed",
+				"completion was not claimed",
+			)),
+			LaunchedAt: launchedAt,
+		}, nil
+	}
+	if _, errUpdate := s.repo.Update(automation); errUpdate != nil {
+		return nil, errUpdate
 	}
 	return &LaunchResult{
 		AutomationID:      automation.ID,
-		LaunchEventID:     launchEventID,
+		LaunchEventID:     event.ID,
 		RuntimeTaskID:     execution.RuntimeTaskID,
 		RuntimeType:       automation.RuntimeType,
 		LaunchType:        automation.LaunchType,
@@ -611,9 +846,17 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 		ExitCode:          execution.ExitCode,
 		DurationMs:        execution.DurationMs,
 		RequiresApproval:  execution.RequiresApproval,
-		AuditEvents:       execution.AuditEvents,
+		AuditEvents:       redactAuditEvents(execution.AuditEvents),
 		LaunchedAt:        launchedAt,
 	}, nil
+}
+
+func automationRuntimeTaskID(automation *models.Automation) string {
+	if automation == nil ||
+		strings.ToLower(strings.TrimSpace(automation.LaunchType)) != "agent_runtime" {
+		return ""
+	}
+	return automation.ID.String()
 }
 
 func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
@@ -664,14 +907,43 @@ func redactAuditEvents(events []string) []string {
 	if len(events) == 0 {
 		return nil
 	}
-	result := make([]string, 0, len(events))
+	const (
+		maxEvents     = 64
+		maxEventRunes = 512
+	)
+	result := make([]string, 0, minInt(len(events), maxEvents))
 	for _, event := range events {
-		event = strings.TrimSpace(safety.RedactSecrets(event))
+		event = boundedSingleLine(safety.RedactSecrets(event), maxEventRunes)
 		if event != "" {
 			result = append(result, event)
 		}
+		if len(result) == maxEvents {
+			break
+		}
 	}
 	return result
+}
+
+func boundedSingleLine(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func automationRuntimeRouteTrace(trace *agentruntime.RouteTrace) *models.AutomationRuntimeRouteTrace {
@@ -748,12 +1020,53 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 			AuditEvents: append(audit, "no server-side device action was performed"),
 		}
 	case "api":
+		method, _ := parseLaunchMethodTarget(automation.LaunchTarget, http.MethodPost)
+		if method == http.MethodGet || method == http.MethodHead {
+			audit = append(audit, "read-only api probe allowed without launcher approval")
+		} else {
+			verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
+			if err != nil {
+				return blockedLaunch(
+					"action-bound human approval is required at the launcher boundary for mutating API requests: "+err.Error(),
+					started,
+					append(audit, "action-bound approval proof rejected before network access"),
+				)
+			}
+			audit = append(audit, verifiedAudit...)
+		}
 		return s.executeAPILaunch(automation, started, audit)
 	case "script":
+		verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
+		if err != nil {
+			return blockedLaunch(
+				"action-bound human approval is required at the launcher boundary for local script execution: "+err.Error(),
+				started,
+				append(audit, "action-bound approval proof rejected before process or filesystem access"),
+			)
+		}
+		audit = append(audit, verifiedAudit...)
 		return s.executeScriptLaunch(automation, started, audit)
 	case "docker_service":
+		verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
+		if err != nil {
+			return blockedLaunch(
+				"action-bound human approval is required at the launcher boundary for Docker container starts: "+err.Error(),
+				started,
+				append(audit, "action-bound approval proof rejected before docker socket access"),
+			)
+		}
+		audit = append(audit, verifiedAudit...)
 		return s.executeDockerLaunch(automation, started, audit)
 	case "agent_runtime":
+		verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
+		if err != nil {
+			return blockedLaunch(
+				"action-bound human approval is required at the launcher boundary for agent runtime execution: "+err.Error(),
+				started,
+				append(audit, "action-bound approval proof rejected before agent runtime access"),
+			)
+		}
+		audit = append(audit, verifiedAudit...)
 		return s.executeAgentRuntime(automation, request, started, audit)
 	default:
 		return launchExecution{
@@ -777,10 +1090,14 @@ func (s *service) executeAgentRuntime(automation *models.Automation, request Tas
 	}
 	runtimeTaskID := automation.ID.String()
 	result := s.runtimeRegistry.Execute(context.Background(), runtimeID, agentruntime.Task{
-		ID:            runtimeTaskID,
-		Prompt:        request.Task,
-		ProjectKey:    request.ProjectKey,
-		HumanApproved: request.HumanApproved,
+		ID:               runtimeTaskID,
+		Prompt:           request.Task,
+		ProjectKey:       request.ProjectKey,
+		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
+		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
+		// The outer launcher has verified and consumed the action-bound proof.
+		// Keep the runtime's own independent approval gate enabled as defense in depth.
+		HumanApproved: true,
 	})
 	return launchExecution{
 		Status:            result.Status,
@@ -793,6 +1110,31 @@ func (s *service) executeAgentRuntime(automation *models.Automation, request Tas
 		RuntimeTaskID:     runtimeTaskID,
 		AuditEvents:       append(audit, result.AuditEvents...),
 	}
+}
+
+func (s *service) verifyAndConsumeApproval(automation *models.Automation, request TaskLaunchRequest) ([]string, error) {
+	if s.approvalProofs == nil {
+		return nil, fmt.Errorf("approval proof service is unavailable")
+	}
+	scope, required := approvalScopeForAutomation(automation)
+	if !required {
+		return nil, fmt.Errorf("automation action has no supported approval scope")
+	}
+	err := s.approvalProofs.VerifyAndConsume(request.ApprovalProof, ApprovalProofExpectation{
+		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
+		AutomationID:     automation.ID,
+		ActionDigest:     automationActionDigest(automation, request),
+		Scope:            scope,
+		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		"action-bound approval proof verified and consumed",
+		"repository-backed approval decision verified",
+		"approval scope " + string(request.ApprovalProof.Scope),
+	}, nil
 }
 
 func (s *service) executeAPILaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
@@ -809,8 +1151,8 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 	if unsafeAPILaunchHost(host) && !envEnabled("AUTOMATION_API_ALLOW_LINK_LOCAL") {
 		return blockedLaunch("API launch target uses link-local, metadata, or unspecified address space", started, append(audit, "api network target rejected"))
 	}
-	if method != http.MethodGet && method != http.MethodPost {
-		return blockedLaunch("API launch supports only GET or POST without a request body", started, append(audit, "api method rejected"))
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodPost {
+		return blockedLaunch("API launch supports only GET, HEAD, or POST without a request body", started, append(audit, "api method rejected"))
 	}
 	client := noRedirectHTTPClient(10 * time.Second)
 	req, err := http.NewRequest(method, target, nil)
@@ -818,6 +1160,9 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 		return failedLaunch(err.Error(), started, append(audit, "api request creation failed"))
 	}
 	req.Header.Set("User-Agent", "018-HAI-Controlled-Launcher/1.0")
+	if safety.EmergencyStopActive() {
+		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop rechecked before API network access"))
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "api request failed"))
@@ -867,6 +1212,9 @@ func (s *service) executeScriptLaunch(automation *models.Automation, started tim
 	cmd := exec.CommandContext(ctx, scriptPath)
 	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Env = safeScriptEnvironment(automation)
+	if safety.EmergencyStopActive() {
+		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop rechecked before script process start"))
+	}
 	output, err := cmd.CombinedOutput()
 	outputText := trimOutput(output, 4096)
 	if ctx.Err() == context.DeadlineExceeded {
@@ -933,6 +1281,9 @@ func (s *service) executeDockerLaunch(automation *models.Automation, started tim
 	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "docker request creation failed"))
+	}
+	if safety.EmergencyStopActive() {
+		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop rechecked before Docker socket access"))
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1173,11 +1524,24 @@ func parseLaunchMethodTarget(value, defaultMethod string) (string, string) {
 	fields := strings.Fields(trimmed)
 	if len(fields) >= 2 {
 		method := strings.ToUpper(fields[0])
-		if method == http.MethodGet || method == http.MethodPost {
-			return method, strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+		target := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+		if isHTTPMethodToken(method) && target != "" {
+			return method, target
 		}
 	}
 	return defaultMethod, trimmed
+}
+
+func isHTTPMethodToken(value string) bool {
+	if value == "" || len(value) > 20 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 'A' || value[i] > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 func redactLaunchTarget(value string) string {

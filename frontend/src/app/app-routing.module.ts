@@ -39,6 +39,14 @@ const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "framework-registry",
+    loadChildren: () =>
+      import("./pages/framework-registry/framework-registry.module").then(
+        (m) => m.FrameworkRegistryModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "control-center",
     loadChildren: () =>
       import("./pages/control-center/control-center.module").then(

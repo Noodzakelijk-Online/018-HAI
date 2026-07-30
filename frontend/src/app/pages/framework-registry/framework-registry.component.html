@@ -1,0 +1,928 @@
+<main class="framework-registry-page">
+  <header class="registry-header">
+    <div class="registry-header__identity">
+      <button
+        nz-button
+        nzType="text"
+        type="button"
+        class="icon-button"
+        nz-tooltip
+        nzTooltipTitle="Return to the Command Center"
+        aria-label="Return to the Command Center"
+        (click)="goBack()"
+      >
+        <span nz-icon nzType="arrow-left" aria-hidden="true"></span>
+      </button>
+      <div>
+        <h1>Framework Registry</h1>
+        <p>Governed decision disciplines, owner preferences, and selection evidence.</p>
+      </div>
+    </div>
+
+    <div class="registry-header__actions">
+      <div class="view-switch" role="group" aria-label="Framework Registry view depth">
+        <button
+          type="button"
+          [class.view-switch__active]="viewMode === 'basic'"
+          [attr.aria-pressed]="viewMode === 'basic'"
+          (click)="setViewMode('basic')"
+        >
+          Basic
+        </button>
+        <button
+          type="button"
+          [class.view-switch__active]="viewMode === 'advanced'"
+          [attr.aria-pressed]="viewMode === 'advanced'"
+          (click)="setViewMode('advanced')"
+        >
+          Advanced
+        </button>
+      </div>
+      <button
+        nz-button
+        type="button"
+        nz-tooltip
+        nzTooltipTitle="Reset only this module's view preferences"
+        (click)="resetView()"
+      >
+        Reset view
+      </button>
+      <button
+        nz-button
+        nzType="primary"
+        type="button"
+        [nzLoading]="loading"
+        (click)="refresh()"
+      >
+        <span nz-icon nzType="reload" aria-hidden="true"></span>
+        Refresh
+      </button>
+    </div>
+  </header>
+
+  <div class="registry-content">
+    <section
+      class="surface"
+      role="alert"
+      aria-labelledby="registry-load-warning"
+      *ngIf="hasPartialLoadFailure"
+    >
+      <div class="section-heading">
+        <div>
+          <h2 id="registry-load-warning">Some registry information is unavailable</h2>
+          <p>Available records remain visible. Mutating controls fail closed when authority is unknown.</p>
+          <ul class="inline-error-list">
+            <li *ngFor="let item of loadErrorItems">
+              <strong>{{ item.label }}:</strong> {{ item.message }}
+            </li>
+          </ul>
+        </div>
+        <button nz-button type="button" [nzLoading]="loading" (click)="refresh()">
+          Retry unavailable data
+        </button>
+      </div>
+    </section>
+
+    <section class="decision-workspace" aria-label="Framework selection workspace">
+      <article class="surface selection-panel">
+        <div class="section-heading">
+          <div>
+            <span class="section-label">Decision support</span>
+            <h2>Select the smallest capable framework set</h2>
+            <p>Describe the work. HAI records a recommendation; it does not start execution.</p>
+          </div>
+          <button
+            type="button"
+            class="help-button"
+            nz-tooltip
+            nzTooltipTitle="Selection applies the active Constitution, owner preferences, exact capability coverage, conflict checks, and authority ceilings."
+            aria-label="About framework selection"
+          >
+            ?
+          </button>
+        </div>
+
+        <form class="selection-form" (ngSubmit)="selectFrameworks()">
+          <label for="framework-selection-request">
+            <span>What needs to be decided or completed?</span>
+          </label>
+          <textarea
+            nz-input
+            id="framework-selection-request"
+            name="frameworkSelectionRequest"
+            rows="5"
+            maxlength="12000"
+            [(ngModel)]="selectionDraft.request"
+            [disabled]="selectionBusy || !canRequestSelection"
+            placeholder="Describe the task, outcome, constraints, and material risk."
+            [attr.aria-describedby]="selectionError ? 'framework-selection-error' : 'framework-selection-boundary'"
+          ></textarea>
+          <div class="field-foot">
+            <span>Give enough context to define a verifiable outcome.</span>
+            <span>{{ selectionDraft.request.length | number }} / 12,000</span>
+          </div>
+
+          <nz-alert
+            *ngIf="!canRequestSelection"
+            nzType="info"
+            nzShowIcon
+            nzMessage="Selection controls are read-only"
+            [nzDescription]="selectionAccessExplanation"
+          ></nz-alert>
+
+          <div class="progressive-panel">
+            <button
+              type="button"
+              class="progressive-panel__summary"
+              id="selection-context-summary"
+              [attr.aria-expanded]="sectionOpen('selection-context')"
+              aria-controls="selection-context-panel"
+              (click)="toggleSection('selection-context')"
+            >
+              <span>
+                <strong>Selection context</strong>
+                <small>Project links, difficulty, success criteria, capabilities, and execution intent</small>
+              </span>
+              <span
+                nz-icon
+                [nzType]="sectionOpen('selection-context') ? 'up' : 'down'"
+                aria-hidden="true"
+              ></span>
+            </button>
+
+            <div
+              class="progressive-panel__body"
+              id="selection-context-panel"
+              role="region"
+              aria-labelledby="selection-context-summary"
+              *ngIf="sectionOpen('selection-context')"
+            >
+              <div class="form-grid">
+                <label>
+                  <span>Project key</span>
+                  <input
+                    nz-input
+                    name="frameworkProjectKey"
+                    [(ngModel)]="selectionDraft.projectKey"
+                    [disabled]="selectionBusy || !canRequestSelection"
+                    placeholder="Optional project identifier"
+                  />
+                </label>
+                <label>
+                  <span>Pursuit ID</span>
+                  <input
+                    nz-input
+                    name="frameworkPursuitId"
+                    [(ngModel)]="selectionDraft.pursuitId"
+                    [disabled]="selectionBusy || !canRequestSelection"
+                    placeholder="Optional long-running objective"
+                  />
+                </label>
+                <label>
+                  <span>Task type</span>
+                  <input
+                    nz-input
+                    name="frameworkTaskType"
+                    [(ngModel)]="selectionDraft.taskType"
+                    [disabled]="selectionBusy || !canRequestSelection"
+                    placeholder="For example: legal research"
+                  />
+                </label>
+                <label>
+                  <span>Required reasoning</span>
+                  <nz-select
+                    name="frameworkReasoning"
+                    [(ngModel)]="selectionDraft.requiredReasoning"
+                    [nzDisabled]="selectionBusy || !canRequestSelection"
+                    nzPlaceHolder="Let HAI classify"
+                  >
+                    <nz-option nzValue="" nzLabel="Let HAI classify"></nz-option>
+                    <nz-option
+                      *ngFor="let level of reasoningLevels"
+                      [nzValue]="level"
+                      [nzLabel]="humanize(level)"
+                    ></nz-option>
+                  </nz-select>
+                </label>
+                <label>
+                  <span>Difficulty, 1 to 10</span>
+                  <nz-input-number
+                    name="frameworkDifficulty"
+                    [(ngModel)]="selectionDraft.difficulty"
+                    [nzDisabled]="selectionBusy || !canRequestSelection"
+                    [nzMin]="1"
+                    [nzMax]="10"
+                    [nzStep]="1"
+                    nzPlaceHolder="Auto"
+                  ></nz-input-number>
+                </label>
+              </div>
+
+              <label class="full-field">
+                <span>Success criteria, one per line</span>
+                <textarea
+                  nz-input
+                  name="frameworkSuccessCriteria"
+                  rows="4"
+                  [(ngModel)]="selectionDraft.successCriteriaText"
+                  [disabled]="selectionBusy || !canRequestSelection"
+                  placeholder="State the evidence that will prove completion."
+                ></textarea>
+              </label>
+
+              <fieldset class="capability-grid" [disabled]="selectionBusy || !canRequestSelection">
+                <legend>Context and capability needs</legend>
+                <label nz-checkbox name="needsMemory" [(ngModel)]="selectionDraft.needsMemory">
+                  Memory
+                </label>
+                <label nz-checkbox name="needsTools" [(ngModel)]="selectionDraft.needsTools">
+                  Tools
+                </label>
+                <label nz-checkbox name="needsDocuments" [(ngModel)]="selectionDraft.needsDocuments">
+                  Documents
+                </label>
+                <label nz-checkbox name="needsWebAccess" [(ngModel)]="selectionDraft.needsWebAccess">
+                  Web access
+                </label>
+                <label
+                  nz-checkbox
+                  name="needsLocalExecution"
+                  [(ngModel)]="selectionDraft.needsLocalExecution"
+                >
+                  Local execution
+                </label>
+                <label
+                  nz-checkbox
+                  name="executeRequested"
+                  [(ngModel)]="selectionDraft.executeRequested"
+                >
+                  Execution requested
+                </label>
+              </fieldset>
+            </div>
+          </div>
+
+          <div class="intent-boundary" id="framework-selection-boundary">
+            <span nz-icon nzType="safety-certificate" aria-hidden="true"></span>
+            <span>
+              A recommendation records reasoning, evidence requirements, conflicts, and an authority
+              ceiling. Approval and execution remain separate controlled operations.
+            </span>
+          </div>
+
+          <div
+            class="selection-error"
+            id="framework-selection-error"
+            role="alert"
+            *ngIf="selectionError"
+          >
+            <span nz-icon nzType="warning" aria-hidden="true"></span>
+            <span>{{ selectionError }}</span>
+          </div>
+
+          <div class="form-actions">
+            <button
+              nz-button
+              type="button"
+              [disabled]="selectionBusy"
+              (click)="clearSelection()"
+            >
+              Clear
+            </button>
+            <button
+              nz-button
+              nzType="primary"
+              type="submit"
+              [nzLoading]="selectionBusy"
+              [disabled]="selectionBusy || !canRequestSelection"
+            >
+              Select frameworks
+            </button>
+          </div>
+        </form>
+      </article>
+
+      <article class="surface recommendation-panel" aria-labelledby="recommendation-heading">
+        <div class="section-heading">
+          <div>
+            <span class="section-label">Recorded decision</span>
+            <h2 id="recommendation-heading" tabindex="-1">Current recommendation</h2>
+            <p>Selection rationale, authority, evidence, and completion contract.</p>
+          </div>
+          <button
+            type="button"
+            class="help-button"
+            nz-tooltip
+            nzTooltipTitle="Advanced view exposes the full reproducibility contract and all selected frameworks."
+            aria-label="About recommendations"
+          >
+            ?
+          </button>
+        </div>
+        <app-framework-registry-recommendation
+          [selection]="currentSelection"
+          [advanced]="isAdvanced"
+          [loading]="loading"
+          [unavailableMessage]="currentSelection ? '' : (loadErrors['selections'] || '')"
+          [staleMessage]="currentSelection ? (loadErrors['selections'] || '') : ''"
+          (inspectFramework)="openFrameworkById($event)"
+        ></app-framework-registry-recommendation>
+      </article>
+    </section>
+
+    <section class="overview-strip" aria-label="Framework Registry summary">
+      <div>
+        <strong>{{ overview?.total ?? frameworks.length }}</strong>
+        <span>Catalog frameworks</span>
+      </div>
+      <div>
+        <strong>{{ overview?.enabled ?? 0 }}</strong>
+        <span>Enabled</span>
+      </div>
+      <div>
+        <strong>{{ overview?.pinned ?? 0 }}</strong>
+        <span>Pinned</span>
+      </div>
+      <div>
+        <strong>{{ overview?.experimental ?? 0 }}</strong>
+        <span>Experimental</span>
+      </div>
+      <div>
+        <strong>v{{ overview?.constitutionVersion ?? constitution?.version ?? '-' }}</strong>
+        <span>Active Constitution</span>
+      </div>
+      <div class="overview-strip__freshness">
+        <strong>
+          {{ overview?.generatedAt ? (overview?.generatedAt | date: 'HH:mm': 'UTC') + ' UTC' : 'Unavailable' }}
+        </strong>
+        <span>Registry freshness</span>
+      </div>
+    </section>
+
+    <section class="surface catalog-panel" aria-labelledby="framework-catalog-heading">
+      <div class="section-heading catalog-heading">
+        <div>
+          <span class="section-label">Versioned catalogue</span>
+          <h2 id="framework-catalog-heading">Available frameworks</h2>
+          <p>
+            {{ filteredFrameworks.length }} matching framework{{ filteredFrameworks.length === 1 ? '' : 's' }}.
+            Basic view shows the first 10.
+          </p>
+        </div>
+        <div class="catalog-filters" aria-label="Framework catalogue filters">
+          <label class="search-box">
+            <span nz-icon nzType="search" aria-hidden="true"></span>
+            <span class="sr-only">Search frameworks</span>
+            <input
+              nz-input
+              [(ngModel)]="searchText"
+              placeholder="Search name, purpose, or trigger"
+              aria-label="Search frameworks"
+            />
+          </label>
+          <nz-select
+            [(ngModel)]="familyFilter"
+            aria-label="Filter frameworks by family"
+          >
+            <nz-option nzValue="all" nzLabel="All families"></nz-option>
+            <nz-option
+              *ngFor="let family of familyOptions"
+              [nzValue]="family"
+              [nzLabel]="humanize(family)"
+            ></nz-option>
+          </nz-select>
+          <nz-select
+            *ngIf="isAdvanced"
+            [(ngModel)]="statusFilter"
+            aria-label="Filter frameworks by lifecycle"
+          >
+            <nz-option nzValue="all" nzLabel="All lifecycles"></nz-option>
+            <nz-option nzValue="active" nzLabel="Active"></nz-option>
+            <nz-option nzValue="experimental" nzLabel="Experimental"></nz-option>
+            <nz-option nzValue="deprecated" nzLabel="Deprecated"></nz-option>
+          </nz-select>
+          <button
+            nz-button
+            type="button"
+            [disabled]="!searchText && familyFilter === 'all' && statusFilter === 'all'"
+            (click)="clearFilters()"
+          >
+            Clear filters
+          </button>
+        </div>
+      </div>
+
+      <div class="catalog-table" *ngIf="displayedFrameworks.length; else emptyCatalogue">
+        <nz-table
+          #frameworkTable
+          [nzData]="displayedFrameworks"
+          [nzFrontPagination]="false"
+          [nzLoading]="loading && !frameworks.length"
+          nzSize="middle"
+        >
+          <thead>
+            <tr>
+              <th>Framework</th>
+              <th>Lifecycle</th>
+              <th>Risk</th>
+              <th>Authority</th>
+              <th>Availability</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let framework of frameworkTable.data; trackBy: trackFramework">
+              <td>
+                <button
+                  type="button"
+                  class="framework-title"
+                  [attr.aria-label]="'Inspect ' + framework.name"
+                  (click)="openFramework(framework)"
+                >
+                  <span class="framework-title__line">
+                    <span nz-icon nzType="pushpin" *ngIf="framework.pinned" aria-hidden="true"></span>
+                    <strong>{{ framework.name }}</strong>
+                    <code>{{ framework.version }}</code>
+                  </span>
+                  <small>{{ framework.purpose }}</small>
+                </button>
+              </td>
+              <td>
+                <nz-tag [nzColor]="statusColor(framework.status)">
+                  {{ humanize(framework.status) }}
+                </nz-tag>
+                <nz-tag *ngIf="isProtectedFramework(framework)" nzColor="blue">
+                  Protected
+                </nz-tag>
+              </td>
+              <td>
+                <nz-tag [nzColor]="riskColor(framework.riskCeiling)">
+                  {{ humanize(framework.riskCeiling) }}
+                </nz-tag>
+              </td>
+              <td>
+                Level {{ framework.effectiveAutonomyLevel }}
+                <small>{{ framework.authorityRequirement }}</small>
+              </td>
+              <td>
+                <nz-tag [nzColor]="framework.enabled ? 'green' : 'red'">
+                  {{ framework.enabled ? 'Enabled' : 'Disabled' }}
+                </nz-tag>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+      </div>
+
+      <ng-template #emptyCatalogue>
+        <div class="empty-state" role="status">
+          <span nz-icon nzType="inbox" aria-hidden="true"></span>
+          <strong>{{ loadErrors['frameworks'] ? 'Framework catalogue unavailable' : 'No matching frameworks' }}</strong>
+          <p>
+            {{ loadErrors['frameworks']
+              ? loadErrors['frameworks']
+              : 'Change the filters or search text to inspect another part of the catalogue.' }}
+          </p>
+          <button
+            nz-button
+            type="button"
+            *ngIf="!loadErrors['frameworks']"
+            (click)="clearFilters()"
+          >
+            Clear filters
+          </button>
+        </div>
+      </ng-template>
+
+      <div class="catalog-foot" *ngIf="!isAdvanced && filteredFrameworks.length > displayedFrameworks.length">
+        <span>
+          {{ filteredFrameworks.length - displayedFrameworks.length }} additional matching frameworks are hidden.
+        </span>
+        <button nz-button nzType="link" type="button" (click)="setViewMode('advanced')">
+          Show all in Advanced view
+        </button>
+      </div>
+    </section>
+
+    <section class="surface" aria-labelledby="constitution-summary-heading">
+      <ng-container *ngIf="constitution as activeConstitution; else constitutionUnavailable">
+        <div class="constitution-summary">
+          <div class="constitution-summary__mark">
+            <span nz-icon nzType="safety-certificate" aria-hidden="true"></span>
+          </div>
+          <div class="constitution-summary__copy">
+            <span class="section-label">Human authority contract</span>
+            <h2 id="constitution-summary-heading">Robert Constitution v{{ activeConstitution.version }}</h2>
+            <p>
+              Active values, prohibitions, permissions, boundaries, and escalation rules constrain
+              every framework recommendation.
+            </p>
+          </div>
+          <div class="constitution-summary__status">
+            <nz-tag nzColor="green">{{ humanize(activeConstitution.status) }}</nz-tag>
+            <small>{{ constitutionSource || activeConstitution.id }}</small>
+          </div>
+          <button nz-button type="button" (click)="openConstitutionGovernance()">
+            Review governance
+          </button>
+        </div>
+      </ng-container>
+      <ng-template #constitutionUnavailable>
+        <div class="constitution-summary">
+          <div class="constitution-summary__mark constitution-summary__mark--warning">
+            <span nz-icon nzType="warning" aria-hidden="true"></span>
+          </div>
+          <div class="constitution-summary__copy">
+            <span class="section-label">Human authority contract</span>
+            <h2 id="constitution-summary-heading">Active Constitution unavailable</h2>
+            <p>{{ loadErrors['constitution'] || 'Refresh to load the active governance contract.' }}</p>
+          </div>
+          <button nz-button type="button" [nzLoading]="loading" (click)="refresh()">Retry</button>
+        </div>
+      </ng-template>
+    </section>
+
+    <section class="progressive-section" *ngIf="isAdvanced">
+      <button
+        type="button"
+        class="progressive-section__summary"
+        id="constitution-history-summary"
+        [attr.aria-expanded]="sectionOpen('constitution-history')"
+        aria-controls="constitution-history-panel"
+        (click)="toggleSection('constitution-history')"
+      >
+        <span>
+          <strong>Constitution version ledger</strong>
+          <small>
+            {{ constitutionHistory.length }} immutable version
+            {{ constitutionHistory.length === 1 ? '' : 's' }}
+            <ng-container *ngIf="constitutionHistoryTruncated">shown from a longer history</ng-container>
+          </small>
+        </span>
+        <span
+          nz-icon
+          [nzType]="sectionOpen('constitution-history') ? 'up' : 'down'"
+          aria-hidden="true"
+        ></span>
+      </button>
+      <div
+        class="progressive-section__body"
+        id="constitution-history-panel"
+        role="region"
+        aria-labelledby="constitution-history-summary"
+        *ngIf="sectionOpen('constitution-history')"
+      >
+        <nz-alert
+          *ngIf="loadErrors['constitutionHistory']"
+          nzType="warning"
+          nzShowIcon
+          nzMessage="Version ledger unavailable"
+          [nzDescription]="loadErrors['constitutionHistory']"
+        ></nz-alert>
+
+        <nz-table
+          #constitutionHistoryTable
+          [nzData]="constitutionHistory"
+          [nzFrontPagination]="false"
+          nzSize="small"
+          *ngIf="constitutionHistory.length; else noConstitutionHistory"
+        >
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>State</th>
+              <th>Created</th>
+              <th>Approval</th>
+              <th>Change</th>
+              <th>Digest</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              *ngFor="let entry of constitutionHistoryTable.data; trackBy: trackConstitutionHistory"
+            >
+              <td>
+                <strong>v{{ entry.version }}</strong>
+                <small class="table-secondary">from v{{ entry.baseVersion }}</small>
+              </td>
+              <td><nz-tag>{{ humanize(entry.status) }}</nz-tag></td>
+              <td>{{ entry.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC</td>
+              <td>
+                <ng-container *ngIf="entry.approvedAt; else notApproved">
+                  {{ entry.approvedAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC
+                  <small class="table-secondary">{{ entry.approvedBy || 'Verified owner' }}</small>
+                </ng-container>
+                <ng-template #notApproved>Not activated</ng-template>
+              </td>
+              <td>{{ entry.changeSummary || 'Initial owner governance baseline' }}</td>
+              <td>
+                <code class="digest" [title]="entry.digest">{{ entry.digest }}</code>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+
+        <ng-template #noConstitutionHistory>
+          <div class="empty-state" role="status" *ngIf="!loadErrors['constitutionHistory']">
+            <span nz-icon nzType="history" aria-hidden="true"></span>
+            <strong>No owner Constitution versions recorded</strong>
+            <p>The built-in baseline remains active until the first owner amendment is stored.</p>
+          </div>
+        </ng-template>
+      </div>
+    </section>
+
+    <section class="progressive-section" *ngIf="isAdvanced">
+      <button
+        type="button"
+        class="progressive-section__summary"
+        id="selection-history-summary"
+        [attr.aria-expanded]="sectionOpen('selection-history')"
+        aria-controls="selection-history-panel"
+        (click)="toggleSection('selection-history')"
+      >
+        <span>
+          <strong>Selection history</strong>
+          <small>{{ selections.length }} owner-scoped recorded decision{{ selections.length === 1 ? '' : 's' }}</small>
+        </span>
+        <span nz-icon [nzType]="sectionOpen('selection-history') ? 'up' : 'down'" aria-hidden="true"></span>
+      </button>
+      <div
+        class="progressive-section__body"
+        id="selection-history-panel"
+        role="region"
+        aria-labelledby="selection-history-summary"
+        *ngIf="sectionOpen('selection-history')"
+      >
+        <nz-table
+          #selectionTable
+          [nzData]="selections"
+          [nzFrontPagination]="false"
+          nzSize="small"
+          *ngIf="selections.length; else noSelectionHistory"
+        >
+          <thead>
+            <tr>
+              <th>Recorded</th>
+              <th>Domain</th>
+              <th>Primary framework</th>
+              <th>Authority</th>
+              <th>Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let selection of selectionTable.data; trackBy: trackSelection">
+              <td>{{ selection.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC</td>
+              <td>{{ humanize(selection.lifeDomain) }}</td>
+              <td>{{ selection.selected.length ? selection.selected[0].name : 'No suitable framework' }}</td>
+              <td>
+                Level {{ selection.maximumAutonomyLevel }}
+                <nz-tag *ngIf="selection.requiresApproval" nzColor="gold">Approval required</nz-tag>
+              </td>
+              <td>
+                <button nz-button nzType="link" type="button" (click)="chooseSelection(selection)">
+                  Open decision
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </nz-table>
+        <ng-template #noSelectionHistory>
+          <div class="empty-state" role="status">
+            <span nz-icon nzType="history" aria-hidden="true"></span>
+            <strong>No recorded selections</strong>
+            <p>Request a framework recommendation to create the first auditable selection.</p>
+          </div>
+        </ng-template>
+      </div>
+    </section>
+
+    <section class="progressive-section" *ngIf="isAdvanced">
+      <button
+        type="button"
+        class="progressive-section__summary"
+        id="constitution-governance-summary"
+        [attr.aria-expanded]="sectionOpen('constitution-governance')"
+        aria-controls="constitution-governance-panel"
+        (click)="toggleSection('constitution-governance')"
+      >
+        <span>
+          <strong>Constitution governance</strong>
+          <small>Inspect rules, prepare an immutable draft, and explicitly activate a reviewed version</small>
+        </span>
+        <span
+          nz-icon
+          [nzType]="sectionOpen('constitution-governance') ? 'up' : 'down'"
+          aria-hidden="true"
+        ></span>
+      </button>
+
+      <div
+        class="progressive-section__body"
+        id="constitution-governance-panel"
+        role="region"
+        aria-labelledby="constitution-governance-summary"
+        *ngIf="sectionOpen('constitution-governance')"
+      >
+        <ng-container *ngIf="constitution as activeConstitution">
+          <div class="governance-overview">
+            <div>
+              <span class="section-label">Active contract</span>
+              <h3>Version {{ activeConstitution.version }}</h3>
+              <p>
+                Created {{ activeConstitution.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC.
+                {{ activeConstitution.changeSummary || 'Built-in owner governance baseline.' }}
+              </p>
+            </div>
+            <button
+              nz-button
+              nzType="primary"
+              type="button"
+              [disabled]="!canManageOwnerControls || constitutionEditing"
+              (click)="beginConstitutionDraft()"
+            >
+              Prepare amendment
+            </button>
+          </div>
+
+          <nz-alert
+            *ngIf="!canManageOwnerControls"
+            nzType="info"
+            nzShowIcon
+            nzMessage="Owner-only controls"
+            [nzDescription]="ownerControlExplanation"
+          ></nz-alert>
+
+          <section class="protected-rules">
+            <h4>Protected rules</h4>
+            <p>Protected rules are always retained and cannot be removed by an owner draft.</p>
+            <ol>
+              <li *ngFor="let rule of activeConstitution.protectedRules; trackBy: trackString">
+                {{ rule }}
+              </li>
+            </ol>
+          </section>
+
+          <nz-alert
+            class="constitution-enforcement-note"
+            nzType="info"
+            nzShowIcon
+            nzMessage="Machine-enforced rules are explicit"
+            nzDescription="Only restrictive HAI-RULE v1 statements are parsed as machine policy. Other Constitution text remains authoritative human-readable governance."
+          ></nz-alert>
+
+          <div class="constitution-contract">
+            <section
+              class="constitution-contract__section"
+              *ngFor="let section of constitutionRuleSections; trackBy: trackConstitutionSection"
+            >
+              <h4>{{ section.label }}</h4>
+              <ul>
+                <li *ngFor="let rule of constitutionValues(activeConstitution, section); trackBy: trackString">
+                  <nz-tag *ngIf="isMachineEnforcedConstitutionRule(rule)" nzColor="blue">
+                    Enforced
+                  </nz-tag>
+                  <span>{{ rule }}</span>
+                </li>
+              </ul>
+              <p *ngIf="!constitutionValues(activeConstitution, section).length">
+                No rules declared.
+              </p>
+            </section>
+          </div>
+
+          <form
+            class="constitution-editor"
+            *ngIf="constitutionEditing"
+            (ngSubmit)="createConstitutionDraft()"
+          >
+            <fieldset
+              class="constitution-draft-fields"
+              [disabled]="constitutionSaving || constitutionActivating || !!constitutionDraft"
+            >
+              <legend class="sr-only">Constitution amendment draft</legend>
+              <nz-alert
+                class="constitution-draft-lock"
+                *ngIf="constitutionDraft"
+                nzType="warning"
+                nzShowIcon
+                nzMessage="Immutable draft created"
+                [nzDescription]="'Version ' + constitutionDraft.version + ' cannot be edited. Review it, then activate it explicitly or close the editor.'"
+              ></nz-alert>
+
+              <div class="constitution-editor__grid">
+                <label
+                  *ngFor="let section of constitutionRuleSections; trackBy: trackConstitutionSection"
+                >
+                  <span>{{ section.label }}, one per line</span>
+                  <textarea
+                    nz-input
+                    rows="5"
+                    [name]="'constitution-' + section.field"
+                    [(ngModel)]="constitutionEditor[section.field]"
+                    [attr.aria-label]="section.label + ', one per line'"
+                  ></textarea>
+                </label>
+              </div>
+
+              <label class="full-field" for="constitution-change-summary">
+                <span>Change summary</span>
+                <textarea
+                  nz-input
+                  id="constitution-change-summary"
+                  name="constitutionChangeSummary"
+                  rows="3"
+                  maxlength="2000"
+                  [(ngModel)]="constitutionEditor.changeSummary"
+                  placeholder="Explain why this amendment is necessary."
+                ></textarea>
+              </label>
+
+              <div class="form-actions">
+                <button nz-button type="button" (click)="cancelConstitutionDraft()">Cancel</button>
+                <button
+                  nz-button
+                  nzType="primary"
+                  type="submit"
+                  [nzLoading]="constitutionSaving"
+                  [disabled]="constitutionSaving || !!constitutionDraft"
+                >
+                  Create immutable draft
+                </button>
+              </div>
+            </fieldset>
+
+            <section class="activation-panel" *ngIf="constitutionDraft as draft">
+              <nz-tag nzColor="gold">Inactive draft v{{ draft.version }}</nz-tag>
+              <div>
+                <h4>Explicit owner activation</h4>
+                <p>Activation supersedes the current Constitution and is recorded in the audit trail.</p>
+              </div>
+              <label for="constitution-activation-confirmation">
+                <span>Exact confirmation phrase</span>
+                <input
+                  nz-input
+                  id="constitution-activation-confirmation"
+                  name="constitutionActivationConfirmation"
+                  autocomplete="off"
+                  [(ngModel)]="activationConfirmation"
+                  placeholder="ACTIVATE CONSTITUTION"
+                />
+                <small>Type <strong>ACTIVATE CONSTITUTION</strong> exactly.</small>
+              </label>
+              <label for="constitution-activation-note">
+                <span>Approval note</span>
+                <textarea
+                  nz-input
+                  id="constitution-activation-note"
+                  name="constitutionActivationNote"
+                  rows="3"
+                  [(ngModel)]="activationNote"
+                  placeholder="Record why this version was reviewed and approved."
+                ></textarea>
+                <small>At least 10 characters. Do not include credentials or secrets.</small>
+              </label>
+              <button
+                nz-button
+                nzType="primary"
+                nzDanger
+                type="button"
+                [nzLoading]="constitutionActivating"
+                [disabled]="constitutionActivating || !canManageOwnerControls"
+                (click)="activateConstitutionDraft()"
+              >
+                Activate Constitution v{{ draft.version }}
+              </button>
+            </section>
+
+            <div class="selection-error" role="alert" *ngIf="constitutionError">
+              <span nz-icon nzType="warning" aria-hidden="true"></span>
+              <span>{{ constitutionError }}</span>
+            </div>
+          </form>
+        </ng-container>
+      </div>
+    </section>
+  </div>
+
+  <nz-drawer
+    [nzVisible]="inspectorVisible"
+    [nzWidth]="720"
+    nzPlacement="right"
+    nzTitle="Framework contract"
+    (nzOnClose)="closeInspector()"
+  >
+    <ng-container *nzDrawerContent>
+      <app-framework-registry-inspector
+        [loading]="inspectorLoading"
+        [errorMessage]="inspectorError"
+        [framework]="selectedFramework"
+        [editor]="preferenceEditor"
+        [saving]="preferenceSaving"
+        [actorRole]="actorRole"
+        [canManagePreferences]="canManageOwnerControls"
+        (retry)="retryFrameworkInspector()"
+        (save)="savePreference()"
+      ></app-framework-registry-inspector>
+    </ng-container>
+  </nz-drawer>
+</main>

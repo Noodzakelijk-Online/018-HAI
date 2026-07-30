@@ -7,7 +7,12 @@ import {
   ICompletionPlan,
   IReviewQueueItem,
   IToolExecutionResult,
+  IValidationCriterionResult,
 } from '../../models/task-plan.model.interface';
+import {
+  IFrameworkSelectionDecision,
+  ISelectedFramework,
+} from '../../models/framework-registry.model.interface';
 import { IAssistantCommandResult } from '../../models/assistant-command.model.interface';
 import { IAgentCyclePursuitOperatingState } from '../../models/agent-cycle.model.interface';
 import { AssistantCommandService } from '../../services/assistant-command.service';
@@ -354,6 +359,132 @@ export class TaskBlueprintComponent implements OnInit {
     this.router.navigate(['/control-center']);
   }
 
+  openFrameworkRegistry(): void {
+    this.router.navigate(['/framework-registry']);
+  }
+
+  visibleFrameworks(decision?: IFrameworkSelectionDecision): ISelectedFramework[] {
+    return (decision?.selected || []).slice(0, 3);
+  }
+
+  additionalFrameworkCount(decision?: IFrameworkSelectionDecision): number {
+    return Math.max(0, (decision?.selected?.length || 0) - 3);
+  }
+
+  structuredValidationCriteria(plan: ICompletionPlan | undefined = this.plan): IValidationCriterionResult[] {
+    if (!plan) {
+      return [];
+    }
+
+    const recorded = (plan.validationResult?.criteria || []).map((result) => ({
+      ...result,
+      evidence: result.evidence || [],
+    }));
+    const seen = new Set(
+      recorded.map((result) => this.validationCriterionKey(result.kind, result.criterion))
+    );
+    const planned: Array<{ kind: IValidationCriterionResult['kind']; criteria: string[] }> = [
+      {
+        kind: 'task_success',
+        criteria: plan.validationPlan?.successCriteria || [],
+      },
+      {
+        kind: 'framework_evidence',
+        criteria: plan.validationPlan?.frameworkEvidenceRequirements || [],
+      },
+      {
+        kind: 'framework_completion',
+        criteria: plan.validationPlan?.frameworkCompletionCriteria || [],
+      },
+      {
+        kind: 'framework_assurance',
+        criteria: plan.validationPlan?.frameworkAssuranceCriteria || [],
+      },
+    ];
+
+    const unrecorded = planned.flatMap((group) =>
+      group.criteria
+        .filter((criterion) => {
+          const key = this.validationCriterionKey(group.kind, criterion);
+          if (seen.has(key)) {
+            return false;
+          }
+          seen.add(key);
+          return true;
+        })
+        .map((criterion) => ({
+          criterion,
+          kind: group.kind,
+          status: 'not_run',
+          evidence: [],
+        }))
+    );
+
+    return [...recorded, ...unrecorded];
+  }
+
+  validationCount(status: 'passed' | 'failed' | 'not_run' | 'not_applicable'): number {
+    return this.structuredValidationCriteria().filter(
+      (criterion) => this.validationCriterionStatus(criterion.status) === status
+    ).length;
+  }
+
+  validationStatusLabel(): string {
+    const criteria = this.structuredValidationCriteria();
+    const taskGates = criteria.filter(
+      (criterion) => this.validationCriterionStatus(criterion.status) !== 'not_applicable'
+    );
+    if (!taskGates.length || taskGates.every((criterion) => this.validationCriterionStatus(criterion.status) === 'not_run')) {
+      return 'Not run';
+    }
+    if (taskGates.some((criterion) => this.validationCriterionStatus(criterion.status) === 'failed')) {
+      return 'Failed';
+    }
+    if (taskGates.every((criterion) => this.validationCriterionStatus(criterion.status) === 'passed')) {
+      return 'Passed';
+    }
+    return 'Not fully run';
+  }
+
+  validationStatusClass(): string {
+    const status = this.validationStatusLabel();
+    if (status === 'Passed') {
+      return 'validation-state--passed';
+    }
+    if (status === 'Failed') {
+      return 'validation-state--failed';
+    }
+    return 'validation-state--not-run';
+  }
+
+  validationCriterionStatus(status?: string): 'passed' | 'failed' | 'not_run' | 'not_applicable' {
+    if (status === 'passed' || status === 'failed' || status === 'not_applicable') {
+      return status;
+    }
+    return 'not_run';
+  }
+
+  validationKindLabel(kind?: string): string {
+    switch (kind) {
+      case 'task_success':
+        return 'Task success';
+      case 'framework_evidence':
+        return 'Framework evidence';
+      case 'framework_completion':
+        return 'Framework completion';
+      case 'framework_assurance':
+        return 'Framework assurance';
+      case 'system_check':
+        return 'System check';
+      default:
+        return 'Validation gate';
+    }
+  }
+
+  openValidationEvidence(): void {
+    this.inspectorMode = 'evidence';
+  }
+
   reviewQueueOpenCount(): number {
     return this.reviewQueue.filter((item) => item.status === 'open').length;
   }
@@ -628,12 +759,23 @@ export class TaskBlueprintComponent implements OnInit {
     return `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
+  private validationCriterionKey(kind: string | undefined, criterion: string | undefined): string {
+    return `${String(kind || '').trim().toLowerCase()}::${String(criterion || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase()}`;
+  }
+
   private normalizePlan(plan: ICompletionPlan): ICompletionPlan {
     const safe = plan as any;
     safe.modelDecision = safe.modelDecision || {};
     safe.toolDecision = safe.toolDecision || {};
     safe.minimalityDecision = safe.minimalityDecision || {};
     safe.contextPlan = safe.contextPlan || {};
+    if (safe.frameworkDecision) {
+      safe.frameworkDecision.selected = safe.frameworkDecision.selected || [];
+      safe.frameworkDecision.approvalReasons = safe.frameworkDecision.approvalReasons || [];
+    }
     safe.intake = safe.intake || {};
     safe.riskAssessment = safe.riskAssessment || {};
     safe.validationPlan = safe.validationPlan || {};
@@ -652,8 +794,13 @@ export class TaskBlueprintComponent implements OnInit {
     safe.riskAssessment.reasons = safe.riskAssessment.reasons || [];
     safe.riskAssessment.missingParameters = safe.riskAssessment.missingParameters || [];
     safe.validationPlan.steps = safe.validationPlan.steps || [];
+    safe.validationPlan.successCriteria = safe.validationPlan.successCriteria || [];
+    safe.validationPlan.frameworkEvidenceRequirements = safe.validationPlan.frameworkEvidenceRequirements || [];
+    safe.validationPlan.frameworkCompletionCriteria = safe.validationPlan.frameworkCompletionCriteria || [];
+    safe.validationPlan.frameworkAssuranceCriteria = safe.validationPlan.frameworkAssuranceCriteria || [];
     safe.validationResult.checked = safe.validationResult.checked || [];
     safe.validationResult.failures = safe.validationResult.failures || [];
+    safe.validationResult.criteria = safe.validationResult.criteria || [];
     safe.executionPlan.approvalRequiredFor = safe.executionPlan.approvalRequiredFor || [];
     safe.executionPlan.auditEvents = safe.executionPlan.auditEvents || [];
     safe.retryPolicy.escalationPath = safe.retryPolicy.escalationPath || [];

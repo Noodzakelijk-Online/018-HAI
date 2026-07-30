@@ -7,7 +7,11 @@ source of truth for current state.
 
 - **Full Docker Compose runtime verification (phase 032, TD-8):** run `docker compose up` where Docker is available and assert `/readyz` green across Postgres/Redis/Kafka/nginx/backend/frontend. *(The only remaining Partial.)*
 - **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
-- **Make dependency scans blocking (TD-6/BH-6):** x/net + pgx already bumped (20→17); finish with a Go 1.25.11+ toolchain bump + later dep jumps, then flip the scans to hard gates.
+- **Make the frontend dependency scan blocking (TD-6/BH-6):** the backend is
+  clean and blocking. Perform a coordinated migration from the vulnerable
+  Angular 16/CDK/ng-zorro family to a supported release, preserve authenticated
+  routes and the full UI regression suite, then make the frontend scan a hard
+  gate.
 - Adopt the `apierror` envelope across handlers in step with the frontend (TD-1).
 
 ## Frontend-dependent (need Angular work)
