@@ -34,6 +34,14 @@ const authenticatedRoutes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "life-ops",
+    loadChildren: () =>
+      import("./pages/life-ops/life-ops.module").then(
+        (m) => m.LifeOpsModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "framework-registry",
     loadChildren: () =>
       import("./pages/framework-registry/framework-registry.module").then(

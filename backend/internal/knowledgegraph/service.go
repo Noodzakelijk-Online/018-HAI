@@ -18,6 +18,10 @@ type Service struct {
 	clock Clock
 }
 
+type atomicNodeCorrectionRepository interface {
+	CorrectNode(context.Context, Node, Node) (Node, error)
+}
+
 func NewService(repo Repository, clock Clock) *Service {
 	if repo == nil {
 		repo = NewMemoryRepository()
@@ -227,6 +231,14 @@ func (s *Service) CorrectNode(ctx context.Context, ownerIdentity, id string, cor
 	}
 	if err := s.validateSourceReferences(ctx, replacement.OwnerIdentity, replacement.Sources); err != nil {
 		return NodeWriteResult{}, err
+	}
+
+	if repository, ok := s.repo.(atomicNodeCorrectionRepository); ok {
+		created, err := repository.CorrectNode(ctx, old, replacement)
+		if err != nil {
+			return NodeWriteResult{}, err
+		}
+		return NodeWriteResult{Node: created, Action: WriteCorrected}, nil
 	}
 
 	created, err := s.repo.CreateNode(ctx, replacement)

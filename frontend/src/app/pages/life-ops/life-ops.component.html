@@ -1,0 +1,468 @@
+<section class="life-ops-page">
+  <header class="life-ops-header">
+    <div>
+      <h1>Life Ops</h1>
+      <p>Current needs, capacity, and goals that HAI may use when planning your work.</p>
+    </div>
+    <button nz-button nzType="default" type="button" (click)="refresh()" [nzLoading]="loading">
+      <i nz-icon nzType="reload" nzTheme="outline"></i>
+      Refresh
+    </button>
+  </header>
+
+  <div class="life-ops-loading" *ngIf="loading">
+    <nz-spin nzSimple></nz-spin>
+    <span>Loading owner context...</span>
+  </div>
+
+  <section class="life-ops-error" *ngIf="!loading && errorMessage" role="alert">
+    <i nz-icon nzType="warning" nzTheme="outline"></i>
+    <div>
+      <strong>Life Ops could not load</strong>
+      <span>{{ errorMessage }}</span>
+    </div>
+    <button nz-button nzType="default" type="button" (click)="refresh()">Try again</button>
+  </section>
+
+  <ng-container *ngIf="!loading && !errorMessage">
+    <section class="attention-band" [attr.data-state]="reviewNeeds.length || capacityState === 'review' ? 'review' : 'clear'">
+      <i nz-icon [nzType]="reviewNeeds.length || capacityState === 'review' ? 'warning' : 'check-circle'" nzTheme="outline"></i>
+      <div>
+        <strong *ngIf="reviewNeeds.length || capacityState === 'review'">Context needs review</strong>
+        <strong *ngIf="!reviewNeeds.length && capacityState !== 'review'">Planning context is current</strong>
+        <span *ngIf="reviewNeeds.length">{{ reviewNeeds.length }} need observation{{ reviewNeeds.length === 1 ? '' : 's' }} require confirmation or renewal.</span>
+        <span *ngIf="!reviewNeeds.length && capacityState === 'review'">The latest capacity snapshot is stale, low-confidence, or marked for review.</span>
+        <span *ngIf="!reviewNeeds.length && capacityState !== 'review'">HAI has no review flag in the current needs or capacity state.</span>
+      </div>
+      <button *ngIf="reviewNeeds.length" nz-button nzType="default" type="button" (click)="openEditor('need')">Review a need</button>
+      <button *ngIf="!reviewNeeds.length && capacityState === 'review'" nz-button nzType="default" type="button" (click)="openEditor('capacity')">Update capacity</button>
+    </section>
+
+    <div class="basic-grid">
+      <section class="life-panel needs-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Current needs</h2>
+            <p>Latest sourced observation per life domain.</p>
+          </div>
+          <button nz-button nzType="primary" type="button" (click)="openEditor('need')">
+            <i nz-icon nzType="plus" nzTheme="outline"></i>
+            Record
+          </button>
+        </div>
+
+        <div class="need-list" *ngIf="currentNeeds.length; else noNeeds">
+          <article *ngFor="let need of currentNeeds | slice:0:6; trackBy: trackById">
+            <div class="need-list__title">
+              <strong>{{ domainName(need.domainId) }}</strong>
+              <span class="state-label" [attr.data-state]="need.needsReview ? 'review' : need.state">
+                {{ need.needsReview ? 'needs review' : need.state.replace('_', ' ') }}
+              </span>
+            </div>
+            <div class="need-progress" [attr.aria-label]="'Current ' + need.currentLevel + ' of target ' + need.targetLevel">
+              <span [style.width.%]="need.currentLevel"></span>
+              <i [style.left.%]="need.targetLevel"></i>
+            </div>
+            <div class="need-list__meta">
+              <span>{{ need.currentLevel }} current</span>
+              <span>{{ need.targetLevel }} target</span>
+              <span>Priority {{ need.priority }}</span>
+            </div>
+            <small>{{ need.sourceLabel }} / observed {{ need.observedAt | date:'mediumDate' }}</small>
+          </article>
+        </div>
+        <ng-template #noNeeds>
+          <div class="life-empty">
+            <i nz-icon nzType="compass" nzTheme="outline"></i>
+            <div>
+              <strong>No need observations yet</strong>
+              <span>Record only useful, sourced context. HAI will not infer a personal fact from an empty record.</span>
+            </div>
+          </div>
+        </ng-template>
+      </section>
+
+      <section class="life-panel capacity-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Current capacity</h2>
+            <p>Limits that should constrain planning right now.</p>
+          </div>
+          <button nz-button nzType="default" type="button" (click)="openEditor('capacity')">
+            Update
+          </button>
+        </div>
+
+        <ng-container *ngIf="capacity as current; else noCapacity">
+          <div class="capacity-summary" [attr.data-state]="capacityState">
+            <div>
+              <span>Status</span>
+              <strong>{{ current.status }}</strong>
+            </div>
+            <div>
+              <span>Available time</span>
+              <strong>{{ current.timeAvailableMinutes }} min</strong>
+            </div>
+            <div>
+              <span>Current load</span>
+              <strong>{{ current.currentLoad }}/100</strong>
+            </div>
+            <div>
+              <span>Concurrent work</span>
+              <strong>{{ current.concurrentWorkLimit }}</strong>
+            </div>
+          </div>
+          <div class="freshness-row">
+            <span [attr.data-state]="current.fresh && !current.needsReview ? 'fresh' : 'review'">
+              {{ current.fresh && !current.needsReview ? 'Current' : 'Review needed' }}
+            </span>
+            <small>{{ capacityAge }} / {{ current.sourceLabel }} / confidence {{ current.confidence | percent:'1.0-0' }}</small>
+          </div>
+          <ul class="constraint-list" *ngIf="current.constraints.length">
+            <li *ngFor="let constraint of current.constraints">{{ constraint }}</li>
+          </ul>
+        </ng-container>
+        <ng-template #noCapacity>
+          <div class="life-empty">
+            <i nz-icon nzType="clock-circle" nzTheme="outline"></i>
+            <div>
+              <strong>Capacity is unknown</strong>
+              <span>Until a snapshot exists, HAI must treat capacity as uncertain and require review.</span>
+            </div>
+          </div>
+        </ng-template>
+      </section>
+    </div>
+
+    <section class="life-panel goal-overview">
+      <div class="panel-heading">
+        <div>
+          <h2>Goal hierarchy</h2>
+          <p>Active outcomes and the next dated commitments beneath them.</p>
+        </div>
+        <button nz-button nzType="default" type="button" (click)="openEditor('goal')">
+          <i nz-icon nzType="plus" nzTheme="outline"></i>
+          Add goal
+        </button>
+      </div>
+      <div class="goal-summary" *ngIf="goals.length; else noGoals">
+        <div>
+          <strong>{{ activeGoals.length }}</strong>
+          <span>Active</span>
+        </div>
+        <div>
+          <strong>{{ goalForest.length }}</strong>
+          <span>Top-level</span>
+        </div>
+        <div>
+          <strong>{{ dueGoals.length }}</strong>
+          <span>With upcoming target</span>
+        </div>
+        <div class="goal-summary__next">
+          <span>Next target</span>
+          <strong *ngIf="dueGoals[0] as next">{{ next.title }}</strong>
+          <small *ngIf="dueGoals[0] as next">{{ next.targetAt | date:'medium' }}</small>
+          <strong *ngIf="!dueGoals.length">No dated target</strong>
+        </div>
+      </div>
+      <ng-template #noGoals>
+        <div class="life-empty life-empty--wide">
+          <i nz-icon nzType="flag" nzTheme="outline"></i>
+          <div>
+            <strong>No owner goals are registered</strong>
+            <span>Create a goal only when its success criteria, stop conditions, domain, and source are clear.</span>
+          </div>
+        </div>
+      </ng-template>
+    </section>
+
+    <div class="advanced-stack">
+      <hai-progressive-section
+        moduleId="life-ops"
+        sectionId="need-observations"
+        title="Need observations"
+        summary="Record a sourced need state and inspect its history.">
+        <ng-container *ngTemplateOutlet="needEditor"></ng-container>
+        <div class="record-table" *ngIf="needs.length">
+          <div class="record-table__head"><span>Domain</span><span>State</span><span>Observed</span><span>Source</span></div>
+          <div class="record-table__row" *ngFor="let need of needs; trackBy: trackById">
+            <span><strong>{{ domainName(need.domainId) }}</strong><small>{{ need.needLevel }}</small></span>
+            <span>{{ need.state.replace('_', ' ') }}<small *ngIf="need.needsReview">Review required</small></span>
+            <span>{{ need.observedAt | date:'short' }}<small *ngIf="need.expiresAt">Expires {{ need.expiresAt | date:'shortDate' }}</small></span>
+            <span><strong>{{ need.sourceLabel }}</strong><a *ngIf="sourceHref(need.sourceUri) as href" [href]="href" target="_blank" rel="noopener noreferrer">Open source</a></span>
+          </div>
+        </div>
+      </hai-progressive-section>
+
+      <hai-progressive-section
+        moduleId="life-ops"
+        sectionId="capacity-record"
+        title="Capacity record"
+        summary="Set explicit limits for energy, attention, time, load, and environment.">
+        <ng-container *ngTemplateOutlet="capacityEditor"></ng-container>
+      </hai-progressive-section>
+
+      <hai-progressive-section
+        moduleId="life-ops"
+        sectionId="entity-domains"
+        title="Entity domain links"
+        summary="Connect pursuits, cases, projects, or tasks to one or more canonical life domains.">
+        <ng-container *ngTemplateOutlet="linkEditor"></ng-container>
+      </hai-progressive-section>
+
+      <hai-progressive-section
+        moduleId="life-ops"
+        sectionId="goal-hierarchy"
+        title="Goal hierarchy and outcomes"
+        summary="Create, nest, and revise goals with success criteria and stop conditions.">
+        <ng-container *ngTemplateOutlet="goalEditor"></ng-container>
+        <div class="goal-tree" *ngIf="goalForest.length">
+          <ng-container *ngFor="let node of goalForest" [ngTemplateOutlet]="goalNode" [ngTemplateOutletContext]="{ $implicit: node, depth: 0 }"></ng-container>
+        </div>
+      </hai-progressive-section>
+
+      <hai-progressive-section
+        moduleId="life-ops"
+        sectionId="priority-assessment"
+        title="Priority assessment"
+        summary="Explain priority across value, harm, effort, capacity, risk, and obligations.">
+        <ng-container *ngTemplateOutlet="priorityEditor"></ng-container>
+      </hai-progressive-section>
+
+      <hai-progressive-section
+        moduleId="life-ops"
+        sectionId="provenance"
+        title="Source and provenance"
+        summary="Inspect where owner context came from and which records still need confirmation.">
+        <div class="provenance-list" *ngIf="needs.length || capacity; else noProvenance">
+          <article *ngFor="let need of currentNeeds; trackBy: trackById">
+            <div><strong>{{ domainName(need.domainId) }} need state</strong><span>{{ need.sourceLabel }}</span></div>
+            <div><span>{{ need.evidence.length }} evidence item{{ need.evidence.length === 1 ? '' : 's' }}</span><span>Confidence {{ need.confidence | percent:'1.0-0' }}</span></div>
+            <a *ngIf="sourceHref(need.sourceUri) as href" [href]="href" target="_blank" rel="noopener noreferrer">Open source</a>
+            <span *ngIf="!sourceHref(need.sourceUri)">No external source link</span>
+          </article>
+          <article *ngIf="capacity as current">
+            <div><strong>Capacity snapshot</strong><span>{{ current.sourceLabel }}</span></div>
+            <div><span>{{ current.constraints.length }} constraint{{ current.constraints.length === 1 ? '' : 's' }}</span><span>Confidence {{ current.confidence | percent:'1.0-0' }}</span></div>
+            <a *ngIf="sourceHref(current.sourceUri) as href" [href]="href" target="_blank" rel="noopener noreferrer">Open source</a>
+            <span *ngIf="!sourceHref(current.sourceUri)">No external source link</span>
+          </article>
+        </div>
+        <ng-template #noProvenance>
+          <div class="life-empty"><strong>No source-linked context yet</strong></div>
+        </ng-template>
+      </hai-progressive-section>
+    </div>
+  </ng-container>
+</section>
+
+<ng-template #needEditor>
+  <form class="life-form" #needFormRef="ngForm" (ngSubmit)="saveNeed()">
+    <div class="form-grid">
+      <label>
+        <span>Life domain</span>
+        <select name="needDomain" [(ngModel)]="needForm.domainId" required>
+          <option *ngFor="let domain of domains" [value]="domain.id">{{ domain.name }}</option>
+        </select>
+      </label>
+      <label><span>Need level</span><input name="needLevel" [(ngModel)]="needForm.needLevel" required></label>
+      <label>
+        <span>State</span>
+        <select name="needState" [(ngModel)]="needForm.state" required>
+          <option value="stable">Stable</option>
+          <option value="attention_required">Attention required</option>
+          <option value="critical">Critical</option>
+          <option value="satisfied">Satisfied</option>
+          <option value="unknown">Unknown</option>
+        </select>
+      </label>
+      <label><span>Current level</span><input type="number" name="needCurrent" [(ngModel)]="needForm.currentLevel" min="0" max="100" required></label>
+      <label><span>Target level</span><input type="number" name="needTarget" [(ngModel)]="needForm.targetLevel" min="0" max="100" required></label>
+      <label><span>Priority</span><input type="number" name="needPriority" [(ngModel)]="needForm.priority" min="0" max="100" required></label>
+      <label><span>Confidence</span><input type="number" name="needConfidence" [(ngModel)]="needForm.confidence" min="0" max="1" step="0.05" required></label>
+      <label><span>Observed at</span><input type="datetime-local" name="needObserved" [(ngModel)]="needForm.observedAt" required></label>
+      <label><span>Expires at (optional)</span><input type="datetime-local" name="needExpires" [(ngModel)]="needForm.expiresAt"></label>
+      <label><span>Source label</span><input name="needSource" [(ngModel)]="needForm.sourceLabel" required></label>
+      <label class="form-grid__wide"><span>Source link (optional)</span><input type="url" name="needSourceUri" [(ngModel)]="needForm.sourceUri" placeholder="https://..."></label>
+      <label class="form-grid__wide"><span>Evidence, one item per line</span><textarea name="needEvidence" [(ngModel)]="needForm.evidence" rows="3"></textarea></label>
+      <label class="check-field form-grid__wide"><input type="checkbox" name="needReview" [(ngModel)]="needForm.needsReview"><span>Require owner review before HAI relies on this observation</span></label>
+    </div>
+    <div class="form-actions">
+      <button nz-button nzType="primary" type="submit" [nzLoading]="saving" [disabled]="needFormRef.invalid || saving">Save observation</button>
+    </div>
+  </form>
+</ng-template>
+
+<ng-template #capacityEditor>
+  <form class="life-form" #capacityFormRef="ngForm" (ngSubmit)="saveCapacity()">
+    <div class="form-grid">
+      <label>
+        <span>Status</span>
+        <select name="capacityStatus" [(ngModel)]="capacityForm.status" required>
+          <option *ngFor="let status of capacityStatuses" [value]="status">{{ status }}</option>
+        </select>
+      </label>
+      <label><span>Available time (minutes)</span><input type="number" name="capacityTime" [(ngModel)]="capacityForm.timeAvailableMinutes" min="0" max="10080" required></label>
+      <label><span>Concurrent work limit</span><input type="number" name="capacityConcurrent" [(ngModel)]="capacityForm.concurrentWorkLimit" min="0" max="50" required></label>
+      <label><span>Current load</span><input type="number" name="capacityLoad" [(ngModel)]="capacityForm.currentLoad" min="0" max="100" required></label>
+      <label><span>Planning step limit (0 = derived)</span><input type="number" name="capacitySteps" [(ngModel)]="capacityForm.planningStepLimit" min="0" max="20"></label>
+      <label><span>Confidence</span><input type="number" name="capacityConfidence" [(ngModel)]="capacityForm.confidence" min="0" max="1" step="0.05" required></label>
+      <label><span>Captured at</span><input type="datetime-local" name="capacityCaptured" [(ngModel)]="capacityForm.capturedAt" required></label>
+      <label><span>Source label</span><input name="capacitySource" [(ngModel)]="capacityForm.sourceLabel" required></label>
+      <label class="form-grid__wide"><span>Source link (optional)</span><input type="url" name="capacitySourceUri" [(ngModel)]="capacityForm.sourceUri" placeholder="https://..."></label>
+    </div>
+    <div class="field-section">
+      <h3>Capacity signals</h3>
+      <p>0 means none or unavailable; 100 means maximum. Load and cost fields are marked.</p>
+      <div class="signal-grid">
+        <label *ngFor="let field of capacityNumericFields; trackBy: trackByKey">
+          <span>{{ field.label }}<small *ngIf="field.inverse">load</small></span>
+          <input type="number" [name]="'signal-' + field.key" [(ngModel)]="capacityForm.signals[field.key]" min="0" max="100" required>
+        </label>
+      </div>
+    </div>
+    <div class="form-grid">
+      <label><span>Location</span><input name="capacityLocation" [(ngModel)]="capacityForm.signals.location"></label>
+      <label><span>Weather conditions</span><input name="capacityWeather" [(ngModel)]="capacityForm.signals.weatherConditions"></label>
+      <label><span>Environmental conditions</span><input name="capacityEnvironment" [(ngModel)]="capacityForm.signals.environmentalConditions"></label>
+      <label><span>Social appropriateness</span><input name="capacitySocial" [(ngModel)]="capacityForm.signals.socialAppropriateness"></label>
+      <label class="form-grid__wide"><span>Constraints, one per line</span><textarea name="capacityConstraints" [(ngModel)]="capacityForm.constraints" rows="3"></textarea></label>
+      <label><span>Available tools, one per line</span><textarea name="capacityTools" [(ngModel)]="capacityForm.availableTools" rows="3"></textarea></label>
+      <label><span>Available helpers, one per line</span><textarea name="capacityHelpers" [(ngModel)]="capacityForm.availableHelpers" rows="3"></textarea></label>
+      <label class="check-field form-grid__wide"><input type="checkbox" name="capacityReview" [(ngModel)]="capacityForm.needsReview"><span>Require review before this snapshot controls planning</span></label>
+    </div>
+    <div class="form-actions">
+      <button nz-button nzType="primary" type="submit" [nzLoading]="saving" [disabled]="capacityFormRef.invalid || saving">Save capacity</button>
+    </div>
+  </form>
+</ng-template>
+
+<ng-template #linkEditor>
+  <form class="life-form" #linkFormRef="ngForm" (ngSubmit)="saveLink()">
+    <div class="form-grid">
+      <label><span>Entity type</span><input name="linkType" [(ngModel)]="linkForm.entityType" required placeholder="pursuit, case, project, task"></label>
+      <label><span>Entity ID</span><input name="linkId" [(ngModel)]="linkForm.entityId" required></label>
+      <label>
+        <span>Life domain</span>
+        <select name="linkDomain" [(ngModel)]="linkForm.domainId" required>
+          <option *ngFor="let domain of domains" [value]="domain.id">{{ domain.name }}</option>
+        </select>
+      </label>
+      <label><span>Confidence</span><input type="number" name="linkConfidence" [(ngModel)]="linkForm.confidence" min="0" max="1" step="0.05" required></label>
+      <label><span>Verification status</span><input name="linkVerification" [(ngModel)]="linkForm.verificationStatus" required></label>
+      <label><span>Source label</span><input name="linkSource" [(ngModel)]="linkForm.sourceLabel" required></label>
+      <label class="form-grid__wide"><span>Source link (optional)</span><input type="url" name="linkSourceUri" [(ngModel)]="linkForm.sourceUri"></label>
+      <label class="form-grid__wide"><span>Evidence, one item per line</span><textarea name="linkEvidence" [(ngModel)]="linkForm.evidence" rows="3"></textarea></label>
+      <label class="check-field form-grid__wide"><input type="checkbox" name="linkPrimary" [(ngModel)]="linkForm.primary"><span>Use as the primary life domain for this entity</span></label>
+    </div>
+    <div class="form-actions">
+      <button nz-button nzType="default" type="button" (click)="loadEntityLinks()" [disabled]="!linkForm.entityType || !linkForm.entityId">Load links</button>
+      <button nz-button nzType="primary" type="submit" [nzLoading]="saving" [disabled]="linkFormRef.invalid || saving">Save link</button>
+    </div>
+  </form>
+  <div class="linked-domains" *ngIf="entityLinksLoaded">
+    <article *ngFor="let link of entityLinks; trackBy: trackById">
+      <div><strong>{{ domainName(link.domainId) }}</strong><span>{{ link.primary ? 'Primary' : 'Additional' }}</span></div>
+      <small>{{ link.sourceLabel }} / confidence {{ link.confidence | percent:'1.0-0' }} / {{ link.verificationStatus }}</small>
+    </article>
+    <div class="life-empty" *ngIf="!entityLinks.length"><strong>No links found for this entity.</strong></div>
+  </div>
+</ng-template>
+
+<ng-template #goalEditor>
+  <form class="life-form" #goalFormRef="ngForm" (ngSubmit)="saveGoal()">
+    <div class="form-grid">
+      <label><span>Title</span><input name="goalTitle" [(ngModel)]="goalForm.title" required></label>
+      <label>
+        <span>Level</span>
+        <select name="goalLevel" [(ngModel)]="goalForm.level" required>
+          <option *ngFor="let level of goalLevels" [value]="level">{{ goalLevelLabel(level) }}</option>
+        </select>
+      </label>
+      <label>
+        <span>Parent goal</span>
+        <select name="goalParent" [(ngModel)]="goalForm.parentId">
+          <option value="">No parent</option>
+          <option *ngFor="let goal of goals" [value]="goal.id" [disabled]="goal.id === editingGoalId">{{ goal.title }} / {{ goalLevelLabel(goal.level) }}</option>
+        </select>
+      </label>
+      <label><span>Status</span><input name="goalStatus" [(ngModel)]="goalForm.status" required></label>
+      <label>
+        <span>Life domains</span>
+        <select name="goalDomains" [(ngModel)]="goalForm.domainIds" multiple required>
+          <option *ngFor="let domain of domains" [value]="domain.id">{{ domain.name }}</option>
+        </select>
+      </label>
+      <label><span>Target date (optional)</span><input type="datetime-local" name="goalTarget" [(ngModel)]="goalForm.targetAt"></label>
+      <label><span>Confidence</span><input type="number" name="goalConfidence" [(ngModel)]="goalForm.confidence" min="0" max="1" step="0.05" required></label>
+      <label><span>Source label</span><input name="goalSource" [(ngModel)]="goalForm.sourceLabel" required></label>
+      <label class="form-grid__wide"><span>Description</span><textarea name="goalDescription" [(ngModel)]="goalForm.description" rows="3"></textarea></label>
+      <label><span>Success criteria, one per line</span><textarea name="goalSuccess" [(ngModel)]="goalForm.successCriteria" rows="4"></textarea></label>
+      <label><span>Stop conditions, one per line</span><textarea name="goalStops" [(ngModel)]="goalForm.stopConditions" rows="4"></textarea></label>
+      <label class="form-grid__wide"><span>Source link (optional)</span><input type="url" name="goalSourceUri" [(ngModel)]="goalForm.sourceUri"></label>
+    </div>
+    <div class="form-actions">
+      <button *ngIf="editingGoalId" nz-button nzType="default" type="button" (click)="resetGoalForm()">Cancel edit</button>
+      <button nz-button nzType="primary" type="submit" [nzLoading]="saving" [disabled]="goalFormRef.invalid || saving">{{ editingGoalId ? 'Update goal' : 'Create goal' }}</button>
+    </div>
+  </form>
+</ng-template>
+
+<ng-template #priorityEditor>
+  <form class="life-form" #priorityFormRef="ngForm" (ngSubmit)="assessPriority()">
+    <div class="form-grid">
+      <label><span>Title</span><input name="priorityTitle" [(ngModel)]="priorityForm.title" required></label>
+      <label><span>Entity type</span><input name="priorityType" [(ngModel)]="priorityForm.entityType" required></label>
+      <label><span>Entity ID</span><input name="priorityId" [(ngModel)]="priorityForm.entityId" required></label>
+      <label><span>Deadline (optional)</span><input type="datetime-local" name="priorityDeadline" [(ngModel)]="priorityForm.deadline"></label>
+      <label class="check-field form-grid__wide"><input type="checkbox" name="priorityCapacity" [(ngModel)]="priorityForm.useCapacity" [disabled]="!capacity"><span>Apply the latest capacity snapshot{{ capacity ? '' : ' (no snapshot available)' }}</span></label>
+    </div>
+    <div class="field-section">
+      <h3>Decision factors</h3>
+      <p>Each value is 0-100. Factors marked cost reduce the result as they increase.</p>
+      <div class="factor-grid">
+        <label *ngFor="let field of priorityFields; trackBy: trackByKey">
+          <span>{{ field.label }}<small *ngIf="field.cost">cost</small></span>
+          <input type="number" [name]="'factor-' + field.key" [(ngModel)]="priorityForm.factors[field.key]" min="0" max="100" required>
+        </label>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button nz-button nzType="primary" type="submit" [nzLoading]="saving" [disabled]="priorityFormRef.invalid || saving">Assess priority</button>
+    </div>
+  </form>
+  <section class="priority-result" *ngIf="priorityAssessment as result" aria-live="polite">
+    <div><span>Score</span><strong>{{ result.score }}/100</strong><small>{{ result.band }}</small></div>
+    <div><span>Method</span><strong>{{ result.algorithmVersion }}</strong><small>{{ result.capacityApplied ? 'Current capacity applied' : 'Capacity not applied' }}</small></div>
+    <ul><li *ngFor="let reason of result.reasons">{{ reason }}</li></ul>
+  </section>
+</ng-template>
+
+<ng-template #goalNode let-node let-depth="depth">
+  <article class="goal-node" [style.--goal-depth]="depth">
+    <div>
+      <strong>{{ node.goal.title }}</strong>
+      <span>{{ goalLevelLabel(node.goal.level) }} / {{ node.goal.status }}</span>
+      <small>{{ node.goal.domainIds.length ? domainName(node.goal.domainIds[0]) : 'No domain' }}<ng-container *ngIf="node.goal.targetAt"> / target {{ node.goal.targetAt | date:'mediumDate' }}</ng-container></small>
+    </div>
+    <button nz-button nzType="default" type="button" (click)="beginEditGoal(node.goal)">Edit</button>
+  </article>
+  <ng-container *ngFor="let child of node.children" [ngTemplateOutlet]="goalNode" [ngTemplateOutletContext]="{ $implicit: child, depth: depth + 1 }"></ng-container>
+</ng-template>
+
+<nz-drawer
+  [nzVisible]="!!editor"
+  [nzWidth]="editor === 'capacity' || editor === 'priority' ? 720 : 620"
+  [nzClosable]="true"
+  [nzTitle]="editor === 'need' ? 'Record need state' : editor === 'capacity' ? 'Update capacity' : editor === 'link' ? 'Link life domain' : editor === 'goal' ? (editingGoalId ? 'Edit goal' : 'Create goal') : 'Assess priority'"
+  (nzOnClose)="closeEditor()">
+  <ng-container *nzDrawerContent>
+    <ng-container [ngSwitch]="editor">
+      <ng-container *ngSwitchCase="'need'" [ngTemplateOutlet]="needEditor"></ng-container>
+      <ng-container *ngSwitchCase="'capacity'" [ngTemplateOutlet]="capacityEditor"></ng-container>
+      <ng-container *ngSwitchCase="'link'" [ngTemplateOutlet]="linkEditor"></ng-container>
+      <ng-container *ngSwitchCase="'goal'" [ngTemplateOutlet]="goalEditor"></ng-container>
+      <ng-container *ngSwitchCase="'priority'" [ngTemplateOutlet]="priorityEditor"></ng-container>
+    </ng-container>
+  </ng-container>
+</nz-drawer>

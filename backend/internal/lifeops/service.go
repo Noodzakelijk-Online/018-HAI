@@ -407,6 +407,11 @@ func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAs
 	request.EntityType = normalizeIdentifier(request.EntityType)
 	request.EntityID = normalize(request.EntityID)
 	request.Title = normalize(request.Title)
+	request.SourceLabel = normalize(request.SourceLabel)
+	request.SourceURI = normalize(request.SourceURI)
+	if request.SourceLabel == "" {
+		request.SourceLabel = "lifeops:priority_input"
+	}
 	if err := validatePriorityRequest(request, s.now().UTC()); err != nil {
 		return nil, err
 	}
@@ -441,7 +446,7 @@ func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAs
 		}
 		reasons = append(reasons, contribution.Reason)
 	}
-	return &PriorityAssessment{
+	assessment := PriorityAssessment{
 		ID:               uuid.New(),
 		OwnerIdentity:    request.OwnerIdentity,
 		EntityType:       request.EntityType,
@@ -454,8 +459,30 @@ func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAs
 		Reasons:          cleanStrings(reasons),
 		CapacityApplied:  capacityApplied,
 		AlgorithmVersion: priorityAlgorithmVersion,
+		SourceLabel:      request.SourceLabel,
+		SourceURI:        request.SourceURI,
 		AssessedAt:       s.now().UTC(),
-	}, nil
+	}
+	if err := s.repo.SavePriorityAssessment(assessment); err != nil {
+		return nil, err
+	}
+	return &assessment, nil
+}
+
+func (s *Service) PriorityHistory(ownerIdentity, entityType, entityID string, limit int) ([]PriorityAssessment, error) {
+	ownerIdentity = normalize(ownerIdentity)
+	entityType = normalizeIdentifier(entityType)
+	entityID = normalize(entityID)
+	if ownerIdentity == "" {
+		return nil, fmt.Errorf("owner identity is required")
+	}
+	if (entityType == "") != (entityID == "") {
+		return nil, fmt.Errorf("entity type and entity id must be supplied together")
+	}
+	if limit < 1 || limit > 500 {
+		return nil, fmt.Errorf("priority history limit must be between 1 and 500")
+	}
+	return s.repo.PriorityAssessments(ownerIdentity, entityType, entityID, limit)
 }
 
 func (s *Service) validateGoal(goal GoalNode) error {

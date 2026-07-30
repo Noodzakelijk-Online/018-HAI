@@ -27,15 +27,15 @@ type Operation struct {
 	WorkflowID    *uuid.UUID `gorm:"type:uuid;index" json:"workflowId,omitempty"`
 	AccountFeedID *uuid.UUID `gorm:"type:uuid;index" json:"accountFeedId,omitempty"`
 
-	OperationType    string `gorm:"type:text;not null" json:"operationType"`
-	Status           string `gorm:"type:text;not null;index:idx_operations_owner_workspace_status" json:"status"`
-	RiskLevel        string `gorm:"type:text;not null;index" json:"riskLevel"`
-	AutonomyLevel    string `gorm:"type:text;not null" json:"autonomyLevel"`
-	OwnerType        string `gorm:"type:text;not null" json:"ownerType"`
-	CurrentDecision  string `gorm:"type:text;not null;default:'observe_only'" json:"currentDecision"`
-	RequiresApproval bool   `gorm:"not null;default:false;index" json:"requiresApproval"`
-	ApprovalID       *uuid.UUID `gorm:"type:uuid" json:"approvalId,omitempty"`
-	RecommendedAction string `gorm:"type:text" json:"recommendedAction,omitempty"`
+	OperationType     string     `gorm:"type:text;not null" json:"operationType"`
+	Status            string     `gorm:"type:text;not null;index:idx_operations_owner_workspace_status" json:"status"`
+	RiskLevel         string     `gorm:"type:text;not null;index" json:"riskLevel"`
+	AutonomyLevel     string     `gorm:"type:text;not null" json:"autonomyLevel"`
+	OwnerType         string     `gorm:"type:text;not null" json:"ownerType"`
+	CurrentDecision   string     `gorm:"type:text;not null;default:'observe_only'" json:"currentDecision"`
+	RequiresApproval  bool       `gorm:"not null;default:false;index" json:"requiresApproval"`
+	ApprovalID        *uuid.UUID `gorm:"type:uuid" json:"approvalId,omitempty"`
+	RecommendedAction string     `gorm:"type:text" json:"recommendedAction,omitempty"`
 
 	EvidenceJSON        string `gorm:"type:jsonb;not null;default:'{}'" json:"evidence"`
 	WorldModelStateJSON string `gorm:"type:jsonb;not null;default:'{}'" json:"worldModelState"`
@@ -47,7 +47,7 @@ type Operation struct {
 	ResultSummary      string `gorm:"type:text" json:"resultSummary,omitempty"`
 	LastError          string `gorm:"type:text" json:"lastError,omitempty"`
 
-	DedupeKey   string     `gorm:"type:text;not null;index" json:"dedupeKey"`
+	DedupeKey    string     `gorm:"type:text;not null;index" json:"dedupeKey"`
 	NextReviewAt *time.Time `gorm:"index" json:"nextReviewAt,omitempty"`
 
 	CreatedAt   time.Time  `json:"createdAt"`

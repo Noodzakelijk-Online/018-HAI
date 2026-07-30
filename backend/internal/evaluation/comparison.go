@@ -3,6 +3,8 @@ package evaluation
 import (
 	"fmt"
 	"math"
+	"reflect"
+	"strings"
 )
 
 type RegressionThresholds struct {
@@ -147,4 +149,236 @@ func DecidePromotion(candidate RunRecord, baseline *RunRecord, thresholds Regres
 		Reasons:    []string{"canary completed and satisfied all absolute and baseline thresholds"},
 		Comparison: &comparison,
 	}
+}
+
+func NewBaselineComparisonReceipt(spec BaselineComparisonReceiptSpec) (BaselineComparisonReceipt, error) {
+	if !validID(strings.TrimSpace(spec.ID)) || spec.CreatedAt.IsZero() {
+		return BaselineComparisonReceipt{}, fmt.Errorf("evaluation: comparison receipt id and created time are required")
+	}
+	comparison, err := CompareToBaseline(spec.Candidate, spec.Baseline, spec.Thresholds)
+	if err != nil {
+		return BaselineComparisonReceipt{}, err
+	}
+	receipt := BaselineComparisonReceipt{
+		SchemaVersion:         ComparisonReceiptSchemaVersion,
+		ID:                    strings.TrimSpace(spec.ID),
+		CandidateRunID:        spec.Candidate.ID,
+		CandidateRecordDigest: spec.Candidate.RecordDigest,
+		BaselineRunID:         spec.Baseline.ID,
+		BaselineRecordDigest:  spec.Baseline.RecordDigest,
+		Thresholds:            spec.Thresholds,
+		Comparison:            comparison,
+		CreatedAt:             spec.CreatedAt.UTC(),
+	}
+	if err := validateBaselineComparisonReceiptShape(receipt); err != nil {
+		return BaselineComparisonReceipt{}, err
+	}
+	receipt.ReceiptDigest = comparisonReceiptDigest(receipt)
+	return receipt, nil
+}
+
+func ValidateBaselineComparisonReceipt(receipt BaselineComparisonReceipt) error {
+	expected := strings.ToLower(strings.TrimSpace(receipt.ReceiptDigest))
+	receipt.ReceiptDigest = ""
+	if err := validateBaselineComparisonReceiptShape(receipt); err != nil {
+		return err
+	}
+	if !validDigest(expected) || comparisonReceiptDigest(receipt) != expected {
+		return fmt.Errorf("evaluation: comparison receipt digest mismatch")
+	}
+	return nil
+}
+
+func NewPromotionDecisionReceipt(spec PromotionDecisionReceiptSpec) (PromotionDecisionReceipt, error) {
+	if !validID(strings.TrimSpace(spec.ID)) || spec.CreatedAt.IsZero() {
+		return PromotionDecisionReceipt{}, fmt.Errorf("evaluation: promotion receipt id and created time are required")
+	}
+	decision := DecidePromotion(spec.Candidate, spec.Baseline, spec.Thresholds)
+	receipt := PromotionDecisionReceipt{
+		SchemaVersion:         PromotionReceiptSchemaVersion,
+		ID:                    strings.TrimSpace(spec.ID),
+		CandidateRunID:        spec.Candidate.ID,
+		CandidateRecordDigest: spec.Candidate.RecordDigest,
+		ComparisonReceiptID:   strings.TrimSpace(spec.ComparisonReceiptID),
+		Thresholds:            spec.Thresholds,
+		Decision:              clonePromotionDecision(decision),
+		CreatedAt:             spec.CreatedAt.UTC(),
+	}
+	if spec.Baseline != nil {
+		receipt.BaselineRunID = spec.Baseline.ID
+		receipt.BaselineRecordDigest = spec.Baseline.RecordDigest
+	}
+	if err := validatePromotionDecisionReceiptShape(receipt); err != nil {
+		return PromotionDecisionReceipt{}, err
+	}
+	receipt.ReceiptDigest = promotionReceiptDigest(receipt)
+	return receipt, nil
+}
+
+func ValidatePromotionDecisionReceipt(receipt PromotionDecisionReceipt) error {
+	expected := strings.ToLower(strings.TrimSpace(receipt.ReceiptDigest))
+	receipt.ReceiptDigest = ""
+	if err := validatePromotionDecisionReceiptShape(receipt); err != nil {
+		return err
+	}
+	if !validDigest(expected) || promotionReceiptDigest(receipt) != expected {
+		return fmt.Errorf("evaluation: promotion receipt digest mismatch")
+	}
+	return nil
+}
+
+func validateBaselineComparisonReceiptShape(receipt BaselineComparisonReceipt) error {
+	if receipt.SchemaVersion != ComparisonReceiptSchemaVersion ||
+		!validID(receipt.ID) ||
+		!validID(receipt.CandidateRunID) ||
+		!validID(receipt.BaselineRunID) ||
+		receipt.CandidateRunID == receipt.BaselineRunID ||
+		!validDigest(receipt.CandidateRecordDigest) ||
+		!validDigest(receipt.BaselineRecordDigest) ||
+		receipt.CreatedAt.IsZero() {
+		return fmt.Errorf("evaluation: invalid comparison receipt identity, run binding, or time")
+	}
+	if err := receipt.Thresholds.Validate(); err != nil {
+		return err
+	}
+	if receipt.Comparison.CandidateRunID != receipt.CandidateRunID ||
+		receipt.Comparison.BaselineRunID != receipt.BaselineRunID {
+		return fmt.Errorf("evaluation: comparison receipt result is bound to different runs")
+	}
+	return nil
+}
+
+func validatePromotionDecisionReceiptShape(receipt PromotionDecisionReceipt) error {
+	if receipt.SchemaVersion != PromotionReceiptSchemaVersion ||
+		!validID(receipt.ID) ||
+		!validID(receipt.CandidateRunID) ||
+		!validDigest(receipt.CandidateRecordDigest) ||
+		receipt.CreatedAt.IsZero() {
+		return fmt.Errorf("evaluation: invalid promotion receipt identity, candidate, or time")
+	}
+	if err := receipt.Thresholds.Validate(); err != nil {
+		return err
+	}
+	if (receipt.BaselineRunID == "") != (receipt.BaselineRecordDigest == "") {
+		return fmt.Errorf("evaluation: promotion receipt baseline id and digest must be provided together")
+	}
+	if receipt.BaselineRunID != "" {
+		if !validID(receipt.BaselineRunID) ||
+			receipt.BaselineRunID == receipt.CandidateRunID ||
+			!validDigest(receipt.BaselineRecordDigest) {
+			return fmt.Errorf("evaluation: invalid promotion receipt baseline binding")
+		}
+	}
+	if receipt.ComparisonReceiptID != "" && !validID(receipt.ComparisonReceiptID) {
+		return fmt.Errorf("evaluation: invalid comparison receipt reference")
+	}
+	switch receipt.Decision.Code {
+	case PromotionPromote:
+		if !receipt.Decision.Allowed || receipt.Decision.Comparison == nil {
+			return fmt.Errorf("evaluation: promote receipt must contain an allowed comparison decision")
+		}
+	case PromotionHold, PromotionReject:
+		if receipt.Decision.Allowed {
+			return fmt.Errorf("evaluation: hold and reject receipts cannot allow promotion")
+		}
+	default:
+		return fmt.Errorf("evaluation: unknown promotion decision code")
+	}
+	if len(receipt.Decision.Reasons) == 0 {
+		return fmt.Errorf("evaluation: promotion receipt requires at least one reason")
+	}
+	if receipt.Decision.Comparison != nil {
+		if receipt.ComparisonReceiptID == "" ||
+			receipt.Decision.Comparison.CandidateRunID != receipt.CandidateRunID ||
+			receipt.Decision.Comparison.BaselineRunID != receipt.BaselineRunID {
+			return fmt.Errorf("evaluation: compared promotion decisions require a matching comparison receipt")
+		}
+	} else if receipt.ComparisonReceiptID != "" {
+		return fmt.Errorf("evaluation: comparison receipt reference requires a comparison result")
+	}
+	return nil
+}
+
+func validateComparisonReceiptAgainstRuns(
+	receipt BaselineComparisonReceipt,
+	candidate RunRecord,
+	baseline RunRecord,
+) error {
+	if err := ValidateBaselineComparisonReceipt(receipt); err != nil {
+		return err
+	}
+	if receipt.CandidateRunID != candidate.ID ||
+		receipt.CandidateRecordDigest != candidate.RecordDigest ||
+		receipt.BaselineRunID != baseline.ID ||
+		receipt.BaselineRecordDigest != baseline.RecordDigest {
+		return fmt.Errorf("evaluation: comparison receipt run digest binding mismatch")
+	}
+	expected, err := CompareToBaseline(candidate, baseline, receipt.Thresholds)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(expected, receipt.Comparison) {
+		return fmt.Errorf("evaluation: comparison receipt result mismatch")
+	}
+	return nil
+}
+
+func validatePromotionReceiptAgainstRuns(
+	receipt PromotionDecisionReceipt,
+	candidate RunRecord,
+	baseline *RunRecord,
+) error {
+	if err := ValidatePromotionDecisionReceipt(receipt); err != nil {
+		return err
+	}
+	if receipt.CandidateRunID != candidate.ID ||
+		receipt.CandidateRecordDigest != candidate.RecordDigest {
+		return fmt.Errorf("evaluation: promotion receipt candidate digest binding mismatch")
+	}
+	if baseline == nil {
+		if receipt.BaselineRunID != "" || receipt.BaselineRecordDigest != "" {
+			return fmt.Errorf("evaluation: promotion receipt references an unavailable baseline")
+		}
+	} else if receipt.BaselineRunID != baseline.ID ||
+		receipt.BaselineRecordDigest != baseline.RecordDigest {
+		return fmt.Errorf("evaluation: promotion receipt baseline digest binding mismatch")
+	}
+	expected := DecidePromotion(candidate, baseline, receipt.Thresholds)
+	if !reflect.DeepEqual(expected, receipt.Decision) {
+		return fmt.Errorf("evaluation: promotion receipt decision mismatch")
+	}
+	return nil
+}
+
+func comparisonReceiptDigest(receipt BaselineComparisonReceipt) string {
+	receipt.ReceiptDigest = ""
+	return digestJSON(receipt)
+}
+
+func promotionReceiptDigest(receipt PromotionDecisionReceipt) string {
+	receipt.ReceiptDigest = ""
+	return digestJSON(receipt)
+}
+
+func cloneBaselineComparisonReceipt(receipt BaselineComparisonReceipt) BaselineComparisonReceipt {
+	copy := receipt
+	copy.Comparison.Violations = append([]string(nil), receipt.Comparison.Violations...)
+	return copy
+}
+
+func clonePromotionDecisionReceipt(receipt PromotionDecisionReceipt) PromotionDecisionReceipt {
+	copy := receipt
+	copy.Decision = clonePromotionDecision(receipt.Decision)
+	return copy
+}
+
+func clonePromotionDecision(decision PromotionDecision) PromotionDecision {
+	copy := decision
+	copy.Reasons = append([]string(nil), decision.Reasons...)
+	if decision.Comparison != nil {
+		comparison := *decision.Comparison
+		comparison.Violations = append([]string(nil), decision.Comparison.Violations...)
+		copy.Comparison = &comparison
+	}
+	return copy
 }
