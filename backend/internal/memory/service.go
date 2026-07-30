@@ -456,7 +456,15 @@ func readableByOwner(memory *models.ContextMemory, ownerIdentity string) bool {
 		return false
 	}
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
-	return ownerIdentity == "" || memory.OwnerIdentity == "" || memory.OwnerIdentity == ownerIdentity
+	if ownerIdentity == "" {
+		// Unscoped calls are reserved for trusted internal/system workflows.
+		// Authenticated handlers always use the owner-scoped methods below.
+		return true
+	}
+	// Legacy records without an owner are quarantined. Treating them as global
+	// would expose personal memories to every authenticated account.
+	return strings.TrimSpace(memory.OwnerIdentity) != "" &&
+		strings.TrimSpace(memory.OwnerIdentity) == ownerIdentity
 }
 
 func writeableByOwner(memory *models.ContextMemory, ownerIdentity string) bool {

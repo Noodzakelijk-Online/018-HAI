@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"automation-hub-backend/internal/safety"
 )
 
 func TestMain(m *testing.M) {
@@ -95,6 +97,29 @@ func TestRegistryBlocksWhenEmergencyStopActive(t *testing.T) {
 	}
 	if !strings.Contains(result.Message, "emergency stop") || !containsString(result.AuditEvents, "emergency stop blocked agent runtime execution") {
 		t.Fatalf("emergency stop result lacks controlled audit evidence: %#v", result)
+	}
+}
+
+func TestRegistryBlocksWhenPersistedEmergencyStopActive(t *testing.T) {
+	restore := safety.SetEmergencyStopProvider(safety.EmergencyStopProviderFunc(func() (bool, string, error) {
+		return true, "operator paused execution", nil
+	}))
+	defer restore()
+
+	adapter := &fakeAdapter{info: Info{
+		ID:               "test",
+		Enabled:          true,
+		Configured:       true,
+		ExecutionEnabled: true,
+		RequiresApproval: true,
+	}}
+	registry := NewRegistry(adapter)
+	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "run approved work"))
+	if result.Status != "blocked" || adapter.called {
+		t.Fatalf("persisted emergency stop did not prevent runtime execution: %#v", result)
+	}
+	if result.Message != "operator paused execution" {
+		t.Fatalf("blocked reason = %q", result.Message)
 	}
 }
 

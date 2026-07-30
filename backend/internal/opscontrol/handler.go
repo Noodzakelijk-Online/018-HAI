@@ -37,13 +37,27 @@ type pauseRequest struct {
 func (h *Handler) Pause(c *gin.Context) {
 	var req pauseRequest
 	_ = c.ShouldBindJSON(&req)
-	state := h.svc.EngageEmergencyStop(req.Reason, h.actor(c))
+	state, err := h.svc.EngageEmergencyStop(req.Reason, h.actor(c))
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":         "failed to persist emergency-stop state; execution remains blocked",
+			"emergencyStop": h.svc.Control().EmergencyState(),
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"emergencyStop": state})
 }
 
 // Resume disengages the emergency stop.
 func (h *Handler) Resume(c *gin.Context) {
-	state := h.svc.DisengageEmergencyStop(h.actor(c))
+	state, err := h.svc.DisengageEmergencyStop(h.actor(c))
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":         "failed to persist resumed state; execution remains blocked",
+			"emergencyStop": h.svc.Control().EmergencyState(),
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"emergencyStop": state})
 }
 

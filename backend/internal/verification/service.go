@@ -82,18 +82,38 @@ type PursuitLinker interface {
 }
 
 type service struct {
-	repo          Repository
-	sourceService source.Service
-	memoryService memory.Service
-	pursuitLinker PursuitLinker
+	repo              Repository
+	sourceService     source.Service
+	memoryService     memory.Service
+	pursuitLinker     PursuitLinker
+	authorityResolver EvidenceAuthorityResolver
 }
 
 func NewService(repo Repository, sourceService source.Service, memoryService memory.Service, pursuitLinkers ...PursuitLinker) Service {
+	return NewServiceWithAuthorityResolver(repo, sourceService, memoryService, nil, pursuitLinkers...)
+}
+
+func NewServiceWithAuthorityResolver(
+	repo Repository,
+	sourceService source.Service,
+	memoryService memory.Service,
+	authorityResolver EvidenceAuthorityResolver,
+	pursuitLinkers ...PursuitLinker,
+) Service {
 	var pursuitLinker PursuitLinker
 	if len(pursuitLinkers) > 0 {
 		pursuitLinker = pursuitLinkers[0]
 	}
-	return &service{repo: repo, sourceService: sourceService, memoryService: memoryService, pursuitLinker: pursuitLinker}
+	if authorityResolver == nil {
+		authorityResolver = untrustedExternalAuthorityResolver{}
+	}
+	return &service{
+		repo:              repo,
+		sourceService:     sourceService,
+		memoryService:     memoryService,
+		pursuitLinker:     pursuitLinker,
+		authorityResolver: authorityResolver,
+	}
 }
 
 func DefaultService() Service {
@@ -254,7 +274,7 @@ func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questi
 						SourceURI:    ranked.Extraction.SourceURI,
 						SourceLabel:  ranked.Extraction.SourceLabel,
 						Snippet:      firstNonEmpty(ranked.Extraction.Summary, ranked.Extraction.Text),
-						Authority:    "connected_account",
+						Authority:    authorityConnectedAccount,
 						Freshness:    freshnessLabel(ranked.Extraction.UpdatedAt),
 						QualityScore: math.Min(1, 0.62+ranked.Score/2),
 						Used:         true,
@@ -267,7 +287,11 @@ func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questi
 		*logs = append(*logs, "connected-source index is not configured; using only supplied evidence")
 	}
 	for _, input := range request.ExternalEvidence {
-		score := evidenceQuality(input, request.Question)
+		authority := normalizeAuthorityResolution(s.authorityResolver.ResolveExternalEvidence(request, input))
+		score := evidenceQuality(input, authority, request.Question)
+		if !authority.Trusted {
+			*logs = append(*logs, authority.Reason)
+		}
 		evidence = append(evidence, models.VerificationEvidence{
 			RunID:        runID,
 			SourceType:   firstNonEmpty(input.SourceType, "external"),
@@ -275,12 +299,12 @@ func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questi
 			SourceURI:    input.SourceURI,
 			SourceLabel:  input.SourceLabel,
 			Snippet:      input.Snippet,
-			Authority:    input.Authority,
+			Authority:    authority.Authority,
 			Freshness:    input.Freshness,
 			QualityScore: score,
 			Used:         score >= 0.35,
 			Rejected:     score < 0.35,
-			RejectReason: rejectReason(score, input),
+			RejectReason: rejectReason(score, input, authority),
 		})
 	}
 	sort.SliceStable(evidence, func(i, j int) bool {
@@ -374,6 +398,12 @@ func verifyClaims(claims []models.VerificationClaim, evidence []models.Verificat
 		}
 		claim.SourceRefs = firstNonEmpty(best.SourceURI, best.SourceID, best.SourceLabel)
 		claim.Confidence = math.Round((score+best.QualityScore)/2*100) / 100
+		if !isTrustedEvidence(best.Authority) {
+			claim.Status = StatusNeedsReview
+			claim.NeedsReview = true
+			claim.SupportExplanation = "source content overlaps the claim, but its provenance authority is untrusted; review is required"
+			continue
+		}
 		claim.SupportExplanation = "claim overlaps supporting evidence and has source provenance"
 		claim.Status = StatusSourceSupported
 		if claim.Confidence >= 0.72 {
@@ -489,12 +519,12 @@ func needsExternal(text string) bool {
 	return containsAny(strings.ToLower(text), "latest", "current", "today", "public", "official", "legal", "government", "financial", "medical")
 }
 
-func evidenceQuality(input EvidenceInput, question string) float64 {
+func evidenceQuality(input EvidenceInput, authority EvidenceAuthorityResolution, question string) float64 {
 	score := 0.35
-	if input.Official {
+	if authority.Trusted && authority.Official {
 		score += 0.25
 	}
-	if input.Primary {
+	if authority.Trusted && authority.Primary {
 		score += 0.2
 	}
 	if input.SourceURI != "" {
@@ -515,12 +545,15 @@ func evidenceQuality(input EvidenceInput, question string) float64 {
 	return math.Round(score*100) / 100
 }
 
-func rejectReason(score float64, input EvidenceInput) string {
+func rejectReason(score float64, input EvidenceInput, authority EvidenceAuthorityResolution) string {
 	if score >= 0.35 {
 		return ""
 	}
 	if input.Generated {
 		return "low-quality generated source"
+	}
+	if !authority.Trusted {
+		return authority.Reason
 	}
 	return "source authority or relevance too weak"
 }

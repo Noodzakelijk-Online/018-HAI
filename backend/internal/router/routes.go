@@ -54,6 +54,7 @@ import (
 	"automation-hub-backend/internal/rbac"
 	"automation-hub-backend/internal/research"
 	"automation-hub-backend/internal/runtimelab"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/serena"
 	"automation-hub-backend/internal/source"
@@ -89,6 +90,10 @@ func initializeRoutes(router *gin.Engine) error {
 	v1.Use(backendAPIKeyMiddleware())
 	v1.Use(identityMiddleware())
 	{
+		modelIntelService := modelintelligence.DefaultService()
+		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
+		opsControlService := phase2Module.OpsControl()
+		safety.SetEmergencyStopProvider(opsControlService.Control())
 		runtimeRegistry := agentruntime.DefaultRegistry()
 		// The automation executor and runtime-control routes must share one
 		// registry so an approved task can be cancelled by its actual owner.
@@ -204,12 +209,10 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeHAIOSRoutes(v1, osHandler)
 		initializeTaskRoutes(v1, task.NewHandler(taskService))
-		modelIntelService := modelintelligence.DefaultService()
 		initializeModelIntelligenceRoutes(v1, modelintelligence.NewHandler(modelIntelService))
 		initializeHardwareRoutes(v1, hardwareprofile.NewHandler(hardwareprofile.DefaultService()))
 		privacyService := privacyfilter.DefaultService()
 		initializePrivacyRoutes(v1, privacyfilter.NewHandler(privacyService))
-		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
 		initializePhase2Routes(v1, phase2Module.Handler())
 		runtimeLabService := runtimelab.NewService(phase2Module.Broker(), phase2Module.Service(), phase2Module.OwnerUserID(), phase2Module.WorkspaceID())
 		initializeRuntimeLabRoutes(v1, runtimelab.NewHandler(runtimeLabService))
@@ -219,7 +222,7 @@ func initializeRoutes(router *gin.Engine) error {
 		})
 		seedAccountFeeds(feedRegistry, phase2Module)
 		initializeAccountFeedRoutes(v1, accountfeed.NewHandler(feedRegistry, phase2Module.OwnerUserID(), phase2Module.WorkspaceID()))
-		initializeOpsControlRoutes(v1, opscontrol.NewHandler(phase2Module.OpsControl()))
+		initializeOpsControlRoutes(v1, opscontrol.NewHandler(opsControlService))
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }

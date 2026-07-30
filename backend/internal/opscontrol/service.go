@@ -49,7 +49,7 @@ func (s *Service) Control() *Controller { return s.control }
 func (s *Service) SetBackgroundRunner(r BackgroundRunner) { s.runner = r }
 
 // EngageEmergencyStop halts all background processing (persisted).
-func (s *Service) EngageEmergencyStop(reason, actor string) EmergencyStopState {
+func (s *Service) EngageEmergencyStop(reason, actor string) (EmergencyStopState, error) {
 	if reason == "" {
 		reason = "operator-engaged emergency stop"
 	}
@@ -57,7 +57,7 @@ func (s *Service) EngageEmergencyStop(reason, actor string) EmergencyStopState {
 }
 
 // DisengageEmergencyStop clears the emergency stop (persisted).
-func (s *Service) DisengageEmergencyStop(actor string) EmergencyStopState {
+func (s *Service) DisengageEmergencyStop(actor string) (EmergencyStopState, error) {
 	return s.control.Disengage(actor, s.now().UTC())
 }
 
@@ -139,7 +139,12 @@ func (s *Service) Readiness(ctx context.Context) Readiness {
 	gates = append(gates, ReadinessGate{Name: "background_operations_smoke", Status: GatePass, Evidence: "scripts/smoke-background-operations.sh (run to re-verify)"})
 
 	// Emergency stop — verifiable (see /windows-runtime/emergency-stop/verify).
-	gates = append(gates, ReadinessGate{Name: "emergency_stop_works", Status: GatePass, Evidence: "persisted emergency stop; halts background processing (verify endpoint proves it)"})
+	_, _, stopErr := s.control.EmergencyStopStatus()
+	if stopErr != nil {
+		gates = append(gates, ReadinessGate{Name: "emergency_stop_works", Status: GateFail, Evidence: "persisted emergency-stop state is unavailable", Remediation: "repair the Phase 2 state directory before resuming execution"})
+	} else {
+		gates = append(gates, ReadinessGate{Name: "emergency_stop_works", Status: GatePass, Evidence: "persisted emergency stop; halts background processing (verify endpoint proves it)"})
+	}
 
 	// No external sends without approval — enforced by design.
 	gates = append(gates, ReadinessGate{Name: "no_external_sends_without_approval", Status: GatePass, Evidence: "only the local safe worker executes; external runtimes/bridges refuse without approval"})
@@ -195,13 +200,15 @@ func (s *Service) VerifyEmergencyStop(ctx context.Context) (EmergencyStopVerific
 	if s.runner == nil {
 		return EmergencyStopVerification{}, fmt.Errorf("opscontrol: no background runner wired")
 	}
-	priorEngaged := s.control.EmergencyStop()
+	priorState := s.control.EmergencyState()
 
-	s.control.Engage("emergency-stop self-verification", "system", s.now().UTC())
+	if _, err := s.control.Engage("emergency-stop self-verification", "system", s.now().UTC()); err != nil {
+		return EmergencyStopVerification{}, fmt.Errorf("engage emergency stop for verification: %w", err)
+	}
 	processed, err := s.runner(ctx)
 	if err != nil {
 		// Restore before returning.
-		s.restore(priorEngaged)
+		_ = s.restore(priorState)
 		return EmergencyStopVerification{}, err
 	}
 
@@ -210,8 +217,10 @@ func (s *Service) VerifyEmergencyStop(ctx context.Context) (EmergencyStopVerific
 		ProcessedDuringStop: processed,
 		Halted:              processed == 0,
 	}
-	s.restore(priorEngaged)
-	v.RestoredEngaged = s.control.EmergencyStop() == priorEngaged
+	if err := s.restore(priorState); err != nil {
+		return EmergencyStopVerification{}, fmt.Errorf("restore emergency stop after verification: %w", err)
+	}
+	v.RestoredEngaged = s.control.EmergencyStop() == priorState.Engaged
 	if v.Halted {
 		v.Detail = "emergency stop halted background processing (0 operations processed while engaged)"
 	} else {
@@ -220,10 +229,19 @@ func (s *Service) VerifyEmergencyStop(ctx context.Context) (EmergencyStopVerific
 	return v, nil
 }
 
-func (s *Service) restore(engaged bool) {
-	if engaged {
-		s.control.Engage("restored after emergency-stop verification", "system", s.now().UTC())
-	} else {
-		s.control.Disengage("system", s.now().UTC())
+func (s *Service) restore(state EmergencyStopState) error {
+	if state.Engaged {
+		reason := state.Reason
+		if reason == "" {
+			reason = "restored after emergency-stop verification"
+		}
+		actor := state.Actor
+		if actor == "" {
+			actor = "system"
+		}
+		_, err := s.control.Engage(reason, actor, s.now().UTC())
+		return err
 	}
+	_, err := s.control.Disengage("system", s.now().UTC())
+	return err
 }

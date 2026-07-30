@@ -32,38 +32,84 @@ func (f *fakeJobRepo) Enqueue(job *models.DurableJob) (*models.DurableJob, error
 	return &stored, nil
 }
 
-func (f *fakeJobRepo) ClaimDue(workerID string, now time.Time, limit int) ([]models.DurableJob, error) {
+func (f *fakeJobRepo) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
+func (f *fakeJobRepo) ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error) {
+	if queue == "" {
+		queue = "default"
+	}
 	claimed := []models.DurableJob{}
 	for _, job := range f.jobs {
 		if len(claimed) >= limit {
 			break
 		}
-		if job.Status != models.DurableJobPending || job.RunAt.After(now) {
+		if job.Queue != queue || job.Status != models.DurableJobPending || job.RunAt.After(now) {
 			continue
 		}
 		job.Status = models.DurableJobRunning
 		lockedAt := now
 		job.LockedBy, job.LockedAt = workerID, &lockedAt
+		job.LeaseGeneration++
 		claimed = append(claimed, *job)
 	}
 	return claimed, nil
 }
 
-func (f *fakeJobRepo) MarkSucceeded(id uuid.UUID, now time.Time) error {
-	f.jobs[id].Status = models.DurableJobSucceeded
-	return nil
+func (f *fakeJobRepo) MarkSucceeded(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
+	job := f.jobs[id]
+	if !sourceFakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
+	job.Status = models.DurableJobSucceeded
+	job.CompletedAt = &now
+	return true, nil
 }
 
-func (f *fakeJobRepo) MarkForRetry(id uuid.UUID, runAt time.Time, attempts int, lastErr string) error {
+func (f *fakeJobRepo) MarkForRetry(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, attempts int, lastErr string) (bool, error) {
 	job := f.jobs[id]
+	if !sourceFakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
 	job.Status, job.RunAt, job.Attempts, job.LastError = models.DurableJobPending, runAt, attempts, lastErr
-	return nil
+	return true, nil
 }
 
-func (f *fakeJobRepo) MarkDead(id uuid.UUID, now time.Time, attempts int, lastErr string) error {
+func (f *fakeJobRepo) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error) {
 	job := f.jobs[id]
+	if !sourceFakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
 	job.Status, job.Attempts, job.LastError = models.DurableJobDead, attempts, lastErr
-	return nil
+	job.CompletedAt = &now
+	return true, nil
+}
+
+func (f *fakeJobRepo) ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
+	job := f.jobs[id]
+	if !sourceFakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
+	job.LockedAt = &now
+	return true, nil
+}
+
+func sourceFakeLeaseOwned(job *models.DurableJob, workerID string, leaseGeneration int64) bool {
+	return job != nil &&
+		job.Status == models.DurableJobRunning &&
+		job.LockedBy == workerID &&
+		job.LeaseGeneration == leaseGeneration
 }
 
 func (f *fakeJobRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {

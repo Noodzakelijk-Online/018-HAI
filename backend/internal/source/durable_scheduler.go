@@ -55,7 +55,7 @@ func startDurableScheduler(ctx context.Context, service Service, interval time.D
 	if err != nil {
 		return err
 	}
-	runner := durablejob.NewRunner(repo, durablejob.Options{})
+	runner := durablejob.NewRunner(repo, durablejob.Options{Queue: "source"})
 	if err := RegisterDurableScheduling(runner, service, interval); err != nil {
 		return err
 	}
