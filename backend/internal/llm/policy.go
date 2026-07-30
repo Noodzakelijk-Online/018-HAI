@@ -161,13 +161,37 @@ type GenerationResult struct {
 	ModelID          string    `json:"modelId"`
 	ModelName        string    `json:"modelName"`
 	Tier             string    `json:"tier"`
-	Output           string    `json:"output"`
+	Output           string    `json:"output,omitempty"`
 	Status           string    `json:"status"`
 	Reason           string    `json:"reason"`
 	EstimatedCostEUR float64   `json:"estimatedCostEur"`
+	InputTokens      int       `json:"inputTokens"`
+	OutputTokens     int       `json:"outputTokens"`
+	UsageSource      string    `json:"usageSource"`
+	AuditStatus      string    `json:"auditStatus"`
 	DurationMs       int64     `json:"durationMs"`
 	FallbackPath     []string  `json:"fallbackPath"`
 	LoggedAt         time.Time `json:"loggedAt"`
+}
+
+// providerUsage is intentionally limited to aggregate counts. HAI does not
+// persist prompts, completions, or provider response payloads as usage data.
+type providerUsage struct {
+	InputTokens  int
+	OutputTokens int
+	HasInput     bool
+	HasOutput    bool
+}
+
+func (usage providerUsage) source() string {
+	switch {
+	case usage.HasInput && usage.HasOutput:
+		return "provider_reported"
+	case usage.HasInput || usage.HasOutput:
+		return "provider_reported_partial"
+	default:
+		return "estimated"
+	}
 }
 
 type ProviderProbeResult struct {
@@ -183,6 +207,10 @@ type ProviderProbeResult struct {
 	RequiresReview   bool       `json:"requiresReview"`
 	CheckedAt        time.Time  `json:"checkedAt"`
 	LastSuccessfulAt *time.Time `json:"lastSuccessfulAt,omitempty"`
+	// ReportedModelIDs is transient evidence used by the model-maintenance
+	// gate. It is not returned or persisted because the configured model ID is
+	// already sufficient operator context for a maintenance decision.
+	ReportedModelIDs []string `json:"-"`
 }
 
 type FallbackOption struct {
@@ -203,11 +231,15 @@ type SkippedModel struct {
 }
 
 type Service struct {
-	policy       Policy
-	mu           sync.Mutex
-	logs         []RouteDecision
-	usage        map[string]UsageCounter
-	probeHistory ProbeHistoryRepository
+	policy             Policy
+	mu                 sync.Mutex
+	logs               []RouteDecision
+	usage              map[string]UsageCounter
+	probeHistory       ProbeHistoryRepository
+	maintenanceHistory ModelMaintenanceRepository
+	generationHistory  GenerationHistoryRepository
+	maintenanceMu      sync.Mutex
+	maintenanceRunning map[string]*sync.Mutex
 }
 
 type UsageCounter struct {
@@ -217,17 +249,29 @@ type UsageCounter struct {
 }
 
 func NewServiceFromEnv() (*Service, error) {
-	return newServiceFromEnv(nil)
+	return newServiceFromEnv(nil, nil, nil)
 }
 
 // NewServiceFromEnvWithProbeHistory keeps live provider probing and durable
 // readiness evidence together for the API process. Other in-process users can
 // still construct a policy-only service without opening a database connection.
 func NewServiceFromEnvWithProbeHistory(probeHistory ProbeHistoryRepository) (*Service, error) {
-	return newServiceFromEnv(probeHistory)
+	return newServiceFromEnv(probeHistory, nil, nil)
 }
 
-func newServiceFromEnv(probeHistory ProbeHistoryRepository) (*Service, error) {
+// NewServiceFromEnvWithHistories wires the optional, durable provider-readiness
+// and per-model maintenance histories into one router service.
+func NewServiceFromEnvWithHistories(probeHistory ProbeHistoryRepository, maintenanceHistory ModelMaintenanceRepository) (*Service, error) {
+	return newServiceFromEnv(probeHistory, maintenanceHistory, nil)
+}
+
+// NewServiceFromEnvWithOperationalHistories keeps readiness, local model
+// maintenance, and redacted generation evidence durable for the API process.
+func NewServiceFromEnvWithOperationalHistories(probeHistory ProbeHistoryRepository, maintenanceHistory ModelMaintenanceRepository, generationHistory GenerationHistoryRepository) (*Service, error) {
+	return newServiceFromEnv(probeHistory, maintenanceHistory, generationHistory)
+}
+
+func newServiceFromEnv(probeHistory ProbeHistoryRepository, maintenanceHistory ModelMaintenanceRepository, generationHistory GenerationHistoryRepository) (*Service, error) {
 	policy := defaultPolicy()
 	if raw := strings.TrimSpace(os.Getenv("LLM_PROVIDERS_JSON")); raw != "" {
 		var providers []Provider
@@ -244,7 +288,7 @@ func newServiceFromEnv(probeHistory ProbeHistoryRepository) (*Service, error) {
 	}
 
 	policy = annotateInfrastructure(annotatePolicyReadiness(normalizeProbePolicy(policy)))
-	return &Service{policy: policy, logs: []RouteDecision{}, usage: map[string]UsageCounter{}, probeHistory: probeHistory}, nil
+	return &Service{policy: policy, logs: []RouteDecision{}, usage: map[string]UsageCounter{}, probeHistory: probeHistory, maintenanceHistory: maintenanceHistory, generationHistory: generationHistory, maintenanceRunning: map[string]*sync.Mutex{}}, nil
 }
 
 func (s *Service) Policy() Policy {
@@ -288,6 +332,78 @@ func (s *Service) Logs() []RouteDecision {
 	copied := make([]RouteDecision, len(s.logs))
 	copy(copied, s.logs)
 	return copied
+}
+
+// GenerationHistory returns redacted generation evidence. The returned records
+// never contain task text, prompts, model output, source content, credentials,
+// or raw provider payloads.
+func (s *Service) GenerationHistory(limit int) ([]GenerationResult, error) {
+	if s.generationHistory == nil {
+		return []GenerationResult{}, nil
+	}
+	records, err := s.generationHistory.FindRecentGenerations(limit)
+	if err != nil {
+		return nil, fmt.Errorf("load generation history: %w", err)
+	}
+	results := make([]GenerationResult, 0, len(records))
+	for _, record := range records {
+		fallbackPath := []string{}
+		if strings.TrimSpace(record.FallbackPathJSON) != "" {
+			_ = json.Unmarshal([]byte(record.FallbackPathJSON), &fallbackPath)
+		}
+		results = append(results, GenerationResult{
+			ProviderID:       record.ProviderID,
+			ModelID:          record.ModelID,
+			ModelName:        record.ModelName,
+			Tier:             record.Tier,
+			Status:           record.Status,
+			Reason:           record.Reason,
+			EstimatedCostEUR: record.EstimatedCostEUR,
+			InputTokens:      record.InputTokens,
+			OutputTokens:     record.OutputTokens,
+			UsageSource:      record.UsageSource,
+			AuditStatus:      "recorded",
+			DurationMs:       record.DurationMs,
+			FallbackPath:     fallbackPath,
+			LoggedAt:         record.LoggedAt,
+		})
+	}
+	return results, nil
+}
+
+func (s *Service) recordGeneration(result *GenerationResult) {
+	if result == nil {
+		return
+	}
+	if s.generationHistory == nil {
+		result.AuditStatus = "not_configured"
+		return
+	}
+	fallbackPath, err := json.Marshal(result.FallbackPath)
+	if err != nil {
+		result.AuditStatus = "record_failed"
+		return
+	}
+	record := &models.LLMGenerationRecord{
+		ProviderID:       result.ProviderID,
+		ModelID:          result.ModelID,
+		ModelName:        result.ModelName,
+		Tier:             result.Tier,
+		Status:           result.Status,
+		Reason:           safety.RedactSecrets(result.Reason),
+		EstimatedCostEUR: result.EstimatedCostEUR,
+		InputTokens:      result.InputTokens,
+		OutputTokens:     result.OutputTokens,
+		UsageSource:      result.UsageSource,
+		DurationMs:       result.DurationMs,
+		FallbackPathJSON: string(fallbackPath),
+		LoggedAt:         result.LoggedAt,
+	}
+	if _, err := s.generationHistory.RecordGeneration(record); err != nil {
+		result.AuditStatus = "record_failed"
+		return
+	}
+	result.AuditStatus = "recorded"
 }
 
 func (s *Service) ProbeProviders() []ProviderProbeResult {
@@ -371,9 +487,17 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 	candidates, skipped := s.candidates(classification, request)
 	estimatedInputTokens := estimateTokens(request.Task)
 	estimatedOutputTokens := estimateRouteOutputTokens(classification)
+	for len(candidates) > 0 {
+		maintenance := s.ensureModelFresh(candidates[0].provider, candidates[0].model)
+		if !maintenance.BlocksExecution {
+			break
+		}
+		skipped = append(skipped, SkippedModel{ProviderID: candidates[0].provider.ID, ModelID: candidates[0].model.ID, Reason: "daily model maintenance blocked this model: " + maintenance.Reason})
+		candidates = candidates[1:]
+	}
 	if len(candidates) == 0 {
 		decision := RouteDecision{
-			Reason:                "No enabled model satisfies the task, budget, quota, and approval policy.",
+			Reason:                "No enabled model satisfies the task, budget, quota, approval, and daily maintenance policy.",
 			EstimatedInputTokens:  estimatedInputTokens,
 			EstimatedOutputTokens: estimatedOutputTokens,
 			Classification:        classification,
@@ -408,7 +532,8 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 	return decision, nil
 }
 
-func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
+func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, err error) {
+	defer func() { s.recordGeneration(result) }()
 	started := time.Now().UTC()
 	if safety.EmergencyStopActive() {
 		return &GenerationResult{
@@ -418,12 +543,15 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			LoggedAt:   time.Now().UTC(),
 		}, nil
 	}
+	routeRequest := RouteRequest{Task: request.Task}
+	if request.RouteRequest != nil {
+		routeRequest = *request.RouteRequest
+		if strings.TrimSpace(routeRequest.Task) == "" {
+			routeRequest.Task = request.Task
+		}
+	}
 	decision := request.RouteDecision
 	if decision == nil || decision.SelectedModelID == "" {
-		routeRequest := RouteRequest{Task: request.Task}
-		if request.RouteRequest != nil {
-			routeRequest = *request.RouteRequest
-		}
 		routed, err := s.Route(routeRequest)
 		if err != nil {
 			return nil, err
@@ -474,6 +602,68 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 			LoggedAt:         time.Now().UTC(),
 		}, nil
 	}
+	maintenance := s.ensureModelFresh(provider, model)
+	if maintenance.BlocksExecution {
+		// A supplied decision can be older than its per-model maintenance
+		// record. Re-run the full policy once so a failed refresh does not
+		// strand an otherwise eligible task when a safe fallback exists.
+		// Route performs the same maintenance gate for every candidate, so
+		// this cannot bypass a failed or stale model.
+		rerouted, routeErr := s.Route(routeRequest)
+		if routeErr != nil {
+			return nil, routeErr
+		}
+		if rerouted.SelectedModelID != "" && (rerouted.SelectedProviderID != provider.ID || rerouted.SelectedModelID != model.ID) {
+			decision = &rerouted
+			provider, model, ok = s.findProviderModel(decision.SelectedProviderID, decision.SelectedModelID)
+			if !ok {
+				return nil, fmt.Errorf("rerouted provider/model not found: %s/%s", decision.SelectedProviderID, decision.SelectedModelID)
+			}
+			if (provider.Paid || model.EstimatedCostEUR > 0 || model.Tier == TierExpensive || model.RequiresApproval) && !request.AllowPaidApproved {
+				return &GenerationResult{
+					ProviderID:       provider.ID,
+					ModelID:          model.ID,
+					ModelName:        model.Name,
+					Tier:             model.Tier,
+					Status:           "blocked",
+					Reason:           "daily model maintenance selected a paid or approval-required fallback, which remains disabled until manually approved",
+					EstimatedCostEUR: model.EstimatedCostEUR,
+					DurationMs:       time.Since(started).Milliseconds(),
+					FallbackPath:     fallbackLabels(decision.FallbackPath),
+					LoggedAt:         time.Now().UTC(),
+				}, nil
+			}
+			endpoint = strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
+			readiness = providerRuntimeReadiness(provider)
+			if !readiness.configured {
+				return &GenerationResult{
+					ProviderID:       provider.ID,
+					ModelID:          model.ID,
+					ModelName:        model.Name,
+					Tier:             model.Tier,
+					Status:           generationStatusForReadiness(readiness.status),
+					Reason:           readiness.reason,
+					EstimatedCostEUR: model.EstimatedCostEUR,
+					DurationMs:       time.Since(started).Milliseconds(),
+					FallbackPath:     fallbackLabels(decision.FallbackPath),
+					LoggedAt:         time.Now().UTC(),
+				}, nil
+			}
+		} else {
+			return &GenerationResult{
+				ProviderID:       provider.ID,
+				ModelID:          model.ID,
+				ModelName:        model.Name,
+				Tier:             model.Tier,
+				Status:           "skipped",
+				Reason:           "daily model maintenance blocked generation: " + maintenance.Reason,
+				EstimatedCostEUR: model.EstimatedCostEUR,
+				DurationMs:       time.Since(started).Milliseconds(),
+				FallbackPath:     fallbackLabels(decision.FallbackPath),
+				LoggedAt:         time.Now().UTC(),
+			}, nil
+		}
+	}
 	if strictReason := s.strictProbeReason(provider, normalizeProbePolicy(s.policy), time.Now().UTC()); strictReason != "" {
 		return &GenerationResult{
 			ProviderID:       provider.ID,
@@ -520,7 +710,7 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 		}
 	}
 
-	output, err := s.callProvider(context.Background(), provider, model, endpoint, request)
+	output, reportedUsage, err := s.callProvider(context.Background(), provider, model, endpoint, request)
 	if err != nil {
 		return &GenerationResult{
 			ProviderID:       provider.ID,
@@ -537,6 +727,12 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 	}
 	inputTokens := estimateTokens(buildPrompt(request))
 	outputTokens := estimateTokens(output)
+	if reportedUsage.HasInput {
+		inputTokens = reportedUsage.InputTokens
+	}
+	if reportedUsage.HasOutput {
+		outputTokens = reportedUsage.OutputTokens
+	}
 	actualCostEUR := estimateModelUsageCostEUR(model, inputTokens, outputTokens)
 	if actualCostEUR == 0 {
 		actualCostEUR = model.EstimatedCostEUR
@@ -551,6 +747,9 @@ func (s *Service) Generate(request GenerateRequest) (*GenerationResult, error) {
 		Status:           "completed",
 		Reason:           "model endpoint returned a draft; verification must still ground important claims",
 		EstimatedCostEUR: actualCostEUR,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		UsageSource:      reportedUsage.source(),
 		DurationMs:       time.Since(started).Milliseconds(),
 		FallbackPath:     fallbackLabels(decision.FallbackPath),
 		LoggedAt:         time.Now().UTC(),
@@ -571,7 +770,7 @@ func (s *Service) findProviderModel(providerID, modelID string) (Provider, Model
 	return Provider{}, Model{}, false
 }
 
-func (s *Service) callProvider(ctx context.Context, provider Provider, model Model, endpoint string, request GenerateRequest) (string, error) {
+func (s *Service) callProvider(ctx context.Context, provider Provider, model Model, endpoint string, request GenerateRequest) (string, providerUsage, error) {
 	timeout := intEnv("LLM_GENERATION_TIMEOUT_SECONDS", 60)
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -580,7 +779,7 @@ func (s *Service) callProvider(ctx context.Context, provider Provider, model Mod
 	case "ollama":
 		return callOllama(ctx, endpoint, model.ID, prompt, request)
 	case "odysseus":
-		return "", errors.New(odysseusExecutionBlockedReason())
+		return "", providerUsage{}, errors.New(odysseusExecutionBlockedReason())
 	default:
 		return callOpenAICompatible(ctx, endpoint, provider, model.ID, prompt, request)
 	}
@@ -648,7 +847,8 @@ func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
 		}
 		return result
 	}
-	result.ModelsSeen = countProbeModels(provider, raw)
+	result.ReportedModelIDs = probeModelIDs(provider, raw)
+	result.ModelsSeen = len(result.ReportedModelIDs)
 	result.Live = true
 	result.Status = "live"
 	if result.ModelsSeen > 0 {
@@ -717,25 +917,42 @@ func probeOdysseusProvider(provider Provider, result ProviderProbeResult, starte
 }
 
 func countProbeModels(provider Provider, raw []byte) int {
-	if provider.ID == "ollama" {
-		var decoded struct {
-			Models []interface{} `json:"models"`
-		}
-		if err := json.Unmarshal(raw, &decoded); err == nil {
-			return len(decoded.Models)
-		}
-		return 0
-	}
-	var decoded struct {
-		Data []interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &decoded); err == nil {
-		return len(decoded.Data)
-	}
-	return 0
+	return len(probeModelIDs(provider, raw))
 }
 
-func callOllama(ctx context.Context, endpoint, modelID, prompt string, request GenerateRequest) (string, error) {
+func probeModelIDs(provider Provider, raw []byte) []string {
+	ids := []string{}
+	if provider.ID == "ollama" {
+		var decoded struct {
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(raw, &decoded); err == nil {
+			for _, model := range decoded.Models {
+				if id := strings.TrimSpace(model.Name); id != "" {
+					ids = append(ids, id)
+				}
+			}
+		}
+		return uniqueStrings(ids)
+	}
+	var decoded struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		for _, model := range decoded.Data {
+			if id := strings.TrimSpace(model.ID); id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return uniqueStrings(ids)
+}
+
+func callOllama(ctx context.Context, endpoint, modelID, prompt string, request GenerateRequest) (string, providerUsage, error) {
 	payload := map[string]interface{}{
 		"model":  modelID,
 		"prompt": prompt,
@@ -746,36 +963,47 @@ func callOllama(ctx context.Context, endpoint, modelID, prompt string, request G
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/api/generate", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := noRedirectHTTPClient().Do(req)
 	if err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("ollama returned HTTP %d: %s", resp.StatusCode, compactOutput(raw, 500))
+		return "", providerUsage{}, fmt.Errorf("ollama returned HTTP %d: %s", resp.StatusCode, compactOutput(raw, 500))
 	}
 	var decoded struct {
-		Response string `json:"response"`
-		Error    string `json:"error"`
+		Response        string `json:"response"`
+		Error           string `json:"error"`
+		PromptEvalCount *int   `json:"prompt_eval_count"`
+		EvalCount       *int   `json:"eval_count"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	if decoded.Error != "" {
-		return "", fmt.Errorf("%s", decoded.Error)
+		return "", providerUsage{}, fmt.Errorf("%s", decoded.Error)
 	}
-	return decoded.Response, nil
+	usage := providerUsage{}
+	if decoded.PromptEvalCount != nil {
+		usage.InputTokens = *decoded.PromptEvalCount
+		usage.HasInput = true
+	}
+	if decoded.EvalCount != nil {
+		usage.OutputTokens = *decoded.EvalCount
+		usage.HasOutput = true
+	}
+	return decoded.Response, usage, nil
 }
 
-func callOpenAICompatible(ctx context.Context, endpoint string, provider Provider, modelID, prompt string, request GenerateRequest) (string, error) {
+func callOpenAICompatible(ctx context.Context, endpoint string, provider Provider, modelID, prompt string, request GenerateRequest) (string, providerUsage, error) {
 	maxTokens := request.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 800
@@ -791,11 +1019,11 @@ func callOpenAICompatible(ctx context.Context, endpoint string, provider Provide
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if provider.APIKeyEnv != "" {
@@ -805,12 +1033,12 @@ func callOpenAICompatible(ctx context.Context, endpoint string, provider Provide
 	}
 	resp, err := noRedirectHTTPClient().Do(req)
 	if err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("openai-compatible endpoint returned HTTP %d: %s", resp.StatusCode, compactOutput(raw, 500))
+		return "", providerUsage{}, fmt.Errorf("openai-compatible endpoint returned HTTP %d: %s", resp.StatusCode, compactOutput(raw, 500))
 	}
 	var decoded struct {
 		Choices []struct {
@@ -818,18 +1046,39 @@ func callOpenAICompatible(ctx context.Context, endpoint string, provider Provide
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     *int `json:"prompt_tokens"`
+			CompletionTokens *int `json:"completion_tokens"`
+			InputTokens      *int `json:"input_tokens"`
+			OutputTokens     *int `json:"output_tokens"`
+		} `json:"usage"`
 		Error interface{} `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return "", err
+		return "", providerUsage{}, err
 	}
 	if decoded.Error != nil {
-		return "", fmt.Errorf("endpoint returned error: %v", decoded.Error)
+		return "", providerUsage{}, fmt.Errorf("endpoint returned error: %v", decoded.Error)
 	}
 	if len(decoded.Choices) == 0 {
-		return "", fmt.Errorf("endpoint returned no choices")
+		return "", providerUsage{}, fmt.Errorf("endpoint returned no choices")
 	}
-	return decoded.Choices[0].Message.Content, nil
+	usage := providerUsage{}
+	if decoded.Usage.PromptTokens != nil {
+		usage.InputTokens = *decoded.Usage.PromptTokens
+		usage.HasInput = true
+	} else if decoded.Usage.InputTokens != nil {
+		usage.InputTokens = *decoded.Usage.InputTokens
+		usage.HasInput = true
+	}
+	if decoded.Usage.CompletionTokens != nil {
+		usage.OutputTokens = *decoded.Usage.CompletionTokens
+		usage.HasOutput = true
+	} else if decoded.Usage.OutputTokens != nil {
+		usage.OutputTokens = *decoded.Usage.OutputTokens
+		usage.HasOutput = true
+	}
+	return decoded.Choices[0].Message.Content, usage, nil
 }
 
 func (s *Service) addLog(decision RouteDecision) {
@@ -1219,7 +1468,7 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 
 func isLoopbackOnlyProvider(providerID string) bool {
 	switch providerID {
-	case "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "mistral-rs", "litellm":
+	case "ollama", "lm-studio", "llama-cpp", "localai", "vllm", "sglang", "mistral-rs", "dspark", "litellm":
 		return true
 	default:
 		return false
@@ -1238,8 +1487,12 @@ func localProviderDisplayName(providerID string) string {
 		return "LocalAI"
 	case "vllm":
 		return "vLLM"
+	case "sglang":
+		return "SGLang"
 	case "mistral-rs":
 		return "mistral.rs"
+	case "dspark":
+		return "DSpark"
 	case "litellm":
 		return "LiteLLM gateway"
 	default:
@@ -1281,6 +1534,11 @@ func noRedirectHTTPClient() *http.Client {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+		// Provider endpoints may receive prompts, source-backed context, or
+		// maintenance requests. Do not inherit machine proxy settings: local
+		// runtimes must stay local and configured cloud endpoints must be
+		// contacted directly rather than silently through an environment proxy.
+		Transport: &http.Transport{Proxy: nil},
 	}
 }
 
@@ -1330,28 +1588,78 @@ func normalizeProbePolicy(policy Policy) Policy {
 	return policy
 }
 
+// configuredOllamaModels keeps the router's active model set explicit. The
+// catalog can describe many supported families, but a configured endpoint must
+// not cause the daily maintenance scheduler to pull every catalog entry.
+func configuredOllamaModels() []Model {
+	available := []Model{
+		{ID: "phi3:mini", Name: "Phi small local", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low"},
+		{ID: "phi4:latest", Name: "Phi general local", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 3, MaxReasoning: "medium"},
+		{ID: "gemma3:4b", Name: "Gemma compact local", Tier: TierLocal, Capabilities: []string{"general", "classification", "summarization"}, MaxDifficulty: 3, MaxReasoning: "medium"},
+		{ID: "gemma3:12b", Name: "Gemma capable local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high"},
+		{ID: "mistral:7b", Name: "Mistral local", Tier: TierLocal, Capabilities: []string{"general", "planning", "summarization"}, MaxDifficulty: 4, MaxReasoning: "high"},
+		{ID: "mixtral:8x7b", Name: "Mixtral local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high"},
+		{ID: "llama3.1:8b", Name: "Llama local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high"},
+		{ID: "llama3.1:70b", Name: "Llama large local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high"},
+		{ID: "qwen2.5:7b", Name: "Qwen general local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high"},
+		{ID: "qwen2.5-coder:7b", Name: "Qwen coder local", Tier: TierLocal, Capabilities: []string{"general", "coding", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high"},
+		{ID: "qwen2.5-coder:32b", Name: "Qwen coder large local", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high"},
+		{ID: "deepseek-coder:6.7b", Name: "DeepSeek coder local", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning"}, MaxDifficulty: 4, MaxReasoning: "high"},
+		{ID: "deepseek-r1:8b", Name: "DeepSeek reasoning local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 4, MaxReasoning: "high"},
+	}
+	byID := make(map[string]Model, len(available))
+	for _, model := range available {
+		byID[model.ID] = model
+	}
+	requested := strings.Split(strings.TrimSpace(os.Getenv("OLLAMA_MODEL_IDS")), ",")
+	if len(requested) == 1 && strings.TrimSpace(requested[0]) == "" {
+		requested = []string{"phi3:mini"}
+	}
+	seen := map[string]bool{}
+	models := make([]Model, 0, len(requested))
+	for _, rawID := range requested {
+		id := strings.TrimSpace(rawID)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		model, known := byID[id]
+		if !known {
+			model = Model{ID: id, Name: "Configured Ollama local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high"}
+		}
+		model.Enabled = true
+		models = append(models, model)
+	}
+	return models
+}
+
+func configuredLocalModelID(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
 func defaultPolicy() Policy {
 	ollamaEndpoint := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
+	ollamaModels := configuredOllamaModels()
 	lmStudioEndpoint := strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
+	lmStudioModelID := configuredLocalModelID("LM_STUDIO_MODEL_ID", "local-model")
 	llamaCPPEndpoint := strings.TrimSpace(os.Getenv("LLAMA_CPP_BASE_URL"))
-	llamaCPPModelID := strings.TrimSpace(os.Getenv("LLAMA_CPP_MODEL_ID"))
-	if llamaCPPModelID == "" {
-		llamaCPPModelID = "local-model"
-	}
+	llamaCPPModelID := configuredLocalModelID("LLAMA_CPP_MODEL_ID", "local-model")
 	localAIEndpoint := strings.TrimSpace(os.Getenv("LOCALAI_BASE_URL"))
-	localAIModelID := strings.TrimSpace(os.Getenv("LOCALAI_MODEL_ID"))
-	if localAIModelID == "" {
-		localAIModelID = "localai-default"
-	}
+	localAIModelID := configuredLocalModelID("LOCALAI_MODEL_ID", "localai-default")
 	vLLMEndpoint := strings.TrimSpace(os.Getenv("VLLM_BASE_URL"))
-	vLLMModelID := strings.TrimSpace(os.Getenv("VLLM_MODEL_ID"))
-	if vLLMModelID == "" {
-		vLLMModelID = "vllm-default"
-	}
+	vLLMModelID := configuredLocalModelID("VLLM_MODEL_ID", "vllm-default")
+	sglangEndpoint := strings.TrimSpace(os.Getenv("SGLANG_BASE_URL"))
+	sglangModelID := configuredLocalModelID("SGLANG_MODEL_ID", "sglang-default")
 	mistralRSEndpoint := strings.TrimSpace(os.Getenv("MISTRAL_RS_BASE_URL"))
-	mistralRSModelID := strings.TrimSpace(os.Getenv("MISTRAL_RS_MODEL_ID"))
-	if mistralRSModelID == "" {
-		mistralRSModelID = "mistralrs-default"
+	mistralRSModelID := configuredLocalModelID("MISTRAL_RS_MODEL_ID", "mistralrs-default")
+	dsparkEndpoint := strings.TrimSpace(os.Getenv("DSPARK_BASE_URL"))
+	dsparkModelID := configuredLocalModelID("DSPARK_MODEL_ID", "dspark-default")
+	dsparkEnabled := false
+	if parsed, err := url.Parse(dsparkEndpoint); err == nil && isLocalModelHost(parsed.Hostname()) {
+		dsparkEnabled = envEnabled("DSPARK_ENABLED")
 	}
 	liteLLMEnabled := envEnabled("LITELLM_ENABLED")
 	liteLLMEndpoint := strings.TrimSpace(os.Getenv("LITELLM_BASE_URL"))
@@ -1402,21 +1710,7 @@ func defaultPolicy() Policy {
 				Paid:           false,
 				EndpointURL:    ollamaEndpoint,
 				QuotaRemaining: -1,
-				Models: []Model{
-					{ID: "phi3:mini", Name: "Phi small local", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
-					{ID: "phi4:latest", Name: "Phi general local", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 3, MaxReasoning: "medium", Enabled: true},
-					{ID: "gemma3:4b", Name: "Gemma compact local", Tier: TierLocal, Capabilities: []string{"general", "classification", "summarization"}, MaxDifficulty: 3, MaxReasoning: "medium", Enabled: true},
-					{ID: "gemma3:12b", Name: "Gemma capable local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "mistral:7b", Name: "Mistral local", Tier: TierLocal, Capabilities: []string{"general", "planning", "summarization"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "mixtral:8x7b", Name: "Mixtral local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
-					{ID: "llama3.1:8b", Name: "Llama local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "llama3.1:70b", Name: "Llama large local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
-					{ID: "qwen2.5:7b", Name: "Qwen general local", Tier: TierLocal, Capabilities: []string{"general", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "qwen2.5-coder:7b", Name: "Qwen coder local", Tier: TierLocal, Capabilities: []string{"general", "coding", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "qwen2.5-coder:32b", Name: "Qwen coder large local", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
-					{ID: "deepseek-coder:6.7b", Name: "DeepSeek coder local", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "deepseek-r1:8b", Name: "DeepSeek reasoning local", Tier: TierLocal, Capabilities: []string{"general", "planning", "verification"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-				},
+				Models:         ollamaModels,
 			},
 			{
 				ID:             "lm-studio",
@@ -1427,9 +1721,7 @@ func defaultPolicy() Policy {
 				EndpointURL:    lmStudioEndpoint,
 				QuotaRemaining: -1,
 				Models: []Model{
-					{ID: "openai-compatible-local", Name: "OpenAI-compatible local endpoint", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "extraction"}, MaxDifficulty: 4, MaxReasoning: "high", Enabled: true},
-					{ID: "local-small", Name: "Configured small local model", Tier: TierLocal, Capabilities: []string{"general", "classification", "extraction"}, MaxDifficulty: 2, MaxReasoning: "low", Enabled: true},
-					{ID: "local-best", Name: "Configured best local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+					{ID: lmStudioModelID, Name: "Configured LM Studio local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
 				},
 			},
 			{
@@ -1469,6 +1761,18 @@ func defaultPolicy() Policy {
 				},
 			},
 			{
+				ID:             "sglang",
+				Name:           "SGLang local server",
+				Enabled:        true,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    sglangEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: sglangModelID, Name: "Configured SGLang local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
 				ID:             "mistral-rs",
 				Name:           "mistral.rs local server",
 				Enabled:        true,
@@ -1478,6 +1782,18 @@ func defaultPolicy() Policy {
 				QuotaRemaining: -1,
 				Models: []Model{
 					{ID: mistralRSModelID, Name: "Configured mistral.rs local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
+				},
+			},
+			{
+				ID:             "dspark",
+				Name:           "DSpark local server",
+				Enabled:        dsparkEnabled,
+				Local:          true,
+				Paid:           false,
+				EndpointURL:    dsparkEndpoint,
+				QuotaRemaining: -1,
+				Models: []Model{
+					{ID: dsparkModelID, Name: "Configured DSpark local model", Tier: TierLocal, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true},
 				},
 			},
 			{

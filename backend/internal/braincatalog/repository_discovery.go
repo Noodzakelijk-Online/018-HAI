@@ -20,7 +20,6 @@ const (
 	// screening snapshot without silently dropping valid review candidates.
 	maxOSSInsightDiscoveries    = 800
 	ossInsightDiscoveryCacheTTL = 5 * time.Minute
-	ossInsightDiscoveryTimeout  = 30 * time.Second
 )
 
 // OSSInsightDiscoveryScope controls the already-screened collections from
@@ -51,8 +50,72 @@ type OSSInsightRepositoryDiscovery struct {
 	Priority           int                   `json:"priority"`
 	Risk               string                `json:"risk"`
 	ReviewReason       string                `json:"reviewReason"`
+	Triage             string                `json:"triage"`
+	TriageReason       string                `json:"triageReason"`
+	ReviewAllowed      bool                  `json:"reviewAllowed"`
 	RelatedCollections []string              `json:"relatedCollections,omitempty"`
 	RelatedSourceURLs  []string              `json:"relatedSourceUrls,omitempty"`
+}
+
+const (
+	discoveryTriageManualReview = "manual_review"
+	discoveryTriageReference    = "reference_only"
+	discoveryTriageDeferred     = "deferred"
+)
+
+type discoveryTriage struct {
+	status string
+	reason string
+}
+
+// repositoryDiscoveryTriages captures repository-specific decisions made in
+// the live OSS Insight reconciliation. It prevents a broad category match
+// from presenting known overlapping control planes or high-risk execution
+// surfaces as equally suitable implementation candidates.
+var repositoryDiscoveryTriages = map[string]discoveryTriage{
+	"hkuds/rag-anything":             {discoveryTriageReference, "Overlaps HAI's bounded RAGFlow bridge and source-linked retrieval; require a measured retrieval gap before reconsideration."},
+	"osu-nlp-group/hipporag":         {discoveryTriageReference, "Overlaps HAI's source-linked graph and RAGFlow retrieval boundaries; do not create a second memory or graph authority."},
+	"flowiseai/flowise":              {discoveryTriageReference, "A broad visual agent and workflow platform would duplicate HAI's routing, approval, audit, and execution control plane."},
+	"langgenius/dify":                {discoveryTriageReference, "A broad agent and RAG platform would duplicate HAI's source, memory, routing, and workflow authorities."},
+	"falkordb/falkordb":              {discoveryTriageReference, "HAI retains Postgres and its candidate graph rather than adding another graph database without a measured scale need."},
+	"apache/airflow":                 {discoveryTriageReference, "Airflow's scheduler and worker model overlaps HAI's bounded Temporal workflow layer."},
+	"netflix/metaflow":               {discoveryTriageReference, "Metaflow's orchestration and remote-compute model is outside HAI's local workflow authority."},
+	"ray-project/ray":                {discoveryTriageDeferred, "Distributed compute is not justified for the current local-first control plane and requires a separate resource and security design."},
+	"zenml-io/zenml":                 {discoveryTriageReference, "MLOps pipelines and metadata would duplicate HAI's model policy, evaluation, provenance, and audit paths."},
+	"e2b-dev/open-computer-use":      {discoveryTriageDeferred, "A general computer-use surface must not create a second host-execution path outside HAI's controlled runtime and approvals."},
+	"lavague-ai/lavague":             {discoveryTriageDeferred, "Browser agent execution remains behind HAI's allowlisted verification and approval flow."},
+	"web-infra-dev/midscene":         {discoveryTriageDeferred, "Browser automation remains behind HAI's allowlisted verification and approval flow."},
+	"nanobrowser/nanobrowser":        {discoveryTriageDeferred, "Browser automation remains behind HAI's allowlisted verification and approval flow."},
+	"aorwall/moatless-tools":         {discoveryTriageDeferred, "Code-agent execution remains behind HAI's workspace-constrained mini-SWE and verification path."},
+	"qodo-ai/qodo-cover":             {discoveryTriageDeferred, "Automated test generation needs an approved repository scope, local model, and test sandbox before it can be reconsidered."},
+	"awslabs/mcp":                    {discoveryTriageDeferred, "Cloud-provider MCP tooling must not inherit account, credential, network, or spend authority from a catalog discovery."},
+	"stripe/agent-toolkit":           {discoveryTriageDeferred, "Financial account and action tooling requires a separate regulated-use and approval design."},
+	"supabase-community/supabase-mcp": {discoveryTriageDeferred, "Database MCP tooling requires a named local adapter and explicit data-scope review before consideration."},
+	"tavily-ai/tavily-mcp":           {discoveryTriageReference, "HAI's local SearXNG discovery path remains the preferred web-research boundary."},
+	"google/adk-python":              {discoveryTriageReference, "A general agent framework would create a parallel orchestration and tool-authority plane."},
+	"google/adk-java":                {discoveryTriageReference, "A general agent framework would create a parallel orchestration and tool-authority plane."},
+	"agent-network-protocol/agentnetworkprotocol": {discoveryTriageReference, "HAI retains its bounded A2A interoperability profile instead of adopting another agent-network control plane."},
+	"coral-protocol/anemoi":          {discoveryTriageReference, "HAI retains its bounded A2A interoperability profile instead of adopting another agent-network control plane."},
+	"coqui-ai/tts":                   {discoveryTriageDeferred, "Voice output needs explicit user intent, model provenance, retention, and delivery controls before adoption."},
+	"suno-ai/bark":                   {discoveryTriageDeferred, "Voice output needs explicit user intent, model provenance, retention, and delivery controls before adoption."},
+	"myshell-ai/openvoice":           {discoveryTriageDeferred, "Voice output needs explicit user intent, model provenance, retention, and delivery controls before adoption."},
+	"agenta-ai/agenta":               {discoveryTriageReference, "Evaluation and prompt-management surfaces overlap HAI's bounded local evaluation and audit profiles."},
+	"pydantic/logfire":               {discoveryTriageReference, "Observability is covered by HAI audit plus opt-in Prometheus, Langfuse, OpenLIT, and MLflow profiles."},
+	"uptrain-ai/uptrain":             {discoveryTriageReference, "Evaluation is covered by HAI's bounded Promptfoo, DeepEval, Evidently, Garak, and LM Evaluation Harness profiles."},
+	"microsoft/responsible-ai-toolbox": {discoveryTriageReference, "Responsible-AI analysis requires a concrete measured fairness or model-risk use case before a separate toolbox is introduced."},
+	"fairlearn/fairlearn":             {discoveryTriageReference, "Fairness analysis requires a concrete measured fairness or model-risk use case before a separate toolbox is introduced."},
+	"trusted-ai/aif360":               {discoveryTriageReference, "Fairness analysis requires a concrete measured fairness or model-risk use case before a separate toolbox is introduced."},
+	"trusted-ai/aix360":               {discoveryTriageReference, "Explainability analysis requires a concrete measured model-risk use case before a separate toolbox is introduced."},
+}
+
+// OSSInsightKnownProfileHit is a source repository HAI already represents in
+// its catalog. It keeps the discovery report complete without presenting a
+// reviewed profile as a new integration candidate.
+type OSSInsightKnownProfileHit struct {
+	Repository         string   `json:"repository"`
+	CatalogEntryIDs    []string `json:"catalogEntryIds"`
+	RelatedCollections []string `json:"relatedCollections,omitempty"`
+	RelatedSourceURLs  []string `json:"relatedSourceUrls,omitempty"`
 }
 
 type OSSInsightRepositoryDiscoveryReport struct {
@@ -72,6 +135,8 @@ type OSSInsightRepositoryDiscoveryReport struct {
 	SourceQueryLimit        int                             `json:"sourceQueryLimit,omitempty"`
 	CollectionsAtQueryLimit int                             `json:"collectionsAtQueryLimit,omitempty"`
 	KnownProfileHits        int                             `json:"knownProfileHits"`
+	KnownProfiles           []OSSInsightKnownProfileHit      `json:"knownProfiles,omitempty"`
+	KnownProfilesTruncated  bool                            `json:"knownProfilesTruncated"`
 	Discoveries             []OSSInsightRepositoryDiscovery `json:"discoveries,omitempty"`
 	MissingCollections      []string                        `json:"missingCollections,omitempty"`
 	UnavailableCollections  []string                        `json:"unavailableCollections,omitempty"`
@@ -123,7 +188,7 @@ func (s *ossInsightRepositoryScout) DiscoverRepositoriesFor(scope OSSInsightDisc
 		report.Cached = true
 		return report, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), ossInsightDiscoveryTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), ossInsightRequestTimeout)
 	defer cancel()
 	report, err := s.discoverRepositories(ctx, scope)
 	if err == nil {
@@ -150,9 +215,10 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 	report.ReviewableCollections = len(reviewable)
 	decisions := repositoryDiscoveryDecisions(scope)
 	report.EligibleCollections = len(decisions)
-	known := catalogRepositories()
+	known := catalogRepositoryEntryIDs()
 	liveNames := map[string]bool{}
 	discoveryIndex := map[string]int{}
+	knownProfileIndex := map[string]int{}
 
 	for _, collection := range live {
 		liveNames[collection.Name] = true
@@ -182,8 +248,21 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 			if repository == "" {
 				continue
 			}
-			if known[strings.ToLower(repository)] {
+			if entryIDs, found := known[strings.ToLower(repository)]; found {
 				report.KnownProfileHits++
+				key := strings.ToLower(repository)
+				knownProfile := OSSInsightKnownProfileHit{
+					Repository: repository, CatalogEntryIDs: append([]string(nil), entryIDs...),
+					RelatedCollections: []string{collection.Name}, RelatedSourceURLs: []string{ossInsightCollectionRepositoriesURL(collection.ID)},
+				}
+				if existingIndex, found := knownProfileIndex[key]; found {
+					report.KnownProfiles[existingIndex] = mergeKnownProfile(report.KnownProfiles[existingIndex], knownProfile)
+				} else if len(report.KnownProfiles) < maxOSSInsightDiscoveries {
+					knownProfileIndex[key] = len(report.KnownProfiles)
+					report.KnownProfiles = append(report.KnownProfiles, knownProfile)
+				} else {
+					report.KnownProfilesTruncated = true
+				}
 				continue
 			}
 			item := newDiscovery(collection, decision, repository)
@@ -214,6 +293,9 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 		}
 		return report.Discoveries[i].Repository < report.Discoveries[j].Repository
 	})
+	sort.Slice(report.KnownProfiles, func(i, j int) bool {
+		return report.KnownProfiles[i].Repository < report.KnownProfiles[j].Repository
+	})
 	report.Available = report.CollectionsChecked > 0
 	if !report.Available {
 		return report, fmt.Errorf("OSS Insight repository collections were unavailable")
@@ -228,6 +310,7 @@ func (s *ossInsightRepositoryScout) discoverRepositories(ctx context.Context, sc
 
 func newDiscovery(collection ossInsightCollection, decision collectionDecision, repository string) OSSInsightRepositoryDiscovery {
 	track, priority, risk, reason := discoveryReviewProfile(collection.Name, decision.disposition)
+	triage, triageReason, reviewAllowed := repositoryDiscoveryTriage(repository)
 	sourceURL := ossInsightCollectionRepositoriesURL(collection.ID)
 	return OSSInsightRepositoryDiscovery{
 		Collection:         collection.Name,
@@ -239,9 +322,19 @@ func newDiscovery(collection ossInsightCollection, decision collectionDecision, 
 		Priority:           priority,
 		Risk:               risk,
 		ReviewReason:       reason,
+		Triage:             triage,
+		TriageReason:       triageReason,
+		ReviewAllowed:      reviewAllowed,
 		RelatedCollections: []string{collection.Name},
 		RelatedSourceURLs:  []string{sourceURL},
 	}
+}
+
+func repositoryDiscoveryTriage(repository string) (status string, reason string, reviewAllowed bool) {
+	if decision, found := repositoryDiscoveryTriages[normalizedRepositorySlug(repository)]; found {
+		return decision.status, decision.reason, false
+	}
+	return discoveryTriageManualReview, "No repository-specific exclusion is recorded. Verify fixed upstream metadata, licence, local deployment boundaries, and a no-op validation plan before creating a manual adapter review.", true
 }
 
 // discoveryReviewProfile ranks a category-level review path. It is not a
@@ -280,6 +373,14 @@ func mergeDiscovery(existing, incoming OSSInsightRepositoryDiscovery) OSSInsight
 	return existing
 }
 
+func mergeKnownProfile(existing, incoming OSSInsightKnownProfileHit) OSSInsightKnownProfileHit {
+	existing.CatalogEntryIDs = appendUnique(existing.CatalogEntryIDs, incoming.CatalogEntryIDs...)
+	sort.Strings(existing.CatalogEntryIDs)
+	existing.RelatedCollections = appendUnique(existing.RelatedCollections, incoming.RelatedCollections...)
+	existing.RelatedSourceURLs = appendUnique(existing.RelatedSourceURLs, incoming.RelatedSourceURLs...)
+	return existing
+}
+
 func appendUnique(values []string, additions ...string) []string {
 	for _, addition := range additions {
 		found := false
@@ -302,20 +403,11 @@ type ossInsightCollection struct {
 }
 
 func (s *ossInsightRepositoryScout) liveCollections(ctx context.Context) ([]ossInsightCollection, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ossInsightCollectionsURL, nil)
+	resp, err := ossInsightGET(ctx, s.client, ossInsightCollectionsURL)
 	if err != nil {
-		return nil, fmt.Errorf("could not prepare OSS Insight collection request")
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", ossInsightCollectionReviewAgent)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("OSS Insight collection request failed")
+		return nil, fmt.Errorf("OSS Insight collection request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OSS Insight collection request returned HTTP %d", resp.StatusCode)
-	}
 	var payload struct {
 		Data struct {
 			Rows []struct {
@@ -347,20 +439,11 @@ type ossInsightCollectionRepositoryResponse struct {
 }
 
 func (s *ossInsightRepositoryScout) collectionRepositories(ctx context.Context, id string) (ossInsightCollectionRepositoryResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ossInsightCollectionRepositoriesURL(id), nil)
+	resp, err := ossInsightGET(ctx, s.client, ossInsightCollectionRepositoriesURL(id))
 	if err != nil {
-		return ossInsightCollectionRepositoryResponse{}, fmt.Errorf("could not prepare OSS Insight repository request")
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", ossInsightCollectionReviewAgent)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return ossInsightCollectionRepositoryResponse{}, fmt.Errorf("OSS Insight repository request failed")
+		return ossInsightCollectionRepositoryResponse{}, fmt.Errorf("OSS Insight repository request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ossInsightCollectionRepositoryResponse{}, fmt.Errorf("OSS Insight repository request returned HTTP %d", resp.StatusCode)
-	}
 	var payload struct {
 		Data struct {
 			Rows []struct {
@@ -423,15 +506,26 @@ func normalizedDiscoveryScope(scope OSSInsightDiscoveryScope) (OSSInsightDiscove
 
 func catalogRepositories() map[string]bool {
 	known := map[string]bool{}
+	for repository := range catalogRepositoryEntryIDs() {
+		known[repository] = true
+	}
+	return known
+}
+
+func catalogRepositoryEntryIDs() map[string][]string {
+	known := map[string][]string{}
 	for _, entry := range Entries() {
 		if repository := repositorySlugFromURL(entry.UpstreamURL); repository != "" {
-			known[repository] = true
+			known[repository] = appendUnique(known[repository], entry.ID)
 		}
 		for _, alias := range entry.RepositoryAliases {
 			if repository := normalizedRepositorySlug(alias); repository != "" {
-				known[repository] = true
+				known[repository] = appendUnique(known[repository], entry.ID)
 			}
 		}
+	}
+	for repository := range known {
+		sort.Strings(known[repository])
 	}
 	return known
 }

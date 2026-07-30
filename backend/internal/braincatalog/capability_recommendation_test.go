@@ -66,7 +66,7 @@ func TestRecommendForNeedExpandsCommonOperationalTermsTransparently(t *testing.T
 	}
 }
 
-func TestRecommendRecordsMicrosoftAgentFrameworkAsCandidateNotRuntime(t *testing.T) {
+func TestRecommendRecordsMicrosoftAgentFrameworkAsGatedLocalProfile(t *testing.T) {
 	recommendations := Recommend("agent migration", "Migrate an AutoGen successor workflow to Microsoft Agent Framework with human approval")
 	found := false
 	for _, recommendation := range recommendations {
@@ -74,8 +74,8 @@ func TestRecommendRecordsMicrosoftAgentFrameworkAsCandidateNotRuntime(t *testing
 			continue
 		}
 		found = true
-		if recommendation.Status != StatusCandidate {
-			t.Fatalf("Microsoft Agent Framework must remain a reviewed candidate: %#v", recommendation)
+		if recommendation.Status != StatusIntegrated {
+			t.Fatalf("Microsoft Agent Framework must remain a configuration-gated local profile: %#v", recommendation)
 		}
 		if !recommendation.RequiresApproval {
 			t.Fatalf("Microsoft Agent Framework must require approval: %#v", recommendation)
@@ -87,7 +87,7 @@ func TestRecommendRecordsMicrosoftAgentFrameworkAsCandidateNotRuntime(t *testing
 }
 
 func TestRecommendReviewedHighPriorityCandidatesWithoutClaimingActivation(t *testing.T) {
-	recommendations := Recommend("operations", "Evaluate source-grounded answers with Evidently, then trial mistral.rs, RAGFlow document retrieval, and a LiveKit realtime voice session")
+	recommendations := Recommend("operations", "Evaluate source-grounded answers with Evidently, then trial mistral.rs, SGLang local structured output serving, RAGFlow document retrieval, and a LiveKit realtime voice session")
 	ids := map[string]Recommendation{}
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
@@ -103,6 +103,9 @@ func TestRecommendReviewedHighPriorityCandidatesWithoutClaimingActivation(t *tes
 	}
 	if recommendation, ok := ids["mistral-rs"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
 		t.Fatalf("mistral.rs must remain integrated but configuration- and approval-gated: %#v", recommendations)
+	}
+	if recommendation, ok := ids["sglang"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("SGLang must remain integrated but configuration- and approval-gated: %#v", recommendations)
 	}
 }
 

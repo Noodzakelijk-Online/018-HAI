@@ -18,6 +18,8 @@ type DSparkProvider struct {
 	baseURL    string
 	probePath  string
 	genPath    string
+	modelID    string
+	local      bool
 	configErr  string
 	httpClient *http.Client
 }
@@ -28,6 +30,7 @@ type DSparkConfig struct {
 	BaseURL   string
 	ProbePath string
 	GenPath   string
+	ModelID   string
 }
 
 // DSparkConfigFromEnv reads DSpark config from the environment.
@@ -37,6 +40,7 @@ func DSparkConfigFromEnv() DSparkConfig {
 		BaseURL:   strings.TrimSpace(os.Getenv("DSPARK_BASE_URL")),
 		ProbePath: envDefault("DSPARK_PROBE_PATH", "/v1/models"),
 		GenPath:   envDefault("DSPARK_GENERATION_PATH", "/v1/chat/completions"),
+		ModelID:   envDefault("DSPARK_MODEL_ID", "dspark-default"),
 	}
 }
 
@@ -48,7 +52,9 @@ func NewDSparkProvider(cfg DSparkConfig) *DSparkProvider {
 		baseURL:    cfg.BaseURL,
 		probePath:  firstNonBlank(cfg.ProbePath, "/v1/models"),
 		genPath:    firstNonBlank(cfg.GenPath, "/v1/chat/completions"),
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		modelID:    firstNonBlank(cfg.ModelID, "dspark-default"),
+		local:      isLocalEndpointURL(cfg.BaseURL),
+		httpClient: newDirectHTTPClient(5 * time.Second),
 	}
 	if !cfg.Enabled {
 		p.configErr = "DSPARK_ENABLED is false or missing"
@@ -67,6 +73,15 @@ func NewDSparkProvider(cfg DSparkConfig) *DSparkProvider {
 func (p *DSparkProvider) ID() string          { return "dspark" }
 func (p *DSparkProvider) DisplayName() string { return "DSpark (OpenAI-compatible inference backend)" }
 
+// ModelMaintenanceIdentity returns the only local DSpark model identity HAI
+// can call. A remote DSpark endpoint is outside this auxiliary execution lane.
+func (p *DSparkProvider) ModelMaintenanceIdentity() (string, string, bool) {
+	if !p.local || !p.configured() {
+		return "", "", false
+	}
+	return p.baseURL, p.modelID, true
+}
+
 func (p *DSparkProvider) configured() bool { return p.enabled && p.baseURL != "" && p.configErr == "" }
 
 func (p *DSparkProvider) status() ProviderStatus {
@@ -79,11 +94,11 @@ func (p *DSparkProvider) status() ProviderStatus {
 func (p *DSparkProvider) Profiles() []ModelProfile {
 	return []ModelProfile{{
 		ProviderID:         "dspark",
-		ModelID:            "dspark-default",
+		ModelID:            p.modelID,
 		DisplayName:        "DSpark configured model",
 		ArchitectureFamily: ArchOpenAICompatibleUnknown,
 		Lanes:              []RoutingLane{LaneFastTriage, LaneDrafting, LaneParallelBatch},
-		Local:              true,
+		Local:              p.local,
 		Paid:               false,
 		Status:             p.status(),
 		ClaimLevel:         dsparkClaim(p),
@@ -114,13 +129,13 @@ func (p *DSparkProvider) Generate(ctx context.Context, req InferenceRequest, now
 	if probe.Status != ProviderActive {
 		return InferenceResult{ProviderID: p.ID(), OK: false, Error: probe.Detail}, fmt.Errorf("dspark: not active: %s", probe.Detail)
 	}
-	return chatCompletion(ctx, p.httpClient, p.ID(), "dspark-default", p.baseURL, p.genPath, req)
+	return chatCompletion(ctx, p.httpClient, p.ID(), p.modelID, p.baseURL, p.genPath, req)
 }
 
 // validateDSparkURL rejects invalid, link-local, metadata, and unspecified
 // hosts (§10.17). Localhost is allowed (existing local endpoint policy).
 func validateDSparkURL(raw string) error {
-	if err := validateEndpointURL(raw); err != nil {
+	if err := validateLocalEndpointURL(raw); err != nil {
 		return fmt.Errorf("dspark: %w", err)
 	}
 	return nil

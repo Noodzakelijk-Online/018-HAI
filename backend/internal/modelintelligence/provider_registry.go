@@ -23,6 +23,7 @@ type remoteProvider struct {
 	modelID    string
 	lanes      []RoutingLane
 	arch       ArchitectureFamily
+	local      bool
 	configErr  string
 	httpClient *http.Client
 }
@@ -38,7 +39,7 @@ func newRemoteProvider(id, name, baseURLEnv, modelID string, arch ArchitectureFa
 		modelID:    modelID,
 		lanes:      lanes,
 		arch:       arch,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		httpClient: newDirectHTTPClient(5 * time.Second),
 	}
 	if p.baseURL == "" {
 		p.configErr = baseURLEnv + " not set"
@@ -67,6 +68,7 @@ func newGuardedLocalGatewayProvider(id, name, enabledEnv, baseURLEnv, modelID, a
 
 func newLocalRemoteProvider(id, name, baseURLEnv, modelID string, arch ArchitectureFamily, lanes []RoutingLane) *remoteProvider {
 	p := newRemoteProvider(id, name, baseURLEnv, modelID, arch, lanes)
+	p.local = true
 	if p.baseURL != "" {
 		if err := validateLocalEndpointURL(p.baseURL); err != nil {
 			p.configErr = err.Error()
@@ -82,9 +84,28 @@ func envOrDefault(name, fallback string) string {
 	return fallback
 }
 
+func firstConfiguredModelID(name, fallback string) string {
+	for _, candidate := range strings.Split(strings.TrimSpace(os.Getenv(name)), ",") {
+		if value := strings.TrimSpace(candidate); value != "" {
+			return value
+		}
+	}
+	return fallback
+}
+
 func (p *remoteProvider) ID() string          { return p.id }
 func (p *remoteProvider) DisplayName() string { return p.name }
 func (p *remoteProvider) configured() bool    { return p.enabled && p.baseURL != "" && p.configErr == "" }
+
+// ModelMaintenanceIdentity exposes only the fixed local endpoint/model pair
+// used for an actual inference call. It deliberately refuses external gateways
+// and incomplete configuration, which keeps the maintenance gate local-only.
+func (p *remoteProvider) ModelMaintenanceIdentity() (string, string, bool) {
+	if !p.local || !p.configured() {
+		return "", "", false
+	}
+	return p.baseURL, p.modelID, true
+}
 
 func (p *remoteProvider) bearerToken() string {
 	if p.apiKeyEnv == "" {
@@ -114,7 +135,7 @@ func (p *remoteProvider) Profiles() []ModelProfile {
 		DisplayName:        p.name,
 		ArchitectureFamily: p.arch,
 		Lanes:              p.lanes,
-		Local:              true,
+		Local:              p.local,
 		Paid:               false,
 		Status:             p.status(),
 		ClaimLevel:         p.claim(),
@@ -147,17 +168,18 @@ type Registry struct {
 // NewRegistryFromEnv assembles the initial provider set:
 //   - test-fast-triage, test-verifier (always active, deterministic, local)
 //   - dspark (env, not_configured by default)
-//   - ollama, lm-studio, llama.cpp, LocalAI, vLLM, mistral.rs, LiteLLM, custom-openai-compatible (env, not_configured by default)
+//   - ollama, lm-studio, llama.cpp, LocalAI, vLLM, SGLang, mistral.rs, LiteLLM, custom-openai-compatible (env, not_configured by default)
 func NewRegistryFromEnv() *Registry {
 	return &Registry{providers: []Provider{
 		&testFastTriageProvider{},
 		&testVerifierProvider{},
 		NewDSparkProvider(DSparkConfigFromEnv()),
-		newLocalRemoteProvider("ollama", "Ollama (loopback local server)", "OLLAMA_BASE_URL", "ollama-default", ArchOllamaUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
-		newLocalRemoteProvider("lm-studio", "LM Studio (loopback local server)", "LM_STUDIO_BASE_URL", "lm-studio-default", ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
+		newLocalRemoteProvider("ollama", "Ollama (loopback local server)", "OLLAMA_BASE_URL", firstConfiguredModelID("OLLAMA_MODEL_IDS", "phi3:mini"), ArchOllamaUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
+		newLocalRemoteProvider("lm-studio", "LM Studio (loopback local server)", "LM_STUDIO_BASE_URL", envOrDefault("LM_STUDIO_MODEL_ID", "local-model"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("llama-cpp", "llama.cpp (local OpenAI-compatible)", "LLAMA_CPP_BASE_URL", envOrDefault("LLAMA_CPP_MODEL_ID", "local-model"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("localai", "LocalAI (loopback OpenAI-compatible)", "LOCALAI_BASE_URL", envOrDefault("LOCALAI_MODEL_ID", "localai-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newLocalRemoteProvider("vllm", "vLLM (loopback OpenAI-compatible)", "VLLM_BASE_URL", envOrDefault("VLLM_MODEL_ID", "vllm-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting, LaneParallelBatch}),
+		newLocalRemoteProvider("sglang", "SGLang (loopback OpenAI-compatible)", "SGLANG_BASE_URL", envOrDefault("SGLANG_MODEL_ID", "sglang-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting, LaneParallelBatch}),
 		newLocalRemoteProvider("mistral-rs", "mistral.rs (loopback OpenAI-compatible)", "MISTRAL_RS_BASE_URL", envOrDefault("MISTRAL_RS_MODEL_ID", "mistralrs-default"), ArchLocalRuntimeUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newGuardedLocalGatewayProvider("litellm", "LiteLLM (local-only gateway)", "LITELLM_ENABLED", "LITELLM_BASE_URL", envOrDefault("LITELLM_MODEL_ID", "local-model"), "LITELLM_API_KEY", ArchOpenAICompatibleUnknown, []RoutingLane{LaneFastTriage, LaneDrafting}),
 		newRemoteProvider("custom-openai-compatible", "Custom OpenAI-compatible", "CUSTOM_OPENAI_BASE_URL", "custom-default", ArchOpenAICompatibleUnknown, []RoutingLane{LaneDrafting, LaneParallelBatch}),

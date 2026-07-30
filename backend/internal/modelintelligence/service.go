@@ -31,6 +31,7 @@ type Service struct {
 	mu             sync.Mutex
 	budgetDefaults OperationBudget
 	observedByKey  map[string]*observed
+	maintenanceGate ModelMaintenanceGate
 }
 
 // NewService builds a service over a registry.
@@ -205,7 +206,25 @@ func (s *Service) Benchmark(ctx context.Context, providerID, modelID string) (Be
 	if !ok {
 		return BenchmarkResult{}, fmt.Errorf("modelintelligence: unknown model %s/%s", providerID, modelID)
 	}
+	if !prof.Local {
+		return BenchmarkResult{
+			ProviderID: providerID,
+			ModelID:    modelID,
+			OK:         false,
+			Detail:     "external model intelligence benchmarks are disabled; use the canonical LLM policy router so budget, approval, audit, and daily maintenance controls apply",
+			ClaimLevel: prof.ClaimLevel,
+		}, nil
+	}
 	p, _ := s.reg.Provider(providerID)
+	if err := s.ensureModelMaintenance(p); err != nil {
+		return BenchmarkResult{
+			ProviderID: providerID,
+			ModelID:    modelID,
+			OK:         false,
+			Detail:     err.Error(),
+			ClaimLevel: prof.ClaimLevel,
+		}, nil
+	}
 	now := s.now().UTC()
 	lane := LaneFastTriage
 	if len(prof.Lanes) > 0 {
@@ -258,6 +277,9 @@ func (s *Service) RunLane(ctx context.Context, lane RoutingLane, in LaneInput, p
 		return dec, nil, nil
 	}
 	p, _ := s.reg.Provider(dec.ProviderID)
+	if err := s.ensureModelMaintenance(p); err != nil {
+		return dec, nil, err
+	}
 	res, err := p.Generate(ctx, InferenceRequest{Lane: lane, Prompt: prompt, MaxOutputTokens: 256, Effort: EffortLow}, now)
 	s.recordTelemetry(res, lane, operationID, err == nil, false)
 	if err != nil {

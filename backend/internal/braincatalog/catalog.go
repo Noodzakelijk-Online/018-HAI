@@ -29,6 +29,18 @@ type ControlMapping struct {
 	Boundary      string `json:"boundary"`
 }
 
+// ImplementationBoundary is the concrete HAI-owned surface behind an
+// integrated catalog profile. It is intentionally not an upstream deployment
+// claim: the route can still be disabled, configuration-gated, or health-only.
+// Keeping this evidence next to the catalog prevents an "integrated" label
+// from drifting into a capability that has no local implementation boundary.
+type ImplementationBoundary struct {
+	Control    string `json:"control"`
+	Route      string `json:"route"`
+	SourcePath string `json:"sourcePath"`
+	Scope      string `json:"scope"`
+}
+
 // Entry is a transparent, source-backed integration decision. Verification is
 // a curation snapshot rather than a claim that a runtime has been installed.
 type Entry struct {
@@ -39,21 +51,22 @@ type Entry struct {
 	// this same upstream. They are discovery de-duplication hints only: an
 	// alias never expands the profile's scope, changes its status, or starts a
 	// runtime.
-	RepositoryAliases    []string         `json:"repositoryAliases,omitempty"`
-	SourceCatalogURL     string           `json:"sourceCatalogUrl"`
-	SourceCollection     string           `json:"sourceCollection,omitempty"`
-	Status               Status           `json:"status"`
-	Category             string           `json:"category"`
-	IntegrationMode      string           `json:"integrationMode"`
-	Capabilities         []string         `json:"capabilities"`
-	RecommendedFor       []string         `json:"recommendedFor"`
-	RequiresApproval     bool             `json:"requiresApproval"`
-	LocalFirstCompatible bool             `json:"localFirstCompatible"`
-	Activation           string           `json:"activation"`
-	Rationale            string           `json:"rationale"`
-	VerifiedAt           string           `json:"verifiedAt"`
-	VerificationNote     string           `json:"verificationNote"`
-	ControlMappings      []ControlMapping `json:"controlMappings,omitempty"`
+	RepositoryAliases    []string                `json:"repositoryAliases,omitempty"`
+	SourceCatalogURL     string                  `json:"sourceCatalogUrl"`
+	SourceCollection     string                  `json:"sourceCollection,omitempty"`
+	Status               Status                  `json:"status"`
+	Category             string                  `json:"category"`
+	IntegrationMode      string                  `json:"integrationMode"`
+	Capabilities         []string                `json:"capabilities"`
+	RecommendedFor       []string                `json:"recommendedFor"`
+	RequiresApproval     bool                    `json:"requiresApproval"`
+	LocalFirstCompatible bool                    `json:"localFirstCompatible"`
+	Activation           string                  `json:"activation"`
+	Rationale            string                  `json:"rationale"`
+	VerifiedAt           string                  `json:"verifiedAt"`
+	VerificationNote     string                  `json:"verificationNote"`
+	ControlMappings      []ControlMapping        `json:"controlMappings,omitempty"`
+	Implementation       *ImplementationBoundary `json:"implementation,omitempty"`
 }
 
 // Recommendation makes a candidate visible to the planner without claiming it
@@ -73,24 +86,31 @@ type Recommendation struct {
 // It deliberately does not change HAI's adoption status: an upstream being
 // available is neither an approval nor proof that its adapter is safe.
 type UpstreamReview struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	UpstreamURL     string   `json:"upstreamUrl"`
-	CheckedAt       string   `json:"checkedAt"`
-	Available       bool     `json:"available"`
-	Archived        bool     `json:"archived"`
-	License         string   `json:"license,omitempty"`
-	DefaultBranch   string   `json:"defaultBranch,omitempty"`
-	PushedAt        string   `json:"pushedAt,omitempty"`
-	Message         string   `json:"message"`
-	Disposition     Status   `json:"disposition"`
-	Readiness       string   `json:"readiness"`
-	ReadinessReason string   `json:"readinessReason"`
-	RequiredGates   []string `json:"requiredGates,omitempty"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	UpstreamURL         string   `json:"upstreamUrl"`
+	ResolvedRepository  string   `json:"resolvedRepository,omitempty"`
+	ResolvedUpstreamURL string   `json:"resolvedUpstreamUrl,omitempty"`
+	RepositoryMoved     bool     `json:"repositoryMoved"`
+	CheckedAt           string   `json:"checkedAt"`
+	Available           bool     `json:"available"`
+	Archived            bool     `json:"archived"`
+	License             string   `json:"license,omitempty"`
+	DefaultBranch       string   `json:"defaultBranch,omitempty"`
+	PushedAt            string   `json:"pushedAt,omitempty"`
+	Message             string   `json:"message"`
+	Disposition         Status   `json:"disposition"`
+	Readiness           string   `json:"readiness"`
+	ReadinessReason     string   `json:"readinessReason"`
+	RequiredGates       []string `json:"requiredGates,omitempty"`
 }
 
 const sourceCatalogURL = "https://github.com/e2b-dev/awesome-ai-agents"
-const verifiedAt = "2026-07-19"
+
+// verifiedAt is the most recent successful check of the OSS Insight collection
+// index. Individual profile entries retain their own upstream verification
+// dates because collection membership does not prove repository readiness.
+const verifiedAt = "2026-07-21"
 
 var discoverySources = []CatalogSource{
 	{Name: "Awesome AI Agents", URL: sourceCatalogURL, Scope: "external agent projects"},
@@ -112,6 +132,20 @@ func DiscoverySources() []CatalogSource {
 
 var entries = []Entry{
 	{
+		ID: "source-linked-knowledge-graph", Name: "HAI source-linked knowledge graph", UpstreamURL: "https://github.com/microsoft/graphrag", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10134/repos/", SourceCollection: "Knowledge Graphs for AI",
+		Status: StatusIntegrated, Category: "deterministic source-provenance graph", IntegrationMode: "read-only candidate graph and timeline view",
+		Capabilities: []string{"entity co-occurrence view", "date candidate timeline", "source-linked inspection", "owner-scoped context"}, RecommendedFor: []string{"connected-source triage", "case timeline review", "evidence navigation", "project-context inspection"},
+		RequiresApproval: false, LocalFirstCompatible: true,
+		Activation: "No external runtime is required. HAI reads only owner-visible source extractions and derives bounded candidate entities, co-occurrence links, and date hints. Sensitive extractions are excluded by default. The result is read-only and cannot update memory, support a claim, create a workflow, select a model, or trigger an action.",
+		Rationale:  "Knowledge-graph repositories demonstrate useful navigation patterns, but a second graph database would duplicate HAI's source and memory authorities before a measured scale need exists. This native view provides provenance-first inspection without importing an agent or graph runtime.",
+		VerifiedAt: "2026-07-20", VerificationNote: "HAI implements a deterministic source-extraction view only. Microsoft GraphRAG is retained as an upstream architecture reference; HAI does not vendor, install, configure, query, or execute GraphRAG code, models, storage, or prompts.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "entity and relationship graph", HAIControl: "owner-scoped source extractions with source references", Boundary: "co-occurrence is labelled candidate-only and never establishes a real-world relationship"},
+			{SourcePattern: "temporal graph context", HAIControl: "candidate date timeline", Boundary: "relative dates remain unparsed and no event may create a reminder, workflow, or action"},
+			{SourcePattern: "graph-enhanced retrieval", HAIControl: "grounded-answer evidence verification", Boundary: "graph output cannot become evidence, memory, claim support, or execution input"},
+		},
+	},
+	{
 		ID: "anythingllm", Name: "AnythingLLM", UpstreamURL: "https://github.com/Mintplex-Labs/anything-llm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10108/repos/", SourceCollection: "RAG Frameworks",
 		Status: StatusIntegrated, Category: "local RAG workspace evidence adapter", IntegrationMode: "bounded local vector-search bridge",
 		Capabilities: []string{"document workspaces", "RAG retrieval", "agent workspace patterns", "local-model connections"}, RecommendedFor: []string{"approved document workspaces", "RAG adapter evaluation", "local research preparation"},
@@ -127,47 +161,48 @@ var entries = []Entry{
 	},
 	{
 		ID: "github-mcp-server", Name: "GitHub MCP Server", UpstreamURL: "https://github.com/github/github-mcp-server", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
-		Status: StatusCandidate, Category: "scoped GitHub tool integration", IntegrationMode: "reviewed local MCP bridge",
+		Status: StatusIntegrated, Category: "scoped GitHub repository context", IntegrationMode: "disabled-by-default local read-only GitHub MCP-compatible context profile",
 		Capabilities: []string{"repository inspection", "issue and pull-request operations", "GitHub tool schemas"}, RecommendedFor: []string{"repository context", "issue triage", "pull-request review"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review one local MCP process, a GitHub App or fine-grained token with the minimum repository scope, fixed tool allowlist, rate limits, audit events, and a read-only-first operating mode. Write, merge, label, comment, or workflow actions remain separate HAI approvals.",
-		Rationale:  "The maintained official GitHub MCP server is a useful candidate for source-grounded repository work, but HAI must keep repository scope, credentials, write policy, and final execution authority in its own connector and approval layers.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, MIT licence; no GitHub MCP server is installed, configured, or credentialed by HAI.",
+		Activation: "Enable HAI's local FastMCP bridge with two separate local-only tokens and one owner identity. The native GitHub source connector remains read-only and supplies at most eight repository slugs with project and sync freshness. A separately installed official GitHub MCP server is still preflight-only and needs its own minimum-scope credential review. Write, merge, label, comment, or workflow actions remain separate HAI approvals.",
+		Rationale:  "The maintained official GitHub MCP server is useful evidence for repository-context interoperability. HAI now exposes its existing owner-scoped GitHub source configuration through a narrowly bounded local FastMCP tool while retaining repository scope, credentials, source content, write policy, and final execution authority in HAI's connector and approval layers.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, MIT licence. On 2026-07-21 HAI added a disabled-by-default local FastMCP GitHub repository-context tool backed only by its owner-scoped native GitHub source registry. It returns repository slug, project key, state, sync frequency, and last-sync time only; it does not install or start GitHub MCP, send GitHub credentials, call upstream tools, or disclose repository content.",
 		ControlMappings: []ControlMapping{
-			{SourcePattern: "GitHub MCP tools", HAIControl: "GitHub connector scopes, audit events, and approval queue", Boundary: "catalog discovery never creates credentials or grants repository access"},
+			{SourcePattern: "GitHub repository context", HAIControl: "owner-scoped GitHub source registry and local FastMCP bridge", Boundary: "only repository slug, project key, status, sync frequency, and last-sync time are returned; source content and credentials stay inside HAI"},
+			{SourcePattern: "GitHub MCP tools", HAIControl: "MCP preflight plus GitHub connector scopes, audit events, and approval queue", Boundary: "catalog discovery never creates credentials or grants repository access"},
 			{SourcePattern: "repository write operations", HAIControl: "risk policy and per-action confirmation", Boundary: "writes, comments, merges, and workflow dispatches stay approval-gated"},
 		},
 	},
 	{
 		ID: "playwright-mcp", Name: "Playwright MCP", UpstreamURL: "https://github.com/microsoft/playwright-mcp", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
-		Status: StatusCandidate, Category: "controlled browser MCP automation", IntegrationMode: "reviewed local browser adapter",
+		Status: StatusCandidate, Category: "controlled browser MCP automation", IntegrationMode: "review-first local inspection-only MCP context profile",
 		Capabilities: []string{"browser tool schemas", "page inspection", "scripted browser actions"}, RecommendedFor: []string{"approved browser verification", "reproducible UI checks", "read-first web workflows"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review a local browser profile with explicit origin, download, upload, credential, storage, and action allowlists. Begin with read-only checks and deterministic test flows; external messages, posts, account changes, uploads, purchases, and deletion require a separate HAI approval.",
 		Rationale:  "Playwright MCP can expose HAI's existing browser verification discipline through a standard tool boundary, without broadening browser autonomy or bypassing the current approval policy.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no Playwright MCP server is installed or connected by HAI.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence. HAI can preflight one operator-configured local endpoint through initialize and tools/list, accepting only a reviewed inspection-only browser inventory. HAI does not install or start Playwright MCP, connect a browser, send credentials, or call its tools.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "browser MCP tools", HAIControl: "browser origin and action allowlists", Boundary: "the tool cannot inherit logged-in accounts or external-action permission"},
 			{SourcePattern: "browser state", HAIControl: "source evidence and verification records", Boundary: "browser observations do not become facts without HAI verification"},
 		},
 	},
 	{
-		ID: "google-genai-toolbox", Name: "Gen AI Toolbox", UpstreamURL: "https://github.com/googleapis/genai-toolbox", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
-		Status: StatusCandidate, Category: "database tool boundary", IntegrationMode: "reviewed local database-tool bridge",
-		Capabilities: []string{"database tool definitions", "MCP exposure", "connection pooling patterns"}, RecommendedFor: []string{"approved read-only data lookup", "source-backed operational queries", "connector design"},
+		ID: "google-genai-toolbox", Name: "MCP Toolbox", UpstreamURL: "https://github.com/googleapis/mcp-toolbox", RepositoryAliases: []string{"googleapis/genai-toolbox"}, SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		Status: StatusIntegrated, Category: "database tool boundary", IntegrationMode: "integrated local MCP Toolbox preflight profile",
+		Capabilities: []string{"local MCP readiness", "database tool inventory", "toolset scope review"}, RecommendedFor: []string{"approved database-tool review", "source-backed operational query design", "connector design"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a named local database connection with read-only credentials, approved query templates, row and time limits, parameter validation, redacted audit logs, and a disconnect path. It cannot receive production credentials, execute arbitrary SQL, or become a second source-of-truth service.",
-		Rationale:  "Gen AI Toolbox offers a relevant MCP design for narrowly exposing approved data queries, while HAI keeps connection ownership, provenance, query policy, and write denial in its own back office.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no Gen AI Toolbox process or database connection is configured by HAI.",
+		Activation: "Configure one separately started local MCP Toolbox Streamable HTTP endpoint under HAI's owner-only preflight. HAI performs only initialize and tools/list, never sends credentials or calls a database tool. A future execution adapter would still require a named read-only toolset, approved query templates, row/time limits, parameter validation, redacted audit logs, and a separate approval review.",
+		Rationale:  "MCP Toolbox offers a relevant MCP design for reviewing a narrowly exposed database toolset, while HAI keeps connection ownership, provenance, query policy, write denial, and every tool call outside this inspection profile.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight MCP Servers repository list and GitHub metadata checked on 2026-07-21: the former googleapis/genai-toolbox slug now resolves to active googleapis/mcp-toolbox (main, Apache-2.0). HAI implements only its owner-authenticated local MCP handshake and tool inventory; no MCP Toolbox process, database connection, credential, or tool execution is configured by HAI.",
 	},
 	{
 		ID: "qodo-pr-agent", Name: "Qodo PR-Agent", UpstreamURL: "https://github.com/qodo-ai/pr-agent", RepositoryAliases: []string{"Codium-ai/pr-agent", "The-PR-Agent/pr-agent"}, SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
-		Status: StatusLicenseReview, Category: "legacy AGPL pull-request review framework", IntegrationMode: "licence-review reference",
+		Status: StatusReferenceOnly, Category: "community-maintained legacy pull-request review framework", IntegrationMode: "review-pattern reference",
 		Capabilities: []string{"pull-request analysis", "change summaries", "review suggestions", "test-gap detection"}, RecommendedFor: []string{"developer quality gates", "pull-request triage", "review preparation"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Do not install or connect this upstream. Its repository now redirects to the community-maintained legacy The-PR-Agent/pr-agent project under AGPL-3.0. Any future use requires a separate licence, maintenance, local-model, repository-scope, diff-redaction, retention, and no-publish/no-merge review.",
-		Rationale:  "The project retains useful pull-request review patterns, but its legacy maintenance status, AGPL-3.0 licence, and CLI/Action/webhook publication paths make it unsuitable for direct adoption without an explicit legal and operational review.",
-		VerifiedAt: "2026-07-20", VerificationNote: "Upstream checked on 2026-07-20: qodo-ai/pr-agent redirects to The-PR-Agent/pr-agent, whose README identifies it as a community-maintained legacy project under AGPL-3.0. Its documented CLI, Action, and webhook paths can publish review output. HAI has no dependency, runner, credentials, repository access, or integration for it.",
+		Activation: "Do not install or connect this upstream. Its repository redirects to the community-maintained legacy The-PR-Agent/pr-agent project. Any future use requires a separate maintenance, local-model, repository-scope, diff-redaction, retention, and no-publish/no-merge review.",
+		Rationale:  "The project retains useful pull-request review patterns, but its community-maintained legacy status and CLI/Action/webhook publication paths make it unsuitable for direct adoption without an explicit operational review. HAI's bounded mini-SWE review proposal profile remains the only active coding-worker path.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Upstream rechecked on 2026-07-21: qodo-ai/pr-agent redirects to active The-PR-Agent/pr-agent, whose README identifies it as a community-maintained legacy project and whose current LICENSE is MIT. Its documented CLI, Action, and webhook paths can publish review output. HAI has no dependency, runner, credentials, repository access, or integration for it.",
 	},
 	{
 		ID: "swe-agent", Name: "SWE-agent", UpstreamURL: "https://github.com/SWE-agent/SWE-agent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review",
@@ -183,13 +218,35 @@ var entries = []Entry{
 		},
 	},
 	{
+		ID: "swe-rex", Name: "SWE-ReX", UpstreamURL: "https://github.com/SWE-agent/SWE-ReX", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10137/repos/", SourceCollection: "Agent Sandboxing",
+		Status: StatusReferenceOnly, Category: "sandboxed shell-session framework", IntegrationMode: "execution-architecture reference",
+		Capabilities: []string{"sandboxed shell sessions", "local and remote deployment abstractions", "command output and exit-code capture", "parallel execution patterns"}, RecommendedFor: []string{"controlled runtime architecture", "sandbox boundary review", "coding-worker containment"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install, start, or connect SWE-ReX directly. Its server exposes session creation, command execution, file read/write, upload, and close endpoints. Revisit only if HAI's existing runtime registry, disposable mini-SWE worker, and WASI runner have a measured sandboxing gap and a dedicated local deployment, command allowlist, workspace isolation, network policy, secret handling, audit, rollback, and emergency-stop design is approved.",
+		Rationale:  "SWE-ReX is active and MIT licensed, but its general shell interface would otherwise create a parallel broad-command execution control plane. HAI retains one approval-gated runtime authority and records SWE-ReX only as a concrete local sandbox architecture reference.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Upstream rechecked on 2026-07-21: active main branch, MIT licence, Python >=3.10, and current server routes for create_session, run_in_session, execute, read_file, write_file, upload, and close. HAI has no SWE-ReX dependency, service, token, endpoint, session, shell command, file operation, or remote deployment configured.",
+	},
+	{
+		ID: "swe-bench", Name: "SWE-bench", UpstreamURL: "https://github.com/SWE-bench/SWE-bench", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10136/repos/", SourceCollection: "AI Code Review / Agent Harness",
+		Status: StatusExcluded, Category: "resource-intensive coding benchmark harness", IntegrationMode: "excluded benchmark harness",
+		Capabilities: []string{"containerized patch evaluation", "real-world issue benchmark", "reproducible code-agent scoring"}, RecommendedFor: []string{"offline benchmark research", "coding-agent evaluation design"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Do not install SWE-bench, download its datasets, pull benchmark images, expose a Docker socket, mount a workspace, or start a cloud evaluation from HAI. Any future evaluation needs a separately approved capacity, source-provenance, image-isolation, local-only, cost, and retention plan.",
+		Rationale:  "SWE-bench is useful benchmark research, but its multi-image Docker harness is inappropriate as a routine HAI brain or local runtime. HAI keeps its lighter mini-SWE disposable patch-proposal worker and independent verification controls for bounded local review.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Code Review and Agent Harness repository lists plus the official SWE-bench README were checked on 2026-07-21. The upstream is MIT licensed but documents Docker with approximately 120 GB free storage, 16 GB RAM, and 8 CPU cores. HAI has no SWE-bench package, dataset, image, Docker socket, cloud evaluation, or execution path configured.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "containerized benchmark evaluation", HAIControl: "separate capacity and isolation review", Boundary: "benchmark images, datasets, workspaces, Docker socket, and cloud execution are unavailable to HAI"},
+			{SourcePattern: "patch success score", HAIControl: "HAI-native diff inspection and deterministic verification", Boundary: "a benchmark result cannot authorize a patch, completion, provider, or execution action"},
+		},
+	},
+	{
 		ID: "mini-swe-agent", Name: "mini-SWE-agent", UpstreamURL: "https://github.com/SWE-agent/mini-swe-agent", SourceCatalogURL: "https://github.com/SWE-agent/mini-swe-agent", SourceCollection: "SWE-agent successor / AI Code Review",
-		Status: StatusCandidate, Category: "minimal sandboxed code-worker", IntegrationMode: "reviewed disposable-worktree worker candidate",
+		Status: StatusIntegrated, Category: "minimal sandboxed code-worker", IntegrationMode: "disabled-by-default disposable patch-proposal worker",
 		Capabilities: []string{"linear agent trajectory", "repository patch proposal", "Docker or Podman environments", "local model compatibility"}, RecommendedFor: []string{"contained local bug-fix experiments", "reproducible patch proposals", "coding-worker sandbox evaluation"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a pinned release in a disposable copied worktree, never the canonical checkout; deny network except an explicitly reviewed local-model gateway; provide no provider token, Git credential, Docker socket, host mount, or unrelated source; enforce CPU, memory, PID, wall-time, and output caps; capture only a diff and selected test summary; then require human acceptance. It cannot commit, push, create a pull request, access accounts, or execute outside the disposable sandbox.",
-		Rationale:  "mini-SWE-agent is the maintained successor recommended by the SWE-agent project and has a smaller, linear execution model that is easier to constrain, audit, and compare with HAI's existing controlled-runtime policy. It remains a review-first candidate because it intentionally uses shell commands and can otherwise produce broad side effects.",
-		VerifiedAt: "2026-07-20", VerificationNote: "Official upstream and documentation reviewed on 2026-07-20: MIT, active main branch, latest v2.4.5 released 2026-07-06. It supports local and container environments but documents bash/subprocess execution and model-provider adapters. HAI has no mini-SWE-agent dependency, image, worktree, model route, provider credential, or execution adapter configured.",
+		Activation: "Enable the pinned `mini-swe` Compose profile only after placing a reviewed, sanitized source snapshot in the workspace allowlist and preloading an isolated local Ollama model. HAI accepts one owner-scoped workflow only after a high-risk review is approved and the workflow reaches ready. The runner copies the snapshot into temporary storage and returns a bounded diff/digest for human review. It cannot commit, push, create a pull request, access accounts, apply a patch, or execute outside the disposable sandbox.",
+		Rationale:  "mini-SWE-agent is the maintained successor recommended by the SWE-agent project and has a smaller, linear execution model that HAI can contain in a review-first, local-only patch-proposal profile. The integration remains disabled until an operator supplies an approved source snapshot, a separate runner token, and a reviewed local model.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official upstream and CLI verified on 2026-07-20: MIT, active main branch, v2.4.5 released 2026-07-06. HAI pins that package in a disabled-by-default, read-only-snapshot Compose profile. The image build and CLI contract are verified; no local model, source snapshot, runner token, or production execution has been configured.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "bash or subprocess command", HAIControl: "isolated disposable worktree and resource-limited execution broker", Boundary: "no host shell, Docker socket, secret, account, or unrestricted network access"},
 			{SourcePattern: "agent trajectory and generated patch", HAIControl: "audit event, diff inspection, selected deterministic tests, and human approval", Boundary: "the agent cannot commit, push, open a pull request, or claim task completion"},
@@ -197,12 +254,25 @@ var entries = []Entry{
 	},
 	{
 		ID: "openlit", Name: "OpenLIT", UpstreamURL: "https://github.com/openlit/openlit", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
-		Status: StatusCandidate, Category: "local AI observability", IntegrationMode: "reviewed local telemetry adapter",
+		Status: StatusIntegrated, Category: "local aggregate OTLP observability", IntegrationMode: "disabled-by-default local aggregate OTLP export bridge",
 		Capabilities: []string{"LLM traces", "latency and token metrics", "tool observability", "OpenTelemetry export"}, RecommendedFor: []string{"model routing diagnostics", "tool failure analysis", "local performance evidence"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a local collector, attribute allowlist, prompt and secret redaction, retention limit, sampling policy, export disablement, and health checks. Telemetry stays read-only and cannot select models, alter paid budgets, approve tasks, or transmit data to an unapproved endpoint.",
-		Rationale:  "OpenLIT is a maintained alternative observability candidate. It is useful for a future measured telemetry gap, while HAI keeps OpenLLMetry, audit records, and its local cost policy authoritative.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Observability repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no OpenLIT collector is installed or configured by HAI.",
+		Activation: "Review and host a local OpenLIT-compatible OTLP collector, set HAI_OPENLIT_ENABLED=true and one loopback/private HAI_OPENLIT_OTLP_ENDPOINT, then invoke the owner-only aggregate snapshot export. Review collector retention, access, deletion, and local network controls separately. HAI will not install OpenLIT, use its SDK, instrument calls automatically, export prompt/source/model/token/workflow data, or contact a remote endpoint.",
+		Rationale:  "OpenLIT now supplies an optional local aggregate trace viewer for a measured observability gap while HAI retains native audit records and sole routing, approval, verification, memory, workflow, and execution authority.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official GitHub metadata rechecked on 2026-07-21: active main branch, Apache-2.0 licence, and a same-day upstream push. HAI implements only a disabled-by-default owner-triggered OTLP/HTTP JSON export to a local collector. It installs no collector and uses no OpenLIT SDK or automatic instrumentation.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "OpenLIT telemetry instrumentation", HAIControl: "fixed aggregate-only manual OTLP snapshot", Boundary: "no SDK, automatic instrumentation, caller-selected attributes, prompt, completion, source, file, token, model, workflow, or credential export"},
+			{SourcePattern: "collector trace acceptance", HAIControl: "HAI audit, approval, verification, routing, and execution controls", Boundary: "a collector trace cannot authorize, verify, route, retain memory, spend budget, or execute work"},
+		},
+	},
+	{
+		ID: "agentops", Name: "AgentOps", UpstreamURL: "https://github.com/AgentOps-AI/agentops", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusReferenceOnly, Category: "agent observability platform", IntegrationMode: "architecture reference",
+		Capabilities: []string{"agent tracing", "cost and latency observability", "session replay patterns"}, RecommendedFor: []string{"observability architecture review", "agent trace comparison"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install the SDK, configure an API key, export traces, or start a hosted or self-hosted AgentOps service from HAI. Reconsider only if HAI's existing audit ledger plus opt-in Prometheus, Langfuse, OpenLIT, and MLflow profiles leave a measured, source-redacted observability gap.",
+		Rationale:  "AgentOps is active and MIT licensed, but introducing another trace authority would duplicate HAI's existing observability surfaces and create additional prompt, source, retention, and egress risk without a demonstrated gap.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Observability repository list and GitHub metadata checked on 2026-07-21: active main branch, archived=false, MIT licence, and latest push 2026-06-25. HAI has no AgentOps SDK, key, endpoint, collector, trace export, or telemetry integration configured.",
 	},
 	{
 		ID: "langmem", Name: "LangMem", UpstreamURL: "https://github.com/langchain-ai/langmem", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10114/repos/", SourceCollection: "AI Agent Memory",
@@ -273,8 +343,8 @@ var entries = []Entry{
 		Capabilities: []string{"OpenTelemetry traces", "model-call instrumentation", "latency metrics", "cost and token signals"}, RecommendedFor: []string{"routing observability", "evaluation traces", "failure analysis"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review local collector ownership, attribute allowlist, secret and prompt redaction, retention, sampling, export disablement, and health checks. Telemetry is observational only: it cannot grant provider access, alter budgets, or approve execution.",
-		Rationale:  "OpenLLMetry can make model and tool decisions inspectable through HAI's existing audit and budget controls while avoiding an unreviewed external telemetry destination.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Observability repository list and GitHub metadata checked on 2026-07-19; no OpenLLMetry instrumentation or collector is configured by HAI.",
+		Rationale:  "OpenLLMetry remains a trace-level observability candidate. HAI now has a durable native redacted generation ledger for provider/model, status, aggregate cost, exact-or-estimated tokens, latency, fallback, and audit evidence; a collector is justified only if a measured trace-level gap remains.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Observability repository listing and current GitHub metadata rechecked on 2026-07-21: active main branch, Apache-2.0 licence. HAI has no OpenLLMetry collector or instrumentation; its native generation ledger deliberately retains no prompts, completions, or raw provider payloads.",
 	},
 	{
 		ID: "graphrag", Name: "Microsoft GraphRAG", UpstreamURL: "https://github.com/microsoft/graphrag", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10134/repos/", SourceCollection: "Knowledge Graphs for AI",
@@ -313,6 +383,19 @@ var entries = []Entry{
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight LLM Inference Engines repository list and GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence. HAI implements only the provider profile; no vLLM endpoint or model is configured by HAI.",
 	},
 	{
+		ID: "sglang", Name: "SGLang", UpstreamURL: "https://github.com/sgl-project/sglang", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
+		Status: StatusIntegrated, Category: "local high-throughput model inference", IntegrationMode: "integrated loopback OpenAI-compatible provider profile",
+		Capabilities: []string{"local model serving", "OpenAI-compatible API", "batched inference", "structured output serving"}, RecommendedFor: []string{"local reasoning", "larger local models", "high-volume extraction"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Review a loopback-only deployment with explicit GPU, model, model licence, context-window, retention, and resource limits. Set SGLANG_BASE_URL and SGLANG_MODEL_ID only after that review. HAI probes only /v1/models and calls only /v1/chat/completions under its EUR 0 policy; it does not start SGLang, pull an image, choose a model, or inherit upstream tool surfaces.",
+		Rationale:  "HAI now implements a distinct SGLang provider profile for an explicit local serving need while preserving local-first routing, the daily exact-model availability gate, budget controls, audit, and task approval gates.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight LLM Inference Engines repository list and current GitHub metadata checked on 2026-07-21: active main branch, Apache-2.0 licence, and same-day upstream push. SGLang documents OpenAI API compatibility; HAI implements only the loopback /v1/models and /v1/chat/completions provider profile. No SGLang server, model, UI, external endpoint, or built-in tool surface is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "OpenAI-compatible server", HAIControl: "local provider probe, daily exact-model availability gate, and EUR 0 router", Boundary: "provider availability does not bypass model selection, budget, or task approval"},
+			{SourcePattern: "operator-managed runtime or model update", HAIControl: "daily exact-model verification", Boundary: "HAI does not silently pull images, replace model weights, change model identifiers, or inherit upstream execution surfaces"},
+		},
+	},
+	{
 		ID: "deepeval", Name: "DeepEval", UpstreamURL: "https://github.com/confident-ai/deepeval", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10119/repos/", SourceCollection: "AI Evaluation & Testing",
 		Status: StatusIntegrated, Category: "local synthetic source-grounding regression", IntegrationMode: "integrated opt-in isolated local evaluation runner",
 		Capabilities: []string{"FaithfulnessMetric regression", "synthetic evidence-answer evaluation", "aggregate evaluator accuracy evidence"}, RecommendedFor: []string{"source-grounded answer regression", "local judge model review", "retrieval quality safeguards"},
@@ -323,6 +406,76 @@ var entries = []Entry{
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "synthetic evidence and answer fixture", HAIControl: "isolated DeepEval FaithfulnessMetric runner", Boundary: "fixed three-case suite only; no real source, answer, prompt, caller metric, or model setting is accepted"},
 			{SourcePattern: "evaluator score", HAIControl: "reviewable aggregate regression evidence", Boundary: "a score cannot mark a claim verified, alter routing, change policy, approve an action, or execute work"},
+		},
+	},
+	{
+		ID: "gitleaks", Name: "Gitleaks", UpstreamURL: "https://github.com/gitleaks/gitleaks", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10051/repos/", SourceCollection: "Security Tool",
+		Status: StatusIntegrated, Category: "local aggregate secret scanner", IntegrationMode: "integrated opt-in redacted snapshot scanner",
+		Capabilities: []string{"read-only named local snapshot scan", "aggregate rule and affected-file evidence", "redacted result digest"}, RecommendedFor: []string{"reviewed repository safety checks", "pre-execution source snapshot review", "credential-leak triage"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Set a separate 16+ character local runner token, list one to eight reviewed snapshot names, copy only the reviewed snapshot under security-snapshots, and start the secret-scan Compose profile. An owner-admin may probe or scan a named snapshot. HAI never accepts a caller-selected path, source content, rule configuration, command, report destination, or secret value.",
+		Rationale:  "A bounded local Gitleaks profile closes a distinct source-safety gap without granting a scanner access to arbitrary host paths, repositories, credentials, network services, or HAI execution authority.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight Security Tool listing and current gitleaks/gitleaks GitHub metadata checked on 2026-07-21: active MIT upstream, v8.30.1 release, and no archive marker. The isolated optional runner uses the documented Gitleaks directory scan with redacted JSON output, deletes its temporary report, and returns aggregate metadata only.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "reviewed named source snapshot", HAIControl: "read-only Gitleaks directory scan", Boundary: "only configured direct child snapshots under the read-only input mount; no caller path, Git history, network, source upload, or file write"},
+			{SourcePattern: "redacted scanner findings", HAIControl: "aggregate rule counts, affected-file count, and result digest", Boundary: "matched text, secret values, paths, lines, commits, authors, raw reports, and source files are not returned, stored, or used as facts"},
+			{SourcePattern: "potential secret finding", HAIControl: "owner review in the original workspace", Boundary: "a result cannot automatically block, approve, execute, verify completion, alter memory, or alter provider routing"},
+		},
+	},
+	{
+		ID: "gosec", Name: "Gosec", UpstreamURL: "https://github.com/securego/gosec", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10051/repos/", SourceCollection: "Security Tool",
+		Status: StatusIntegrated, Category: "local aggregate Go security analysis", IntegrationMode: "integrated opt-in redacted vendored Go snapshot scanner",
+		Capabilities: []string{"read-only named vendored Go snapshot scan", "aggregate severity and confidence evidence", "redacted result digest"}, RecommendedFor: []string{"reviewed Go repository security checks", "pre-execution source snapshot review", "manual secure-coding triage"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Set a separate 16+ character local runner token, list one to eight reviewed snapshot names, copy only a reviewed Go source snapshot with go.mod and vendor/modules.txt under security-snapshots, and start the go-security-scan Compose profile. An owner-admin may probe or scan a named snapshot. HAI never accepts a caller-selected path, source, finding, rule, CWE, command, report destination, or remediation request.",
+		Rationale:  "A bounded local Gosec profile adds a distinct static Go AST/SSA and taint-analysis signal next to HAI's secrets, SBOM, and vulnerability controls without granting a scanner arbitrary host paths, source export, module network access, credentials, write authority, or HAI execution authority.",
+		VerifiedAt: "2026-07-22", VerificationNote: "OSS Insight Security Tool listing and current securego/gosec GitHub metadata checked on 2026-07-22: active Apache-2.0 upstream, v2.28.0 release, and no archive marker. Upstream documents AST/SSA scanning, taint analyzers, JSON output, and Go 1.25+; HAI's isolated optional runner requires vendored dependencies and disables module downloads and proxy egress before returning aggregate metadata only.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "reviewed named vendored Go source snapshot", HAIControl: "read-only offline Gosec package scan", Boundary: "only configured direct child snapshots under the read-only input mount with go.mod and vendor/modules.txt; no caller path, source upload, module download, proxy egress, or file write"},
+			{SourcePattern: "local static-analysis report", HAIControl: "aggregate finding total, severity/confidence counts, and result digest", Boundary: "source, paths, findings, rules, CWEs, raw reports, and remediation details are not returned, stored, or used as facts"},
+			{SourcePattern: "potential secure-coding finding", HAIControl: "owner review in the original workspace", Boundary: "a result cannot automatically alter source, block or approve work, execute remediation, verify completion, alter memory, or alter provider routing"},
+		},
+	},
+	{
+		ID: "trivy", Name: "Trivy", UpstreamURL: "https://github.com/aquasecurity/trivy", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10051/repos/", SourceCollection: "Security Tool",
+		Status: StatusIntegrated, Category: "local aggregate configuration security review", IntegrationMode: "integrated opt-in offline configuration snapshot scanner",
+		Capabilities: []string{"read-only named configuration snapshot scan", "aggregate configuration severity evidence", "redacted result digest"}, RecommendedFor: []string{"reviewed infrastructure configuration checks", "pre-execution configuration snapshot review", "manual misconfiguration triage"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Set a separate 16+ character local runner token, list one to eight reviewed snapshot names, copy only a reviewed configuration snapshot under security-snapshots, and start the configuration-security-scan Compose profile. An owner-admin may probe or scan a named snapshot. HAI never accepts a caller-selected path, image, repository, cloud target, finding, policy, command, report destination, or remediation request.",
+		Rationale:  "A bounded local Trivy profile adds aggregate offline configuration-security evidence without granting a scanner arbitrary host paths, image/repository/cloud access, policy updates, credentials, write authority, or HAI execution authority.",
+		VerifiedAt: "2026-07-22", VerificationNote: "OSS Insight Security Tool listing and current aquasecurity/trivy GitHub metadata checked on 2026-07-22: active Apache-2.0 upstream, v0.72.0 release, and no archive marker. HAI deliberately uses only the offline configuration scanner, disables policy updates and proxy egress, and returns aggregate metadata only.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "reviewed named configuration snapshot", HAIControl: "read-only offline Trivy configuration scan", Boundary: "only configured direct child snapshots under the read-only input mount; no caller path, source upload, image, repository, cloud, policy update, proxy egress, or file write"},
+			{SourcePattern: "local configuration security report", HAIControl: "aggregate finding total, severity counts, and result digest", Boundary: "source, paths, findings, rules, policy details, raw reports, and remediation details are not returned, stored, or used as facts"},
+			{SourcePattern: "potential configuration issue", HAIControl: "owner review in the original workspace", Boundary: "a result cannot automatically alter source, block or approve work, execute remediation, verify completion, alter memory, or alter provider routing"},
+		},
+	},
+	{
+		ID: "syft", Name: "Syft", UpstreamURL: "https://github.com/anchore/syft", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10051/repos/", SourceCollection: "Security Tool",
+		Status: StatusIntegrated, Category: "local aggregate software inventory", IntegrationMode: "integrated opt-in redacted snapshot SBOM inventory",
+		Capabilities: []string{"read-only named local snapshot inventory", "aggregate package and ecosystem evidence", "redacted result digest"}, RecommendedFor: []string{"reviewed repository inventory", "dependency ecosystem review", "pre-execution source snapshot review"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Set a separate 16+ character local runner token, list one to eight reviewed snapshot names, copy only the reviewed snapshot under security-snapshots, and start the sbom-inventory Compose profile. An owner-admin may probe or inventory a named snapshot. HAI never accepts a caller-selected path, source content, SBOM export, package query, command, or scanner configuration.",
+		Rationale:  "A bounded local Syft profile gives HAI software-supply-chain context without granting an inventory runner access to arbitrary host paths, repositories, package metadata, credentials, network services, or HAI execution authority.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight Security Tool listing and current anchore/syft GitHub metadata checked on 2026-07-21: active Apache-2.0 upstream, v1.48.0 release, and no archive marker. The isolated optional runner uses the documented Syft directory inventory with in-memory Syft JSON parsing and returns aggregate metadata only.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "reviewed named source snapshot", HAIControl: "read-only Syft directory inventory", Boundary: "only configured direct child snapshots under the read-only input mount; no caller path, Git history, network, source upload, or file write"},
+			{SourcePattern: "generated local SBOM", HAIControl: "aggregate package total, ecosystem counts, and result digest", Boundary: "SBOMs, package names, versions, licences, PURLs, paths, and source files are not returned, stored, or used as facts"},
+			{SourcePattern: "software inventory evidence", HAIControl: "owner review in the original workspace", Boundary: "a result cannot automatically block, approve, execute, verify completion, alter memory, or alter provider routing"},
+		},
+	},
+	{
+		ID: "grype", Name: "Grype", UpstreamURL: "https://github.com/anchore/grype", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10051/repos/", SourceCollection: "Security Tool",
+		Status: StatusIntegrated, Category: "local aggregate vulnerability evidence", IntegrationMode: "integrated opt-in offline snapshot vulnerability scanner",
+		Capabilities: []string{"read-only named local snapshot scan", "aggregate severity and fix-availability evidence", "redacted result digest"}, RecommendedFor: []string{"reviewed repository vulnerability triage", "pre-execution source snapshot review", "manual dependency-risk review"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Set a separate 16+ character local runner token, list one to eight reviewed snapshot names, copy only the reviewed snapshot under security-snapshots, manually provide a reviewed local advisory database under security-advisories, and start the vulnerability-scan Compose profile. An owner-admin may probe or scan a named snapshot. HAI never accepts a caller-selected path, package, version, CVE, advisory, raw report, command, scanner configuration, or remediation request.",
+		Rationale:  "A bounded offline Grype profile closes the remaining aggregate vulnerability-evidence gap next to HAI's secret and SBOM controls without granting a scanner arbitrary host paths, repositories, credentials, network access, dependency-write authority, or HAI execution authority.",
+		VerifiedAt: "2026-07-22", VerificationNote: "OSS Insight Security Tool listing and current anchore/grype GitHub metadata checked on 2026-07-22: active Apache-2.0 upstream, v0.116.0 release, and no archive marker. The isolated optional runner accepts only a configured named read-only snapshot, uses a separately mounted local advisory database with update checks disabled, clears proxies, and returns aggregate metadata only.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "reviewed named source snapshot", HAIControl: "read-only offline Grype directory scan", Boundary: "only configured direct child snapshots under the read-only input mount; no caller path, Git history, network, source upload, or file write"},
+			{SourcePattern: "local vulnerability evidence", HAIControl: "aggregate severity counts, fix-availability count, and result digest", Boundary: "CVEs, package names, versions, advisories, paths, raw reports, source files, and remediation commands are not returned, stored, or used as facts"},
+			{SourcePattern: "potential vulnerability finding", HAIControl: "owner review in the original workspace", Boundary: "a result cannot automatically alter dependencies, block or approve work, execute remediation, verify completion, alter memory, or alter provider routing"},
 		},
 	},
 	{
@@ -340,17 +493,17 @@ var entries = []Entry{
 		Capabilities: []string{"browser task planning", "tool-mediated browsing", "structured browser outcomes"}, RecommendedFor: []string{"browser workflow design", "approved research", "read-only verification"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review a local, named browser profile with origin, download, upload, credential, and action allowlists. Start with read-only verification; sending, posting, account changes, purchases, uploads, and destructive actions require separate HAI approvals.",
-		Rationale:  "A relevant browser-agent candidate, but browser autonomy can cause irreversible external effects. HAI retains its current controlled browser verification path until a narrow adapter proves safe.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Browser Agents repository list checked on 2026-07-19; no browser-use runtime is installed or configured by HAI.",
+		Rationale:  "A relevant browser-agent candidate, but browser autonomy can cause irreversible external effects. HAI already owns allowlisted read-only local browser verification, so a browser-use adapter is justified only by a measured capability gap that does not duplicate that surface.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Browser Agents listing and current GitHub metadata rechecked on 2026-07-21: active main branch, MIT licence, and not archived. HAI has no browser-use runtime, browser profile, cookies, account session, or external-action integration configured.",
 	},
 	{
 		ID: "nemo-guardrails", Name: "NVIDIA NeMo Guardrails", UpstreamURL: "https://github.com/NVIDIA-NeMo/Guardrails", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10116/repos/", SourceCollection: "AI Safety & Alignment",
-		Status: StatusCandidate, Category: "LLM interaction guardrails", IntegrationMode: "operator-hosted validation adapter",
+		Status: StatusLicenseReview, Category: "LLM interaction guardrails", IntegrationMode: "license-review reference",
 		Capabilities: []string{"input controls", "output controls", "topic and policy rails"}, RecommendedFor: []string{"draft validation", "high-risk output review", "policy testing"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Complete a local adapter review covering policy ownership, false-positive handling, data redaction, model routing, audit events, and fail-closed behavior. Guardrails may flag work but cannot approve or execute it.",
-		Rationale:  "A useful defense-in-depth candidate for LLM interaction validation. It must complement, never replace, HAI's deterministic risk policy and human approvals.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Safety & Alignment repository list checked on 2026-07-19; no NeMo Guardrails service is configured by HAI.",
+		Activation: "Do not integrate until upstream licence terms are independently reviewed. A future local adapter would also need policy ownership, false-positive handling, data redaction, model routing, audit events, fail-closed behavior, and strict no-approval/no-execution boundaries.",
+		Rationale:  "NeMo Guardrails remains relevant to interaction-safety research, but current GitHub metadata provides no SPDX licence assertion. HAI keeps its deterministic injection block, Guardrails AI schema validator, Garak regression, verification policy, and approvals authoritative rather than importing an unreviewed dependency.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Current NVIDIA-NeMo/Guardrails GitHub metadata rechecked on 2026-07-21: active develop branch, release v0.23.0 published 2026-07-01, licence=NOASSERTION. No NeMo service, package, policy file, model, or telemetry path is configured by HAI.",
 	},
 	{
 		ID: "garak", Name: "garak", UpstreamURL: "https://github.com/NVIDIA/garak", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10138/repos/", SourceCollection: "AI Red Teaming",
@@ -373,6 +526,20 @@ var entries = []Entry{
 		Activation: "Enable the local-transcription Compose profile, place one reviewed GGML model in the local model folder, then create an owner-scoped local-only whisper-audio source with an explicit subfolder. HAI stores returned transcripts only through its existing source and memory verification path.",
 		Rationale:  "Local speech-to-text can broaden safe intake without transmitting audio to a cloud service, but it requires explicit consent and evidence-quality controls.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Multimodal AI repository list checked on 2026-07-19; HAI includes a disabled-by-default local whisper.cpp runner that reads only an explicit selected folder and returns transcript metadata through the source review path.",
+	},
+	{
+		ID: "docling", Name: "Docling", UpstreamURL: "https://github.com/docling-project/docling", SourceCatalogURL: "https://ossinsight.io/collections", SourceCollection: "capability-gap review",
+		Status: StatusIntegrated, Category: "local structured document extraction", IntegrationMode: "operator-triggered owner-scoped local intake adapter",
+		Capabilities: []string{"office-document extraction", "structured Markdown conversion", "local text intake"}, RecommendedFor: []string{"document evidence intake", "project document review", "selected-folder extraction"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Enable the local-document-extraction Compose profile, use a dedicated internal runner token, and create an owner-scoped local-only docling-documents source that names one subfolder of ./connected-sources. DOCX, PPTX, XLSX, HTML, Markdown, and text extraction are manual only. PDF extraction stays disabled unless the operator separately provides reviewed local Docling artifacts and explicitly enables it; HAI never downloads models or calls remote parsing services.",
+		Rationale:  "Docling closes a concrete structured-document intake gap while keeping HAI's source registry, provenance, memory, verification, workflow, approval, and execution controls authoritative.",
+		VerifiedAt: "2026-07-22", VerificationNote: "Direct upstream metadata and documentation reviewed on 2026-07-22: active MIT-licensed main branch and v2.114.0 released 2026-07-20. This project was selected after an OSS Insight collection capability-gap pass; it was not represented as a member of a current collection response. HAI pins an opt-in internal runner, disables remote services, OCR, and table processing, accepts only an explicit selected folder, and never downloads model artifacts. Extracted text remains source-linked uncertain evidence until independently reviewed.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "selected local documents", HAIControl: "owner-scoped local-only source registry", Boundary: "one registered relative subfolder only; no uploads, arbitrary paths, scheduled scans, browser capture, or original-file retention"},
+			{SourcePattern: "document conversion output", HAIControl: "source provenance and verification workflow", Boundary: "extracted text is uncertain source evidence and cannot create facts, update memory, approve work, execute an action, or prove completion"},
+			{SourcePattern: "Docling PDF models and remote services", HAIControl: "operator-managed local artifact boundary", Boundary: "PDF extraction is disabled by default; HAI never downloads artifacts or enables remote parsing, OCR, table processing, plugins, or telemetry"},
+		},
 	},
 	{
 		ID: "a2a", Name: "A2A Protocol", UpstreamURL: "https://github.com/a2aproject/A2A", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10139/repos/", SourceCollection: "A2A Protocol",
@@ -438,6 +605,28 @@ var entries = []Entry{
 		},
 	},
 	{
+		ID: "mlflow", Name: "MLflow", UpstreamURL: "https://github.com/mlflow/mlflow", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10135/repos/", SourceCollection: "AI Observability",
+		Status: StatusIntegrated, Category: "local evaluation evidence", IntegrationMode: "integrated opt-in local fixed-metric evaluation bridge",
+		Capabilities: []string{"fixed-experiment evaluation run projection", "allowlisted metric evidence", "local model-review context"}, RecommendedFor: []string{"model evaluation evidence", "model selection review", "local experiment inventory"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Configure an operator-managed loopback or private MLflow tracking endpoint with explicit experiment-ID and metric-key allowlists. HAI reads only bounded recent run metadata and those metrics; it cannot read prompts, params, tags, datasets, artifacts, models, traces, or credentials, and cannot create, update, delete, register, deploy, or route anything.",
+		Rationale:  "MLflow adds an inspectable local evidence source for model and agent evaluation runs without making it a routing authority, prompt store, model registry, workflow engine, or provider gateway.",
+		VerifiedAt: "2026-07-20", VerificationNote: "Official MLflow REST documentation and repository reviewed on 2026-07-20: the active Apache-2.0 project documents experiment and run search endpoints. HAI implements only a disabled-by-default local read-only runs-search projection with fixed experiment and metric allowlists. No MLflow tracking server, experiment, run, model, prompt, artifact, or credential is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "MLflow experiment and run metrics", HAIControl: "model intelligence review context and audit boundary", Boundary: "only configured local experiment IDs and metric keys are projected; prompts, params, tags, datasets, artifacts, models, and traces are never requested"},
+			{SourcePattern: "model registry and deployment APIs", HAIControl: "HAI local-first provider policy and approval queue", Boundary: "the bridge has no mutation endpoint and cannot alter routing, budget, model availability, workflow state, or execution"},
+		},
+	},
+	{
+		ID: "promptflow", Name: "Prompt flow", UpstreamURL: "https://github.com/microsoft/promptflow", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10141/repos/", SourceCollection: "Agent Harness",
+		Status: StatusReferenceOnly, Category: "LLM flow development toolkit", IntegrationMode: "architecture reference",
+		Capabilities: []string{"prompt-flow design", "flow evaluation", "trace and deployment patterns"}, RecommendedFor: []string{"LLM application lifecycle review", "flow evaluation design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install Prompt flow, create a provider connection, enable telemetry, or run a flow from HAI. Reconsider only for a measured lifecycle or evaluation requirement that cannot be met by HAI's native task/verification path and its isolated evaluation profiles.",
+		Rationale:  "Prompt flow remains MIT licensed and available, but its flow, connection, telemetry, and deployment surfaces overlap HAI's policy, routing, evaluation, audit, and workflow authority. It must not become a competing execution or provider configuration plane.",
+		VerifiedAt: "2026-07-21", VerificationNote: "GitHub metadata checked on 2026-07-21: active main branch, archived=false, MIT licence, and latest push 2026-07-09. Its current README still documents provider connections and telemetry configuration. HAI has no Prompt flow package, connection, provider key, telemetry, flow, deployment, or execution integration configured.",
+	},
+	{
 		ID: "promptfoo", Name: "Promptfoo", UpstreamURL: "https://github.com/promptfoo/promptfoo", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
 		Status: StatusIntegrated, Category: "LLM safety regression", IntegrationMode: "integrated opt-in internal fixed-suite local evaluation bridge",
 		Capabilities: []string{"prompt regression testing", "provider comparison", "synthetic high-risk action regression"}, RecommendedFor: []string{"local model safety regression", "prompt-injection regression checks", "evaluation design"},
@@ -474,12 +663,21 @@ var entries = []Entry{
 	},
 	{
 		ID: "continue", Name: "Continue", UpstreamURL: "https://github.com/continuedev/continue", SourceCatalogURL: sourceCatalogURL,
-		Status: StatusCandidate, Category: "coding review", IntegrationMode: "operator-configured CLI or CI check",
+		Status: StatusExcluded, Category: "unmaintained coding assistant", IntegrationMode: "excluded upstream",
 		Capabilities: []string{"source-controlled coding checks", "PR review", "local CLI"}, RecommendedFor: []string{"coding", "repository review", "verification"},
-		RequiresApproval: false, LocalFirstCompatible: true,
-		Activation: "Install and configure Continue outside HAI, then add a reviewed check-only adapter. HAI will not install it or grant repository write access.",
-		Rationale:  "Active Apache-2.0 project with a Windows CLI path and a narrow check/review role that complements HAI verification.",
-		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository and release activity checked on 2026-07-19.",
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install or connect Continue. Its upstream repository now states that it is read-only and no longer actively maintained; a future replacement requires a separate review.",
+		Rationale:  "A final release and archived-for-development repository are not a suitable foundation for a new HAI coding adapter.",
+		VerifiedAt: verifiedAt, VerificationNote: "Upstream README rechecked on 2026-07-21: it states the repository is read-only and no longer actively maintained, despite a final 2.0.0 release.",
+	},
+	{
+		ID: "microsoft-jarvis", Name: "Microsoft JARVIS (HuggingGPT)", UpstreamURL: "https://github.com/microsoft/JARVIS", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusExcluded, Category: "legacy multi-model research prototype", IntegrationMode: "excluded upstream",
+		Capabilities: []string{"task decomposition", "expert-model selection", "multi-model execution patterns"}, RecommendedFor: []string{"historical orchestration research"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Do not install, connect, or recommend JARVIS. Retain only its task-planning and explicit model-selection ideas as historical research; HAI's own router, runtime registry, verification, approval, and audit controls remain the only operational authority.",
+		Rationale:  "The documented runtime is an outdated research stack that depends on Ubuntu 16.04, Python 3.8, text-davinci-003, Hugging Face credentials, or very large model downloads. It neither meets HAI's Windows local-first baseline nor its zero-paid-default and controlled-execution boundaries.",
+		VerifiedAt: verifiedAt, VerificationNote: "Upstream README rechecked on 2026-07-21: latest announced project update is EasyTool dated 2024-01-15; setup specifies Ubuntu 16.04, Python 3.8, text-davinci-003, and up to 284 GB of model storage. No JARVIS package, service, credential, workspace, or model endpoint is configured by HAI.",
 	},
 	{
 		ID: "cline", Name: "Cline", UpstreamURL: "https://github.com/cline/cline", SourceCatalogURL: "https://ossinsight.io/collections/llm-devtools", SourceCollection: "LLM DevTools",
@@ -517,17 +715,17 @@ var entries = []Entry{
 		Capabilities: []string{"configured endpoint health probe", "coding-agent setup requirements", "operator-reviewed deployment boundary"}, RecommendedFor: []string{"coding-agent readiness review", "isolated workspace planning", "operator-controlled runtime health"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Set OPENHANDS_BASE_URL and an explicit RUNTIME_LAB_ALLOWED_HOSTS entry for an operator-managed health route, then use Runtime Lab to probe it. This adapter only verifies configured endpoint reachability. HAI cannot start OpenHands agents, select a backend/model, read or mount a workspace, call tools, create automations, or execute a task through it.",
-		Rationale:  "The health-only adapter provides an auditable readiness boundary for an operator-managed OpenHands deployment while HAI keeps workspace scope, network access, task transport, execution, verification, and approval authority.",
-		VerifiedAt: "2026-07-20", VerificationNote: "Official OpenHands repository reviewed on 2026-07-20: the project has moved from All-Hands-AI/OpenHands and documents Agent Canvas/Agent Server deployment with explicit warnings that unsandboxed installation can expose the host filesystem. HAI implements only a disabled-by-default, allowlisted GET health probe; no OpenHands service, workspace, agent, model, tool, credential, or automation is configured by HAI.",
+		Rationale:  "The health-only adapter provides an auditable readiness boundary for an operator-managed OpenHands deployment while HAI keeps workspace scope, network access, task transport, execution, verification, and approval authority. The upstream is currently a beta Agent Canvas control center and its agent source is moving into separate repositories, so a task-execution bridge would be an unstable second control plane rather than a safe incremental capability.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official OpenHands repository and GitHub metadata rechecked on 2026-07-21: active main branch, not archived, but GitHub reports licence NOASSERTION. Its README identifies the project as beta Agent Canvas, says Agent and Agent Server source live in OpenHands/software-agent-sdk, and warns that unsandboxed installation gives the agent full filesystem access. HAI implements only a disabled-by-default, allowlisted GET health probe; no OpenHands service, workspace, agent, model, tool, credential, or automation is configured by HAI.",
 	},
 	{
 		ID: "crewai", Name: "CrewAI", UpstreamURL: "https://github.com/crewAIInc/crewAI", SourceCatalogURL: sourceCatalogURL,
-		Status: StatusCandidate, Category: "multi-agent orchestration", IntegrationMode: "operator-hosted service adapter",
+		Status: StatusIntegrated, Category: "multi-agent orchestration", IntegrationMode: "integrated opt-in local two-role planning runner",
 		Capabilities: []string{"role-based agents", "task orchestration", "flows"}, RecommendedFor: []string{"planning", "research", "multi-step workflows"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Host a reviewed CrewAI service with explicit tools and a local model route; bind only an allowlisted task API to HAI.",
-		Rationale:  "Actively maintained MIT project that can contribute orchestration patterns, but HAI must own policy, approval, audit, and final execution decisions.",
-		VerifiedAt: verifiedAt, VerificationNote: "Upstream repository and release activity checked on 2026-07-19.",
+		Activation: "Enable `HAI_CREWAI_ENABLED=true` and the separate `crewai-planning` Compose profile only after configuring one reviewed local OpenAI-compatible model endpoint. HAI sends a short task plus up to eight criteria to two fixed no-tool roles, accepts one bounded schema-checked planning artifact, and retains validation, audit, approval, and all execution authority.",
+		Rationale:  "The runner uses CrewAI's role/task coordination for a constrained planner-plus-reviewer draft without adopting its tools, memory, delegation, telemetry, provider discovery, or workflow control plane.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official CrewAI upstream reviewed on 2026-07-21: active main branch, MIT licensed, and release 1.15.5 dated 2026-07-20. HAI's profile pins that release, disables OpenTelemetry, fixes a local model endpoint, creates no tools or memory, and returns only a reviewable plan through an owner-authenticated API.",
 	},
 	{
 		ID: "aider", Name: "Aider", UpstreamURL: "https://github.com/Aider-AI/aider", RepositoryAliases: []string{"paul-gauthier/aider"}, SourceCatalogURL: sourceCatalogURL,
@@ -558,12 +756,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "autogen", Name: "AutoGen", UpstreamURL: "https://github.com/microsoft/autogen", SourceCatalogURL: sourceCatalogURL,
-		Status: StatusCompatibility, Category: "legacy multi-agent compatibility", IntegrationMode: "operator-hosted bridge or protocol translation",
+		Status: StatusCompatibility, Category: "legacy multi-agent compatibility", IntegrationMode: "integrated transient migration-preview bridge",
 		Capabilities: []string{"event-driven agent messaging", "team and delegation patterns", "MCP workbench compatibility", "structured task events"}, RecommendedFor: []string{"existing AutoGen workloads", "MCP compatibility", "migration planning"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Use only behind a dedicated operator-hosted bridge with a narrow task schema. HAI does not install or execute AutoGen project code. New capability must use a HAI-native adapter or undergo a separate successor-framework review.",
-		Rationale:  "AutoGen is maintenance mode but documents useful interoperability patterns. HAI maps those patterns into its native task, workflow, approval, and audit pipeline rather than using AutoGen as a new execution foundation.",
-		VerifiedAt: verifiedAt, VerificationNote: "Official maintenance notice and MCP trusted-server warning checked on 2026-07-19.",
+		Activation: "Use HAI's owner-authenticated /api/v1/autogen-compat/preview endpoint with a 1-100 event, redacted migration sample. It normalizes only fixed event types into transient review signals. HAI does not install or execute AutoGen project code; any actual runtime bridge still needs a separate approved adapter review.",
+		Rationale:  "AutoGen is maintenance mode but documents useful interoperability patterns. HAI now maps a bounded legacy event export into native review controls and open loops without creating a second runtime, persistence path, or authority channel.",
+		VerifiedAt: "2026-07-21", VerificationNote: "GitHub metadata rechecked on 2026-07-21: active main branch, archived=false, licence=CC-BY-4.0. HAI's compatibility adapter has no AutoGen dependency and cannot invoke agents, models, MCP, tools, workflows, persistence, or execution.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "event-driven agent messages", HAIControl: "task events, workflow state, and immutable audit records", Boundary: "HAI owns task lifecycle and completion decisions"},
 			{SourcePattern: "agent teams and delegation", HAIControl: "planner recommendations and approval-gated workflow assignments", Boundary: "no AutoGen agent can self-authorize an action"},
@@ -574,12 +772,12 @@ var entries = []Entry{
 	{
 		ID: "microsoft-agent-framework", Name: "Microsoft Agent Framework", UpstreamURL: "https://github.com/microsoft/agent-framework", SourceCatalogURL: "https://github.com/microsoft/autogen",
 		SourceCollection: "Official AutoGen successor",
-		Status:           StatusCandidate, Category: "multi-agent workflow orchestration", IntegrationMode: "operator-hosted bridge with HAI-owned task boundary",
-		Capabilities: []string{"durable agent workflows", "human-in-the-loop orchestration", "checkpointing patterns", "A2A and MCP interoperability"}, RecommendedFor: []string{"AutoGen migration", "reviewed multi-agent workflow", "agent interoperability planning"},
+		Status:           StatusIntegrated, Category: "multi-agent workflow orchestration", IntegrationMode: "integrated opt-in local sequential planning runner plus transient migration-plan translator",
+		Capabilities: []string{"local OpenAI-compatible planner/reviewer draft", "human-in-the-loop orchestration patterns", "checkpointing patterns", "A2A and MCP interoperability"}, RecommendedFor: []string{"AutoGen migration", "reviewed multi-agent planning", "agent interoperability planning"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Review a narrow, local operator-hosted bridge for one fixed task schema. HAI keeps provider routing, approval, budget, source controls, audit records, emergency stop, and completion verification; no framework-owned tool execution, cloud hosting, or implicit peer discovery is permitted.",
-		Rationale:  "Microsoft positions Agent Framework as AutoGen's successor with workflow, human-in-the-loop, observability, and interoperability patterns. It is a stronger future migration target than new AutoGen code, but it remains an external framework that must not replace HAI's control plane.",
-		VerifiedAt: verifiedAt, VerificationNote: "Official AutoGen maintenance notice and Microsoft Agent Framework repository, MIT license, and July 2026 release activity checked on 2026-07-19.",
+		Activation: "Use the owner-authenticated /api/v1/autogen-compat/migration-plan endpoint with a 1-100-event redacted sample for a non-executable migration plan. Separately, enable HAI_AGENT_FRAMEWORK_ENABLED=true and the `agent-framework-planning` local Compose profile only after configuring one reviewed local OpenAI-compatible model endpoint. The runner receives a short task plus up to eight criteria, runs two fixed no-tool local roles, and returns one bounded review-only JSON draft. HAI keeps provider routing, approval, budget, source controls, audit records, emergency stop, persistence, and completion verification; no framework-owned tool execution, cloud hosting, checkpoint, peer discovery, or state authority is permitted.",
+		Rationale:  "Microsoft positions Agent Framework as AutoGen's supported successor. Its current OpenAI-compatible client supports local Ollama, LM Studio, and vLLM endpoints, so HAI can use a tightly scoped local planner/reviewer without introducing a second control plane or opening tools, memory, MCP, A2A, workflow hosting, or execution.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official AutoGen and Agent Framework upstream materials rechecked on 2026-07-21: AutoGen is maintenance mode; Agent Framework is MIT-licensed, production-stable, and supports local OpenAI-compatible endpoints. HAI pins Agent Framework core 1.11.0 and compatible OpenAI client 1.10.1 in an opt-in isolated runner with telemetry disabled and no tool/state authority.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "workflow checkpointing and restart", HAIControl: "workflow state machine, durable follow-up records, and verified completion", Boundary: "HAI owns state transitions and does not trust upstream completion signals"},
 			{SourcePattern: "human-in-the-loop orchestration", HAIControl: "approval queue and autonomy policy", Boundary: "a framework callback cannot approve or execute a protected action"},
@@ -622,6 +820,24 @@ var entries = []Entry{
 		Activation: "Enable the local durability Compose profile and HAI_TEMPORAL_ENABLED. The one registered worker can only run governed follow-up proposal checks; HAI remains authoritative for approval and completion decisions.",
 		Rationale:  "Temporal is wired as a local restart-safe scheduling layer for one HAI-owned workflow. It is infrastructure, not an autonomous decision-maker or policy bypass.",
 		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Workflow Scheduler listing and upstream MIT-licensed release activity checked on 2026-07-19.",
+	},
+	{
+		ID: "prefect", Name: "Prefect", UpstreamURL: "https://github.com/PrefectHQ/prefect", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10123/repos/", SourceCollection: "AI Workflow Orchestration",
+		Status: StatusReferenceOnly, Category: "data workflow orchestrator", IntegrationMode: "architecture reference",
+		Capabilities: []string{"scheduled flows", "retry orchestration", "work pools", "pipeline visibility"}, RecommendedFor: []string{"workflow orchestration comparison", "background-job architecture review"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install Prefect, start its server, create a work pool, configure a cloud account, or register a deployment from HAI. Reconsider only for a measured data-pipeline gap that cannot be met by HAI's bounded Temporal worker and existing governed workflow state machine.",
+		Rationale:  "Prefect is active and Apache-2.0 licensed, but it would create a parallel scheduler, deployment registry, and workflow-control surface. HAI keeps Temporal as its single local durability layer until an explicit scale requirement proves otherwise.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Workflow Orchestration listing and GitHub metadata checked on 2026-07-21: active main branch, archived=false, Apache-2.0 licence, and latest push 2026-07-21. HAI has no Prefect package, server, deployment, work pool, cloud account, credential, or worker configured.",
+	},
+	{
+		ID: "dagster", Name: "Dagster", UpstreamURL: "https://github.com/dagster-io/dagster", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10123/repos/", SourceCollection: "AI Workflow Orchestration",
+		Status: StatusReferenceOnly, Category: "data asset orchestrator", IntegrationMode: "architecture reference",
+		Capabilities: []string{"asset lineage", "data-pipeline orchestration", "observability", "data quality patterns"}, RecommendedFor: []string{"data asset architecture review", "lineage and scheduling comparison"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install Dagster, start a webserver or daemon, register an asset, configure an integration, or expose HAI sources to it. Reconsider only with a separately approved data-asset lineage need that cannot be represented by HAI's source provenance, audit, and Temporal-backed workflow controls.",
+		Rationale:  "Dagster is active and Apache-2.0 licensed, but its asset catalog, daemon, and orchestration layer would overlap HAI's existing source provenance, task state, audit, and durability controls before a demonstrated data-platform need exists.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Workflow Orchestration listing and GitHub metadata checked on 2026-07-21: active master branch, archived=false, Apache-2.0 licence, and latest push 2026-07-21. HAI has no Dagster package, daemon, webserver, asset catalog, integration, source exposure, or credential configured.",
 	},
 	{
 		ID: "prometheus", Name: "Prometheus", UpstreamURL: "https://github.com/prometheus/prometheus", SourceCatalogURL: "https://ossinsight.io/collections/monitoring-tool", SourceCollection: "Monitoring Tool",
@@ -700,9 +916,9 @@ var entries = []Entry{
 		Status: StatusIntegrated, Category: "local public-source discovery", IntegrationMode: "operator-configured local JSON search adapter",
 		Capabilities: []string{"self-hosted metasearch", "JSON source candidates", "privacy-oriented discovery", "search-engine aggregation"}, RecommendedFor: []string{"current public research", "source discovery", "grounded-answer evidence selection"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Run and review a local SearXNG instance separately, enable its JSON format, then set HAI_SEARXNG_ENABLED=true and HAI_SEARXNG_BASE_URL to a local/private endpoint. HAI sends bounded queries only, returns candidate sources, does not fetch pages, and does not treat snippets as verified evidence.",
-		Rationale:  "HAI now has a constrained local discovery adapter for the gap between a research question and source selection. It remains disabled by default because its configured search engines receive the query, and AGPL-3.0 deployment terms must be reviewed independently.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Search Engine collection, upstream repository activity, AGPL-3.0 license, and the official JSON search API documentation checked on 2026-07-19.",
+		Activation: "Set a unique HAI_SEARXNG_SECRET, set HAI_SEARXNG_ENABLED=true, and start HAI's optional research-discovery Compose profile. The profile has no host port: only HAI's backend can reach it over an internal network, while SearXNG alone has outbound search-engine access. HAI sends bounded queries only, returns candidate sources, does not fetch pages, and does not treat snippets as verified evidence.",
+		Rationale:  "HAI now has a constrained local discovery adapter and an opt-in, internal-only Compose profile for the gap between a research question and source selection. It remains disabled by default because its configured search engines receive the query, and AGPL-3.0 deployment terms must be reviewed independently.",
+		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Search Engine collection, upstream repository activity, AGPL-3.0 license, official Docker installation guidance, and the local HAI research-discovery profile checked on 2026-07-21.",
 	},
 	{
 		ID: "playwright", Name: "Playwright", UpstreamURL: "https://github.com/microsoft/playwright", SourceCatalogURL: "https://ossinsight.io/collections/testing-tools", SourceCollection: "Testing Tools",
@@ -813,7 +1029,7 @@ var entries = []Entry{
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review a local-only telemetry deployment with trace redaction, short retention, non-production fixtures first, explicit provider egress control, and an export/delete path. It cannot become HAI's audit authority or receive secrets, full personal documents, or unredacted credentials.",
 		Rationale:  "Opik is a maintained Apache-2.0 local observability candidate that can complement HAI's audit records with evaluation evidence when Langfuse or OpenLLMetry do not meet a demonstrated review need.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight AI Observability and AI Evaluation & Testing listings plus GitHub metadata checked on 2026-07-19: active main branch, Apache-2.0 licence; no Opik service or telemetry export is configured by HAI.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official GitHub metadata rechecked on 2026-07-21: active main branch, Apache-2.0 licence, and a same-day upstream push. No Opik service or telemetry export is configured by HAI.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "LLM trace", HAIControl: "redaction and audit-event policy", Boundary: "observability data cannot override HAI verification or approval decisions"},
 			{SourcePattern: "evaluation dashboard", HAIControl: "source-backed metric definitions", Boundary: "metrics remain advisory and must identify their scope and freshness"},
@@ -846,13 +1062,39 @@ var entries = []Entry{
 		},
 	},
 	{
+		ID: "claude-code-project-instructions", Name: "Claude Code project instructions", UpstreamURL: "https://github.com/anthropics/claude-code", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10124/repos/", SourceCollection: "Agent Skills & AGENTS.md",
+		Status: StatusIntegrated, Category: "local read-only project agent guidance", IntegrationMode: "integrated untrusted project-instructions source reader",
+		Capabilities: []string{"project-local agent guidance", "AGENTS.md intake", "CLAUDE.md intake", "source-linked planning context"}, RecommendedFor: []string{"reviewable software task planning", "project conventions", "workspace-scoped agent guidance"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Create a local-only `project-instructions` connected source for one selected folder under CONNECTED_SOURCE_LOCAL_ROOT. HAI reads only root AGENTS.md and CLAUDE.md as untrusted source records with file provenance. An operator must explicitly review and attach the content as planning context; HAI never runs commands from it, injects it into a model automatically, or lets it override policy, approvals, tool allowlists, workspace boundaries, or execution controls.",
+		Rationale:  "Project-local instructions are useful context for consistent coding and review work, but they are not trusted authority. This narrow reader adds provenance and explicit review without adopting a second agent harness or allowing repository files to self-authorize HAI behavior.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight Agent Skills & AGENTS.md listing and GitHub metadata checked on 2026-07-21: anthropics/claude-code is active on main and not archived; GitHub reported no SPDX licence value in that metadata response. HAI does not install, invoke, configure, or send data to Claude Code. It implements only a local reader for the documented project-guidance file pattern.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "AGENTS.md or CLAUDE.md project guidance", HAIControl: "allowlisted local connected source with provenance", Boundary: "content is marked untrusted and is never automatic model input or execution authority"},
+			{SourcePattern: "agent instruction", HAIControl: "HAI policy, approval, tool, and workspace controls", Boundary: "project text cannot relax policy, grants, runtime isolation, or emergency stop"},
+		},
+	},
+	{
+		ID: "fabric-patterns", Name: "Fabric prompt patterns", UpstreamURL: "https://github.com/danielmiessler/Fabric", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10124/repos/", SourceCollection: "Agent Skills & AGENTS.md",
+		Status: StatusIntegrated, Category: "local read-only prompt-pattern review", IntegrationMode: "integrated untrusted Fabric pattern source reader",
+		Capabilities: []string{"prompt-pattern library intake", "system.md provenance", "bounded local pattern review", "manual planning-context candidates"}, RecommendedFor: []string{"reviewable prompt patterns", "structured drafting patterns", "explicitly selected planning guidance"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Install or copy reviewed Fabric pattern folders locally, then create a local-only `fabric-patterns` connected source pointed at that patterns folder under CONNECTED_SOURCE_LOCAL_ROOT. HAI reads only immediate-child `system.md` files, at most 24 files of 48 KiB each, as untrusted source records with file provenance. It does not install or run Fabric, invoke a provider, automatically attach a pattern to a model, execute a pattern, or let a pattern override HAI policy, evidence, approvals, routing, tool allowlists, workspace controls, or emergency stop.",
+		Rationale:  "Fabric provides a maintained, reusable pattern library, but its prompts are external instructions rather than HAI authority. A narrow local reader preserves useful operator-reviewed material without adding Fabric's CLI, provider configuration, plugins, or execution path as a parallel control plane.",
+		VerifiedAt: "2026-07-22", VerificationNote: "OSS Insight Agent Skills & AGENTS.md listing and GitHub metadata checked on 2026-07-22: danielmiessler/Fabric is active on main, not archived, MIT licensed, and had an upstream push on 2026-07-16. HAI implements only a bounded local reader for manually installed pattern system.md files; no Fabric dependency, CLI, provider, plugin, updater, telemetry, command, or network call is installed or invoked.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "Fabric pattern system.md", HAIControl: "allowlisted local source extraction with provenance", Boundary: "pattern text is marked untrusted, excluded from normal automatic task context, and cannot authorize an action or support a factual claim"},
+			{SourcePattern: "prompt-pattern library", HAIControl: "explicit operator review before a future attachment path", Boundary: "no upstream CLI, model/provider configuration, plugin, command, tool, or network surface is inherited"},
+		},
+	},
+	{
 		ID: "pipecat", Name: "Pipecat", UpstreamURL: "https://github.com/pipecat-ai/pipecat", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10118/repos/", SourceCollection: "Multimodal AI",
 		Status: StatusCandidate, Category: "local voice and multimodal intake", IntegrationMode: "reviewed local input pipeline adapter",
 		Capabilities: []string{"voice pipelines", "multimodal events", "turn detection patterns", "local transport options"}, RecommendedFor: []string{"approved voice capture", "multimodal intake", "ambient input prototypes"},
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review an opt-in local microphone or file-import adapter with explicit capture indicator, per-source consent, local retention, transcription provenance, redaction, pause controls, and no always-on recording default. It cannot invoke tools or contacts from a spoken instruction without HAI's standard approval path.",
 		Rationale:  "Pipecat is a maintained BSD-2-Clause framework that can inform a consentful local voice-intake path, while HAI preserves the user-controlled ambient, memory, execution, and safety boundaries.",
-		VerifiedAt: verifiedAt, VerificationNote: "OSS Insight Multimodal AI and Agent Harness listings plus GitHub metadata checked on 2026-07-19: active main branch, BSD-2-Clause licence; no Pipecat pipeline or audio capture is enabled by HAI.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official GitHub metadata rechecked on 2026-07-21: active main branch, BSD-2-Clause licence, and a same-day upstream push. No Pipecat pipeline or audio capture is enabled by HAI.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "voice event", HAIControl: "source intake permission and provenance", Boundary: "audio is never captured or retained by default"},
 			{SourcePattern: "multimodal agent turn", HAIControl: "planner and approval-gated runtime", Boundary: "input interpretation cannot self-authorize action"},
@@ -936,7 +1178,7 @@ var entries = []Entry{
 		RequiresApproval: true, LocalFirstCompatible: true,
 		Activation: "Review an opt-in local or self-hosted LiveKit deployment with a visible capture state, per-session consent, explicit STT/LLM/TTS providers, retained-transcript controls, a named room allowlist, and HAI's existing tool and approval gates. It must not activate a microphone, make calls, contact anyone, or invoke MCP tools without separate HAI authorization.",
 		Rationale:  "LiveKit Agents is a maintained Apache-2.0 framework for real-time multimodal interaction and can eventually provide a consentful voice front door, while HAI keeps task creation, memory, provider routing, execution, and external effects under its own controls.",
-		VerifiedAt: verifiedAt, VerificationNote: "Official repository reviewed on 2026-07-19: Apache-2.0, latest livekit-agents@1.6.6 released 2026-07-18, supports MCP and local terminal testing but production requires explicit LiveKit URL, API key, and secret. No LiveKit service, room, capture device, or credentials are configured by HAI.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official GitHub metadata rechecked on 2026-07-21: active main branch, Apache-2.0 licence, and a same-day upstream push. Production still requires an explicit LiveKit URL, API key, secret, room allowlist, and consent design. No LiveKit service, room, capture device, or credentials are configured by HAI.",
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "realtime voice session", HAIControl: "source-intake consent, provenance, and pause controls", Boundary: "audio is not captured or retained by default"},
 			{SourcePattern: "function or MCP tool", HAIControl: "runtime registry and approval-gated action policy", Boundary: "a spoken instruction cannot self-authorize a tool or external effect"},
@@ -966,6 +1208,20 @@ var entries = []Entry{
 		ControlMappings: []ControlMapping{
 			{SourcePattern: "agent cooperation and handoff", HAIControl: "workflow state, assignments, and approval queue", Boundary: "HAI owns lifecycle, approval, and completion state"},
 			{SourcePattern: "code execution or registered tool", HAIControl: "controlled runtime executor and tool allowlist", Boundary: "no AG2 agent receives generic host, secret, or network authority"},
+		},
+	},
+	{
+		ID: "omega-memory", Name: "Omega Memory", UpstreamURL: "https://github.com/omega-memory/omega-memory", SourceCatalogURL: "https://ossinsight.io/collections/ai-agent-frameworks", SourceCollection: "AI Agent Frameworks",
+		Status: StatusReferenceOnly, Category: "local-first cross-model memory patterns", IntegrationMode: "native memory-health reference",
+		Capabilities: []string{"local-first memory storage", "on-device semantic retrieval", "cross-model memory patterns", "MCP memory client patterns"}, RecommendedFor: []string{"memory consolidation review", "local memory portability research", "cross-agent memory-boundary design"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install, start, connect, import, or enable Omega Memory or its MCP/client hooks. HAI remains the only memory, provenance, retention, and deletion authority. Any future migration must begin with an owner-selected export, a local-only schema and retention review, duplicate/provenance reconciliation, a dry run, explicit acceptance, and rollback evidence.",
+		Rationale:  "Omega Memory offers useful local-first consolidation and cross-model memory patterns, but adding another active memory store would split ownership, correction, provenance, retention, and verification. HAI instead adds an owner-scoped read-only memory-health endpoint that identifies stale, ungrounded, dormant, and possible duplicate records for manual review.",
+		VerifiedAt: "2026-07-21", VerificationNote: "Official upstream and license reviewed on 2026-07-21: Apache-2.0, active main branch, local SQLite/on-device embedding design, and MCP client integration patterns. HAI does not install Omega packages, databases, model files, MCP servers, hooks, or source ingestion.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "cross-model memory store", HAIControl: "owner-scoped ContextMemory plus canonical source and verification layers", Boundary: "no second persistent memory authority or automatic memory import is created"},
+			{SourcePattern: "memory consolidation", HAIControl: "read-only memory-health and candidate review", Boundary: "suggestions cannot archive, merge, delete, change provenance, or verify a memory"},
+			{SourcePattern: "MCP memory client", HAIControl: "reviewed local MCP bridge and source/memory access policy", Boundary: "no MCP hook receives memory content or write authority by default"},
 		},
 	},
 	{
@@ -1022,6 +1278,82 @@ var entries = []Entry{
 		},
 	},
 	{
+		ID: "agno", Name: "Agno", UpstreamURL: "https://github.com/agno-agi/agno", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusReferenceOnly, Category: "broad agent-platform architecture", IntegrationMode: "second-control-plane reference",
+		Capabilities: []string{"agent platform patterns", "multi-agent composition", "developer tooling"}, RecommendedFor: []string{"agent-control-plane comparison", "local-first orchestration research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install, start, or connect Agno as an HAI runtime. Revisit only for a measured local-only capability gap with a fixed schema, named provider, no-tool default, workspace and network limits, audit trail, approval gate, and emergency stop. HAI must retain workflow state, routing, source, memory, verification, and execution authority.",
+		Rationale:  "Agno is an active Apache-2.0 agent-platform project, but its broad platform scope overlaps HAI's existing workflow, provider, approval, audit, and controlled-runtime layers. It is useful for architecture comparison, not a second autonomous control plane.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-21: active main branch, archived=false, Apache-2.0. No Agno package, service, model, credential, tool, workspace, or agent is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "agent platform and multi-agent composition", HAIControl: "HAI workflow engine and approval queue", Boundary: "no upstream agent may create a parallel lifecycle or self-authorize work"},
+			{SourcePattern: "developer tool integration", HAIControl: "reviewed runtime registry and tool allowlist", Boundary: "no host, secret, browser, filesystem, or network authority is inherited"},
+		},
+	},
+	{
+		ID: "voltagent", Name: "VoltAgent", UpstreamURL: "https://github.com/VoltAgent/voltagent", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusReferenceOnly, Category: "TypeScript agent and observability architecture", IntegrationMode: "second-control-plane reference",
+		Capabilities: []string{"agent framework patterns", "MCP integration patterns", "multi-agent collaboration", "observability patterns"}, RecommendedFor: []string{"TypeScript agent architecture comparison", "MCP and trace-boundary research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install, start, or connect VoltAgent. Revisit only after a measured gap remains beyond HAI's reviewed MCP preflight, provider routing, audit records, and observability candidates. Any bridge must be local, fixed-schema, tool-denied by default, and preserve HAI-owned approval, redaction, retention, and emergency-stop controls.",
+		Rationale:  "VoltAgent is an active MIT TypeScript agent platform, but its agent, MCP, and observability surfaces overlap HAI's controlled runtime and telemetry roadmap. A second TypeScript control plane or trace store has no demonstrated justification.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-21: active main branch, archived=false, MIT. No VoltAgent package, service, trace store, provider, MCP server, credential, or agent is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "MCP and agent tool integration", HAIControl: "MCP preflight and reviewed runtime adapters", Boundary: "unreviewed tools cannot be enumerated for execution or inherit credentials"},
+			{SourcePattern: "agent observability", HAIControl: "HAI audit and redacted generation evidence", Boundary: "no prompt, secret, source, or action data is exported to a second telemetry authority"},
+		},
+	},
+	{
+		ID: "openai-agents-python", Name: "OpenAI Agents SDK", UpstreamURL: "https://github.com/openai/openai-agents-python", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusReferenceOnly, Category: "multi-agent workflow architecture", IntegrationMode: "provider and control-plane reference",
+		Capabilities: []string{"multi-agent workflow patterns", "handoff patterns", "agent harness architecture"}, RecommendedFor: []string{"agent handoff comparison", "provider-boundary research"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Do not install or invoke the OpenAI Agents SDK from HAI. Any future compatibility work must prove a local-first or explicitly approved provider boundary, retain HAI routing and EUR 0 policy ownership, forbid implicit cloud calls, and use a fixed non-executing schema before any runtime or tool integration is considered.",
+		Rationale:  "The SDK is active and MIT licensed, but a generic agent SDK bridge would add a second agent loop and provider/billing surface while HAI defaults to local models and paid usage disabled. Its handoff patterns remain useful as reference only.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-21: active main branch, archived=false, MIT. No SDK dependency, OpenAI credential, model call, agent loop, tool, or handoff runtime is configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "agent handoff", HAIControl: "workflow assignment and review state", Boundary: "a handoff cannot bypass task ownership, risk, approval, or completion verification"},
+			{SourcePattern: "model provider call", HAIControl: "local-first LLM router and paid-budget policy", Boundary: "no provider credential or cloud call is inherited"},
+		},
+	},
+	{
+		ID: "langroid", Name: "Langroid", UpstreamURL: "https://github.com/langroid/langroid", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusReferenceOnly, Category: "local-model multi-agent architecture", IntegrationMode: "architecture reference",
+		Capabilities: []string{"local-model patterns", "multi-agent programming", "retrieval patterns", "tool-call patterns"}, RecommendedFor: []string{"local multi-agent comparison", "retrieval design research"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Do not install, start, or connect Langroid as an HAI runtime. Revisit only if a concrete local-model multi-agent or retrieval gap remains after HAI's PydanticAI, CrewAI, AutoGen/AG2 compatibility, RAGFlow, and native planning paths are measured. Any bridge must be bounded, no-tool by default, and HAI-governed.",
+		Rationale:  "Langroid remains active and MIT licensed with local-model and multi-agent patterns, but it duplicates existing reviewed planning, compatibility, and retrieval options. No additional runtime authority is warranted without a measured gap.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-21: active main branch, archived=false, MIT. No Langroid package, local model, retrieval index, tool, source connection, or agent is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "local-model and multi-agent loop", HAIControl: "HAI local router and workflow planner", Boundary: "the upstream cannot select providers, change budget, or create autonomous tasks"},
+			{SourcePattern: "retrieval or tool call", HAIControl: "source provenance and reviewed runtime adapters", Boundary: "no source, memory, or tool side effect is accepted without HAI verification and approval"},
+		},
+	},
+	{
+		ID: "camel", Name: "CAMEL", UpstreamURL: "https://github.com/camel-ai/camel", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusReferenceOnly, Category: "multi-agent research architecture", IntegrationMode: "research reference",
+		Capabilities: []string{"agent-society patterns", "multi-agent coordination research", "agent evaluation patterns"}, RecommendedFor: []string{"multi-agent research comparison", "agent-safety design review"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Do not install, start, or connect CAMEL as an HAI runtime. Revisit only with a concrete, bounded research or evaluation need, synthetic/redacted fixtures, no external accounts, no tools, no execution, and a separate approval and privacy review.",
+		Rationale:  "CAMEL is an active Apache-2.0 research-oriented multi-agent framework. Its broad agent-society focus is not a justified substitute for HAI's operational control plane, but its patterns can inform future evaluation design.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-21: active master branch, archived=false, Apache-2.0. No CAMEL package, agent, model, research dataset, tool, or runtime is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "multi-agent coordination research", HAIControl: "reviewed workflow and evaluation design", Boundary: "research patterns cannot authorize autonomous execution or external contact"},
+		},
+	},
+	{
+		ID: "mastra", Name: "Mastra", UpstreamURL: "https://github.com/mastra-ai/mastra", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10098/repos/", SourceCollection: "AI Agent Frameworks",
+		Status: StatusLicenseReview, Category: "TypeScript agent framework", IntegrationMode: "licence-review reference",
+		Capabilities: []string{"agent framework patterns", "workflow patterns", "tool integration patterns"}, RecommendedFor: []string{"agent framework comparison", "TypeScript workflow research"},
+		RequiresApproval: true, LocalFirstCompatible: false,
+		Activation: "Do not install, start, or connect Mastra. The public GitHub metadata did not provide a usable SPDX licence assertion; independently review the applicable terms, provider/data handling, and overlap with HAI before considering any local adapter.",
+		Rationale:  "Mastra is active, but its unverified licence metadata and broad framework overlap block adoption. HAI records it for transparent review rather than assuming it is safe to use.",
+		VerifiedAt: "2026-07-21", VerificationNote: "OSS Insight AI Agent Frameworks listing and GitHub metadata checked on 2026-07-21: active main branch, archived=false, licence=NOASSERTION. No Mastra package, service, provider, credential, tool, workflow, or agent is installed or configured by HAI.",
+		ControlMappings: []ControlMapping{
+			{SourcePattern: "agent framework and tool integration", HAIControl: "catalog licence and adapter review", Boundary: "no runtime activation occurs before terms and safety boundaries are independently approved"},
+		},
+	},
+	{
 		ID: "minio", Name: "MinIO", UpstreamURL: "https://github.com/minio/minio", SourceCatalogURL: "https://ossinsight.io/collections/distributed-file-storage", SourceCollection: "Distributed File Storage",
 		Status: StatusExcluded, Category: "object storage", IntegrationMode: "not adopted",
 		Capabilities: []string{"S3-compatible object storage", "local artifact storage"}, RecommendedFor: []string{"storage architecture reference"},
@@ -1036,11 +1368,7 @@ var entries = []Entry{
 func Entries() []Entry {
 	out := make([]Entry, 0, len(entries))
 	for _, entry := range entries {
-		entry.RepositoryAliases = append([]string(nil), entry.RepositoryAliases...)
-		entry.Capabilities = append([]string(nil), entry.Capabilities...)
-		entry.RecommendedFor = append([]string(nil), entry.RecommendedFor...)
-		entry.ControlMappings = append([]ControlMapping(nil), entry.ControlMappings...)
-		out = append(out, entry)
+		out = append(out, copyEntry(entry))
 	}
 	return out
 }
@@ -1048,14 +1376,24 @@ func Entries() []Entry {
 func EntryByID(id string) (Entry, bool) {
 	for _, entry := range entries {
 		if entry.ID == strings.ToLower(strings.TrimSpace(id)) {
-			entry.RepositoryAliases = append([]string(nil), entry.RepositoryAliases...)
-			entry.Capabilities = append([]string(nil), entry.Capabilities...)
-			entry.RecommendedFor = append([]string(nil), entry.RecommendedFor...)
-			entry.ControlMappings = append([]ControlMapping(nil), entry.ControlMappings...)
-			return entry, true
+			return copyEntry(entry), true
 		}
 	}
 	return Entry{}, false
+}
+
+func copyEntry(entry Entry) Entry {
+	entry.RepositoryAliases = append([]string(nil), entry.RepositoryAliases...)
+	entry.Capabilities = append([]string(nil), entry.Capabilities...)
+	entry.RecommendedFor = append([]string(nil), entry.RecommendedFor...)
+	entry.ControlMappings = append([]ControlMapping(nil), entry.ControlMappings...)
+	if boundary, ok := IntegratedImplementationBoundary(entry.ID); ok {
+		copy := boundary
+		entry.Implementation = &copy
+	} else {
+		entry.Implementation = nil
+	}
+	return entry
 }
 
 // Recommend maps a task to relevant external capabilities. It never marks a
@@ -1064,13 +1402,13 @@ func Recommend(taskType, request string) []Recommendation {
 	text := strings.ToLower(taskType + " " + request)
 	ids := []string{}
 	if containsAny(text, "code", "coding", "repository", "repo", "pull request", "test", "build", "bug", "commit") {
-		ids = append(ids, "continue", "cline", "opencode", "aider", "openhands", "qodo-pr-agent", "mini-swe-agent")
+		ids = append(ids, "cline", "opencode", "aider", "openhands", "qodo-pr-agent", "mini-swe-agent")
 	}
 	if containsAny(text, "serena", "semantic code", "symbol retrieval", "symbolic code", "cross-file impact", "language server diagnostics") {
 		ids = append(ids, "serena")
 	}
 	if containsAny(text, "plan", "research", "workflow", "delegate", "multi-agent", "orchestr") {
-		ids = append(ids, "crewai")
+		ids = append(ids, "crewai", "microsoft-agent-framework")
 	}
 	if containsAny(text, "ag2", "ag2 migration", "ag2 workflow") {
 		ids = append(ids, "ag2")
@@ -1099,6 +1437,9 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "vllm", "high throughput", "batched inference", "serve a model") {
 		ids = append(ids, "vllm")
 	}
+	if containsAny(text, "sglang", "structured output serving", "speculative decoding") {
+		ids = append(ids, "sglang")
+	}
 	if containsAny(text, "mistral.rs", "mistral rs", "anthropic compatible local", "local multimodal model", "local multimodal inference") {
 		ids = append(ids, "mistral-rs")
 	}
@@ -1116,6 +1457,9 @@ func Recommend(taskType, request string) []Recommendation {
 	}
 	if containsAny(text, "durable workflow", "scheduled", "follow-up", "follow up", "retry", "temporal") {
 		ids = append(ids, "temporal")
+	}
+	if containsAny(text, "prefect", "dagster", "data workflow orchestrator", "data asset orchestrator") {
+		ids = append(ids, "prefect", "dagster")
 	}
 	if containsAny(text, "observability", "monitoring", "metrics", "prometheus") {
 		ids = append(ids, "prometheus")
@@ -1150,6 +1494,21 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "guardrail", "prompt injection", "llm safety", "red team", "red-team", "jailbreak", "safety evaluation") {
 		ids = append(ids, "nemo-guardrails", "garak", "promptfoo")
 	}
+	if containsAny(text, "gitleaks", "secret scan", "scan repository secrets", "scan repo secrets", "credential leak", "credential leaks") {
+		ids = append(ids, "gitleaks")
+	}
+	if containsAny(text, "gosec", "go security scan", "go static security", "go source security", "go taint analysis", "secure go code") {
+		ids = append(ids, "gosec")
+	}
+	if containsAny(text, "trivy", "configuration scan", "misconfiguration scan", "infrastructure configuration", "dockerfile security", "compose security", "terraform security", "iac security") {
+		ids = append(ids, "trivy")
+	}
+	if containsAny(text, "grype", "vulnerability scan", "vulnerability severity", "dependency vulnerability", "vulnerabilities") {
+		ids = append(ids, "grype")
+	}
+	if containsAny(text, "syft", "sbom", "software bill of materials", "dependency inventory", "package inventory", "dependency ecosystem") {
+		ids = append(ids, "syft")
+	}
 	if containsAny(text, "deepteam", "red team regression", "agent red team") {
 		ids = append(ids, "deepteam")
 	}
@@ -1171,8 +1530,14 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "trace instrumentation", "trace telemetry", "open telemetry", "opentelemetry", "openllmetry", "model traces") {
 		ids = append(ids, "openllmetry", "openlit", "phoenix")
 	}
+	if containsAny(text, "agentops", "agent ops", "promptflow", "prompt flow") {
+		ids = append(ids, "agentops", "promptflow")
+	}
 	if containsAny(text, "voice note", "audio", "transcribe", "transcription", "speech to text", "speech-to-text") {
 		ids = append(ids, "whisper-cpp")
+	}
+	if containsAny(text, "docling", "extract document", "document extraction", "office document", "docx", "pptx", "xlsx", "document evidence", "parse document") {
+		ids = append(ids, "docling")
 	}
 	if containsAny(text, "voice pipeline", "multimodal intake", "pipecat", "ambient voice") {
 		ids = append(ids, "pipecat", "livekit-agents")
@@ -1189,8 +1554,14 @@ func Recommend(taskType, request string) []Recommendation {
 	if containsAny(text, "openspec", "spec driven", "specification", "acceptance criteria", "change plan") {
 		ids = append(ids, "openspec")
 	}
-	if containsAny(text, "letta", "agent memory", "memory consolidation", "long term memory", "long-term memory", "langmem") {
-		ids = append(ids, "letta", "langmem")
+	if containsAny(text, "agents.md", "claude.md", "project instructions", "project guidance", "repository guidance") {
+		ids = append(ids, "claude-code-project-instructions")
+	}
+	if containsAny(text, "fabric pattern", "fabric prompt", "prompt pattern", "prompt-pattern", "pattern library") {
+		ids = append(ids, "fabric-patterns")
+	}
+	if containsAny(text, "letta", "agent memory", "memory consolidation", "long term memory", "long-term memory", "langmem", "omega memory", "cross model memory") {
+		ids = append(ids, "letta", "langmem", "omega-memory")
 	}
 	if containsAny(text, "comfyui", "image generation", "generate image") {
 		ids = append(ids, "comfyui")

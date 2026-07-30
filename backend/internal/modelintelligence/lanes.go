@@ -99,8 +99,11 @@ func (r *Router) Route(lane RoutingLane, in LaneInput, now time.Time) RouteDecis
 	cloudRestricted := !in.SafeForCloud
 	dec.CloudRestricted = cloudRestricted
 	for _, prof := range candidates {
-		if cloudRestricted && !prof.Local {
-			dec.Fallbacks = append(dec.Fallbacks, prof.Key()+" (skipped: cloud-restricted by privacy filter)")
+		// This auxiliary lane is limited to deterministic and local model
+		// intelligence. External provider routing, budget accounting, and the
+		// daily maintenance gate belong to HAI's canonical LLM policy router.
+		if !prof.Local {
+			dec.Fallbacks = append(dec.Fallbacks, prof.Key()+" (skipped: external model intelligence execution is disabled)")
 			continue
 		}
 		if !dec.Routable {
@@ -114,7 +117,7 @@ func (r *Router) Route(lane RoutingLane, in LaneInput, now time.Time) RouteDecis
 		}
 	}
 	if !dec.Routable {
-		dec.Reason = "all lane models restricted by privacy filter (cloud not allowed)"
+		dec.Reason = "no active local model serves this lane; external providers must use HAI's canonical LLM policy router"
 	}
 	return dec
 }

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"automation-hub-backend/internal/safety"
 	"net/http"
 	"strconv"
 
@@ -44,6 +45,37 @@ func (h *Handler) ProviderProbeHistory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, probes)
+}
+
+func (h *Handler) ModelMaintenanceHistory(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
+	records, err := h.service.ModelMaintenanceHistory(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, records)
+}
+
+func (h *Handler) RunDueModelMaintenance(c *gin.Context) {
+	if safety.EmergencyStopActive() {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  safety.EmergencyStopReason(),
+			"status": "blocked",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, h.service.RunDueModelMaintenance())
+}
+
+func (h *Handler) GenerationHistory(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
+	records, err := h.service.GenerationHistory(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, records)
 }
 
 func (h *Handler) Route(c *gin.Context) {

@@ -35,3 +35,37 @@ func TestOSSInsightCollectionReviewerUsesFixedBoundedCollectionList(t *testing.T
 		t.Fatalf("review must preserve activation boundary: %#v", review)
 	}
 }
+
+func TestOSSInsightCollectionReviewerRetriesTransientResponses(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: reviewRoundTripper(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(`temporarily unavailable`)), Header: make(http.Header)}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"rows":[{"name":"MCP Servers"}]}}`)), Header: make(http.Header)}, nil
+	})}
+
+	review, err := NewOSSInsightCollectionReviewer(client).ReviewCollections()
+	if err != nil {
+		t.Fatalf("ReviewCollections() error = %v", err)
+	}
+	if !review.Available || attempts != 2 {
+		t.Fatalf("review=%#v attempts=%d, want available after two attempts", review, attempts)
+	}
+}
+
+func TestOSSInsightCollectionReviewerDoesNotRetryPermanentClientError(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: reviewRoundTripper(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`not found`)), Header: make(http.Header)}, nil
+	})}
+
+	if _, err := NewOSSInsightCollectionReviewer(client).ReviewCollections(); err == nil {
+		t.Fatal("expected permanent client error")
+	}
+	if attempts != 1 {
+		t.Fatalf("permanent client error attempts=%d, want 1", attempts)
+	}
+}

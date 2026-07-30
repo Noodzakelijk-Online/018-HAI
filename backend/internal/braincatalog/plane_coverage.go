@@ -52,27 +52,27 @@ var capabilityPlaneOrder = []CapabilityPlane{
 var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	PlaneThinking: {
 		name: "Thinking and planning", description: "Local reasoning, model routing, research, and deterministic planning proposals.",
-		entryIDs: []string{"ag2", "anythingllm", "autogen", "autogpt", "crewai", "goose", "langchain", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "metagpt", "microsoft-agent-framework", "mistral-rs", "ollama", "ortools", "pydantic-ai", "searxng", "vllm"},
+		entryIDs: []string{"ag2", "agno", "anythingllm", "autogen", "autogpt", "camel", "crewai", "goose", "langchain", "langroid", "letta", "litellm", "llama-cpp", "lm-eval-harness", "localai", "mastra", "metagpt", "microsoft-agent-framework", "microsoft-jarvis", "mistral-rs", "ollama", "openai-agents-python", "ortools", "pydantic-ai", "searxng", "sglang", "vllm", "voltagent"},
 	},
 	PlaneMemory: {
 		name: "Memory and knowledge", description: "Source-linked retrieval, workspace context, and durable knowledge patterns.",
-		entryIDs: []string{"anythingllm", "cognee", "graphrag", "haystack", "langchain", "langmem", "letta", "llamaindex", "mem0", "pgvector", "qdrant", "ragflow"},
+		entryIDs: []string{"anythingllm", "cognee", "graphrag", "haystack", "langchain", "langmem", "letta", "llamaindex", "mem0", "omega-memory", "pgvector", "qdrant", "ragflow", "source-linked-knowledge-graph"},
 	},
 	PlaneIntake: {
 		name: "Source intake", description: "Read-first connector, document, search, and transcription capability candidates.",
-		entryIDs: []string{"airbyte", "cloudquery", "google-genai-toolbox", "livekit-agents", "omniparser", "pipecat", "ragflow", "searxng", "whisper-cpp"},
+		entryIDs: []string{"airbyte", "claude-code-project-instructions", "cloudquery", "docling", "fabric-patterns", "google-genai-toolbox", "livekit-agents", "omniparser", "pipecat", "ragflow", "searxng", "whisper-cpp"},
 	},
 	PlaneOperations: {
 		name: "Operations", description: "Durable workflows, business-system bridges, and controlled operational data flows.",
-		entryIDs: []string{"activepieces", "airbyte", "cloudquery", "minio", "n8n", "odoo", "openmetadata", "temporal"},
+		entryIDs: []string{"activepieces", "airbyte", "cloudquery", "dagster", "minio", "n8n", "odoo", "openmetadata", "prefect", "temporal"},
 	},
 	PlaneExecution: {
 		name: "Controlled execution", description: "Scoped browser, MCP, workspace, CLI, and WASI execution patterns behind HAI controls.",
-		entryIDs: []string{"a2a", "ag2", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "goose", "google-genai-toolbox", "livekit-agents", "mcp-inspector", "mcp-servers", "metagpt", "mini-swe-agent", "microsoft-agent-framework", "opencode", "opencode-ai-legacy", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "serena", "swe-agent", "tabby", "taskweaver", "ufo", "wasmtime"},
+		entryIDs: []string{"a2a", "ag2", "aider", "autogen", "autogpt", "browser-use", "cline", "comfyui", "continue", "crewai", "daytona", "e2b", "fastmcp", "github-mcp-server", "goose", "google-genai-toolbox", "livekit-agents", "mcp-inspector", "mcp-servers", "metagpt", "mini-swe-agent", "microsoft-agent-framework", "opencode", "opencode-ai-legacy", "openhands", "openspec", "pipecat", "playwright", "playwright-mcp", "pydantic-ai", "serena", "swe-agent", "swe-rex", "tabby", "taskweaver", "ufo", "wasmtime"},
 	},
 	PlaneVerification: {
 		name: "Verification and safety", description: "Evaluation, redaction, guardrails, code review, and adversarial testing before completion or action.",
-		entryIDs: []string{"agentbench", "browser-use", "deepeval", "deepteam", "evidently", "garak", "guardrails-ai", "langfuse", "llm-guard", "lm-eval-harness", "nemo-guardrails", "openai-evals", "opik", "presidio", "promptfoo", "pyrit", "qodo-pr-agent"},
+		entryIDs: []string{"agentbench", "browser-use", "deepeval", "deepteam", "evidently", "garak", "gitleaks", "gosec", "grype", "guardrails-ai", "langfuse", "llm-guard", "lm-eval-harness", "nemo-guardrails", "openai-evals", "opik", "presidio", "promptfoo", "pyrit", "qodo-pr-agent", "source-linked-knowledge-graph", "swe-bench", "syft", "trivy"},
 	},
 	PlaneGovernance: {
 		name: "Governance and boundaries", description: "Approval, protocol, policy, and data-boundary patterns that remain HAI-owned.",
@@ -80,7 +80,7 @@ var capabilityPlaneDefinitions = map[CapabilityPlane]capabilityPlaneDefinition{
 	},
 	PlaneObservability: {
 		name: "Observability", description: "Local metrics, traces, evaluations, and diagnostics for inspectable agent behavior.",
-		entryIDs: []string{"evidently", "grafana", "langfuse", "openlit", "openllmetry", "opik", "phoenix", "prometheus", "whylogs"},
+		entryIDs: []string{"agentops", "evidently", "grafana", "langfuse", "mlflow", "openlit", "openllmetry", "opik", "phoenix", "prometheus", "promptflow", "whylogs"},
 	},
 }
 

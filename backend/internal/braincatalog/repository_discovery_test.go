@@ -34,6 +34,9 @@ func TestOSSInsightRepositoryScoutOnlyQueriesCandidateCollectionEndpoints(t *tes
 	if !report.Available || report.CollectionsScreened != 138 || report.CandidateCollections == 0 || report.CollectionsChecked != 2 || report.RepositoriesChecked != 4 || report.KnownProfileHits != 2 {
 		t.Fatalf("unexpected discovery report: %#v", report)
 	}
+	if len(report.KnownProfiles) != 2 || report.KnownProfiles[0].Repository != "github/github-mcp-server" || len(report.KnownProfiles[0].CatalogEntryIDs) != 1 || report.KnownProfiles[0].CatalogEntryIDs[0] != "github-mcp-server" {
+		t.Fatalf("known profiles must remain source-linked and catalog-linked: %#v", report.KnownProfiles)
+	}
 	if len(report.Discoveries) != 2 || report.Discoveries[0].Repository != "owner/new-mcp" || report.Discoveries[1].Repository != "owner/new-review" {
 		t.Fatalf("unexpected discoveries: %#v", report.Discoveries)
 	}
@@ -95,6 +98,33 @@ func TestOSSInsightRepositoryScoutReviewableScopeQueriesRepresentedCategoriesSep
 	}
 }
 
+func TestOSSInsightRepositoryScoutRetriesTransientRepositoryResponse(t *testing.T) {
+	repositoryAttempts := 0
+	client := &http.Client{Transport: reviewRoundTripper(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case ossInsightCollectionsURL:
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"rows":[{"id":"10105","name":"MCP Servers"}]}}`)), Header: make(http.Header)}, nil
+		case "https://api.ossinsight.io/v1/collections/10105/repos/":
+			repositoryAttempts++
+			if repositoryAttempts == 1 {
+				return &http.Response{StatusCode: http.StatusTooManyRequests, Body: io.NopCloser(strings.NewReader(`slow down`)), Header: make(http.Header)}, nil
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"rows":[{"repo_name":"owner/retry-safe"}],"result":{"limit":20}}}`)), Header: make(http.Header)}, nil
+		default:
+			t.Fatalf("unexpected source request: %s", req.URL)
+			return nil, nil
+		}
+	})}
+	scout := NewOSSInsightRepositoryScout(client).(*ossInsightRepositoryScout)
+	report, err := scout.DiscoverRepositories()
+	if err != nil {
+		t.Fatalf("DiscoverRepositories() error = %v", err)
+	}
+	if !report.Available || repositoryAttempts != 2 || len(report.Discoveries) != 1 || report.Discoveries[0].Repository != "owner/retry-safe" {
+		t.Fatalf("report=%#v repositoryAttempts=%d", report, repositoryAttempts)
+	}
+}
+
 func TestOSSInsightRepositoryScoutRejectsUnknownScope(t *testing.T) {
 	scout := NewOSSInsightRepositoryScout(&http.Client{}).(*ossInsightRepositoryScout)
 	if _, err := scout.DiscoverRepositoriesFor("all"); err == nil {
@@ -107,6 +137,7 @@ func TestCatalogRepositoriesIncludesOnlyExplicitReviewedAliases(t *testing.T) {
 	for _, repository := range []string{
 		"all-hands-ai/openhands",
 		"prefecthq/fastmcp",
+		"googleapis/genai-toolbox",
 		"paul-gauthier/aider",
 		"microsoft/presidio",
 		"codium-ai/pr-agent",
@@ -118,6 +149,34 @@ func TestCatalogRepositoriesIncludesOnlyExplicitReviewedAliases(t *testing.T) {
 	}
 	if !known["opencode-ai/opencode"] {
 		t.Fatal("the explicitly reviewed archived same-name repository must not remain a viable discovery candidate")
+	}
+}
+
+func TestCatalogRepositoryEntryIDsPreserveTheProfileForAReviewedAlias(t *testing.T) {
+	profiles := catalogRepositoryEntryIDs()
+	if ids := profiles["prefecthq/fastmcp"]; len(ids) != 1 || ids[0] != "fastmcp" {
+		t.Fatalf("reviewed alias must retain its catalog profile: %#v", ids)
+	}
+	if ids := profiles["googleapis/genai-toolbox"]; len(ids) != 1 || ids[0] != "google-genai-toolbox" {
+		t.Fatalf("renamed MCP Toolbox repository must retain its catalog profile: %#v", ids)
+	}
+}
+
+func TestRepositoryDiscoveryTriageKeepsKnownOverlapsAndHighRiskSurfacesOutOfAdapterReview(t *testing.T) {
+	for repository, wantStatus := range map[string]string{
+		"HKUDS/RAG-Anything":        discoveryTriageReference,
+		"apache/airflow":             discoveryTriageReference,
+		"e2b-dev/open-computer-use": discoveryTriageDeferred,
+		"stripe/agent-toolkit":       discoveryTriageDeferred,
+	} {
+		status, reason, reviewAllowed := repositoryDiscoveryTriage(repository)
+		if status != wantStatus || reviewAllowed || strings.TrimSpace(reason) == "" {
+			t.Fatalf("triage(%q) = status=%q reviewAllowed=%v reason=%q", repository, status, reviewAllowed, reason)
+		}
+	}
+	status, _, reviewAllowed := repositoryDiscoveryTriage("owner/new-reviewed-candidate")
+	if status != discoveryTriageManualReview || !reviewAllowed {
+		t.Fatalf("unknown repository must remain a manual review candidate: status=%q reviewAllowed=%v", status, reviewAllowed)
 	}
 }
 

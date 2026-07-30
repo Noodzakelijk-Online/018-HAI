@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+func newDirectHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		// A model endpoint can receive task context. Do not follow a redirect
+		// or inherit environment proxy settings that could move that context
+		// outside the configured endpoint boundary.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+		Transport:     &http.Transport{Proxy: nil},
+	}
+}
+
 // validateEndpointURL rejects invalid, unspecified, link-local, and cloud
 // metadata hosts (§10.17). Localhost/loopback is allowed for local endpoints.
 func validateEndpointURL(raw string) error {
@@ -62,6 +73,10 @@ func validateLocalEndpointURL(raw string) error {
 		return nil
 	}
 	return fmt.Errorf("local provider endpoint must use localhost, loopback, or host.docker.internal")
+}
+
+func isLocalEndpointURL(raw string) bool {
+	return validateLocalEndpointURL(raw) == nil
 }
 
 // probeModelsEndpoint performs a truthful GET against an OpenAI-compatible

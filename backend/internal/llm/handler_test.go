@@ -1,11 +1,15 @@
 package llm
 
 import (
+	"automation-hub-backend/internal/models"
 	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -102,5 +106,58 @@ func TestProviderProbeHandlersRecordAndReturnHistory(t *testing.T) {
 	}
 	if len(history) != 1 || !history[0].Live || history[0].LastSuccessfulAt == nil {
 		t.Fatalf("history = %#v, want persisted live probe", history)
+	}
+}
+
+func TestRunDueModelMaintenanceHandlerReturnsAggregateOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &Service{policy: Policy{}, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	handler := NewHandler(service)
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodPost, "/model-maintenance/run", nil)
+
+	handler.RunDueModelMaintenance(context)
+
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte("\"eligible\":0")) || !bytes.Contains(response.Body.Bytes(), []byte("\"results\":[]")) {
+		t.Fatalf("maintenance run = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRunDueModelMaintenanceHandlerRespectsEmergencyStop(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+	service := &Service{policy: Policy{}, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	handler := NewHandler(service)
+
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodPost, "/model-maintenance/run", nil)
+	handler.RunDueModelMaintenance(context)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("maintenance run = %d %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "blocked") {
+		t.Fatalf("response = %s", response.Body.String())
+	}
+}
+
+func TestGenerationHistoryHandlerReturnsRedactedLedger(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	history := &fakeGenerationHistoryRepository{records: []models.LLMGenerationRecord{{
+		ProviderID: "ollama", ModelID: "qwen2.5:7b", Status: "completed", InputTokens: 12, OutputTokens: 4, UsageSource: "provider_reported", LoggedAt: time.Now().UTC(),
+	}}}
+	handler := NewHandler(&Service{generationHistory: history})
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodGet, "/generations?limit=5", nil)
+
+	handler.GenerationHistory(context)
+
+	if response.Code != http.StatusOK || bytes.Contains(response.Body.Bytes(), []byte("\"output\"")) {
+		t.Fatalf("generation history = %d %s", response.Code, response.Body.String())
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte("\"usageSource\":\"provider_reported\"")) {
+		t.Fatalf("generation history did not return usage evidence: %s", response.Body.String())
 	}
 }
