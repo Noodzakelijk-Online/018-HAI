@@ -24,9 +24,9 @@ against a real local Postgres instance.
 ```powershell
 cd 018-HAI
 Copy-Item .env.example .env.local
-docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
-docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
-docker compose --env-file .env.local -f docker-compose.local.yml ps
+docker compose --env-file .env.local config --quiet
+docker compose --env-file .env.local up --build -d
+docker compose --env-file .env.local ps
 curl.exe -i http://localhost/
 curl.exe -i http://localhost/healthz
 curl.exe -i http://localhost/readyz

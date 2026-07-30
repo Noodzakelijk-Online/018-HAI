@@ -59,6 +59,11 @@ func RunMigrations(db *gorm.DB) error {
 		&models.AutomationIncident{},
 		&models.AutomationSLO{},
 		&models.LLMProviderProbe{},
+		&models.LLMModelMaintenance{},
+		&models.LLMGenerationRecord{},
+		&models.BrainCatalogUpstreamReview{},
+		&models.BrainCatalogCollectionReview{},
+		&models.BrainCatalogRepositoryDiscoveryReview{},
 		&models.ContextMemory{},
 		&models.AIConversationArchive{},
 		&models.AIMemoryInsight{},
@@ -108,6 +113,7 @@ func RunMigrations(db *gorm.DB) error {
 		&models.TemporalWorkflowRun{},
 		&models.BrowserVerificationRun{},
 		&models.WASIRun{},
+		&models.MiniSWEPatchProposal{},
 	); err != nil {
 		return err
 	}

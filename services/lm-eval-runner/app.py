@@ -117,8 +117,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {"error": "not found"})
             return
         try:
-            model_id, _ = configuration()
-            self.respond(200, {"status": "ok", "engine": ENGINE, "configured": True, "modelId": model_id, "suite": SUITE})
+            model_id, base_url = configuration()
+            self.respond(200, {"status": "ok", "engine": ENGINE, "configured": True, "modelId": model_id, "modelEndpoint": base_url, "suite": SUITE})
         except RequestError:
             self.respond(200, {"status": "ok", "engine": ENGINE, "configured": False, "suite": SUITE})
 

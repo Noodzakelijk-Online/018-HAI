@@ -59,6 +59,34 @@ export interface ILLMProviderProbe {
   lastSuccessfulAt?: string;
 }
 
+export interface ILLMModelMaintenanceResult {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+  status: string;
+  reason: string;
+  previousDigest?: string;
+  currentDigest?: string;
+  configurationChanged: boolean;
+  updateAttempted: boolean;
+  updateApplied: boolean;
+  blocksExecution: boolean;
+  reused: boolean;
+  checkedAt: string;
+  nextCheckDueAt?: string;
+}
+
+export interface ILLMModelMaintenanceRun {
+  eligible: number;
+  checked: number;
+  reused: number;
+  updated: number;
+  failed: number;
+  results: ILLMModelMaintenanceResult[];
+  runAt: string;
+}
+
 export interface ILLMModel {
   id: string;
   name: string;
@@ -138,6 +166,10 @@ export interface ILLMGenerationResult {
   status: string;
   reason: string;
   estimatedCostEur: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  usageSource?: string;
+  auditStatus?: string;
   durationMs: number;
   fallbackPath: string[];
   loggedAt: string;

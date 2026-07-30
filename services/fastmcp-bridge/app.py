@@ -102,8 +102,8 @@ def build_server(config: Config) -> FastMCP:
     server = FastMCP(
         name="HAI local read-only bridge",
         instructions=(
-            "Read only the bounded HAI workflow summaries exposed by these tools. "
-            "Do not claim authority to approve, execute, create, update, or retrieve sources. "
+            "Read only the bounded HAI workflow summaries, GitHub sync context, and daily model-maintenance readiness exposed by these tools. "
+            "Do not claim authority to approve, execute, create, update, retrieve source content, route a model, refresh a model, or generate with a model. "
             "Route every consequential decision back to HAI's owner-facing approval and workflow screens."
         ),
         auth=StaticTokenVerifier(config.client_token),
@@ -120,6 +120,20 @@ def build_server(config: Config) -> FastMCP:
         if not isinstance(limit, int) or limit < 1 or limit > 8:
             raise ValueError("limit must be between 1 and 8")
         return await fetch_read_model(config, "/actionable", {"limit": limit})
+
+    @server.tool(tags={"hai", "read-only", "github"})
+    async def hai_github_repository_context(limit: int = 5) -> dict:
+        """Return up to eight configured GitHub repository slugs and sync freshness only."""
+        if not isinstance(limit, int) or limit < 1 or limit > 8:
+            raise ValueError("limit must be between 1 and 8")
+        return await fetch_read_model(config, "/github-repositories", {"limit": limit})
+
+    @server.tool(tags={"hai", "read-only", "model-readiness"})
+    async def hai_model_maintenance_readiness(limit: int = 5) -> dict:
+        """Return up to eight aggregate per-model daily freshness records; it cannot route or update a model."""
+        if not isinstance(limit, int) or limit < 1 or limit > 8:
+            raise ValueError("limit must be between 1 and 8")
+        return await fetch_read_model(config, "/model-maintenance", {"limit": limit})
 
     return server
 

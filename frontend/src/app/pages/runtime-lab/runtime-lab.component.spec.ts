@@ -29,6 +29,24 @@ describe('RuntimeLabComponent MCP readiness', () => {
     expect(notification.success).toHaveBeenCalledWith('MCP server ready', 'GitHub MCP Server: 3 declared tool(s) inspected. No tool was called.');
   });
 
+  it('identifies an inventory that passed the GitHub read-only contract', () => {
+    const { component, mcpService, notification } = make();
+    mcpService.run.and.returnValue(of({ status: 'ready', toolCount: 2, detail: 'No tool was called.', readOnlyVerified: true }));
+    component.runMCPPreflight({ id: 'github', catalogName: 'GitHub MCP Server', configured: true });
+
+    expect(notification.success).toHaveBeenCalledWith(
+      'MCP server ready',
+      'GitHub MCP Server: 2 declared tool(s) inspected. No tool was called. Declared tools matched HAI\'s inspection-only context contract.',
+    );
+  });
+
+  it('recognizes the reviewed GitHub and Playwright inspection profiles', () => {
+    const { component } = make();
+    expect(component.isReadOnlyContractServer({ id: 'github', catalogId: 'github-mcp-server', configured: true })).toBeTrue();
+    expect(component.isReadOnlyContractServer({ id: 'playwright', catalogId: 'playwright-mcp', configured: true })).toBeTrue();
+    expect(component.isReadOnlyContractServer({ id: 'serena', catalogId: 'serena', configured: true })).toBeFalse();
+  });
+
   it('does not run an unconfigured MCP server', () => {
     const { component, mcpService } = make();
     component.runMCPPreflight({ id: 'github', configured: false });

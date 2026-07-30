@@ -144,6 +144,154 @@
         </ng-container>
         <span *ngIf="langfuseStatusUnavailable">The local bridge status could not be read. No Langfuse action was started.</span>
       </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'openlit'">
+        <strong>Local aggregate telemetry state</strong>
+        <span *ngIf="loadingOpenLITStatus">Checking the configured local collector bridge.</span>
+        <ng-container *ngIf="openLITStatus as status">
+          <span>{{ status.configured ? 'Configured for explicit aggregate-only local OTLP export.' : 'Not configured. HAI cannot contact or export to OpenLIT.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+          <div class="brain-catalog-page__bridge-actions" *ngIf="status.configured">
+            <button nz-button nzType="primary" (click)="exportOpenLITSnapshot()" [nzLoading]="exportingOpenLIT" [disabled]="exportingOpenLIT">Export aggregate snapshot</button>
+          </div>
+          <small *ngIf="openLITExport as export">Collector accepted the aggregate trace {{ export.exportedAt }}. Trace ID: {{ export.traceId }}.</small>
+        </ng-container>
+        <span *ngIf="openLITStatusUnavailable">The local collector bridge status could not be read. No OpenLIT action was started.</span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'mlflow'">
+        <strong>Local evaluation evidence state</strong>
+        <span *ngIf="loadingMLflowStatus">Checking the configured local bridge.</span>
+        <ng-container *ngIf="mlflowStatus as status">
+          <span>{{ status.configured ? 'Configured for fixed-experiment, allowlisted evaluation metrics.' : 'Not configured. HAI cannot contact or query MLflow.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>Approved experiments: {{ status.experimentIds.length }}. Approved metrics: {{ status.metricKeys.length }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="mlflowStatusUnavailable">The local bridge status could not be read. No MLflow action was started.</span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'mini-swe-agent'">
+        <strong>Disposable patch proposal state</strong>
+        <span *ngIf="loadingMiniSWEStatus">Checking the local disposable worker configuration.</span>
+        <ng-container *ngIf="miniSWEStatus as status">
+          <span>{{ status.configured ? 'Configured for one approved, review-only local patch proposal.' : 'Not configured. HAI cannot contact or invoke the mini-SWE worker.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>Approved snapshot: {{ status.workspaces.length ? status.workspaces[0] : 'not configured' }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="miniSWEStatusUnavailable">The local worker status could not be read. No patch proposal was started.</span>
+      </div>
+        <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'gitleaks'">
+        <strong>Local secret-scan state</strong>
+        <span *ngIf="loadingGitleaksStatus">Checking the configured local scanner boundary.</span>
+        <ng-container *ngIf="gitleaksStatus as status">
+          <span>{{ status.configured ? 'Configured for owner-triggered aggregate secret scanning of approved snapshots.' : 'Not configured. HAI cannot contact or scan through Gitleaks.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>Approved snapshots: {{ status.workspaces.length }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+          <span *ngIf="gitleaksStatusUnavailable">The local scanner status could not be read. No scan was started.</span>
+        </div>
+        <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'gosec'">
+          <strong>Local Go security-analysis state</strong>
+          <span *ngIf="loadingGosecStatus">Checking the configured offline scanner boundary.</span>
+          <ng-container *ngIf="gosecStatus as status">
+            <span>{{ status.configured ? 'Configured for owner-triggered aggregate Go security analysis of approved vendored snapshots.' : 'Not configured. HAI cannot contact or scan through Gosec.' }}</span>
+            <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+            <small>Approved snapshots: {{ status.workspaces.length }}.</small>
+            <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+            <small>{{ status.scope }}</small>
+            <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+          </ng-container>
+          <span *ngIf="gosecStatusUnavailable">The local scanner status could not be read. No scan was started.</span>
+        </div>
+        <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'trivy'">
+          <strong>Local configuration-security state</strong>
+          <span *ngIf="loadingTrivyStatus">Checking the configured offline configuration scanner boundary.</span>
+          <ng-container *ngIf="trivyStatus as status">
+            <span>{{ status.configured ? 'Configured for owner-triggered aggregate offline configuration analysis of approved snapshots.' : 'Not configured. HAI cannot contact or scan through Trivy.' }}</span>
+            <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+            <small>Approved snapshots: {{ status.workspaces.length }}.</small>
+            <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+            <small>{{ status.scope }}</small>
+            <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+          </ng-container>
+          <span *ngIf="trivyStatusUnavailable">The local scanner status could not be read. No scan was started.</span>
+        </div>
+        <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'grype'">
+        <strong>Local vulnerability-evidence state</strong>
+        <span *ngIf="loadingGrypeStatus">Checking the configured offline scanner boundary.</span>
+        <ng-container *ngIf="grypeStatus as status">
+          <span>{{ status.configured ? 'Configured for owner-triggered aggregate vulnerability evidence from approved snapshots.' : 'Not configured. HAI cannot contact or scan through Grype.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>Approved snapshots: {{ status.workspaces.length }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="grypeStatusUnavailable">The local scanner status could not be read. No scan was started.</span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'syft'">
+        <strong>Local SBOM inventory state</strong>
+        <span *ngIf="loadingSyftStatus">Checking the configured local inventory boundary.</span>
+        <ng-container *ngIf="syftStatus as status">
+          <span>{{ status.configured ? 'Configured for owner-triggered aggregate SBOM inventory of approved snapshots.' : 'Not configured. HAI cannot contact or inventory through Syft.' }}</span>
+          <small *ngIf="status.endpoint">Endpoint: {{ status.endpoint }}</small>
+          <small>Approved snapshots: {{ status.workspaces.length }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+          <small>Blocked capabilities: {{ status.restrictions.join('; ') }}.</small>
+        </ng-container>
+        <span *ngIf="syftStatusUnavailable">The local inventory status could not be read. No inventory was started.</span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'playwright'">
+        <strong>Read-only browser verification state</strong>
+        <span *ngIf="loadingBrowserVerificationStatus">Checking the configured local verification boundary.</span>
+        <ng-container *ngIf="browserVerificationStatus as status">
+          <span>{{ status.configured ? 'Configured for named, read-only checks against approved local origins.' : 'Not configured. HAI cannot start a browser verification run.' }}</span>
+          <small *ngIf="status.runnerUrl">Runner: {{ status.runnerUrl }}</small>
+          <small>Approved verification profiles: {{ status.profiles.length }}.</small>
+          <small *ngIf="status.configError">Configuration gate: {{ status.configError }}</small>
+          <small>{{ status.scope }}</small>
+        </ng-container>
+        <span *ngIf="browserVerificationStatusUnavailable">The local browser-verification status could not be read. No browser check was started.</span>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'google-genai-toolbox'">
+        <strong>MCP Toolbox inspection state</strong>
+        <span>HAI can inspect one owner-configured local MCP Toolbox toolset through the Runtime Lab. It never receives database credentials or calls a declared tool.</span>
+        <div class="brain-catalog-page__bridge-actions">
+          <button nz-button nzType="default" (click)="openMCPToolboxRuntimeLab()">Open MCP readiness</button>
+        </div>
+      </div>
+      <div class="brain-catalog-page__profile-state" *ngIf="entry.id === 'microsoft-agent-framework'">
+        <strong>Migration planning</strong>
+        <span>Paste a redacted AutoGen-style event export. HAI returns a transient migration control map; it does not store the sample or start Microsoft Agent Framework.</span>
+        <textarea #frameworkMigrationInput nz-input [value]="frameworkMigrationExample" rows="8" aria-label="Redacted AutoGen migration sample"></textarea>
+        <div class="brain-catalog-page__bridge-actions">
+          <button nz-button nzType="primary" (click)="prepareFrameworkMigration(frameworkMigrationInput.value)" [nzLoading]="planningFrameworkMigration" [disabled]="planningFrameworkMigration">
+            Prepare migration plan
+          </button>
+        </div>
+        <ng-container *ngIf="frameworkMigrationPlan as plan">
+          <small><strong>{{ plan.steps.length }} HAI control stages</strong> - runtime detected: {{ plan.frameworkRuntimeDetected ? 'yes' : 'no' }}; execution allowed: {{ plan.executionAllowed ? 'yes' : 'no' }}.</small>
+          <div class="brain-catalog-page__control-mappings">
+            <div *ngFor="let step of plan.steps">
+              <strong>{{ step.order }}. {{ step.haiControl }}</strong>
+              <span>{{ step.agentFrameworkRole }}</span>
+              <small>{{ step.gate }}</small>
+            </div>
+          </div>
+          <small>Blocked until: {{ plan.blockedUntil.join('; ') }}.</small>
+          <small>{{ plan.scope }}</small>
+        </ng-container>
+      </div>
       <div class="brain-catalog-page__activation"><strong>Activation gate</strong><span>{{ entry.activation }}</span></div>
       <div class="brain-catalog-page__review-action" *ngIf="canStartReview(entry)">
         <div>
@@ -162,6 +310,10 @@
         <div><dt>Reviewed</dt><dd>{{ entry.verifiedAt }}</dd></div>
         <div *ngIf="entry.sourceCollection"><dt>OSS Insight collection</dt><dd>{{ entry.sourceCollection }}</dd></div>
       </dl>
+      <div class="brain-catalog-page__control-mappings" *ngIf="entry.implementation as implementation">
+        <strong>HAI implementation boundary</strong>
+        <div><span>{{ implementation.control }}</span><i nz-icon nzType="arrow-right" nzTheme="outline"></i><span>{{ implementation.route }}</span><small>{{ implementation.scope }}</small></div>
+      </div>
       <p class="brain-catalog-page__verification-note">{{ entry.verificationNote }}</p>
       <div class="brain-catalog-page__upstream-review">
         <div>
@@ -172,9 +324,10 @@
           Recheck upstream
         </button>
       </div>
-      <div class="brain-catalog-page__upstream-result" *ngIf="upstreamReview as review" [class.brain-catalog-page__upstream-result--warning]="review.archived || !review.available">
+      <div class="brain-catalog-page__upstream-result" *ngIf="upstreamReview as review" [class.brain-catalog-page__upstream-result--warning]="review.archived || !review.available || review.repositoryMoved">
         <strong>{{ review.available ? (review.archived ? 'Archived upstream' : 'Upstream available') : 'Upstream unavailable' }}</strong>
         <span>{{ review.message }}</span>
+        <small *ngIf="review.repositoryMoved && review.resolvedRepository">GitHub now resolves this project as <a *ngIf="review.resolvedUpstreamUrl; else resolvedRepositoryText" [href]="review.resolvedUpstreamUrl" target="_blank" rel="noopener noreferrer">{{ review.resolvedRepository }}</a><ng-template #resolvedRepositoryText>{{ review.resolvedRepository }}</ng-template>. Catalog configuration was not changed.</small>
         <small><strong>Readiness: {{ readinessLabel(review.readiness) }}</strong> - {{ review.readinessReason }}</small>
         <small *ngIf="review.requiredGates?.length">Required before activation: {{ review.requiredGates?.join('; ') }}.</small>
         <small>Checked {{ review.checkedAt }}<ng-container *ngIf="review.license"> · {{ review.license }}</ng-container><ng-container *ngIf="review.defaultBranch"> · {{ review.defaultBranch }}</ng-container></small>
@@ -228,6 +381,42 @@
 
   <hai-progressive-section moduleId="brain-catalog" sectionId="oss-insight-screening" title="OSS Insight collection coverage" summary="The complete discovery pass is visible here. A collection is evidence for review, never a permission to install its repositories.">
 	<div class="brain-catalog-page__source-review">
+	  <div><strong>Catalog metadata maintenance</strong><span>Checks only due fixed GitHub entries in a small daily batch. It records availability, archive, licence, and rename evidence without changing a catalog decision or activating a project.</span></div>
+	  <button nz-button nzType="default" (click)="runDueCatalogRevalidations()" [nzLoading]="runningCatalogRevalidation" [disabled]="runningCatalogRevalidation"><i nz-icon nzType="sync" nzTheme="outline"></i> Run due checks</button>
+	</div>
+	<div class="brain-catalog-page__source-result" *ngIf="catalogRevalidation as run" [class.brain-catalog-page__source-result--warning]="!run.enabled || run.failed > 0">
+	  <ng-container *ngIf="!run.enabled; else catalogRevalidationEnabled"><strong>Catalog maintenance is disabled</strong><span>Set HAI_CATALOG_REVALIDATION_ENABLED=true to allow the bounded public metadata sweep. No catalog or runtime state changed.</span></ng-container>
+	  <ng-template #catalogRevalidationEnabled>
+	  <strong>{{ run.checked }} checked / {{ run.eligible }} eligible</strong>
+	  <span>{{ run.reused }} have recent evidence; {{ run.failed }} need a later retry or review. No upstream was installed, enabled, or reclassified.</span>
+	  <small *ngFor="let review of run.results">{{ review.name }}: {{ review.message }}</small>
+	  <small *ngIf="run.collectionReview as collection" [class.brain-catalog-page__source-result--warning]="!collection.enabled || collection.failed">
+		Collection snapshot: <ng-container *ngIf="collection.enabled; else collectionMaintenanceDisabled">{{ collection.reused ? 'recent evidence reused' : (collection.failed ? 'check needs a later retry' : collection.review.currentTotal + ' live / ' + collection.review.expectedTotal + ' recorded') }}.</ng-container><ng-template #collectionMaintenanceDisabled>disabled; no OSS Insight source-index request was made.</ng-template>
+	  </small>
+	  <small *ngIf="run.repositoryDiscoveryReview as discovery" [class.brain-catalog-page__source-result--warning]="!discovery.enabled || discovery.failed">
+		Repository gap review: <ng-container *ngIf="discovery.enabled; else repositoryMaintenanceDisabled">{{ discovery.reused ? 'recent evidence reused' : (discovery.failed ? 'check needs a later retry' : discovery.review.unreviewedDiscoveries + ' candidates from ' + discovery.review.repositoriesChecked + ' source names') }}.</ng-container><ng-template #repositoryMaintenanceDisabled>disabled; no repository discovery request was made.</ng-template>
+	  </small>
+	  </ng-template>
+	</div>
+	<div class="brain-catalog-page__source-result" *ngIf="collectionMaintenanceHistory.length">
+	  <strong>Recent persisted OSS Insight checks</strong>
+	  <span>Source-index evidence survives restarts. It does not install repositories or modify catalog decisions.</span>
+	  <small *ngFor="let review of collectionMaintenanceHistory">{{ review.checkedAt | date: 'short' }}: {{ review.currentTotal }} live / {{ review.expectedTotal }} recorded<ng-container *ngIf="review.newCollections?.length">; new {{ review.newCollections?.length }}</ng-container><ng-container *ngIf="review.missingExpected?.length">; missing {{ review.missingExpected?.length }}</ng-container>.</small>
+	</div>
+	<div class="brain-catalog-page__source-result brain-catalog-page__source-result--warning" *ngIf="collectionMaintenanceHistoryUnavailable">
+	  <strong>Persisted collection history is unavailable</strong>
+	  <span>HAI did not start a replacement scan. Check the local database and reload this page.</span>
+	</div>
+	<div class="brain-catalog-page__source-result" *ngIf="repositoryDiscoveryMaintenanceHistory.length">
+	  <strong>Recent persisted repository gap reviews</strong>
+	  <span>Only aggregate counts and a capped review list are retained. A candidate is not an installation or an enabled runtime.</span>
+	  <small *ngFor="let review of repositoryDiscoveryMaintenanceHistory">{{ review.checkedAt | date: 'short' }}: {{ review.unreviewedDiscoveries }} candidates from {{ review.repositoriesChecked }} source names<ng-container *ngIf="review.candidateRepositories?.length">; {{ review.candidateRepositories?.join(', ') }}</ng-container><ng-container *ngIf="review.candidatesTruncated">; list capped</ng-container>.</small>
+	</div>
+	<div class="brain-catalog-page__source-result brain-catalog-page__source-result--warning" *ngIf="repositoryDiscoveryMaintenanceHistoryUnavailable">
+	  <strong>Persisted repository gap-review history is unavailable</strong>
+	  <span>HAI did not start a replacement scan. Check the local database and reload this page.</span>
+	</div>
+	<div class="brain-catalog-page__source-review">
 	  <div><strong>Source freshness</strong><span>Admin-only read of one fixed public collection list. It reports drift but never changes HAI's catalog or runtime.</span></div>
 	  <button nz-button nzType="default" (click)="revalidateOSSInsightCollections()" [nzLoading]="checkingOSSInsight" [disabled]="checkingOSSInsight"><i nz-icon nzType="sync" nzTheme="outline"></i> Recheck OSS Insight</button>
 	</div>
@@ -247,7 +436,7 @@
     <div class="brain-catalog-page__source-result" *ngIf="ossInsightDiscovery as report" [class.brain-catalog-page__source-result--warning]="!!report.unavailableCollections?.length || !!report.missingCollections?.length">
       <strong>{{ report.discoveries?.length ?? 0 }} ranked review candidates / {{ report.repositoriesChecked }} repository names</strong>
       <span>{{ report.message }}</span>
-      <small>{{ report.collectionsChecked }} of {{ report.eligibleCollections }} {{ report.scope === 'reviewable' ? 'relevant' : 'candidate' }} collections checked; {{ report.knownProfileHits }} known profiles skipped; {{ report.duplicateSourceHits }} cross-category source matches merged.<ng-container *ngIf="report.cached"> Reused the recent read-only result.</ng-container></small>
+      <small>{{ report.collectionsChecked }} of {{ report.eligibleCollections }} {{ report.scope === 'reviewable' ? 'relevant' : 'candidate' }} collections checked; {{ report.knownProfileHits }} source rows already map to {{ report.knownProfiles?.length ?? 0 }} HAI profiles; {{ report.duplicateSourceHits }} cross-category source matches merged.<ng-container *ngIf="report.cached"> Reused the recent read-only result.</ng-container></small>
       <small *ngIf="report.sourceQueryLimit">OSS Insight query limit: {{ report.sourceQueryLimit }} rows per collection response. This is a ranked source list, not a complete GitHub inventory.</small>
       <small *ngIf="report.discoveriesTruncated">Results exceeded the current {{ report.maximumDiscoveries }}-item review capacity.</small>
       <small *ngIf="report.unavailableCollections?.length">Unavailable: {{ report.unavailableCollections?.join(', ') }}</small>
@@ -255,11 +444,23 @@
     </div>
     <div class="brain-catalog-page__discovery-list" *ngIf="visibleDiscoveries.length">
       <article *ngFor="let discovery of visibleDiscoveries">
-        <div><strong>{{ discovery.repository }}</strong><small>Priority {{ discovery.priority }} - {{ discovery.reviewTrack }} - {{ discovery.risk }} risk</small><small>{{ discovery.collection }} - {{ collectionDispositionLabel(discovery.disposition) }}<ng-container *ngIf="(discovery.relatedCollections?.length ?? 0) > 1"> + {{ (discovery.relatedCollections?.length ?? 0) - 1 }} related source categories</ng-container></small><span>{{ discovery.reviewReason }}</span><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
-        <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository || !discoveryReviews[discovery.repository]">Review</button></div>
+        <div><strong>{{ discovery.repository }}</strong><small>Priority {{ discovery.priority }} - {{ discovery.reviewTrack }} - {{ discovery.risk }} risk</small><small>{{ discovery.collection }} - {{ collectionDispositionLabel(discovery.disposition) }}<ng-container *ngIf="(discovery.relatedCollections?.length ?? 0) > 1"> + {{ (discovery.relatedCollections?.length ?? 0) - 1 }} related source categories</ng-container></small><span>{{ discovery.reviewReason }}</span><small *ngIf="discovery.triage">Triage: {{ discovery.triage.replace('_', ' ') }}. {{ discovery.triageReason }}</small><small *ngIf="discoveryReviews[discovery.repository] as review">Metadata: {{ review.archived ? 'archived' : (review.available ? 'available' : 'not found') }}; license {{ review.license || 'not reported' }}; {{ readinessLabel(review.readiness) }}.</small><small *ngIf="discoveryReviews[discovery.repository] as review">{{ review.readinessReason }}</small></div>
+        <div><a [href]="discovery.sourceUrl" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="verifyDiscovery(discovery)" [nzLoading]="verifyingDiscoveryRepository === discovery.repository" [disabled]="!!verifyingDiscoveryRepository">Verify metadata</button><button nz-button nzType="default" (click)="queueDiscoveryReview(discovery)" [nzLoading]="reviewingDiscoveryRepository === discovery.repository" [disabled]="!!reviewingDiscoveryRepository || discovery.reviewAllowed === false || !discoveryReviews[discovery.repository] || !discoveryReviews[discovery.repository].available || discoveryReviews[discovery.repository].archived" [title]="discovery.reviewAllowed === false ? (discovery.triageReason || 'This repository is retained as a reference or deferred capability.') : (!discoveryReviews[discovery.repository] ? 'Verify current upstream metadata before creating a manual review.' : (!discoveryReviews[discovery.repository].available || discoveryReviews[discovery.repository].archived ? 'This upstream is unavailable or archived, so HAI cannot open an adapter review.' : 'Create an approval-gated manual adapter review. No repository is installed or activated.'))">Review</button></div>
       </article>
     </div>
     <button nz-button nzType="default" *ngIf="(ossInsightDiscovery?.discoveries?.length ?? 0) > discoveryDisplayLimit" (click)="showMoreDiscoveries()">Show 30 more review candidates</button>
+    <div class="brain-catalog-page__source-result" *ngIf="visibleKnownProfiles.length">
+      <strong>Already profiled by HAI</strong>
+      <span>These source repositories are already represented in the catalog. They are coverage evidence, not new activation candidates.</span>
+      <small *ngIf="ossInsightDiscovery?.knownProfilesTruncated">Known-profile detail exceeded the current {{ ossInsightDiscovery?.maximumDiscoveries }}-item capacity.</small>
+    </div>
+    <div class="brain-catalog-page__discovery-list" *ngIf="visibleKnownProfiles.length">
+      <article *ngFor="let profile of visibleKnownProfiles">
+        <div><strong>{{ profile.repository }}</strong><small>HAI profiles: {{ profile.catalogEntryIds.join(', ') }}</small><small>{{ profile.relatedCollections?.join(', ') }}</small></div>
+        <div><a *ngIf="profile.relatedSourceUrls?.[0]" [href]="profile.relatedSourceUrls?.[0]" target="_blank" rel="noopener noreferrer">Source</a><button nz-button nzType="default" (click)="selectById(profile.catalogEntryIds[0])">Inspect profile</button></div>
+      </article>
+    </div>
+    <button nz-button nzType="default" *ngIf="(ossInsightDiscovery?.knownProfiles?.length ?? 0) > knownProfileDisplayLimit" (click)="showMoreKnownProfiles()">Show 20 more profiled repositories</button>
     <div class="brain-catalog-page__screening-summary">
       <span><strong>{{ catalog.collectionScreening.represented }}</strong> represented</span>
       <span><strong>{{ catalog.collectionScreening.candidates }}</strong> review candidates</span>

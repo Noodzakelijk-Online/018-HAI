@@ -90,6 +90,34 @@
   overflow-wrap: anywhere;
 }
 
+.source-conflict {
+  align-items: flex-start;
+  border-top: 1px solid var(--hai-border, #e5e7eb);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 12px 0;
+
+  p {
+    color: var(--hai-text-secondary, #667085);
+    margin: 4px 0 0;
+  }
+}
+
+.conflict-references {
+  display: grid;
+  gap: 6px;
+  max-width: 48%;
+
+  code {
+    background: var(--hai-surface-muted, #f7f8fa);
+    border: 1px solid var(--hai-border, #e5e7eb);
+    color: var(--hai-text, #101828);
+    overflow-wrap: anywhere;
+    padding: 4px 6px;
+  }
+}
+
 form {
   display: flex;
   flex-direction: column;
@@ -119,5 +147,14 @@ textarea {
 @media (max-width: 640px) {
   .research-result {
     flex-direction: column;
+  }
+
+  .source-conflict {
+    flex-direction: column;
+  }
+
+  .conflict-references {
+    max-width: 100%;
+    width: 100%;
   }
 }

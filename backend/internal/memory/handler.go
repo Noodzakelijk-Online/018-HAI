@@ -70,6 +70,15 @@ func (h *Handler) Query(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *Handler) Health(c *gin.Context) {
+	report, err := HealthForOwner(h.service, memoryOwner(c), c.Query("projectKey"))
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "memory health review is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
 func (h *Handler) Get(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {

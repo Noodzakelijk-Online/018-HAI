@@ -35,6 +35,7 @@ describe('MCPPreflightService', () => {
       detail: 'MCP handshake and tool listing completed.',
       toolCount: 2,
       truncated: false,
+      readOnlyVerified: true,
       durationMs: 12,
       checkedAt: '2026-07-20T00:00:00Z',
     });

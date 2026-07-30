@@ -58,9 +58,28 @@ func TestRegistryExecutesApprovedTask(t *testing.T) {
 		RequiresApproval: true,
 	}}
 	registry := NewRegistry(adapter)
-	result := registry.Execute(context.Background(), "test", Task{Prompt: "do work", HumanApproved: true})
+	result := registry.Execute(context.Background(), "test", Task{ID: "task-1", Prompt: "do work", HumanApproved: true})
 	if result.Status != "completed" || !adapter.called {
 		t.Fatalf("approved task was not executed: %#v", result)
+	}
+}
+
+func TestRegistryRequiresTaskIDForApprovedExecution(t *testing.T) {
+	adapter := &fakeAdapter{info: Info{
+		ID:               "test",
+		Enabled:          true,
+		Configured:       true,
+		ExecutionEnabled: true,
+		RequiresApproval: true,
+	}}
+	registry := NewRegistry(adapter)
+
+	result := registry.Execute(context.Background(), "test", Task{Prompt: "do work", HumanApproved: true})
+	if result.Status != "blocked" || adapter.called {
+		t.Fatalf("untracked task was executed: %#v", result)
+	}
+	if !strings.Contains(result.Message, "task id is required") || !containsString(result.AuditEvents, "untracked agent runtime task rejected") {
+		t.Fatalf("missing task-id result lacks audit evidence: %#v", result)
 	}
 }
 
@@ -262,6 +281,21 @@ func TestHermesWorkspaceMustStayInsideRuntimeRoot(t *testing.T) {
 	}
 }
 
+func TestHermesExecutionRequiresDedicatedWorkspace(t *testing.T) {
+	adapter := &hermesAdapter{workspaceRoot: t.TempDir()}
+	result := adapter.ExecuteTask(context.Background(), Task{Prompt: "inspect safely", HumanApproved: true})
+	if result.Status != "blocked" || !strings.Contains(result.Message, "HERMES_WORKSPACE is required") {
+		t.Fatalf("expected missing Hermes workspace to block execution, got %#v", result)
+	}
+
+	adapter.workspace = t.TempDir()
+	adapter.workspaceRoot = ""
+	result = adapter.ExecuteTask(context.Background(), Task{Prompt: "inspect safely", HumanApproved: true})
+	if result.Status != "blocked" || !strings.Contains(result.Message, "AGENT_RUNTIME_WORKSPACE_ROOT is required") {
+		t.Fatalf("expected missing workspace root to block execution, got %#v", result)
+	}
+}
+
 func TestHermesInfoAdvertisesEcosystemAndControls(t *testing.T) {
 	adapter := &hermesAdapter{
 		enabled:          true,
@@ -303,7 +337,7 @@ func TestHermesAdapterInvokesControlledCli(t *testing.T) {
 		t.Fatalf("create home: %v", err)
 	}
 	executable := filepath.Join(root, "hermes")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'HERMES_HOME=%s\\n' \"$HERMES_HOME\"\nprintf 'HERMES_PROFILE=%s\\n' \"$HERMES_PROFILE\"\nprintf 'IGNORE=%s\\n' \"$HERMES_IGNORE_USER_CONFIG\"\nprintf 'TERMINAL_CWD=%s\\n' \"$TERMINAL_CWD\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'HERMES_HOME=%s\\n' \"$HERMES_HOME\"\nprintf 'HOME=%s\\n' \"$HOME\"\nprintf 'USERPROFILE=%s\\n' \"$USERPROFILE\"\nprintf 'HERMES_PROFILE=%s\\n' \"$HERMES_PROFILE\"\nprintf 'IGNORE=%s\\n' \"$HERMES_IGNORE_USER_CONFIG\"\nprintf 'TERMINAL_CWD=%s\\n' \"$TERMINAL_CWD\"\n"
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake Hermes executable: %v", err)
 	}
@@ -330,7 +364,7 @@ func TestHermesAdapterInvokesControlledCli(t *testing.T) {
 	for _, expected := range []string{
 		"chat", "-q", "draft safely", "-Q", "--source", "tool", "--max-turns", "3", "--checkpoints",
 		"--toolsets", "safe", "--skills", "legal-drafting",
-		"HERMES_HOME=" + home, "HERMES_PROFILE=hai", "IGNORE=1", "TERMINAL_CWD=" + workspace,
+		"HERMES_HOME=" + home, "HOME=" + home, "USERPROFILE=" + home, "HERMES_PROFILE=hai", "IGNORE=1", "TERMINAL_CWD=" + workspace,
 	} {
 		if !strings.Contains(result.Output, expected) {
 			t.Fatalf("output %q missing %q", result.Output, expected)
@@ -400,6 +434,21 @@ func TestOpenClawInfoAdvertisesEcosystemAndControls(t *testing.T) {
 	}
 	if len(info.Architecture) == 0 {
 		t.Fatalf("expected OpenClaw architecture chain to be visible")
+	}
+}
+
+func TestOpenClawExecutionRequiresDedicatedWorkspace(t *testing.T) {
+	adapter := &openClawAdapter{agentCLIEnabled: true, workspaceRoot: t.TempDir()}
+	result := adapter.ExecuteTask(context.Background(), Task{Prompt: "inspect safely", HumanApproved: true})
+	if result.Status != "blocked" || !strings.Contains(result.Message, "OPENCLAW_WORKSPACE is required") {
+		t.Fatalf("expected missing OpenClaw workspace to block execution, got %#v", result)
+	}
+
+	adapter.workspace = t.TempDir()
+	adapter.workspaceRoot = ""
+	result = adapter.ExecuteTask(context.Background(), Task{Prompt: "inspect safely", HumanApproved: true})
+	if result.Status != "blocked" || !strings.Contains(result.Message, "AGENT_RUNTIME_WORKSPACE_ROOT is required") {
+		t.Fatalf("expected missing workspace root to block execution, got %#v", result)
 	}
 }
 
@@ -524,7 +573,7 @@ func TestOpenClawAdapterInvokesControlledCli(t *testing.T) {
 		t.Fatalf("create state dir: %v", err)
 	}
 	executable := filepath.Join(root, "openclaw")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'OPENCLAW_STATE_DIR=%s\\n' \"$OPENCLAW_STATE_DIR\"\nprintf 'OPENCLAW_HOME=%s\\n' \"$OPENCLAW_HOME\"\nprintf 'HAI_RUNTIME_TASK_ID=%s\\n' \"$HAI_RUNTIME_TASK_ID\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'OPENCLAW_STATE_DIR=%s\\n' \"$OPENCLAW_STATE_DIR\"\nprintf 'OPENCLAW_HOME=%s\\n' \"$OPENCLAW_HOME\"\nprintf 'HOME=%s\\n' \"$HOME\"\nprintf 'USERPROFILE=%s\\n' \"$USERPROFILE\"\nprintf 'HAI_RUNTIME_TASK_ID=%s\\n' \"$HAI_RUNTIME_TASK_ID\"\n"
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake OpenClaw executable: %v", err)
 	}
@@ -550,7 +599,7 @@ func TestOpenClawAdapterInvokesControlledCli(t *testing.T) {
 	for _, expected := range []string{
 		"agent", "--message", "move safe work forward", "--thinking", "high",
 		"HAI approved OpenClaw task envelope", "Execution mode:", "Blocked surfaces:", "Validation checklist:",
-		"OPENCLAW_STATE_DIR=" + stateDir, "OPENCLAW_HOME=" + stateDir, "HAI_RUNTIME_TASK_ID=task-1",
+		"OPENCLAW_STATE_DIR=" + stateDir, "OPENCLAW_HOME=" + stateDir, "HOME=" + stateDir, "USERPROFILE=" + stateDir, "HAI_RUNTIME_TASK_ID=task-1",
 	} {
 		if !strings.Contains(result.Output, expected) {
 			t.Fatalf("output %q missing %q", result.Output, expected)

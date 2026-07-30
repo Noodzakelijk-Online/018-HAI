@@ -58,7 +58,7 @@ func TestListHandlerPublishesReadOnlyCatalog(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), "Catalog discovery is read-only") || !strings.Contains(response.Body.String(), "openhands") || !strings.Contains(response.Body.String(), "OSS Insight") || !strings.Contains(response.Body.String(), "litellm") || !strings.Contains(response.Body.String(), "langfuse") || !strings.Contains(response.Body.String(), "collectionScreening") || !strings.Contains(response.Body.String(), `"total":138`) || !strings.Contains(response.Body.String(), "license_review") {
+	if !strings.Contains(response.Body.String(), "Catalog discovery is read-only") || !strings.Contains(response.Body.String(), "openhands") || !strings.Contains(response.Body.String(), "OSS Insight") || !strings.Contains(response.Body.String(), "litellm") || !strings.Contains(response.Body.String(), "langfuse") || !strings.Contains(response.Body.String(), "gosec") || !strings.Contains(response.Body.String(), "trivy") || !strings.Contains(response.Body.String(), "collectionScreening") || !strings.Contains(response.Body.String(), `"total":138`) || !strings.Contains(response.Body.String(), "license_review") || !strings.Contains(response.Body.String(), `"implementation"`) || !strings.Contains(response.Body.String(), "/api/v1/llm") {
 		t.Fatalf("catalog response lacks policy or entry: %s", response.Body.String())
 	}
 }
@@ -115,6 +115,56 @@ func TestRevalidateCollectionsHandlerReportsDriftWithoutMutatingCatalog(t *testi
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ossinsight/revalidate", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"newCollections":["Future capability"]`) || !strings.Contains(response.Body.String(), "drift only") {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCollectionMaintenanceHandlersReturnOnlyDurableIndexEvidence(t *testing.T) {
+	t.Setenv("HAI_CATALOG_REVALIDATION_ENABLED", "true")
+	t.Setenv("HAI_CATALOG_COLLECTION_REVALIDATION_ENABLED", "true")
+	gin.SetMode(gin.TestMode)
+	collectionHistory := &fakeCollectionReviewHistory{}
+	maintenance := NewCatalogMaintenanceService(&fakeCatalogReviewer{}, &fakeCatalogReviewHistory{}).
+		WithCollectionMaintenance(&fakeScheduledCollectionReviewer{}, collectionHistory)
+	handler := NewHandler().WithMaintenance(maintenance)
+	router := gin.New()
+	router.POST("/collection-revalidation/run", handler.RunDueCollectionRevalidation)
+	router.GET("/collection-revalidation-history", handler.CollectionRevalidationHistory)
+
+	run := httptest.NewRecorder()
+	router.ServeHTTP(run, httptest.NewRequest(http.MethodPost, "/collection-revalidation/run", nil))
+	if run.Code != http.StatusOK || !strings.Contains(run.Body.String(), `"expectedTotal":138`) || strings.Contains(run.Body.String(), "repository rows") {
+		t.Fatalf("unexpected collection maintenance result: %d %s", run.Code, run.Body.String())
+	}
+
+	history := httptest.NewRecorder()
+	router.ServeHTTP(history, httptest.NewRequest(http.MethodGet, "/collection-revalidation-history", nil))
+	if history.Code != http.StatusOK || !strings.Contains(history.Body.String(), `"currentTotal":138`) {
+		t.Fatalf("unexpected collection maintenance history: %d %s", history.Code, history.Body.String())
+	}
+}
+
+func TestRepositoryDiscoveryMaintenanceHandlersReturnCappedReviewEvidence(t *testing.T) {
+	t.Setenv("HAI_CATALOG_REVALIDATION_ENABLED", "true")
+	t.Setenv("HAI_CATALOG_REPOSITORY_DISCOVERY_REVALIDATION_ENABLED", "true")
+	gin.SetMode(gin.TestMode)
+	history := &fakeRepositoryDiscoveryReviewHistory{}
+	maintenance := NewCatalogMaintenanceService(&fakeCatalogReviewer{}, &fakeCatalogReviewHistory{}).
+		WithRepositoryDiscoveryMaintenance(&fakeScheduledRepositoryScout{}, history)
+	handler := NewHandler().WithMaintenance(maintenance)
+	router := gin.New()
+	router.POST("/repository-discovery-revalidation/run", handler.RunDueRepositoryDiscoveryRevalidation)
+	router.GET("/repository-discovery-revalidation-history", handler.RepositoryDiscoveryRevalidationHistory)
+
+	run := httptest.NewRecorder()
+	router.ServeHTTP(run, httptest.NewRequest(http.MethodPost, "/repository-discovery-revalidation/run", nil))
+	if run.Code != http.StatusOK || !strings.Contains(run.Body.String(), "owner/review-me") || strings.Contains(run.Body.String(), "package metadata") {
+		t.Fatalf("unexpected repository discovery maintenance result: %d %s", run.Code, run.Body.String())
+	}
+
+	resultHistory := httptest.NewRecorder()
+	router.ServeHTTP(resultHistory, httptest.NewRequest(http.MethodGet, "/repository-discovery-revalidation-history", nil))
+	if resultHistory.Code != http.StatusOK || !strings.Contains(resultHistory.Body.String(), `"repositoriesChecked":116`) {
+		t.Fatalf("unexpected repository discovery maintenance history: %d %s", resultHistory.Code, resultHistory.Body.String())
 	}
 }
 

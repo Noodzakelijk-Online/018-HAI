@@ -8,6 +8,14 @@ repository-discovery and ranking source. HAI uses it to discover candidate
 capabilities, never to automatically download, vendor, enable, or execute
 third-party code.
 
+The fixed public collection API was rechecked on 2026-07-21 and returned 138
+collections. HAI's collection reviewer and candidate/reviewable repository
+discovery use bounded, read-only requests: one initial request plus at most two
+short retries for transient `429` or `5xx` responses. Permanent client errors,
+invalid payloads, response-size limits, and the 30-second request deadline
+remain visible failures. A scan result is discovery evidence, not an adoption,
+installation, credential grant, or execution decision.
+
 ## Review rule
 
 An upstream project becomes a HAI catalog entry only when it has a concrete
@@ -30,6 +38,7 @@ role in one of these planes:
 | Workflow Scheduler | Temporal | Integrated, opt-in | Run one local durable, proposal-only follow-up workflow through a narrow Go worker. |
 | Monitoring Tool | Prometheus | Integrated profile | Enable a token-protected local metrics endpoint; configure a separate local collector when needed. |
 | Model Context Protocol Client | MCP Inspector | Integrated profile | HAI-owned, local-only Streamable HTTP preflight lists tools before a separately reviewed adapter activation. |
+| MCP Servers | MCP Toolbox | Integrated, opt-in | Owner-only local `/mcp/<reviewed-toolset>` inventory preflight; HAI does not hold credentials or call a database tool. |
 | ChatGPT Alternatives | llama.cpp | Integrated local provider | Configure a loopback or `host.docker.internal` OpenAI-compatible `llama-server`; HAI probes `/v1/models` before it can route or generate. |
 | Testing Tools | Playwright | Integrated, opt-in | Verify named, allowlisted local routes without clicks, forms, downloads, retained state, or external origins. |
 | WebAssembly Runtime | Wasmtime | Integrated, opt-in | Run reviewed capability-limited WASI helper modules only through HAI's approval-gated manifest runner. |
@@ -56,27 +65,61 @@ the collection-screening, adapter, provenance, safety, or resource gates.
 | Whylogs | Source-quality profiling | Reference only | Compact profile and constraint patterns only; the 2024 latest package release, overlap with Evidently, and default anonymous analytics require a measured gap and separate freshness/privacy review before any local adoption. |
 | Guardrails AI | Verification and safety | Integrated, opt-in | Internal fixed-schema action-proposal validator; metadata-only output, no model call, Hub download, persistence, approval, or execution. |
 | LM Evaluation Harness | Model evaluation | Integrated, opt-in | Fixed six-case synthetic local suite against one preconfigured local OpenAI-compatible model; aggregate metadata only and manual review required. |
+| Docling | Source intake | Integrated, opt-in | Direct upstream capability-gap review, not an asserted OSS Insight collection member: one manual owner-scoped local folder produces uncertain source-linked document text. DOCX/PPTX/XLSX/HTML/Markdown/text are allowed; PDF is disabled until reviewed local artifacts are installed, and HAI never downloads models or enables remote parsing. |
 | LiveKit Agents | Intake and controlled execution | Candidate | Explicit session-consent model, self-hosted/local service, configured providers, and a no-tool/no-contact default. |
 | mistral.rs | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, approved model and resource configuration, live probe, and disabled upstream agentic tools. |
+| SGLang | Thinking and local inference | Integrated, opt-in | Loopback-only OpenAI-compatible `/v1` server, explicit model/resource configuration, daily exact-model availability checks, live probe, and no inherited upstream tool surfaces. |
 | AG2 | Thinking and execution compatibility | Compatibility only | Fixed-schema bridge for an existing workload; no new parallel HAI runtime. |
 | RAGFlow | Memory and source intake | Integrated, opt-in | Measured retrieval gap, named local data sources, provenance/deletion plan, capacity reservation, disabled code executor, and fixed-dataset local retrieval configuration. |
 | SWE-agent | Coding-worker architecture | Reference only | The upstream recommends mini-SWE-agent, so HAI retains SWE-agent only as a historical comparison and does not add a legacy code-worker. |
-| mini-SWE-agent | Controlled coding worker | Candidate | Pinned release, disposable copied worktree, no host shell/Docker socket/secrets/accounts, deny-by-default network, strict resource caps, diff-only output, selected deterministic tests, and human acceptance are required before any experimental adapter. |
+| mini-SWE-agent | Controlled coding worker | Integrated, opt-in | Pinned release, one disposable copied worktree, no host shell/Docker socket/secrets/accounts, deny-by-default network, strict resource caps, response-only diff output, opaque workflow review signal, selected deterministic tests, and human acceptance before any separate apply path. |
 | Promptfoo | Model safety regression | Integrated, opt-in | One reviewed local model endpoint, fixed synthetic suite, no external providers or telemetry, no production data, aggregate-only report, and human review before any routing or policy decision. |
 | Serena | Coding-context retrieval | Integrated, opt-in | One owner-started loopback MCP endpoint pinned to a single project, a stable HAI project label, MCP handshake/tool inventory probe, and HAI's fixed `find_symbol` allowlist with source-body and hover data disabled. |
 | Odoo | Business-system source ingestion | Integrated, opt-in | One operator-owned JSON-2 endpoint, read-only API key, optional database, and fixed HAI model/field allowlist. HAI uses only bounded `search_read`; all writes, payments, accounting changes, and generic RPC calls remain unavailable. |
 | CloudQuery | Source-intake sync health | Integrated, opt-in | One local, operator-produced `cloudquery sync --summary-location` JSONL file under an explicit read-only mount. HAI does not run CloudQuery, inspect its configuration/credentials, or access source/destination records; it converts only bounded completed summary rows into provenance-linked review signals. |
 | OpenSpec | Spec-driven software planning | Integrated, opt-in | One selected local project folder. HAI reads only active `openspec/changes` proposal/design/tasks/spec Markdown as reviewable planning bundles; it does not run OpenSpec, scan repository code, write files, or authorize coding execution. |
+| Claude Code project instructions | Agent Skills & AGENTS.md | Integrated, opt-in | One selected local project folder. HAI reads only root `AGENTS.md` and `CLAUDE.md` as untrusted, source-linked planning context; it does not install/run Claude Code, automatically send the text to a model, execute instructions, or let project guidance override HAI policy, approvals, tool/workspace limits, or emergency stop. |
+| Fabric prompt patterns | Agent Skills & AGENTS.md | Integrated, opt-in | One selected locally installed patterns folder. HAI reads only immediate-child `system.md` files, up to 24 files of 48 KiB, as untrusted provenance-linked manual-review records. It does not install/run Fabric, configure providers/plugins, call a model, execute a pattern, auto-inject pattern text, or let it override HAI policy, source grounding, approvals, routing, tool/workspace limits, or emergency stop. |
 
 RAGFlow is deliberately not presented as HAI memory. Its parsed chunks and
 citations are candidate evidence that must pass HAI's source-grounding,
 freshness, conflict, and memory-update controls before influencing a fact,
 task, or external action.
 
+## Implemented AutoGen compatibility boundary
+
+HAI does not install, launch, or delegate authority to AutoGen. The
+owner-authenticated `GET /api/v1/autogen-compat/status` and
+`POST /api/v1/autogen-compat/preview` endpoints support a migration review
+only: a caller supplies one bounded, redacted workload label and 1-100 fixed
+event envelopes (`message`, `handoff`, `tool_call`, `tool_result`,
+`approval_request`, task state, or `termination`). HAI returns transient
+normalized events, unresolved handoffs/tool calls, and review-control
+recommendations. It records no event input and cannot create a source, memory,
+task, workflow, approval, audit record, runtime call, model call, MCP call, or
+completion claim. Imported `task_completed` events are explicitly unverified;
+they must be recreated through HAI evidence and verification before any HAI
+state can change.
+
 HAI's disabled-by-default bridge exposes only a local endpoint probe and fixed-
 dataset retrieval. It cannot ingest or delete documents, invoke RAGFlow chat,
 agents, MCP, or code execution, alter RAGFlow configuration, or create memory,
 facts, workflows, or external actions automatically.
+
+## Implemented Microsoft Agent Framework migration boundary
+
+HAI does not install, launch, probe, configure, or invoke Microsoft Agent
+Framework. The owner-authenticated
+`POST /api/v1/autogen-compat/migration-plan` endpoint accepts the same
+1-100 event redacted sample as the AutoGen compatibility preview, and only a
+fixed `microsoft-agent-framework` target. It produces a transient four-stage
+plan: HAI-owned task intake and workflow state, local-first provider routing,
+runtime and approval review, then HAI verification/audit/recovery. The response
+is always non-executable and explicitly reports that no framework runtime was
+detected. It creates no framework connection, task, workflow, source, memory,
+approval, audit record, or completion state. A real bridge remains separately
+blocked on an owner-reviewed local version/license pin plus provider, tool,
+workspace, network, redaction, audit, rollback, and emergency-stop controls.
 
 ## Non-negotiable boundaries
 
@@ -93,6 +136,14 @@ provenance, activation boundary, status, and recommendation data. Planning can
 surface a matching candidate, but tool routing marks it unavailable until the
 specific adapter is present and reviewed.
 
+The admin-only repository-discovery routes also return two separate bounded
+inventories: unreviewed repository candidates and source repositories already
+represented by HAI catalog profiles. Known-profile records retain the source
+collection URL and catalog entry IDs, including reviewed aliases, so an
+operator can distinguish complete coverage from a skipped repository. They are
+coverage evidence only: neither inventory changes a catalog disposition,
+installs a project, creates credentials, or enables a runtime.
+
 The complete category pass, candidate shortlist, and exclusion rationale are in
 [the OSS Insight screening ledger](ossinsight-screening-ledger.md).
 
@@ -106,10 +157,11 @@ case. A configured value alone is not enough: HAI marks it usable only after a
 live `/v1/models` probe, retains the EUR 0 paid budget, and continues to apply
 the router's existing validation, fallback, audit, and approval controls.
 
-`Ollama`, `LM Studio`, `LocalAI`, and `vLLM` use separate, first-class profile
+`Ollama`, `LM Studio`, `LocalAI`, `vLLM`, and `SGLang` use separate, first-class profile
 patterns. Set
-`LOCALAI_BASE_URL` / `LOCALAI_MODEL_ID` or `VLLM_BASE_URL` / `VLLM_MODEL_ID`
-to point at an operator-installed endpoint. Both profiles reject non-local
+`LOCALAI_BASE_URL` / `LOCALAI_MODEL_ID`, `VLLM_BASE_URL` / `VLLM_MODEL_ID`, or
+`SGLANG_BASE_URL` / `SGLANG_MODEL_ID`
+to point at an operator-installed endpoint. These local profiles reject non-local
 endpoints, stay inactive until `/v1/models` succeeds, use the bounded
 OpenAI-compatible completion contract, and remain subject to HAI's EUR 0,
 local-first, validation, audit, and approval policy. HAI neither installs the
@@ -224,3 +276,8 @@ the worker blocks requests and redirects outside its local origin allowlist,
 does not retain state, and returns only a sanitized path, title, and bounded
 pass/fail summary. Each run is approval-gated and owner-scoped. It is useful for
 confirming a route is reachable, not for using an account or automating a site.
+
+When an operator supplies a workflow ID, the completed result is attached only
+as an owner-authorized, source-linked quality signal. A passed check confirms
+the configured local route expectation and nothing more: it cannot establish a
+factual claim, write to memory, execute a tool, or move a workflow to complete.

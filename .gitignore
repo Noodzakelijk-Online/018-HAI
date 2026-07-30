@@ -22,3 +22,17 @@ Thumbs.db
 # Local verification artifacts (may contain session tokens, build logs).
 .verify/
 .playwright-mcp/
+.playwright-cli/
+security-snapshots/
+workflow-*.png
+
+# Local deployment and agent workspaces.
+backend/.hai-backend-deploy
+frontend/.hai-frontend-deploy/
+mini-swe-workspaces/
+hai-repo-link/
+
+# Python runtime caches.
+**/__pycache__/
+*.py[cod]
+.pytest_cache/

@@ -11,6 +11,27 @@ the collections contain hundreds of repositories, many of which overlap with
 HAI, introduce a second control plane, require a separate security review, or
 have no role in a local-first personal operations system.
 
+The public API was rechecked on 2026-07-21 and still returned 138 collections.
+This confirms the collection-index snapshot has not drifted; it does not
+revalidate individual upstream repositories or turn any review-first entry
+into an installed runtime.
+
+The 2026-07-21 live **AI Agent Frameworks** repository list was also compared
+with the catalog's existing AutoGen, AG2, CrewAI, PydanticAI, LangChain, and
+Microsoft Agent Framework coverage. The remaining actively maintained projects
+below are recorded as explicit non-adoption decisions, not omissions. Their
+GitHub metadata was checked only through the public repository API; no package,
+container, source archive, credential, or runtime was fetched.
+
+| Project | Live metadata result | Disposition | Reason |
+| --- | --- | --- | --- |
+| [Agno](https://github.com/agno-agi/agno) | active `main`, Apache-2.0 | Reference only | Broad agent-platform scope overlaps HAI's workflow, provider, approval, audit, and execution control planes. Revisit only for a measured local-only capability gap. |
+| [VoltAgent](https://github.com/VoltAgent/voltagent) | active `main`, MIT | Reference only | Its TypeScript framework, MCP, and observability claims overlap HAI's reviewed local bridges and telemetry candidates; no separate authority or telemetry store is justified. |
+| [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) | active `main`, MIT | Reference only | Multi-agent patterns are useful reference material, but a generic SDK bridge would introduce a second agent loop and provider/billing surface while HAI is local-first and paid-disabled by default. |
+| [Langroid](https://github.com/langroid/langroid) | active `main`, MIT | Reference only | Local-model and multi-agent patterns overlap PydanticAI, CrewAI, AutoGen/AG2 compatibility, and HAI's own planner. No native gap was established. |
+| [CAMEL](https://github.com/camel-ai/camel) | active `master`, Apache-2.0 | Reference only | Research-oriented multi-agent patterns are not a reason to add an autonomous runtime before a concrete operational gap and safety envelope exist. |
+| [Mastra](https://github.com/mastra-ai/mastra) | active `main`, license `NOASSERTION` | License review | The upstream is active but its public metadata does not provide a usable SPDX licence assertion. No package or service may be adopted until terms and overlap are independently reviewed. |
+
 An entry is added to the authenticated HAI brain catalog only when it has a
 clear control-plane role and a bounded activation path. A catalog profile is
 never an installed dependency, a grant of credentials, or permission to run
@@ -28,35 +49,49 @@ only in its expandable collection-coverage section.
 | Temporal | Workflow Scheduler | Integrated, opt-in | Durable governed follow-up checks | One local worker runs a named proposal-only workflow; HAI owns approvals and completion. |
 | Prometheus | Monitoring Tool | Integrated profile | Authenticated HTTP request telemetry | Opt-in token-protected exporter; local collector and retention configuration remain operator-managed. |
 | MCP Inspector | Model Context Protocol (MCP) Client | Integrated profile | Local-only MCP preflight | HAI-owned initialize + tools/list review of configured local Streamable HTTP servers; no process spawn or tool execution. |
+| MCP Toolbox | MCP Servers | Integrated, opt-in | Local database-tool inventory preflight | Owner-only preflight for one separately started local `/mcp/<reviewed-toolset>` endpoint; no Toolbox credentials, configuration reads, database access, SQL, or tool execution. The stable HAI profile ID remains `google-genai-toolbox` after the upstream rename. |
 | Playwright | Testing Tools | Integrated, opt-in | Read-only local browser verification | Named local routes, origin allowlist, no secret capture, no interaction API, and approval gates. |
 | Wasmtime | WebAssembly Runtime | Integrated, opt-in | Bounded WASI helper execution | Reviewed content-addressed modules only; no inherited network, filesystem, environment, or arguments; strict resource caps and approval gate. |
 | OR-Tools | Optimization Solvers | Integrated, opt-in | Internal deterministic CP-SAT schedule proposals | Bounded opaque task inputs only; returns audited suggestions and deferred work without workflow, calendar, filesystem, tool, or external-network apply capability. |
 | Ollama | LLM Inference Engines | Integrated, opt-in | Local model routing and live probe | Existing loopback provider, model-tag probe, persisted readiness, EUR 0 policy, and task approval gates remain authoritative. |
-| FastMCP | MCP Servers | Integrated, opt-in | Authenticated local HAI read-context bridge | The `mcp-bridge` profile publishes exactly two bounded read-only workflow tools over loopback using distinct client and backend tokens. HAI retains sources, memory, approvals, execution, and audit; any write tool needs a separate review. |
+| FastMCP | MCP Servers | Integrated, opt-in | Authenticated local HAI read-context bridge | The `mcp-bridge` profile publishes exactly three bounded read-only tools over loopback using distinct client and backend tokens: workflow overview, actionable workflow summary, and owner-scoped GitHub repository sync context. The GitHub tool returns only repository slug, project key, status, sync frequency, and last-sync time. HAI retains source content, memory, approvals, execution, and audit; any write tool needs a separate review. |
 | vLLM | LLM Inference Engines | Integrated, opt-in | Local high-throughput model serving | A loopback endpoint, explicit GPU/model limits, existing HAI provider probe, and EUR 0 routing policy are required. |
+| SGLang | LLM Inference Engines | Integrated, opt-in | Local high-throughput OpenAI-compatible serving | HAI requires one operator-configured loopback endpoint and exact model ID. It checks availability daily before use, but never pulls the SGLang image or model, substitutes model weights, or inherits upstream tool surfaces. |
 | DeepEval | AI Evaluation & Testing | Integrated, opt-in | Fixed local source-grounding regression | The isolated `deepeval-evaluation` runner pins DeepEval 4.1.1 and evaluates exactly three shipped synthetic evidence/answer pairs with `FaithfulnessMetric` through one configured local judge. It returns aggregate evaluator accuracy only and cannot receive real HAI sources, answers, prompts, metrics, or actions. |
 | Microsoft Presidio | AI Safety & Alignment | Integrated, opt-in | Local sensitive-data detection and redaction | Explicit recognisers, confidence thresholds, false-positive review, source retention, and audit events are required; redaction cannot delete or hide authorised source evidence. |
 | Guardrails AI | AI Safety & Alignment | Integrated, opt-in | Fixed-schema structured-proposal validation | The opt-in internal runner validates one bounded redacted `action_proposal` JSON document with no model call, Hub download, persistence, approval, or execution; a valid result remains review evidence only. |
 | LM Evaluation Harness | AI Evaluation & Testing | Integrated, opt-in | Fixed six-case synthetic local model benchmark runner | The opt-in runner evaluates only one operator-configured local OpenAI-compatible model against HAI's shipped synthetic suite, returns aggregate metadata only, and cannot alter routing automatically. |
-| OpenLLMetry | AI Observability | Candidate | Local LLM trace instrumentation | Local collector ownership, attribute allowlists, secret/prompt redaction, retention, sampling, export disablement, and health checks are required; telemetry cannot approve execution or spend. |
+| OpenLLMetry | AI Observability | Candidate | Local LLM trace instrumentation | Rechecked active under Apache-2.0 on 2026-07-21. HAI now has a durable native redacted generation ledger for aggregate provider/model/status/cost/token/latency/fallback evidence; a local collector remains conditional on a measured trace-level gap, with prompt/secret redaction, retention, sampling, export disablement, and health checks required. Telemetry cannot approve execution or spend. |
+| OpenLIT | AI Observability | Integrated, opt-in | Local aggregate OTLP observability | Rechecked active on `main`, Apache-2.0, with a same-day upstream push on 2026-07-21. HAI now provides one disabled-by-default, owner-triggered fixed aggregate OTLP/HTTP JSON export to a local collector. HAI installs no collector and uses no OpenLIT SDK or automatic instrumentation; no prompts, completions, sources, files, models, tokens, workflows, credentials, or caller-selected attributes are exported. Collector retention, deletion, access, and local network controls remain operator-owned. |
+| Opik | AI Observability / AI Evaluation & Testing | Candidate | Local trace and evaluation evidence | Rechecked active on `main`, Apache-2.0, with a same-day upstream push on 2026-07-21. It remains uninstalled: traces and evaluations cannot replace HAI audit, verification, approval, or routing authority and require local-only retention/export review first. |
+| Pipecat | Multimodal AI / Agent Harness | Candidate | Consentful local voice and multimodal intake | Rechecked active on `main`, BSD-2-Clause, with a same-day upstream push on 2026-07-21. No audio capture or pipeline is enabled; a future bridge needs visible capture, per-session consent, provenance, local retention, pause, and approval gates. |
+| LiveKit Agents | Multimodal AI | Candidate | Consentful real-time voice and multimodal intake | Rechecked active on `main`, Apache-2.0, with a same-day upstream push on 2026-07-21. No LiveKit service, room, capture device, or credentials are configured; any future bridge needs a named room allowlist, explicit providers, consent, and HAI action gates. |
 | Whylogs | AI Observability | Reference only | Compact data-quality profiling and constraint patterns | The latest public package release is from 2024 and overlaps the bounded Evidently evaluator. Do not install it; any future local-only review must disable documented anonymous analytics, preserve source/retention controls, and prevent profile output from changing facts, memory, routing, verification, or actions. |
 | Langfuse | LLM DevTools | Integrated, opt-in | Local aggregate control-plane observability | The owner-only local bridge probes health/readiness and can explicitly export one fixed aggregate OTLP trace; trace redaction, retention, service credentials, and data-egress controls still require an operator review. |
 | Promptfoo | LLM DevTools | Integrated, opt-in | Fixed synthetic local safety regression | The opt-in `safety-evaluation` runner uses one reviewed local model endpoint and a shipped six-case suite. It returns aggregate metadata only; no provider, prompt, source, test data, routing, policy, or action is caller-controlled. |
 | Airbyte | Data Integration | Integrated, opt-in | Local source and connection inventory | The local-only `airbyte-inventory` connector reads a single bounded metadata page for fixed allowlisted workspaces. It excludes credentials, connector configuration, selected fields, source records, sync results, and every Airbyte mutation or sync-control action. |
 | Odoo | Business Management | Integrated, opt-in | Read-only Odoo JSON-2 source adapter | HAI can call only `search_read` for fixed operator-approved models and fields from one named instance. Any write, customer, financial, or accounting action remains independently approval-gated. |
-| browser-use | AI Browser Agents | Candidate | Reviewed browser-agent adapter | Named browser profile, origin/download/upload/credential allowlists, read-only-first validation, and separate high-risk action approvals are required. |
-| NVIDIA NeMo Guardrails | AI Safety & Alignment | Candidate | Local dialog-guardrail adapter | Policy ownership, redacted fixtures, false-positive review, audit records, and no-write evaluation boundaries are mandatory. |
+| browser-use | AI Browser Agents | Candidate | Reviewed browser-agent adapter | Rechecked active and MIT-licensed on 2026-07-21. HAI already has an allowlisted, read-only local browser-verification profile, so browser-use needs a measured non-duplicative capability gap before adapter work. Any future path still requires named browser profiles, origin/download/upload/credential allowlists, read-only-first validation, and separate high-risk approvals. |
+| NVIDIA NeMo Guardrails | AI Safety & Alignment | License review | Interaction-safety reference | Rechecked on 2026-07-21: active `develop`, v0.23.0 released 2026-07-01, but GitHub metadata reports `NOASSERTION` for the licence. Do not import or run it until terms are independently reviewed. Any later local adapter would still require policy ownership, redacted fixtures, false-positive review, audit records, fail-closed behavior, and no approval/execution authority. |
 | garak | AI Red Teaming | Integrated, opt-in | Fixed local prompt-injection regression | The isolated `garak-evaluation` runner pins Garak 0.15.1, calls one configured local model with one four-case synthetic PromptInject probe, returns aggregate metadata only, clears inherited provider credentials/proxies, and deletes raw reports. It cannot target HAI or change its controls. |
 | whisper.cpp | Multimodal AI | Integrated, opt-in | Local speech-to-text intake | The opt-in local-transcription runner reads only an explicit owner-selected subfolder with a manually provisioned local model, produces source-linked uncertain transcripts, and has no microphone, cloud upload, automatic scan, raw-audio retention, or action path. |
+| Docling | Direct upstream capability-gap review | Integrated, opt-in | Local structured-document intake | Active MIT upstream and v2.114.0 checked 2026-07-22. This is not represented as a current OSS Insight collection member. HAI's isolated `local-document-extraction` profile accepts only an owner-scoped selected local folder and extracts DOCX/PPTX/XLSX/HTML/Markdown/text as uncertain source-linked records. It cannot upload files, accept arbitrary paths, scan automatically, retain originals, call remote services, enable OCR/tables/plugins/telemetry, update memory, approve work, execute work, or prove completion. PDF stays disabled until the operator supplies a reviewed read-only artifact folder and explicitly enables it. |
 | A2A Protocol | A2A Protocol | Integrated, opt-in | Local controlled-planning bridge | The local A2A 1.0-shaped Agent Card and authenticated `SendMessage` profile produce a bounded side-effect-free planning artifact for one named owner. It requires `A2A-Version: 1.0` and accepts only standalone `ROLE_USER` text. It is not a full task-lifecycle server: no polling, task persistence, peer discovery, remote peer, source refresh, approval, execution, streaming, file input, or HAI context disclosure. |
 | Tabby | AI Coding Assistants | Candidate | Self-hosted coding assistance | Local deployment, model/privacy review, workspace scope, and read-only-first review are required. |
 | Cline | LLM DevTools | Candidate | Review-first interactive coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | OpenCode | Model Context Protocol (MCP) Client | Candidate | Review-first terminal coding assistance | Explicit model provider, workspace, tool, network, audit, and approval boundary required before any HAI bridge. |
 | OpenCode (opencode-ai legacy) | Model Context Protocol (MCP) Client | Excluded | Archived same-name terminal agent | This distinct archived upstream cannot inherit the active anomalyco/opencode candidate's review status, workspace, provider, credential, MCP, or runtime permissions. |
-| Continue, OpenHands, CrewAI, Aider | AI Agent Frameworks / LLM DevTools / MCP | Candidate | Reviewed coding and orchestration profiles | Existing catalog controls apply; no generic agent-execution endpoint. |
-| AutoGen | AI Agent Frameworks | Compatibility only | Migration and protocol translation | Dedicated bridge and approval required; no new foundation work. |
+| Continue | AI Agent Frameworks / LLM DevTools | Excluded | Discontinued coding-assistant reference | Rechecked on 2026-07-21: its upstream README states that the repository is read-only and no longer actively maintained after final 2.0.0. HAI will not install, connect, or recommend it. |
+| Microsoft JARVIS (HuggingGPT) | AI Agent Frameworks | Excluded | Legacy multi-model research prototype | Rechecked on 2026-07-21: its documented runtime requires Ubuntu 16.04, Python 3.8, `text-davinci-003`, Hugging Face credentials, or up to 284 GB of local model storage. HAI keeps no JARVIS package, service, credential, workspace, or endpoint. |
+| OpenHands | AI Agent Frameworks | Integrated, health-only | Local coding-agent readiness | Rechecked on 2026-07-21: active beta Agent Canvas with Agent/Agent Server source moving to `OpenHands/software-agent-sdk` and GitHub licence `NOASSERTION`. HAI keeps only an allowlisted, disabled-by-default health probe; it cannot execute, mount workspaces, select models, call tools, or create automations. |
+| SWE-ReX | Agent Sandboxing | Reference only | Local sandboxed-shell architecture | Rechecked 2026-07-21: active MIT project with a server exposing session, arbitrary command, file read/write, upload, and close routes. HAI keeps no dependency, service, token, endpoint, session, shell, file, or remote deployment. Its broad API cannot bypass the existing approval-gated runtime registry. |
+| Aider | MCP | Candidate | Review-first coding assistance | Existing catalog controls apply; no generic agent-execution endpoint. |
+| CrewAI | AI Agent Frameworks | Integrated, opt-in | Isolated local planner/reviewer draft | A fixed local two-role runner accepts only a short owner task and up to eight criteria, has no tools/memory/delegation/execution surface, and returns a schema-checked draft. HAI retains all policy, validation, audit, approval, and execution authority. |
+| Microsoft Agent Framework | AutoGen successor | Integrated, opt-in | Isolated local sequential planner/reviewer draft | The supported AutoGen successor is pinned behind an internal-only local profile. Its two fixed no-tool roles produce one bounded proposal from a reviewed local OpenAI-compatible model endpoint. It cannot access HAI state or execute work. |
+| AutoGen | AI Agent Frameworks | Compatibility only | Migration and protocol translation | Rechecked 2026-07-21: active but GitHub metadata reports CC-BY-4.0. HAI has no AutoGen dependency; only the transient migration preview/plan is available. |
 | Activepieces | Zapier Alternatives | Reference only | Connector and workflow-pattern research | No second automation control plane by default. |
 | Mem0 | LLM Tools | Reference only | Memory-consolidation reference | HAI remains the sole memory/provenance authority. |
+| Omega Memory | AI Agent Frameworks | Reference only | Local-first memory health and consolidation patterns | HAI remains the single editable source/provenance memory authority. The native owner-scoped memory-health review can surface stale, ungrounded, dormant, and possible duplicate records without importing a second store, MCP hook, database, or automatic merge path. |
 | Letta, ComfyUI | Agent Memory / Image Generation | Reference only | Design and workflow references | HAI does not create a second memory authority or autonomous publication workflow without an explicit architecture decision. |
 | Daytona | Agent Sandboxing | Excluded | Public upstream no longer maintained | The public repository states that core development moved private in June 2026. HAI must not install, connect, or recommend a discontinued, account/API-key based external sandbox. |
 | OpenMetadata | Open Source Data Catalogs | Reference only | Data lineage and governance reference | Too large for current local-first source registry. |
@@ -70,8 +105,11 @@ On 2026-07-19, the GitHub repository API was checked for the active profiles
 and highest-value candidates: LiteLLM, llama.cpp, pgvector, Temporal,
 Prometheus, MCP Inspector, Playwright, Wasmtime, OR-Tools, Continue, Cline, OpenCode,
 OpenHands, CrewAI, Aider, AutoGen, AutoGPT, Mem0, OpenMetadata, and n8n. All
-20 repositories reported `archived=false` at that time. This is a maintenance
-signal, not an adoption grant: HAI still requires the per-profile configuration,
+20 repositories reported `archived=false` at that time. That field alone is not
+a maintenance signal: Continue's own README later stated that it is read-only
+and no longer actively maintained. HAI therefore treats upstream maintenance
+claims as a combination of repository state and maintainer guidance, not a
+single API field. The remaining profiles still require per-profile configuration,
 health, approval, audit, rollback, license, and data-egress gates described
 above.
 
@@ -97,13 +135,13 @@ project review-first, and holds licence-sensitive or external-sandbox
 candidates as references only where their upstream remains suitable.
 
 The same-day expansion also checked the next operationally relevant OSS Insight
-repositories. GitHub MCP Server, Playwright MCP, Gen AI Toolbox, Qodo PR-Agent,
+repositories. GitHub MCP Server, Playwright MCP, MCP Toolbox (formerly Gen AI Toolbox), Qodo PR-Agent,
 SWE-agent, OpenLIT, and LangMem reported `archived=false`; their GitHub API
 licences were MIT, Apache-2.0, Apache-2.0, MIT, MIT, Apache-2.0, and MIT
 respectively. They are catalogued only as review-first candidates or a memory
 reference. A 2026 follow-up found that SWE-agent now recommends its maintained
 mini-SWE-agent successor: HAI holds SWE-agent as a reference and makes
-mini-SWE-agent the only review-first disposable-worktree candidate. No MCP
+mini-SWE-agent the only integrated, opt-in disposable-worktree profile. No MCP
 service, token, browser profile, database connection, code worker, collector,
 or memory store was installed by this screening. Arize Phoenix reported
 `NOASSERTION`, so it remains under licence review. PyRIT and TaskWeaver
@@ -152,7 +190,7 @@ a separate project-level review.
 | 2 | Browser Extension Frameworks; Go Logging Libraries; Go Web Frameworks; Relational Database; WebRTC; LLM DevTools; Reactive Monolith Frameworks; Open Source Data Catalogs; ML in Rust; Programming Language of China; Web Scanner; Cloud Financial Management and Resource Optimization | Added coding-tool and data-governance references. Browser extensions, web scanners, and framework replacements are not adopted; financial-optimisation tools need a separate finance scope. |
 | 3 | Networking for Games; Stable Diffusion Ecosystem; ChatGPT Apps; Vector Search Engine; LLM Tools; ChatGPT Alternatives; Zapier Alternatives; Cpp CLI Parsing; Business Management; Ansible DevTools; Approximate Nearest Neighbor Library; Optimization Solvers | Added llama.cpp, OR-Tools, workflow-platform dispositions, and memory reference. Image, business-suite, and infrastructure tooling remain separate optional projects. |
 | 4 | X as Code; Robotics; Virtual Reality; javascript ORM; Javascript Build Tool; Kubernetes Tooling; Serverless Framework; Slack Alternative; iOS Framework; Key Value Database; MLOps Tools; Workflow Scheduler | Added Temporal. Infrastructure-as-code, Kubernetes, serverless, chat, mobile, and robotics are not HAI brain dependencies; Redis remains existing infrastructure rather than a new brain store. |
-| 5 | Data Integration; Password Manager; Monitoring Tool; Configuration Management Tools; Golang ORM; Security Tool; Open Source Forum Software; Computer Science Courses; UI Framework and UIkit; Terminal; TUI Framework; Modern Data Stack | Added Prometheus/Grafana dispositions and an opt-in Airbyte source/connection inventory adapter. Password/security tools are not imported due to credential and attack-surface concerns; data integration remains bounded by HAI connector controls. |
+| 5 | Data Integration; Password Manager; Monitoring Tool; Configuration Management Tools; Golang ORM; Security Tool; Open Source Forum Software; Computer Science Courses; UI Framework and UIkit; Terminal; TUI Framework; Modern Data Stack | Added Prometheus/Grafana dispositions, an opt-in Airbyte source/connection inventory adapter, and bounded Gitleaks secret-scan plus Syft SBOM-inventory evidence for reviewed read-only snapshots. Password managers and broad security tools are not imported; scanner evidence never exposes secrets or authorizes execution. |
 | 6 | Go Database; Rust Database; Segment Alternative; API tool for developer; Hyperledger Fabric; Hyperledger Besu; Hyperledger Foundation; WYSIWYG Editor; PaaS; Diagram as Code; Identity Server; Message and Streaming | No direct adoption. HAI already has Postgres, bundled identity, and message infrastructure. Blockchain, PaaS, and editor frameworks do not power the HAI brain. |
 | 7 | Web3; Finance; Cross Platform GUI Tool; Remote Desktop Tool; Testing Tools; WebAssembly Runtime; Distributed File Storage; Programming Language; Javascript Charting; CICD; React Framework; APM Tool | Added Playwright and Wasmtime. Remote desktop, Web3, finance, and CI/CD execution are deliberately out of scope; MinIO is excluded; APM remains Prometheus-first. |
 | 8 | Chaos Engineering; Search Engine; Text Editor; Javascript Game Engine; Game Engine; Headless CMS; Artificial Intelligence; Github Alternative; Graph Database; Time Series Database; Business Intelligence; Javascript Framework | No direct adoption. Search/graph/time-series options stay deferred behind pgvector/Prometheus; AI libraries require a concrete model-serving or evaluation gap; development/UI ecosystems do not replace HAI's stack. |
@@ -316,17 +354,29 @@ high-ranking collection.
 | Repository | Capability gap | Decision | Boundary |
 | --- | --- | --- | --- |
 | `pydantic/pydantic-ai` | Typed planning and schema-constrained output | Integrated, opt-in local proposal runner | `pydantic-ai-slim[openai]` 2.13.0 runs only behind a fixed local schema, loopback-model allowlist, bounded request/response limits, and no-tool/no-persistence boundary. HAI retains schemas, validation, provider policy, audit, and approvals. |
-| `qodo-ai/pr-agent` -> `The-PR-Agent/pr-agent` | Pull-request review patterns | Licence review | The repository redirects to a community-maintained legacy AGPL-3.0 project with CLI, Action, and webhook publishing paths. HAI installs nothing; any use requires explicit licence, model-egress, repository-scope, redaction, retention, and no-publish review. |
+| `qodo-ai/pr-agent` -> `The-PR-Agent/pr-agent` | Pull-request review patterns | Reference only | Rechecked 2026-07-21: the repository redirects to an active community-maintained legacy project with a current MIT LICENSE. Its CLI, Action, and webhook paths can publish review output, so HAI installs nothing; any future use still requires explicit maintenance, model-egress, repository-scope, redaction, retention, and no-publish review. |
 | `mudler/LocalAI` | Alternative local OpenAI-compatible model serving | Review-first candidate | Loopback only, approved model provenance, no automatic model download or paid routing. |
 | `cloudquery/cloudquery` | Read-first incremental source inventory | Integrated, opt-in local summary reader | Fixed local JSONL summary path only, bounded completed rows and incremental cursoring; CloudQuery credentials/configuration, raw source data, destinations, and process execution remain outside HAI. |
 | `comet-ml/opik` | Local trace and evaluation evidence | Review-first candidate | Redacted local traces, retention/export controls, no audit-authority replacement. |
 | `confident-ai/deepteam` | No-write agent red-team regression | Integrated, opt-in synthetic local runner | Pinned DeepTeam 1.0.7 evaluates one deterministic synthetic HAI refusal target against two fixed vulnerability types and one bounded prompt-injection method. Assessment upload is disabled; HAI accepts only aggregate metadata. It never targets real HAI behavior, sources, accounts, runtimes, or actions. |
 | `confident-ai/deepeval` | Source-grounded answer evaluation | Integrated, opt-in synthetic local runner | Pinned DeepEval 4.1.1 evaluates only three shipped synthetic evidence/answer fixtures through `FaithfulnessMetric` and one configured local judge. The runner returns aggregate metadata only; it cannot receive real HAI answers, sources, prompts, metrics, routing, policy, verification, or action data. |
 | `Fission-AI/OpenSpec` | Spec-first coding plans | Integrated, opt-in local artifact reader | Selected local `openspec/changes` artifacts only; groups proposal/design/tasks/spec Markdown into reviewable source bundles and never invokes OpenSpec, reads repository code outside that tree, or edits/commits/branches/opens pulls. |
+| `anthropics/claude-code` | Agent Skills & AGENTS.md project guidance | Integrated, opt-in local untrusted-context reader | Rechecked 2026-07-21: active main branch and not archived; GitHub metadata returned no SPDX licence value. HAI reads only root `AGENTS.md` and `CLAUDE.md` from one selected local project with source provenance. It does not install/run Claude Code, auto-inject the text into a model, execute it, or allow it to override HAI policy, approvals, tool allowlists, workspace boundaries, or emergency stop. |
+| `danielmiessler/Fabric` | Agent Skills & AGENTS.md reusable prompt patterns | Integrated, opt-in local untrusted-context reader | Rechecked 2026-07-22: active main branch, MIT license, not archived, upstream pushed 2026-07-16. HAI reads only manually installed immediate-child `system.md` files from an allowlisted local patterns folder, at most 24 files of 48 KiB. It does not install/run Fabric, configure providers/plugins, call a model, execute a pattern, auto-inject text, update memory, support claims, or override HAI policy, approvals, routing, tool/workspace limits, or emergency stop. |
 | `pipecat-ai/pipecat` | Consentful local voice or multimodal intake | Review-first candidate | Opt-in capture, provenance, pause, retention, and no action from speech without HAI approval. |
 | `protectai/llm-guard` | LLM security filtering | Excluded | GitHub metadata reports the upstream as archived. |
 | `openai/evals` | LLM evaluation framework | Licence review | GitHub metadata reports `NOASSERTION`; provider and dependency review is also required. |
 | `THUDM/AgentBench` | Agent benchmark taxonomy | Reference only | Use only to inform HAI-native, redacted evaluation fixtures. |
+| `SWE-bench/SWE-bench` | Code-agent benchmark harness | Excluded | Official setup documentation calls for Docker, approximately 120 GB free storage, 16 GB RAM, and 8 CPU cores. It is a capacity-gated external benchmark, not an HAI runtime. HAI retains the isolated, review-only mini-SWE patch-proposal profile and native deterministic verification instead. |
+| `gitleaks/gitleaks` | Local secret detection | Integrated, opt-in aggregate snapshot scanner | Active MIT upstream and v8.30.1 checked 2026-07-21. HAI's isolated `secret-scan` profile accepts only a configured named read-only snapshot, clears proxy access, deletes the redacted temporary report, and returns aggregate count/rule/digest metadata. It cannot receive a caller path, source, command, config, report destination, Git credentials, or network target; findings may attach only an owner-scoped redacted `needs_review` signal to an existing workflow and cannot transition it, alter memory or approvals, route work, execute work, or prove completion. |
+| `securego/gosec` | Local Go static security analysis | Integrated, opt-in aggregate vendored snapshot scanner | Active Apache-2.0 upstream and v2.28.0 checked 2026-07-22. HAI's isolated `go-security-scan` profile accepts only a configured named read-only Go snapshot with `go.mod` and `vendor/modules.txt`, forces vendor mode, disables module downloads and proxy egress, and returns aggregate finding/severity/confidence/digest metadata. It cannot receive a caller path, source, finding, rule, CWE, command, config, report destination, Git credential, or network target; results cannot alter source, transition a workflow, alter memory or approvals, route work, execute work, or prove completion. |
+| `aquasecurity/trivy` | Local configuration-security review | Integrated, opt-in offline aggregate snapshot scanner | Active Apache-2.0 upstream and v0.72.0 checked 2026-07-22. HAI's isolated `configuration-security-scan` profile accepts only a configured named read-only configuration snapshot and runs Trivy's offline configuration scanner with policy updates and proxy egress disabled. It returns aggregate finding/severity/digest metadata only. It cannot receive a caller path, source, image, repository, cloud target, finding, rule, policy, command, config, report destination, Git credential, network target, or remediation instruction; results cannot alter infrastructure, transition a workflow, alter memory or approvals, route work, execute work, or prove completion. |
+| `anchore/syft` | Local SBOM inventory | Integrated, opt-in aggregate snapshot inventory | Active Apache-2.0 upstream and v1.48.0 checked 2026-07-21. HAI's isolated `sbom-inventory` profile accepts only a configured named read-only snapshot, clears proxy access, generates the SBOM in process only, and returns aggregate package/ecosystem/digest metadata. It cannot receive a caller path, source, command, config, report destination, Git credentials, or network target; results may attach only an owner-scoped redacted `needs_review` signal to an existing workflow and cannot transition it, alter memory or approvals, route work, execute work, approve dependencies, or prove completion. |
+| `anchore/grype` | Local vulnerability evidence | Integrated, opt-in offline aggregate snapshot scanner | Active Apache-2.0 upstream and v0.116.0 checked 2026-07-22. HAI's isolated `vulnerability-scan` profile accepts only a configured named read-only snapshot and a separately mounted, operator-reviewed local advisory database. It disables Grype database/app updates and proxy egress, then returns only aggregate total, severity, fix-availability, duration, and digest metadata. It cannot receive a caller path, source, package, version, CVE, advisory, command, config, report destination, Git credential, network target, or remediation instruction; results cannot alter dependencies, transition a workflow, alter memory or approvals, route work, execute work, or prove completion. |
+| `PrefectHQ/prefect` | Data workflow orchestration | Reference only | Active Apache-2.0 upstream (checked 2026-07-21), but its server, deployments, work pools, and scheduler would duplicate HAI's bounded Temporal durability layer. No package, server, worker, cloud account, or credential is configured. |
+| `dagster-io/dagster` | Data asset orchestration | Reference only | Active Apache-2.0 upstream (checked 2026-07-21), but its daemon, webserver, catalog, and integration layer would overlap HAI's source provenance, audit, and task-state controls. No package, daemon, webserver, asset catalog, source exposure, or credential is configured. |
+| `AgentOps-AI/agentops` | Agent tracing and observability | Reference only | Active MIT upstream (checked 2026-07-21), but it would add a parallel trace authority beside HAI audit records and the opt-in Prometheus, Langfuse, OpenLIT, and MLflow profiles. No SDK, key, collector, trace export, or telemetry integration is configured. |
+| `microsoft/promptflow` | LLM-flow lifecycle toolkit | Reference only | Active MIT upstream (checked 2026-07-21), but its connection, telemetry, flow, and deployment surfaces would duplicate HAI policy, routing, evaluation, audit, and workflow controls. No package, connection, telemetry, flow, deployment, or execution integration is configured. |
 | `microsoft/OmniParser` | GUI screen-understanding patterns | Licence review | CC-BY-4.0, screenshot privacy, weights, and retention require separate review. |
 | `modelcontextprotocol/servers` | MCP examples collection | Licence review | The collection is not a trust bundle; each server needs an individual review. |
 
@@ -334,3 +384,68 @@ The live comparison also found many overlapping coding agents, hosted
 workspaces, duplicate RAG systems, broad browser agents, and business suites.
 HAI keeps those as unreviewed discovery records or category-level non-adoption
 decisions unless a measured product gap justifies a narrow adapter design.
+
+## 2026-07-21 live repository-feed reconciliation
+
+On 2026-07-21, HAI made bounded, read-only requests to all 16 live OSS Insight
+repository feeds that are currently classified as `review_candidate` or
+`represented_in_catalog`: MCP Servers, Coding Agents, RAG Frameworks, LLM
+Inference Engines, AI Browser Agents, AI Safety & Alignment, Multimodal AI,
+AI Evaluation & Testing, AI Workflow Orchestration, Knowledge Graphs for AI,
+AI Observability, AI Code Review, Agent Sandboxing, AI Red Teaming, A2A
+Protocol, and Agent Harness. All 16 feeds returned successfully, with 209
+ranked repository rows in total. This is a feed-reconciliation result, not a
+complete GitHub inventory and not evidence that any returned project is safe
+or appropriate to run.
+
+After normalizing HAI's current reviewed upstream slugs and recorded transfer
+aliases, 112 distinct returned repositories remained unrepresented by a
+catalog entry. They are retained by the bounded discovery queue, rather than
+being bulk-added or installed. The following groups were reviewed as the most
+plausible apparent gaps and deliberately remain non-adoptions until a measured
+need produces a narrow adapter proposal:
+
+| Live feed group | Examples observed | Decision | Reason |
+| --- | --- | --- | --- |
+| RAG and graph retrieval replacements | `HKUDS/RAG-Anything`, `OSU-NLP-Group/HippoRAG`, `FlowiseAI/Flowise`, `langgenius/dify`, `FalkorDB/FalkorDB` | Do not add a second retrieval, graph, or workflow authority | HAI already has source-linked retrieval, pgvector, the bounded RAGFlow bridge, and a deterministic candidate graph. A replacement must first show a concrete retrieval or parsing failure with a local retention, provenance, deletion, and rollback design. |
+| Workflow and data orchestration stacks | `apache/airflow`, `Netflix/metaflow`, `ray-project/ray`, `zenml-io/zenml` | Reference only | Their schedulers, workers, catalogs, or remote compute patterns overlap HAI's Temporal-based workflow and audit control plane. |
+| Browser, desktop, and code execution agents | `e2b-dev/open-computer-use`, `lavague-ai/LaVague`, `web-infra-dev/midscene`, `nanobrowser/nanobrowser`, `aorwall/moatless-tools`, `qodo-ai/qodo-cover` | Manual discovery only | These can expose browser, filesystem, shell, code-generation, or public-output paths. HAI retains its allowlisted browser verification, Serena symbol bridge, mini-SWE proposal runner, tests, approvals, and emergency stop as the only possible execution path. |
+| External MCP or cloud-connected tool kits | `awslabs/mcp`, `stripe/agent-toolkit`, `supabase-community/supabase-mcp`, `tavily-ai/tavily-mcp` | Manual discovery only | A high-ranking MCP listing does not transfer credential, account, tool, network, or financial authority. Every server still needs a named local adapter, source scope, tool allowlist, health check, audit trail, and approval design. |
+| Agent/orchestration framework alternatives | `google/adk-python`, `google/adk-java`, `agent-network-protocol/AgentNetworkProtocol`, `Coral-Protocol/Anemoi` | Reference only | HAI already records AutoGen/AG2, Microsoft Agent Framework, A2A, PydanticAI, CrewAI, and native orchestration. A further general agent framework would create a parallel policy and execution plane without a demonstrated interoperability gap. |
+| Voice, image, and multimodal generation systems | `coqui-ai/TTS`, `suno-ai/bark`, `myshell-ai/OpenVoice`, `openai/whisper`, `facebookresearch/ImageBind` | Defer | HAI's selected-folder whisper.cpp intake is explicit-consent and local-only. Output generation or alternate capture stacks require a separate consent, retention, model-provenance, and publication/use-case review. |
+| Evaluation, observability, and safety alternatives | `Agenta-AI/agenta`, `pydantic/logfire`, `uptrain-ai/uptrain`, `microsoft/responsible-ai-toolbox`, `fairlearn/fairlearn`, `Trusted-AI/AIF360` | Reference or manual discovery only | HAI already has bounded evaluation, redaction, guardrail, audit, and observability profiles. These projects may be reconsidered only when a measured validation, fairness, or traceability gap cannot be met by those local-first paths. |
+
+The daily repository discovery revalidation records the source URL, scope,
+availability, collection/repository counts, known profile hits, unknown
+candidates, missing or unavailable collections, and a capped candidate list.
+It never downloads source code, packages, weights, images, models, or tools;
+it never creates a catalog entry, credential, connector, runtime, workflow, or
+approval. A candidate must first pass fixed-upstream metadata verification and
+then be explicitly converted into a manual, high-risk Pursuit before any
+adapter design can begin.
+
+The discovery response also applies this repository-level triage before it
+reaches the operator UI. `manual_review` is the only state that can proceed to
+metadata verification and a manual adapter-review Pursuit. `reference_only`
+records a source-reviewed overlapping control plane, while `deferred` records
+a capability that would introduce an unsafe or unjustified execution, account,
+financial, browser, compute, or output-generation surface. These states are
+enforced by the Review control as well as explained in its visible context;
+they do not merely relabel the button. An upstream that is unavailable or
+archived after metadata verification is also ineligible for a review Pursuit.
+
+## 2026-07-22 integrated-profile implementation audit
+
+HAI reconciled all 49 catalog entries labelled `integrated_profile` against
+the canonical Go/Angular implementation. Each integrated entry now returns an
+implementation boundary containing the HAI control, API route, repository
+source path, and bounded scope that support the label. The catalog integrity
+test rejects an integrated entry without that boundary and confirms that its
+recorded source path exists in this repository.
+
+This is implementation provenance, not a claim that an optional upstream is
+installed, reachable, licensed for a specific deployment, or safe to activate.
+Profiles that are intentionally health-only or proposal-only retain that limit.
+For example, an OpenHands profile can report readiness but cannot grant host
+execution authority; model-provider profiles still require an explicitly
+configured endpoint and pass the local-first routing and approval policies.

@@ -116,3 +116,32 @@ func TestHandlerQueryPaginatesAndFilters(t *testing.T) {
 		t.Fatalf("echoed params wrong: size=%d sort=%s order=%s", page1.PageSize, page1.Sort, page1.Order)
 	}
 }
+
+func TestHandlerHealthUsesAuthenticatedOwnerScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepository()
+	service := NewService(repo)
+	scoped := service.(OwnerScopedService)
+	if _, err := scoped.CreateForOwner("bob", CreateRequest{ProjectKey: "case", Kind: "preference", Content: "Bob private case note."}); err != nil {
+		t.Fatalf("seed Bob memory: %v", err)
+	}
+	if _, err := scoped.CreateForOwner("alice", CreateRequest{ProjectKey: "case", Kind: "preference", Content: "Alice private case note."}); err != nil {
+		t.Fatalf("seed Alice memory: %v", err)
+	}
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/memory/health", handler.Health)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/memory/health?projectKey=case", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("health status=%d body=%s", response.Code, response.Body.String())
+	}
+	var report MemoryHealthReport
+	if err := json.Unmarshal(response.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode health report: %v", err)
+	}
+	if report.Active != 1 || report.ProjectKey != "case" {
+		t.Fatalf("owner-scoped report = %#v", report)
+	}
+}

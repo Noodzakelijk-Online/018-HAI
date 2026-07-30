@@ -556,6 +556,48 @@
             <button
               type="button"
               class="section-title-button"
+              (click)="runDueModelMaintenance()"
+              title="Checks every due model that current routing can use. Ollama installs or refreshes only its fixed configured local tag; all other runtimes must report the exact configured model ID without being changed."
+            >
+              <h2>Daily model checks</h2>
+              <p>Every routable model is checked at most once every 24 hours before HAI can use it.</p>
+            </button>
+            <button
+              type="button"
+              nz-button
+              nzType="default"
+              (click)="runDueModelMaintenance()"
+              [nzLoading]="maintaining"
+              title="Run only checks currently due. Only Ollama may install or pull its configured local tag; cloud versions and other local installations are never changed by HAI."
+            >
+              Run due checks
+            </button>
+          </div>
+          <nz-empty *ngIf="!maintenance.length" nzNotFoundContent="No persisted model maintenance records yet."></nz-empty>
+          <div class="event-list" *ngIf="maintenance.length">
+            <article *ngFor="let record of maintenance; trackBy: trackByMaintenance">
+              <i nz-icon nzType="sync" nzTheme="outline"></i>
+              <div>
+                <strong>{{ record.modelName || record.modelId }}</strong>
+                <span>{{ record.providerName }} / checked {{ record.checkedAt | date: 'short' }}</span>
+                <small>{{ record.reason }}</small>
+                <small>{{ maintenanceScheduleText(record) }}</small>
+                <small *ngIf="record.configurationChanged">Provider or model configuration changed since the previous check, so HAI verified it again before use.</small>
+                <small *ngIf="record.status === 'installed'">Configured Ollama tag was installed and verified before HAI used it.</small>
+                <small *ngIf="record.updateApplied && record.status !== 'installed'">Configured tag changed after the verified Ollama refresh.</small>
+                <small *ngIf="record.status === 'provider_managed'">The provider confirmed the configured model ID. HAI does not silently substitute cloud-managed model versions.</small>
+                <small *ngIf="record.blocksExecution">This model remains unavailable for routing until a successful future check.</small>
+              </div>
+              <nz-tag [nzColor]="maintenanceColor(record)">{{ record.status }}</nz-tag>
+            </article>
+          </div>
+        </article>
+
+        <article class="surface-panel">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
               (click)="loadLogs()"
               title="Reload recent model-routing decisions"
             >

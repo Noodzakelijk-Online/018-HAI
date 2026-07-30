@@ -11,11 +11,11 @@ the remote (TeamViewer/AnyDesk) session.
 - Stack file: `docker-compose.local.yml` with `--env-file .env.local`
 - Go build/test run in `golang:1.23` container (no Go toolchain on host)
 
-> Note on which compose file is authoritative: `docker-compose.local.yml` builds
-> the backend, frontend and IDP **from source**. `docker-compose.yml` pulls
-> prebuilt upstream `jacksonbarreto/*` images and is not the HAI stack. Use the
-> local file. This corrects the earlier `ANALYSIS_REPORT.md`, which recommended
-> the opposite.
+> Note on which compose file is authoritative: `docker-compose.yml` is the
+> canonical entrypoint and includes `docker-compose.local.yml`, which builds the
+> backend, frontend and IDP **from source**. The retired prebuilt-image stack
+> was removed so a normal `docker compose up` cannot create a parallel HAI
+> deployment.
 
 ---
 
@@ -42,7 +42,8 @@ dependents never started, and **zero** application containers came up.
 
 Change: infrastructure services (Postgres, Redis) now bind to `127.0.0.1` on
 configurable host ports, defaulting Redis to `6380` to avoid the common
-already-running-Redis clash. Only the gateway is published on all interfaces.
+already-running-Redis clash. The gateway is the sole browser entrypoint and
+defaults to loopback `127.0.0.1:80`.
 
 ```
 docker compose -f docker-compose.local.yml --env-file .env.local up -d --build

@@ -83,6 +83,7 @@ type Result struct {
 	ToolCount       int       `json:"toolCount"`
 	Tools           []Tool    `json:"tools,omitempty"`
 	Truncated       bool      `json:"truncated"`
+	ReadOnlyVerified bool     `json:"readOnlyVerified"`
 	DurationMs      int64     `json:"durationMs"`
 	CheckedAt       time.Time `json:"checkedAt"`
 }
@@ -242,7 +243,7 @@ func (s *Service) Preflight(ctx context.Context, serverID string) (Result, bool)
 		result.Detail = safeError("tools/list", err)
 		return s.record(result, start), true
 	}
-	tools, count, truncated, err := boundedTools(toolsResponse.Result)
+	tools, declaredToolNames, count, truncated, err := boundedTools(toolsResponse.Result)
 	if err != nil {
 		result.Status = "failed"
 		result.Detail = "tools/list returned an invalid result"
@@ -253,6 +254,19 @@ func (s *Service) Preflight(ctx context.Context, serverID string) (Result, bool)
 	result.Tools = tools
 	result.ToolCount = count
 	result.Truncated = truncated
+	if allowedTools, contractName, hasContract := readOnlyToolContract(server.CatalogID); hasContract {
+		if count == 0 {
+			result.Status = "blocked"
+			result.Detail = contractName + " declared no reviewed read-only context tools; keep the server blocked until an explicit inspection-only toolset is configured"
+			return s.record(result, start), true
+		}
+		if disallowed := readOnlyToolNameViolations(declaredToolNames, allowedTools); len(disallowed) > 0 {
+			result.Status = "blocked"
+			result.Detail = contractName + " declared tools outside HAI's reviewed inspection-only context allowlist; keep interactive, file, storage, and unknown tools unavailable"
+			return s.record(result, start), true
+		}
+		result.ReadOnlyVerified = true
+	}
 	return s.record(result, start), true
 }
 
@@ -388,7 +402,7 @@ func matchesRequestID(raw json.RawMessage, expected int) bool {
 	return strings.TrimSpace(string(raw)) == strconv.Itoa(expected)
 }
 
-func boundedTools(raw json.RawMessage) ([]Tool, int, bool, error) {
+func boundedTools(raw json.RawMessage) ([]Tool, []string, int, bool, error) {
 	var result struct {
 		Tools []struct {
 			Name        string          `json:"name"`
@@ -397,27 +411,31 @@ func boundedTools(raw json.RawMessage) ([]Tool, int, bool, error) {
 		} `json:"tools"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, 0, false, err
+		return nil, nil, 0, false, err
 	}
 	count := len(result.Tools)
+	declaredNames := make([]string, 0, count)
+	for _, item := range result.Tools {
+		name := redactDisplay(strings.TrimSpace(item.Name))
+		if name == "" {
+			name = "redacted-tool"
+		}
+		declaredNames = append(declaredNames, truncate(name, 128))
+	}
 	truncated := count > maxTools
 	if truncated {
 		result.Tools = result.Tools[:maxTools]
 	}
 	tools := make([]Tool, 0, len(result.Tools))
 	for _, item := range result.Tools {
-		name := redactDisplay(strings.TrimSpace(item.Name))
-		if name == "" {
-			name = "redacted-tool"
-		}
 		tools = append(tools, Tool{
-			Name:           truncate(name, 128),
+			Name:           declaredNames[len(tools)],
 			Title:          truncate(redactDisplay(strings.TrimSpace(item.Title)), 160),
 			HasInputSchema: len(item.InputSchema) > 0 && string(item.InputSchema) != "null",
 		})
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools, count, truncated, nil
+	return tools, declaredNames, count, truncated, nil
 }
 
 func safeError(stage string, err error) string {
@@ -443,6 +461,81 @@ func truncate(value string, limit int) string {
 		return value
 	}
 	return value[:limit] + "..."
+}
+
+// githubReadOnlyContextTools is deliberately a small, explicit contract for a
+// GitHub MCP server used only as repository context. This preflight service
+// never calls a tool. Keeping the allowlist here prevents an operator from
+// accidentally treating a server with write, mutation, or unknown tools as a
+// safe context endpoint merely because its handshake succeeds.
+var githubReadOnlyContextTools = map[string]struct{}{
+	"get_commit":             {},
+	"get_file_contents":      {},
+	"get_pull_request":       {},
+	"get_pull_request_diff":  {},
+	"get_pull_request_files": {},
+	"get_repository":         {},
+	"get_workflow_run_logs":  {},
+	"issue_read":             {},
+	"list_branches":          {},
+	"list_commits":           {},
+	"list_issues":            {},
+	"list_pull_requests":     {},
+	"list_workflow_runs":     {},
+	"pull_request_read":      {},
+	"search_code":            {},
+	"search_issues":          {},
+	"search_pull_requests":   {},
+	"search_repositories":    {},
+}
+
+// Playwright MCP declares browser navigation and interaction tools as
+// non-read-only. HAI accepts only a compact inspection inventory; it never
+// calls these tools through preflight. Browser navigation, screenshots, cookie
+// and storage reads, network bodies, and anything that writes browser or file
+// state remain outside this profile and require HAI's dedicated verification
+// path plus explicit approval.
+var playwrightReadOnlyContextTools = map[string]struct{}{
+	"browser_console_messages": {},
+	"browser_find":             {},
+	"browser_get_config":       {},
+	"browser_route_list":       {},
+	"browser_snapshot":         {},
+}
+
+func readOnlyToolContract(catalogID string) (map[string]struct{}, string, bool) {
+	switch strings.TrimSpace(catalogID) {
+	case "github-mcp-server":
+		return githubReadOnlyContextTools, "GitHub MCP", true
+	case "playwright-mcp":
+		return playwrightReadOnlyContextTools, "Playwright MCP", true
+	default:
+		return nil, "", false
+	}
+}
+
+func githubReadOnlyToolViolations(tools []Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return githubReadOnlyToolNameViolations(names)
+}
+
+func githubReadOnlyToolNameViolations(names []string) []string {
+	return readOnlyToolNameViolations(names, githubReadOnlyContextTools)
+}
+
+func readOnlyToolNameViolations(names []string, allowedTools map[string]struct{}) []string {
+	violations := make([]string, 0)
+	for _, declared := range names {
+		name := strings.TrimSpace(declared)
+		if _, allowed := allowedTools[name]; !allowed {
+			violations = append(violations, name)
+		}
+	}
+	sort.Strings(violations)
+	return violations
 }
 
 func parseServers(raw string) []Server {

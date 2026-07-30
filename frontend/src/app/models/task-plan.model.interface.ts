@@ -10,6 +10,7 @@ export interface ITaskPlanRequest {
   pursuitId?: string;
   automationId?: string;
   successCriteria?: string[];
+  includeRagflowCandidates?: boolean;
   executeAllowed?: boolean;
   humanApproved?: boolean;
   approvalNote?: string;
@@ -34,9 +35,23 @@ export interface IContextPlan {
   strategy: string[];
   usedContext: IRankedMemory[];
   sourceContext: IRankedExtraction[];
+  ragflowCandidates: IRAGFlowCandidateContext[];
+  ragflowExplanation?: string;
   sourceRefresh?: IScheduledSyncRun;
   sourceRefreshExplanation?: string;
   explanation: string;
+}
+
+export interface IRAGFlowCandidateContext {
+  status: 'unverified_candidate' | string;
+  sourceUri: string;
+  datasetId: string;
+  documentId?: string;
+  documentName?: string;
+  chunkId: string;
+  snippet: string;
+  similarity?: number;
+  scope: string;
 }
 
 export interface IValidationPlan {

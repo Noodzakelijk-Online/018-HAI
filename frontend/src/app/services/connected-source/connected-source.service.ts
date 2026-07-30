@@ -13,6 +13,7 @@ import {
   ISourceSearchResult,
   ISourceSyncJob,
   ISourceSyncResult,
+  IKnowledgeGraphResult,
   IScheduledSyncRun,
 } from '../../models/connected-source.model.interface';
 
@@ -63,6 +64,10 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.post<ISourceSyncResult>(`${this.apiUrl}/${sourceId}/transcribe`, null);
   }
 
+  extractDocuments(sourceId: string): Observable<ISourceSyncResult> {
+    return this.http.post<ISourceSyncResult>(`${this.apiUrl}/${sourceId}/extract-documents`, null);
+  }
+
   runDueScheduledSyncs(): Observable<IScheduledSyncRun> {
     return this.http.post<IScheduledSyncRun>(`${this.apiUrl}/sync-due`, {});
   }
@@ -85,6 +90,15 @@ export class ConnectedSourceService implements IConnectedSourceService {
 
   search(request: ISourceSearchRequest): Observable<ISourceSearchResult> {
     return this.http.post<ISourceSearchResult>(`${this.apiUrl}/search`, request);
+  }
+
+  knowledgeGraph(projectKey: string, includeArchived: boolean, includeSensitive: boolean): Observable<IKnowledgeGraphResult> {
+    return this.http.get<IKnowledgeGraphResult>(`${this.apiUrl}/knowledge-graph`, {
+      params: new HttpParams()
+        .set('projectKey', projectKey || '')
+        .set('includeArchived', includeArchived)
+        .set('includeSensitive', includeSensitive),
+    });
   }
 
   extractions(projectKey: string, includeArchived: boolean): Observable<ISourceExtraction[]> {

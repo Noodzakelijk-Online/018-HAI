@@ -5,10 +5,11 @@ Day-to-day operation of 018-HAI on a single local host.
 ## Start / stop
 
 ```bash
-# Bring the stack up (Postgres/Redis/Kafka/backend/frontend/gateway).
-docker compose -f docker-compose.local.yml up -d
+# Bring up the one canonical HAI Compose project
+# (Postgres/Redis/Kafka/backend/frontend/gateway).
+docker compose up -d
 # Stop it.
-docker compose -f docker-compose.local.yml down
+docker compose down
 ```
 
 ## Health checks

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestValidateLocalURL(t *testing.T) {
@@ -43,5 +44,16 @@ func TestEmbedUsesLocalEndpointAndBearer(t *testing.T) {
 	vector, err := service.embed(context.Background(), "source text")
 	if err != nil || len(vector) != 2 || vector[0] != 0.25 {
 		t.Fatalf("embedding = %#v, %v", vector, err)
+	}
+}
+
+func TestLocalEmbeddingClientDisablesProxyAndRedirects(t *testing.T) {
+	client := newLocalHTTPClient(time.Second)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil {
+		t.Fatalf("local embedding client must disable environment proxy routing: %#v", client.Transport)
+	}
+	if err := client.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Fatalf("local embedding client must preserve redirect responses, got %v", err)
 	}
 }

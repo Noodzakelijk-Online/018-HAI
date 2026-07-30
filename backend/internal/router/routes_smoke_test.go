@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"automation-hub-backend/internal/autogencompat"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/mcppreflight"
 	"automation-hub-backend/internal/models"
@@ -76,6 +77,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	m.GET("/", mark("memoryList"))
 	m.POST("/", mark("memoryCreate"))
 	m.POST("/retrieve", mark("memoryRetrieve"))
+	m.GET("/health", mark("memoryHealth"))
 	m.GET("/export", mark("memoryExport"))
 	m.GET("/:id", mark("memoryGet"))
 
@@ -91,9 +93,27 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	llmRoutes := r.Group("/api/v1").Group("/llm")
 	llmRoutes.GET("/policy", mark("llmPolicy"))
 	llmRoutes.GET("/probes", mark("llmProbes"))
+	llmRoutes.GET("/model-maintenance", mark("llmModelMaintenance"))
+	llmRoutes.POST("/model-maintenance/run", mark("llmModelMaintenanceRun"))
 	llmRoutes.POST("/route", mark("llmRoute"))
 	llmRoutes.POST("/generate", mark("llmGenerate"))
 	llmRoutes.GET("/logs", mark("llmLogs"))
+
+	mcpAgentRoutes := r.Group("/api/v1").Group("/mcp-agent")
+	mcpAgentRoutes.GET("/overview", mark("mcpAgentOverview"))
+	mcpAgentRoutes.GET("/actionable", mark("mcpAgentActionable"))
+	mcpAgentRoutes.GET("/github-repositories", mark("mcpAgentGitHubRepositories"))
+	mcpAgentRoutes.GET("/model-maintenance", mark("mcpAgentModelMaintenance"))
+
+	autogenRoutes := r.Group("/api/v1").Group("/autogen-compat")
+	autogenRoutes.GET("/status", mark("autogenStatus"))
+	autogenRoutes.POST("/preview", mark("autogenPreview"))
+	autogenRoutes.POST("/migration-plan", mark("autogenMigrationPlan"))
+
+	agentFrameworkRoutes := r.Group("/api/v1").Group("/agent-framework")
+	agentFrameworkRoutes.GET("/status", mark("agentFrameworkStatus"))
+	agentFrameworkRoutes.POST("/probe", mark("agentFrameworkProbe"))
+	agentFrameworkRoutes.POST("/proposals", mark("agentFrameworkProposals"))
 
 	tasks := r.Group("/api/v1").Group("/task")
 	tasks.POST("/plan", mark("taskPlan"))
@@ -116,6 +136,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	sources.DELETE("/extractions/:id", mark("sourceExtractionDelete"))
 	sources.PATCH("/:id", mark("sourceUpdate"))
 	sources.POST("/:id/sync", mark("sourceSync"))
+	sources.POST("/:id/extract-documents", mark("sourceExtractDocuments"))
 	sources.POST("/:id/reindex", mark("sourceReindex"))
 	sources.POST("/:id/pause", mark("sourcePause"))
 	sources.POST("/:id/resume", mark("sourceResume"))
@@ -265,6 +286,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/assistant/command", "assistantCommand"},
 		{"GET", "/api/v1/assistant/logs", "assistantLogs"},
 		{"POST", "/api/v1/memory/retrieve", "memoryRetrieve"},
+		{"GET", "/api/v1/memory/health", "memoryHealth"},
 		{"GET", "/api/v1/memory/export", "memoryExport"},
 		{"GET", "/api/v1/memory/abc", "memoryGet"},
 		{"POST", "/api/v1/memory-engine/import", "memoryEngineImport"},
@@ -276,9 +298,20 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/memory-engine/insights", "memoryEngineInsights"},
 		{"GET", "/api/v1/llm/policy", "llmPolicy"},
 		{"GET", "/api/v1/llm/probes", "llmProbes"},
+		{"GET", "/api/v1/llm/model-maintenance", "llmModelMaintenance"},
+		{"POST", "/api/v1/llm/model-maintenance/run", "llmModelMaintenanceRun"},
 		{"POST", "/api/v1/llm/route", "llmRoute"},
 		{"POST", "/api/v1/llm/generate", "llmGenerate"},
 		{"GET", "/api/v1/llm/logs", "llmLogs"},
+		{"GET", "/api/v1/mcp-agent/overview", "mcpAgentOverview"},
+		{"GET", "/api/v1/mcp-agent/actionable", "mcpAgentActionable"},
+		{"GET", "/api/v1/mcp-agent/github-repositories", "mcpAgentGitHubRepositories"},
+		{"GET", "/api/v1/autogen-compat/status", "autogenStatus"},
+		{"POST", "/api/v1/autogen-compat/preview", "autogenPreview"},
+		{"POST", "/api/v1/autogen-compat/migration-plan", "autogenMigrationPlan"},
+		{"GET", "/api/v1/agent-framework/status", "agentFrameworkStatus"},
+		{"POST", "/api/v1/agent-framework/probe", "agentFrameworkProbe"},
+		{"POST", "/api/v1/agent-framework/proposals", "agentFrameworkProposals"},
 		{"POST", "/api/v1/task/plan", "taskPlan"},
 		{"POST", "/api/v1/task/run", "taskRun"},
 		{"POST", "/api/v1/task/success", "taskRun"},
@@ -297,6 +330,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"DELETE", "/api/v1/sources/extractions/abc", "sourceExtractionDelete"},
 		{"PATCH", "/api/v1/sources/abc", "sourceUpdate"},
 		{"POST", "/api/v1/sources/abc/sync", "sourceSync"},
+		{"POST", "/api/v1/sources/abc/extract-documents", "sourceExtractDocuments"},
 		{"POST", "/api/v1/sources/abc/reindex", "sourceReindex"},
 		{"POST", "/api/v1/sources/abc/pause", "sourcePause"},
 		{"POST", "/api/v1/sources/abc/resume", "sourceResume"},
@@ -353,6 +387,64 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		if hit != tc.want {
 			t.Fatalf("%s %s -> handler %q, want %q", tc.method, tc.path, hit, tc.want)
 		}
+	}
+}
+
+func TestAutoGenCompatibilityRoutesRequireOwnerAndWritePermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payload := `{"workloadId":"legacy","events":[{"id":"event-1","type":"message","summary":"Review migration"}]}`
+	migrationPayload := `{"target":"microsoft-agent-framework","workloadId":"legacy","events":[{"id":"event-1","type":"message","summary":"Review migration"}]}`
+
+	unauthenticated := gin.New()
+	initializeAutoGenCompatibilityRoutes(unauthenticated.Group("/api/v1"), autogencompat.NewHandler(autogencompat.DefaultService()))
+	response := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/autogen-compat/status", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status without an owner must be unauthorized, got %d", response.Code)
+	}
+
+	viewer := gin.New()
+	viewer.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "viewer@example.test")
+		c.Set(contextRoleKey, "viewer")
+		c.Next()
+	})
+	initializeAutoGenCompatibilityRoutes(viewer.Group("/api/v1"), autogencompat.NewHandler(autogencompat.DefaultService()))
+	response = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/autogen-compat/preview", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	viewer.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer must not prepare a migration preview, got %d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/autogen-compat/migration-plan", strings.NewReader(migrationPayload))
+	request.Header.Set("Content-Type", "application/json")
+	viewer.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer must not prepare a framework migration plan, got %d", response.Code)
+	}
+
+	operator := gin.New()
+	operator.Use(func(c *gin.Context) {
+		c.Set(contextSubjectKey, "operator@example.test")
+		c.Set(contextRoleKey, "operator")
+		c.Next()
+	})
+	initializeAutoGenCompatibilityRoutes(operator.Group("/api/v1"), autogencompat.NewHandler(autogencompat.DefaultService()))
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/autogen-compat/preview", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	operator.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"executionAllowed":false`) {
+		t.Fatalf("operator preview = %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/autogen-compat/migration-plan", strings.NewReader(migrationPayload))
+	request.Header.Set("Content-Type", "application/json")
+	operator.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"frameworkRuntimeDetected":false`) {
+		t.Fatalf("operator migration plan = %d %s", response.Code, response.Body.String())
 	}
 }
 

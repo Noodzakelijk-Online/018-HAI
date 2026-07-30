@@ -218,8 +218,8 @@ class Handler(BaseHTTPRequestHandler):
             response(self, 404, {"error": "not found"})
             return
         try:
-            _, model_id, _ = configuration()
-            response(self, 200, {"status": "ok", "engine": engine_name(), "configured": True, "modelId": model_id, "suite": SUITE, "metric": METRIC})
+            base_url, model_id, _ = configuration()
+            response(self, 200, {"status": "ok", "engine": engine_name(), "configured": True, "modelId": model_id, "modelEndpoint": base_url, "suite": SUITE, "metric": METRIC})
         except RequestError:
             response(self, 200, {"status": "ok", "engine": engine_name(), "configured": False, "suite": SUITE, "metric": METRIC, "scope": "runner is healthy; local model is not configured"})
 

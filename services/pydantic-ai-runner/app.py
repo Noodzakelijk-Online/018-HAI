@@ -152,7 +152,7 @@ def probe() -> dict:
     models = data.get("data", []) if isinstance(data, dict) else []
     if not any(isinstance(item, dict) and item.get("id") == model_id for item in models):
         raise RequestError("configured local model is not reported by its endpoint")
-    return {"status": "ok", "engine": f"pydantic-ai {version('pydantic-ai-slim')}", "modelId": model_id}
+    return {"status": "ok", "engine": f"pydantic-ai {version('pydantic-ai-slim')}", "modelId": model_id, "modelEndpoint": base_url}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -163,8 +163,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {"error": "not found"})
             return
         try:
-            _, model_id, _ = configured()
-            self.respond(200, {"status": "ok", "configured": True, "engine": f"pydantic-ai {version('pydantic-ai-slim')}", "modelId": model_id, "scope": "configured local proposal runner only"})
+            base_url, model_id, _ = configured()
+            self.respond(200, {"status": "ok", "configured": True, "engine": f"pydantic-ai {version('pydantic-ai-slim')}", "modelId": model_id, "modelEndpoint": base_url, "scope": "configured local proposal runner only"})
         except RequestError:
             # Keep the isolated profile observable before its local model is
             # configured. The stricter /v1/probe still fails until that model

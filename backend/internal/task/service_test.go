@@ -11,6 +11,7 @@ import (
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/ragflow"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/verification"
 
@@ -49,11 +50,11 @@ func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 	if len(plan.ToolDecision.SelectedTools) == 0 {
 		t.Fatalf("expected tool routing decision")
 	}
-	if !hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "continue") || !hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "openhands") {
-		t.Fatalf("coding plan must surface governed agent-catalog capabilities: %#v", plan.ToolDecision.CatalogRecommendations)
+	if !hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "openhands") {
+		t.Fatalf("coding plan must surface the remaining governed agent-catalog capability: %#v", plan.ToolDecision.CatalogRecommendations)
 	}
-	if !containsToolDecisionItem(plan.ToolDecision.SkippedTools, "agent-catalog.continue: operator-configured adapter required") {
-		t.Fatalf("candidate must not be treated as configured or executable: %#v", plan.ToolDecision)
+	if hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "continue") {
+		t.Fatalf("discontinued Continue must not be recommended: %#v", plan.ToolDecision.CatalogRecommendations)
 	}
 }
 
@@ -72,6 +73,21 @@ func TestPlanGatesAutoGenCompatibilityBehindBridgeAndApproval(t *testing.T) {
 	}
 	if !containsToolDecisionItem(plan.ToolDecision.BlockedTools, "agent-catalog.autogen: compatibility bridge and approval required") {
 		t.Fatalf("AutoGen compatibility must not become an executable tool: %#v", plan.ToolDecision)
+	}
+}
+
+func TestPlanSurfacesProjectInstructionsWithoutTreatingThemAsAnExecutableTool(t *testing.T) {
+	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t))
+
+	plan, err := service.Plan(IntakeRequest{Request: "Review the repository AGENTS.md and CLAUDE.md project guidance before planning this code change."})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !hasCatalogRecommendation(plan.ToolDecision.CatalogRecommendations, "claude-code-project-instructions") {
+		t.Fatalf("project instructions must surface as catalog context: %#v", plan.ToolDecision.CatalogRecommendations)
+	}
+	if !containsToolDecisionItem(plan.ToolDecision.SkippedTools, "agent-catalog.claude-code-project-instructions: integrated profile requires local configuration and live health") {
+		t.Fatalf("project instructions must not become executable: %#v", plan.ToolDecision)
 	}
 }
 
@@ -190,6 +206,79 @@ func TestPreviewDoesNotRefreshSourcesOrPersistTaskLog(t *testing.T) {
 	}
 }
 
+func TestPlanUsesExplicitRAGFlowCandidatesWithoutPromotingThemToEvidence(t *testing.T) {
+	retriever := &fakeTaskRAGFlowService{
+		status: ragflow.Status{Enabled: true, Configured: true, Provider: "RAGFlow"},
+		response: &ragflow.Response{Results: []ragflow.Result{
+			{
+				DatasetID:    "legal-records",
+				ChunkID:      "chunk-17",
+				DocumentID:   "doc-4",
+				DocumentName: "case-notes.pdf",
+				Content:      "Potential lead: correspondence may mention a deadline.",
+				Similarity:   0.88,
+			},
+		}},
+	}
+	service := NewServiceWithEnginesAndPursuitAttemptsAndRAGFlow(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		nil,
+		nil,
+		retriever,
+	)
+
+	plan, err := service.Plan(IntakeRequest{
+		Request:                  "Prepare a safe case summary from local research.",
+		IncludeRAGFlowCandidates: true,
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if retriever.calls != 1 {
+		t.Fatalf("RAGFlow calls = %d, want 1", retriever.calls)
+	}
+	if len(plan.ContextPlan.RAGFlowCandidates) != 1 {
+		t.Fatalf("RAGFlow candidates = %#v", plan.ContextPlan.RAGFlowCandidates)
+	}
+	candidate := plan.ContextPlan.RAGFlowCandidates[0]
+	if candidate.Status != "unverified_candidate" || candidate.Scope != "candidate_only_not_evidence_memory_or_execution" || candidate.SourceURI != "ragflow://dataset/legal-records/chunk/chunk-17" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+	for _, item := range evidenceFromPlan(plan) {
+		if item.SourceType == "ragflow" || strings.Contains(item.SourceURI, "ragflow://") {
+			t.Fatalf("RAGFlow candidate escaped into verification evidence: %#v", item)
+		}
+	}
+	joinedContext := strings.Join(generationContext(plan), "\n")
+	if !strings.Contains(joinedContext, "UNVERIFIED RAGFLOW CANDIDATE") || !strings.Contains(joinedContext, "Potential lead") {
+		t.Fatalf("generation context did not retain the candidate warning: %q", joinedContext)
+	}
+}
+
+func TestPlanDoesNotCallRAGFlowWithoutExplicitOptIn(t *testing.T) {
+	retriever := &fakeTaskRAGFlowService{
+		status:   ragflow.Status{Enabled: true, Configured: true, Provider: "RAGFlow"},
+		response: &ragflow.Response{Results: []ragflow.Result{{DatasetID: "records", ChunkID: "chunk-1", Content: "must stay unread"}}},
+	}
+	service := NewServiceWithEnginesAndPursuitAttemptsAndRAGFlow(
+		&fakeMemoryService{}, newTaskTestLLMService(t), nil, nil, nil, nil, retriever,
+	)
+
+	plan, err := service.Plan(IntakeRequest{Request: "Prepare a normal plan."})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if retriever.calls != 0 || len(plan.ContextPlan.RAGFlowCandidates) != 0 {
+		t.Fatalf("RAGFlow should remain opt-in: calls=%d plan=%#v", retriever.calls, plan.ContextPlan)
+	}
+	if plan.ContextPlan.RAGFlowExplanation != "RAGFlow candidate retrieval was not requested." {
+		t.Fatalf("explanation = %q", plan.ContextPlan.RAGFlowExplanation)
+	}
+}
+
 func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.T) {
 	mem := &fakeMemoryService{}
 	src := &fakeTaskSourceService{}
@@ -220,6 +309,11 @@ func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.
 	}
 	if len(src.searchRequests) != 1 || src.searchRequests[0].OwnerIdentity != "alice" {
 		t.Fatalf("source search requests = %#v, want owner alice", src.searchRequests)
+	}
+	for _, connectorKey := range source.ManualPlanningContextOnlyConnectorKeys() {
+		if !containsToolDecisionItem(src.searchRequests[0].ExcludeConnectorKeys, connectorKey) {
+			t.Fatalf("task planner did not exclude manual-only connector %q: %#v", connectorKey, src.searchRequests[0])
+		}
 	}
 }
 
@@ -790,8 +884,14 @@ func newTaskTestLLMService(t *testing.T) *llm.Service {
 	t.Setenv("LLM_PROVIDERS_JSON", "")
 	t.Setenv("LLM_POLICY_JSON", "")
 	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+	// Cover the distinct capabilities exercised by this package: coding,
+	// summarization, and a second capable coding route for fallback tests.
+	t.Setenv("OLLAMA_MODEL_IDS", "qwen2.5-coder:32b,deepseek-coder:6.7b,qwen2.5:7b,mixtral:8x7b")
 	t.Setenv("LM_STUDIO_BASE_URL", "")
 	t.Setenv("FREE_CLOUD_OPENAI_BASE_URL", "")
+	// Task unit tests exercise the deterministic planning and verification
+	// chain. They must not depend on a host Ollama download or daily probe.
+	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "false")
 	llmService, err := llm.NewServiceFromEnv()
 	if err != nil {
 		t.Fatalf("NewServiceFromEnv: %v", err)
@@ -952,6 +1052,27 @@ type fakeTaskSourceService struct {
 	searchRequests     []source.SearchRequest
 }
 
+type fakeTaskRAGFlowService struct {
+	status   ragflow.Status
+	response *ragflow.Response
+	err      error
+	calls    int
+}
+
+func (s *fakeTaskRAGFlowService) Status() ragflow.Status { return s.status }
+
+func (s *fakeTaskRAGFlowService) Probe(context.Context) (*ragflow.ProbeResult, error) {
+	return nil, s.err
+}
+
+func (s *fakeTaskRAGFlowService) Retrieve(_ context.Context, request ragflow.Request) (*ragflow.Response, error) {
+	s.calls++
+	if request.Limit != 3 {
+		return nil, fmt.Errorf("RAGFlow candidate limit = %d, want 3", request.Limit)
+	}
+	return s.response, s.err
+}
+
 func (s *fakeTaskSourceService) Connectors() ([]models.SourceConnector, error) {
 	return nil, nil
 }
@@ -1029,6 +1150,10 @@ func (s *fakeTaskSourceService) Search(request source.SearchRequest) (*source.Se
 		},
 		Explanation: "fake source context retrieved",
 	}, nil
+}
+
+func (s *fakeTaskSourceService) KnowledgeGraph(request source.KnowledgeGraphRequest) (*source.KnowledgeGraphResult, error) {
+	return &source.KnowledgeGraphResult{ProjectKey: request.ProjectKey, Status: "candidate_only"}, nil
 }
 
 func (s *fakeTaskSourceService) Extractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {

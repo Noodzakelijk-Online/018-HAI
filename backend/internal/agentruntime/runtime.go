@@ -329,6 +329,15 @@ func (r *Registry) Execute(ctx context.Context, runtimeID string, task Task) Res
 			AuditEvents: []string{"agent approval gate blocked execution"},
 		}
 	}
+	if strings.TrimSpace(task.ID) == "" {
+		return Result{
+			RuntimeID:   runtimeID,
+			Status:      "blocked",
+			Message:     "agent runtime task id is required so HAI can audit, deduplicate, and stop the execution",
+			ExitCode:    -1,
+			AuditEvents: []string{"untracked agent runtime task rejected"},
+		}
+	}
 	if strings.TrimSpace(task.Prompt) == "" {
 		return Result{
 			RuntimeID:   runtimeID,
@@ -451,7 +460,7 @@ func newHermesAdapterFromEnv() *hermesAdapter {
 		skills:            csvValues(os.Getenv("HERMES_SKILLS")),
 		envAllow:          csvValues(os.Getenv("HERMES_ENV_ALLOWLIST")),
 		outputLimit:       int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
-		ignoreUserConfig:  envEnabled("HERMES_IGNORE_USER_CONFIG"),
+		ignoreUserConfig:  envEnabledDefault("HERMES_IGNORE_USER_CONFIG", true),
 		gatewayEnabled:    envEnabled("HERMES_GATEWAY_ENABLED"),
 		cronEnabled:       envEnabled("HERMES_CRON_ENABLED"),
 		mcpEnabled:        envEnabled("HERMES_MCP_ENABLED"),
@@ -468,13 +477,10 @@ func (a *hermesAdapter) Info() Info {
 	if strings.TrimSpace(a.executable) == "" {
 		missing = append(missing, "HERMES_EXECUTABLE")
 	}
-	if strings.TrimSpace(a.workspace) == "" {
-		missing = append(missing, "HERMES_WORKSPACE")
-	}
-	if strings.TrimSpace(a.workspaceRoot) == "" {
-		missing = append(missing, "AGENT_RUNTIME_WORKSPACE_ROOT")
-	}
 	workspaceReason := a.workspaceBlockedReason()
+	if workspaceReason != "" {
+		missing = append(missing, workspaceReason)
+	}
 	return Info{
 		ID:                   "hermes",
 		Name:                 "Hermes Agent",
@@ -583,6 +589,8 @@ func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 	}
 	if a.home != "" {
 		envAdditions["HERMES_HOME"] = a.home
+		envAdditions["HOME"] = a.home
+		envAdditions["USERPROFILE"] = a.home
 	}
 	if a.profile != "" {
 		envAdditions["HERMES_PROFILE"] = a.profile
@@ -714,8 +722,11 @@ func (a *hermesAdapter) ecosystemReadiness() []string {
 }
 
 func (a *hermesAdapter) workspaceBlockedReason() string {
-	if strings.TrimSpace(a.workspace) == "" || strings.TrimSpace(a.workspaceRoot) == "" {
-		return ""
+	if strings.TrimSpace(a.workspace) == "" {
+		return "HERMES_WORKSPACE is required"
+	}
+	if strings.TrimSpace(a.workspaceRoot) == "" {
+		return "AGENT_RUNTIME_WORKSPACE_ROOT is required"
 	}
 	root, err := filepath.Abs(filepath.Clean(a.workspaceRoot))
 	if err != nil {
@@ -852,12 +863,6 @@ func (a *openClawAdapter) Info() Info {
 	missing := []string{}
 	if strings.TrimSpace(a.executable) == "" {
 		missing = append(missing, "OPENCLAW_EXECUTABLE")
-	}
-	if strings.TrimSpace(a.workspace) == "" {
-		missing = append(missing, "OPENCLAW_WORKSPACE")
-	}
-	if strings.TrimSpace(a.workspaceRoot) == "" {
-		missing = append(missing, "AGENT_RUNTIME_WORKSPACE_ROOT")
 	}
 	if a.gatewayEnabled && strings.TrimSpace(a.gatewayToken) == "" {
 		missing = append(missing, "OPENCLAW_GATEWAY_TOKEN")
@@ -1026,6 +1031,10 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 		"OPENCLAW_STATE_DIR":     a.stateDir,
 		"OPENCLAW_CONFIG_PATH":   a.configPath,
 		"OPENCLAW_GATEWAY_TOKEN": a.gatewayToken,
+	}
+	if a.stateDir != "" {
+		envAdditions["HOME"] = a.stateDir
+		envAdditions["USERPROFILE"] = a.stateDir
 	}
 	cmd.Env = safeEnvironment(a.envAllow, envAdditions)
 	var stdout bytes.Buffer
@@ -2687,8 +2696,11 @@ func (a *openClawAdapter) validGatewayURL() string {
 }
 
 func (a *openClawAdapter) workspaceBlockedReason() string {
-	if strings.TrimSpace(a.workspace) == "" || strings.TrimSpace(a.workspaceRoot) == "" {
-		return ""
+	if strings.TrimSpace(a.workspace) == "" {
+		return "OPENCLAW_WORKSPACE is required"
+	}
+	if strings.TrimSpace(a.workspaceRoot) == "" {
+		return "AGENT_RUNTIME_WORKSPACE_ROOT is required"
 	}
 	root, err := filepath.Abs(filepath.Clean(a.workspaceRoot))
 	if err != nil {
@@ -3184,7 +3196,10 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 
 func safeEnvironment(allow []string, additions map[string]string) []string {
 	env := []string{}
-	for _, key := range append([]string{"PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"}, allow...) {
+	// Host profile variables are intentionally excluded. Runtime-specific homes
+	// are passed explicitly through additions after their dedicated directories
+	// have been configured above.
+	for _, key := range append([]string{"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"}, allow...) {
 		if value, ok := os.LookupEnv(key); ok && validEnvKey(key) {
 			env = append(env, key+"="+value)
 		}

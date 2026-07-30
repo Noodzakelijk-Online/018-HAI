@@ -16,6 +16,7 @@ export interface IMCPPreflightResult {
   toolCount: number;
   tools?: IMCPPreflightTool[];
   truncated: boolean;
+  readOnlyVerified: boolean;
   durationMs: number;
   checkedAt: string;
 }

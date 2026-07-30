@@ -48,14 +48,23 @@ type Status struct {
 }
 
 type Run struct {
-	ID          string     `json:"id"`
-	ProfileID   string     `json:"profileId"`
-	Status      string     `json:"status"`
-	FinalPath   string     `json:"finalPath,omitempty"`
-	PageTitle   string     `json:"pageTitle,omitempty"`
-	Summary     string     `json:"summary"`
-	StartedAt   time.Time  `json:"startedAt"`
-	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	ID                 string     `json:"id"`
+	ProfileID          string     `json:"profileId"`
+	Status             string     `json:"status"`
+	FinalPath          string     `json:"finalPath,omitempty"`
+	PageTitle          string     `json:"pageTitle,omitempty"`
+	Summary            string     `json:"summary"`
+	StartedAt          time.Time  `json:"startedAt"`
+	CompletedAt        *time.Time `json:"completedAt,omitempty"`
+	WorkflowID         string     `json:"workflowId,omitempty"`
+	WorkflowLinkStatus string     `json:"workflowLinkStatus,omitempty"`
+	WorkflowLinkError  string     `json:"workflowLinkError,omitempty"`
+}
+
+// WorkflowLinker records a browser result as a source-linked quality signal.
+// It must never treat a successful route check as workflow completion.
+type WorkflowLinker interface {
+	AttachBrowserVerification(ownerIdentity, workflowID, runID, profileID, status, finalPath, pageTitle, summary string) error
 }
 
 type config struct {
@@ -68,18 +77,22 @@ type service struct {
 	config    config
 	configErr string
 	repo      Repository
+	workflows WorkflowLinker
 	client    *http.Client
 	now       func() time.Time
 }
 
-func DefaultService() *service {
+func DefaultService(workflows ...WorkflowLinker) *service {
 	profiles, _ := parseProfiles(os.Getenv(profilesEnv))
-	return NewService(DefaultRepository(), strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"), os.Getenv(runnerEnv), os.Getenv(tokenEnv), profiles)
+	return NewService(DefaultRepository(), strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"), os.Getenv(runnerEnv), os.Getenv(tokenEnv), profiles, workflows...)
 }
 
-func NewService(repo Repository, enabled bool, runnerURL, token string, profiles []Profile) *service {
+func NewService(repo Repository, enabled bool, runnerURL, token string, profiles []Profile, workflows ...WorkflowLinker) *service {
 	s := &service{config: config{enabled: enabled, runnerURL: strings.TrimRight(strings.TrimSpace(runnerURL), "/"), token: strings.TrimSpace(token), profiles: profiles}, repo: repo, now: time.Now,
 		client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: nil}}}
+	if len(workflows) > 0 {
+		s.workflows = workflows[0]
+	}
 	if enabled {
 		s.configErr = validateConfig(s.config)
 	}
@@ -91,7 +104,7 @@ func (s *service) Status() Status {
 }
 func (s *service) Profiles() []Profile { return append([]Profile(nil), s.config.profiles...) }
 
-func (s *service) Run(ctx context.Context, owner, profileID string) (*Run, error) {
+func (s *service) Run(ctx context.Context, owner, profileID, workflowID string) (*Run, error) {
 	if strings.TrimSpace(owner) == "" {
 		return nil, fmt.Errorf("owner identity is required")
 	}
@@ -145,6 +158,20 @@ func (s *service) Run(ctx context.Context, owner, profileID string) (*Run, error
 		return nil, err
 	}
 	out := runFromModel(*stored)
+	if strings.TrimSpace(workflowID) != "" {
+		out.WorkflowID = strings.TrimSpace(workflowID)
+		if s.workflows == nil {
+			out.WorkflowLinkStatus = "not_linked"
+			out.WorkflowLinkError = "workflow linkage is unavailable"
+			return &out, nil
+		}
+		if err := s.workflows.AttachBrowserVerification(owner, out.WorkflowID, out.ID, out.ProfileID, out.Status, out.FinalPath, out.PageTitle, out.Summary); err != nil {
+			out.WorkflowLinkStatus = "link_failed"
+			out.WorkflowLinkError = "browser verification completed but could not be linked to the requested workflow"
+			return &out, nil
+		}
+		out.WorkflowLinkStatus = "linked_quality_signal"
+	}
 	return &out, nil
 }
 

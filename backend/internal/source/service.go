@@ -83,9 +83,12 @@ type ImportRequest struct {
 	// controlledTranscription is deliberately package-private. Only the
 	// server-side whisper handler can mark runner output as audio-derived.
 	controlledTranscription bool
-	ProjectKey              string `json:"projectKey,omitempty"`
-	Limit                   int    `json:"limit,omitempty"`
-	MaxBytes                int64  `json:"maxBytes,omitempty"`
+	// controlledDocumentExtraction is deliberately package-private. Only the
+	// server-side Docling handler can mark runner output as document-derived.
+	controlledDocumentExtraction bool
+	ProjectKey                   string `json:"projectKey,omitempty"`
+	Limit                        int    `json:"limit,omitempty"`
+	MaxBytes                     int64  `json:"maxBytes,omitempty"`
 }
 
 type SyncResult struct {
@@ -112,6 +115,10 @@ type SearchRequest struct {
 	ProjectKey       string `json:"projectKey,omitempty"`
 	Limit            int    `json:"limit,omitempty"`
 	IncludeSensitive bool   `json:"includeSensitive,omitempty"`
+	// ExcludeConnectorKeys is an internal-use source allowlist refinement.
+	// It lets planners exclude untrusted, manual-review-only context without
+	// weakening owner, project, archive, or sensitivity enforcement.
+	ExcludeConnectorKeys []string `json:"-"`
 }
 
 type RankedExtraction struct {
@@ -125,6 +132,61 @@ type SearchResult struct {
 	ProjectKey  string             `json:"projectKey,omitempty"`
 	UsedContext []RankedExtraction `json:"usedContext"`
 	Explanation string             `json:"explanation"`
+}
+
+// KnowledgeGraphRequest builds a read-only, candidate-only view from already
+// extracted source metadata. It intentionally has no write, memory, workflow,
+// or action fields: graph output is context for a human review, not authority
+// for an autonomous decision.
+type KnowledgeGraphRequest struct {
+	OwnerIdentity    string `json:"-"`
+	ProjectKey       string `json:"projectKey,omitempty"`
+	IncludeArchived  bool   `json:"includeArchived,omitempty"`
+	IncludeSensitive bool   `json:"includeSensitive,omitempty"`
+}
+
+type KnowledgeGraphSourceRef struct {
+	ExtractionID string `json:"extractionId"`
+	SourceURI    string `json:"sourceUri,omitempty"`
+	SourceLabel  string `json:"sourceLabel,omitempty"`
+}
+
+type KnowledgeGraphEntity struct {
+	ID           string                    `json:"id"`
+	Name         string                    `json:"name"`
+	Kind         string                    `json:"kind"`
+	Status       string                    `json:"status"`
+	MentionCount int                       `json:"mentionCount"`
+	SourceRefs   []KnowledgeGraphSourceRef `json:"sourceRefs"`
+}
+
+type KnowledgeGraphRelationship struct {
+	ID           string                    `json:"id"`
+	FromEntityID string                    `json:"fromEntityId"`
+	ToEntityID   string                    `json:"toEntityId"`
+	Relationship string                    `json:"relationship"`
+	Status       string                    `json:"status"`
+	SupportCount int                       `json:"supportCount"`
+	SourceRefs   []KnowledgeGraphSourceRef `json:"sourceRefs"`
+}
+
+type KnowledgeGraphTimelineEvent struct {
+	ID         string                    `json:"id"`
+	DateHint   string                    `json:"dateHint"`
+	ParsedAt   *time.Time                `json:"parsedAt,omitempty"`
+	Status     string                    `json:"status"`
+	SourceRefs []KnowledgeGraphSourceRef `json:"sourceRefs"`
+}
+
+type KnowledgeGraphResult struct {
+	ProjectKey        string                        `json:"projectKey,omitempty"`
+	Status            string                        `json:"status"`
+	ExtractionCount   int                           `json:"extractionCount"`
+	SensitiveExcluded int                           `json:"sensitiveExcluded"`
+	Entities          []KnowledgeGraphEntity        `json:"entities"`
+	Relationships     []KnowledgeGraphRelationship  `json:"relationships"`
+	Timeline          []KnowledgeGraphTimelineEvent `json:"timeline"`
+	Warnings          []string                      `json:"warnings"`
 }
 
 type ScheduledSyncRun struct {
@@ -149,6 +211,7 @@ type Service interface {
 	Pause(sourceID uuid.UUID, paused bool) (*models.ConnectedSource, error)
 	Revoke(sourceID uuid.UUID) (*models.ConnectedSource, error)
 	Search(request SearchRequest) (*SearchResult, error)
+	KnowledgeGraph(request KnowledgeGraphRequest) (*KnowledgeGraphResult, error)
 	Extractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	ExtractionsForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error)
@@ -346,6 +409,48 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
 		}
 	}
+	if connectorKey == projectInstructionsConnectorKey {
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("project instructions must use the code_spec category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("project instructions are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("project instructions require a selected project folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("project instruction folder is not allowed: %w", err)
+		}
+	}
+	if connectorKey == fabricPatternsConnectorKey {
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("Fabric patterns must use the code_spec category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("Fabric patterns are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("Fabric patterns require a selected pattern folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("Fabric pattern folder is not allowed: %w", err)
+		}
+	}
+	if connectorKey == "docling-documents" {
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("Docling documents must use the document category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("Docling documents are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("Docling documents require a selected document folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("Docling document folder is not allowed: %w", err)
+		}
+	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
 	}
@@ -421,6 +526,45 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 			}
 		}
 	}
+	if source.ConnectorKey == projectInstructionsConnectorKey {
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("project instructions are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil {
+			if strings.TrimSpace(*request.SyncTarget) == "" {
+				return nil, fmt.Errorf("project instructions require a selected project folder")
+			}
+			if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), *request.SyncTarget); err != nil {
+				return nil, fmt.Errorf("project instruction folder is not allowed: %w", err)
+			}
+		}
+	}
+	if source.ConnectorKey == fabricPatternsConnectorKey {
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("Fabric patterns are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil {
+			if strings.TrimSpace(*request.SyncTarget) == "" {
+				return nil, fmt.Errorf("Fabric patterns require a selected pattern folder")
+			}
+			if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), *request.SyncTarget); err != nil {
+				return nil, fmt.Errorf("Fabric pattern folder is not allowed: %w", err)
+			}
+		}
+	}
+	if source.ConnectorKey == "docling-documents" {
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("Docling documents are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil {
+			if strings.TrimSpace(*request.SyncTarget) == "" {
+				return nil, fmt.Errorf("Docling documents require a selected document folder")
+			}
+			if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), *request.SyncTarget); err != nil {
+				return nil, fmt.Errorf("Docling document folder is not allowed: %w", err)
+			}
+		}
+	}
 	if strings.TrimSpace(request.Name) != "" {
 		source.Name = strings.TrimSpace(request.Name)
 	}
@@ -481,6 +625,12 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
 		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")
 	}
+	if source.ConnectorKey == "docling-documents" && !request.controlledDocumentExtraction {
+		return nil, fmt.Errorf("docling-documents sources must use the controlled document extraction route")
+	}
+	if source.ConnectorKey == "github" && len(request.Items) != 0 {
+		return nil, fmt.Errorf("GitHub sources use the configured read-only API sync; caller-provided items are not accepted")
+	}
 	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
 		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) != "" {
 			return nil, fmt.Errorf("CloudQuery sync summaries must remain local-only with the environment-configured summary path")
@@ -506,6 +656,32 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 		if requested := strings.TrimSpace(request.FolderPath); requested != "" && requested != strings.TrimSpace(source.SyncTarget) {
 			return nil, fmt.Errorf("OpenSpec sync must use its registered project folder")
+		}
+		request.FolderPath = source.SyncTarget
+		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
+	}
+	if source.ConnectorKey == projectInstructionsConnectorKey {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) == "" {
+			return nil, fmt.Errorf("project instructions must remain local-only with a selected project folder")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("project instructions must be read from the selected project folder; manual items are not accepted")
+		}
+		if requested := strings.TrimSpace(request.FolderPath); requested != "" && requested != strings.TrimSpace(source.SyncTarget) {
+			return nil, fmt.Errorf("project instruction sync must use its registered project folder")
+		}
+		request.FolderPath = source.SyncTarget
+		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
+	}
+	if source.ConnectorKey == fabricPatternsConnectorKey {
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) == "" {
+			return nil, fmt.Errorf("Fabric patterns must remain local-only with a selected pattern folder")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("Fabric patterns must be read from the selected pattern folder; manual items are not accepted")
+		}
+		if requested := strings.TrimSpace(request.FolderPath); requested != "" && requested != strings.TrimSpace(source.SyncTarget) {
+			return nil, fmt.Errorf("Fabric pattern sync must use its registered pattern folder")
 		}
 		request.FolderPath = source.SyncTarget
 		request.ProjectKey = firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
@@ -646,6 +822,32 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			return nil, err
 		}
 		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == projectInstructionsConnectorKey {
+		items, err = s.projectInstructionItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.project_instructions_read", fmt.Sprintf("read %d untrusted project instruction file(s) from the selected local project", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == fabricPatternsConnectorKey {
+		items, err = s.fabricPatternItems(source, request)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.fabric_patterns_read", fmt.Sprintf("read %d bounded untrusted Fabric prompt pattern(s) from the selected local folder", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
 		items, err = s.whatsAppExportItems(source, request)
@@ -916,25 +1118,32 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 8
 	}
-	visibleSourceIDs, err := s.visibleSourceIDs(request.OwnerIdentity)
+	visibleSourceIDs, err := s.visibleSourceIDsExcluding(request.OwnerIdentity, request.ExcludeConnectorKeys)
 	if err != nil {
 		return nil, err
 	}
-	if s.semanticService != nil && s.semanticService.Enabled() {
+	if len(visibleSourceIDs) > 0 && s.semanticService != nil && s.semanticService.Enabled() {
 		matches, semanticErr := s.semanticService.Search(context.Background(), semantic.SearchRequest{
 			OwnerIdentity: request.OwnerIdentity, Query: request.Query, ProjectKey: request.ProjectKey,
-			Limit: limit, IncludeSensitive: request.IncludeSensitive,
+			Limit: limit, IncludeSensitive: request.IncludeSensitive, SourceIDs: sourceIDsFromSet(visibleSourceIDs),
 		})
 		if semanticErr == nil && len(matches) > 0 {
 			ranked := make([]RankedExtraction, 0, len(matches))
 			for _, match := range matches {
+				// Recheck the local allowlist so a stale or faulty semantic index
+				// can never bypass source ownership or manual-context exclusions.
+				if !visibleSourceIDs[match.Extraction.SourceID] {
+					continue
+				}
 				ranked = append(ranked, RankedExtraction{
 					Extraction: match.Extraction, Score: match.Similarity,
 					Explanation: "local pgvector cosine similarity; source ownership and sensitivity filters applied",
 				})
 			}
-			return &SearchResult{Query: request.Query, ProjectKey: request.ProjectKey, UsedContext: ranked,
-				Explanation: fmt.Sprintf("Retrieved %d source-backed records through local pgvector semantic retrieval; owner, project, archive, and sensitivity filters were enforced in the database query.", len(ranked))}, nil
+			if len(ranked) > 0 {
+				return &SearchResult{Query: request.Query, ProjectKey: request.ProjectKey, UsedContext: ranked,
+					Explanation: fmt.Sprintf("Retrieved %d source-backed records through local pgvector semantic retrieval; owner, project, archive, sensitivity, and connector-use filters were enforced in the database query.", len(ranked))}, nil
+			}
 		}
 		// A semantic failure falls back to the existing bounded keyword search.
 		// It is deliberately not attached to an arbitrary source audit record.
@@ -976,13 +1185,26 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 }
 
 func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, error) {
+	return s.visibleSourceIDsExcluding(ownerIdentity, nil)
+}
+
+func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnectorKeys []string) (map[uuid.UUID]bool, error) {
 	sources, err := s.repo.FindSources(true)
 	if err != nil {
 		return nil, err
 	}
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	excluded := make(map[string]bool, len(excludedConnectorKeys))
+	for _, connectorKey := range excludedConnectorKeys {
+		if connectorKey = strings.TrimSpace(connectorKey); connectorKey != "" {
+			excluded[connectorKey] = true
+		}
+	}
 	visible := make(map[uuid.UUID]bool, len(sources))
 	for _, source := range sources {
+		if excluded[strings.TrimSpace(source.ConnectorKey)] {
+			continue
+		}
 		if ownerIdentity == "" || source.OwnerIdentity == "" || source.OwnerIdentity == ownerIdentity {
 			visible[source.ID] = true
 		}
@@ -1008,6 +1230,237 @@ func (s *service) ExtractionsForOwner(ownerIdentity, projectKey string, includeA
 		return nil, err
 	}
 	return s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
+}
+
+const (
+	maxKnowledgeGraphExtractions   = 250
+	maxKnowledgeGraphEntities      = 120
+	maxKnowledgeGraphRelationships = 240
+	maxKnowledgeGraphTimeline      = 250
+	maxKnowledgeGraphRefs          = 12
+)
+
+// KnowledgeGraph derives an inspectable graph from the same owner-scoped,
+// source-linked extraction records used by source search. It does not use an
+// LLM, infer facts, write a graph database, or send graph output to memory or
+// execution. A co-occurrence means only that two candidate strings appeared in
+// one extraction, never that a real-world relationship was proven.
+func (s *service) KnowledgeGraph(request KnowledgeGraphRequest) (*KnowledgeGraphResult, error) {
+	extractions, err := s.ExtractionsForOwner(request.OwnerIdentity, strings.TrimSpace(request.ProjectKey), request.IncludeArchived)
+	if err != nil {
+		return nil, err
+	}
+	if len(extractions) > maxKnowledgeGraphExtractions {
+		extractions = extractions[:maxKnowledgeGraphExtractions]
+	}
+
+	result := &KnowledgeGraphResult{
+		ProjectKey: strings.TrimSpace(request.ProjectKey),
+		Status:     "candidate_only",
+		Warnings: []string{
+			"This deterministic graph is candidate context, not verified fact. Each node, link, and date remains traceable to its source extraction.",
+			"Co-occurrence means only that candidate entities appeared in the same extraction. It does not establish identity, causality, or a real-world relationship.",
+			"Graph output cannot update memory, support claims, create workflows, or trigger actions. Review the linked source before using it.",
+		},
+	}
+	entityBuckets := map[string]*knowledgeGraphEntityBucket{}
+	relationshipBuckets := map[string]*knowledgeGraphRelationshipBucket{}
+	timelineBuckets := map[string]*knowledgeGraphTimelineBucket{}
+
+	for _, extraction := range extractions {
+		if extraction.Sensitive && !request.IncludeSensitive {
+			result.SensitiveExcluded++
+			continue
+		}
+		result.ExtractionCount++
+		ref := knowledgeGraphReference(extraction)
+		entityIDs := []string{}
+		for _, entity := range splitSourceValues(extraction.Entities) {
+			key := strings.ToLower(entity)
+			bucket := entityBuckets[key]
+			if bucket == nil {
+				bucket = &knowledgeGraphEntityBucket{entity: KnowledgeGraphEntity{
+					ID:     "entity:" + hashText(key),
+					Name:   entity,
+					Kind:   knowledgeGraphEntityKind(entity),
+					Status: "candidate",
+				}, refs: map[string]bool{}}
+				entityBuckets[key] = bucket
+			}
+			bucket.entity.MentionCount++
+			bucket.addRef(ref)
+			entityIDs = append(entityIDs, bucket.entity.ID)
+		}
+		entityIDs = uniqueStrings(entityIDs)
+		for left := 0; left < len(entityIDs); left++ {
+			for right := left + 1; right < len(entityIDs); right++ {
+				fromID, toID := entityIDs[left], entityIDs[right]
+				if fromID > toID {
+					fromID, toID = toID, fromID
+				}
+				key := fromID + "|" + toID
+				bucket := relationshipBuckets[key]
+				if bucket == nil {
+					bucket = &knowledgeGraphRelationshipBucket{relationship: KnowledgeGraphRelationship{
+						ID:           "relationship:" + hashText(key),
+						FromEntityID: fromID,
+						ToEntityID:   toID,
+						Relationship: "co_occurs_in_source",
+						Status:       "candidate",
+					}, refs: map[string]bool{}}
+					relationshipBuckets[key] = bucket
+				}
+				bucket.relationship.SupportCount++
+				bucket.addRef(ref)
+			}
+		}
+		for _, dateHint := range splitSourceValues(extraction.Dates) {
+			key := strings.ToLower(dateHint)
+			bucket := timelineBuckets[key]
+			if bucket == nil {
+				bucket = &knowledgeGraphTimelineBucket{event: KnowledgeGraphTimelineEvent{
+					ID:       "date:" + hashText(key),
+					DateHint: dateHint,
+					ParsedAt: parseCandidateDate(dateHint),
+					Status:   "candidate",
+				}, refs: map[string]bool{}}
+				timelineBuckets[key] = bucket
+			}
+			bucket.addRef(ref)
+		}
+	}
+
+	for _, bucket := range entityBuckets {
+		result.Entities = append(result.Entities, bucket.entity)
+	}
+	for _, bucket := range relationshipBuckets {
+		result.Relationships = append(result.Relationships, bucket.relationship)
+	}
+	for _, bucket := range timelineBuckets {
+		result.Timeline = append(result.Timeline, bucket.event)
+	}
+	sort.Slice(result.Entities, func(i, j int) bool {
+		if result.Entities[i].MentionCount == result.Entities[j].MentionCount {
+			return result.Entities[i].Name < result.Entities[j].Name
+		}
+		return result.Entities[i].MentionCount > result.Entities[j].MentionCount
+	})
+	sort.Slice(result.Relationships, func(i, j int) bool {
+		if result.Relationships[i].SupportCount == result.Relationships[j].SupportCount {
+			return result.Relationships[i].ID < result.Relationships[j].ID
+		}
+		return result.Relationships[i].SupportCount > result.Relationships[j].SupportCount
+	})
+	sort.Slice(result.Timeline, func(i, j int) bool {
+		left, right := result.Timeline[i].ParsedAt, result.Timeline[j].ParsedAt
+		if left == nil && right == nil {
+			return result.Timeline[i].DateHint < result.Timeline[j].DateHint
+		}
+		if left == nil {
+			return false
+		}
+		if right == nil {
+			return true
+		}
+		return left.Before(*right)
+	})
+	result.Entities = limitKnowledgeGraphEntities(result.Entities, maxKnowledgeGraphEntities)
+	result.Relationships = limitKnowledgeGraphRelationships(result.Relationships, maxKnowledgeGraphRelationships)
+	result.Timeline = limitKnowledgeGraphTimeline(result.Timeline, maxKnowledgeGraphTimeline)
+	return result, nil
+}
+
+type knowledgeGraphEntityBucket struct {
+	entity KnowledgeGraphEntity
+	refs   map[string]bool
+}
+
+func (b *knowledgeGraphEntityBucket) addRef(ref KnowledgeGraphSourceRef) {
+	if b.refs[ref.ExtractionID] || len(b.entity.SourceRefs) >= maxKnowledgeGraphRefs {
+		return
+	}
+	b.refs[ref.ExtractionID] = true
+	b.entity.SourceRefs = append(b.entity.SourceRefs, ref)
+}
+
+type knowledgeGraphRelationshipBucket struct {
+	relationship KnowledgeGraphRelationship
+	refs         map[string]bool
+}
+
+func (b *knowledgeGraphRelationshipBucket) addRef(ref KnowledgeGraphSourceRef) {
+	if b.refs[ref.ExtractionID] || len(b.relationship.SourceRefs) >= maxKnowledgeGraphRefs {
+		return
+	}
+	b.refs[ref.ExtractionID] = true
+	b.relationship.SourceRefs = append(b.relationship.SourceRefs, ref)
+}
+
+type knowledgeGraphTimelineBucket struct {
+	event KnowledgeGraphTimelineEvent
+	refs  map[string]bool
+}
+
+func (b *knowledgeGraphTimelineBucket) addRef(ref KnowledgeGraphSourceRef) {
+	if b.refs[ref.ExtractionID] || len(b.event.SourceRefs) >= maxKnowledgeGraphRefs {
+		return
+	}
+	b.refs[ref.ExtractionID] = true
+	b.event.SourceRefs = append(b.event.SourceRefs, ref)
+}
+
+func knowledgeGraphReference(extraction models.SourceExtraction) KnowledgeGraphSourceRef {
+	return KnowledgeGraphSourceRef{ExtractionID: extraction.ID.String(), SourceURI: extraction.SourceURI, SourceLabel: extraction.SourceLabel}
+}
+
+func splitSourceValues(value string) []string {
+	values := []string{}
+	for _, candidate := range strings.Split(value, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			values = append(values, candidate)
+		}
+	}
+	return uniqueStrings(values)
+}
+
+func knowledgeGraphEntityKind(value string) string {
+	if strings.Contains(value, "@") {
+		return "email_candidate"
+	}
+	return "proper_noun_candidate"
+}
+
+func parseCandidateDate(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{time.RFC3339, "2006-01-02", "02-01-2006", "02/01/2006", "2006/01/02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			parsed = parsed.UTC()
+			return &parsed
+		}
+	}
+	return nil
+}
+
+func limitKnowledgeGraphEntities(values []KnowledgeGraphEntity, limit int) []KnowledgeGraphEntity {
+	if len(values) > limit {
+		return values[:limit]
+	}
+	return values
+}
+
+func limitKnowledgeGraphRelationships(values []KnowledgeGraphRelationship, limit int) []KnowledgeGraphRelationship {
+	if len(values) > limit {
+		return values[:limit]
+	}
+	return values
+}
+
+func limitKnowledgeGraphTimeline(values []KnowledgeGraphTimelineEvent, limit int) []KnowledgeGraphTimelineEvent {
+	if len(values) > limit {
+		return values[:limit]
+	}
+	return values
 }
 
 func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {
@@ -1436,13 +1889,16 @@ func (s *service) extractAndStore(source *models.ConnectedSource, raw *models.So
 	existing.SourceLabel = raw.Title
 	existing.ContentHash = raw.ContentHash
 	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
-	existing.Uncertain = len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
+	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
 	existing.LastIndexedAt = &now
 	return s.repo.SaveExtraction(existing)
 }
 
 func (s *service) storeUsefulMemory(source *models.ConnectedSource, extraction *models.SourceExtraction) {
 	if s.memoryService == nil || source == nil || extraction == nil {
+		return
+	}
+	if isManualPlanningContextOnlyConnector(source.ConnectorKey) {
 		return
 	}
 	if extraction.Sensitive || extraction.Uncertain || extraction.Summary == "" {
@@ -1472,6 +1928,9 @@ func (s *service) rememberExtractionCorrection(before, after *models.SourceExtra
 		return
 	}
 	source, _ := s.repo.FindSource(after.SourceID)
+	if source != nil && isManualPlanningContextOnlyConnector(source.ConnectorKey) {
+		return
+	}
 	request := extractionCorrectionMemoryRequest(source, before, after)
 	ownerIdentity := ""
 	if source != nil {
@@ -1610,6 +2069,9 @@ func extractionCorrectionValue(label, value string) string {
 
 func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) (*PursuitRoutingOutcome, error) {
 	if s.workflowService == nil {
+		return nil, nil
+	}
+	if source == nil || isManualPlanningContextOnlyConnector(source.ConnectorKey) {
 		return nil, nil
 	}
 	taskSignal := firstNonEmpty(extraction.Tasks, extraction.FollowUps)
@@ -1907,11 +2369,14 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
 		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
+		{ConnectorKey: "docling-documents", Name: "Selected document folders (Docling)", Category: "document", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-document-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local extraction from an explicit selected folder through Docling; no browser upload, cloud service, automatic model download, OCR/table option, scheduled scan, or original-file retention"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
 		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
 		{ConnectorKey: airbyteInventoryConnectorKey, Name: "Airbyte source and connection inventory (local read only)", Category: "connector_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "airbyte-api-key,approved-workspace:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded source and connection metadata from a configured local Airbyte API and fixed workspace allowlist; never reads credentials/configuration/records or creates, changes, starts, stops, or deletes a sync"},
 		{ConnectorKey: openSpecArtifactConnectorKey, Name: "OpenSpec change artifacts (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only proposal.md, design.md, tasks.md, and specs Markdown below a selected local openspec/changes folder; never installs or runs OpenSpec, edits a repository, or authorizes code changes"},
+		{ConnectorKey: projectInstructionsConnectorKey, Name: "Project agent instructions (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only root AGENTS.md and CLAUDE.md from one selected project folder as untrusted planning context; never runs an agent, executes instructions, edits a repository, or overrides HAI policy"},
+		{ConnectorKey: fabricPatternsConnectorKey, Name: "Fabric prompt patterns (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only immediate-child system.md files from one selected locally installed Fabric patterns folder as untrusted manual-review context; never installs or runs Fabric, invokes a model, executes a pattern, or overrides HAI policy"},
 	}
 }
 
@@ -1941,7 +2406,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "docling-documents" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey || connectorKey == projectInstructionsConnectorKey || connectorKey == fabricPatternsConnectorKey
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
@@ -1976,7 +2441,7 @@ func minimalPermissions(category string, requested []string) []string {
 	if len(requested) == 0 {
 		return []string{"metadata:read", category + ":read"}
 	}
-	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
+	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "selected-document-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
 	result := []string{}
 	for _, value := range requested {
 		value = strings.TrimSpace(value)
@@ -2017,6 +2482,9 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
 	if source.ConnectorKey == "whisper-audio" {
 		return false, "whisper-audio transcription is operator-triggered only"
+	}
+	if source.ConnectorKey == "docling-documents" {
+		return false, "docling document extraction is operator-triggered only"
 	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
@@ -2110,6 +2578,17 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 	return normalizeFeedItems(envelope.Items, source), firstNonEmpty(strings.TrimSpace(envelope.NextCursor), source.Cursor), nil
 }
 
+const (
+	githubPageSize            = 100
+	githubMaxPagesPerResource = 10
+)
+
+type githubEndpoint struct {
+	path      string
+	kind      string
+	paginated bool
+}
+
 func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
@@ -2127,24 +2606,21 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	if !sourceHTTPHostAllowed(parsedBase.Hostname()) || sourceHTTPAddressBlocked(parsedBase.Hostname()) {
 		return nil, "", fmt.Errorf("github API host %s is not allowlisted", parsedBase.Hostname())
 	}
-	endpoints := []struct {
-		path string
-		kind string
-	}{
-		{"/repos/" + repository, "repository"},
-		{"/repos/" + repository + "/issues", "issue"},
-		{"/repos/" + repository + "/pulls", "pull_request"},
-		{"/repos/" + repository + "/commits", "commit"},
-		{"/repos/" + repository + "/actions/runs", "workflow_run"},
+	endpoints := []githubEndpoint{
+		{path: "/repos/" + repository, kind: "repository"},
+		{path: "/repos/" + repository + "/issues", kind: "issue", paginated: true},
+		{path: "/repos/" + repository + "/pulls", kind: "pull_request", paginated: true},
+		{path: "/repos/" + repository + "/branches", kind: "branch", paginated: true},
+		{path: "/repos/" + repository + "/commits", kind: "commit", paginated: true},
+		{path: "/repos/" + repository + "/actions/runs", kind: "workflow_run", paginated: true},
 	}
 	items := []ImportItem{}
 	latest := strings.TrimSpace(source.Cursor)
 	for _, endpoint := range endpoints {
-		value, err := fetchGitHubJSON(parsedBase, endpoint.path, source.Cursor)
+		records, err := fetchGitHubRecords(parsedBase, endpoint, source.Cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("fetch github %s: %w", endpoint.kind, err)
 		}
-		records := githubRecords(value, endpoint.kind)
 		for _, record := range records {
 			item, updated := githubImportItem(record, endpoint.kind, source.DefaultProjectKey, repository)
 			if item.ExternalID == "" || item.Content == "" {
@@ -2159,16 +2635,42 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	return items, latest, nil
 }
 
-func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
+func fetchGitHubRecords(base *url.URL, endpoint githubEndpoint, cursor string) ([]map[string]any, error) {
+	maxPages := 1
+	if endpoint.paginated {
+		maxPages = githubMaxPagesPerResource
+	}
+	records := []map[string]any{}
+	for page := 1; page <= maxPages; page++ {
+		value, err := fetchGitHubJSON(base, endpoint, cursor, page)
+		if err != nil {
+			return nil, err
+		}
+		rawPageRecords := githubRawRecords(value, endpoint.kind)
+		pageRecords := githubRecords(value, endpoint.kind)
+		records = append(records, pageRecords...)
+		if !endpoint.paginated || !githubPageIsFull(value, endpoint.kind) || githubRecordsAreAtOrBeforeCursor(rawPageRecords, endpoint.kind, cursor) {
+			return records, nil
+		}
+	}
+	return nil, fmt.Errorf("GitHub %s sync exceeds the bounded %d-record window; cursor was retained so no records are skipped", endpoint.kind, githubPageSize*githubMaxPagesPerResource)
+}
+
+func fetchGitHubJSON(base *url.URL, endpoint githubEndpoint, cursor string, page int) (any, error) {
 	target := *base
-	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
+	target.Path = strings.TrimRight(base.Path, "/") + endpoint.path
 	query := target.Query()
-	query.Set("per_page", "100")
-	query.Set("state", "all")
-	query.Set("sort", "updated")
-	query.Set("direction", "asc")
-	if cursor != "" && resourcePath != "" && resourcePath != "/repos/" {
-		if _, err := time.Parse(time.RFC3339, cursor); err == nil && (strings.HasSuffix(resourcePath, "/issues") || strings.HasSuffix(resourcePath, "/pulls")) {
+	if endpoint.paginated {
+		query.Set("per_page", strconv.Itoa(githubPageSize))
+		query.Set("page", strconv.Itoa(page))
+	}
+	if endpoint.kind == "issue" || endpoint.kind == "pull_request" {
+		query.Set("state", "all")
+		query.Set("sort", "updated")
+		query.Set("direction", "desc")
+	}
+	if cursor != "" {
+		if _, err := time.Parse(time.RFC3339, cursor); err == nil && (endpoint.kind == "issue" || endpoint.kind == "commit") {
 			query.Set("since", cursor)
 		}
 	}
@@ -2206,7 +2708,44 @@ func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
 	return value, nil
 }
 
+func githubPageIsFull(value any, kind string) bool {
+	return len(githubRawRecords(value, kind)) == githubPageSize
+}
+
+func githubRecordsAreAtOrBeforeCursor(records []map[string]any, kind, cursor string) bool {
+	if len(records) == 0 {
+		return true
+	}
+	if _, err := time.Parse(time.RFC3339, cursor); err != nil {
+		return false
+	}
+	for _, record := range records {
+		_, updated := githubImportItem(record, kind, "", "")
+		if updated == "" || updated > cursor {
+			return false
+		}
+	}
+	return true
+}
+
 func githubRecords(value any, kind string) []map[string]any {
+	records := githubRawRecords(value, kind)
+	if kind == "issue" {
+		// GitHub's issues endpoint deliberately includes pull requests. Pull
+		// requests are fetched through their own endpoint below, so retaining
+		// them here creates duplicated source evidence and workflows.
+		issues := make([]map[string]any, 0, len(records))
+		for _, record := range records {
+			if _, isPullRequest := record["pull_request"]; !isPullRequest {
+				issues = append(issues, record)
+			}
+		}
+		return issues
+	}
+	return records
+}
+
+func githubRawRecords(value any, kind string) []map[string]any {
 	if object, ok := value.(map[string]any); ok {
 		if kind == "workflow_run" {
 			if runs, ok := object["workflow_runs"].([]any); ok {
@@ -2243,6 +2782,9 @@ func githubImportItem(record map[string]any, kind, projectKey, repository string
 	body := githubString(record, "body", "message", "description", "name", "status")
 	if nested, ok := record["commit"].(map[string]any); ok {
 		body = firstNonEmpty(body, githubString(nested, "message"))
+		if body == "" {
+			body = githubString(nested, "sha")
+		}
 	}
 	content := strings.TrimSpace(strings.Join([]string{
 		"GitHub " + strings.ReplaceAll(kind, "_", " ") + " from " + repository,
@@ -2250,12 +2792,24 @@ func githubImportItem(record map[string]any, kind, projectKey, repository string
 		"Status: " + githubString(record, "state", "status", "conclusion"),
 		body,
 	}, "\n"))
-	updated := githubString(record, "updated_at", "created_at", "run_started_at", "timestamp")
+	updated := githubString(record, "updated_at", "created_at", "run_started_at", "pushed_at", "timestamp")
+	if updated == "" {
+		if commit, ok := record["commit"].(map[string]any); ok {
+			updated = githubNestedString(commit, "author", "date")
+			if updated == "" {
+				updated = githubNestedString(commit, "committer", "date")
+			}
+		}
+	}
+	sourceURI := githubString(record, "html_url", "url")
+	if sourceURI == "" && kind == "branch" {
+		sourceURI = "https://github.com/" + repository + "/tree/" + url.PathEscape(title)
+	}
 	return ImportItem{
 		ExternalID: "github:" + kind + ":" + identifier,
 		Title:      compact(title, 500),
 		Content:    compact(content, 12000),
-		SourceURI:  githubString(record, "html_url", "url"),
+		SourceURI:  sourceURI,
 		ItemType:   "github_" + kind,
 		ProjectKey: projectKey,
 		Metadata:   fmt.Sprintf("source=github;repository=%s;kind=%s;updated=%s", repository, kind, updated),
@@ -2276,6 +2830,14 @@ func githubString(record map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func githubNestedString(record map[string]any, nestedKey, key string) string {
+	nested, ok := record[nestedKey].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return githubString(nested, key)
 }
 
 func normalizeFeedItems(items []ImportItem, source *models.ConnectedSource) []ImportItem {

@@ -105,6 +105,162 @@ func TestPreflightRequiresAnEligibleMCPCatalogProfile(t *testing.T) {
 	if svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "serena", CatalogID: "serena", URL: "http://127.0.0.1:3000/mcp"}}}); svc.Overview().ConfigError != "" {
 		t.Fatalf("reviewed read-only Serena MCP profile must be preflight eligible: %q", svc.Overview().ConfigError)
 	}
+	if svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "toolbox", CatalogID: "google-genai-toolbox", URL: "http://127.0.0.1:5000/mcp/approved_readonly_toolset"}}}); svc.Overview().ConfigError != "" {
+		t.Fatalf("integrated MCP Toolbox inspection profile must be preflight eligible: %q", svc.Overview().ConfigError)
+	}
+}
+
+func TestGitHubReadOnlyToolAllowlist(t *testing.T) {
+	allowed := []Tool{
+		{Name: "get_file_contents"},
+		{Name: "issue_read"},
+		{Name: "list_pull_requests"},
+		{Name: "search_code"},
+	}
+	if violations := githubReadOnlyToolViolations(allowed); len(violations) != 0 {
+		t.Fatalf("read-only tools must be allowed: %v", violations)
+	}
+
+	violations := githubReadOnlyToolViolations([]Tool{
+		{Name: "create_pull_request"},
+		{Name: "update_issue"},
+		{Name: "get_repository"},
+	})
+	if got, want := strings.Join(violations, ","), "create_pull_request,update_issue"; got != want {
+		t.Fatalf("violations = %q, want %q", got, want)
+	}
+}
+
+func TestGitHubAllowlistChecksToolsBeyondTheDisplayLimit(t *testing.T) {
+	declared := make([]map[string]string, 0, maxTools+1)
+	for index := 0; index < maxTools; index++ {
+		declared = append(declared, map[string]string{"name": "get_repository"})
+	}
+	declared = append(declared, map[string]string{"name": "create_issue"})
+	raw, err := json.Marshal(map[string]any{"tools": declared})
+	if err != nil {
+		t.Fatalf("marshal tools: %v", err)
+	}
+	tools, names, count, truncated, err := boundedTools(raw)
+	if err != nil || count != maxTools+1 || !truncated || len(tools) != maxTools || len(names) != maxTools+1 {
+		t.Fatalf("bounded inventory = tools=%d names=%d count=%d truncated=%t err=%v", len(tools), len(names), count, truncated, err)
+	}
+	if got, want := strings.Join(githubReadOnlyToolNameViolations(names), ","), "create_issue"; got != want {
+		t.Fatalf("tail violation = %q, want %q", got, want)
+	}
+}
+
+func TestPlaywrightReadOnlyToolContractExcludesInteractiveInventory(t *testing.T) {
+	allowed, name, found := readOnlyToolContract("playwright-mcp")
+	if !found || name != "Playwright MCP" {
+		t.Fatalf("Playwright contract = found=%t name=%q", found, name)
+	}
+	if violations := readOnlyToolNameViolations([]string{"browser_snapshot", "browser_find", "browser_console_messages"}, allowed); len(violations) != 0 {
+		t.Fatalf("inspection tools must be allowed: %v", violations)
+	}
+	if got, want := strings.Join(readOnlyToolNameViolations([]string{"browser_click", "browser_file_upload", "browser_run_code_unsafe"}, allowed), ","), "browser_click,browser_file_upload,browser_run_code_unsafe"; got != want {
+		t.Fatalf("interactive violations = %q, want %q", got, want)
+	}
+}
+
+func TestGitHubPreflightBlocksNonReadOnlyInventoryWithoutCallingTools(t *testing.T) {
+	methods := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		methods = append(methods, request.Method)
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "github-session")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_file_contents"},{"name":"create_pull_request"}]}}`))
+		default:
+			t.Fatalf("preflight must not call %q", request.Method)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "github", CatalogID: "github-mcp-server", URL: server.URL}}})
+	result, found := svc.Preflight(context.Background(), "github")
+	if !found || result.Status != "blocked" || result.ReadOnlyVerified {
+		t.Fatalf("GitHub inventory with write tool must be blocked: %#v", result)
+	}
+	if got, want := strings.Join(methods, ","), "initialize,notifications/initialized,tools/list"; got != want {
+		t.Fatalf("preflight methods = %q, want %q", got, want)
+	}
+}
+
+func TestGitHubPreflightAcceptsOnlyReviewedReadOnlyInventory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "github-session")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_file_contents"},{"name":"issue_read"},{"name":"list_commits"},{"name":"search_code"}]}}`))
+		default:
+			t.Fatalf("unexpected MCP method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "github", CatalogID: "github-mcp-server", URL: server.URL}}})
+	result, found := svc.Preflight(context.Background(), "github")
+	if !found || result.Status != "ready" || !result.ReadOnlyVerified || result.ToolCount != 4 {
+		t.Fatalf("reviewed GitHub inventory must be ready: %#v", result)
+	}
+}
+
+func TestPlaywrightPreflightBlocksInteractiveInventoryWithoutCallingTools(t *testing.T) {
+	methods := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		methods = append(methods, request.Method)
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "playwright-session")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"browser_snapshot"},{"name":"browser_click"}]}}`))
+		default:
+			t.Fatalf("preflight must not call %q", request.Method)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "playwright", CatalogID: "playwright-mcp", URL: server.URL}}})
+	result, found := svc.Preflight(context.Background(), "playwright")
+	if !found || result.Status != "blocked" || result.ReadOnlyVerified {
+		t.Fatalf("interactive Playwright inventory must be blocked: %#v", result)
+	}
+	if got, want := strings.Join(methods, ","), "initialize,notifications/initialized,tools/list"; got != want {
+		t.Fatalf("preflight methods = %q, want %q", got, want)
+	}
 }
 
 func TestValidateLocalURLRejectsCredentialsAndNonLocalHosts(t *testing.T) {

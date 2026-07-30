@@ -70,7 +70,7 @@ func AdoptionPlanReport() AdoptionPlan {
 			SourceCatalogURL:  entry.SourceCatalogURL,
 			SourceCollection:  entry.SourceCollection,
 			VerificationNote:  entry.VerificationNote,
-			RecommendedAction: adoptionRecommendedAction(entry.Status),
+			RecommendedAction: adoptionRecommendedActionFor(entry.ID, entry.Status),
 		})
 	}
 	sort.SliceStable(plan.Items, func(i, j int) bool {
@@ -130,6 +130,13 @@ func adoptionPriority(entry Entry, planes []CapabilityPlane, integratedByPlane m
 }
 
 func adoptionRecommendedAction(status Status) string {
+	return adoptionRecommendedActionFor("", status)
+}
+
+func adoptionRecommendedActionFor(id string, status Status) string {
+	if id == "source-linked-knowledge-graph" {
+		return "Open the source knowledge graph for an owner-scoped project and review its linked extractions; no external runtime or activation is required."
+	}
 	switch status {
 	case StatusIntegrated:
 		return "Open the existing HAI profile, configure only a local approved endpoint or worker, then run its live health check."

@@ -89,6 +89,173 @@ func TestIntakePersistsVerifiedOwnerIdentity(t *testing.T) {
 	}
 }
 
+func TestAttachBrowserVerificationAddsAnIdempotentOwnerScopedQualitySignal(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Review the local dashboard route.",
+		SourceType:    "manual",
+		SourceID:      "browser-verification-test",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	runID := uuid.NewString()
+	browserLinker, ok := service.(interface {
+		AttachBrowserVerification(ownerIdentity, workflowID, runID, profileID, status, finalPath, pageTitle, summary string) error
+	})
+	if !ok {
+		t.Fatal("default workflow service must support browser verification linkage")
+	}
+	if err := browserLinker.AttachBrowserVerification("alice", record.Item.ID.String(), runID, "dashboard-route", "passed", "/control-center", "HAI Control Center", "named local route reached"); err != nil {
+		t.Fatalf("AttachBrowserVerification: %v", err)
+	}
+	if err := browserLinker.AttachBrowserVerification("alice", record.Item.ID.String(), runID, "dashboard-route", "passed", "/control-center", "HAI Control Center", "named local route reached"); err != nil {
+		t.Fatalf("idempotent AttachBrowserVerification: %v", err)
+	}
+	updated, err := service.GetForOwner("alice", record.Item.ID)
+	if err != nil {
+		t.Fatalf("GetForOwner: %v", err)
+	}
+	linked := 0
+	for _, link := range updated.SourceLinks {
+		if link.Relationship == "read_only_browser_verification" && link.SourceURI == "browser-verification://run/"+runID {
+			linked++
+		}
+	}
+	if linked != 1 {
+		t.Fatalf("browser verification links = %d, want 1; %#v", linked, updated.SourceLinks)
+	}
+	matchedGate := false
+	for _, gate := range updated.QualityGates {
+		if gate.Gate == "local browser verification" && gate.Status == "passed" {
+			matchedGate = true
+		}
+	}
+	if !matchedGate {
+		t.Fatalf("missing passed browser verification quality gate: %#v", updated.QualityGates)
+	}
+	if updated.Item.CurrentState != record.Item.CurrentState {
+		t.Fatalf("browser quality signal changed state from %q to %q", record.Item.CurrentState, updated.Item.CurrentState)
+	}
+	if err := browserLinker.AttachBrowserVerification("bob", record.Item.ID.String(), uuid.NewString(), "dashboard-route", "passed", "/control-center", "HAI Control Center", "named local route reached"); err == nil {
+		t.Fatal("foreign owner must not link a browser result")
+	}
+}
+
+func TestAttachSecretScanLinksAggregateMetadataWithoutChangingWorkflowState(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Prepare a source snapshot for review.",
+		SourceType:    "manual",
+		SourceID:      "secret-scan-test",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	linker, ok := service.(interface {
+		AttachSecretScan(ownerIdentity, workflowID, workspaceID, resultDigest string, findingCount, affectedFiles int) error
+	})
+	if !ok {
+		t.Fatal("default workflow service must support aggregate secret scan linkage")
+	}
+	digest := strings.Repeat("a", 64)
+	if err := linker.AttachSecretScan("alice", record.Item.ID.String(), "review-snapshot", digest, 2, 1); err != nil {
+		t.Fatalf("AttachSecretScan: %v", err)
+	}
+	if err := linker.AttachSecretScan("alice", record.Item.ID.String(), "review-snapshot", digest, 2, 1); err != nil {
+		t.Fatalf("idempotent AttachSecretScan: %v", err)
+	}
+	updated, err := service.GetForOwner("alice", record.Item.ID)
+	if err != nil {
+		t.Fatalf("GetForOwner: %v", err)
+	}
+	linked := 0
+	for _, link := range updated.SourceLinks {
+		if link.Relationship == "aggregate_secret_scan" && link.SourceURI == "gitleaks://scan/review-snapshot/"+digest {
+			linked++
+		}
+	}
+	if linked != 1 {
+		t.Fatalf("secret scan links = %d, want 1; %#v", linked, updated.SourceLinks)
+	}
+	if updated.Item.CurrentState != record.Item.CurrentState {
+		t.Fatalf("secret scan changed state from %q to %q", record.Item.CurrentState, updated.Item.CurrentState)
+	}
+	foundReviewDecision := false
+	for _, decision := range updated.Decisions {
+		if decision.DecisionType == "aggregate_secret_scan" && decision.Decision == "needs_review" {
+			foundReviewDecision = true
+		}
+	}
+	if !foundReviewDecision {
+		t.Fatalf("missing aggregate scan review decision: %#v", updated.Decisions)
+	}
+	if err := linker.AttachSecretScan("bob", record.Item.ID.String(), "review-snapshot", strings.Repeat("b", 64), 0, 0); err == nil {
+		t.Fatal("foreign owner must not link a secret scan")
+	}
+}
+
+func TestAttachSBOMInventoryLinksAggregateMetadataWithoutChangingWorkflowState(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Review a software snapshot.", SourceType: "manual", SourceID: "sbom-inventory-test"})
+	if err != nil { t.Fatalf("Intake: %v", err) }
+	linker, ok := service.(interface {
+		AttachSBOMInventory(ownerIdentity, workflowID, workspaceID, resultDigest string, packageCount, ecosystemCount int) error
+	})
+	if !ok { t.Fatal("default workflow service must support aggregate SBOM inventory linkage") }
+	digest := strings.Repeat("a", 64)
+	if err := linker.AttachSBOMInventory("alice", record.Item.ID.String(), "review-snapshot", digest, 2, 2); err != nil { t.Fatalf("AttachSBOMInventory: %v", err) }
+	if err := linker.AttachSBOMInventory("alice", record.Item.ID.String(), "review-snapshot", digest, 2, 2); err != nil { t.Fatalf("idempotent AttachSBOMInventory: %v", err) }
+	updated, err := service.GetForOwner("alice", record.Item.ID)
+	if err != nil { t.Fatalf("GetForOwner: %v", err) }
+	linked := 0
+	for _, link := range updated.SourceLinks {
+		if link.Relationship == "aggregate_sbom_inventory" && link.SourceURI == "syft://inventory/review-snapshot/"+digest { linked++ }
+	}
+	if linked != 1 { t.Fatalf("SBOM inventory links = %d, want 1; %#v", linked, updated.SourceLinks) }
+	if updated.Item.CurrentState != record.Item.CurrentState { t.Fatalf("SBOM inventory changed state from %q to %q", record.Item.CurrentState, updated.Item.CurrentState) }
+	foundReviewDecision := false
+	for _, decision := range updated.Decisions {
+		if decision.DecisionType == "aggregate_sbom_inventory" && decision.Decision == "needs_review" { foundReviewDecision = true }
+	}
+	if !foundReviewDecision { t.Fatalf("missing aggregate SBOM inventory review decision: %#v", updated.Decisions) }
+	if err := linker.AttachSBOMInventory("bob", record.Item.ID.String(), "review-snapshot", strings.Repeat("b", 64), 0, 0); err == nil { t.Fatal("foreign owner must not link an SBOM inventory") }
+}
+
+func TestAttachMiniSWEPatchProposalLinksDigestWithoutChangingWorkflowState(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	record, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Prepare a technical patch for review.", SourceType: "manual", SourceID: "mini-swe-patch-test"})
+	if err != nil { t.Fatalf("Intake: %v", err) }
+	linker, ok := service.(interface {
+		AttachMiniSWEPatchProposal(ownerIdentity, workflowID, proposalID, workspaceID, diffDigest string, changedFiles int) error
+	})
+	if !ok { t.Fatal("default workflow service must support mini-SWE patch linkage") }
+	proposalID := uuid.NewString()
+	digest := strings.Repeat("a", 64)
+	if err := linker.AttachMiniSWEPatchProposal("alice", record.Item.ID.String(), proposalID, "hai-source", digest, 1); err != nil { t.Fatalf("AttachMiniSWEPatchProposal: %v", err) }
+	if err := linker.AttachMiniSWEPatchProposal("alice", record.Item.ID.String(), proposalID, "hai-source", digest, 1); err != nil { t.Fatalf("idempotent AttachMiniSWEPatchProposal: %v", err) }
+	updated, err := service.GetForOwner("alice", record.Item.ID)
+	if err != nil { t.Fatalf("GetForOwner: %v", err) }
+	linked := 0
+	for _, link := range updated.SourceLinks {
+		if link.Relationship == "review_only_patch_proposal" && link.SourceURI == "mini-swe://proposal/"+proposalID+"/"+digest { linked++ }
+	}
+	if linked != 1 { t.Fatalf("mini-SWE proposal links = %d, want 1; %#v", linked, updated.SourceLinks) }
+	if updated.Item.CurrentState != record.Item.CurrentState { t.Fatalf("mini-SWE proposal changed state from %q to %q", record.Item.CurrentState, updated.Item.CurrentState) }
+	foundReviewDecision := false
+	for _, decision := range updated.Decisions {
+		if decision.DecisionType == "mini_swe_patch_proposal" && decision.Decision == "needs_review" { foundReviewDecision = true }
+	}
+	if !foundReviewDecision { t.Fatalf("missing mini-SWE proposal review decision: %#v", updated.Decisions) }
+	if err := linker.AttachMiniSWEPatchProposal("bob", record.Item.ID.String(), uuid.NewString(), "hai-source", strings.Repeat("b", 64), 0); err == nil { t.Fatal("foreign owner must not link a mini-SWE proposal") }
+}
+
 func TestOwnerScopedIntakeDoesNotReuseForeignOrLegacySourceWorkflows(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	service := NewService(repo)
@@ -1702,6 +1869,57 @@ func TestRunDueBlocksTechnicalWorkflowWhenQualityEvidenceMissing(t *testing.T) {
 	}
 	if !hasGateStatus(updated.QualityGates, "tests or build evidence", "needs_review") {
 		t.Fatalf("expected tests/build gate to need review")
+	}
+}
+
+func TestRunDueCompletesTechnicalWorkflowOnlyWithSourceLinkedGitHubEvidence(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "plan-tech-evidence",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "commit tests build README Windows passed",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{
+		Input:       "GitHub commit updates README setup documentation.",
+		SourceType:  "github_commit",
+		SourceID:    "abc123",
+		SourceURI:   "https://github.com/acme/demo/commit/abc123",
+		SourceLabel: "Commit abc123",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	_, err = repo.CreateEvidenceClaim(&models.WorkflowEvidenceClaim{
+		WorkflowID: record.Item.ID, ClaimText: "GitHub Actions build completed successfully", SourceURI: "https://github.com/acme/demo/actions/runs/99", SourceLabel: "CI success", Reliability: "connected_source", Status: "source_linked",
+	})
+	if err != nil {
+		t.Fatalf("Create Actions evidence: %v", err)
+	}
+	_, err = repo.CreateEvidenceClaim(&models.WorkflowEvidenceClaim{
+		WorkflowID: record.Item.ID, ClaimText: "Windows 11 Docker Compose validation passed", SourceURI: "automation-launch://technical-check", SourceLabel: "Controlled Windows check", Reliability: "controlled_runtime", Status: "verified",
+	})
+	if err != nil {
+		t.Fatalf("Create Windows evidence: %v", err)
+	}
+
+	summary, err := service.RunDue(RunDueRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if summary.Completed != 1 || summary.Blocked != 0 || summary.Retried != 0 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	updated, err := service.Get(record.Item.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	for _, gate := range []string{"GitHub commit exists", "tests or build evidence", "README/setup updated", "Windows 11 operational path"} {
+		if !hasGateStatus(updated.QualityGates, gate, "passed") {
+			t.Fatalf("expected %q to pass from source evidence: %#v", gate, updated.QualityGates)
+		}
 	}
 }
 

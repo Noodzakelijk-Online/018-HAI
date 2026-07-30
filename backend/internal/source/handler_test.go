@@ -1,6 +1,7 @@
 package source
 
 import (
+	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
@@ -19,6 +20,21 @@ type sourceTranscriberStub struct {
 	transcripts []whispercpp.Transcript
 	err         error
 	folder      string
+}
+
+type sourceDocumentExtractorStub struct {
+	documents []docling.Document
+	err       error
+	folder    string
+}
+
+func (s *sourceDocumentExtractorStub) Status() docling.Status { return docling.Status{} }
+func (s *sourceDocumentExtractorStub) Probe(context.Context) (*docling.ProbeResult, error) {
+	return &docling.ProbeResult{Reachable: true}, nil
+}
+func (s *sourceDocumentExtractorStub) Extract(_ context.Context, folder string) ([]docling.Document, error) {
+	s.folder = folder
+	return s.documents, s.err
 }
 
 func (s *sourceTranscriberStub) Status() whispercpp.Status { return whispercpp.Status{} }
@@ -133,6 +149,39 @@ func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	}
 }
 
+func TestHandlerReturnsOwnerScopedCandidateKnowledgeGraph(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: aliceID, ProjectKey: "legal", Entities: "Vivare,Robert", Dates: "2026-09-09", SourceURI: "gmail://alice/1"}); err != nil {
+		t.Fatalf("SaveExtraction Alice: %v", err)
+	}
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: bobID, ProjectKey: "legal", Entities: "BobOnly,Vivare", Dates: "2026-09-10", SourceURI: "file://bob/1"}); err != nil {
+		t.Fatalf("SaveExtraction Bob: %v", err)
+	}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/knowledge-graph", handler.KnowledgeGraph)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/knowledge-graph?projectKey=legal", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("knowledge graph status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var graph KnowledgeGraphResult
+	if err := json.Unmarshal(response.Body.Bytes(), &graph); err != nil {
+		t.Fatalf("decode knowledge graph: %v", err)
+	}
+	if graph.Status != "candidate_only" || graphContainsEntity(&graph, "BobOnly") || !graphContainsEntity(&graph, "Vivare") {
+		t.Fatalf("unexpected owner-scoped graph: %#v", graph)
+	}
+}
+
 func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sourceID := uuid.New()
@@ -238,5 +287,58 @@ func TestHandlerTranscriptionRejectsCallerPayloadAndNonAudioSources(t *testing.T
 	router.ServeHTTP(nonAudioResponse, nonAudioRequest)
 	if nonAudioResponse.Code != http.StatusBadRequest {
 		t.Fatalf("non-audio status = %d, body=%s", nonAudioResponse.Code, nonAudioResponse.Body.String())
+	}
+}
+
+func TestHandlerExtractsOnlyAnOwnedExplicitDocumentSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "docling-documents", Name: "Legal evidence", Category: "document",
+		Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "legal/vivare", DefaultProjectKey: "Vivare-dispute",
+	})
+	extractor := &sourceDocumentExtractorStub{documents: []docling.Document{{Path: "legal/vivare/evidence.docx", Text: "The hearing is scheduled for 9 September.", Format: "docx", PageCount: 2, ContentDigest: strings.Repeat("a", 64)}}}
+	handler := NewHandlerWithDocumentExtractor(NewService(repo, nil), &sourceTranscriberStub{}, extractor)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/extract-documents", handler.ExtractDocuments)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("extract status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if extractor.folder != "legal/vivare" {
+		t.Fatalf("folder = %q", extractor.folder)
+	}
+	if len(repo.rawItems) != 1 {
+		t.Fatalf("raw items = %#v", repo.rawItems)
+	}
+	for _, raw := range repo.rawItems {
+		if raw.ItemType != "document_extraction" || !strings.HasPrefix(raw.SourceURI, "document://selected-source/") || !strings.Contains(raw.Metadata, "network=disabled") {
+			t.Fatalf("raw item = %#v", raw)
+		}
+	}
+}
+
+func TestHandlerDocumentExtractionRejectsPayloadAndNonDocumentSources(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Files", Category: "local_folder", Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "notes"})
+	handler := NewHandlerWithDocumentExtractor(NewService(repo, nil), &sourceTranscriberStub{}, &sourceDocumentExtractorStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/extract-documents", handler.ExtractDocuments)
+
+	payloadResponse := httptest.NewRecorder()
+	router.ServeHTTP(payloadResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", strings.NewReader(`{"path":"anywhere"}`)))
+	if payloadResponse.Code != http.StatusBadRequest {
+		t.Fatalf("payload status = %d, body=%s", payloadResponse.Code, payloadResponse.Body.String())
+	}
+
+	nonDocumentResponse := httptest.NewRecorder()
+	router.ServeHTTP(nonDocumentResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", nil))
+	if nonDocumentResponse.Code != http.StatusBadRequest {
+		t.Fatalf("non-document status = %d, body=%s", nonDocumentResponse.Code, nonDocumentResponse.Body.String())
 	}
 }

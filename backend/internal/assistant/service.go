@@ -39,6 +39,9 @@ type CommandRequest struct {
 	PursuitID       string   `json:"pursuitId,omitempty"`
 	AutomationID    string   `json:"automationId,omitempty"`
 	SuccessCriteria []string `json:"successCriteria,omitempty"`
+	// IncludeRAGFlowCandidates is an explicit, candidate-only planning opt-in.
+	// It never turns RAGFlow text into evidence or authorizes execution.
+	IncludeRAGFlowCandidates bool     `json:"includeRagflowCandidates,omitempty"`
 	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
 	RunCycle        bool     `json:"runCycle,omitempty"`
 	SkipSourceSync  bool     `json:"skipSourceSync,omitempty"`
@@ -121,6 +124,7 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 		ProjectKey:      request.ProjectKey,
 		AutomationID:    request.AutomationID,
 		SuccessCriteria: request.SuccessCriteria,
+		IncludeRAGFlowCandidates: request.IncludeRAGFlowCandidates,
 		ExecuteAllowed:  request.ExecuteAllowed,
 	}
 

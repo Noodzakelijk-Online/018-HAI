@@ -85,8 +85,9 @@ jobs:
         run: npm audit --audit-level=high
 
   compose:
-    name: Local Compose validation
+    name: Canonical Compose validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: docker compose --env-file .env.example config
       - run: docker compose --env-file .env.example -f docker-compose.local.yml config

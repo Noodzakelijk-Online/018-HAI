@@ -1,16 +1,17 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { EMPTY } from 'rxjs';
 import { ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
 
 describe('ConnectedSourcesComponent pursuit handoff', () => {
-  function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router> } {
+  function createComponent(sourceService: Record<string, unknown> = {}): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     return {
       component: new ConnectedSourcesComponent(
         new FormBuilder(),
-        {} as any,
+        sourceService as any,
         {} as NzNotificationService,
         router,
         { mode: () => 'light' } as any,
@@ -46,5 +47,23 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     component.openPursuitOutcome({ status: 'routing_deferred', message: 'Router repair is required.' });
 
     expect(router.navigate).toHaveBeenCalledWith(['/pursuits'], { queryParams: undefined });
+  });
+
+  it('keeps the candidate graph readable when a source reference is absent', () => {
+    const { component } = createComponent();
+
+    expect(component.knowledgeGraphSourceLabel([])).toBe('source linked');
+    expect(component.knowledgeGraphSourceLabel([{ extractionId: 'x', sourceLabel: 'Lawyer email' }])).toBe('Lawyer email');
+  });
+
+  it('routes a Docling source through controlled document extraction instead of generic sync', () => {
+    const extractDocuments = jasmine.createSpy('extractDocuments').and.returnValue(EMPTY);
+    const { component } = createComponent({ extractDocuments });
+
+    component.syncSource({ id: 'source-1', connectorKey: 'docling-documents' } as any);
+
+    expect(extractDocuments).toHaveBeenCalledOnceWith('source-1');
+    expect(component.sourceActionLabel({ connectorKey: 'docling-documents' } as any)).toBe('Extract documents');
+    expect(component.sourceActionTitle({ connectorKey: 'docling-documents' } as any)).toContain('explicit local document folder');
   });
 });

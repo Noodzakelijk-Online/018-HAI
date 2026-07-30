@@ -1,6 +1,7 @@
 package braincatalog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,9 @@ const (
 	ossInsightCollectionsURL        = "https://api.ossinsight.io/v1/collections/"
 	maxOSSInsightCollectionsBytes   = 256 << 10
 	ossInsightCollectionReviewAgent = "HAI-BrainCatalog/1.0"
+	ossInsightRequestMaxAttempts    = 3
+	ossInsightRetryBaseDelay        = 100 * time.Millisecond
+	ossInsightRequestTimeout        = 30 * time.Second
 )
 
 // OSSInsightCollectionReviewer checks the one fixed public collection list.
@@ -58,20 +62,13 @@ func (r *ossInsightCollectionReviewer) ReviewCollections() (OSSInsightCollection
 	review := OSSInsightCollectionReview{
 		CheckedAt: r.now().UTC().Format(time.RFC3339), SourceURL: ossInsightCollectionsURL, ExpectedTotal: len(expected),
 	}
-	req, err := http.NewRequest(http.MethodGet, ossInsightCollectionsURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), ossInsightRequestTimeout)
+	defer cancel()
+	resp, err := ossInsightGET(ctx, r.client, ossInsightCollectionsURL)
 	if err != nil {
-		return review, fmt.Errorf("could not prepare OSS Insight collection request")
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", ossInsightCollectionReviewAgent)
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return review, fmt.Errorf("OSS Insight collection request failed")
+		return review, fmt.Errorf("OSS Insight collection request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return review, fmt.Errorf("OSS Insight collection request returned HTTP %d", resp.StatusCode)
-	}
 
 	var payload struct {
 		Data struct {
@@ -113,6 +110,61 @@ func (r *ossInsightCollectionReviewer) ReviewCollections() (OSSInsightCollection
 		review.Message = "OSS Insight collection drift was detected. Review the changed categories before changing HAI's catalog; this check did not install, enable, approve, or execute any project."
 	}
 	return review, nil
+}
+
+// ossInsightGET performs a bounded, read-only request against the fixed OSS
+// Insight endpoints. The public collection service occasionally responds with
+// a transient 429 or 5xx while its indexes are rebuilding. Retrying those
+// failures prevents a partial catalog scan from being presented as source
+// drift, while non-transient 4xx responses still fail immediately.
+func ossInsightGET(ctx context.Context, client *http.Client, requestURL string) (*http.Response, error) {
+	if client == nil {
+		return nil, fmt.Errorf("OSS Insight HTTP client is unavailable")
+	}
+	for attempt := 1; attempt <= ossInsightRequestMaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("could not prepare OSS Insight request")
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", ossInsightCollectionReviewAgent)
+		resp, err := client.Do(req)
+		if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+
+		transient := err != nil || (resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError))
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+			resp.Body.Close()
+		}
+		if !transient || attempt == ossInsightRequestMaxAttempts {
+			if err != nil {
+				return nil, fmt.Errorf("request failed after %d attempt(s): %w", attempt, err)
+			}
+			return nil, fmt.Errorf("request returned HTTP %d after %d attempt(s)", status, attempt)
+		}
+		if err := waitForCatalogRetry(ctx, attempt); err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("request retry loop ended unexpectedly")
+}
+
+func waitForCatalogRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(attempt) * ossInsightRetryBaseDelay
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func expectedOSSInsightCollections() map[string]struct{} {

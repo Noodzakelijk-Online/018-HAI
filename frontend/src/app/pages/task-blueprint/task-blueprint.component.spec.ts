@@ -25,6 +25,7 @@ describe('TaskBlueprintComponent pursuit context', () => {
         route,
         { mode: () => 'light' } as any,
         { propose: jasmine.createSpy('propose') } as any,
+        { propose: jasmine.createSpy('propose') } as any,
       ),
       router,
     };
@@ -61,6 +62,19 @@ describe('TaskBlueprintComponent pursuit context', () => {
     };
 
     component.useTypedProposalCriteria();
+
+    expect(component.planForm.value.successCriteria).toBe('Use evidence\nDo not send');
+    expect(component.contextExpanded).toBeTrue();
+  });
+
+  it('copies a reviewed CrewAI draft only into editable success criteria', () => {
+    const { component } = createComponent();
+    component.crewProposal = {
+      engine: 'crewai 1.15.5', modelId: 'qwen-local', requestDigest: 'digest', scope: 'draft only',
+      proposal: { goal: 'Prepare a plan', successCriteria: ['Use evidence', 'Do not send'], nextSteps: ['Inspect'], risk: 'medium', requiresApproval: true, reasons: ['External impact'], uncertainties: [] },
+    };
+
+    component.useCrewProposalCriteria();
 
     expect(component.planForm.value.successCriteria).toBe('Use evidence\nDo not send');
     expect(component.contextExpanded).toBeTrue();

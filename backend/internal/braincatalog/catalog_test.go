@@ -1,6 +1,9 @@
 package braincatalog
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	entries := Entries()
@@ -12,7 +15,7 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 			t.Fatalf("entry lacks provenance or activation boundary: %#v", entry)
 		}
 	}
-	if entry, ok := EntryByID("autogen"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval || len(entry.ControlMappings) == 0 {
+	if entry, ok := EntryByID("autogen"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval || len(entry.ControlMappings) == 0 || !strings.Contains(entry.IntegrationMode, "migration-preview") {
 		t.Fatalf("AutoGen must remain a gated compatibility profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("autogpt"); !ok || entry.Status != StatusLicenseReview {
@@ -21,21 +24,42 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("opencode-ai-legacy"); !ok || entry.Status != StatusExcluded || !entry.RequiresApproval {
 		t.Fatalf("the archived opencode-ai project must remain excluded: %#v", entry)
 	}
-	for _, id := range []string{"openllmetry", "browser-use", "nemo-guardrails", "tabby", "github-mcp-server", "playwright-mcp", "google-genai-toolbox", "mini-swe-agent", "openlit", "opik", "pipecat", "livekit-agents"} {
+	if entry, ok := EntryByID("continue"); !ok || entry.Status != StatusExcluded || !entry.RequiresApproval || !strings.Contains(entry.VerificationNote, "no longer actively maintained") {
+		t.Fatalf("the discontinued Continue project must remain excluded: %#v", entry)
+	}
+	if entry, ok := EntryByID("microsoft-jarvis"); !ok || entry.Status != StatusExcluded || !entry.RequiresApproval || !strings.Contains(entry.VerificationNote, "text-davinci-003") {
+		t.Fatalf("the legacy JARVIS prototype must remain excluded: %#v", entry)
+	}
+	for _, id := range []string{"openllmetry", "browser-use", "tabby", "playwright-mcp", "opik", "pipecat", "livekit-agents"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusCandidate || !entry.RequiresApproval {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, entry)
 		}
 	}
+	for _, id := range []string{"openlit", "opik", "pipecat", "livekit-agents"} {
+		entry, ok := EntryByID(id)
+		if !ok || entry.VerifiedAt != "2026-07-21" || !strings.Contains(entry.VerificationNote, "same-day upstream push") {
+			t.Fatalf("%s must retain its current upstream review evidence: %#v", id, entry)
+		}
+	}
+	if entry, ok := EntryByID("google-genai-toolbox"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible || entry.Name != "MCP Toolbox" || entry.UpstreamURL != "https://github.com/googleapis/mcp-toolbox" || len(entry.RepositoryAliases) != 1 || entry.RepositoryAliases[0] != "googleapis/genai-toolbox" {
+		t.Fatalf("MCP Toolbox rename must retain the stable profile and historic repository alias: %#v", entry)
+	}
+	if entry, ok := EntryByID("nemo-guardrails"); !ok || entry.Status != StatusLicenseReview || !entry.RequiresApproval {
+		t.Fatalf("NeMo Guardrails must remain held for licence review: %#v", entry)
+	}
 	if entry, ok := EntryByID("airbyte"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("Airbyte must remain a guarded local-first integration: %#v", entry)
 	}
-	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "deepeval", "deepteam", "garak", "evidently", "ragflow", "anythingllm", "serena", "odoo", "cloudquery", "openspec"} {
+	for _, id := range []string{"presidio", "guardrails-ai", "lm-eval-harness", "promptfoo", "deepeval", "deepteam", "garak", "gitleaks", "gosec", "trivy", "grype", "syft", "evidently", "ragflow", "anythingllm", "serena", "mlflow", "odoo", "cloudquery", "openspec", "claude-code-project-instructions", "fabric-patterns", "mini-swe-agent", "openlit"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
 			t.Fatalf("%s must expose its implemented local profile without claiming that it is configured: %#v", id, entry)
 		}
 	}
 	if entry, ok := EntryByID("langfuse"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
 		t.Fatalf("Langfuse must expose only its local, approval-aware bridge: %#v", entry)
+	}
+	if entry, ok := EntryByID("openlit"); !ok || !strings.Contains(entry.IntegrationMode, "aggregate OTLP") || len(entry.ControlMappings) != 2 {
+		t.Fatalf("OpenLIT must expose only its local aggregate OTLP bridge: %#v", entry)
 	}
 	if entry, ok := EntryByID("ag2"); !ok || entry.Status != StatusCompatibility || !entry.RequiresApproval {
 		t.Fatalf("AG2 must remain a gated compatibility profile: %#v", entry)
@@ -45,17 +69,31 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 			t.Fatalf("%s must remain a non-active high-risk reference: %#v", id, entry)
 		}
 	}
+	for _, id := range []string{"agno", "voltagent", "openai-agents-python", "langroid", "camel"} {
+		if entry, ok := EntryByID(id); !ok || entry.Status != StatusReferenceOnly || !entry.RequiresApproval || len(entry.ControlMappings) == 0 {
+			t.Fatalf("%s must remain an explicit non-active agent-framework reference: %#v", id, entry)
+		}
+	}
+	if entry, ok := EntryByID("mastra"); !ok || entry.Status != StatusLicenseReview || !entry.RequiresApproval || len(entry.ControlMappings) == 0 {
+		t.Fatalf("Mastra must remain held for licence review: %#v", entry)
+	}
 	if entry, ok := EntryByID("localai"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval {
 		t.Fatalf("LocalAI must report its integrated, approval-gated local provider profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("vllm"); !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval {
 		t.Fatalf("vLLM must report its integrated, approval-gated local provider profile: %#v", entry)
 	}
+	if entry, ok := EntryByID("sglang"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
+		t.Fatalf("SGLang must report its integrated, approval-gated local provider profile: %#v", entry)
+	}
 	if entry, ok := EntryByID("mistral-rs"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("mistral.rs must report its integrated, approval-gated local provider profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("whisper-cpp"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("whisper.cpp must report its integrated, approval-gated local source profile: %#v", entry)
+	}
+	if entry, ok := EntryByID("docling"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval || entry.Implementation == nil {
+		t.Fatalf("Docling must report its integrated, approval-gated local document profile: %#v", entry)
 	}
 	if entry, ok := EntryByID("pydantic-ai"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("PydanticAI must report its integrated, approval-gated local typed-planning profile: %#v", entry)
@@ -66,6 +104,86 @@ func TestEntriesAreTransparentAndDisabledByPolicy(t *testing.T) {
 	if entry, ok := EntryByID("a2a"); !ok || entry.Status != StatusIntegrated || !entry.LocalFirstCompatible || !entry.RequiresApproval {
 		t.Fatalf("A2A must report its integrated, approval-gated local planning bridge: %#v", entry)
 	}
+}
+
+func TestRecommendIncludesProjectInstructionsForRepositoryGuidance(t *testing.T) {
+	recommendations := Recommend("planning", "Review this repository's AGENTS.md and CLAUDE.md project guidance before creating a bounded plan")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "claude-code-project-instructions" && recommendation.Status == StatusIntegrated && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("project-instructions profile was not recommended: %#v", recommendations)
+}
+
+func TestRecommendIncludesFabricPatternsForExplicitPromptPatternReview(t *testing.T) {
+	recommendations := Recommend("planning", "Review a Fabric prompt pattern from the local pattern library before drafting")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "fabric-patterns" && recommendation.Status == StatusIntegrated && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("Fabric pattern profile was not recommended: %#v", recommendations)
+}
+
+func TestRecommendIncludesBoundedGitleaksProfileForSecretScanning(t *testing.T) {
+	recommendations := Recommend("repository safety", "Run a Gitleaks secret scan against a reviewed repository snapshot")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "gitleaks" && recommendation.Status == StatusIntegrated && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("bounded Gitleaks profile was not recommended: %#v", recommendations)
+}
+
+func TestRecommendIncludesBoundedGosecProfileForGoSourceSafety(t *testing.T) {
+	recommendations := Recommend("repository safety", "Run a Gosec Go static security scan against a reviewed vendored repository snapshot")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "gosec" && recommendation.Status == StatusIntegrated && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("bounded Gosec profile was not recommended: %#v", recommendations)
+}
+
+func TestRecommendIncludesBoundedTrivyProfileForConfigurationSafety(t *testing.T) {
+	recommendations := Recommend("repository safety", "Run an offline Trivy configuration scan for Docker Compose and Terraform without changing infrastructure")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "trivy" && recommendation.Status == StatusIntegrated && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("bounded Trivy profile was not recommended: %#v", recommendations)
+}
+
+func TestRecommendIncludesBoundedSyftProfileForSoftwareInventory(t *testing.T) {
+	recommendations := Recommend("repository safety", "Create an SBOM dependency inventory for a reviewed repository snapshot")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "syft" && recommendation.Status == StatusIntegrated && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("bounded Syft profile was not recommended: %#v", recommendations)
+}
+
+func TestRecommendIncludesBoundedGrypeProfileForVulnerabilityEvidence(t *testing.T) {
+	recommendations := Recommend("repository safety", "Review aggregate vulnerability severity for a reviewed repository snapshot without changing dependencies")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "grype" && recommendation.Status == StatusIntegrated && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("bounded Grype profile was not recommended: %#v", recommendations)
+}
+
+func TestRecommendKeepsOmegaMemoryAsAReferenceOnlyMemoryOption(t *testing.T) {
+	recommendations := Recommend("memory", "Review local cross model memory consolidation without adding a second store")
+	for _, recommendation := range recommendations {
+		if recommendation.ID == "omega-memory" && recommendation.Status == StatusReferenceOnly && recommendation.RequiresApproval {
+			return
+		}
+	}
+	t.Fatalf("Omega Memory reference was not recommended: %#v", recommendations)
 }
 
 func TestOSSInsightCollectionScreeningCoversEveryCollection(t *testing.T) {
@@ -142,7 +260,7 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	if entry, ok := EntryByID("qdrant"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("Qdrant must not create a second active vector store by default: %#v", entry)
 	}
-	for _, id := range []string{"activepieces", "mem0", "letta", "comfyui", "openmetadata"} {
+	for _, id := range []string{"activepieces", "agentops", "dagster", "mem0", "letta", "omega-memory", "comfyui", "openmetadata", "prefect", "promptflow"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusReferenceOnly {
 			t.Fatalf("%s must remain a reference rather than a parallel control plane: %#v", id, entry)
 		}
@@ -159,16 +277,25 @@ func TestOSSInsightCandidatesHaveLocalActivationBoundaries(t *testing.T) {
 	if entry, ok := EntryByID("llm-guard"); !ok || entry.Status != StatusExcluded {
 		t.Fatalf("archived LLM Guard must remain excluded: %#v", entry)
 	}
-	for _, id := range []string{"openai-evals", "omniparser", "mcp-servers", "qodo-pr-agent"} {
+	for _, id := range []string{"openai-evals", "omniparser", "mcp-servers"} {
 		if entry, ok := EntryByID(id); !ok || entry.Status != StatusLicenseReview {
 			t.Fatalf("%s must remain held for licence review: %#v", id, entry)
 		}
+	}
+	if entry, ok := EntryByID("qodo-pr-agent"); !ok || entry.Status != StatusReferenceOnly || !strings.Contains(entry.VerificationNote, "LICENSE is MIT") {
+		t.Fatalf("Qodo PR-Agent must remain a current but non-integrated review reference: %#v", entry)
+	}
+	if entry, ok := EntryByID("swe-rex"); !ok || entry.Status != StatusReferenceOnly || !strings.Contains(entry.Activation, "Do not install") {
+		t.Fatalf("SWE-ReX must remain a non-integrated sandbox reference: %#v", entry)
 	}
 	if entry, ok := EntryByID("agentbench"); !ok || entry.Status != StatusReferenceOnly {
 		t.Fatalf("AgentBench must remain a reference-only evaluation pattern: %#v", entry)
 	}
 	if entry, ok := EntryByID("swe-agent"); !ok || entry.Status != StatusReferenceOnly || !entry.RequiresApproval {
 		t.Fatalf("SWE-agent must remain a superseded architecture reference: %#v", entry)
+	}
+	if entry, ok := EntryByID("swe-bench"); !ok || entry.Status != StatusExcluded || entry.LocalFirstCompatible || !entry.RequiresApproval || len(entry.ControlMappings) != 2 {
+		t.Fatalf("SWE-bench must remain a capacity-gated benchmark exclusion: %#v", entry)
 	}
 	if entry, ok := EntryByID("whylogs"); !ok || entry.Status != StatusReferenceOnly || !entry.RequiresApproval || !entry.LocalFirstCompatible || len(entry.ControlMappings) != 2 {
 		t.Fatalf("Whylogs must remain a local-only freshness-held profiling reference: %#v", entry)
@@ -294,9 +421,14 @@ func TestRecommendCodingNeverClaimsExecution(t *testing.T) {
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"continue", "cline", "opencode", "aider", "openhands"} {
+	for _, id := range []string{"cline", "opencode", "aider", "openhands"} {
 		if _, ok := ids[id]; !ok {
 			t.Fatalf("missing %s recommendation: %#v", id, recommendations)
+		}
+	}
+	for _, id := range []string{"continue", "microsoft-jarvis"} {
+		if _, ok := ids[id]; ok {
+			t.Fatalf("excluded %s must not be recommended: %#v", id, recommendations)
 		}
 	}
 	if !ids["cline"].RequiresApproval || !ids["opencode"].RequiresApproval || !ids["aider"].RequiresApproval || !ids["openhands"].RequiresApproval {
@@ -318,7 +450,7 @@ func TestRecommendExternalSandboxIsReferenceOnly(t *testing.T) {
 }
 
 func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
-	recommendations := Recommend("operations", "Use Ollama for a local model, transcribe a voice note, run a browser agent safety evaluation, and exchange an A2A task envelope")
+	recommendations := Recommend("operations", "Use Ollama for a local model, transcribe a voice note, extract document evidence, run a browser agent safety evaluation, and exchange an A2A task envelope")
 	ids := map[string]Recommendation{}
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
@@ -326,16 +458,20 @@ func TestRecommendNewOSSInsightCapabilitiesStayGoverned(t *testing.T) {
 	if recommendation, ok := ids["ollama"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
 		t.Fatalf("Ollama must surface as HAI's existing approval-gated local provider profile: %#v", recommendations)
 	}
-	for _, id := range []string{"browser-use", "nemo-guardrails"} {
-		if recommendation, ok := ids[id]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
-			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
-		}
+	if recommendation, ok := ids["browser-use"]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval {
+		t.Fatalf("browser-use must remain a review-first candidate: %#v", recommendations)
+	}
+	if recommendation, ok := ids["nemo-guardrails"]; !ok || recommendation.Status != StatusLicenseReview || !recommendation.RequiresApproval {
+		t.Fatalf("nemo guardrails must remain under licence review: %#v", recommendations)
 	}
 	if recommendation, ok := ids["garak"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
 		t.Fatalf("Garak must surface as a configuration-gated local safety profile: %#v", recommendations)
 	}
 	if recommendation, ok := ids["whisper-cpp"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
 		t.Fatalf("whisper.cpp must surface as HAI's approval-gated local transcription profile: %#v", recommendations)
+	}
+	if recommendation, ok := ids["docling"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
+		t.Fatalf("Docling must surface as HAI's approval-gated local document profile: %#v", recommendations)
 	}
 	if recommendation, ok := ids["a2a"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval {
 		t.Fatalf("A2A must surface as a gated local planning bridge: %#v", recommendations)
@@ -379,14 +515,21 @@ func TestRecommendNewControlledMCPAndCodeCandidatesStayReviewFirst(t *testing.T)
 	for _, recommendation := range recommendations {
 		ids[recommendation.ID] = recommendation
 	}
-	for _, id := range []string{"github-mcp-server", "playwright-mcp", "mini-swe-agent"} {
+	for _, id := range []string{"playwright-mcp"} {
 		recommendation, ok := ids[id]
 		if !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 			t.Fatalf("%s must remain a review-first candidate: %#v", id, recommendations)
 		}
 	}
-	if recommendation, ok := ids["qodo-pr-agent"]; !ok || recommendation.Status != StatusLicenseReview || recommendation.Role != "reference or review only" {
-		t.Fatalf("qodo-pr-agent must remain held for licence review: %#v", recommendations)
+	githubMCP, ok := ids["github-mcp-server"]
+	if !ok || githubMCP.Status != StatusIntegrated || githubMCP.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("GitHub MCP context must surface as an integrated bounded profile: %#v", recommendations)
+	}
+	if recommendation, ok := ids["mini-swe-agent"]; !ok || recommendation.Status != StatusIntegrated || !recommendation.RequiresApproval || recommendation.Role != "integrated profile; operator configuration and live probe required" {
+		t.Fatalf("mini-SWE must surface as a configuration-gated disposable patch profile: %#v", recommendations)
+	}
+	if recommendation, ok := ids["qodo-pr-agent"]; !ok || recommendation.Status != StatusReferenceOnly || recommendation.Role != "reference or review only" {
+		t.Fatalf("qodo-pr-agent must remain a non-integrated review reference: %#v", recommendations)
 	}
 }
 
@@ -401,7 +544,7 @@ func TestNewOSSInsightReferencesAndExclusionsDoNotClaimActivation(t *testing.T) 
 	}
 	for _, id := range []string{"openlit", "phoenix"} {
 		recommendation, ok := ids[id]
-		if !ok || recommendation.Role != "optional capability" && recommendation.Role != "reference or review only" {
+		if !ok || recommendation.Role != "optional capability" && recommendation.Role != "reference or review only" && recommendation.Role != "integrated profile; operator configuration and live probe required" {
 			t.Fatalf("%s must not claim activation: %#v", id, recommendations)
 		}
 	}
@@ -427,6 +570,19 @@ func TestRecommendSafetyEvaluationAndTelemetryCandidatesStayReviewFirst(t *testi
 	}
 	if recommendation, ok := ids["openllmetry"]; !ok || recommendation.Status != StatusCandidate || !recommendation.RequiresApproval || recommendation.Role != "optional capability" {
 		t.Fatalf("OpenLLMetry must remain a review-first candidate: %#v", recommendations)
+	}
+}
+
+func TestMicrosoftAgentFrameworkRemainsAConfigurationGatedReviewOnlyProfile(t *testing.T) {
+	entry, ok := EntryByID("microsoft-agent-framework")
+	if !ok || entry.Status != StatusIntegrated || !entry.RequiresApproval || !entry.LocalFirstCompatible {
+		t.Fatalf("Microsoft Agent Framework must remain an opt-in local review-only profile: %#v", entry)
+	}
+	if !strings.Contains(entry.IntegrationMode, "sequential planning") || !strings.Contains(entry.Activation, "HAI_AGENT_FRAMEWORK_ENABLED") || !strings.Contains(entry.Activation, "/api/v1/autogen-compat/migration-plan") {
+		t.Fatalf("local profile and migration-plan boundaries must stay explicit: %#v", entry)
+	}
+	if !strings.Contains(entry.VerificationNote, "no tool/state authority") {
+		t.Fatalf("framework boundary must not claim autonomous authority: %#v", entry)
 	}
 }
 

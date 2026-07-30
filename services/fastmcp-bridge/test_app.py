@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from app import ConfigurationError, StaticTokenVerifier, load_config, local_api_base_url
+from app import ConfigurationError, Config, StaticTokenVerifier, build_server, load_config, local_api_base_url
 
 
 class FastMCPBridgeTests(unittest.TestCase):
@@ -31,6 +31,12 @@ class FastMCPBridgeTests(unittest.TestCase):
         self.assertIsNotNone(accepted)
         self.assertEqual(accepted.scopes, ["hai:read"])
         self.assertIsNone(rejected)
+
+    def test_registers_only_four_read_only_hai_tools(self):
+        server = build_server(Config("http://backend:8080/api/v1/mcp-agent", "a" * 32, "b" * 32))
+        tools = asyncio.run(server.list_tools())
+        names = {tool.name for tool in tools}
+        self.assertEqual(names, {"hai_operating_overview", "hai_actionable_workflows", "hai_github_repository_context", "hai_model_maintenance_readiness"})
 
 
 if __name__ == "__main__":

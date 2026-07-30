@@ -14,6 +14,14 @@ to its source, and only promotes useful low-risk facts into memory.
 - GitHub repositories, issues, pull requests, commits, and actions
 - selected local folders
 
+GitHub repository sync is a live, read-only adapter for one explicit
+`owner/repository` source target. It requests the newest records first and
+uses a timestamp cursor for incremental reads. Each endpoint is bounded to ten
+pages of 100 records; if a larger changed window is encountered, the sync fails
+without advancing its cursor so the operator can narrow the source or retry
+without silently losing repository context. GitHub writes, code downloads,
+secrets, webhooks, and arbitrary repository discovery are out of scope.
+
 The connector registry is configuration-friendly, so future connector keys can
 be added without changing the task engine. The initial implementation exposes
 manual import, historical backfill, incremental sync, scheduled sync, webhook

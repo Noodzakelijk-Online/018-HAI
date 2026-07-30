@@ -38,6 +38,10 @@ type SearchRequest struct {
 	ProjectKey       string
 	Limit            int
 	IncludeSensitive bool
+	// SourceIDs is an optional, already-authorized allowlist supplied by the
+	// source service. It keeps semantic retrieval subject to the same source
+	// visibility and connector-use restrictions as keyword retrieval.
+	SourceIDs []uuid.UUID
 }
 
 type Match struct {
@@ -167,7 +171,7 @@ func NewService(db *gorm.DB, config Config) (Service, error) {
 	if err := ensureSchema(db); err != nil {
 		return nil, err
 	}
-	return &service{db: db, config: config, client: &http.Client{Timeout: config.RequestTimeout}}, nil
+	return &service{db: db, config: config, client: newLocalHTTPClient(config.RequestTimeout)}, nil
 }
 
 func (s *service) Enabled() bool  { return true }
@@ -266,6 +270,19 @@ func (s *service) Search(ctx context.Context, request SearchRequest) ([]Match, e
 	if owner := strings.TrimSpace(request.OwnerIdentity); owner != "" {
 		query += ` AND (cs.owner_identity = ? OR cs.owner_identity = '' OR cs.owner_identity IS NULL)`
 		args = append(args, owner)
+	}
+	if len(request.SourceIDs) > 0 {
+		placeholders := make([]string, 0, len(request.SourceIDs))
+		for _, sourceID := range request.SourceIDs {
+			if sourceID == uuid.Nil {
+				continue
+			}
+			placeholders = append(placeholders, "?")
+			args = append(args, sourceID)
+		}
+		if len(placeholders) > 0 {
+			query += ` AND se.source_id IN (` + strings.Join(placeholders, ",") + `)`
+		}
 	}
 	query += ` ORDER BY emb.embedding <=> ?::vector ASC LIMIT ?`
 	args = append(args, vectorLiteral(vector), limit)
@@ -472,6 +489,19 @@ func validateLocalURL(raw string) error {
 		return nil
 	}
 	return fmt.Errorf("embedding endpoint must use localhost, loopback, or host.docker.internal")
+}
+
+// newLocalHTTPClient keeps embedding input inside the reviewed local endpoint
+// boundary. A proxy or redirect could otherwise route source/memory text to a
+// different host after configuration passed local URL validation.
+func newLocalHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{Proxy: nil},
+	}
 }
 
 func trimRunes(value string, limit int) string {

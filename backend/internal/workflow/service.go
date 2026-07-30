@@ -1,16 +1,18 @@
 package workflow
 
 import (
-	"automation-hub-backend/internal/autonomy"
-	"automation-hub-backend/internal/memory"
-	"automation-hub-backend/internal/models"
-	"automation-hub-backend/internal/safety"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"automation-hub-backend/internal/autonomy"
+	"automation-hub-backend/internal/memory"
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
 )
@@ -707,6 +709,250 @@ func (s *service) GetForOwner(ownerIdentity string, id uuid.UUID) (*WorkflowReco
 	}
 	record.Pursuits = visibleWorkflowPursuits(ownerIdentity, record.Pursuits)
 	return record, nil
+}
+
+// AttachBrowserVerification links one completed, owner-authorized local
+// browser check as a quality signal. A passing route check proves only that the
+// named local page met its configured navigation expectation: it cannot verify
+// facts, update memory, execute work, or transition the workflow to complete.
+func (s *service) AttachBrowserVerification(ownerIdentity, workflowID, runID, profileID, status, finalPath, pageTitle, summary string) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	runID = strings.TrimSpace(runID)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if _, err := uuid.Parse(runID); err != nil {
+		return fmt.Errorf("browser verification run id is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status != "passed" && status != "failed" {
+		return fmt.Errorf("browser verification must be completed before it can be linked")
+	}
+	uri := "browser-verification://run/" + runID
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "read_only_browser_verification" {
+			linked = true
+			break
+		}
+	}
+	label := firstNonEmpty(strings.TrimSpace(profileID), "Local browser verification")
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "browser_verification", SourceID: runID,
+			SourceURI: uri, SourceLabel: label, Relationship: "read_only_browser_verification",
+		}); err != nil {
+			return fmt.Errorf("store browser verification source link: %w", err)
+		}
+	}
+	reason := "read-only local browser verification " + status + ": " + firstNonEmpty(strings.TrimSpace(summary), "no summary returned")
+	if strings.TrimSpace(finalPath) != "" {
+		reason += " (path " + strings.TrimSpace(finalPath) + ")"
+	}
+	if strings.TrimSpace(pageTitle) != "" {
+		reason += " (title " + strings.TrimSpace(pageTitle) + ")"
+	}
+	if err := s.requireQualityGate(record.Item.ID, "local browser verification", status, reason); err != nil {
+		return err
+	}
+	s.audit(record.Item.ID, "workflow.browser_verification_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "read_only_browser_verification", status, uri, "browser_verifier")
+	return nil
+}
+
+// AttachSecretScan links a redacted aggregate Gitleaks result to an
+// owner-authorized workflow. It records only the reviewed snapshot identifier,
+// aggregate counts, and an opaque result digest. A scan is a review signal, not
+// source evidence or completion proof, so it cannot move workflow state or
+// authorize execution.
+func (s *service) AttachSecretScan(ownerIdentity, workflowID, workspaceID, resultDigest string, findingCount, affectedFiles int) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	resultDigest = strings.TrimSpace(resultDigest)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if !validWorkflowScanWorkspace(workspaceID) || len(resultDigest) != sha256.Size*2 || findingCount < 0 || affectedFiles < 0 || affectedFiles > findingCount {
+		return fmt.Errorf("aggregate secret scan result is invalid")
+	}
+	if _, err := hex.DecodeString(resultDigest); err != nil {
+		return fmt.Errorf("aggregate secret scan result is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	uri := "gitleaks://scan/" + workspaceID + "/" + resultDigest
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "aggregate_secret_scan" {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "gitleaks_scan", SourceID: resultDigest,
+			SourceURI: uri, SourceLabel: workspaceID, Relationship: "aggregate_secret_scan",
+		}); err != nil {
+			return fmt.Errorf("store secret scan source link: %w", err)
+		}
+	}
+	decision := "passed"
+	reason := fmt.Sprintf("redacted aggregate secret scan found no findings in reviewed snapshot %s", workspaceID)
+	if findingCount > 0 {
+		decision = "needs_review"
+		reason = fmt.Sprintf("redacted aggregate secret scan found %d finding(s) across %d affected file(s) in reviewed snapshot %s", findingCount, affectedFiles, workspaceID)
+	}
+	s.decide(record.Item.ID, "aggregate_secret_scan", decision, reason, "read_only_security_scan", false, "gitleaks")
+	s.audit(record.Item.ID, "workflow.secret_scan_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "aggregate_secret_scan", decision, uri, "gitleaks")
+	return nil
+}
+
+// AttachSBOMInventory links a redacted aggregate Syft result to an owner-
+// authorized workflow. It provides review context only: package and ecosystem
+// counts cannot establish a dependency's safety, change workflow state, or
+// authorize execution.
+func (s *service) AttachSBOMInventory(ownerIdentity, workflowID, workspaceID, resultDigest string, packageCount, ecosystemCount int) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	resultDigest = strings.TrimSpace(resultDigest)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if !validWorkflowScanWorkspace(workspaceID) || len(resultDigest) != sha256.Size*2 || packageCount < 0 || ecosystemCount < 0 || (packageCount > 0 && ecosystemCount == 0) {
+		return fmt.Errorf("aggregate SBOM inventory result is invalid")
+	}
+	if _, err := hex.DecodeString(resultDigest); err != nil {
+		return fmt.Errorf("aggregate SBOM inventory result is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	uri := "syft://inventory/" + workspaceID + "/" + resultDigest
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "aggregate_sbom_inventory" {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "syft_inventory", SourceID: resultDigest,
+			SourceURI: uri, SourceLabel: workspaceID, Relationship: "aggregate_sbom_inventory",
+		}); err != nil {
+			return fmt.Errorf("store SBOM inventory source link: %w", err)
+		}
+	}
+	reason := fmt.Sprintf("redacted aggregate SBOM inventory recorded %d package(s) across %d ecosystem(s) in reviewed snapshot %s; review in the original workspace before making dependency decisions", packageCount, ecosystemCount, workspaceID)
+	s.decide(record.Item.ID, "aggregate_sbom_inventory", "needs_review", reason, "read_only_software_inventory", false, "syft")
+	s.audit(record.Item.ID, "workflow.sbom_inventory_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "aggregate_sbom_inventory", "needs_review", uri, "syft")
+	return nil
+}
+
+// AttachMiniSWEPatchProposal records only an opaque disposable patch proposal
+// reference. The generated diff remains response-only at the mini-SWE boundary;
+// this workflow link is a review signal and cannot apply code, change state, or
+// satisfy a technical completion gate.
+func (s *service) AttachMiniSWEPatchProposal(ownerIdentity, workflowID, proposalID, workspaceID, diffDigest string, changedFiles int) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	proposalID = strings.TrimSpace(proposalID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	diffDigest = strings.TrimSpace(diffDigest)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if _, err := uuid.Parse(proposalID); err != nil {
+		return fmt.Errorf("patch proposal id is invalid")
+	}
+	if !validWorkflowScanWorkspace(workspaceID) || len(diffDigest) != sha256.Size*2 || changedFiles < 0 || changedFiles > 2000 {
+		return fmt.Errorf("patch proposal result is invalid")
+	}
+	if _, err := hex.DecodeString(diffDigest); err != nil {
+		return fmt.Errorf("patch proposal result is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	uri := "mini-swe://proposal/" + proposalID + "/" + diffDigest
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "review_only_patch_proposal" {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "mini_swe_patch_proposal", SourceID: proposalID,
+			SourceURI: uri, SourceLabel: workspaceID, Relationship: "review_only_patch_proposal",
+		}); err != nil {
+			return fmt.Errorf("store patch proposal source link: %w", err)
+		}
+	}
+	reason := fmt.Sprintf("isolated mini-SWE patch proposal returned an opaque diff digest with %d changed file(s); review the response-only diff before any independent apply or test", changedFiles)
+	s.decide(record.Item.ID, "mini_swe_patch_proposal", "needs_review", reason, "review_only_patch_proposal", false, "mini-swe")
+	s.audit(record.Item.ID, "workflow.mini_swe_patch_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "review_only_patch_proposal", "needs_review", uri, "mini-swe")
+	return nil
+}
+
+func validWorkflowScanWorkspace(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	first := value[0]
+	if first == '_' || first == '-' {
+		return false
+	}
+	return true
 }
 
 func (s *service) get(id uuid.UUID) (*WorkflowRecord, error) {
@@ -1871,7 +2117,7 @@ func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *Task
 	}
 	sourceLinks, _ := s.repo.FindSourceLinks(item.ID)
 	evidence, _ := s.repo.FindEvidenceClaims(item.ID)
-	output := strings.ToLower(firstNonEmpty(runResult.Output, runResult.FailureReason, runResult.VerificationStatus, runResult.CompletionStatus))
+	githubEvidence := collectGitHubQualityEvidence(item, sourceLinks, evidence)
 
 	for _, gate := range gates {
 		status := "passed"
@@ -1912,16 +2158,36 @@ func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *Task
 			}
 		case "github commit exists":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"commit", "branch", "github", "pull request", "pr"}, "task output does not mention GitHub branch/commit evidence")
+			if !githubEvidence.Commit {
+				status = "needs_review"
+				reason = "no source-linked GitHub commit record is attached"
+			} else {
+				reason = "source-linked GitHub commit record is attached"
+			}
 		case "tests or build evidence":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"test", "tests", "build", "passed"}, "task output does not mention test/build evidence")
+			if !githubEvidence.WorkflowSuccess {
+				status = "needs_review"
+				reason = "no source-linked successful GitHub Actions run is attached"
+			} else {
+				reason = "source-linked successful GitHub Actions run is attached"
+			}
 		case "readme/setup updated":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"readme", "setup", "docs", "documentation"}, "task output does not mention setup or README evidence")
+			if !githubEvidence.DocsChanged {
+				status = "needs_review"
+				reason = "no source-linked GitHub evidence identifies README, setup, or documentation changes"
+			} else {
+				reason = "source-linked GitHub evidence identifies README, setup, or documentation changes"
+			}
 		case "windows 11 operational path":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"windows", "docker compose", "local", "operational"}, "task output does not mention a Windows/local operational path")
+			if !githubEvidence.WindowsValidation {
+				status = "needs_review"
+				reason = "no source-linked controlled-runtime evidence confirms the Windows 11 operational path"
+			} else {
+				reason = "source-linked controlled-runtime evidence confirms the Windows 11 operational path"
+			}
 		}
 		gate.Status = status
 		gate.Reason = reason
@@ -1937,6 +2203,74 @@ func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *Task
 		s.decide(item.ID, "quality_gates", "needs_review", strings.Join(result.Failures, "; "), "completion engine", false, "workflow-worker")
 	}
 	return result
+}
+
+type githubQualityEvidence struct {
+	Commit            bool
+	WorkflowSuccess   bool
+	DocsChanged       bool
+	WindowsValidation bool
+}
+
+// collectGitHubQualityEvidence keeps technical completion grounded in durable
+// source records. Worker prose is intentionally excluded: a model or runtime
+// saying that a commit or build exists is not proof that it does.
+func collectGitHubQualityEvidence(item models.WorkflowItem, links []models.WorkflowSourceLink, claims []models.WorkflowEvidenceClaim) githubQualityEvidence {
+	evidence := githubQualityEvidence{}
+	type sourceDescriptor struct {
+		uri   string
+		label string
+	}
+	sources := []sourceDescriptor{{uri: item.SourceURI, label: strings.Join([]string{item.SourceLabel, item.Title, item.Description}, " ")}}
+	uris := []string{item.SourceURI}
+	for _, link := range links {
+		uris = append(uris, link.SourceURI)
+		sources = append(sources, sourceDescriptor{uri: link.SourceURI, label: link.SourceLabel})
+	}
+	for _, claim := range claims {
+		uris = append(uris, claim.SourceURI)
+		sources = append(sources, sourceDescriptor{uri: claim.SourceURI, label: strings.Join([]string{claim.ClaimText, claim.SourceLabel}, " ")})
+	}
+	for _, uri := range uris {
+		if isGitHubCommitURI(uri) {
+			evidence.Commit = true
+		}
+	}
+	for _, source := range sources {
+		if isGitHubURI(source.uri) && containsAny(strings.ToLower(source.label), "readme", "setup", "documentation", "docs") {
+			evidence.DocsChanged = true
+		}
+	}
+	for _, claim := range claims {
+		text := strings.ToLower(strings.Join([]string{claim.ClaimText, claim.SourceLabel}, " "))
+		if isGitHubActionsURI(claim.SourceURI) && githubWorkflowSucceeded(text) {
+			evidence.WorkflowSuccess = true
+		}
+		if claim.Reliability == "controlled_runtime" && containsAny(text, "windows 11", "docker compose", "windows") && containsAny(text, "passed", "validated", "completed", "success") {
+			evidence.WindowsValidation = true
+		}
+	}
+	return evidence
+}
+
+func isGitHubURI(uri string) bool {
+	uri = strings.ToLower(strings.TrimSpace(uri))
+	return strings.Contains(uri, "://github.com/") || strings.Contains(uri, "://api.github.com/")
+}
+
+func isGitHubCommitURI(uri string) bool {
+	return isGitHubURI(uri) && strings.Contains(strings.ToLower(uri), "/commit/")
+}
+
+func isGitHubActionsURI(uri string) bool {
+	return isGitHubURI(uri) && strings.Contains(strings.ToLower(uri), "/actions/runs/")
+}
+
+func githubWorkflowSucceeded(text string) bool {
+	if containsAny(text, "failure", "failed", "cancelled", "canceled", "timed_out", "action_required") {
+		return false
+	}
+	return containsAny(text, "success", "successful", "passed", "completed")
 }
 
 func (s *service) markQualityGate(workflowID uuid.UUID, gateName, status, reason string) {
@@ -2549,9 +2883,9 @@ func engineCapabilities() []EngineCapability {
 		{ID: "document-ingestion", Name: "Document ingestion engine", Status: "partial", Implemented: []string{"allowlisted local folder sync", "text extraction for readable files", "source provenance"}, Next: []string{"OCR, file renaming, folder movement, PDF extraction"}},
 		{ID: "duplicate-version", Name: "Duplicate and version control engine", Status: "partial", Implemented: []string{"stable source-identity deduplication", "immutable workflow revision hashes", "changed source revisions supersede stale workflows and approvals", "source item cursor/hash support"}, Next: []string{"near-duplicate and final-vs-draft detection"}},
 		{ID: "case-timeline", Name: "Case timeline engine", Status: "partial", Implemented: []string{"timestamped intake/events/transitions/claims"}, Next: []string{"project timeline API grouped by evidence"}},
-		{ID: "contradiction-detection", Name: "Contradiction detection engine", Status: "partial", Implemented: []string{"verification module has conflict statuses", "evidence claims can be reviewed"}, Next: []string{"cross-source contradiction scans"}},
-		{ID: "developer-github", Name: "Developer/GitHub engine", Status: "partial", Implemented: []string{"technical task classification", "GitHub quality gate records"}, Next: []string{"GitHub branch/commit/check adapters"}},
-		{ID: "software-quality-gate", Name: "Software quality gate engine", Status: "implemented", Implemented: []string{"test/build/readme/windows setup gates created for technical workflows", "mandatory technical gates can block completion"}, Next: []string{"automated repository acceptance reports"}},
+		{ID: "contradiction-detection", Name: "Contradiction detection engine", Status: "implemented", Implemented: []string{"verification module has conflict statuses", "evidence claims can be reviewed", "deterministic cross-source scans require separate source records, a shared concrete topic, and opposite lifecycle assertions", "conflicts preserve both source references and remain human-review signals"}, Next: []string{"typed entity/date/value contradiction extraction for operator-reviewed evidence"}},
+		{ID: "developer-github", Name: "Developer/GitHub engine", Status: "implemented", Implemented: []string{"read-only GitHub source adapter for repository, issue, pull request, branch, commit, and Actions-run records", "technical task classification", "source-linked commit and successful Actions evidence gates", "worker prose cannot self-certify GitHub completion"}, Next: []string{"read-only branch comparison and repository acceptance reports"}},
+		{ID: "software-quality-gate", Name: "Software quality gate engine", Status: "implemented", Implemented: []string{"test/build/readme/windows setup gates created for technical workflows", "mandatory technical gates require source-linked GitHub and controlled-runtime evidence before completion"}, Next: []string{"automated repository acceptance reports"}},
 		{ID: "public-accountability", Name: "Public accountability engine", Status: "partial", Implemented: []string{"public-post approval gate", "evidence claim records", "risk-gated publishing flow"}, Next: []string{"safer wording reviewer and source-backed timeline builder"}},
 		{ID: "medium-publishing", Name: "Medium/blog publishing engine", Status: "partial", Implemented: []string{"publishing task type", "draft-only rule", "article checklist"}, Next: []string{"Medium draft adapter and image prompt workflow"}},
 		{ID: "client-operations", Name: "Client job operations engine", Status: "partial", Implemented: []string{"administrative workflow path", "deadline/priority/checklist support"}, Next: []string{"quote, travel, materials, and invoice templates"}},

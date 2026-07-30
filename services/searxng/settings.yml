@@ -1,0 +1,30 @@
+# HAI's local SearXNG profile is for bounded source discovery, not browsing,
+# scraping, evidence creation, or autonomous action. `SEARXNG_SECRET` replaces
+# this placeholder at runtime; set HAI_SEARXNG_SECRET in .env.local before the
+# profile is enabled.
+use_default_settings: true
+
+general:
+  instance_name: "HAI local source discovery"
+  enable_metrics: false
+
+search:
+  safe_search: 2
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "change-this-local-searxng-secret"
+  limiter: false
+  image_proxy: false
+  public_instance: false
+  method: GET
+
+outgoing:
+  request_timeout: 8.0
+  max_request_timeout: 8.0
+  pool_connections: 20
+  pool_maxsize: 5
+  enable_http2: false

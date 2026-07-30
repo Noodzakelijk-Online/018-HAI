@@ -3,9 +3,13 @@ package verification
 import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/ragflow"
+	"automation-hub-backend/internal/research"
 	"automation-hub-backend/internal/source"
+	"context"
 	"fmt"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,16 +49,45 @@ type EvidenceInput struct {
 }
 
 type AnswerRequest struct {
-	OwnerIdentity     string          `json:"-"`
-	Question          string          `json:"question"`
-	ProjectKey        string          `json:"projectKey,omitempty"`
-	PursuitID         string          `json:"pursuitId,omitempty"`
-	Mode              string          `json:"mode,omitempty"`
-	DraftAnswer       string          `json:"draftAnswer,omitempty"`
-	ExternalEvidence  []EvidenceInput `json:"externalEvidence,omitempty"`
-	IncludeSensitive  bool            `json:"includeSensitive,omitempty"`
-	HumanApproved     bool            `json:"humanApproved,omitempty"`
-	AllowMemoryUpdate bool            `json:"allowMemoryUpdate,omitempty"`
+	OwnerIdentity            string          `json:"-"`
+	Question                 string          `json:"question"`
+	ProjectKey               string          `json:"projectKey,omitempty"`
+	PursuitID                string          `json:"pursuitId,omitempty"`
+	Mode                     string          `json:"mode,omitempty"`
+	DraftAnswer              string          `json:"draftAnswer,omitempty"`
+	ExternalEvidence         []EvidenceInput `json:"externalEvidence,omitempty"`
+	IncludeSensitive         bool            `json:"includeSensitive,omitempty"`
+	IncludeRAGFlowCandidates bool            `json:"includeRagflowCandidates,omitempty"`
+	IncludeResearchCandidates bool           `json:"includeResearchCandidates,omitempty"`
+	HumanApproved            bool            `json:"humanApproved,omitempty"`
+	AllowMemoryUpdate        bool            `json:"allowMemoryUpdate,omitempty"`
+}
+
+// CandidateEvidence is deliberately separate from VerificationEvidence. It is
+// a retrieval preview and is never persisted, used to support a claim, or
+// allowed to update memory or trigger an action until the operator explicitly
+// attaches it as ordinary evidence in a later verification request.
+type CandidateEvidence struct {
+	SourceType   string  `json:"sourceType"`
+	SourceURI    string  `json:"sourceUri"`
+	SourceLabel  string  `json:"sourceLabel"`
+	Snippet      string  `json:"snippet"`
+	DatasetID    string  `json:"datasetId"`
+	DocumentID   string  `json:"documentId,omitempty"`
+	ChunkID      string  `json:"chunkId"`
+	Similarity   float64 `json:"similarity,omitempty"`
+	Status       string  `json:"status"`
+	Restrictions string  `json:"restrictions"`
+}
+
+// EvidenceConflict is a deterministic review signal, not an assertion that one
+// source is true. It names the conflicting source records so an operator can
+// resolve the disagreement with the underlying evidence.
+type EvidenceConflict struct {
+	Topic        string   `json:"topic"`
+	Status       string   `json:"status"`
+	Reason       string   `json:"reason"`
+	EvidenceRefs []string `json:"evidenceRefs"`
 }
 
 type VerificationResult struct {
@@ -64,7 +97,10 @@ type VerificationResult struct {
 	PursuitLinkError  string                        `json:"pursuitLinkError,omitempty"`
 	Claims            []models.VerificationClaim    `json:"claims"`
 	Evidence          []models.VerificationEvidence `json:"evidence"`
+	Conflicts         []EvidenceConflict            `json:"conflicts"`
 	UnsupportedClaims []models.VerificationClaim    `json:"unsupportedClaims"`
+	RAGFlowCandidates []CandidateEvidence           `json:"ragflowCandidates"`
+	ResearchCandidates []CandidateEvidence          `json:"researchCandidates"`
 	ResearchQuestions []string                      `json:"researchQuestions"`
 	Logs              []string                      `json:"logs"`
 }
@@ -82,22 +118,38 @@ type PursuitLinker interface {
 }
 
 type service struct {
-	repo          Repository
-	sourceService source.Service
-	memoryService memory.Service
-	pursuitLinker PursuitLinker
+	repo           Repository
+	sourceService  source.Service
+	memoryService  memory.Service
+	ragflowService ragflow.Service
+	researchService research.Service
+	pursuitLinker  PursuitLinker
 }
 
 func NewService(repo Repository, sourceService source.Service, memoryService memory.Service, pursuitLinkers ...PursuitLinker) Service {
+	return NewServiceWithRAGFlow(repo, sourceService, memoryService, nil, pursuitLinkers...)
+}
+
+// NewServiceWithRAGFlow keeps retrieval separate from evidence verification.
+// Callers must opt in per request before this service contacts RAGFlow.
+func NewServiceWithRAGFlow(repo Repository, sourceService source.Service, memoryService memory.Service, ragflowService ragflow.Service, pursuitLinkers ...PursuitLinker) Service {
+	return NewServiceWithCandidateRetrieval(repo, sourceService, memoryService, ragflowService, nil, pursuitLinkers...)
+}
+
+// NewServiceWithCandidateRetrieval keeps local RAGFlow and SearXNG discovery
+// separate from evidence verification. Each must be explicitly requested by
+// the operator and only returns previews that cannot affect facts, memory, or
+// actions until re-submitted as ordinary evidence and verified again.
+func NewServiceWithCandidateRetrieval(repo Repository, sourceService source.Service, memoryService memory.Service, ragflowService ragflow.Service, researchService research.Service, pursuitLinkers ...PursuitLinker) Service {
 	var pursuitLinker PursuitLinker
 	if len(pursuitLinkers) > 0 {
 		pursuitLinker = pursuitLinkers[0]
 	}
-	return &service{repo: repo, sourceService: sourceService, memoryService: memoryService, pursuitLinker: pursuitLinker}
+	return &service{repo: repo, sourceService: sourceService, memoryService: memoryService, ragflowService: ragflowService, researchService: researchService, pursuitLinker: pursuitLinker}
 }
 
 func DefaultService() Service {
-	return NewService(DefaultRepository(), source.DefaultService(), memory.DefaultService())
+	return NewServiceWithRAGFlow(DefaultRepository(), source.DefaultService(), memory.DefaultService(), ragflow.DefaultService())
 }
 
 func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
@@ -125,9 +177,20 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 	}
 
 	evidence := s.collectEvidence(run.ID, request, questions, &logs)
+	ragflowCandidates, ragflowSearched := s.collectRAGFlowCandidates(request, mode, questions, &logs)
+	researchCandidates, researchSearched := s.collectResearchCandidates(request, mode, questions, &logs)
+	searchScopes := []string{"connected_sources", "provided_evidence"}
+	if ragflowSearched {
+		searchScopes = append(searchScopes, "ragflow_candidate_datasets")
+	}
+	if researchSearched {
+		searchScopes = append(searchScopes, "local_research_candidates")
+	}
+	run.SourcesSearched = strings.Join(searchScopes, ",")
 	answer := buildAnswer(request, mode, evidence)
 	claims := decomposeClaims(run.ID, answer, mode, request)
-	verifiedClaims := verifyClaims(claims, evidence, request, mode)
+	conflicts := detectEvidenceConflicts(evidence)
+	verifiedClaims := verifyClaims(claims, evidence, conflicts, request, mode)
 	unsupported := unsupportedClaims(verifiedClaims)
 	status := runStatus(verifiedClaims, mode, request)
 
@@ -147,6 +210,10 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 		_, _ = s.repo.CreateClaim(&claim)
 	}
 	s.audit(run.ID, "verification.completed", "important claims decomposed and verified before acceptance")
+	if len(conflicts) > 0 {
+		s.audit(run.ID, "verification.conflicts_detected", fmt.Sprintf("%d source-linked evidence conflict(s) require review", len(conflicts)))
+		logs = append(logs, "detected source-linked evidence conflicts; no conflict was resolved automatically")
+	}
 	if request.AllowMemoryUpdate {
 		s.storeVerifiedMemory(request, run, verifiedClaims)
 	}
@@ -154,7 +221,10 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 		Run:               *run,
 		Claims:            verifiedClaims,
 		Evidence:          evidence,
+		Conflicts:         conflicts,
 		UnsupportedClaims: unsupported,
+		RAGFlowCandidates: ragflowCandidates,
+		ResearchCandidates: researchCandidates,
 		ResearchQuestions: questions,
 		Logs:              append(logs, "verification status logged for every important claim"),
 	}
@@ -171,6 +241,115 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 		}
 	}
 	return result, nil
+}
+
+func (s *service) collectResearchCandidates(request AnswerRequest, mode string, questions []string, logs *[]string) ([]CandidateEvidence, bool) {
+	if !request.IncludeResearchCandidates {
+		return []CandidateEvidence{}, false
+	}
+	if mode == ModeAction {
+		*logs = append(*logs, "local public-source candidate retrieval is not available in action mode")
+		return []CandidateEvidence{}, false
+	}
+	if s.researchService == nil || !s.researchService.Status().Configured {
+		*logs = append(*logs, "local public-source discovery is not configured; no candidate evidence was added")
+		return []CandidateEvidence{}, false
+	}
+
+	const maxQuestions = 2
+	const maxCandidatesPerQuestion = 3
+	seen := map[string]bool{}
+	candidates := []CandidateEvidence{}
+	searched := false
+	for index, question := range questions {
+		if index >= maxQuestions {
+			break
+		}
+		response, err := s.researchService.Search(context.Background(), research.Request{Query: question, Limit: maxCandidatesPerQuestion})
+		if err != nil {
+			*logs = append(*logs, "local public-source discovery was unavailable; no candidate evidence was added for one research question")
+			continue
+		}
+		searched = true
+		for _, item := range response.Results {
+			key := strings.TrimSpace(item.SourceURI)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			candidates = append(candidates, CandidateEvidence{
+				SourceType:   "searxng_candidate",
+				SourceURI:    item.SourceURI,
+				SourceLabel:  firstNonEmpty(item.Title, item.SourceURI),
+				Snippet:      compact(item.Snippet, 1200),
+				Status:       "unverified_candidate",
+				Restrictions: "Discovery preview only. This result has not been fetched or checked for source support, freshness, authority, or conflicts. It is not persisted as evidence and cannot support claims, update memory, or authorize actions until explicitly attached and re-verified.",
+			})
+		}
+	}
+	if searched {
+		*logs = append(*logs, "retrieved local public-source candidates without using them for verification")
+	}
+	return candidates, searched
+}
+
+func (s *service) collectRAGFlowCandidates(request AnswerRequest, mode string, questions []string, logs *[]string) ([]CandidateEvidence, bool) {
+	if !request.IncludeRAGFlowCandidates {
+		return []CandidateEvidence{}, false
+	}
+	if mode == ModeAction {
+		*logs = append(*logs, "RAGFlow candidate retrieval is not available in action mode")
+		return []CandidateEvidence{}, false
+	}
+	if s.ragflowService == nil || !s.ragflowService.Status().Configured {
+		*logs = append(*logs, "local RAGFlow candidate retrieval is not configured; no candidate evidence was added")
+		return []CandidateEvidence{}, false
+	}
+
+	const maxQuestions = 2
+	const maxCandidatesPerQuestion = 3
+	seen := map[string]bool{}
+	candidates := []CandidateEvidence{}
+	searched := false
+	for index, question := range questions {
+		if index >= maxQuestions {
+			break
+		}
+		response, err := s.ragflowService.Retrieve(context.Background(), ragflow.Request{Query: question, Limit: maxCandidatesPerQuestion})
+		if err != nil {
+			*logs = append(*logs, "local RAGFlow candidate retrieval was unavailable; no candidate evidence was added for one research question")
+			continue
+		}
+		searched = true
+		for _, item := range response.Results {
+			key := item.DatasetID + "\x00" + item.DocumentID + "\x00" + item.ChunkID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			candidates = append(candidates, CandidateEvidence{
+				SourceType:   "ragflow_candidate",
+				SourceURI:    ragflowCandidateURI(item),
+				SourceLabel:  firstNonEmpty(item.DocumentName, "RAGFlow candidate"),
+				Snippet:      compact(item.Content, 1200),
+				DatasetID:    item.DatasetID,
+				DocumentID:   item.DocumentID,
+				ChunkID:      item.ChunkID,
+				Similarity:   item.Similarity,
+				Status:       "unverified_candidate",
+				Restrictions: "Preview only. This chunk is not persisted as verification evidence and cannot support claims, update memory, or authorize actions until explicitly attached and re-verified.",
+			})
+		}
+	}
+	if searched {
+		*logs = append(*logs, "retrieved local RAGFlow candidate evidence without using it for verification")
+	}
+	return candidates, searched
+}
+
+func ragflowCandidateURI(item ragflow.Result) string {
+	segment := func(value string) string { return url.PathEscape(firstNonEmpty(value, "unknown")) }
+	return "ragflow://dataset/" + segment(item.DatasetID) + "/document/" + segment(item.DocumentID) + "/chunk/" + segment(item.ChunkID)
 }
 
 func requestedPursuitID(value string) (uuid.UUID, error) {
@@ -225,12 +404,20 @@ func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*Verif
 	if err != nil {
 		return nil, err
 	}
+	conflicts := detectEvidenceConflicts(evidence)
+	logs := []string{"loaded persisted verification details"}
+	if len(conflicts) > 0 {
+		logs = append(logs, "source-linked evidence conflicts require review")
+	}
 	return &VerificationResult{
 		Run:               *run,
 		Claims:            claims,
 		Evidence:          evidence,
+		Conflicts:         conflicts,
 		UnsupportedClaims: unsupportedClaims(claims),
-		Logs:              []string{"loaded persisted verification details"},
+		RAGFlowCandidates: []CandidateEvidence{},
+		ResearchCandidates: []CandidateEvidence{},
+		Logs:              logs,
 	}, nil
 }
 
@@ -334,7 +521,7 @@ func decomposeClaims(runID uuid.UUID, answer, mode string, request AnswerRequest
 	return claims
 }
 
-func verifyClaims(claims []models.VerificationClaim, evidence []models.VerificationEvidence, request AnswerRequest, mode string) []models.VerificationClaim {
+func verifyClaims(claims []models.VerificationClaim, evidence []models.VerificationEvidence, conflicts []EvidenceConflict, request AnswerRequest, mode string) []models.VerificationClaim {
 	for i := range claims {
 		claim := &claims[i]
 		best, score := bestEvidenceForClaim(claim.ClaimText, evidence)
@@ -385,10 +572,11 @@ func verifyClaims(claims []models.VerificationClaim, evidence []models.Verificat
 		if request.HumanApproved && claim.HighRisk {
 			claim.Status = StatusHumanApproved
 		}
-		if containsContradiction(claim.ClaimText, evidence) {
+		if conflict := conflictForClaim(claim.ClaimText, conflicts); conflict != nil {
 			claim.Status = StatusConflicting
 			claim.NeedsReview = true
-			claim.SupportExplanation = "supporting sources appear to disagree"
+			claim.SourceRefs = joinValues(conflict.EvidenceRefs)
+			claim.SupportExplanation = "separate source records disagree about " + conflict.Topic
 		}
 	}
 	return claims
@@ -573,18 +761,115 @@ func sourceLabels(evidence []models.VerificationEvidence) string {
 	return joinValues(values)
 }
 
-func containsContradiction(claim string, evidence []models.VerificationEvidence) bool {
-	lower := strings.ToLower(claim)
-	for _, item := range evidence {
-		snippet := strings.ToLower(item.Snippet)
-		if containsAny(lower, "approved", "yes", "enabled") && containsAny(snippet, "rejected", "no", "disabled") {
-			return true
+func detectEvidenceConflicts(evidence []models.VerificationEvidence) []EvidenceConflict {
+	conflicts := []EvidenceConflict{}
+	seen := map[string]bool{}
+	for left := 0; left < len(evidence); left++ {
+		if evidence[left].Rejected || strings.TrimSpace(evidence[left].Snippet) == "" {
+			continue
 		}
-		if containsAny(lower, "rejected", "no", "disabled") && containsAny(snippet, "approved", "yes", "enabled") {
-			return true
+		leftState := evidenceAssertionState(evidence[left].Snippet)
+		if leftState == "" {
+			continue
+		}
+		for right := left + 1; right < len(evidence); right++ {
+			if evidence[right].Rejected || strings.TrimSpace(evidence[right].Snippet) == "" {
+				continue
+			}
+			rightState := evidenceAssertionState(evidence[right].Snippet)
+			if rightState == "" || rightState == leftState || evidenceReference(evidence[left]) == evidenceReference(evidence[right]) {
+				continue
+			}
+			topicTokens := sharedTopicTokens(evidence[left].Snippet, evidence[right].Snippet)
+			if len(topicTokens) < 2 {
+				continue
+			}
+			refs := []string{evidenceReference(evidence[left]), evidenceReference(evidence[right])}
+			sort.Strings(refs)
+			key := strings.Join(topicTokens, " ") + "\x00" + strings.Join(refs, "\x00")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			conflicts = append(conflicts, EvidenceConflict{
+				Topic:        strings.Join(topicTokens, " "),
+				Status:       StatusNeedsReview,
+				Reason:       "separate source records carry opposite status assertions",
+				EvidenceRefs: refs,
+			})
 		}
 	}
-	return false
+	return conflicts
+}
+
+func conflictForClaim(claim string, conflicts []EvidenceConflict) *EvidenceConflict {
+	claimTokens := tokenSet(claim)
+	for index := range conflicts {
+		matches := 0
+		for _, token := range strings.Fields(conflicts[index].Topic) {
+			if claimTokens[token] {
+				matches++
+			}
+		}
+		if matches >= 2 {
+			return &conflicts[index]
+		}
+	}
+	return nil
+}
+
+func evidenceAssertionState(text string) string {
+	lower := strings.ToLower(text)
+	if containsAny(lower, "not approved", "not accepted", "not confirmed", "rejected", "denied", "disabled", "cancelled", "canceled", "revoked", "incomplete") {
+		return "negative"
+	}
+	if containsAny(lower, "approved", "accepted", "enabled", "confirmed", "completed", "scheduled", "granted") {
+		return "positive"
+	}
+	return ""
+}
+
+func evidenceReference(evidence models.VerificationEvidence) string {
+	return firstNonEmpty(evidence.SourceURI, evidence.SourceID, evidence.SourceLabel, evidence.SourceType)
+}
+
+func sharedTopicTokens(left, right string) []string {
+	leftTokens := topicTokenSet(left)
+	rightTokens := topicTokenSet(right)
+	shared := []string{}
+	for token := range leftTokens {
+		if rightTokens[token] {
+			shared = append(shared, token)
+		}
+	}
+	sort.Strings(shared)
+	if len(shared) > 5 {
+		return shared[:5]
+	}
+	return shared
+}
+
+func topicTokenSet(text string) map[string]bool {
+	ignored := map[string]bool{
+		"a": true, "an": true, "and": true, "are": true, "as": true, "at": true, "be": true, "by": true,
+		"for": true, "from": true, "has": true, "have": true, "in": true, "is": true, "it": true, "of": true,
+		"on": true, "or": true, "the": true, "to": true, "was": true, "were": true, "with": true,
+		"approved": true, "accepted": true, "enabled": true, "confirmed": true, "completed": true, "scheduled": true, "granted": true,
+		"rejected": true, "denied": true, "disabled": true, "cancelled": true, "canceled": true, "revoked": true, "incomplete": true, "not": true,
+	}
+	cleaned := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return ' '
+	}, strings.ToLower(text))
+	tokens := map[string]bool{}
+	for _, token := range strings.Fields(cleaned) {
+		if len(token) >= 3 && !ignored[token] {
+			tokens[token] = true
+		}
+	}
+	return tokens
 }
 
 func splitClaims(answer string) []string {

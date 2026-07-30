@@ -1,7 +1,7 @@
 // Package mcpbridge exposes a small, read-only context surface for a reviewed
 // local MCP server. It is deliberately separate from HAI's normal user API:
 // an MCP client gets a distinct, explicit token and cannot use this bridge to
-// create, approve, execute, retrieve sources, or alter memory.
+// create, approve, execute, retrieve source content, or alter memory.
 package mcpbridge
 
 import (
@@ -10,7 +10,9 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
+	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/workflow"
 	"github.com/google/uuid"
@@ -66,15 +68,59 @@ type ActionableWorkflow struct {
 	VerificationStatus string `json:"verificationStatus,omitempty"`
 }
 
+// GitHubRepositoryContext is intentionally a configuration-and-freshness
+// summary, not repository content. It gives a reviewed local MCP client enough
+// context to ask HAI's owner-facing screens the right question without
+// disclosing an issue, pull request, file, commit, source URI, or credential.
+type GitHubRepositoryContext struct {
+	Repository    string     `json:"repository"`
+	ProjectKey    string     `json:"projectKey,omitempty"`
+	Enabled       bool       `json:"enabled"`
+	Status        string     `json:"status"`
+	SyncFrequency string     `json:"syncFrequency"`
+	LastSyncedAt  *time.Time `json:"lastSyncedAt,omitempty"`
+}
+
+// ModelMaintenanceContext is a bounded freshness signal for a local MCP
+// client. It intentionally omits endpoint, digest, token, prompt, output,
+// cost, quota, and provider payload data. The policy router remains the only
+// authority that can route, refresh, or use a model.
+type ModelMaintenanceContext struct {
+	ProviderID      string     `json:"providerId"`
+	ProviderName    string     `json:"providerName"`
+	ModelID         string     `json:"modelId"`
+	ModelName       string     `json:"modelName"`
+	Status          string     `json:"status"`
+	BlocksExecution bool       `json:"blocksExecution"`
+	CheckedAt       time.Time  `json:"checkedAt"`
+	NextCheckDueAt  *time.Time `json:"nextCheckDueAt,omitempty"`
+}
+
 // DashboardProvider is deliberately limited to read-only workflow summaries.
 type DashboardProvider interface {
 	DashboardForOwner(ownerIdentity string) (*workflow.WorkflowDashboard, error)
 }
 
+// GitHubSourceProvider intentionally exposes only the existing source
+// registry. The bridge maps its records into GitHubRepositoryContext itself;
+// it does not receive extraction, raw-item, OAuth-token, sync-job, or search
+// methods.
+type GitHubSourceProvider interface {
+	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
+}
+
+// ModelMaintenanceProvider exposes persisted aggregate freshness evidence,
+// rather than provider configuration or raw maintenance responses.
+type ModelMaintenanceProvider interface {
+	ModelMaintenanceHistory(limit int) ([]llm.ModelMaintenanceResult, error)
+}
+
 type Service struct {
-	config Config
-	flows  DashboardProvider
-	err    string
+	config        Config
+	flows         DashboardProvider
+	githubSources GitHubSourceProvider
+	maintenance   ModelMaintenanceProvider
+	err           string
 }
 
 func DefaultConfig() Config {
@@ -85,8 +131,11 @@ func DefaultConfig() Config {
 	}
 }
 
-func NewService(config Config, flows DashboardProvider) *Service {
+func NewService(config Config, flows DashboardProvider, githubSources ...GitHubSourceProvider) *Service {
 	s := &Service{config: config, flows: flows}
+	if len(githubSources) > 0 {
+		s.githubSources = githubSources[0]
+	}
 	if !config.Enabled {
 		return s
 	}
@@ -104,7 +153,17 @@ func NewService(config Config, flows DashboardProvider) *Service {
 	return s
 }
 
-func NewServiceFromEnv(flows DashboardProvider) *Service { return NewService(DefaultConfig(), flows) }
+func NewServiceFromEnv(flows DashboardProvider, githubSources ...GitHubSourceProvider) *Service {
+	return NewService(DefaultConfig(), flows, githubSources...)
+}
+
+// WithModelMaintenance adds the existing HAI-owned history reader to the
+// bridge. It does not enable the bridge, grant a model operation, or expose
+// provider configuration.
+func (s *Service) WithModelMaintenance(provider ModelMaintenanceProvider) *Service {
+	s.maintenance = provider
+	return s
+}
 
 func (s *Service) Status() Status {
 	return Status{
@@ -115,14 +174,16 @@ func (s *Service) Status() Status {
 		Capabilities: []string{
 			"authenticated aggregate workflow overview",
 			"authenticated bounded actionable-work summary",
+			"authenticated bounded GitHub repository sync context",
+			"authenticated bounded daily model-maintenance readiness",
 			"separate server-to-server and MCP-client tokens",
 		},
 		Restrictions: []string{
-			"no task creation, workflow transition, approval, execution, source retrieval, memory write, or policy change",
-			"no raw intake, source URI, evidence, audit event, credential, or secret exposure",
+			"no task creation, workflow transition, approval, execution, source-content retrieval, memory write, policy change, model refresh, model route, or model generation",
+			"no raw intake, source URI, issue, pull request, commit, file, evidence, audit event, credential, secret, provider endpoint, model digest, prompt, completion, token, quota, or cost exposure",
 			"disabled unless an owner, a 32-character bridge token, and a separately configured MCP client token are supplied",
 		},
-		Scope: "A local FastMCP server may inspect one configured owner's bounded operational summary. HAI remains the only authority for planning, approval, execution, sources, memory, and audit.",
+		Scope: "A local FastMCP server may inspect one configured owner's bounded operational summary, GitHub sync freshness, and persisted model-maintenance readiness. HAI remains the only authority for model maintenance, routing, planning, approval, execution, source content, memory, and audit.",
 	}
 }
 
@@ -200,6 +261,111 @@ func (s *Service) Actionable(limit int) ([]ActionableWorkflow, error) {
 	return result, nil
 }
 
+// GitHubRepositories returns a small owner-scoped inventory of HAI's existing
+// GitHub source connections. It deliberately returns only repository slugs and
+// sync freshness; repository data stays behind HAI's normal source APIs.
+func (s *Service) GitHubRepositories(limit int) ([]GitHubRepositoryContext, error) {
+	if !s.configured() || s.githubSources == nil {
+		return nil, ErrUnavailable
+	}
+	if limit < 1 {
+		limit = 5
+	}
+	if limit > 8 {
+		limit = 8
+	}
+	sources, err := s.githubSources.Sources(true)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]GitHubRepositoryContext, 0, limit)
+	for _, source := range sources {
+		if strings.TrimSpace(source.OwnerIdentity) != s.config.OwnerID || !strings.EqualFold(strings.TrimSpace(source.ConnectorKey), "github") {
+			continue
+		}
+		repository, ok := githubRepositorySlug(source.SyncTarget)
+		if !ok {
+			continue
+		}
+		result = append(result, GitHubRepositoryContext{
+			Repository: repository, ProjectKey: bounded(source.DefaultProjectKey, 120), Enabled: source.Enabled,
+			Status: bounded(source.Status, 80), SyncFrequency: bounded(source.SyncFrequency, 80), LastSyncedAt: source.LastSyncedAt,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		left, right := result[i].LastSyncedAt, result[j].LastSyncedAt
+		if left == nil && right != nil {
+			return false
+		}
+		if left != nil && right == nil {
+			return true
+		}
+		if left != nil && right != nil && !left.Equal(*right) {
+			return left.After(*right)
+		}
+		return result[i].Repository < result[j].Repository
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+// ModelMaintenanceReadiness returns at most eight latest per-model freshness
+// records. It is informational only: an MCP client cannot use it to override
+// the policy router, run a refresh, or treat a record as model quality proof.
+func (s *Service) ModelMaintenanceReadiness(limit int) ([]ModelMaintenanceContext, error) {
+	if !s.configured() || s.maintenance == nil {
+		return nil, ErrUnavailable
+	}
+	if limit < 1 {
+		limit = 5
+	}
+	if limit > 8 {
+		limit = 8
+	}
+	records, err := s.maintenance.ModelMaintenanceHistory(64)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[string]llm.ModelMaintenanceResult{}
+	for _, record := range records {
+		key := record.ProviderID + "\x00" + record.ModelID
+		current, ok := latest[key]
+		if !ok || record.CheckedAt.After(current.CheckedAt) {
+			latest[key] = record
+		}
+	}
+	result := make([]ModelMaintenanceContext, 0, len(latest))
+	for _, record := range latest {
+		result = append(result, ModelMaintenanceContext{
+			ProviderID: bounded(record.ProviderID, 80), ProviderName: bounded(record.ProviderName, 120),
+			ModelID: bounded(record.ModelID, 160), ModelName: bounded(record.ModelName, 160),
+			Status: bounded(record.Status, 80), BlocksExecution: record.BlocksExecution,
+			CheckedAt: record.CheckedAt, NextCheckDueAt: record.NextCheckDueAt,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].BlocksExecution != result[j].BlocksExecution {
+			return result[i].BlocksExecution
+		}
+		if result[i].NextCheckDueAt == nil && result[j].NextCheckDueAt != nil {
+			return false
+		}
+		if result[i].NextCheckDueAt != nil && result[j].NextCheckDueAt == nil {
+			return true
+		}
+		if result[i].NextCheckDueAt != nil && result[j].NextCheckDueAt != nil && !result[i].NextCheckDueAt.Equal(*result[j].NextCheckDueAt) {
+			return result[i].NextCheckDueAt.Before(*result[j].NextCheckDueAt)
+		}
+		return result[i].ModelID < result[j].ModelID
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
 func (s *Service) configured() bool { return s.config.Enabled && s.err == "" && s.flows != nil }
 
 func validOwner(value string) bool {
@@ -216,4 +382,27 @@ func bounded(value string, max int) string {
 		return value[:max]
 	}
 	return strings.TrimSpace(value[:max-3]) + "..."
+}
+
+func githubRepositorySlug(value string) (string, bool) {
+	value = strings.Trim(strings.TrimSpace(value), "/")
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 || !validGitHubSlugPart(parts[0]) || !validGitHubSlugPart(parts[1]) {
+		return "", false
+	}
+	return parts[0] + "/" + parts[1], true
+}
+
+func validGitHubSlugPart(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 100 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }

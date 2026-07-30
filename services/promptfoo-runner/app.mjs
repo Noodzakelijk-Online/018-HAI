@@ -174,8 +174,8 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   createServer(async (request, serverResponse) => {
     if (request.method === 'GET' && request.url === '/healthz') {
       try {
-        const { modelId } = configuration();
-        response(serverResponse, 200, { status: 'ok', engine: ENGINE, configured: true, modelId, suite: SUITE });
+        const { modelId, baseUrl } = configuration();
+        response(serverResponse, 200, { status: 'ok', engine: ENGINE, configured: true, modelId, modelEndpoint: baseUrl, suite: SUITE });
       } catch {
         response(serverResponse, 200, { status: 'ok', engine: ENGINE, configured: false, suite: SUITE });
       }

@@ -109,6 +109,18 @@ describe('GroundedAnswersComponent RAGFlow evidence boundary', () => {
     }))
   })
 
+  it('can explicitly request bounded public-source previews without attaching evidence', () => {
+    const { component, verificationService } = createComponent()
+    component.answerForm.patchValue({ includeResearchCandidates: true, evidenceSnippet: '' })
+
+    component.answer()
+
+    expect(verificationService.answer).toHaveBeenCalledWith(jasmine.objectContaining({
+      includeResearchCandidates: true,
+      externalEvidence: [],
+    }))
+  })
+
   it('reads AnythingLLM configuration without retrieving evidence', () => {
     const { component, anythingLLMService } = createComponent()
 

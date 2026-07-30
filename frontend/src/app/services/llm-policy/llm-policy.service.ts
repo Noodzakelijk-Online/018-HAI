@@ -4,6 +4,8 @@ import { Observable } from 'rxjs';
 import { ILLMPolicyService } from '../llm-policy.service.interface';
 import {
   ILLMPolicy,
+  ILLMModelMaintenanceResult,
+  ILLMModelMaintenanceRun,
   ILLMProviderProbe,
   ILLMRouteDecision,
   ILLMRouteRequest,
@@ -29,6 +31,16 @@ export class LLMPolicyService implements ILLMPolicyService {
     return this.http.get<ILLMProviderProbe[]>(`${this.apiUrl}/probes/history`, {
       params: { limit: String(limit) },
     });
+  }
+
+  getModelMaintenanceHistory(limit: number = 30): Observable<ILLMModelMaintenanceResult[]> {
+    return this.http.get<ILLMModelMaintenanceResult[]>(`${this.apiUrl}/model-maintenance`, {
+      params: { limit: String(limit) },
+    });
+  }
+
+  runDueModelMaintenance(): Observable<ILLMModelMaintenanceRun> {
+    return this.http.post<ILLMModelMaintenanceRun>(`${this.apiUrl}/model-maintenance/run`, {});
   }
 
   routeTask(request: ILLMRouteRequest): Observable<ILLMRouteDecision> {

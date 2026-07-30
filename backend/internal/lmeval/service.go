@@ -5,6 +5,7 @@
 package lmeval
 
 import (
+	"automation-hub-backend/internal/runnermaintenance"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -71,6 +72,7 @@ type service struct {
 	configErr string
 	client    *http.Client
 	now       func() time.Time
+	maintenanceGate runnermaintenance.Gate
 }
 
 func DefaultService() Service {
@@ -99,6 +101,15 @@ func NewService(enabled bool, rawBaseURL string, timeout time.Duration, client *
 		s.baseURL, s.configErr = parseLocalBaseURL(rawBaseURL)
 	}
 	return s
+}
+
+// WithModelMaintenance binds the fixed evaluation runner to HAI's canonical
+// local model policy before it may issue any synthetic evaluation request.
+func WithModelMaintenance(delegate Service, gate runnermaintenance.Gate) Service {
+	if configured, ok := delegate.(*service); ok {
+		configured.maintenanceGate = gate
+	}
+	return delegate
 }
 
 func (s *service) Status() Status {
@@ -153,6 +164,9 @@ func (s *service) Probe(ctx context.Context) (*ProbeResult, error) {
 func (s *service) Run(ctx context.Context) (*Result, error) {
 	if !s.configured() {
 		return nil, ErrNotConfigured
+	}
+	if err := runnermaintenance.EnsureConfiguredLocalModel(ctx, s.client, s.baseURL, "HAI-LM-Eval/1.0", "LM Evaluation Harness", s.maintenanceGate); err != nil {
+		return nil, err
 	}
 	endpoint := s.endpoint("/v1/run")
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader([]byte(`{}`)))

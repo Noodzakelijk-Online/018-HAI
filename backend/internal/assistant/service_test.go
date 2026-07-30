@@ -139,6 +139,25 @@ func TestCommandPlanOnlyForOrdinaryRequest(t *testing.T) {
 	}
 }
 
+func TestCommandPassesExplicitRAGFlowPlanningOptInWithoutAuthorizingExecution(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	service := NewService(tasks, nil)
+
+	_, err := service.Command(CommandRequest{
+		Message:                  "Plan a local research summary.",
+		IncludeRAGFlowCandidates: true,
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if tasks.planCalls != 1 || tasks.runCalls != 0 {
+		t.Fatalf("task calls plan=%d run=%d, want plan only", tasks.planCalls, tasks.runCalls)
+	}
+	if !tasks.lastRequest.IncludeRAGFlowCandidates || tasks.lastRequest.ExecuteAllowed {
+		t.Fatalf("task request = %#v", tasks.lastRequest)
+	}
+}
+
 func TestCommandPlanningSuggestsPursuitsWithoutCreatingWorkflowWork(t *testing.T) {
 	tasks := &fakeTaskEngine{}
 	pursuitID := uuid.New()

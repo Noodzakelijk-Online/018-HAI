@@ -209,6 +209,52 @@ func TestReindexSemanticDoesNothingWhenLocalEmbeddingIsDisabled(t *testing.T) {
 	}
 }
 
+func TestMemoryHealthIsOwnerScopedReadOnlyAndFindsReviewCandidates(t *testing.T) {
+	repo := newFakeRepository()
+	service := NewService(repo)
+	// Insert directly because this test checks the health report's read-only
+	// duplicate preview. Normal creation intentionally consolidates this pair.
+	first, err := repo.Create(&models.ContextMemory{OwnerIdentity: "robert", ProjectKey: "vivare", Kind: "preference", Confidence: 0.9, Content: "Use formal Dutch legal tone for Vivare correspondence and attach evidence."})
+	if err != nil {
+		t.Fatalf("create first memory: %v", err)
+	}
+	second, err := repo.Create(&models.ContextMemory{OwnerIdentity: "robert", ProjectKey: "vivare", Kind: "preference", Confidence: 0.8, Content: "Use formal Dutch legal tone for Vivare correspondence and attach source evidence."})
+	if err != nil {
+		t.Fatalf("create second memory: %v", err)
+	}
+	if _, err := repo.Create(&models.ContextMemory{OwnerIdentity: "other-owner", ProjectKey: "vivare", Kind: "preference", Content: "Other owner private memory."}); err != nil {
+		t.Fatalf("create other owner memory: %v", err)
+	}
+	stale := time.Now().UTC().Add(-91 * 24 * time.Hour)
+	first.CreatedAt, first.UpdatedAt, first.LastUsedAt = stale, stale, nil
+	second.CreatedAt, second.UpdatedAt = stale, stale
+	repo.memories[first.ID] = *first
+	repo.memories[second.ID] = *second
+
+	health, ok := service.(MemoryHealthService)
+	if !ok {
+		t.Fatal("native memory service does not implement MemoryHealthService")
+	}
+	report, err := health.MemoryHealthForOwner("robert", "vivare")
+	if err != nil {
+		t.Fatalf("MemoryHealthForOwner: %v", err)
+	}
+	if report.Active != 2 || report.NeedsSourceReview != 2 || report.HighConfidenceUngrounded != 2 || report.Stale != 2 || report.Dormant != 2 {
+		t.Fatalf("unexpected health counts: %#v", report)
+	}
+	if report.PossibleDuplicatePairs != 1 || len(report.ConsolidationCandidates) != 1 {
+		t.Fatalf("expected one manual consolidation candidate: %#v", report)
+	}
+	candidate := report.ConsolidationCandidates[0]
+	correctPair := (candidate.FirstID == first.ID && candidate.SecondID == second.ID) || (candidate.FirstID == second.ID && candidate.SecondID == first.ID)
+	if !correctPair || candidate.Similarity < 0.78 {
+		t.Fatalf("unexpected candidate: %#v", candidate)
+	}
+	if repo.memories[first.ID].Archived || repo.memories[second.ID].Archived {
+		t.Fatal("health review mutated a memory")
+	}
+}
+
 type semanticMemoryStub struct {
 	matches          []semantic.MemoryMatch
 	requests         []semantic.MemorySearchRequest

@@ -437,6 +437,40 @@
               <nz-empty *ngIf="!searchResult.usedContext.length" nzNotFoundContent="No relevant extracted context."></nz-empty>
             </div>
           </div>
+
+          <div *ngSwitchCase="'graph'" class="operation">
+            <div class="panel-heading compact">
+              <div>
+                <h2>Source connections</h2>
+                <p>Inspect candidate entities and dates from your connected sources. Nothing here is a verified fact or an action trigger.</p>
+              </div>
+              <button type="button" nz-button nzType="default" (click)="loadKnowledgeGraph()" [nzLoading]="graphLoading" title="Rebuild the read-only candidate view from current source extractions">
+                <i nz-icon nzType="reload" nzTheme="outline"></i>
+                Refresh
+              </button>
+            </div>
+            <div class="form-footer">
+              <label nz-checkbox [(ngModel)]="graphIncludeSensitive" (ngModelChange)="loadKnowledgeGraph()">Include sensitive sources</label>
+              <span>{{ knowledgeGraph?.extractionCount || 0 }} source records inspected</span>
+            </div>
+            <div *ngIf="knowledgeGraph as graph" class="search-results">
+              <article *ngFor="let warning of graph.warnings" class="status-note">
+                <span>{{ warning }}</span>
+              </article>
+              <article *ngFor="let entity of graph.entities | slice:0:8" [title]="knowledgeGraphSourceLabel(entity.sourceRefs)">
+                <strong>{{ entity.name }}</strong>
+                <span>{{ entity.mentionCount }} mention{{ entity.mentionCount === 1 ? '' : 's' }} - {{ entity.kind.replace('_candidate', '') }}</span>
+                <small>{{ knowledgeGraphSourceLabel(entity.sourceRefs) }}</small>
+              </article>
+              <nz-empty *ngIf="!graph.entities.length" nzNotFoundContent="No entity candidates in the current source scope."></nz-empty>
+              <details class="advanced-section" *ngIf="graph.timeline.length || graph.relationships.length">
+                <summary>Timeline and co-occurrence details</summary>
+                <p *ngFor="let event of graph.timeline | slice:0:8"><strong>{{ event.parsedAt ? (event.parsedAt | date: 'mediumDate') : event.dateHint }}</strong> - candidate date from {{ knowledgeGraphSourceLabel(event.sourceRefs) }}</p>
+                <p *ngFor="let link of graph.relationships | slice:0:8">{{ link.relationship.replaceAll('_', ' ') }} - {{ link.supportCount }} source record{{ link.supportCount === 1 ? '' : 's' }}</p>
+              </details>
+            </div>
+            <nz-empty *ngIf="!knowledgeGraph && !graphLoading" nzNotFoundContent="Open the candidate view to inspect source-linked entities and dates."></nz-empty>
+          </div>
         </ng-container>
       </section>
 
@@ -477,7 +511,7 @@
               </div>
             </dl>
             <div class="inspector-actions">
-              <button type="button" nz-button nzType="default" (click)="syncSource(source)" [disabled]="!syncButtonVisible(source)" [nzLoading]="syncing" [title]="source.connectorKey === 'whisper-audio' ? 'Transcribe the source’s explicit local audio folder. HAI never records a microphone or accepts uploaded audio.' : 'Run an incremental sync for this source'">{{ source.connectorKey === 'whisper-audio' ? 'Transcribe' : 'Sync' }}</button>
+              <button type="button" nz-button nzType="default" (click)="syncSource(source)" [disabled]="!syncButtonVisible(source)" [nzLoading]="syncing" [title]="sourceActionTitle(source)">{{ sourceActionLabel(source) }}</button>
               <button type="button" nz-button nzType="default" (click)="reindex(source)">Re-index</button>
               <button type="button" *ngIf="source.enabled" nz-button nzType="default" (click)="pause(source)">Pause</button>
               <button type="button" *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzType="default" (click)="resume(source)">Resume</button>

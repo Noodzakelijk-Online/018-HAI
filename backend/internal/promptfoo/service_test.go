@@ -8,6 +8,9 @@ import (
 	"testing"
 )
 
+type maintenanceGateStub struct { endpoint, modelID string; err error }
+func (s *maintenanceGateStub) EnsureConfiguredLocalModel(endpointURL, modelID string) error { s.endpoint, s.modelID = endpointURL, modelID; return s.err }
+
 func TestPromptfooBridgeUsesOnlyConfiguredFixedSuite(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -15,7 +18,7 @@ func TestPromptfooBridgeUsesOnlyConfiguredFixedSuite(t *testing.T) {
 			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "" || r.Header.Get("User-Agent") != "HAI-Promptfoo/1.0" {
 				t.Fatalf("unexpected health request")
 			}
-			_, _ = w.Write([]byte(`{"status":"ok","engine":"promptfoo 0.121.19","configured":true,"suite":"hai_safety_regression_v1","modelId":"qwen2.5:7b"}`))
+			_, _ = w.Write([]byte(`{"status":"ok","engine":"promptfoo 0.121.19","configured":true,"suite":"hai_safety_regression_v1","modelId":"qwen2.5:7b","modelEndpoint":"http://127.0.0.1:11434/v1"}`))
 		case "/v1/run":
 			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "" || r.Header.Get("User-Agent") != "HAI-Promptfoo/1.0" {
 				t.Fatalf("unexpected evaluation request")
@@ -26,7 +29,8 @@ func TestPromptfooBridgeUsesOnlyConfiguredFixedSuite(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	service := NewService(true, server.URL, 0, nil)
+	gate := &maintenanceGateStub{}
+	service := WithModelMaintenance(NewService(true, server.URL, 0, nil), gate)
 	if probe, err := service.Probe(context.Background()); err != nil || !probe.Reachable {
 		t.Fatalf("unexpected probe: %#v %v", probe, err)
 	}
@@ -34,6 +38,7 @@ func TestPromptfooBridgeUsesOnlyConfiguredFixedSuite(t *testing.T) {
 	if err != nil || result.CaseCount != 6 || result.PassedCount != 5 {
 		t.Fatalf("unexpected evaluation result: %#v %v", result, err)
 	}
+	if gate.endpoint != "http://127.0.0.1:11434/v1" || gate.modelID != "qwen2.5:7b" { t.Fatalf("maintenance gate was not called: %#v", gate) }
 }
 
 func TestPromptfooProbeRejectsAnUnconfiguredRunner(t *testing.T) {

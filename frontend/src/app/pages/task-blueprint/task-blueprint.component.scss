@@ -64,6 +64,36 @@
   border-color: var(--border);
 }
 
+.candidate-context-toggle {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: pointer;
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.candidate-context-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--blue);
+}
+
+.candidate-context-toggle strong,
+.candidate-context-toggle small {
+  display: block;
+}
+
+.candidate-context-toggle small {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
 button,
 input,
 textarea {

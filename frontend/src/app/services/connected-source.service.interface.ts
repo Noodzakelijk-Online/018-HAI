@@ -10,6 +10,7 @@ import {
   ISourceSearchResult,
   ISourceSyncJob,
   ISourceSyncResult,
+  IKnowledgeGraphResult,
   IScheduledSyncRun,
 } from '../models/connected-source.model.interface';
 
@@ -21,12 +22,14 @@ export interface IConnectedSourceService {
   startGoogleOAuth(sourceId: string): Observable<{ authorizeUrl: string }>;
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult>;
   transcribe(sourceId: string): Observable<ISourceSyncResult>;
+  extractDocuments(sourceId: string): Observable<ISourceSyncResult>;
   runDueScheduledSyncs(): Observable<IScheduledSyncRun>;
   reindex(sourceId: string): Observable<ISourceSyncResult>;
   pause(sourceId: string): Observable<IConnectedSource>;
   resume(sourceId: string): Observable<IConnectedSource>;
   revoke(sourceId: string): Observable<IConnectedSource>;
   search(request: ISourceSearchRequest): Observable<ISourceSearchResult>;
+  knowledgeGraph(projectKey: string, includeArchived: boolean, includeSensitive: boolean): Observable<IKnowledgeGraphResult>;
   extractions(projectKey: string, includeArchived: boolean): Observable<ISourceExtraction[]>;
   updateExtraction(id: string, extraction: Partial<ISourceExtraction>): Observable<ISourceExtraction>;
   archiveExtraction(id: string): Observable<ISourceExtraction>;

@@ -78,10 +78,15 @@ export class RuntimeLabComponent implements OnInit {
 
   private notifyMCPPreflight(server: IMCPPreflightServer, result: IMCPPreflightResult): void {
     if (result.status === 'ready') {
-      this.notification.success('MCP server ready', `${server.catalogName || server.id}: ${result.toolCount} declared tool(s) inspected. No tool was called.`)
+      const verification = result.readOnlyVerified ? ' Declared tools matched HAI\'s inspection-only context contract.' : ''
+      this.notification.success('MCP server ready', `${server.catalogName || server.id}: ${result.toolCount} declared tool(s) inspected. No tool was called.${verification}`)
       return
     }
     this.notification.warning('MCP server not ready', `${server.catalogName || server.id}: ${result.detail}`)
+  }
+
+  isReadOnlyContractServer(server: IMCPPreflightServer): boolean {
+    return server.catalogId === 'github-mcp-server' || server.catalogId === 'playwright-mcp'
   }
 
   probe(r: IRuntimeSummary): void {

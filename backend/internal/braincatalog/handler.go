@@ -2,6 +2,7 @@ package braincatalog
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,7 @@ type Handler struct {
 	reviewer           UpstreamReviewer
 	collectionReviewer OSSInsightCollectionReviewer
 	repositoryScout    OSSInsightRepositoryScout
+	maintenance        *CatalogMaintenanceService
 }
 
 func NewHandler() *Handler {
@@ -38,6 +40,13 @@ func NewHandlerWithReviewers(reviewer UpstreamReviewer, collectionReviewer OSSIn
 
 func NewHandlerWithReviewersAndScout(reviewer UpstreamReviewer, collectionReviewer OSSInsightCollectionReviewer, repositoryScout OSSInsightRepositoryScout) *Handler {
 	return &Handler{reviewer: reviewer, collectionReviewer: collectionReviewer, repositoryScout: repositoryScout}
+}
+
+// WithMaintenance adds durable, bounded catalog metadata maintenance without
+// altering the handler's read-only catalog or its activation boundaries.
+func (h *Handler) WithMaintenance(maintenance *CatalogMaintenanceService) *Handler {
+	h.maintenance = maintenance
+	return h
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -87,6 +96,110 @@ func (h *Handler) Revalidate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, review)
+}
+
+// RevalidationHistory returns redacted evidence from bounded scheduled or
+// owner-triggered upstream checks. It never returns archives or raw responses.
+func (h *Handler) RevalidationHistory(c *gin.Context) {
+	if h.maintenance == nil || h.maintenance.history == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog revalidation history is unavailable"})
+		return
+	}
+	limit := 30
+	if parsed, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "30"))); err == nil {
+		limit = parsed
+	}
+	records, err := h.maintenance.history.FindRecentUpstreamReviews(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load catalog revalidation history"})
+		return
+	}
+	reviews := make([]UpstreamReview, 0, len(records))
+	for _, record := range records {
+		reviews = append(reviews, upstreamReviewFromRecord(record))
+	}
+	c.JSON(http.StatusOK, reviews)
+}
+
+// CollectionRevalidationHistory returns bounded public OSS Insight index
+// evidence. It never contains repository rows, source archives, credentials,
+// or an activation decision.
+func (h *Handler) CollectionRevalidationHistory(c *gin.Context) {
+	if h.maintenance == nil || h.maintenance.collectionHistory == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog collection revalidation history is unavailable"})
+		return
+	}
+	limit := 30
+	if parsed, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "30"))); err == nil {
+		limit = parsed
+	}
+	records, err := h.maintenance.collectionHistory.FindRecentCollectionReviews(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load catalog collection revalidation history"})
+		return
+	}
+	reviews := make([]OSSInsightCollectionReview, 0, len(records))
+	for _, record := range records {
+		reviews = append(reviews, collectionReviewFromRecord(record))
+	}
+	c.JSON(http.StatusOK, reviews)
+}
+
+// RepositoryDiscoveryRevalidationHistory returns the compact daily gap-review
+// evidence. It intentionally exposes only counts and capped repository names,
+// never an upstream response, source archive, credential, or activation state.
+func (h *Handler) RepositoryDiscoveryRevalidationHistory(c *gin.Context) {
+	if h.maintenance == nil || h.maintenance.repositoryDiscoveryHistory == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog repository discovery revalidation history is unavailable"})
+		return
+	}
+	limit := 30
+	if parsed, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "30"))); err == nil {
+		limit = parsed
+	}
+	records, err := h.maintenance.repositoryDiscoveryHistory.FindRecentRepositoryDiscoveryReviews(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load catalog repository discovery revalidation history"})
+		return
+	}
+	reviews := make([]OSSInsightRepositoryDiscoveryMaintenanceReview, 0, len(records))
+	for _, record := range records {
+		reviews = append(reviews, repositoryDiscoveryReviewFromRecord(record))
+	}
+	c.JSON(http.StatusOK, reviews)
+}
+
+// RunDueRevalidations performs the same rate-bounded, fixed-entry sweep used
+// by the scheduler. It cannot install, activate, configure, or reclassify a
+// catalog entry.
+func (h *Handler) RunDueRevalidations(c *gin.Context) {
+	if h.maintenance == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog revalidation is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, h.maintenance.RunDueRevalidations())
+}
+
+// RunDueCollectionRevalidation runs the same bounded, daily source-index
+// comparison used by the scheduler. It cannot enumerate repositories, mutate
+// catalog entries, install a project, or enable a runtime.
+func (h *Handler) RunDueCollectionRevalidation(c *gin.Context) {
+	if h.maintenance == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog collection revalidation is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, h.maintenance.RunDueCollectionRevalidation())
+}
+
+// RunDueRepositoryDiscoveryRevalidation runs the opted-in, daily read-only
+// repository gap review. It cannot mutate the catalog, install a dependency,
+// create a connector, or enable an execution runtime.
+func (h *Handler) RunDueRepositoryDiscoveryRevalidation(c *gin.Context) {
+	if h.maintenance == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog repository discovery revalidation is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, h.maintenance.RunDueRepositoryDiscoveryRevalidation())
 }
 
 // RevalidateCollections compares HAI's fixed 138-category source snapshot to

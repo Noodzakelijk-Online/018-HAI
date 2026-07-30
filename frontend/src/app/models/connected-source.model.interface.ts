@@ -143,6 +143,50 @@ export interface ISourceSearchResult {
   explanation: string;
 }
 
+export interface IKnowledgeGraphSourceRef {
+  extractionId: string;
+  sourceUri?: string;
+  sourceLabel?: string;
+}
+
+export interface IKnowledgeGraphEntity {
+  id: string;
+  name: string;
+  kind: string;
+  status: 'candidate';
+  mentionCount: number;
+  sourceRefs: IKnowledgeGraphSourceRef[];
+}
+
+export interface IKnowledgeGraphRelationship {
+  id: string;
+  fromEntityId: string;
+  toEntityId: string;
+  relationship: 'co_occurs_in_source';
+  status: 'candidate';
+  supportCount: number;
+  sourceRefs: IKnowledgeGraphSourceRef[];
+}
+
+export interface IKnowledgeGraphTimelineEvent {
+  id: string;
+  dateHint: string;
+  parsedAt?: string;
+  status: 'candidate';
+  sourceRefs: IKnowledgeGraphSourceRef[];
+}
+
+export interface IKnowledgeGraphResult {
+  projectKey?: string;
+  status: 'candidate_only';
+  extractionCount: number;
+  sensitiveExcluded: number;
+  entities: IKnowledgeGraphEntity[];
+  relationships: IKnowledgeGraphRelationship[];
+  timeline: IKnowledgeGraphTimelineEvent[];
+  warnings: string[];
+}
+
 export interface ISourceAuditLog {
   id: string;
   sourceId?: string;

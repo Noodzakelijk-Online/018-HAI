@@ -84,9 +84,9 @@ No configured provider, runtime, dashboard state, or generated answer upgrades i
 | Local platform | Compose configuration and the development-workspace stack have been exercised. A fresh Windows 11 clone-and-sign-in acceptance run is still required. |
 | Core operating flow | Pursuits, workflows, task attempts, approvals, verification, audit, compact memory, source extraction, and ambient proposals are implemented and persisted. |
 | Intake safety | New source, assistant, and ambient input is matched to an active pursuit or becomes a non-executable candidate. An approval-capable user must accept a candidate before its first governed workflow is created. |
-| External accounts | Local/export ingestion and read-only GitHub sync are available. Live Gmail, Drive, Calendar, Trello, WhatsApp, browser, and similar account connectors are not implemented. |
+| External accounts | Local/export ingestion and read-only GitHub sync are available. GitHub sync imports repository metadata, issues, pull requests, branches, commits, and Actions runs as source-linked records. Live Gmail, Drive, Calendar, Trello, WhatsApp, browser, and similar account connectors are not implemented. |
 | Models and runtimes | Local/free-first routing and guarded adapter surfaces exist. No provider or runtime is live-proven until its scoped probe, approved task, audit, and verification evidence exist. |
-| External capability catalog | Candidate capabilities from Awesome AI Agents and OSS Insight Collections are curated into task planning and a read-only API. Integrated opt-in capabilities include local model inference/gateway, Postgres semantic retrieval, durable follow-up proposals, metrics, deterministic planning, and bounded RAGFlow candidate-evidence retrieval; browser/WASM verification and broader agent profiles remain candidates. | A catalog entry is not an installed dependency or executable runtime. See [the catalog decision record](docs/agent-tool-catalog.md), [OSS Insight curation](docs/ossinsight-brain-curation.md), and the [138-collection screening ledger](docs/ossinsight-screening-ledger.md). |
+| External capability catalog | Candidate capabilities from Awesome AI Agents and OSS Insight Collections are curated into task planning and a read-only API. Integrated opt-in capabilities include local model inference/gateway, Postgres semantic retrieval, durable follow-up proposals, metrics, deterministic planning, bounded RAGFlow candidate-evidence retrieval, and a source-linked candidate graph/timeline view; browser/WASM verification and broader agent profiles remain candidates. | A catalog entry is not an installed dependency or executable runtime. See [the catalog decision record](docs/agent-tool-catalog.md), [OSS Insight curation](docs/ossinsight-brain-curation.md), and the [138-collection screening ledger](docs/ossinsight-screening-ledger.md). |
 | Production readiness | Not claimed. Clean-machine deployment, signed-in browser coverage, two-real-account isolation, and bounded real-provider/runtime exercises remain release gates. |
 
 ### Verification Snapshot
@@ -302,12 +302,48 @@ and ng-zorro-antd. The current data model relies on Gorm `AutoMigrate` and
 ```powershell
 Copy-Item .env.example .env.local
 # Edit .env.local: set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY.
-docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
-docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
-docker compose --env-file .env.local -f docker-compose.local.yml ps
+docker compose --env-file .env.local config --quiet
+docker compose --env-file .env.local up --build -d
+docker compose --env-file .env.local ps
 ```
 
 Open [http://localhost](http://localhost).
+
+### One HAI stack, one entrypoint
+
+`docker-compose.yml` is the canonical entrypoint and includes the checked-in
+local topology. The explicit `-f docker-compose.local.yml` commands above are
+equivalent, but a normal `docker compose --env-file .env.local up --build -d`
+now starts the same stack rather than a retired prebuilt-image deployment.
+
+Docker Desktop groups the local deployment under one Compose project named
+`018-hai`. The rows inside that group are supporting processes for the single
+HAI application: the Angular dashboard, Go API, local identity service,
+gateway, and state services. They are not separate HAI installations, and the
+only browser entrypoint is the `018-hai-gateway` container at
+`http://localhost`.
+
+The normal command above intentionally excludes the two legacy compatibility
+services (`generic-auto` and `nginxconfigmanager`). They are no longer needed
+for the dashboard or its API. Start them only when maintaining a legacy route
+or Kafka-driven route configuration:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml --profile legacy-compat up -d
+```
+
+To remove already-running copies of those legacy services after upgrading this
+file, run:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml stop generic-auto nginxconfigmanager
+docker compose --env-file .env.local -f docker-compose.local.yml rm -f generic-auto nginxconfigmanager
+```
+
+Keep the identity, API, gateway, PostgreSQL, Redis, Kafka, and frontend
+processes separate. Combining them into one container would make health checks,
+data persistence, authentication boundaries, and safe upgrades less reliable;
+it would not create a second user-facing HAI instance.
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep
 `GATEWAY_HOST_BIND=127.0.0.1`. The login screen then shows **Open local
@@ -374,9 +410,8 @@ Expected behavior:
 - Protected engine routes such as `/api/v1/llm/policy` return `401` without a
   signed session, not anonymous application data.
 
-If port 80 is already in use, change the nginx port mapping in
-`docker-compose.local.yml` from `\"80:80\"` to, for example, `\"8088:80\"`, then
-open `http://localhost:8088`.
+If port 80 is already in use, set `GATEWAY_HOST_PORT=8088` in `.env.local`,
+recreate the gateway, then open `http://localhost:8088`.
 
 For the target-machine acceptance sequence, use
 [fresh-clone dry run](docs/fresh-clone-dryrun.md). For diagnosis, use
@@ -401,7 +436,7 @@ and `.ics` within the same allowlisted root.
 | `/control-center` | Primary operational overview and bounded maintenance actions. |
 | `/command-dashboard` | Robert-only decisions, open loops, source-backed context, memory-derived work, and unified approval actions for pursuits and linked workflows. |
 | `/pursuits` | Long-running objectives with workflow, source, memory, verification, blocker, approval, activity, and related-pursuit links. |
-| `/workflow-engine` | Work queue, approvals, quality gates, interruptions, retries, and follow-ups. |
+| `/workflow-engine` | Work queue, approvals, source-linked quality gates, interruptions, retries, and follow-ups. |
 | `/connected-sources` | Source configuration, sync history, extraction inspection, reindexing, pause/resume, and revocation. |
 | `/memory` | Compact memory search, correction, archive, retrieval, and export controls. |
 | `/llm-policy` | Provider/model configuration, budget/policy visibility, probes, routing, and fallback history. |
@@ -442,19 +477,151 @@ disabled by default with a EUR 0 budget; request JSON cannot self-approve paid
 or approval-required use.
 
 Supported configuration families include Ollama, a first-class local
-`llama.cpp` server, LocalAI, vLLM, `mistral.rs`, LM Studio, other configured
+`llama.cpp` server, LocalAI, vLLM, SGLang, `mistral.rs`, DSpark, LM Studio, other configured
 OpenAI-compatible local servers, and configured free/freemium providers.
 `LLAMA_CPP_BASE_URL`, `OLLAMA_BASE_URL`, `LM_STUDIO_BASE_URL`,
-`LOCALAI_BASE_URL`, `VLLM_BASE_URL`, and `MISTRAL_RS_BASE_URL` accept only `localhost`, loopback, or
+`LOCALAI_BASE_URL`, `VLLM_BASE_URL`, `SGLANG_BASE_URL`, `MISTRAL_RS_BASE_URL`, and `DSPARK_BASE_URL` accept only `localhost`, loopback, or
 `host.docker.internal`; configure the matching `*_MODEL_ID` for the
-operator-installed model server. HAI does not install LocalAI, vLLM, or
-`mistral.rs`, and does not download models. HAI calls a configured
+operator-installed model server. `OLLAMA_MODEL_IDS` is the explicit
+comma-separated allowlist of Ollama tags HAI may route or refresh; it defaults
+to `phi3:mini` rather than every catalog model. HAI does not install LocalAI,
+vLLM, SGLang, `mistral.rs`, or DSpark, and does not download models outside a configured
+Ollama tag. HAI calls a configured
 `mistral.rs` server only through `/v1/models` and `/v1/chat/completions`; its
 upstream agent, shell, web, file, MCP, Skills, UI, and code-execution features
 stay outside HAI. Model
 catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
 other configured provider models. Provider status must be read as configuration
 and probe history, not as a live-service guarantee.
+
+### Daily model maintenance
+
+HAI checks every model that current routing policy can use before routing or
+generation. By default,
+`LLM_MODEL_MAINTENANCE_ENABLED=true` records one check per provider/model every
+24 hours (`LLM_MODEL_MAINTENANCE_INTERVAL_HOURS=24`). For an operator-configured
+loopback Ollama endpoint, HAI reads `/api/tags`, runs the fixed local
+`/api/pull` request for each explicit `OLLAMA_MODEL_IDS` tag, then reads `/api/tags` again
+to record whether the installed digest changed. Both reads must return a
+non-empty digest for the exact configured tag; a successful pull response
+alone is not accepted as evidence that the runtime will execute a verified
+artifact. A configured model that is not yet installed is pulled and
+post-verified through the same path. The model is only used after that result
+is recorded; a failed refresh skips the model and lets routing try
+the next suitable candidate. Generation re-routes a stale supplied decision
+once through the same policy when its chosen model fails maintenance, so a
+safe eligible fallback can continue the task without bypassing budget or
+approval rules. The bounded request timeout is controlled by
+`LLM_MODEL_MAINTENANCE_TIMEOUT_SECONDS` (30 seconds minimum, one hour maximum).
+The maintenance interval is fixed at 24 hours. Any configured value is clamped
+to that daily cycle, so a configuration typo cannot multiply provider checks or
+let a model go longer than one day without another freshness check.
+
+Maintenance records are bound to a redacted, non-secret fingerprint of the
+configured provider endpoint, provider mode, maintenance adapter, and model
+identifier. Changing any of those values bypasses a previously successful
+24-hour record and forces a fresh check before that model can run.
+
+The opt-in PydanticAI, CrewAI, and Microsoft Agent Framework planning runners,
+plus the fixed LM Evaluation Harness, Promptfoo, DeepEval, DeepTeam, and Garak
+local evaluation runners, are also admitted through this same gate before they
+receive a model-using request. Their disclosed local endpoint and model ID must
+exactly match an enabled local provider/model in `LLM_PROVIDERS_JSON`; HAI then
+applies the same persisted daily check. A runner cannot select a different
+model, download one independently, or continue after the canonical policy
+blocks its model.
+
+A failed check never counts as a successful daily check. HAI keeps the model
+blocked during a short, bounded recovery window and then retries the same
+check before the model can be used again. The default is five minutes
+(`LLM_MODEL_MAINTENANCE_FAILURE_RETRY_MINUTES=5`), clamped between one minute
+and one hour. This avoids both a retry storm and a needless 24-hour outage
+after a transient local runtime, network, or registry failure.
+
+The background sweep is enabled by default with
+`LLM_MODEL_MAINTENANCE_SCHEDULER_ENABLED=true`. It wakes hourly
+(`LLM_MODEL_MAINTENANCE_SCHEDULER_INTERVAL_MINUTES=60`; any other value is
+clamped to 60) and visits every enabled, configured model that the current
+policy can use, but its durable per-model history prevents any network check or
+pull before the 24-hour record is due. It observes HAI's persisted emergency
+stop. Owners can inspect recent results at
+`GET /api/v1/llm/model-maintenance` or trigger the same bounded sweep with
+`POST /api/v1/llm/model-maintenance/run`.
+
+LM Studio, llama.cpp, LocalAI, vLLM, SGLang, mistral.rs, explicitly enabled loopback DSpark, and OpenAI-compatible local
+servers must report the **exact configured model ID** every 24 hours. There is
+no common safe update API, so HAI never guesses how to pull images, replace
+GGUF files, or alter an operator-managed deployment. Configured free cloud
+models receive the same exact-ID availability check. Cloud model versions stay
+provider-managed: HAI will never silently replace a configured cloud model
+with a newer identifier because that can change cost, behavior, and approval
+requirements. Recent redacted maintenance decisions are available to owners at
+`GET /api/v1/llm/model-maintenance`.
+
+The separate Model Intelligence view is an auxiliary local/deterministic
+triage and benchmark layer. It never routes or benchmarks an external model:
+external providers must use the canonical LLM policy router so the daily
+maintenance gate, EUR budget, approval, audit, and fallback controls remain
+authoritative. Any real local model used by that auxiliary lane must also
+match an enabled canonical provider/model pair and pass the same persisted
+daily-maintenance gate before HAI calls it. Deterministic in-process rules do
+not have a downloadable model artifact and are therefore not treated as a
+model-update runtime.
+
+### Catalog upstream maintenance
+
+The optional catalog maintenance worker is separate from LLM routing. When
+`HAI_CATALOG_REVALIDATION_ENABLED=true`, HAI checks a small batch of fixed
+GitHub repositories from its own brain catalog every 24 hours. It records only
+redacted public metadata: availability, archive status, SPDX licence,
+default branch, push timestamp, and a repository rename or transfer when
+GitHub reports one. It never follows arbitrary URLs, downloads a repository,
+installs a dependency, changes an entry's disposition, creates credentials,
+or starts a runtime.
+
+The worker is disabled by default because it makes public external requests.
+When enabled, its scheduler wakes hourly by default, observes the emergency
+stop, and limits one sweep to eight due entries
+(`HAI_CATALOG_REVALIDATION_BATCH_SIZE=8`, capped at 20). Durable evidence
+prevents repeat GitHub requests before the configured daily interval. Owners
+can inspect recent records at `GET /api/v1/brain-catalog/revalidation-history`
+or run the same bounded sweep at
+`POST /api/v1/brain-catalog/revalidation/run`. The Brain Catalog view exposes
+the same operator action and result summary.
+
+Set `HAI_CATALOG_COLLECTION_REVALIDATION_ENABLED=true` as well to perform a
+separate once-daily comparison of HAI's fixed OSS Insight collection snapshot.
+This companion check persists only collection counts, names, and drift summary;
+it does not enumerate repository rows, download code, alter a catalog decision,
+or enable any project. Inspect its evidence at
+`GET /api/v1/brain-catalog/collection-revalidation-history` or run the same
+bounded comparison through
+`POST /api/v1/brain-catalog/collection-revalidation/run`.
+
+Set `HAI_CATALOG_REPOSITORY_DISCOVERY_REVALIDATION_ENABLED=true` as a further
+opt-in to run one daily gap review across only the already-screened reviewable
+OSS Insight categories. HAI persists aggregate source counts and at most 30
+repository names that require a separate review. It does not download source
+code, install packages, change the catalog, create credentials, or activate a
+runtime. Inspect the evidence at
+`GET /api/v1/brain-catalog/repository-discovery-revalidation-history` or run
+the same bounded review through
+`POST /api/v1/brain-catalog/repository-discovery-revalidation/run`.
+
+### Generation usage evidence
+
+For completed generation calls, HAI records input and output token counts from
+the provider response when the configured endpoint supplies them. Ollama's
+`prompt_eval_count`/`eval_count` and OpenAI-compatible
+`prompt_tokens`/`completion_tokens` (or `input_tokens`/`output_tokens`) are
+used directly. `usageSource` is returned as `provider_reported`,
+`provider_reported_partial`, or `estimated`; estimates remain a clearly
+labelled fallback when an endpoint does not report one or both counts. Cost and
+budget accounting use those same counts. HAI retains aggregate counts only, not
+raw prompts, completions, or provider response payloads as usage telemetry.
+The owner-only `GET /api/v1/llm/generations` endpoint exposes that durable
+redacted ledger after the local database is available; it is operational
+evidence only and cannot replay a generation or disclose its task/output.
 
 LiteLLM is also available as an optional local gateway profile. It needs
 `LITELLM_ENABLED=true`, `LITELLM_BASE_URL`, `LITELLM_MODEL_ID`, and a separate
@@ -478,16 +645,32 @@ explicitly backfill up to 100 visible memories per request through
 `POST /api/v1/memory/semantic/reindex`; this does not run automatically or
 cross owner boundaries.
 
-Optional public-source discovery uses an operator-managed local SearXNG
-instance. Set `HAI_SEARXNG_ENABLED=true` and a loopback,
-`host.docker.internal`, or private-network `HAI_SEARXNG_BASE_URL` only after
-the instance has its JSON output enabled. HAI sends one bounded general query
-to the local instance and returns at most ten candidate sources. It does not
-fetch result pages, retain cookies or credentials, use public instances, or
-turn snippets into verified evidence. An operator must explicitly select a
-candidate, after which the normal grounded-answer claim checks remain
-authoritative. The SearXNG source is AGPL-3.0; operate it as a separate local
-service and review its license and search-engine configuration before enabling.
+Optional public-source discovery uses a local SearXNG instance. A fresh HAI
+clone can start the supplied internal-only profile after setting a unique
+`HAI_SEARXNG_SECRET` in `.env.local` and changing
+`HAI_SEARXNG_ENABLED=true`:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml --profile research-discovery up -d searxng
+```
+
+The service has no published host port. The backend reaches only
+`http://searxng:8080` through a dedicated internal network; SearXNG alone has
+an outbound network for its configured search engines. Its checked-in settings
+enable only bounded JSON result output, strict safe search, no image proxy, no
+metrics, and no public-instance mode. HAI sends one bounded general query and
+returns at most ten candidate sources. It does not fetch result pages, retain
+cookies or credentials, use public instances, or turn snippets into verified
+evidence. An operator must explicitly select a candidate, after which the
+normal grounded-answer claim checks remain authoritative. The SearXNG source
+is AGPL-3.0; review its license and search-engine configuration before
+enabling. An existing private local SearXNG deployment remains supported by
+setting `HAI_SEARXNG_BASE_URL` to its loopback, `host.docker.internal`, or
+private-network URL.
+In **Grounded Answers**, an operator can also opt in to a bounded candidate
+preview during a non-action verification request. Those previews stay outside
+the answer, persisted evidence, claims, memory, workflows, and actions until
+one is explicitly attached as unverified evidence and verification runs again.
 An admin can use `POST /api/v1/research/probe` to check only the configured
 local `/healthz` endpoint. This does not prove SearXNG JSON output, configured
 search-engine behavior, upstream privacy, result provenance, or evidence quality.
@@ -502,16 +685,80 @@ network address with the port actually selected by the operator. Then set
 `HAI_RAGFLOW_DATASET_IDS` that HAI is allowed to query. The bridge
 only uses RAGFlow's retrieval endpoint for those fixed datasets and returns
 candidate evidence for normal HAI source-grounding and verification. In
-**Grounded Answers**, an operator must explicitly select a returned chunk before
-it is attached as unverified evidence; retrieval never silently changes an
-answer, memory, workflow, or external action. It does not upload, ingest, edit,
+**Grounded Answers**, an operator can retrieve candidates manually or opt in to
+a bounded candidate-preview pass while preparing a grounded answer. In both
+cases, HAI keeps those chunks outside the answer, persisted evidence, claim
+support, memory, workflow, and action paths until the operator explicitly
+attaches a selected chunk and runs verification again. It does not upload, ingest, edit,
 delete, run agents, use MCP, execute code, change RAGFlow settings, write HAI
 memory, or trigger a workflow or external action.
+
+The **Task Blueprint** Advanced context also has an explicit `Use local RAGFlow
+leads` toggle. It retrieves at most three chunks from the already-approved local
+dataset allowlist, labels each one `unverified_candidate`, and passes that label
+into draft planning only. These leads do not enter the evidence list, claim
+validation, memory updates, workflow creation, or execution. Any answer relying
+on one remains unsupported until HAI finds independent evidence and verifies it.
 The optional probe checks endpoint reachability and RAGFlow's reported
 dependency-health status; it does not prove the credential, dataset
 permissions, provenance, or evidence quality. Keep RAGFlow's optional agent
 and code-executor features disabled and complete the capacity, retention, and
 provenance review described in the catalog before enabling this bridge.
+
+### Optional local MLflow evaluation evidence
+
+[MLflow](https://github.com/mlflow/mlflow) can supply local model-evaluation
+context without becoming HAI's model router or model registry. Set
+`HAI_MLFLOW_ENABLED=true`, a local `HAI_MLFLOW_BASE_URL`, an optional dedicated
+bearer token, explicit `HAI_MLFLOW_EXPERIMENT_IDS`, and explicit
+`HAI_MLFLOW_METRIC_KEYS`. The bridge only posts a fixed recent-runs query to
+the approved experiment IDs and returns the named metrics plus bounded run
+metadata. It cannot retrieve prompts, parameters, tags, datasets, artifacts,
+models, or traces; it has no mutation routes and cannot alter HAI routing,
+budget, verification, workflow, or execution state.
+
+Use `GET /api/v1/mlflow/status` to inspect non-secret configuration,
+`POST /api/v1/mlflow/probe` to check the fixed read-only scope, and
+`GET /api/v1/mlflow/runs?limit=10` to view recent local evaluation evidence.
+Metrics remain review context, not an automatic routing signal.
+
+### Optional disposable mini-SWE patch proposals
+
+HAI can run [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) only
+as a separate, disabled-by-default `mini-swe` Compose profile. This is not a
+general host coding agent: HAI accepts only an owner-scoped workflow already in
+`ready` state with an explicit approved high-risk review, derives the task from
+that workflow server-side, and permits only a named `HAI_MINISWE_WORKSPACES`
+source snapshot. The runner copies that snapshot from its read-only mount into
+temporary storage, invokes its pinned local model there, and returns a bounded
+unified diff plus SHA-256 digest for human review. A truncated response fails
+closed and is not retained as a patch proposal. HAI stores only job metadata
+and the digest, never the diff/source content, and has no apply, commit, push,
+repository credential, Docker-socket, Git metadata, browser task-text, or
+public-network capability.
+
+Enable it only after placing exactly one sanitized, non-secret snapshot in
+`mini-swe-workspaces/<approved-name>`, initially preloading the reviewed model
+tag into the named `018-hai-miniswe-ollama-models` volume, generating a
+separate 16+ character `HAI_MINISWE_RUNNER_TOKEN`, and setting that single
+matching workspace and model configuration in `.env`. Before each proposal
+after its 24-hour maintenance window, HAI refreshes and verifies only that tag
+through the dedicated `ollama-miniswe` service. It cannot choose another model
+or endpoint. Start it with:
+
+```powershell
+docker compose --env-file .env -f docker-compose.local.yml --profile mini-swe up --build
+```
+
+Then an owner can inspect configuration at `GET /api/v1/mini-swe/status`, an
+admin can probe only runner/model readiness at `POST /api/v1/mini-swe/probe`,
+and an approver can request one review-only proposal at
+`POST /api/v1/mini-swe/workflows/:id/propose-patch` with
+`{"workspaceId":"approved-name"}`. A truncated response is rejected before
+it becomes a review artifact, so it cannot be applied. A completed proposal
+adds only its opaque diff digest and a `needs_review` signal to the originating
+workflow; the returned diff remains response-only and cannot satisfy a quality
+gate or change workflow state.
 
 Optional AnythingLLM retrieval is also separate and operator-managed. Set
 `HAI_ANYTHINGLLM_ENABLED=true`, a loopback, `host.docker.internal`,
@@ -588,6 +835,54 @@ can influence any real work. The probe checks only the local runner and its
 configured model endpoint; it does not establish model quality, task
 correctness, or authorization to execute.
 
+Before a PydanticAI planning draft is requested, its fixed local endpoint and
+model ID must match an enabled local entry in HAI's central LLM policy and pass
+the persisted daily maintenance gate. The runner cannot choose, pull, or
+upgrade a model itself.
+
+Optional local CrewAI planning uses the isolated `crewai-planning` Compose
+profile. Set `HAI_CREWAI_ENABLED=true`, run
+`docker compose --profile crewai-planning up --build`, and configure a
+reviewed loopback OpenAI-compatible `HAI_CREWAI_LOCAL_MODEL_BASE_URL` and
+explicit `HAI_CREWAI_LOCAL_MODEL_ID`. HAI sends only a short task request and
+up to eight success criteria to two fixed local roles: a planner and a safety
+reviewer. The runner has no HAI credential, tools, browser, web, filesystem,
+MCP, memory, knowledge store, delegation, persistence, retry loop, provider
+discovery, approval, or execution surface. It returns one bounded,
+schema-validated planning draft through owner-authenticated endpoints:
+`GET /api/v1/crewai/status`, `POST /api/v1/crewai/probe`, and
+`POST /api/v1/crewai/proposals`. The task UI exposes it only as **Review
+draft**; copying its criteria into a task does not run, approve, save, or
+verify work. The probe verifies only the isolated runner and the exact
+configured local model ID. It does not prove model quality, task correctness,
+or authority to execute. CrewAI telemetry is disabled in the Compose profile.
+Before it receives a draft request, its fixed local endpoint and model ID must
+match an enabled central local provider/model and pass the same persisted daily
+maintenance gate; CrewAI cannot select or update a model itself.
+
+Optional Microsoft Agent Framework planning uses the isolated
+`agent-framework-planning` Compose profile. Set
+`HAI_AGENT_FRAMEWORK_ENABLED=true`, run
+`docker compose --profile agent-framework-planning up --build`, and configure
+a reviewed loopback OpenAI-compatible
+`HAI_AGENT_FRAMEWORK_LOCAL_MODEL_BASE_URL` and explicit
+`HAI_AGENT_FRAMEWORK_LOCAL_MODEL_ID`. The runner pins Microsoft Agent Framework
+core 1.11.0 plus its compatible OpenAI client 1.10.1, uses two fixed local
+roles for a sequential planner/reviewer draft, and returns only one bounded
+schema-validated proposal. It has no HAI credential, browser, web search,
+filesystem, source, tool, MCP, skills, memory, sessions, checkpoints, hosted
+agent, A2A, workflow-host, retry, approval, or execution surface. Owner-only
+endpoints are `GET /api/v1/agent-framework/status`,
+`POST /api/v1/agent-framework/probe`, and
+`POST /api/v1/agent-framework/proposals`. The probe proves only that the local
+runner and exact configured model endpoint are reachable; it does not establish
+model quality, task correctness, or authority to execute. HAI remains the only
+authority for routing, policy, audit, approval, emergency stop, persistence,
+workflow state, and completion verification.
+Before it receives a proposal request, its fixed local endpoint and model ID
+must match an enabled central local provider/model and pass the same persisted
+daily maintenance gate; Agent Framework cannot select or update a model itself.
+
 Optional FastMCP context sharing uses the isolated `mcp-bridge` Compose
 profile. It is not a generic HAI MCP executor. Set
 `HAI_FASTMCP_BRIDGE_ENABLED=true`, one explicit
@@ -596,11 +891,16 @@ tokens: `HAI_FASTMCP_BRIDGE_TOKEN` is used only from the container to HAI, and
 `HAI_FASTMCP_CLIENT_TOKEN` is used only by the approved local MCP client. Run
 `docker compose --profile mcp-bridge up --build`, then connect the client to
 `http://127.0.0.1:8090/mcp` with the `hai:read` bearer scope. The bridge offers
-only `hai_operating_overview` and `hai_actionable_workflows`; it returns a
-single owner's aggregate counts and bounded sanitized workflow summaries. It
-cannot create tasks, transition workflows, approve, execute, read connected
-sources, retrieve evidence, write memory, alter policy, access files or
-processes, or return secrets. Do not add this authenticated bridge to
+only `hai_operating_overview`, `hai_actionable_workflows`,
+`hai_github_repository_context`, and `hai_model_maintenance_readiness`; it
+returns a single owner's aggregate counts, bounded sanitized workflow
+summaries, at most eight already configured GitHub repository slugs with HAI
+project and sync-freshness metadata, and at most eight persisted per-model
+freshness records. Model context excludes endpoint, digest, API key, prompt,
+completion, token, quota, and cost data, and cannot route, refresh, or use a
+model. The bridge cannot create tasks, transition workflows, approve, execute,
+read connected sources, retrieve evidence, write memory, alter policy, access
+files or processes, or return secrets. Do not add this authenticated bridge to
 `HAI_MCP_PREFLIGHT_SERVERS`, which intentionally has no credential support.
 
 Optional Agent2Agent (A2A) planning is built into the backend and remains
@@ -730,6 +1030,19 @@ model payloads, tokens, credentials, or caller-selected data. A successful
 export proves only that Langfuse accepted that fixed trace; it cannot verify
 work, change routing/policy, approve work, update memory, or trigger execution.
 
+Optional local OpenLIT observability is a separate, disabled-by-default
+aggregate OTLP bridge. Set `HAI_OPENLIT_ENABLED=true` and one loopback,
+`host.docker.internal`, `openlit`, or private-network
+`HAI_OPENLIT_OTLP_ENDPOINT` for an operator-hosted collector. An owner can
+explicitly call `POST /api/v1/openlit/export/operational-snapshot`; HAI posts
+only one fixed aggregate OTLP/HTTP JSON span to `/v1/traces`. HAI does not
+install OpenLIT, use its SDK, add automatic instrumentation, assume an
+undocumented health endpoint, or accept a caller-selected payload. The bridge
+exports no prompts, completions, source text, files, models, tokens, workflow
+records, credentials, or custom attributes. A successful export proves only
+collector acceptance of that fixed trace; it cannot verify work, change
+routing/policy, approve work, update memory, or trigger execution.
+
 Optional local speech-to-text uses the `local-transcription` Compose profile.
 Set `HAI_WHISPER_CPP_ENABLED=true`, manually place a reviewed whisper.cpp GGML
 model under `./whisper-models`, set `WHISPER_CPP_MODEL_FILE` to its filename,
@@ -742,6 +1055,110 @@ files, returns text only, and HAI records that text as uncertain, source-linked
 evidence. It never records a microphone, uploads cloud audio, runs on a
 schedule, retains raw audio, verifies a claim, or executes an action. Review
 the original media before relying on any transcript for a consequential fact.
+
+Optional local document extraction uses the `local-document-extraction` Compose
+profile. Set `HAI_DOCLING_ENABLED=true`, replace
+`HAI_DOCLING_RUNNER_TOKEN` with a separate 16+ character local token, then run
+`docker compose --profile local-document-extraction up --build`. Create an
+owner-scoped, `localOnly: true` `docling-documents` source with an explicit
+subfolder below `./connected-sources` and use its **Extract documents** action.
+The read-only internal runner accepts no browser file upload, caller-selected
+path, model, OCR, table, parser, cloud service, plugin, or scheduling setting.
+It reads at most ten bounded documents and returns extracted text plus format,
+page-count, and content-digest metadata to HAI's normal source review path;
+original files stay local. DOCX, PPTX, XLSX, HTML, Markdown, and text work in
+the default no-model path. PDF is disabled by default and only becomes available
+after an operator places reviewed Docling artifacts under `./docling-artifacts`
+and explicitly sets `HAI_DOCLING_PDF_ENABLED=true`; the runner never downloads
+them. Extracted text is uncertain, source-linked evidence, not a verified fact,
+approval, or executable instruction.
+
+Optional local secret scanning uses the `secret-scan` Compose profile. Set
+`HAI_GITLEAKS_ENABLED=true`, generate a separate local runner token, copy one
+reviewed, access-approved snapshot to `./security-snapshots/<snapshot-name>`, set
+`HAI_GITLEAKS_WORKSPACES=<snapshot-name>`, then run
+`docker compose --profile secret-scan up --build`. An owner-admin can call
+`GET /api/v1/gitleaks/status`, `POST /api/v1/gitleaks/probe`, and
+`POST /api/v1/gitleaks/scan` with a request body containing
+`{"workspaceId":"<snapshot-name>"}`.
+An optional existing `workflowId` adds a redacted, owner-scoped security review
+signal to that workflow. It never exposes a finding, changes workflow state,
+updates memory, executes work, or proves completion.
+The runner scans only that mounted read-only snapshot and returns only the
+finding count, affected-file count, rule counts, duration, and digest. It never
+returns or retains matched text, secret values, paths, lines, commits, authors,
+raw reports, or source content. It has no host port, external network, source
+write, Git credential, Docker socket, cloud upload, scheduled scan, or workflow
+mutation path. A result is review context, not proof that a workspace is safe
+or that an action may be approved.
+
+Optional local Go source security analysis uses the `go-security-scan` Compose
+profile. Set `HAI_GOSEC_ENABLED=true`, generate a separate local runner token,
+copy one reviewed, access-approved Go source snapshot to
+`./security-snapshots/<snapshot-name>`, ensure it contains `go.mod` and a
+complete `vendor/modules.txt`, set `HAI_GOSEC_WORKSPACES=<snapshot-name>`, then
+run `docker compose --profile go-security-scan up --build`. An owner-admin can
+call `GET /api/v1/gosec/status`, `POST /api/v1/gosec/probe`, and
+`POST /api/v1/gosec/scan` with `{"workspaceId":"<snapshot-name>"}`. The
+runner forces Go vendor mode, disables module downloads and proxy egress, and
+returns only the finding total, severity/confidence counts, duration, and a
+digest. It never returns or retains source, paths, findings, rules, CWEs, raw
+reports, or remediation steps. It has no host port, external network, source
+write, Git credential, cloud upload, scheduled scan, or workflow-mutation
+path. The result is owner review context, not proof that a workspace is safe or
+that an action may be approved.
+
+Optional local configuration security review uses the
+`configuration-security-scan` Compose profile. Set `HAI_TRIVY_ENABLED=true`,
+generate a separate local runner token, copy one reviewed, access-approved
+configuration snapshot to `./security-snapshots/<snapshot-name>`, set
+`HAI_TRIVY_WORKSPACES=<snapshot-name>`, then run
+`docker compose --profile configuration-security-scan up --build`. An
+owner-admin can call `GET /api/v1/trivy/status`, `POST /api/v1/trivy/probe`,
+and `POST /api/v1/trivy/scan` with `{"workspaceId":"<snapshot-name>"}`. The
+runner uses only Trivy's offline configuration scanner, disables policy updates
+and proxy egress, and returns only the finding total, severity counts, duration,
+and digest. It never returns or retains source, paths, findings, rules, policy
+details, raw reports, image/repository/cloud results, or remediation steps. It
+has no host port, external network, source write, Git credential, cloud upload,
+scheduled scan, or workflow-mutation path. The result is owner review context,
+not proof that a snapshot is safe or that infrastructure may be changed.
+
+Optional local vulnerability evidence uses the `vulnerability-scan` Compose
+profile. Set `HAI_GRYPE_ENABLED=true`, generate a separate local runner token,
+copy one reviewed, access-approved snapshot to
+`./security-snapshots/<snapshot-name>`, place a separately reviewed and locally
+maintained Grype advisory database under `./security-advisories`, set
+`HAI_GRYPE_WORKSPACES=<snapshot-name>`, then run
+`docker compose --profile vulnerability-scan up --build`. An owner-admin can
+call `GET /api/v1/grype/status`, `POST /api/v1/grype/probe`, and
+`POST /api/v1/grype/scan` with a request body containing
+`{"workspaceId":"<snapshot-name>"}`. The runner has no host port, takes no
+caller path, CVE, package, version, advisory, report, command, configuration,
+or remediation request, and uses a read-only local advisory mount with Grype
+database/app updates and proxy egress disabled. It returns only total,
+severity counts, fix-availability count, duration, and digest. CVEs, package
+names, versions, advisories, paths, raw reports, and source files are never
+returned or retained. A scan is review context only: it cannot modify a
+dependency, change workflow state, update memory, approve, execute, or prove
+completion. The advisory database is a user-operated security supply-chain
+input; HAI neither downloads nor updates it.
+
+Optional local software inventory uses the `sbom-inventory` Compose profile.
+Set `HAI_SYFT_ENABLED=true`, generate a separate local runner token, copy one
+reviewed, access-approved snapshot to `./security-snapshots/<snapshot-name>`,
+set `HAI_SYFT_WORKSPACES=<snapshot-name>`, then run
+`docker compose --profile sbom-inventory up --build`. An owner-admin can call
+`GET /api/v1/syft/status`, `POST /api/v1/syft/probe`, and
+`POST /api/v1/syft/inventory` with a request body containing
+`{"workspaceId":"<snapshot-name>"}`. An optional existing `workflowId`
+adds a redacted, owner-scoped review signal only. The runner inventories only that
+mounted read-only snapshot and returns only package total, ecosystem counts,
+duration, and a digest. It never returns or retains an SBOM, package names,
+versions, licences, PURLs, source paths, or source content. It has no host
+port, external network, source write, Git credential, Docker socket, cloud
+upload, scheduled inventory, or workflow mutation path. Inventory is review
+context, not dependency approval, vulnerability proof, execution authority, or completion proof.
 
 Optional deterministic planning uses the local OR-Tools `optimization` Compose
 profile. Set `HAI_PLANNING_OPTIMIZER_ENABLED=true` and run
@@ -835,7 +1252,7 @@ backend/                 Go API and HAI engines
 frontend/                Angular dashboard
 idp/                     Identity provider service
 nginx-config/            Gateway configuration used by local Compose
-nginx-config-manager/    Generated route-config manager; Docker socket disabled by default
+nginx-config-manager/    Legacy compatibility service; opt-in via legacy-compat profile
 automation-scripts/      Read-only allowlisted script mount
 connected-sources/       Read-only local/export ingestion root
 browser-extension/       Explicit user-authorized conversation capture
@@ -844,7 +1261,7 @@ docs/                    Architecture, runbooks, evidence, audits, and roadmap
 .github/workflows/       CI pipeline
 docker-compose.local.yml Windows/local-first Compose topology
 .env.example             Environment template; copy to untracked .env.local
-generic-auto/            Legacy service, not the canonical HAI engine
+generic-auto/            Legacy service; opt-in via legacy-compat profile
 gate/                    Legacy gateway/config area; local Compose uses nginx-config/
 ```
 
