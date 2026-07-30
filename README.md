@@ -130,6 +130,7 @@ Constitution, run an approval-gated task, or resolve a task review item.
 | LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
 | Verification | Source-grounded answers, claim/evidence status, schema/deterministic validation, review routing, and verification-gated task completion. | Model confidence alone never authorizes a factual claim or consequential action. |
 | Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, emergency stop, and an internal action-bound approval proof before mutating side effects. | Direct mutating HTTP launches cannot create the proof and fail closed. The approved task-review path issues a short-lived, single-use proof; its signing key and consumption state are currently process-local. External runtimes remain disabled until explicitly configured and validated. |
+| Optional local runners | Disabled-by-default Compose profiles for aggregate security scans, no-tool planning drafts, selected-folder document extraction, and disposable patch proposals. | They publish no host ports and have private networks, read-only mounts, and resource limits. Configuration or container health is not live proof; each real snapshot, model, or document path still needs retained approval, audit, and verification evidence. |
 | Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. |
 | Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. This is a single-node worker, not a distributed or HA platform. |
 
@@ -140,6 +141,20 @@ Constitution, run an approval-gated task, or resolve a task review item.
 - **Live-proven**: a configured account, provider, or runtime completed a bounded approved end-to-end task on the target machine with audit and verification evidence.
 
 No configured provider, runtime, dashboard state, or generated answer upgrades itself to live-proven.
+
+### Optional Runtime Profiles
+
+Recovered security, agent-planning, document, and patch-proposal helpers are
+now wired as isolated, disabled-by-default Compose profiles. The ordinary
+`docker compose up` does not start them. See
+[Optional Runtime Profiles](docs/optional-runtime-profiles.md) for the exact
+profile names, environment contract, resource ceilings, read-only mount rules,
+activation commands, and evidence required before any capability is described
+as live-proven.
+
+MLflow and OpenLIT remain bridge-only integrations to separately operated
+local/private services; this repository does not silently install or expose
+either observability server.
 
 ### Status At A Glance
 

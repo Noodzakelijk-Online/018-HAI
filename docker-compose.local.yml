@@ -117,6 +117,13 @@ services:
       LLM_REQUIRE_RECENT_LIVE_PROBE: ${LLM_REQUIRE_RECENT_LIVE_PROBE}
       LLM_PROVIDER_PROBE_MAX_AGE_SECONDS: ${LLM_PROVIDER_PROBE_MAX_AGE_SECONDS}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_MODEL_IDS: ${OLLAMA_MODEL_IDS:-}
+      LLM_MODEL_MAINTENANCE_ENABLED: ${LLM_MODEL_MAINTENANCE_ENABLED:-true}
+      LLM_MODEL_MAINTENANCE_INTERVAL_HOURS: ${LLM_MODEL_MAINTENANCE_INTERVAL_HOURS:-24}
+      LLM_MODEL_MAINTENANCE_TIMEOUT_SECONDS: ${LLM_MODEL_MAINTENANCE_TIMEOUT_SECONDS:-900}
+      LLM_MODEL_MAINTENANCE_FAILURE_RETRY_MINUTES: ${LLM_MODEL_MAINTENANCE_FAILURE_RETRY_MINUTES:-5}
+      LLM_MODEL_MAINTENANCE_SCHEDULER_ENABLED: ${LLM_MODEL_MAINTENANCE_SCHEDULER_ENABLED:-true}
+      LLM_MODEL_MAINTENANCE_SCHEDULER_INTERVAL_MINUTES: ${LLM_MODEL_MAINTENANCE_SCHEDULER_INTERVAL_MINUTES:-60}
       LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL}
       LLAMA_CPP_BASE_URL: ${LLAMA_CPP_BASE_URL}
       LLAMA_CPP_MODEL_ID: ${LLAMA_CPP_MODEL_ID}
@@ -221,6 +228,58 @@ services:
       HAI_WHISPER_CPP_ENABLED: ${HAI_WHISPER_CPP_ENABLED:-false}
       HAI_WHISPER_CPP_BASE_URL: ${HAI_WHISPER_CPP_BASE_URL:-http://whispercpp-runner:8080}
       HAI_WHISPER_CPP_TIMEOUT_SECONDS: ${HAI_WHISPER_CPP_TIMEOUT_SECONDS:-300}
+      # Optional recovered runners. Every runner is disabled by default,
+      # reachable only on a private Compose network, and retains no authority
+      # outside its bounded backend adapter.
+      HAI_GITLEAKS_ENABLED: ${HAI_GITLEAKS_ENABLED:-false}
+      HAI_GITLEAKS_RUNNER_URL: ${HAI_GITLEAKS_RUNNER_URL:-http://gitleaks-runner:8080}
+      HAI_GITLEAKS_RUNNER_TOKEN: ${HAI_GITLEAKS_RUNNER_TOKEN:-}
+      HAI_GITLEAKS_WORKSPACES: ${HAI_GITLEAKS_WORKSPACES:-}
+      HAI_GITLEAKS_TIMEOUT_SECONDS: ${HAI_GITLEAKS_TIMEOUT_SECONDS:-120}
+      HAI_GOSEC_ENABLED: ${HAI_GOSEC_ENABLED:-false}
+      HAI_GOSEC_RUNNER_URL: ${HAI_GOSEC_RUNNER_URL:-http://gosec-runner:8080}
+      HAI_GOSEC_RUNNER_TOKEN: ${HAI_GOSEC_RUNNER_TOKEN:-}
+      HAI_GOSEC_WORKSPACES: ${HAI_GOSEC_WORKSPACES:-}
+      HAI_GOSEC_TIMEOUT_SECONDS: ${HAI_GOSEC_TIMEOUT_SECONDS:-120}
+      HAI_GRYPE_ENABLED: ${HAI_GRYPE_ENABLED:-false}
+      HAI_GRYPE_RUNNER_URL: ${HAI_GRYPE_RUNNER_URL:-http://grype-runner:8080}
+      HAI_GRYPE_RUNNER_TOKEN: ${HAI_GRYPE_RUNNER_TOKEN:-}
+      HAI_GRYPE_WORKSPACES: ${HAI_GRYPE_WORKSPACES:-}
+      HAI_GRYPE_TIMEOUT_SECONDS: ${HAI_GRYPE_TIMEOUT_SECONDS:-120}
+      HAI_SYFT_ENABLED: ${HAI_SYFT_ENABLED:-false}
+      HAI_SYFT_RUNNER_URL: ${HAI_SYFT_RUNNER_URL:-http://syft-runner:8080}
+      HAI_SYFT_RUNNER_TOKEN: ${HAI_SYFT_RUNNER_TOKEN:-}
+      HAI_SYFT_WORKSPACES: ${HAI_SYFT_WORKSPACES:-}
+      HAI_SYFT_TIMEOUT_SECONDS: ${HAI_SYFT_TIMEOUT_SECONDS:-120}
+      HAI_TRIVY_ENABLED: ${HAI_TRIVY_ENABLED:-false}
+      HAI_TRIVY_RUNNER_URL: ${HAI_TRIVY_RUNNER_URL:-http://trivy-runner:8080}
+      HAI_TRIVY_RUNNER_TOKEN: ${HAI_TRIVY_RUNNER_TOKEN:-}
+      HAI_TRIVY_WORKSPACES: ${HAI_TRIVY_WORKSPACES:-}
+      HAI_TRIVY_TIMEOUT_SECONDS: ${HAI_TRIVY_TIMEOUT_SECONDS:-120}
+      HAI_AGENT_FRAMEWORK_ENABLED: ${HAI_AGENT_FRAMEWORK_ENABLED:-false}
+      HAI_AGENT_FRAMEWORK_BASE_URL: ${HAI_AGENT_FRAMEWORK_BASE_URL:-http://agent-framework-runner:8080}
+      HAI_AGENT_FRAMEWORK_TIMEOUT_SECONDS: ${HAI_AGENT_FRAMEWORK_TIMEOUT_SECONDS:-120}
+      HAI_CREWAI_ENABLED: ${HAI_CREWAI_ENABLED:-false}
+      HAI_CREWAI_BASE_URL: ${HAI_CREWAI_BASE_URL:-http://crewai-runner:8080}
+      HAI_CREWAI_TIMEOUT_SECONDS: ${HAI_CREWAI_TIMEOUT_SECONDS:-120}
+      HAI_DOCLING_ENABLED: ${HAI_DOCLING_ENABLED:-false}
+      HAI_DOCLING_RUNNER_URL: ${HAI_DOCLING_RUNNER_URL:-http://docling-runner:8080}
+      HAI_DOCLING_RUNNER_TOKEN: ${HAI_DOCLING_RUNNER_TOKEN:-}
+      HAI_DOCLING_TIMEOUT_SECONDS: ${HAI_DOCLING_TIMEOUT_SECONDS:-180}
+      HAI_MINISWE_ENABLED: ${HAI_MINISWE_ENABLED:-false}
+      HAI_MINISWE_RUNNER_URL: ${HAI_MINISWE_RUNNER_URL:-http://miniswe-runner:8080}
+      HAI_MINISWE_RUNNER_TOKEN: ${HAI_MINISWE_RUNNER_TOKEN:-}
+      HAI_MINISWE_WORKSPACES: ${HAI_MINISWE_WORKSPACES:-}
+      HAI_MINISWE_TIMEOUT_SECONDS: ${HAI_MINISWE_TIMEOUT_SECONDS:-300}
+      HAI_MLFLOW_ENABLED: ${HAI_MLFLOW_ENABLED:-false}
+      HAI_MLFLOW_BASE_URL: ${HAI_MLFLOW_BASE_URL:-}
+      HAI_MLFLOW_BEARER_TOKEN: ${HAI_MLFLOW_BEARER_TOKEN:-}
+      HAI_MLFLOW_EXPERIMENT_IDS: ${HAI_MLFLOW_EXPERIMENT_IDS:-}
+      HAI_MLFLOW_METRIC_KEYS: ${HAI_MLFLOW_METRIC_KEYS:-}
+      HAI_MLFLOW_TIMEOUT_SECONDS: ${HAI_MLFLOW_TIMEOUT_SECONDS:-8}
+      HAI_OPENLIT_ENABLED: ${HAI_OPENLIT_ENABLED:-false}
+      HAI_OPENLIT_OTLP_ENDPOINT: ${HAI_OPENLIT_OTLP_ENDPOINT:-}
+      HAI_OPENLIT_TIMEOUT_SECONDS: ${HAI_OPENLIT_TIMEOUT_SECONDS:-8}
       HAI_WASI_ENABLED: ${HAI_WASI_ENABLED}
       HAI_WASI_RUNNER_URL: ${HAI_WASI_RUNNER_URL}
       HAI_WASI_RUNNER_TOKEN: ${HAI_WASI_RUNNER_TOKEN:-}
@@ -417,6 +476,10 @@ services:
       - whispercpp-internal
       - pydantic-ai-internal
       - fastmcp-internal
+      - security-runners-internal
+      - agent-runners-internal
+      - document-runners-internal
+      - coding-runners-internal
 
   frontend:
     build:
@@ -460,6 +523,285 @@ services:
       start_period: 15s
     networks:
       - service-hub
+
+  # These scanners operate only on operator-created disposable snapshots under
+  # ./security-snapshots. They cannot inspect the repository, Docker socket,
+  # connected sources, or host filesystem unless content is copied there.
+  gitleaks-runner:
+    build:
+      context: ./services/gitleaks-runner
+    profiles: ["security-scanning"]
+    restart: unless-stopped
+    environment:
+      HAI_GITLEAKS_RUNNER_TOKEN: ${HAI_GITLEAKS_RUNNER_TOKEN:-}
+      HAI_GITLEAKS_INPUT_ROOT: /inputs
+      HAI_GITLEAKS_WORKSPACES: ${HAI_GITLEAKS_WORKSPACES:-}
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=128m"]
+    volumes:
+      - ./security-snapshots:/inputs:ro
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks: [security-runners-internal]
+
+  gosec-runner:
+    build:
+      context: ./services/gosec-runner
+    profiles: ["security-scanning"]
+    restart: unless-stopped
+    environment:
+      HAI_GOSEC_RUNNER_TOKEN: ${HAI_GOSEC_RUNNER_TOKEN:-}
+      HAI_GOSEC_INPUT_ROOT: /inputs
+      HAI_GOSEC_WORKSPACES: ${HAI_GOSEC_WORKSPACES:-}
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    volumes:
+      - ./security-snapshots:/inputs:ro
+    mem_limit: 768m
+    cpus: 1.5
+    pids_limit: 192
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks: [security-runners-internal]
+
+  syft-runner:
+    build:
+      context: ./services/syft-runner
+    profiles: ["security-scanning"]
+    restart: unless-stopped
+    environment:
+      HAI_SYFT_RUNNER_TOKEN: ${HAI_SYFT_RUNNER_TOKEN:-}
+      HAI_SYFT_INPUT_ROOT: /inputs
+      HAI_SYFT_WORKSPACES: ${HAI_SYFT_WORKSPACES:-}
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    volumes:
+      - ./security-snapshots:/inputs:ro
+    mem_limit: 768m
+    cpus: 1.5
+    pids_limit: 192
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks: [security-runners-internal]
+
+  grype-runner:
+    build:
+      context: ./services/grype-runner
+    profiles: ["security-scanning"]
+    restart: unless-stopped
+    environment:
+      HAI_GRYPE_RUNNER_TOKEN: ${HAI_GRYPE_RUNNER_TOKEN:-}
+      HAI_GRYPE_INPUT_ROOT: /inputs
+      HAI_GRYPE_DB_ROOT: /grype-db
+      HAI_GRYPE_WORKSPACES: ${HAI_GRYPE_WORKSPACES:-}
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    volumes:
+      - ./security-snapshots:/inputs:ro
+      - ./grype-db:/grype-db:ro
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 192
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks: [security-runners-internal]
+
+  trivy-runner:
+    build:
+      context: ./services/trivy-runner
+    profiles: ["security-scanning"]
+    restart: unless-stopped
+    environment:
+      HAI_TRIVY_RUNNER_TOKEN: ${HAI_TRIVY_RUNNER_TOKEN:-}
+      HAI_TRIVY_INPUT_ROOT: /inputs
+      HAI_TRIVY_WORKSPACES: ${HAI_TRIVY_WORKSPACES:-}
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=384m"]
+    volumes:
+      - ./security-snapshots:/inputs:ro
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 192
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks: [security-runners-internal]
+
+  # One private Ollama instance supports only disposable patch proposals. It
+  # publishes no host port. Model tags are pulled by HAI's dedicated mini-SWE
+  # maintenance gate before use; image upgrades remain an operator action.
+  ollama-miniswe:
+    image: ${HAI_RUNNER_OLLAMA_IMAGE:-ollama/ollama:0.11.10}
+    profiles: ["patch-proposals"]
+    restart: unless-stopped
+    expose: ["11434"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=512m"]
+    volumes:
+      - runner-ollama-data:/root/.ollama
+    mem_limit: 6g
+    cpus: 4.0
+    pids_limit: 512
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+    networks: [coding-runners-internal]
+
+  agent-framework-runner:
+    build:
+      context: ./services/agent-framework-runner
+    profiles: ["agent-framework-planning"]
+    restart: unless-stopped
+    environment:
+      HAI_AGENT_FRAMEWORK_LOCAL_MODEL_BASE_URL: ${HAI_AGENT_FRAMEWORK_LOCAL_MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+      HAI_AGENT_FRAMEWORK_LOCAL_MODEL_ID: ${HAI_AGENT_FRAMEWORK_LOCAL_MODEL_ID:-}
+      HAI_AGENT_FRAMEWORK_LOCAL_MODEL_API_KEY: ${HAI_AGENT_FRAMEWORK_LOCAL_MODEL_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 192
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [agent-runners-internal]
+
+  crewai-runner:
+    build:
+      context: ./services/crewai-runner
+    profiles: ["crewai-planning"]
+    restart: unless-stopped
+    environment:
+      HAI_CREWAI_LOCAL_MODEL_BASE_URL: ${HAI_CREWAI_LOCAL_MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+      HAI_CREWAI_LOCAL_MODEL_ID: ${HAI_CREWAI_LOCAL_MODEL_ID:-}
+      HAI_CREWAI_LOCAL_MODEL_API_KEY: ${HAI_CREWAI_LOCAL_MODEL_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 192
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [agent-runners-internal]
+
+  docling-runner:
+    build:
+      context: ./services/docling-runner
+    profiles: ["local-document-extraction"]
+    restart: unless-stopped
+    environment:
+      HAI_DOCLING_RUNNER_TOKEN: ${HAI_DOCLING_RUNNER_TOKEN:-}
+      HAI_DOCLING_INPUT_ROOT: /intake
+      HAI_DOCLING_ARTIFACTS_ROOT: /models
+      HAI_DOCLING_PDF_ENABLED: ${HAI_DOCLING_PDF_ENABLED:-false}
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=1g"]
+    volumes:
+      - ./connected-sources:/intake:ro
+      - ./docling-models:/models:ro
+    mem_limit: 3g
+    cpus: 2.0
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    networks: [document-runners-internal]
+
+  miniswe-runner:
+    build:
+      context: ./services/miniswe-runner
+    profiles: ["patch-proposals"]
+    restart: unless-stopped
+    depends_on:
+      ollama-miniswe:
+        condition: service_healthy
+    environment:
+      HAI_MINISWE_RUNNER_TOKEN: ${HAI_MINISWE_RUNNER_TOKEN:-}
+      HAI_MINISWE_OLLAMA_BASE_URL: http://ollama-miniswe:11434
+      HAI_MINISWE_MODEL_ID: ${HAI_MINISWE_MODEL_ID:-}
+      HAI_MINISWE_INPUT_ROOT: /inputs
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,size=1g"]
+    volumes:
+      - ./mini-swe-workspaces:/inputs:ro
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [coding-runners-internal]
 
   nginx:
     image: nginx:alpine
@@ -1164,6 +1506,22 @@ networks:
     name: 018-hai-fastmcp-internal
     driver: bridge
     internal: true
+  security-runners-internal:
+    name: 018-hai-security-runners-internal
+    driver: bridge
+    internal: true
+  agent-runners-internal:
+    name: 018-hai-agent-runners-internal
+    driver: bridge
+    internal: true
+  document-runners-internal:
+    name: 018-hai-document-runners-internal
+    driver: bridge
+    internal: true
+  coding-runners-internal:
+    name: 018-hai-coding-runners-internal
+    driver: bridge
+    internal: true
 
 volumes:
   postgres-idp-data:
@@ -1172,3 +1530,5 @@ volumes:
     name: 018-hai-postgres-automation-data
   temporal-postgres-data:
     name: 018-hai-temporal-postgres-data
+  runner-ollama-data:
+    name: 018-hai-runner-ollama-data
