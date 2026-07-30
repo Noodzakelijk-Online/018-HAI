@@ -13,6 +13,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	workflowItemsUnavailableMessage     = "workflow items are unavailable"
+	workflowApprovalsUnavailableMessage = "workflow approval items are unavailable"
+	workflowDashboardUnavailableMessage = "workflow dashboard is unavailable"
+	workflowRunFailedMessage            = "workflow run failed"
+	workflowRecoveryFailedMessage       = "workflow recovery failed"
+	workflowOpenLoopRunFailedMessage    = "workflow follow-up run failed"
+)
+
 type Handler struct {
 	service             Service
 	pursuitIntakeRouter PursuitIntakeRouter
@@ -118,7 +127,7 @@ func (h *Handler) Items(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
 	items, err := h.service.ItemsForOwner(verifiedWorkflowOwner(c), includeArchived)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowItemsUnavailableMessage})
 		return
 	}
 	c.JSON(http.StatusOK, items)
@@ -127,7 +136,7 @@ func (h *Handler) Items(c *gin.Context) {
 func (h *Handler) ApprovalItems(c *gin.Context) {
 	items, err := h.service.ApprovalItemsForOwner(verifiedWorkflowOwner(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowApprovalsUnavailableMessage})
 		return
 	}
 	c.JSON(http.StatusOK, items)
@@ -136,7 +145,7 @@ func (h *Handler) ApprovalItems(c *gin.Context) {
 func (h *Handler) Dashboard(c *gin.Context) {
 	dashboard, err := h.service.DashboardForOwner(verifiedWorkflowOwner(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowDashboardUnavailableMessage})
 		return
 	}
 	c.JSON(http.StatusOK, dashboard)
@@ -300,11 +309,9 @@ func verifiedWorkflowOwner(c *gin.Context) string {
 	return ""
 }
 
-// ensureWorkflowMutable is stricter than read visibility. Ownerless legacy
-// workflows remain inspectable during local migration, but a signed-in caller
-// cannot adopt or change one through the HTTP API. System workers use the
-// service directly with an empty owner identity when that maintenance is
-// deliberately required.
+// Ownerless legacy workflows remain available only to explicit internal
+// maintenance calls. Authenticated API callers cannot inspect, adopt, or
+// mutate them without a separate audited migration assigning an owner.
 func (h *Handler) ensureWorkflowMutable(c *gin.Context, id uuid.UUID) bool {
 	record, err := h.service.GetForOwner(verifiedWorkflowOwner(c), id)
 	if err != nil || strings.TrimSpace(record.Item.OwnerIdentity) != verifiedWorkflowOwner(c) {
@@ -328,7 +335,7 @@ func (h *Handler) RunDue(c *gin.Context) {
 	_ = c.ShouldBindJSON(&request)
 	result, err := h.service.RunDueForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRunFailedMessage})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -339,7 +346,7 @@ func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 	_ = c.ShouldBindJSON(&request)
 	result, err := h.service.RecoverStaleClaimsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRecoveryFailedMessage})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -350,7 +357,7 @@ func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 	_ = c.ShouldBindJSON(&request)
 	result, err := h.service.RunDueOpenLoopsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowOpenLoopRunFailedMessage})
 		return
 	}
 	c.JSON(http.StatusOK, result)

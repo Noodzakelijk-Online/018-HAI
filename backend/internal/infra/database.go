@@ -127,6 +127,15 @@ func RunMigrations(db *gorm.DB) error {
 			&models.ModelRunTelemetry{},
 			// Durable worker: background jobs that survive a restart.
 			&models.DurableJob{},
+			// Owner-scoped Framework Registry preferences, immutable selection
+			// audits, and versioned Robert Constitution records.
+			&models.FrameworkPreference{},
+			&models.FrameworkSelectionRecord{},
+			&models.RobertConstitutionVersion{},
+			// Owner-scoped, append-only task completion and approval state.
+			&models.TaskCompletionPlanLog{},
+			&models.TaskReviewItemRecord{},
+			&models.TaskReviewDecisionRecord{},
 		); err != nil {
 			return err
 		}

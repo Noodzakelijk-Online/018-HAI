@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/identity"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,6 +93,90 @@ func TestRunHandlerUsesVerifiedOwner(t *testing.T) {
 	}
 	if service.runRequest.OwnerIdentity != "alice" {
 		t.Fatalf("task owner = %q, want verified owner alice", service.runRequest.OwnerIdentity)
+	}
+}
+
+func TestPlanAndRunHandlersDoNotExposeServiceErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	internalError := errors.New("dial postgres at db.internal with password=do-not-expose")
+
+	for _, test := range []struct {
+		name      string
+		path      string
+		service   *capturingTaskService
+		invoke    func(*Handler, *gin.Context)
+		publicErr string
+	}{
+		{
+			name:      "plan",
+			path:      "/task/plan",
+			service:   &capturingTaskService{planErr: internalError},
+			invoke:    (*Handler).Plan,
+			publicErr: "task plan could not be created",
+		},
+		{
+			name:      "run",
+			path:      "/task/run",
+			service:   &capturingTaskService{runErr: internalError},
+			invoke:    (*Handler).Run,
+			publicErr: "task run could not be completed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(`{"request":"Handle private work"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = request
+			context.Set(identity.ContextSubjectKey, "alice")
+
+			test.invoke(NewHandler(test.service), context)
+
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+			}
+			var payload map[string]string
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if payload["error"] != test.publicErr {
+				t.Fatalf("public error = %q, want %q", payload["error"], test.publicErr)
+			}
+			if strings.Contains(response.Body.String(), "postgres") || strings.Contains(response.Body.String(), "do-not-expose") {
+				t.Fatalf("internal service error leaked in response: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestPlanAndRunHandlersKeepSafeInputErrorsAsBadRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range []struct {
+		name   string
+		path   string
+		invoke func(*Handler, *gin.Context)
+	}{
+		{name: "plan", path: "/task/plan", invoke: (*Handler).Plan},
+		{name: "run", path: "/task/run", invoke: (*Handler).Run},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(`{"request":""}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = request
+			context.Set(identity.ContextSubjectKey, "alice")
+
+			test.invoke(NewHandler(&capturingTaskService{}), context)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+			if response.Body.String() != `{"error":"request is required"}` {
+				t.Fatalf("safe input error changed: %s", response.Body.String())
+			}
+		})
 	}
 }
 
@@ -196,6 +281,8 @@ func TestTaskReviewHandlersUseVerifiedOwnerScopedView(t *testing.T) {
 type capturingTaskService struct {
 	planRequest  IntakeRequest
 	runRequest   IntakeRequest
+	planErr      error
+	runErr       error
 	logsOwner    string
 	queueOwner   string
 	resolveOwner string
@@ -203,11 +290,17 @@ type capturingTaskService struct {
 
 func (s *capturingTaskService) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	s.planRequest = request
+	if s.planErr != nil {
+		return nil, s.planErr
+	}
 	return &CompletionPlan{Request: request.Request}, nil
 }
 
 func (s *capturingTaskService) Run(request IntakeRequest) (*CompletionPlan, error) {
 	s.runRequest = request
+	if s.runErr != nil {
+		return nil, s.runErr
+	}
 	return &CompletionPlan{Request: request.Request}, nil
 }
 

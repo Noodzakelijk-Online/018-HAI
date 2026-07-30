@@ -22,12 +22,21 @@
 }
 
 .ant-button-remove-image {
-  // margin-top: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
 }
 
 .ant-button-remove-image:hover {
   color: red;
+}
+
+.ant-button-remove-image:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
 }
 
 .ant-row {

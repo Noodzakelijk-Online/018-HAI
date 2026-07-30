@@ -26,4 +26,5 @@ type IService interface {
 	ConfirmPasswordReset(token, newPassword string) error
 	ChangePassword(accessToken string, newPassword string) error
 	GetIdFromToken(accessToken string) (uuid.UUID, error)
+	GetSessionFromToken(accessToken string) (*dto.AuthSession, error)
 }

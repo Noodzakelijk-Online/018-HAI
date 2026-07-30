@@ -108,7 +108,7 @@ export class LLMPolicyComponent implements OnInit {
   }
 
   themeIcon(): string {
-    return this.themeMode === 'dark' ? 'moon' : 'bulb';
+    return this.themeService.icon();
   }
 
   probeProviders(): void {

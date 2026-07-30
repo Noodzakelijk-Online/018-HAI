@@ -7,7 +7,10 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrDuplicateUser = errors.New("duplicate user")
+var (
+	ErrDuplicateUser = errors.New("duplicate user")
+	ErrUserNotFound  = errors.New("user not found")
+)
 
 type UserRepository interface {
 	FindByID(id uuid.UUID) (*models.User, error)

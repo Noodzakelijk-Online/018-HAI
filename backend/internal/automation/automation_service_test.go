@@ -3,13 +3,18 @@ package automation
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/config"
@@ -19,6 +24,25 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
+
+func TestMain(m *testing.M) {
+	switch os.Getenv("HAI_TEST_SCRIPT_MODE") {
+	case "ok":
+		fmt.Println("script-ok")
+		os.Exit(0)
+	case "clean-environment":
+		if os.Getenv("SECRET_TOKEN") != "" {
+			fmt.Println("leaked")
+		} else {
+			fmt.Println("clean")
+		}
+		os.Exit(0)
+	case "redact":
+		fmt.Println("token=super-secret-token")
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	called := false
@@ -44,7 +68,9 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		OwnerIdentity: "alice",
+	}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -65,6 +91,252 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 	}
 	if repo.launchEvents[0].OwnerIdentity != "alice" {
 		t.Fatalf("launch event owner = %q, want alice", repo.launchEvents[0].OwnerIdentity)
+	}
+}
+
+func TestLaunchBlocksMutatingAPIWithoutApprovalBeforeNetworkAccess(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Unapproved API Automation",
+		URLPath:      "unapproved-api-automation",
+		LaunchType:   "api",
+		LaunchTarget: "POST " + server.URL + "/mutate",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("mutating API received %d calls without approval, want zero", calls.Load())
+	}
+	assertLauncherApprovalBlocked(t, result, repo, "action-bound approval proof rejected before network access")
+}
+
+func TestLaunchRejectsApprovalAfterAutomationTargetChangesBeforeNetworkAccess(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Digest-bound API Automation",
+		URLPath:      "digest-bound-api-automation",
+		LaunchType:   "api",
+		LaunchTarget: "POST " + server.URL + "/approved-target",
+	})
+	service := NewService(repo, events.Publisher{})
+	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		OwnerIdentity: "alice",
+		Task:          "Perform the reviewed mutation.",
+		ProjectKey:    "018-hai",
+	})
+
+	repo.automation.LaunchTarget = "POST " + server.URL + "/changed-after-review"
+	result, err := service.LaunchTask(id, request)
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("changed action received %d network calls, want zero", calls.Load())
+	}
+	assertLauncherApprovalBlocked(t, result, repo, "action-bound approval proof rejected before network access")
+	if !strings.Contains(result.Message, "action digest mismatch") {
+		t.Fatalf("blocked message = %q, want action digest mismatch", result.Message)
+	}
+}
+
+func TestLaunchRejectsMismatchedApprovalBindingBeforeNetworkAccess(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name          string
+		mutate        func(*TaskLaunchRequest)
+		expectedError string
+	}{
+		{name: "owner", mutate: func(request *TaskLaunchRequest) { request.OwnerIdentity = "bob" }, expectedError: "owner mismatch"},
+		{name: "task", mutate: func(request *TaskLaunchRequest) { request.Task = "Different action" }, expectedError: "action digest mismatch"},
+		{name: "review item", mutate: func(request *TaskLaunchRequest) { request.ApprovalSourceID = "task-review:different" }, expectedError: "approval source mismatch"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			id := uuid.New()
+			repo := newFakeAutomationRepo(&models.Automation{
+				ID:           id,
+				Name:         "Bound API Automation",
+				URLPath:      "bound-api-automation",
+				LaunchType:   "api",
+				LaunchTarget: "POST " + server.URL + "/mutate",
+			})
+			service := NewService(repo, events.Publisher{})
+			request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+				OwnerIdentity: "alice",
+				Task:          "Perform the reviewed action.",
+				ProjectKey:    "018-hai",
+			})
+			test.mutate(&request)
+
+			result, err := service.LaunchTask(id, request)
+			if err != nil {
+				t.Fatalf("LaunchTask: %v", err)
+			}
+			if result.Status != "blocked" || !strings.Contains(result.Message, test.expectedError) {
+				t.Fatalf("mismatch result = %#v, want %q block", result, test.expectedError)
+			}
+			if len(repo.launchEvents) != 1 || repo.launchEvents[0].Status != "blocked" {
+				t.Fatalf("mismatch denial was not audited: %#v", repo.launchEvents)
+			}
+		})
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("mismatched proofs caused %d network calls, want zero", calls.Load())
+	}
+}
+
+func TestLaunchConsumesApprovalProofOnceBeforeMutatingAPI(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:                 id,
+		Name:               "Single-use API Automation",
+		URLPath:            "single-use-api-automation",
+		LaunchType:         "api",
+		LaunchTarget:       "POST " + server.URL + "/mutate",
+		ExpectedHTTPStatus: http.StatusNoContent,
+	})
+	service := NewService(repo, events.Publisher{})
+	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		OwnerIdentity: "alice",
+		Task:          "Perform this mutation once.",
+		ProjectKey:    "018-hai",
+	})
+
+	first, err := service.LaunchTask(id, request)
+	if err != nil {
+		t.Fatalf("first LaunchTask: %v", err)
+	}
+	if first.Status != "completed" || calls.Load() != 1 {
+		t.Fatalf("first result = %#v calls=%d, want one completed mutation", first, calls.Load())
+	}
+	second, err := service.LaunchTask(id, request)
+	if err != nil {
+		t.Fatalf("second LaunchTask: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("replayed proof caused %d network calls, want one total", calls.Load())
+	}
+	if second.Status != "blocked" || !strings.Contains(second.Message, ErrApprovalProofConsumed.Error()) {
+		t.Fatalf("replay result = %#v, want consumed-proof block", second)
+	}
+	if len(repo.launchEvents) != 2 || repo.launchEvents[1].Status != "blocked" {
+		t.Fatalf("replay denial was not audited: %#v", repo.launchEvents)
+	}
+}
+
+func TestLaunchRejectsExpiredApprovalBeforeMutatingAPI(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	now := time.Date(2026, time.July, 30, 10, 0, 0, 0, time.UTC)
+	proofService := newApprovalProofTestService(t, func() time.Time { return now })
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Expiring API Automation",
+		URLPath:      "expiring-api-automation",
+		LaunchType:   "api",
+		LaunchTarget: "POST " + server.URL + "/mutate",
+	})
+	service := NewServiceWithRuntimeRegistryAndApprovalProofs(
+		repo,
+		events.Publisher{},
+		agentruntime.DefaultRegistry(),
+		proofService,
+	)
+	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		OwnerIdentity: "alice",
+		Task:          "Perform the reviewed mutation.",
+	})
+	now = now.Add(defaultApprovalProofTTL)
+
+	result, err := service.LaunchTask(id, request)
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("expired proof caused %d network calls, want zero", calls.Load())
+	}
+	if result.Status != "blocked" || !strings.Contains(result.Message, ErrApprovalProofExpired.Error()) {
+		t.Fatalf("expired result = %#v, want expiry block", result)
+	}
+}
+
+func TestLaunchAllowsReadOnlyAPIProbeWithoutApproval(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != method {
+					t.Errorf("method = %s, want %s", r.Method, method)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			id := uuid.New()
+			repo := newFakeAutomationRepo(&models.Automation{
+				ID:                 id,
+				Name:               "Read-only API Probe",
+				URLPath:            "read-only-api-probe",
+				LaunchType:         "api",
+				LaunchTarget:       method + " " + server.URL + "/health",
+				ExpectedHTTPStatus: http.StatusOK,
+			})
+			service := NewService(repo, events.Publisher{})
+
+			result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
+			if err != nil {
+				t.Fatalf("LaunchTask: %v", err)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("read-only API received %d calls, want one", calls.Load())
+			}
+			if result.Status != "completed" || result.RequiresApproval {
+				t.Fatalf("read-only result = %#v, want completed without approval", result)
+			}
+			if !containsString(result.AuditEvents, "read-only api probe allowed without launcher approval") {
+				t.Fatalf("read-only approval exemption missing from audit: %#v", result.AuditEvents)
+			}
+		})
 	}
 }
 
@@ -281,7 +553,7 @@ func TestLaunchDoesNotFollowAPIRedirect(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -295,10 +567,7 @@ func TestLaunchDoesNotFollowAPIRedirect(t *testing.T) {
 
 func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	dir := t.TempDir()
-	script := filepath.Join(dir, "launch.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho script-ok\n"), 0755); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	target := writeExecutableScriptFixture(t, dir, "ok")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
 
@@ -310,11 +579,11 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 		Host:         "localhost",
 		Port:         8080,
 		LaunchType:   "script",
-		LaunchTarget: "launch.sh",
+		LaunchTarget: target,
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -326,12 +595,39 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	}
 }
 
-func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
+func TestLaunchBlocksScriptWithoutApprovalBeforeProcessExecution(t *testing.T) {
 	dir := t.TempDir()
-	script := filepath.Join(dir, "env.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nif [ -n \"$SECRET_TOKEN\" ]; then echo leaked; else echo clean; fi\n"), 0755); err != nil {
+	script := filepath.Join(dir, "launch.sh")
+	marker := filepath.Join(dir, "executed.txt")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch executed.txt\n"), 0755); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Unapproved Script Automation",
+		URLPath:      "unapproved-script-automation",
+		LaunchType:   "script",
+		LaunchTarget: "launch.sh",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("script side-effect marker exists or stat returned unexpected error: %v", err)
+	}
+	assertLauncherApprovalBlocked(t, result, repo, "action-bound approval proof rejected before process or filesystem access")
+}
+
+func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	target := writeExecutableScriptFixture(t, dir, "clean-environment")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
 	t.Setenv("SECRET_TOKEN", "must-not-leak")
@@ -344,11 +640,11 @@ func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
 		Host:         "localhost",
 		Port:         8080,
 		LaunchType:   "script",
-		LaunchTarget: "env.sh",
+		LaunchTarget: target,
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -362,10 +658,7 @@ func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
 
 func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 	dir := t.TempDir()
-	script := filepath.Join(dir, "leak.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'token=super-secret-token'\n"), 0755); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	target := writeExecutableScriptFixture(t, dir, "redact")
 	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
 	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
 
@@ -377,13 +670,16 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 		Host:         "localhost",
 		Port:         8080,
 		LaunchType:   "script",
-		LaunchTarget: "leak.sh",
+		LaunchTarget: target,
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status = %q, want completed: %s", result.Status, result.Message)
 	}
 	if strings.Contains(result.Output, "super-secret-token") {
 		t.Fatalf("script output leaked secret: %s", result.Output)
@@ -391,6 +687,44 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 	if len(repo.launchEvents) != 1 || strings.Contains(repo.launchEvents[0].Output, "super-secret-token") {
 		t.Fatalf("launch event leaked secret: %#v", repo.launchEvents)
 	}
+}
+
+func writeExecutableScriptFixture(t *testing.T, dir, mode string) string {
+	t.Helper()
+	t.Setenv("HAI_TEST_SCRIPT_MODE", mode)
+	t.Setenv("AUTOMATION_SCRIPT_ENV_ALLOWLIST", "HAI_TEST_SCRIPT_MODE")
+	if runtime.GOOS == "windows" {
+		source, err := os.Executable()
+		if err != nil {
+			t.Fatalf("locate test executable: %v", err)
+		}
+		target := filepath.Join(dir, "hai-script-test-helper.exe")
+		payload, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatalf("read test executable: %v", err)
+		}
+		if err := os.WriteFile(target, payload, 0755); err != nil {
+			t.Fatalf("write test executable fixture: %v", err)
+		}
+		return filepath.Base(target)
+	}
+
+	target := filepath.Join(dir, "hai-script-test-helper.sh")
+	var body string
+	switch mode {
+	case "ok":
+		body = "#!/bin/sh\necho script-ok\n"
+	case "clean-environment":
+		body = "#!/bin/sh\nif [ -n \"$SECRET_TOKEN\" ]; then echo leaked; else echo clean; fi\n"
+	case "redact":
+		body = "#!/bin/sh\necho 'token=super-secret-token'\n"
+	default:
+		t.Fatalf("unsupported script fixture mode %q", mode)
+	}
+	if err := os.WriteFile(target, []byte(body), 0755); err != nil {
+		t.Fatalf("write script fixture: %v", err)
+	}
+	return filepath.Base(target)
 }
 
 func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
@@ -414,7 +748,7 @@ func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -443,7 +777,7 @@ func TestLaunchBlocksScriptOutsideAllowlist(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -480,7 +814,7 @@ func TestLaunchBlocksScriptSymlinkEscape(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -507,7 +841,7 @@ func TestLaunchBlocksDockerWhenPolicyDisabled(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -572,15 +906,14 @@ func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	if blocked.Status != "blocked" || adapter.called {
 		t.Fatalf("direct launch bypassed approval: %#v", blocked)
 	}
-	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "agent approval gate blocked execution") {
+	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "action-bound approval proof rejected before agent runtime access") {
 		t.Fatalf("blocked runtime audit was not persisted: %#v", repo.launchEvents)
 	}
 
-	completed, err := service.LaunchTask(id, TaskLaunchRequest{
-		Task:          "Inspect the project and report verified completion.",
-		ProjectKey:    "018-hai",
-		HumanApproved: true,
-	})
+	completed, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		Task:       "Inspect the project and report verified completion.",
+		ProjectKey: "018-hai",
+	}))
 	if err != nil {
 		t.Fatalf("LaunchTask: %v", err)
 	}
@@ -604,7 +937,7 @@ func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	}
 }
 
-func TestStopRuntimeTaskUsesAutomationRuntimeAndTaskID(t *testing.T) {
+func TestStopRuntimeTaskUsesVerifiedOwnerAutomationRuntimeAndTaskID(t *testing.T) {
 	id := uuid.New()
 	adapter := &fakeAgentRuntimeAdapter{id: "openclaw"}
 	registry := agentruntime.NewRegistry(adapter)
@@ -620,21 +953,26 @@ func TestStopRuntimeTaskUsesAutomationRuntimeAndTaskID(t *testing.T) {
 	})
 	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
 
-	result, err := service.StopRuntimeTask(id)
+	result, err := service.StopRuntimeTaskForOwner(id, "alice")
 	if err != nil {
-		t.Fatalf("StopRuntimeTask: %v", err)
+		t.Fatalf("StopRuntimeTaskForOwner: %v", err)
 	}
-	if result.RuntimeID != "openclaw" || result.TaskID != id.String() || result.Status != "stopped" {
+	if result.RuntimeID != "openclaw" || result.TaskID != id.String() || result.Status != "blocked" ||
+		!strings.Contains(result.Message, "owner-bound") {
 		t.Fatalf("stop result = %#v", result)
 	}
 	if result.EvidenceURI == "" {
 		t.Fatalf("stop result missing evidence URI: %#v", result)
 	}
+	if len(repo.launchIntents) != 1 || repo.launchIntents[0].OwnerIdentity != "alice" {
+		t.Fatalf("expected owner-bound runtime stop intent, got %#v", repo.launchIntents)
+	}
 	if len(repo.launchEvents) != 1 {
 		t.Fatalf("expected runtime stop launch event, got %#v", repo.launchEvents)
 	}
 	event := repo.launchEvents[0]
-	if event.LaunchType != "agent_runtime_stop" || event.RuntimeTaskID != id.String() || event.Status != "stopped" {
+	if event.LaunchType != "agent_runtime_stop" || event.RuntimeTaskID != id.String() || event.Status != "blocked" ||
+		event.OwnerIdentity != "alice" {
 		t.Fatalf("runtime stop event = %#v", event)
 	}
 	if result.EvidenceURI != "automation-launch://"+event.ID.String() {
@@ -661,11 +999,10 @@ func TestAgentRuntimeLaunchAllowsOpenClaw(t *testing.T) {
 	})
 	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
 
-	completed, err := service.LaunchTask(id, TaskLaunchRequest{
-		Task:          "Move approved OpenClaw work forward safely.",
-		ProjectKey:    "018-hai",
-		HumanApproved: true,
-	})
+	completed, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		Task:       "Move approved OpenClaw work forward safely.",
+		ProjectKey: "018-hai",
+	}))
 	if err != nil {
 		t.Fatalf("LaunchTask: %v", err)
 	}
@@ -680,6 +1017,65 @@ func TestAgentRuntimeLaunchAllowsOpenClaw(t *testing.T) {
 	}
 	if len(repo.launchEvents) != 1 || repo.launchEvents[0].RuntimeRouteTrace == nil || !containsString(repo.launchEvents[0].RuntimeRouteTrace.VisibleTools, "browser") {
 		t.Fatalf("runtime route trace missing from launch event: %#v", repo.launchEvents)
+	}
+}
+
+func TestLaunchBlocksDockerWithoutApprovalBeforeSocketAccess(t *testing.T) {
+	socketPath, calls := startDockerTestServer(t)
+	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
+	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
+	t.Setenv("AUTOMATION_DOCKER_SOCKET", socketPath)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Unapproved Docker Automation",
+		URLPath:      "unapproved-docker-automation",
+		LaunchType:   "docker_service",
+		LaunchTarget: "safe-container",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("Docker API received %d calls without approval, want zero", calls.Load())
+	}
+	assertLauncherApprovalBlocked(t, result, repo, "action-bound approval proof rejected before docker socket access")
+}
+
+func TestLaunchAllowsDockerWithApproval(t *testing.T) {
+	socketPath, calls := startDockerTestServer(t)
+	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
+	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
+	t.Setenv("AUTOMATION_DOCKER_SOCKET", socketPath)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Approved Docker Automation",
+		URLPath:      "approved-docker-automation",
+		LaunchType:   "docker_service",
+		LaunchTarget: "safe-container",
+	})
+	service := NewService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		OwnerIdentity: "alice",
+	}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("Docker API received %d calls, want one", calls.Load())
+	}
+	if result.Status != "completed" || result.ExitCode != http.StatusNoContent {
+		t.Fatalf("approved Docker result = %#v, want completed HTTP %d", result, http.StatusNoContent)
+	}
+	if len(repo.launchEvents) != 1 || repo.launchEvents[0].Status != "completed" {
+		t.Fatalf("approved Docker launch was not audited: %#v", repo.launchEvents)
 	}
 }
 
@@ -699,7 +1095,7 @@ func TestLaunchBlocksDockerWhenContainerNotAllowlisted(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -724,7 +1120,7 @@ func TestLaunchBlocksAPITargetOutsideAllowlist(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -751,7 +1147,7 @@ func TestLaunchBlocksAPILinkLocalTarget(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -779,7 +1175,7 @@ func TestLaunchRedactsAPITargetAndResponseSecrets(t *testing.T) {
 	})
 	service := NewService(repo, events.Publisher{})
 
-	result, err := service.Launch(id)
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -790,10 +1186,107 @@ func TestLaunchRedactsAPITargetAndResponseSecrets(t *testing.T) {
 	}
 }
 
+func assertLauncherApprovalBlocked(
+	t *testing.T,
+	result *LaunchResult,
+	repo *fakeAutomationRepo,
+	expectedAudit string,
+) {
+	t.Helper()
+	if result == nil || result.Status != "blocked" || !result.RequiresApproval {
+		t.Fatalf("launcher result = %#v, want blocked and approval-required", result)
+	}
+	if result.Output != "" {
+		t.Fatalf("blocked launch output = %q, want empty", result.Output)
+	}
+	if len(repo.launchEvents) != 1 {
+		t.Fatalf("blocked launch event count = %d, want one", len(repo.launchEvents))
+	}
+	event := repo.launchEvents[0]
+	if event.Status != "blocked" || !containsString(event.AuditEvents, expectedAudit) {
+		t.Fatalf("blocked launch audit = %#v, want %q", event, expectedAudit)
+	}
+	if result.LaunchEventID == uuid.Nil || result.LaunchEventID != event.ID {
+		t.Fatalf("blocked launch event id = %s, want %s", result.LaunchEventID, event.ID)
+	}
+}
+
+func approvedTaskLaunchRequest(
+	t *testing.T,
+	service Service,
+	id uuid.UUID,
+	request TaskLaunchRequest,
+) TaskLaunchRequest {
+	t.Helper()
+	if strings.TrimSpace(request.OwnerIdentity) == "" {
+		request.OwnerIdentity = "alice"
+	}
+	if strings.TrimSpace(request.ApprovalSourceID) == "" {
+		request.ApprovalSourceID = "task-review:" + uuid.NewString()
+	}
+	recorder, ok := service.(ApprovalDecisionRecorder)
+	if !ok {
+		t.Fatalf("automation service does not expose the trusted approval decision recorder")
+	}
+	if err := recorder.RecordApprovalDecision(id, TaskApprovalDecisionRequest{
+		OwnerIdentity:    request.OwnerIdentity,
+		Task:             request.Task,
+		ProjectKey:       request.ProjectKey,
+		ApprovalSourceID: request.ApprovalSourceID,
+		ApprovedAt:       time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("RecordApprovalDecision: %v", err)
+	}
+	issuer, ok := service.(ApprovalProofIssuer)
+	if !ok {
+		t.Fatalf("automation service does not expose the trusted approval proof issuer")
+	}
+	proof, err := issuer.IssueApprovalProof(id, TaskApprovalProofRequest{
+		OwnerIdentity:    request.OwnerIdentity,
+		Task:             request.Task,
+		ProjectKey:       request.ProjectKey,
+		ApprovalSourceID: request.ApprovalSourceID,
+	})
+	if err != nil {
+		t.Fatalf("IssueApprovalProof: %v", err)
+	}
+	request.ApprovalProof = proof
+	return request
+}
+
+func startDockerTestServer(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
+	socketPath := filepath.Join(os.TempDir(), "hai-"+uuid.NewString()+".sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("Unix sockets are unavailable on this platform: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(socketPath)
+	})
+	calls := &atomic.Int32{}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		_ = server.Shutdown(context.Background())
+		_ = listener.Close()
+	})
+	return socketPath, calls
+}
+
 type fakeAutomationRepo struct {
-	automation   *models.Automation
-	launchEvents []models.AutomationLaunchEvent
-	healthEvents []models.AutomationHealthEvent
+	automation        *models.Automation
+	launchIntents     []models.AutomationLaunchEvent
+	launchEvents      []models.AutomationLaunchEvent
+	healthEvents      []models.AutomationHealthEvent
+	approvalDecisions map[string]ApprovalDecisionRecord
+	saveIntentErr     error
+	saveLaunchErr     error
 }
 
 type fakeAgentRuntimeAdapter struct {
@@ -875,7 +1368,10 @@ func containsString(values []string, expected string) bool {
 }
 
 func newFakeAutomationRepo(automation *models.Automation) *fakeAutomationRepo {
-	return &fakeAutomationRepo{automation: automation}
+	return &fakeAutomationRepo{
+		automation:        automation,
+		approvalDecisions: map[string]ApprovalDecisionRecord{},
+	}
 }
 
 func (r *fakeAutomationRepo) FindByID(id uuid.UUID) (*models.Automation, error) {
@@ -926,6 +1422,9 @@ func (r *fakeAutomationRepo) FindHealthEvents(automationID uuid.UUID, limit int)
 }
 
 func (r *fakeAutomationRepo) SaveLaunchEvent(event *models.AutomationLaunchEvent) error {
+	if r.saveLaunchErr != nil {
+		return r.saveLaunchErr
+	}
 	if event.ID == uuid.Nil {
 		event.ID = uuid.New()
 	}
@@ -933,6 +1432,39 @@ func (r *fakeAutomationRepo) SaveLaunchEvent(event *models.AutomationLaunchEvent
 	return nil
 }
 
+func (r *fakeAutomationRepo) SaveLaunchIntent(event *models.AutomationLaunchEvent) error {
+	if r.saveIntentErr != nil {
+		return r.saveIntentErr
+	}
+	if event.ID == uuid.Nil {
+		event.ID = uuid.New()
+	}
+	r.launchIntents = append(r.launchIntents, *event)
+	return nil
+}
+
 func (r *fakeAutomationRepo) FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error) {
 	return r.launchEvents, nil
+}
+
+func (r *fakeAutomationRepo) SaveApprovalDecision(record *ApprovalDecisionRecord) error {
+	if err := validateApprovalDecisionRecord(record); err != nil {
+		return err
+	}
+	if existing, ok := r.approvalDecisions[record.SourceID]; ok {
+		if sameApprovalDecision(&existing, record) {
+			return nil
+		}
+		return fmt.Errorf("approval decision conflicts with the recorded action binding")
+	}
+	r.approvalDecisions[record.SourceID] = *record
+	return nil
+}
+
+func (r *fakeAutomationRepo) FindApprovalDecision(sourceID string) (*ApprovalDecisionRecord, error) {
+	record, ok := r.approvalDecisions[sourceID]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &record, nil
 }

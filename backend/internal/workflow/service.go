@@ -1,16 +1,19 @@
 package workflow
 
 import (
-	"automation-hub-backend/internal/autonomy"
-	"automation-hub-backend/internal/memory"
-	"automation-hub-backend/internal/models"
-	"automation-hub-backend/internal/safety"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"automation-hub-backend/internal/autonomy"
+	"automation-hub-backend/internal/memory"
+	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
 )
@@ -32,6 +35,9 @@ const (
 	RecoveryRetryConfirmed      = "retry_confirmed"
 	RecoveryCompletionConfirmed = "completion_confirmed"
 	RecoveryCompletedAfterRetry = "completed_after_retry"
+
+	frameworkSelectionDecisionType = "framework_selection"
+	frameworkSelectionEventType    = "workflow.framework_selection"
 )
 
 type IntakeRequest struct {
@@ -94,14 +100,72 @@ type ProposalResolutionRequest struct {
 }
 
 type TaskRunRequest struct {
-	OwnerIdentity string `json:"-"`
-	PursuitID     string `json:"pursuitId,omitempty"`
-	WorkflowID    string `json:"workflowId"`
-	Request       string `json:"request"`
-	ProjectKey    string `json:"projectKey,omitempty"`
-	AutomationID  string `json:"automationId,omitempty"`
-	HumanApproved bool   `json:"humanApproved"`
-	ApprovalNote  string `json:"approvalNote,omitempty"`
+	OwnerIdentity    string `json:"-"`
+	PursuitID        string `json:"pursuitId,omitempty"`
+	WorkflowID       string `json:"workflowId"`
+	Request          string `json:"request"`
+	ProjectKey       string `json:"projectKey,omitempty"`
+	AutomationID     string `json:"automationId,omitempty"`
+	HumanApproved    bool   `json:"humanApproved"`
+	ApprovalNote     string `json:"approvalNote,omitempty"`
+	ApprovalSourceID string `json:"-"`
+}
+
+type FrameworkSelectionProvenance struct {
+	SelectionDecisionID       string `json:"selectionDecisionId"`
+	TaskPlanID                string `json:"taskPlanId"`
+	CatalogVersion            string `json:"catalogVersion"`
+	CatalogDigest             string `json:"catalogDigest"`
+	SelectorAlgorithmVersion  string `json:"selectorAlgorithmVersion"`
+	EffectivePreferenceDigest string `json:"effectivePreferenceDigest"`
+	ConstitutionVersion       int    `json:"constitutionVersion"`
+	ConstitutionDigest        string `json:"constitutionDigest"`
+	ConstitutionSource        string `json:"constitutionSource"`
+}
+
+func (p FrameworkSelectionProvenance) Validate(taskPlanID string) error {
+	required := []struct {
+		label string
+		value string
+	}{
+		{label: "selection decision id", value: p.SelectionDecisionID},
+		{label: "task plan id", value: p.TaskPlanID},
+		{label: "catalog version", value: p.CatalogVersion},
+		{label: "selector algorithm version", value: p.SelectorAlgorithmVersion},
+		{label: "constitution source", value: p.ConstitutionSource},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required", field.label)
+		}
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(p.SelectionDecisionID)); err != nil {
+		return fmt.Errorf("selection decision id must be a UUID: %w", err)
+	}
+	if expected := strings.TrimSpace(taskPlanID); expected != "" && strings.TrimSpace(p.TaskPlanID) != expected {
+		return fmt.Errorf("framework selection task plan %q does not match execution plan %q", p.TaskPlanID, expected)
+	}
+	digests := []struct {
+		label string
+		value string
+	}{
+		{label: "catalog digest", value: p.CatalogDigest},
+		{label: "effective preference digest", value: p.EffectivePreferenceDigest},
+		{label: "constitution digest", value: p.ConstitutionDigest},
+	}
+	for _, digest := range digests {
+		value := strings.TrimSpace(digest.value)
+		if len(value) != sha256.Size*2 {
+			return fmt.Errorf("%s must be a SHA-256 digest", digest.label)
+		}
+		if _, err := hex.DecodeString(value); err != nil {
+			return fmt.Errorf("%s must be a SHA-256 digest: %w", digest.label, err)
+		}
+	}
+	if p.ConstitutionVersion < 1 {
+		return fmt.Errorf("constitution version must be positive")
+	}
+	return nil
 }
 
 type TaskRunResult struct {
@@ -115,21 +179,36 @@ type TaskRunResult struct {
 	RuntimeRouteTrace      *models.AutomationRuntimeRouteTrace `json:"runtimeRouteTrace,omitempty"`
 	Passed                 bool                                `json:"passed"`
 	ReviewRequired         bool                                `json:"reviewRequired"`
+	ApprovalRequired       bool                                `json:"approvalRequired"`
 	ExternalActionExecuted bool                                `json:"externalActionExecuted"`
+	FrameworkSelection     *FrameworkSelectionProvenance       `json:"frameworkSelection,omitempty"`
 }
 
 type TaskRunner interface {
 	RunWorkflowTask(request TaskRunRequest) (*TaskRunResult, error)
 }
 
+type WorkflowApprovalBindingRequest struct {
+	OwnerIdentity string
+	WorkflowID    string
+	AutomationID  string
+	Request       string
+	ProjectKey    string
+}
+
+type ApprovalBindingPreparer interface {
+	PrepareWorkflowApprovalBinding(request WorkflowApprovalBindingRequest) (string, error)
+}
+
 type WorkflowRunResult struct {
-	WorkflowID         uuid.UUID  `json:"workflowId"`
-	Status             string     `json:"status"`
-	State              string     `json:"state"`
-	Attempts           int        `json:"attempts"`
-	VerificationStatus string     `json:"verificationStatus,omitempty"`
-	NextRunAt          *time.Time `json:"nextRunAt,omitempty"`
-	Message            string     `json:"message,omitempty"`
+	WorkflowID         uuid.UUID                     `json:"workflowId"`
+	Status             string                        `json:"status"`
+	State              string                        `json:"state"`
+	Attempts           int                           `json:"attempts"`
+	VerificationStatus string                        `json:"verificationStatus,omitempty"`
+	NextRunAt          *time.Time                    `json:"nextRunAt,omitempty"`
+	Message            string                        `json:"message,omitempty"`
+	FrameworkSelection *FrameworkSelectionProvenance `json:"frameworkSelection,omitempty"`
 }
 
 type WorkflowRunSummary struct {
@@ -174,19 +253,20 @@ type ClaimRecoverySummary struct {
 }
 
 type WorkflowRecord struct {
-	Item         models.WorkflowItem            `json:"item"`
-	Checklist    []models.WorkflowChecklistItem `json:"checklist"`
-	Intake       []models.WorkflowIntakeRecord  `json:"intake"`
-	Matches      []models.WorkflowProjectMatch  `json:"matches"`
-	Pursuits     []WorkflowPursuitContext       `json:"pursuits"`
-	Evidence     []models.WorkflowEvidenceClaim `json:"evidence"`
-	OpenLoops    []models.WorkflowOpenLoop      `json:"openLoops"`
-	Proposals    []models.WorkflowProposal      `json:"proposals"`
-	QualityGates []models.WorkflowQualityGate   `json:"qualityGates"`
-	Transitions  []models.WorkflowTransition    `json:"transitions"`
-	SourceLinks  []models.WorkflowSourceLink    `json:"sourceLinks"`
-	Decisions    []models.WorkflowDecision      `json:"decisions"`
-	Events       []models.WorkflowEvent         `json:"events"`
+	Item                models.WorkflowItem            `json:"item"`
+	Checklist           []models.WorkflowChecklistItem `json:"checklist"`
+	Intake              []models.WorkflowIntakeRecord  `json:"intake"`
+	Matches             []models.WorkflowProjectMatch  `json:"matches"`
+	Pursuits            []WorkflowPursuitContext       `json:"pursuits"`
+	Evidence            []models.WorkflowEvidenceClaim `json:"evidence"`
+	OpenLoops           []models.WorkflowOpenLoop      `json:"openLoops"`
+	Proposals           []models.WorkflowProposal      `json:"proposals"`
+	QualityGates        []models.WorkflowQualityGate   `json:"qualityGates"`
+	Transitions         []models.WorkflowTransition    `json:"transitions"`
+	SourceLinks         []models.WorkflowSourceLink    `json:"sourceLinks"`
+	Decisions           []models.WorkflowDecision      `json:"decisions"`
+	Events              []models.WorkflowEvent         `json:"events"`
+	FrameworkSelections []FrameworkSelectionProvenance `json:"frameworkSelections"`
 }
 
 type WorkflowPursuitContext struct {
@@ -292,6 +372,33 @@ func firstMemoryService(services ...memory.Service) memory.Service {
 		}
 	}
 	return nil
+}
+
+func (s *service) approvalDecisionRule(item *models.WorkflowItem) (string, error) {
+	if item == nil {
+		return "", fmt.Errorf("workflow approval requires an item")
+	}
+	if strings.TrimSpace(item.AutomationID) == "" {
+		return "manual approval gate", nil
+	}
+	preparer, ok := s.taskRunner.(ApprovalBindingPreparer)
+	if !ok || preparer == nil {
+		return "", fmt.Errorf("workflow task runner cannot prepare an exact automation approval binding")
+	}
+	binding, err := preparer.PrepareWorkflowApprovalBinding(WorkflowApprovalBindingRequest{
+		OwnerIdentity: strings.TrimSpace(item.OwnerIdentity),
+		WorkflowID:    item.ID.String(),
+		AutomationID:  strings.TrimSpace(item.AutomationID),
+		Request:       strings.TrimSpace(item.Description),
+		ProjectKey:    strings.TrimSpace(item.ProjectKey),
+	})
+	if err != nil {
+		return "", fmt.Errorf("prepare exact automation approval binding: %w", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(binding), "automation-action:") {
+		return "", fmt.Errorf("workflow task runner returned an invalid automation approval binding")
+	}
+	return strings.TrimSpace(binding), nil
 }
 
 func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
@@ -709,6 +816,250 @@ func (s *service) GetForOwner(ownerIdentity string, id uuid.UUID) (*WorkflowReco
 	return record, nil
 }
 
+// AttachBrowserVerification links one completed, owner-authorized local
+// browser check as a quality signal. A passing route check proves only that the
+// named local page met its configured navigation expectation: it cannot verify
+// facts, update memory, execute work, or transition the workflow to complete.
+func (s *service) AttachBrowserVerification(ownerIdentity, workflowID, runID, profileID, status, finalPath, pageTitle, summary string) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	runID = strings.TrimSpace(runID)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if _, err := uuid.Parse(runID); err != nil {
+		return fmt.Errorf("browser verification run id is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status != "passed" && status != "failed" {
+		return fmt.Errorf("browser verification must be completed before it can be linked")
+	}
+	uri := "browser-verification://run/" + runID
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "read_only_browser_verification" {
+			linked = true
+			break
+		}
+	}
+	label := firstNonEmpty(strings.TrimSpace(profileID), "Local browser verification")
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "browser_verification", SourceID: runID,
+			SourceURI: uri, SourceLabel: label, Relationship: "read_only_browser_verification",
+		}); err != nil {
+			return fmt.Errorf("store browser verification source link: %w", err)
+		}
+	}
+	reason := "read-only local browser verification " + status + ": " + firstNonEmpty(strings.TrimSpace(summary), "no summary returned")
+	if strings.TrimSpace(finalPath) != "" {
+		reason += " (path " + strings.TrimSpace(finalPath) + ")"
+	}
+	if strings.TrimSpace(pageTitle) != "" {
+		reason += " (title " + strings.TrimSpace(pageTitle) + ")"
+	}
+	if err := s.requireQualityGate(record.Item.ID, "local browser verification", status, reason); err != nil {
+		return err
+	}
+	s.audit(record.Item.ID, "workflow.browser_verification_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "read_only_browser_verification", status, uri, "browser_verifier")
+	return nil
+}
+
+// AttachSecretScan links a redacted aggregate Gitleaks result to an
+// owner-authorized workflow. It records only the reviewed snapshot identifier,
+// aggregate counts, and an opaque result digest. A scan is a review signal, not
+// source evidence or completion proof, so it cannot move workflow state or
+// authorize execution.
+func (s *service) AttachSecretScan(ownerIdentity, workflowID, workspaceID, resultDigest string, findingCount, affectedFiles int) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	resultDigest = strings.TrimSpace(resultDigest)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if !validWorkflowScanWorkspace(workspaceID) || len(resultDigest) != sha256.Size*2 || findingCount < 0 || affectedFiles < 0 || affectedFiles > findingCount {
+		return fmt.Errorf("aggregate secret scan result is invalid")
+	}
+	if _, err := hex.DecodeString(resultDigest); err != nil {
+		return fmt.Errorf("aggregate secret scan result is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	uri := "gitleaks://scan/" + workspaceID + "/" + resultDigest
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "aggregate_secret_scan" {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "gitleaks_scan", SourceID: resultDigest,
+			SourceURI: uri, SourceLabel: workspaceID, Relationship: "aggregate_secret_scan",
+		}); err != nil {
+			return fmt.Errorf("store secret scan source link: %w", err)
+		}
+	}
+	decision := "passed"
+	reason := fmt.Sprintf("redacted aggregate secret scan found no findings in reviewed snapshot %s", workspaceID)
+	if findingCount > 0 {
+		decision = "needs_review"
+		reason = fmt.Sprintf("redacted aggregate secret scan found %d finding(s) across %d affected file(s) in reviewed snapshot %s", findingCount, affectedFiles, workspaceID)
+	}
+	s.decide(record.Item.ID, "aggregate_secret_scan", decision, reason, "read_only_security_scan", false, "gitleaks")
+	s.audit(record.Item.ID, "workflow.secret_scan_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "aggregate_secret_scan", decision, uri, "gitleaks")
+	return nil
+}
+
+// AttachSBOMInventory links a redacted aggregate Syft result to an owner-
+// authorized workflow. It provides review context only: package and ecosystem
+// counts cannot establish a dependency's safety, change workflow state, or
+// authorize execution.
+func (s *service) AttachSBOMInventory(ownerIdentity, workflowID, workspaceID, resultDigest string, packageCount, ecosystemCount int) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	resultDigest = strings.TrimSpace(resultDigest)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if !validWorkflowScanWorkspace(workspaceID) || len(resultDigest) != sha256.Size*2 || packageCount < 0 || ecosystemCount < 0 || (packageCount > 0 && ecosystemCount == 0) {
+		return fmt.Errorf("aggregate SBOM inventory result is invalid")
+	}
+	if _, err := hex.DecodeString(resultDigest); err != nil {
+		return fmt.Errorf("aggregate SBOM inventory result is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	uri := "syft://inventory/" + workspaceID + "/" + resultDigest
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "aggregate_sbom_inventory" {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "syft_inventory", SourceID: resultDigest,
+			SourceURI: uri, SourceLabel: workspaceID, Relationship: "aggregate_sbom_inventory",
+		}); err != nil {
+			return fmt.Errorf("store SBOM inventory source link: %w", err)
+		}
+	}
+	reason := fmt.Sprintf("redacted aggregate SBOM inventory recorded %d package(s) across %d ecosystem(s) in reviewed snapshot %s; review in the original workspace before making dependency decisions", packageCount, ecosystemCount, workspaceID)
+	s.decide(record.Item.ID, "aggregate_sbom_inventory", "needs_review", reason, "read_only_software_inventory", false, "syft")
+	s.audit(record.Item.ID, "workflow.sbom_inventory_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "aggregate_sbom_inventory", "needs_review", uri, "syft")
+	return nil
+}
+
+// AttachMiniSWEPatchProposal records only an opaque disposable patch proposal
+// reference. The generated diff remains response-only at the mini-SWE boundary;
+// this workflow link is a review signal and cannot apply code, change state, or
+// satisfy a technical completion gate.
+func (s *service) AttachMiniSWEPatchProposal(ownerIdentity, workflowID, proposalID, workspaceID, diffDigest string, changedFiles int) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return fmt.Errorf("owner identity is required")
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	proposalID = strings.TrimSpace(proposalID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	diffDigest = strings.TrimSpace(diffDigest)
+	parsedWorkflowID, err := uuid.Parse(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow id is invalid")
+	}
+	if _, err := uuid.Parse(proposalID); err != nil {
+		return fmt.Errorf("patch proposal id is invalid")
+	}
+	if !validWorkflowScanWorkspace(workspaceID) || len(diffDigest) != sha256.Size*2 || changedFiles < 0 || changedFiles > 2000 {
+		return fmt.Errorf("patch proposal result is invalid")
+	}
+	if _, err := hex.DecodeString(diffDigest); err != nil {
+		return fmt.Errorf("patch proposal result is invalid")
+	}
+	record, err := s.GetForOwner(ownerIdentity, parsedWorkflowID)
+	if err != nil {
+		return err
+	}
+	uri := "mini-swe://proposal/" + proposalID + "/" + diffDigest
+	links, err := s.repo.FindSourceLinks(record.Item.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow source links: %w", err)
+	}
+	linked := false
+	for _, link := range links {
+		if link.SourceURI == uri && link.Relationship == "review_only_patch_proposal" {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		if _, err := s.repo.CreateSourceLink(&models.WorkflowSourceLink{
+			WorkflowID: record.Item.ID, SourceType: "mini_swe_patch_proposal", SourceID: proposalID,
+			SourceURI: uri, SourceLabel: workspaceID, Relationship: "review_only_patch_proposal",
+		}); err != nil {
+			return fmt.Errorf("store patch proposal source link: %w", err)
+		}
+	}
+	reason := fmt.Sprintf("isolated mini-SWE patch proposal returned an opaque diff digest with %d changed file(s); review the response-only diff before any independent apply or test", changedFiles)
+	s.decide(record.Item.ID, "mini_swe_patch_proposal", "needs_review", reason, "review_only_patch_proposal", false, "mini-swe")
+	s.audit(record.Item.ID, "workflow.mini_swe_patch_linked", record.Item.CurrentState, record.Item.CurrentState, reason, "review_only_patch_proposal", "needs_review", uri, "mini-swe")
+	return nil
+}
+
+func validWorkflowScanWorkspace(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	first := value[0]
+	if first == '_' || first == '-' {
+		return false
+	}
+	return true
+}
+
 func (s *service) get(id uuid.UUID) (*WorkflowRecord, error) {
 	item, err := s.repo.FindItem(id)
 	if err != nil {
@@ -762,7 +1113,22 @@ func (s *service) get(id uuid.UUID) (*WorkflowRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WorkflowRecord{Item: *item, Checklist: checklist, Intake: intake, Matches: matches, Pursuits: pursuits, Evidence: evidence, OpenLoops: openLoops, Proposals: proposals, QualityGates: qualityGates, Transitions: transitions, SourceLinks: sourceLinks, Decisions: decisions, Events: events}, nil
+	return &WorkflowRecord{
+		Item:                *item,
+		Checklist:           checklist,
+		Intake:              intake,
+		Matches:             matches,
+		Pursuits:            pursuits,
+		Evidence:            evidence,
+		OpenLoops:           openLoops,
+		Proposals:           proposals,
+		QualityGates:        qualityGates,
+		Transitions:         transitions,
+		SourceLinks:         sourceLinks,
+		Decisions:           decisions,
+		Events:              events,
+		FrameworkSelections: frameworkSelectionsFromDecisions(decisions),
+	}, nil
 }
 
 func workflowVisibleTo(item models.WorkflowItem, ownerIdentity string) bool {
@@ -770,8 +1136,7 @@ func workflowVisibleTo(item models.WorkflowItem, ownerIdentity string) bool {
 	if ownerIdentity == "" {
 		return true
 	}
-	owner := strings.TrimSpace(item.OwnerIdentity)
-	return owner == "" || owner == ownerIdentity
+	return strings.TrimSpace(item.OwnerIdentity) == ownerIdentity
 }
 
 func visibleWorkflowItems(ownerIdentity string, items []models.WorkflowItem) []models.WorkflowItem {
@@ -850,6 +1215,13 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 	if !transitionAllowed(item.CurrentState, target, request.Approved) {
 		return nil, fmt.Errorf("transition from %s to %s is not allowed", item.CurrentState, target)
 	}
+	decisionRule := "manual approval gate"
+	if request.Approved {
+		decisionRule, err = s.approvalDecisionRule(item)
+		if err != nil {
+			return nil, err
+		}
+	}
 	from := item.CurrentState
 	item.CurrentState = target
 	if target == StateNeedsApproval {
@@ -880,7 +1252,7 @@ func (s *service) Transition(id uuid.UUID, request TransitionRequest) (*Workflow
 	}
 	s.recordTransition(updated.ID, from, target, "manual_transition", firstNonEmpty(request.Actor, "operator"), request.Approved, request.Message)
 	if request.Approved {
-		s.decide(updated.ID, "approval", "approved", firstNonEmpty(request.Message, "human approval recorded"), "manual approval gate", true, firstNonEmpty(request.Actor, "operator"))
+		s.decide(updated.ID, "approval", "approved", firstNonEmpty(request.Message, "human approval recorded"), decisionRule, true, firstNonEmpty(request.Actor, "operator"))
 	}
 	s.audit(updated.ID, "workflow.transition", from, target, request.Message, "manual_transition", approvalRule(request.Approved), updated.SourceURI, firstNonEmpty(request.Actor, "operator"))
 	return s.Get(updated.ID)
@@ -1570,15 +1942,30 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	if pursuitErr != nil {
 		return s.handleRunReviewRequired(&item, claimID, "linked pursuit context could not be resolved before task execution: "+pursuitErr.Error(), "needs_review")
 	}
+	humanApproved := item.ApprovalStatus == "approved"
+	approvalSourceID := ""
+	if humanApproved {
+		var approvalErr error
+		approvalSourceID, approvalErr = s.workflowApprovalSourceID(item)
+		if approvalErr != nil {
+			return s.handleRunApprovalRequired(
+				&item,
+				claimID,
+				"approved workflow is missing durable approval provenance: "+approvalErr.Error(),
+				"needs_review",
+			)
+		}
+	}
 	runResult, err := s.runTaskWithLease(item.ID, claimID, TaskRunRequest{
-		OwnerIdentity: item.OwnerIdentity,
-		PursuitID:     pursuitID,
-		WorkflowID:    item.ID.String(),
-		Request:       item.Description,
-		ProjectKey:    item.ProjectKey,
-		AutomationID:  item.AutomationID,
-		HumanApproved: !item.RequiresApproval || item.ApprovalStatus == "approved",
-		ApprovalNote:  item.ApprovalReason,
+		OwnerIdentity:    item.OwnerIdentity,
+		PursuitID:        pursuitID,
+		WorkflowID:       item.ID.String(),
+		Request:          item.Description,
+		ProjectKey:       item.ProjectKey,
+		AutomationID:     item.AutomationID,
+		HumanApproved:    humanApproved,
+		ApprovalNote:     item.ApprovalReason,
+		ApprovalSourceID: approvalSourceID,
 	})
 	if err != nil {
 		return s.handleRunFailure(&item, claimID, "task engine failed: "+err.Error(), "")
@@ -1586,22 +1973,36 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	if runResult == nil {
 		return s.handleRunFailure(&item, claimID, "task engine returned no result", "")
 	}
+	item.LastTaskPlanID = runResult.PlanID
+	item.VerificationStatus = runResult.VerificationStatus
+	if err := s.storeTaskFrameworkSelection(item.ID, runResult); err != nil {
+		return s.handleRunReviewRequired(&item, claimID, "framework selection provenance could not be stored: "+err.Error(), "needs_review")
+	}
 	if time.Now().UTC().After(observedAt.Add(worldStateTTL())) {
-		return s.handleRunReviewRequired(
+		result := s.handleRunReviewRequired(
 			&item,
 			claimID,
 			"world state expired during execution; re-observe source and external side effects before accepting completion",
 			"needs_review",
 		)
+		result.FrameworkSelection = runResult.FrameworkSelection
+		return result
 	}
-	item.LastTaskPlanID = runResult.PlanID
-	item.VerificationStatus = runResult.VerificationStatus
 	if err := s.storeTaskRuntimeEvidence(item.ID, runResult); err != nil {
-		return s.handleRunReviewRequired(&item, claimID, "runtime evidence could not be stored: "+err.Error(), "needs_review")
+		result := s.handleRunReviewRequired(&item, claimID, "runtime evidence could not be stored: "+err.Error(), "needs_review")
+		result.FrameworkSelection = runResult.FrameworkSelection
+		return result
 	}
 	if runResult.ReviewRequired {
 		reason := firstNonEmpty(runResult.FailureReason, "task engine requires human review")
-		return s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
+		if runResult.ApprovalRequired {
+			result := s.handleRunApprovalRequired(&item, claimID, reason, runResult.VerificationStatus)
+			result.FrameworkSelection = runResult.FrameworkSelection
+			return result
+		}
+		result := s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
+		result.FrameworkSelection = runResult.FrameworkSelection
+		return result
 	}
 	gateResult := s.evaluateQualityGates(item, runResult)
 	if runResult.Passed && !runResult.ReviewRequired && gateResult.Passed {
@@ -1615,15 +2016,15 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		item.LastWorkerError = ""
 		item.NextAction = "write completion summary and archive when reviewed"
 		if _, owned, err := s.repo.UpdateClaimedItem(&item, claimID); err != nil {
-			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: err.Error()}
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: err.Error(), FrameworkSelection: runResult.FrameworkSelection}
 		} else if !owned {
-			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "worker claim was lost before completion could be persisted"}
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "worker claim was lost before completion could be persisted", FrameworkSelection: runResult.FrameworkSelection}
 		}
 		s.recordTransition(item.ID, StateInProgress, StateCompleted, "worker", "workflow-worker", item.ApprovalStatus == "approved", "task engine result verified workflow completion")
 		s.decide(item.ID, "verification_completion", "completed", "verification accepted task engine result", firstNonEmpty(runResult.VerificationStatus, "validation passed"), item.ApprovalStatus == "approved", "workflow-worker")
 		s.audit(item.ID, "workflow.worker_completed", StateInProgress, StateCompleted, firstNonEmpty(runResult.Output, "task engine result verified workflow completion"), "worker", "verification accepted completion", item.SourceURI, "workflow-worker")
 		s.markChecklistProgress(item.ID, "Verify completion before closing")
-		return WorkflowRunResult{WorkflowID: item.ID, Status: "completed", State: StateCompleted, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "verified completion"}
+		return WorkflowRunResult{WorkflowID: item.ID, Status: "completed", State: StateCompleted, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "verified completion", FrameworkSelection: runResult.FrameworkSelection}
 	}
 	reason := firstNonEmpty(runResult.FailureReason, "task engine validation did not pass")
 	if !gateResult.Passed {
@@ -1631,9 +2032,13 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	}
 	if runResult.ExternalActionExecuted {
 		reason = "controlled runtime action executed, but completion validation failed; review evidence before any retry: " + reason
-		return s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
+		result := s.handleRunReviewRequired(&item, claimID, reason, runResult.VerificationStatus)
+		result.FrameworkSelection = runResult.FrameworkSelection
+		return result
 	}
-	return s.handleRunFailure(&item, claimID, reason, runResult.VerificationStatus)
+	result := s.handleRunFailure(&item, claimID, reason, runResult.VerificationStatus)
+	result.FrameworkSelection = runResult.FrameworkSelection
+	return result
 }
 
 // workflowTaskPursuitID only attributes a workflow worker run when exactly
@@ -1661,6 +2066,178 @@ func (s *service) workflowTaskPursuitID(item models.WorkflowItem) (string, error
 		return "", nil
 	}
 	return matched.String(), nil
+}
+
+func (s *service) workflowApprovalSourceID(item models.WorkflowItem) (string, error) {
+	decisions, err := s.repo.FindDecisions(item.ID)
+	if err != nil {
+		return "", err
+	}
+	for _, decision := range decisions {
+		if !strings.EqualFold(strings.TrimSpace(decision.DecisionType), "approval") {
+			continue
+		}
+		if decision.ID == uuid.Nil ||
+			!decision.Approved ||
+			!strings.EqualFold(strings.TrimSpace(decision.Decision), "approved") {
+			return "", fmt.Errorf("latest workflow approval decision is not an approval")
+		}
+		if strings.TrimSpace(item.AutomationID) != "" &&
+			!strings.HasPrefix(strings.TrimSpace(decision.RuleApplied), "automation-action:") {
+			return "", fmt.Errorf("latest workflow approval decision has no exact automation action binding")
+		}
+		return "workflow-decision:" + decision.ID.String(), nil
+	}
+	return "", fmt.Errorf("no approved workflow decision record exists")
+}
+
+func normalizeFrameworkSelection(selection FrameworkSelectionProvenance) FrameworkSelectionProvenance {
+	selection.SelectionDecisionID = strings.TrimSpace(selection.SelectionDecisionID)
+	selection.TaskPlanID = strings.TrimSpace(selection.TaskPlanID)
+	selection.CatalogVersion = strings.TrimSpace(selection.CatalogVersion)
+	selection.CatalogDigest = strings.ToLower(strings.TrimSpace(selection.CatalogDigest))
+	selection.SelectorAlgorithmVersion = strings.TrimSpace(selection.SelectorAlgorithmVersion)
+	selection.EffectivePreferenceDigest = strings.ToLower(strings.TrimSpace(selection.EffectivePreferenceDigest))
+	selection.ConstitutionDigest = strings.ToLower(strings.TrimSpace(selection.ConstitutionDigest))
+	selection.ConstitutionSource = strings.TrimSpace(selection.ConstitutionSource)
+	return selection
+}
+
+func frameworkSelectionRule(selection FrameworkSelectionProvenance) string {
+	return fmt.Sprintf(
+		"catalog=%s selector=%s constitution_version=%d constitution_source=%s",
+		selection.CatalogVersion,
+		selection.SelectorAlgorithmVersion,
+		selection.ConstitutionVersion,
+		selection.ConstitutionSource,
+	)
+}
+
+func decodeFrameworkSelectionDecision(decision models.WorkflowDecision) (FrameworkSelectionProvenance, error) {
+	payload := strings.TrimSpace(decision.Reason)
+	if payload == "" && strings.HasPrefix(strings.TrimSpace(decision.RuleApplied), "{") {
+		payload = strings.TrimSpace(decision.RuleApplied)
+	}
+	if payload == "" {
+		return FrameworkSelectionProvenance{}, fmt.Errorf("framework selection decision payload is empty")
+	}
+	var selection FrameworkSelectionProvenance
+	if err := json.Unmarshal([]byte(payload), &selection); err != nil {
+		return FrameworkSelectionProvenance{}, fmt.Errorf("decode framework selection decision: %w", err)
+	}
+	selection = normalizeFrameworkSelection(selection)
+	if strings.TrimSpace(decision.Decision) != "" &&
+		selection.SelectionDecisionID != strings.TrimSpace(decision.Decision) {
+		return FrameworkSelectionProvenance{}, fmt.Errorf("framework selection decision identity does not match its payload")
+	}
+	if err := selection.Validate(selection.TaskPlanID); err != nil {
+		return FrameworkSelectionProvenance{}, err
+	}
+	return selection, nil
+}
+
+func frameworkSelectionsFromDecisions(decisions []models.WorkflowDecision) []FrameworkSelectionProvenance {
+	selections := make([]FrameworkSelectionProvenance, 0)
+	seen := make(map[string]struct{})
+	for _, decision := range decisions {
+		if decision.DecisionType != frameworkSelectionDecisionType {
+			continue
+		}
+		selection, err := decodeFrameworkSelectionDecision(decision)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[selection.SelectionDecisionID]; ok {
+			continue
+		}
+		seen[selection.SelectionDecisionID] = struct{}{}
+		selections = append(selections, selection)
+	}
+	return selections
+}
+
+func (s *service) storeTaskFrameworkSelection(workflowID uuid.UUID, result *TaskRunResult) error {
+	if result == nil {
+		return fmt.Errorf("task engine returned no framework selection result")
+	}
+	if result.FrameworkSelection == nil {
+		return fmt.Errorf("task plan %q has no framework selection provenance", strings.TrimSpace(result.PlanID))
+	}
+	selection := normalizeFrameworkSelection(*result.FrameworkSelection)
+	if err := selection.Validate(strings.TrimSpace(result.PlanID)); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(selection)
+	if err != nil {
+		return fmt.Errorf("encode framework selection provenance: %w", err)
+	}
+	payloadText := string(payload)
+	rule := frameworkSelectionRule(selection)
+	sourceURI := "framework-selection://" + selection.SelectionDecisionID
+
+	decisions, err := s.repo.FindDecisions(workflowID)
+	if err != nil {
+		return err
+	}
+	decisionExists := false
+	for _, decision := range decisions {
+		if decision.DecisionType != frameworkSelectionDecisionType ||
+			strings.TrimSpace(decision.Decision) != selection.SelectionDecisionID {
+			continue
+		}
+		existing, decodeErr := decodeFrameworkSelectionDecision(decision)
+		if decodeErr != nil || existing != selection {
+			return fmt.Errorf("framework selection decision conflicts with existing provenance")
+		}
+		decisionExists = true
+		break
+	}
+	if !decisionExists {
+		if _, err := s.repo.CreateDecision(&models.WorkflowDecision{
+			WorkflowID:   workflowID,
+			DecisionType: frameworkSelectionDecisionType,
+			Decision:     selection.SelectionDecisionID,
+			Reason:       payloadText,
+			RuleApplied:  rule,
+			Approved:     true,
+			Actor:        "workflow-worker",
+		}); err != nil {
+			return fmt.Errorf("store framework selection decision: %w", err)
+		}
+	}
+
+	events, err := s.repo.FindEvents(workflowID)
+	if err != nil {
+		return err
+	}
+	eventExists := false
+	for _, event := range events {
+		if event.EventType != frameworkSelectionEventType ||
+			strings.TrimSpace(event.SourceURI) != sourceURI {
+			continue
+		}
+		if strings.TrimSpace(event.Message) != payloadText ||
+			strings.TrimSpace(event.RuleApplied) != rule {
+			return fmt.Errorf("framework selection event conflicts with existing provenance")
+		}
+		eventExists = true
+		break
+	}
+	if !eventExists {
+		if _, err := s.repo.CreateEvent(&models.WorkflowEvent{
+			WorkflowID:  workflowID,
+			EventType:   frameworkSelectionEventType,
+			Message:     payloadText,
+			Trigger:     "task_engine_framework_selection",
+			RuleApplied: rule,
+			SourceURI:   sourceURI,
+			Actor:       "workflow-worker",
+		}); err != nil {
+			return fmt.Errorf("store framework selection event: %w", err)
+		}
+	}
+	*result.FrameworkSelection = selection
+	return nil
 }
 
 func (s *service) storeTaskRuntimeEvidence(workflowID uuid.UUID, result *TaskRunResult) error {
@@ -1841,6 +2418,51 @@ type qualityGateRunResult struct {
 	Failures []string
 }
 
+func (s *service) handleRunApprovalRequired(item *models.WorkflowItem, claimID, reason, verificationStatus string) WorkflowRunResult {
+	item.CurrentState = StateNeedsApproval
+	item.RequiresApproval = true
+	item.ApprovalStatus = "pending"
+	item.ApprovalReason = firstNonEmpty(reason, "task execution requires explicit human approval")
+	item.BlockedReason = ""
+	item.NextAction = "review the exact proposed action and approve before execution"
+	item.NextRunAt = nil
+	item.LastWorkerError = item.ApprovalReason
+	item.VerificationStatus = verificationStatus
+	s.markQualityGate(item.ID, "human approval", "needs_review", item.ApprovalReason)
+	updated, owned, err := s.repo.UpdateClaimedItem(item, claimID)
+	if err != nil {
+		return WorkflowRunResult{
+			WorkflowID:         item.ID,
+			Status:             "blocked",
+			State:              StateInProgress,
+			Attempts:           item.RetryCount,
+			VerificationStatus: verificationStatus,
+			Message:            err.Error(),
+		}
+	}
+	if !owned || updated == nil {
+		return WorkflowRunResult{
+			WorkflowID:         item.ID,
+			Status:             "blocked",
+			State:              StateBlocked,
+			Attempts:           item.RetryCount,
+			VerificationStatus: verificationStatus,
+			Message:            "worker claim was lost before approval-required state could be persisted",
+		}
+	}
+	s.recordTransition(item.ID, StateInProgress, StateNeedsApproval, "worker_approval_required", "workflow-worker", false, item.ApprovalReason)
+	s.decide(item.ID, "worker_execution", "needs_approval", item.ApprovalReason, "exact action requires a durable human approval decision", false, "workflow-worker")
+	s.audit(item.ID, "workflow.worker_approval_required", StateInProgress, StateNeedsApproval, item.ApprovalReason, "worker_approval_required", "approval gate blocks execution", item.SourceURI, "workflow-worker")
+	return WorkflowRunResult{
+		WorkflowID:         item.ID,
+		Status:             "blocked",
+		State:              StateNeedsApproval,
+		Attempts:           item.RetryCount,
+		VerificationStatus: verificationStatus,
+		Message:            item.ApprovalReason,
+	}
+}
+
 func (s *service) handleRunReviewRequired(item *models.WorkflowItem, claimID, reason, verificationStatus string) WorkflowRunResult {
 	item.RetryCount++
 	item.CurrentState = StateBlocked
@@ -1871,7 +2493,7 @@ func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *Task
 	}
 	sourceLinks, _ := s.repo.FindSourceLinks(item.ID)
 	evidence, _ := s.repo.FindEvidenceClaims(item.ID)
-	output := strings.ToLower(firstNonEmpty(runResult.Output, runResult.FailureReason, runResult.VerificationStatus, runResult.CompletionStatus))
+	githubEvidence := collectGitHubQualityEvidence(item, sourceLinks, evidence)
 
 	for _, gate := range gates {
 		status := "passed"
@@ -1912,16 +2534,36 @@ func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *Task
 			}
 		case "github commit exists":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"commit", "branch", "github", "pull request", "pr"}, "task output does not mention GitHub branch/commit evidence")
+			if !githubEvidence.Commit {
+				status = "needs_review"
+				reason = "no source-linked GitHub commit record is attached"
+			} else {
+				reason = "source-linked GitHub commit record is attached"
+			}
 		case "tests or build evidence":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"test", "tests", "build", "passed"}, "task output does not mention test/build evidence")
+			if !githubEvidence.WorkflowSuccess {
+				status = "needs_review"
+				reason = "no source-linked successful GitHub Actions run is attached"
+			} else {
+				reason = "source-linked successful GitHub Actions run is attached"
+			}
 		case "readme/setup updated":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"readme", "setup", "docs", "documentation"}, "task output does not mention setup or README evidence")
+			if !githubEvidence.DocsChanged {
+				status = "needs_review"
+				reason = "no source-linked GitHub evidence identifies README, setup, or documentation changes"
+			} else {
+				reason = "source-linked GitHub evidence identifies README, setup, or documentation changes"
+			}
 		case "windows 11 operational path":
 			mandatory = item.TaskType == "technical"
-			status, reason = keywordGate(output, []string{"windows", "docker compose", "local", "operational"}, "task output does not mention a Windows/local operational path")
+			if !githubEvidence.WindowsValidation {
+				status = "needs_review"
+				reason = "no source-linked controlled-runtime evidence confirms the Windows 11 operational path"
+			} else {
+				reason = "source-linked controlled-runtime evidence confirms the Windows 11 operational path"
+			}
 		}
 		gate.Status = status
 		gate.Reason = reason
@@ -1937,6 +2579,74 @@ func (s *service) evaluateQualityGates(item models.WorkflowItem, runResult *Task
 		s.decide(item.ID, "quality_gates", "needs_review", strings.Join(result.Failures, "; "), "completion engine", false, "workflow-worker")
 	}
 	return result
+}
+
+type githubQualityEvidence struct {
+	Commit            bool
+	WorkflowSuccess   bool
+	DocsChanged       bool
+	WindowsValidation bool
+}
+
+// collectGitHubQualityEvidence keeps technical completion grounded in durable
+// source records. Worker prose is intentionally excluded: a model or runtime
+// saying that a commit or build exists is not proof that it does.
+func collectGitHubQualityEvidence(item models.WorkflowItem, links []models.WorkflowSourceLink, claims []models.WorkflowEvidenceClaim) githubQualityEvidence {
+	evidence := githubQualityEvidence{}
+	type sourceDescriptor struct {
+		uri   string
+		label string
+	}
+	sources := []sourceDescriptor{{uri: item.SourceURI, label: strings.Join([]string{item.SourceLabel, item.Title, item.Description}, " ")}}
+	uris := []string{item.SourceURI}
+	for _, link := range links {
+		uris = append(uris, link.SourceURI)
+		sources = append(sources, sourceDescriptor{uri: link.SourceURI, label: link.SourceLabel})
+	}
+	for _, claim := range claims {
+		uris = append(uris, claim.SourceURI)
+		sources = append(sources, sourceDescriptor{uri: claim.SourceURI, label: strings.Join([]string{claim.ClaimText, claim.SourceLabel}, " ")})
+	}
+	for _, uri := range uris {
+		if isGitHubCommitURI(uri) {
+			evidence.Commit = true
+		}
+	}
+	for _, source := range sources {
+		if isGitHubURI(source.uri) && containsAny(strings.ToLower(source.label), "readme", "setup", "documentation", "docs") {
+			evidence.DocsChanged = true
+		}
+	}
+	for _, claim := range claims {
+		text := strings.ToLower(strings.Join([]string{claim.ClaimText, claim.SourceLabel}, " "))
+		if isGitHubActionsURI(claim.SourceURI) && githubWorkflowSucceeded(text) {
+			evidence.WorkflowSuccess = true
+		}
+		if claim.Reliability == "controlled_runtime" && containsAny(text, "windows 11", "docker compose", "windows") && containsAny(text, "passed", "validated", "completed", "success") {
+			evidence.WindowsValidation = true
+		}
+	}
+	return evidence
+}
+
+func isGitHubURI(uri string) bool {
+	uri = strings.ToLower(strings.TrimSpace(uri))
+	return strings.Contains(uri, "://github.com/") || strings.Contains(uri, "://api.github.com/")
+}
+
+func isGitHubCommitURI(uri string) bool {
+	return isGitHubURI(uri) && strings.Contains(strings.ToLower(uri), "/commit/")
+}
+
+func isGitHubActionsURI(uri string) bool {
+	return isGitHubURI(uri) && strings.Contains(strings.ToLower(uri), "/actions/runs/")
+}
+
+func githubWorkflowSucceeded(text string) bool {
+	if containsAny(text, "failure", "failed", "cancelled", "canceled", "timed_out", "action_required") {
+		return false
+	}
+	return containsAny(text, "success", "successful", "passed", "completed")
 }
 
 func (s *service) markQualityGate(workflowID uuid.UUID, gateName, status, reason string) {
@@ -2549,9 +3259,9 @@ func engineCapabilities() []EngineCapability {
 		{ID: "document-ingestion", Name: "Document ingestion engine", Status: "partial", Implemented: []string{"allowlisted local folder sync", "text extraction for readable files", "source provenance"}, Next: []string{"OCR, file renaming, folder movement, PDF extraction"}},
 		{ID: "duplicate-version", Name: "Duplicate and version control engine", Status: "partial", Implemented: []string{"stable source-identity deduplication", "immutable workflow revision hashes", "changed source revisions supersede stale workflows and approvals", "source item cursor/hash support"}, Next: []string{"near-duplicate and final-vs-draft detection"}},
 		{ID: "case-timeline", Name: "Case timeline engine", Status: "partial", Implemented: []string{"timestamped intake/events/transitions/claims"}, Next: []string{"project timeline API grouped by evidence"}},
-		{ID: "contradiction-detection", Name: "Contradiction detection engine", Status: "partial", Implemented: []string{"verification module has conflict statuses", "evidence claims can be reviewed"}, Next: []string{"cross-source contradiction scans"}},
-		{ID: "developer-github", Name: "Developer/GitHub engine", Status: "partial", Implemented: []string{"technical task classification", "GitHub quality gate records"}, Next: []string{"GitHub branch/commit/check adapters"}},
-		{ID: "software-quality-gate", Name: "Software quality gate engine", Status: "implemented", Implemented: []string{"test/build/readme/windows setup gates created for technical workflows", "mandatory technical gates can block completion"}, Next: []string{"automated repository acceptance reports"}},
+		{ID: "contradiction-detection", Name: "Contradiction detection engine", Status: "implemented", Implemented: []string{"verification module has conflict statuses", "evidence claims can be reviewed", "deterministic cross-source scans require separate source records, a shared concrete topic, and opposite lifecycle assertions", "conflicts preserve both source references and remain human-review signals"}, Next: []string{"typed entity/date/value contradiction extraction for operator-reviewed evidence"}},
+		{ID: "developer-github", Name: "Developer/GitHub engine", Status: "implemented", Implemented: []string{"read-only GitHub source adapter for repository, issue, pull request, branch, commit, and Actions-run records", "technical task classification", "source-linked commit and successful Actions evidence gates", "worker prose cannot self-certify GitHub completion"}, Next: []string{"read-only branch comparison and repository acceptance reports"}},
+		{ID: "software-quality-gate", Name: "Software quality gate engine", Status: "implemented", Implemented: []string{"test/build/readme/windows setup gates created for technical workflows", "mandatory technical gates require source-linked GitHub and controlled-runtime evidence before completion"}, Next: []string{"automated repository acceptance reports"}},
 		{ID: "public-accountability", Name: "Public accountability engine", Status: "partial", Implemented: []string{"public-post approval gate", "evidence claim records", "risk-gated publishing flow"}, Next: []string{"safer wording reviewer and source-backed timeline builder"}},
 		{ID: "medium-publishing", Name: "Medium/blog publishing engine", Status: "partial", Implemented: []string{"publishing task type", "draft-only rule", "article checklist"}, Next: []string{"Medium draft adapter and image prompt workflow"}},
 		{ID: "client-operations", Name: "Client job operations engine", Status: "partial", Implemented: []string{"administrative workflow path", "deadline/priority/checklist support"}, Next: []string{"quote, travel, materials, and invoice templates"}},

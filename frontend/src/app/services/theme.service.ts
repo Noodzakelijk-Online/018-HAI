@@ -35,7 +35,7 @@ export class ThemeService {
   }
 
   icon(): string {
-    return this.currentMode === 'dark' ? 'moon' : 'bulb'
+    return this.currentMode === 'dark' ? 'star' : 'bulb'
   }
 
   private load(): ThemeMode {

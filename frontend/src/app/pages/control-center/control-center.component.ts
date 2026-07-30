@@ -139,6 +139,7 @@ export class ControlCenterComponent implements OnInit {
         { label: 'Account Bridges', icon: 'link', route: '/account-bridges' },
         { label: 'Memory', icon: 'database', route: '/memory' },
         { label: 'Task Planning', icon: 'partition', route: '/task-blueprint' },
+        { label: 'Frameworks', icon: 'apartment', route: '/framework-registry' },
         { label: 'Verified Answers', icon: 'safety-certificate', route: '/grounded-answers' },
         { label: 'Activity', icon: 'history', section: 'activity' },
       ],

@@ -398,12 +398,112 @@
           </dl>
         </article>
 
-        <article class="inspector-card">
-          <h3>Success Criteria <span title="What must be true before HAI can call this complete">?</span></h3>
-          <ul class="criteria-list">
-            <li *ngFor="let criterion of plan?.intake?.successCriteria || criteria()">{{ criterion }}</li>
-            <li *ngIf="!(plan?.intake?.successCriteria?.length || criteria().length)">No explicit criteria yet.</li>
-          </ul>
+        <article class="inspector-card framework-summary">
+          <div class="framework-summary__header">
+            <h3>Operating Frameworks <span title="The governed methods HAI selected for this plan, including their authority and approval limits">?</span></h3>
+            <button type="button" nz-button nzType="link" nzSize="small" (click)="openFrameworkRegistry()">
+              Open registry
+            </button>
+          </div>
+
+          <ng-container *ngIf="plan?.frameworkDecision as decision; else noFrameworkDecision">
+            <dl>
+              <div>
+                <dt>Domain</dt>
+                <dd>{{ decision.lifeDomain || 'General' }}</dd>
+              </div>
+              <div>
+                <dt>Autonomy</dt>
+                <dd>Level {{ decision.maximumAutonomyLevel }} / 10</dd>
+              </div>
+              <div>
+                <dt>Approval</dt>
+                <dd>{{ decision.requiresApproval ? 'Required' : 'Not required' }}</dd>
+              </div>
+            </dl>
+            <div class="framework-summary__selection" *ngIf="decision.selected.length; else noSelectedFrameworks">
+              <nz-tag *ngFor="let framework of visibleFrameworks(decision)">
+                {{ framework.name }}
+              </nz-tag>
+              <span class="framework-summary__more" *ngIf="additionalFrameworkCount(decision)">
+                +{{ additionalFrameworkCount(decision) }} more
+              </span>
+            </div>
+            <ng-template #noSelectedFrameworks>
+              <p class="framework-summary__empty">No frameworks were selected for this decision.</p>
+            </ng-template>
+          </ng-container>
+
+          <ng-template #noFrameworkDecision>
+            <p class="framework-summary__empty">
+              No framework decision was recorded for this plan. New plans show their governed selection here.
+            </p>
+          </ng-template>
+        </article>
+
+        <article class="inspector-card validation-summary" aria-labelledby="validation-summary-title">
+          <div class="validation-summary__header">
+            <h3 id="validation-summary-title">
+              Completion validation
+              <span title="Real task, framework evidence, framework completion, and system checks required before HAI can call work complete">?</span>
+            </h3>
+            <button
+              type="button"
+              nz-button
+              nzType="link"
+              nzSize="small"
+              (click)="openValidationEvidence()"
+            >
+              Inspect evidence
+            </button>
+          </div>
+
+          <div
+            class="validation-state"
+            [ngClass]="validationStatusClass()"
+            role="status"
+            aria-live="polite"
+          >
+            <span class="validation-state__mark" aria-hidden="true"></span>
+            <div>
+              <strong>{{ validationStatusLabel() }}</strong>
+              <small *ngIf="structuredValidationCriteria().length; else noValidationCriteria">
+                {{ structuredValidationCriteria().length }} completion
+                {{ structuredValidationCriteria().length === 1 ? 'gate' : 'gates' }}
+              </small>
+              <ng-template #noValidationCriteria>
+                <small>No structured validation gates are available yet.</small>
+              </ng-template>
+            </div>
+          </div>
+
+          <div
+            class="validation-counts"
+            *ngIf="structuredValidationCriteria().length"
+            aria-label="Validation result counts"
+          >
+            <div class="validation-count validation-count--passed">
+              <strong>{{ validationCount('passed') }}</strong>
+              <span>Passed</span>
+            </div>
+            <div class="validation-count validation-count--failed">
+              <strong>{{ validationCount('failed') }}</strong>
+              <span>Failed</span>
+            </div>
+            <div class="validation-count validation-count--not-run">
+              <strong>{{ validationCount('not_run') }}</strong>
+              <span>Not run</span>
+            </div>
+            <div class="validation-count validation-count--not-applicable">
+              <strong>{{ validationCount('not_applicable') }}</strong>
+              <span>Assurance / N/A</span>
+            </div>
+          </div>
+
+          <p class="validation-summary__next" *ngIf="plan">
+            <strong>Next:</strong>
+            {{ plan.validationResult.nextAction || plan.validationPlan.completionGate }}
+          </p>
         </article>
 
         <article class="inspector-card">
@@ -453,13 +553,85 @@
           <nz-empty *ngIf="!plan?.steps?.length" nzNotFoundContent="No plan steps yet."></nz-empty>
         </article>
 
-        <article class="inspector-card">
-          <h3>Validation</h3>
-          <ul>
-            <li *ngFor="let step of plan?.validationPlan?.steps || []">{{ step }}</li>
-          </ul>
-          <p *ngIf="plan"><strong>Completion gate:</strong> {{ plan.validationPlan.completionGate }}</p>
-          <p *ngIf="plan"><strong>Result:</strong> {{ plan.validationResult.status }} · {{ plan.validationResult.nextAction }}</p>
+        <article class="inspector-card validation-plan">
+          <h3>Validation plan <span title="The exact checks HAI must run before the task can be marked complete">?</span></h3>
+
+          <ng-container *ngIf="plan as currentPlan; else noValidationPlan">
+            <dl class="validation-policy">
+              <div>
+                <dt>Completion gate</dt>
+                <dd>{{ currentPlan.validationPlan.completionGate }}</dd>
+              </div>
+              <div>
+                <dt>Failure policy</dt>
+                <dd>{{ currentPlan.validationPlan.failurePolicy }}</dd>
+              </div>
+            </dl>
+
+            <section
+              class="validation-plan__group"
+              *ngIf="currentPlan.validationPlan.successCriteria.length"
+              aria-labelledby="task-success-heading"
+            >
+              <h4 id="task-success-heading">Task success</h4>
+              <ol>
+                <li *ngFor="let criterion of currentPlan.validationPlan.successCriteria">{{ criterion }}</li>
+              </ol>
+            </section>
+
+            <section
+              class="validation-plan__group"
+              *ngIf="currentPlan.validationPlan.frameworkEvidenceRequirements.length"
+              aria-labelledby="framework-evidence-heading"
+            >
+              <h4 id="framework-evidence-heading">Framework evidence requirements</h4>
+              <ol>
+                <li *ngFor="let criterion of currentPlan.validationPlan.frameworkEvidenceRequirements">{{ criterion }}</li>
+              </ol>
+            </section>
+
+            <section
+              class="validation-plan__group"
+              *ngIf="currentPlan.validationPlan.frameworkCompletionCriteria.length"
+              aria-labelledby="framework-completion-heading"
+            >
+              <h4 id="framework-completion-heading">Framework completion criteria</h4>
+              <ol>
+                <li *ngFor="let criterion of currentPlan.validationPlan.frameworkCompletionCriteria">{{ criterion }}</li>
+              </ol>
+            </section>
+
+            <section
+              class="validation-plan__group"
+              *ngIf="currentPlan.validationPlan.frameworkAssuranceCriteria.length"
+              aria-labelledby="framework-assurance-heading"
+            >
+              <h4 id="framework-assurance-heading">Framework assurance checks</h4>
+              <p>Measured at registry or longitudinal scope; these do not masquerade as per-task completion gates.</p>
+              <ol>
+                <li *ngFor="let criterion of currentPlan.validationPlan.frameworkAssuranceCriteria">{{ criterion }}</li>
+              </ol>
+            </section>
+
+            <section
+              class="validation-plan__group"
+              *ngIf="currentPlan.validationPlan.steps.length"
+              aria-labelledby="system-checks-heading"
+            >
+              <h4 id="system-checks-heading">Deterministic system checks</h4>
+              <ol>
+                <li *ngFor="let step of currentPlan.validationPlan.steps">{{ step }}</li>
+              </ol>
+            </section>
+
+            <p class="validation-plan__empty" *ngIf="!structuredValidationCriteria(currentPlan).length">
+              No structured completion gates were produced for this plan.
+            </p>
+          </ng-container>
+
+          <ng-template #noValidationPlan>
+            <p class="validation-plan__empty">Create a plan to see its completion gates.</p>
+          </ng-template>
         </article>
 
         <article class="inspector-card">
@@ -473,6 +645,66 @@
       </section>
 
       <section class="inspector-body" *ngIf="inspectorMode === 'evidence'">
+        <article class="inspector-card validation-detail" aria-labelledby="validation-evidence-title">
+          <div class="validation-detail__header">
+            <div>
+              <h3 id="validation-evidence-title">Completion evidence</h3>
+              <p>Each gate remains not run until the engine records its actual result and evidence.</p>
+            </div>
+            <strong class="validation-detail__state" [ngClass]="validationStatusClass()">
+              {{ validationStatusLabel() }}
+            </strong>
+          </div>
+
+          <div
+            class="validation-criterion"
+            *ngFor="let result of structuredValidationCriteria()"
+            [attr.data-status]="validationCriterionStatus(result.status)"
+          >
+            <div class="validation-criterion__status">
+              <span class="validation-state__mark" aria-hidden="true"></span>
+              <strong>
+                {{
+                  validationCriterionStatus(result.status) === 'not_run'
+                    ? 'Not run'
+                    : validationCriterionStatus(result.status) === 'not_applicable'
+                      ? 'Not applicable'
+                      : (validationCriterionStatus(result.status) | titlecase)
+                }}
+              </strong>
+            </div>
+            <div class="validation-criterion__body">
+              <small>{{ validationKindLabel(result.kind) }}</small>
+              <h4>{{ result.criterion }}</h4>
+
+              <p class="validation-criterion__reason" *ngIf="validationCriterionStatus(result.status) === 'failed'">
+                <strong>Failure reason:</strong>
+                {{ result.failure || 'The engine did not record a failure reason.' }}
+              </p>
+              <p class="validation-criterion__reason" *ngIf="validationCriterionStatus(result.status) === 'not_run'">
+                This gate has not been evaluated.
+              </p>
+              <p class="validation-criterion__reason" *ngIf="validationCriterionStatus(result.status) === 'not_applicable'">
+                {{ result.applicabilityReason || 'This check belongs to framework assurance rather than this task run.' }}
+              </p>
+
+              <div class="validation-criterion__evidence">
+                <strong>Evidence</strong>
+                <ul *ngIf="result.evidence.length; else noCriterionEvidence">
+                  <li *ngFor="let evidence of result.evidence"><code>{{ evidence }}</code></li>
+                </ul>
+                <ng-template #noCriterionEvidence>
+                  <span>No evidence recorded.</span>
+                </ng-template>
+              </div>
+            </div>
+          </div>
+
+          <p class="validation-plan__empty" *ngIf="!structuredValidationCriteria().length">
+            No validation gates or evidence are available for the current plan.
+          </p>
+        </article>
+
         <article class="inspector-card">
           <h3>Memory Used</h3>
           <div class="source-row" *ngFor="let item of plan?.contextPlan?.usedContext || []">

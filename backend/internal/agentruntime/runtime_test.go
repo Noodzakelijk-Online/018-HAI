@@ -15,6 +15,29 @@ import (
 	"time"
 )
 
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && (os.Args[1] == "chat" || os.Args[1] == "agent") {
+		for _, arg := range os.Args[1:] {
+			fmt.Fprintln(os.Stdout, arg)
+		}
+		for _, key := range []string{
+			"HERMES_HOME",
+			"HERMES_PROFILE",
+			"HERMES_IGNORE_USER_CONFIG",
+			"TERMINAL_CWD",
+			"OPENCLAW_STATE_DIR",
+			"OPENCLAW_HOME",
+			"HAI_RUNTIME_TASK_ID",
+		} {
+			if value, ok := os.LookupEnv(key); ok {
+				fmt.Fprintf(os.Stdout, "%s=%s\n", key, value)
+			}
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
 func TestRegistryRequiresApproval(t *testing.T) {
 	adapter := &fakeAdapter{info: Info{
 		ID:               "test",
@@ -24,9 +47,35 @@ func TestRegistryRequiresApproval(t *testing.T) {
 		RequiresApproval: true,
 	}}
 	registry := NewRegistry(adapter)
-	result := registry.Execute(context.Background(), "test", Task{Prompt: "do work"})
+	result := registry.Execute(context.Background(), "test", Task{
+		ID:            "task-1",
+		Prompt:        "do work",
+		OwnerIdentity: "alice",
+	})
 	if result.Status != "blocked" || adapter.called {
 		t.Fatalf("unapproved task was executed: %#v", result)
+	}
+}
+
+func TestRegistryRejectsCallerControlledApprovalFlagWithoutProvenance(t *testing.T) {
+	adapter := &fakeAdapter{info: Info{
+		ID:               "test",
+		Enabled:          true,
+		Configured:       true,
+		ExecutionEnabled: true,
+		RequiresApproval: true,
+	}}
+	registry := NewRegistry(adapter)
+
+	for _, task := range []Task{
+		{ID: "task-1", Prompt: "do work", OwnerIdentity: "alice", HumanApproved: true},
+		{ID: "task-2", Prompt: "do work", OwnerIdentity: "alice", HumanApproved: true, ApprovalSourceID: "workflow-decision:forged"},
+		{ID: "task-3", Prompt: "do work", HumanApproved: true, ApprovalSourceID: "task-review:11111111-1111-4111-8111-111111111111"},
+	} {
+		result := registry.Execute(context.Background(), "test", task)
+		if result.Status != "blocked" || adapter.called {
+			t.Fatalf("unproven approval task executed: task=%#v result=%#v", task, result)
+		}
 	}
 }
 
@@ -40,7 +89,7 @@ func TestRegistryBlocksWhenEmergencyStopActive(t *testing.T) {
 		RequiresApproval: true,
 	}}
 	registry := NewRegistry(adapter)
-	result := registry.Execute(context.Background(), "test", Task{Prompt: "run approved work", HumanApproved: true})
+	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "run approved work"))
 	if result.Status != "blocked" || adapter.called {
 		t.Fatalf("emergency stop did not prevent runtime execution: %#v", result)
 	}
@@ -58,7 +107,7 @@ func TestRegistryExecutesApprovedTask(t *testing.T) {
 		RequiresApproval: true,
 	}}
 	registry := NewRegistry(adapter)
-	result := registry.Execute(context.Background(), "test", Task{Prompt: "do work", HumanApproved: true})
+	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
 	if result.Status != "completed" || !adapter.called {
 		t.Fatalf("approved task was not executed: %#v", result)
 	}
@@ -74,7 +123,7 @@ func TestRegistryBlockMessageIncludesConfigurationReasons(t *testing.T) {
 		MissingConfiguration: []string{"TEST_WORKSPACE", "runtime endpoint missing"},
 	}}
 	registry := NewRegistry(adapter)
-	result := registry.Execute(context.Background(), "test", Task{Prompt: "do work", HumanApproved: true})
+	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
 	if result.Status != "blocked" || adapter.called {
 		t.Fatalf("misconfigured runtime should not execute: %#v", result)
 	}
@@ -102,7 +151,7 @@ func TestRegistryStopTaskCancelsActiveRuntimeExecution(t *testing.T) {
 	registry := NewRegistry(adapter)
 	resultCh := make(chan Result, 1)
 	go func() {
-		resultCh <- registry.Execute(context.Background(), "test", Task{ID: "task-1", Prompt: "do work", HumanApproved: true})
+		resultCh <- registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
 	}()
 
 	select {
@@ -111,7 +160,12 @@ func TestRegistryStopTaskCancelsActiveRuntimeExecution(t *testing.T) {
 		t.Fatalf("runtime task did not start")
 	}
 
-	stop := registry.StopTask(context.Background(), "test", "task-1")
+	wrongOwner := registry.StopTask(context.Background(), "test", "task-1", "bob")
+	if wrongOwner.Status != "blocked" || !strings.Contains(wrongOwner.Message, "different owner") {
+		t.Fatalf("cross-owner stop result = %#v", wrongOwner)
+	}
+
+	stop := registry.StopTask(context.Background(), "test", "task-1", "alice")
 	if stop.Status != "stopping" || !strings.Contains(stop.Message, "cancellation signal") {
 		t.Fatalf("stop result = %#v", stop)
 	}
@@ -143,7 +197,7 @@ func TestRegistryRejectsDuplicateActiveRuntimeTaskID(t *testing.T) {
 	registry := NewRegistry(adapter)
 	resultCh := make(chan Result, 1)
 	go func() {
-		resultCh <- registry.Execute(context.Background(), "test", Task{ID: "task-1", Prompt: "do work", HumanApproved: true})
+		resultCh <- registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
 	}()
 
 	select {
@@ -152,12 +206,12 @@ func TestRegistryRejectsDuplicateActiveRuntimeTaskID(t *testing.T) {
 		t.Fatalf("runtime task did not start")
 	}
 
-	duplicate := registry.Execute(context.Background(), "test", Task{ID: "task-1", Prompt: "do duplicate work", HumanApproved: true})
+	duplicate := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do duplicate work"))
 	if duplicate.Status != "blocked" || !strings.Contains(duplicate.Message, "already running") {
 		t.Fatalf("duplicate task result = %#v", duplicate)
 	}
 
-	_ = registry.StopTask(context.Background(), "test", "task-1")
+	_ = registry.StopTask(context.Background(), "test", "task-1", "alice")
 	select {
 	case <-resultCh:
 	case <-time.After(2 * time.Second):
@@ -302,10 +356,9 @@ func TestHermesAdapterInvokesControlledCli(t *testing.T) {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatalf("create home: %v", err)
 	}
-	executable := filepath.Join(root, "hermes")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'HERMES_HOME=%s\\n' \"$HERMES_HOME\"\nprintf 'HERMES_PROFILE=%s\\n' \"$HERMES_PROFILE\"\nprintf 'IGNORE=%s\\n' \"$HERMES_IGNORE_USER_CONFIG\"\nprintf 'TERMINAL_CWD=%s\\n' \"$TERMINAL_CWD\"\n"
-	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake Hermes executable: %v", err)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve native test executable: %v", err)
 	}
 	adapter := &hermesAdapter{
 		enabled:          true,
@@ -330,7 +383,7 @@ func TestHermesAdapterInvokesControlledCli(t *testing.T) {
 	for _, expected := range []string{
 		"chat", "-q", "draft safely", "-Q", "--source", "tool", "--max-turns", "3", "--checkpoints",
 		"--toolsets", "safe", "--skills", "legal-drafting",
-		"HERMES_HOME=" + home, "HERMES_PROFILE=hai", "IGNORE=1", "TERMINAL_CWD=" + workspace,
+		"HERMES_HOME=" + home, "HERMES_PROFILE=hai", "HERMES_IGNORE_USER_CONFIG=1", "TERMINAL_CWD=" + workspace,
 	} {
 		if !strings.Contains(result.Output, expected) {
 			t.Fatalf("output %q missing %q", result.Output, expected)
@@ -441,7 +494,7 @@ func TestOpenClawHighRiskSurfacesBlockExecutionUntilAcknowledged(t *testing.T) {
 		t.Fatalf("execution should be blocked by high-risk surfaces: %#v", result)
 	}
 	registry := NewRegistry(adapter)
-	registryResult := registry.Execute(context.Background(), "openclaw", Task{Prompt: "do work", HumanApproved: true})
+	registryResult := registry.Execute(context.Background(), "openclaw", approvedRuntimeTask("task-1", "do work"))
 	if registryResult.Status != "blocked" || !strings.Contains(registryResult.Message, "browser control") || !strings.Contains(registryResult.Message, "host tools") {
 		t.Fatalf("registry execution should preserve OpenClaw policy reason: %#v", registryResult)
 	}
@@ -523,10 +576,9 @@ func TestOpenClawAdapterInvokesControlledCli(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
-	executable := filepath.Join(root, "openclaw")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'OPENCLAW_STATE_DIR=%s\\n' \"$OPENCLAW_STATE_DIR\"\nprintf 'OPENCLAW_HOME=%s\\n' \"$OPENCLAW_HOME\"\nprintf 'HAI_RUNTIME_TASK_ID=%s\\n' \"$HAI_RUNTIME_TASK_ID\"\n"
-	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake OpenClaw executable: %v", err)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve native test executable: %v", err)
 	}
 	adapter := &openClawAdapter{
 		enabled:         true,
@@ -1014,6 +1066,96 @@ func summedInventoryItems(values []string) int {
 		}
 	}
 	return total
+}
+
+func TestOpenClawSetEcosystemPathRejectsCallerSelectedPathOutsideAllowedRoots(t *testing.T) {
+	parent := t.TempDir()
+	allowed := filepath.Join(parent, "allowed")
+	outside := filepath.Join(parent, "outside")
+	for _, directory := range []string{allowed, outside} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatalf("create %s: %v", directory, err)
+		}
+	}
+	initial := filepath.Join(allowed, "openclaw-main.zip")
+	callerSelected := filepath.Join(outside, "openclaw-main.zip")
+	for _, archive := range []string{initial, callerSelected} {
+		if err := writeMinimalOpenClawZip(archive); err != nil {
+			t.Fatalf("write OpenClaw archive %s: %v", archive, err)
+		}
+	}
+	adapter := &openClawAdapter{
+		workspace:     allowed,
+		workspaceRoot: allowed,
+		ecosystemPath: initial,
+	}
+
+	if err := adapter.setEcosystemPath(callerSelected); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("outside ecosystem path error = %v, want allowlist rejection", err)
+	}
+}
+
+func TestOpenClawSetEcosystemPathRejectsSymlinkEscape(t *testing.T) {
+	parent := t.TempDir()
+	allowed := filepath.Join(parent, "allowed")
+	outside := filepath.Join(parent, "outside")
+	for _, directory := range []string{allowed, outside} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatalf("create %s: %v", directory, err)
+		}
+	}
+	initial := filepath.Join(allowed, "openclaw-main.zip")
+	outsideArchive := filepath.Join(outside, "openclaw-main.zip")
+	for _, archive := range []string{initial, outsideArchive} {
+		if err := writeMinimalOpenClawZip(archive); err != nil {
+			t.Fatalf("write OpenClaw archive %s: %v", archive, err)
+		}
+	}
+	link := filepath.Join(allowed, "linked-openclaw.zip")
+	if err := os.Symlink(outsideArchive, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	adapter := &openClawAdapter{
+		workspace:     allowed,
+		workspaceRoot: allowed,
+		ecosystemPath: initial,
+	}
+
+	if err := adapter.setEcosystemPath(link); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("symlink ecosystem path error = %v, want resolved allowlist rejection", err)
+	}
+}
+
+func TestOdysseusAdapterEmergencyStopPreventsNetworkIO(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "true")
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	adapter := &odysseusAdapter{
+		enabled:     true,
+		baseURL:     server.URL,
+		timeout:     time.Second,
+		outputLimit: defaultOutputLimit,
+		allowedHost: map[string]bool{"127.0.0.1": true},
+	}
+
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("task-1", "do not send"))
+	if result.Status != "blocked" || calls != 0 {
+		t.Fatalf("emergency-stop result=%#v calls=%d, want block before network I/O", result, calls)
+	}
+}
+
+func approvedRuntimeTask(id, prompt string) Task {
+	return Task{
+		ID:               id,
+		Prompt:           prompt,
+		OwnerIdentity:    "alice",
+		HumanApproved:    true,
+		ApprovalSourceID: "task-review:11111111-1111-4111-8111-111111111111",
+	}
 }
 
 type fakeAdapter struct {

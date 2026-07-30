@@ -6,8 +6,8 @@
 # critical path end-to-end: readiness -> memory create -> memory search ->
 # workflow overview -> grounded/system surfaces. Tears everything down on exit.
 #
-# Requires: a local `postgres`/`initdb`/`pg_ctl`/`createdb` and Go. Does NOT
-# require Docker. In CI this can run against the compose stack instead.
+# Requires: a local `postgres`/`initdb`/`pg_ctl`/`createdb`, Go, curl, and jq.
+# Does NOT require Docker.
 #
 # Usage: scripts/smoke-critical-path.sh
 set -euo pipefail
@@ -15,8 +15,10 @@ set -euo pipefail
 PG_PORT="${PG_PORT:-55432}"
 API_PORT="${API_PORT:-18080}"
 API_KEY="${API_KEY:-smoke-key}"
+JWT_SECRET="${JWT_SECRET:-smoke-jwt-secret}"
 BASE="http://127.0.0.1:${API_PORT}/api/v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "${ROOT}/scripts/smoke-auth.sh"
 
 WORKDIR="$(mktemp -d)"
 PGDATA="${WORKDIR}/pgdata"
@@ -45,7 +47,7 @@ check() { # name, expected_substr, actual
 
 echo "==> Starting throwaway PostgreSQL on :${PG_PORT}"
 initdb -D "${PGDATA}" -U "$(whoami)" --auth=trust --locale=C --encoding=UTF8 >/dev/null
-pg_ctl -D "${PGDATA}" -o "-p ${PG_PORT} -h 127.0.0.1" -l "${PGDATA}/server.log" start >/dev/null
+pg_ctl -D "${PGDATA}" -o "-p ${PG_PORT} -h 127.0.0.1 -k ${WORKDIR}" -l "${PGDATA}/server.log" start >/dev/null
 for i in $(seq 1 30); do
   pg_isready -h 127.0.0.1 -p "${PG_PORT}" >/dev/null 2>&1 && break
   sleep 1
@@ -60,7 +62,7 @@ mkdir -p "${IMAGES}"
 DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
   DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
   BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
-  RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="smoke-jwt-secret" \
+  RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="${JWT_SECRET}" \
   "${BIN}" > "${WORKDIR}/backend.log" 2>&1 &
 BACKEND_PID=$!
 
@@ -75,11 +77,18 @@ for i in $(seq 1 60); do
 done
 [ -n "${ready}" ] || { echo "backend never became live; log:"; tail -20 "${WORKDIR}/backend.log"; exit 1; }
 
-hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
+owner_jwt="$(hai_smoke_mint_jwt owner "${JWT_SECRET}")"
+key_hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
+hdr=("${key_hdr[@]}" -H "Authorization: Bearer ${owner_jwt}")
 
 echo "==> Critical path"
 check "healthz ok" '"status":"ok"' "$(curl -fsS http://127.0.0.1:${API_PORT}/healthz)"
-check "readyz ready" 'ready' "$(curl -sS http://127.0.0.1:${API_PORT}/readyz)"
+readyz_http="$(curl -sS -o "${WORKDIR}/readyz.json" -w '%{http_code}' "http://127.0.0.1:${API_PORT}/readyz")"
+check "readyz serves an operational response" '200' "${readyz_http}"
+check "readyz is ready or degraded, never not_ready" 'true' \
+  "$(jq -r '(.status == "ready") or (.status == "degraded")' "${WORKDIR}/readyz.json")"
+check "API key alone is rejected on protected routes" '401' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" "${BASE}/memory/query?projectKey=smoke&q=angular")"
 
 created="$(curl -sS "${hdr[@]}" -X POST "${BASE}/memory/" \
   -d '{"projectKey":"smoke","kind":"note","content":"Angular dashboard with Go backend","tags":["stack"]}')"
@@ -125,23 +134,11 @@ check "refuses to fabricate without evidence (anti-hallucination)" 'No grounded 
   "$(echo "${ver_none}" | jq -r '.run.answer')"
 
 echo "==> Authorization (per-user RBAC via IDP-style JWT)"
-mint_jwt() { # $1 = role
-  python3 - "$1" "smoke-jwt-secret" <<'PY'
-import sys, hmac, hashlib, base64, json, time
-role, secret = sys.argv[1], sys.argv[2]
-b = lambda x: base64.urlsafe_b64encode(x).rstrip(b'=').decode()
-h = b(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(',', ':')).encode())
-p = b(json.dumps({"sub": "smoke", "role": role, "exp": int(time.time()) + 3600}, separators=(',', ':')).encode())
-sig = b(hmac.new(secret.encode(), (h + '.' + p).encode(), hashlib.sha256).digest())
-print(h + '.' + p + '.' + sig)
-PY
-}
-owner_jwt="$(mint_jwt owner)"
-viewer_jwt="$(mint_jwt viewer)"
+viewer_jwt="$(hai_smoke_mint_jwt viewer "${JWT_SECRET}" smoke-viewer)"
 check "viewer JWT denied on admin support-bundle (403)" '403' \
-  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" -H "Authorization: Bearer ${viewer_jwt}" "${BASE}/system/support-bundle")"
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" -H "Authorization: Bearer ${viewer_jwt}" "${BASE}/system/support-bundle")"
 check "owner JWT allowed on admin support-bundle (200)" '200' \
-  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" -H "Authorization: Bearer ${owner_jwt}" "${BASE}/system/support-bundle")"
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" "${BASE}/system/support-bundle")"
 
 echo ""
 echo "==> Result: ${pass} passed, ${fail} failed"

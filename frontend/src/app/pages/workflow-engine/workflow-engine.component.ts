@@ -11,6 +11,8 @@ import { PursuitService } from '../../services/pursuit.service';
 import {
   IWorkflowClaimRecoverySummary,
   IWorkflowDashboard,
+  IWorkflowFrameworkSelectionDecision,
+  IWorkflowFrameworkSelectionProvenance,
   IWorkflowItem,
   IWorkflowOpenLoopRunSummary,
   IWorkflowOverview,
@@ -19,6 +21,8 @@ import {
 } from '../../models/workflow.model.interface';
 import { WORKFLOW_SERVICE_TOKEN } from '../../services/workflow/workflow.service.token';
 import { IWorkflowService } from '../../services/workflow.service.interface';
+
+type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
 
 @Component({
   selector: 'app-workflow-engine',
@@ -34,6 +38,12 @@ export class WorkflowEngineComponent implements OnInit {
   runSummary?: IWorkflowRunSummary;
   openLoopRunSummary?: IWorkflowOpenLoopRunSummary;
   recoverySummary?: IWorkflowClaimRecoverySummary;
+  frameworkProvenance?: IWorkflowFrameworkSelectionProvenance;
+  frameworkSelectionDecision?: IWorkflowFrameworkSelectionDecision;
+  frameworkProvenanceState: FrameworkProvenanceState = 'missing';
+  frameworkProvenanceIssues: string[] = [];
+  frameworkSelectionLoading = false;
+  frameworkSelectionUnavailable = false;
   pursuitMatches: IPursuitMatchCandidate[] = [];
   selectedPursuitMatch?: IPursuitMatchCandidate;
   includeArchived = false;
@@ -52,6 +62,7 @@ export class WorkflowEngineComponent implements OnInit {
   stateFilter = 'all';
   riskFilter = 'all';
   activeQueue: 'all' | 'approval' | 'ready' | 'blocked' | 'review' = 'all';
+  private frameworkSelectionLookup = 0;
 
   intakeForm: FormGroup = this.fb.group({
     input: [
@@ -104,7 +115,7 @@ export class WorkflowEngineComponent implements OnInit {
     const workflowId = this.route.snapshot.queryParamMap.get('workflowId');
     if (workflowId) {
       this.workflowService.get(workflowId).subscribe({
-        next: (record) => (this.selected = record),
+        next: (record) => this.applyWorkflowRecord(record),
         error: () => this.notification.error('Error', 'The linked workflow could not be opened.'),
       });
     }
@@ -254,7 +265,7 @@ export class WorkflowEngineComponent implements OnInit {
 
   open(item: IWorkflowItem): void {
     this.workflowService.get(item.id).subscribe({
-      next: (record) => (this.selected = record),
+      next: (record) => this.applyWorkflowRecord(record),
       error: () => this.notification.error('Error', 'Failed to open workflow.'),
     });
   }
@@ -265,7 +276,7 @@ export class WorkflowEngineComponent implements OnInit {
     }
     this.workflowService.transition(this.selected.item.id, this.transitionForm.value).subscribe({
       next: (record) => {
-        this.selected = record;
+        this.applyWorkflowRecord(record);
         this.notification.success('State updated', 'Workflow transition was validated and audited.');
         this.refresh(false, true);
       },
@@ -280,7 +291,7 @@ export class WorkflowEngineComponent implements OnInit {
       actor: 'operator',
     }).subscribe({
       next: (record) => {
-        this.selected = record;
+        this.applyWorkflowRecord(record);
         this.notification.success('Approval updated', approved ? 'Workflow approved for execution.' : 'Workflow rejected and blocked.');
         this.refresh(false, true);
       },
@@ -303,7 +314,13 @@ export class WorkflowEngineComponent implements OnInit {
     this.saving = true;
     this.workflowService.resolveInterruptedExecution(this.selected.item.id, request).subscribe({
       next: (record) => {
-        this.selected = record;
+        this.applyWorkflowRecord(record);
+        this.interruptionForm.reset({
+          decision: 'retry',
+          note: '',
+          evidenceUri: '',
+          evidenceLabel: '',
+        });
         this.saving = false;
         this.notification.success('Interruption resolved', `Recovery decision recorded: ${request.decision}.`);
         this.refresh(false, true);
@@ -332,6 +349,7 @@ export class WorkflowEngineComponent implements OnInit {
           at: new Date(),
         };
         this.notification.success('Worker run complete', `${summary.completed} completed, ${summary.retried} retried, ${summary.blocked} blocked.`);
+        this.reloadSelectedWorkflow();
         this.refresh(false, true);
       },
       error: () => {
@@ -436,7 +454,7 @@ export class WorkflowEngineComponent implements OnInit {
       actor: 'operator',
     }).subscribe({
       next: (record) => {
-        this.selected = record;
+        this.applyWorkflowRecord(record);
         this.notification.success('Proposal updated', noteByStatus[status]);
         this.refresh();
       },
@@ -449,9 +467,149 @@ export class WorkflowEngineComponent implements OnInit {
       return;
     }
     this.workflowService.updateChecklistItem(this.selected.item.id, itemId, { status }).subscribe({
-      next: (record) => (this.selected = record),
+      next: (record) => this.applyWorkflowRecord(record),
       error: () => this.notification.error('Error', 'Failed to update checklist item.'),
     });
+  }
+
+  get interruptionRequiresEvidence(): boolean {
+    return this.interruptionForm.get('decision')?.value === 'confirm_completed';
+  }
+
+  applyWorkflowRecord(record: IWorkflowRecord): void {
+    this.selected = record;
+    this.frameworkSelectionDecision = undefined;
+    this.frameworkSelectionLoading = false;
+    this.frameworkSelectionUnavailable = false;
+    this.frameworkProvenanceIssues = [];
+
+    const selections = Array.isArray(record.frameworkSelections)
+      ? record.frameworkSelections
+      : [];
+    if (!selections.length) {
+      this.frameworkProvenance = undefined;
+      this.frameworkProvenanceState = 'missing';
+      this.frameworkSelectionLookup += 1;
+      return;
+    }
+
+    const currentPlanId = (record.item.lastTaskPlanId || '').trim();
+    const provenance = currentPlanId
+      ? selections.find((selection) => selection?.taskPlanId?.trim() === currentPlanId)
+      : selections[0];
+    this.frameworkProvenance = provenance || selections[0];
+
+    if (!provenance) {
+      this.frameworkProvenanceState = 'invalid';
+      this.frameworkProvenanceIssues = [
+        'No stored framework selection matches the workflow current task plan.',
+      ];
+      this.frameworkSelectionLookup += 1;
+      return;
+    }
+
+    this.frameworkProvenanceIssues = this.validateFrameworkProvenance(
+      provenance,
+      currentPlanId
+    );
+    if (this.frameworkProvenanceIssues.length) {
+      this.frameworkProvenanceState = 'invalid';
+      this.frameworkSelectionLookup += 1;
+      return;
+    }
+
+    this.frameworkProvenanceState = 'recorded';
+    this.frameworkSelectionLoading = true;
+    const lookup = ++this.frameworkSelectionLookup;
+    this.workflowService.frameworkSelection(provenance.selectionDecisionId).subscribe({
+      next: (decision) => {
+        if (lookup !== this.frameworkSelectionLookup) {
+          return;
+        }
+        this.frameworkSelectionLoading = false;
+        if (!decision) {
+          this.frameworkSelectionUnavailable = true;
+          return;
+        }
+        const issues = this.validateFrameworkSelectionDecision(decision, provenance);
+        if (issues.length) {
+          this.frameworkProvenanceState = 'invalid';
+          this.frameworkProvenanceIssues = issues;
+          return;
+        }
+        this.frameworkSelectionDecision = decision;
+        this.frameworkProvenanceState = 'verified';
+      },
+      error: () => {
+        if (lookup !== this.frameworkSelectionLookup) {
+          return;
+        }
+        this.frameworkSelectionLoading = false;
+        this.frameworkSelectionUnavailable = true;
+      },
+    });
+  }
+
+  get frameworkGovernanceLabel(): string {
+    switch (this.frameworkProvenanceState) {
+      case 'verified':
+        return 'Governed selection verified';
+      case 'recorded':
+        return 'Selection provenance recorded';
+      case 'invalid':
+        return 'Framework provenance needs review';
+      default:
+        return 'No framework selection recorded';
+    }
+  }
+
+  get frameworkGovernanceSummary(): string {
+    switch (this.frameworkProvenanceState) {
+      case 'verified':
+        return 'The workflow provenance matches its owner-scoped Framework Registry decision.';
+      case 'recorded':
+        return 'Compact provenance is present, but the full registry decision is not currently confirmed.';
+      case 'invalid':
+        return 'Stored provenance failed validation. Do not treat this workflow as framework-governed.';
+      default:
+        return 'Framework-governed execution or completion cannot be confirmed from this workflow record.';
+    }
+  }
+
+  get frameworkGovernanceClass(): string {
+    if (this.frameworkProvenanceState === 'verified') {
+      return 'governance-summary--verified';
+    }
+    if (this.frameworkProvenanceState === 'invalid') {
+      return 'governance-summary--invalid';
+    }
+    return 'governance-summary--unconfirmed';
+  }
+
+  get frameworkSelectionLabel(): string {
+    return this.frameworkProvenance?.selectionDecisionId
+      ? `Selection ${this.shortIdentifier(this.frameworkProvenance.selectionDecisionId)}`
+      : 'No selection ID';
+  }
+
+  openFrameworkRegistry(): void {
+    this.router.navigate(['/framework-registry']);
+  }
+
+  copyProvenanceValue(label: string, value?: string | number): void {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      this.notification.warning('Value unavailable', `${label} is not present in this workflow record.`);
+      return;
+    }
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      this.notification.info(label, text);
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => this.notification.success('Copied', `${label} copied.`),
+      () => this.notification.info(label, text)
+    );
   }
 
   optionLines(options?: string): string[] {
@@ -579,6 +737,138 @@ export class WorkflowEngineComponent implements OnInit {
 
   anyActionRunning(): boolean {
     return !!this.runningAction;
+  }
+
+  private validateFrameworkProvenance(
+    provenance: IWorkflowFrameworkSelectionProvenance,
+    currentPlanId: string
+  ): string[] {
+    const issues: string[] = [];
+    const requiredStrings: Array<[string, string | undefined]> = [
+      ['Selection decision ID', provenance?.selectionDecisionId],
+      ['Task plan ID', provenance?.taskPlanId],
+      ['Catalog version', provenance?.catalogVersion],
+      ['Selector algorithm version', provenance?.selectorAlgorithmVersion],
+      ['Constitution source', provenance?.constitutionSource],
+    ];
+    requiredStrings.forEach(([label, value]) => {
+      if (!String(value || '').trim()) {
+        issues.push(`${label} is missing.`);
+      }
+    });
+
+    const decisionId = String(provenance?.selectionDecisionId || '').trim();
+    if (decisionId && !this.isUuid(decisionId)) {
+      issues.push('Selection decision ID is not a UUID.');
+    }
+    if (
+      currentPlanId &&
+      String(provenance?.taskPlanId || '').trim() !== currentPlanId
+    ) {
+      issues.push('Selection provenance does not match the workflow current task plan.');
+    }
+
+    const digests: Array<[string, string | undefined]> = [
+      ['Catalog digest', provenance?.catalogDigest],
+      ['Preference digest', provenance?.effectivePreferenceDigest],
+      ['Constitution digest', provenance?.constitutionDigest],
+    ];
+    digests.forEach(([label, value]) => {
+      if (!this.isSha256(value)) {
+        issues.push(`${label} is not a SHA-256 digest.`);
+      }
+    });
+    if (!Number.isInteger(provenance?.constitutionVersion) || provenance.constitutionVersion < 1) {
+      issues.push('Constitution version is not a positive integer.');
+    }
+    return Array.from(new Set(issues));
+  }
+
+  private validateFrameworkSelectionDecision(
+    decision: IWorkflowFrameworkSelectionDecision,
+    provenance: IWorkflowFrameworkSelectionProvenance
+  ): string[] {
+    const issues: string[] = [];
+    const matches: Array<[string, string | number | undefined, string | number | undefined]> = [
+      ['Selection decision ID', decision?.id, provenance.selectionDecisionId],
+      ['Task plan ID', decision?.taskPlanId, provenance.taskPlanId],
+      ['Catalog version', decision?.catalogVersion, provenance.catalogVersion],
+      ['Catalog digest', decision?.catalogDigest, provenance.catalogDigest],
+      [
+        'Selector algorithm version',
+        decision?.selectorAlgorithmVersion,
+        provenance.selectorAlgorithmVersion,
+      ],
+      [
+        'Preference digest',
+        decision?.effectivePreferenceDigest,
+        provenance.effectivePreferenceDigest,
+      ],
+      ['Constitution version', decision?.constitutionVersion, provenance.constitutionVersion],
+      ['Constitution digest', decision?.constitutionDigest, provenance.constitutionDigest],
+      ['Constitution source', decision?.constitutionSource, provenance.constitutionSource],
+    ];
+    matches.forEach(([label, actual, expected]) => {
+      if (String(actual ?? '').trim() !== String(expected ?? '').trim()) {
+        issues.push(`${label} does not match the persisted workflow provenance.`);
+      }
+    });
+
+    if (!Array.isArray(decision?.selected) || !decision.selected.length) {
+      issues.push('The Framework Registry decision has no selected frameworks.');
+    } else {
+      const seen = new Set<string>();
+      decision.selected.forEach((framework) => {
+        const id = String(framework?.id || '').trim();
+        const version = String(framework?.version || '').trim();
+        if (!id || !version) {
+          issues.push('A selected framework is missing its ID or version.');
+          return;
+        }
+        const key = `${id}@${version}`;
+        if (seen.has(key)) {
+          issues.push('The Framework Registry decision contains duplicate framework versions.');
+        }
+        seen.add(key);
+      });
+    }
+    return Array.from(new Set(issues));
+  }
+
+  private isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  private isSha256(value?: string): boolean {
+    return /^[0-9a-f]{64}$/i.test(String(value || '').trim());
+  }
+
+  private shortIdentifier(value: string): string {
+    const normalized = String(value || '').trim();
+    if (normalized.length <= 18) {
+      return normalized;
+    }
+    return `${normalized.slice(0, 8)}...${normalized.slice(-4)}`;
+  }
+
+  private reloadSelectedWorkflow(): void {
+    const workflowId = this.selected?.item?.id;
+    if (!workflowId) {
+      return;
+    }
+    this.workflowService.get(workflowId).subscribe({
+      next: (record) => {
+        if (this.selected?.item?.id === workflowId) {
+          this.applyWorkflowRecord(record);
+        }
+      },
+      error: () => {
+        this.notification.warning(
+          'Workflow detail not refreshed',
+          'The worker result is available, but the selected workflow detail could not be reloaded.'
+        );
+      },
+    });
   }
 
   private workflowRunDetails(summary: IWorkflowRunSummary): string {

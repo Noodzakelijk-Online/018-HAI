@@ -21,7 +21,10 @@ import (
 	"sync"
 	"time"
 
+	"automation-hub-backend/internal/pathsafety"
 	"automation-hub-backend/internal/safety"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -32,10 +35,12 @@ const (
 )
 
 type Task struct {
-	ID            string
-	Prompt        string
-	ProjectKey    string
-	HumanApproved bool
+	ID               string
+	Prompt           string
+	ProjectKey       string
+	OwnerIdentity    string
+	HumanApproved    bool
+	ApprovalSourceID string
 }
 
 type Result struct {
@@ -132,14 +137,19 @@ type Adapter interface {
 
 type Registry struct {
 	adapters map[string]Adapter
-	running  map[string]context.CancelFunc
+	running  map[string]runningTask
 	mu       sync.Mutex
+}
+
+type runningTask struct {
+	ownerIdentity string
+	cancel        context.CancelFunc
 }
 
 func NewRegistry(adapters ...Adapter) *Registry {
 	registry := &Registry{
 		adapters: map[string]Adapter{},
-		running:  map[string]context.CancelFunc{},
+		running:  map[string]runningTask{},
 	}
 	for _, adapter := range adapters {
 		if adapter == nil {
@@ -183,9 +193,19 @@ func (r *Registry) Skills(ctx context.Context, runtimeID string) ([]Skill, error
 	return adapter.ListSkills(ctx), nil
 }
 
-func (r *Registry) StopTask(ctx context.Context, runtimeID string, taskID string) StopResult {
+func (r *Registry) StopTask(_ context.Context, runtimeID string, taskID string, ownerIdentity string) StopResult {
 	runtimeID = strings.ToLower(strings.TrimSpace(runtimeID))
 	taskID = strings.TrimSpace(taskID)
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return StopResult{
+			RuntimeID:   runtimeID,
+			TaskID:      taskID,
+			Status:      "blocked",
+			Message:     "authenticated runtime task owner is required",
+			AuditEvents: []string{"ownerless runtime task stop request rejected"},
+		}
+	}
 	if taskID == "" {
 		return StopResult{
 			RuntimeID:   runtimeID,
@@ -194,7 +214,17 @@ func (r *Registry) StopTask(ctx context.Context, runtimeID string, taskID string
 			AuditEvents: []string{"empty runtime task stop request rejected"},
 		}
 	}
-	if r.stopRunningTask(runtimeID, taskID) {
+	found, ownerMatched := r.stopRunningTask(runtimeID, taskID, ownerIdentity)
+	if found && !ownerMatched {
+		return StopResult{
+			RuntimeID:   runtimeID,
+			TaskID:      taskID,
+			Status:      "blocked",
+			Message:     "runtime task belongs to a different owner",
+			AuditEvents: []string{"cross-owner runtime task stop request rejected"},
+		}
+	}
+	if found {
 		return StopResult{
 			RuntimeID: runtimeID,
 			TaskID:    taskID,
@@ -206,8 +236,7 @@ func (r *Registry) StopTask(ctx context.Context, runtimeID string, taskID string
 			},
 		}
 	}
-	adapter := r.adapters[runtimeID]
-	if adapter == nil {
+	if r.adapters[runtimeID] == nil {
 		return StopResult{
 			RuntimeID:   runtimeID,
 			TaskID:      taskID,
@@ -216,18 +245,24 @@ func (r *Registry) StopTask(ctx context.Context, runtimeID string, taskID string
 			AuditEvents: []string{"runtime registry lookup failed"},
 		}
 	}
-	return adapter.StopTask(ctx, taskID)
+	return StopResult{
+		RuntimeID:   runtimeID,
+		TaskID:      taskID,
+		Status:      "blocked",
+		Message:     "no active owner-bound runtime task was found",
+		AuditEvents: []string{"untracked runtime stop rejected before adapter access"},
+	}
 }
 
 func runtimeTaskKey(runtimeID string, taskID string) string {
 	return strings.ToLower(strings.TrimSpace(runtimeID)) + ":" + strings.TrimSpace(taskID)
 }
 
-func (r *Registry) registerRunningTask(parent context.Context, runtimeID string, taskID string) (context.Context, context.CancelFunc, bool) {
+func (r *Registry) registerRunningTask(parent context.Context, runtimeID string, task Task) (context.Context, context.CancelFunc, bool) {
+	taskID := strings.TrimSpace(task.ID)
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
-		ctx, cancel := context.WithCancel(parent)
-		return ctx, cancel, true
+		return parent, func() {}, false
 	}
 	key := runtimeTaskKey(runtimeID, taskID)
 	r.mu.Lock()
@@ -236,7 +271,10 @@ func (r *Registry) registerRunningTask(parent context.Context, runtimeID string,
 		return parent, func() {}, false
 	}
 	ctx, cancel := context.WithCancel(parent)
-	r.running[key] = cancel
+	r.running[key] = runningTask{
+		ownerIdentity: strings.TrimSpace(task.OwnerIdentity),
+		cancel:        cancel,
+	}
 	return ctx, cancel, true
 }
 
@@ -251,16 +289,19 @@ func (r *Registry) finishRunningTask(runtimeID string, taskID string) {
 	r.mu.Unlock()
 }
 
-func (r *Registry) stopRunningTask(runtimeID string, taskID string) bool {
+func (r *Registry) stopRunningTask(runtimeID string, taskID string, ownerIdentity string) (bool, bool) {
 	key := runtimeTaskKey(runtimeID, taskID)
 	r.mu.Lock()
-	cancel, exists := r.running[key]
-	r.mu.Unlock()
+	defer r.mu.Unlock()
+	task, exists := r.running[key]
 	if !exists {
-		return false
+		return false, false
 	}
-	cancel()
-	return true
+	if task.ownerIdentity != strings.TrimSpace(ownerIdentity) {
+		return true, false
+	}
+	task.cancel()
+	return true, true
 }
 
 func (r *Registry) OpenClawAdapter() (*openClawAdapter, bool) {
@@ -280,6 +321,17 @@ func (r *Registry) SetOpenClawEcosystemPath(path string) (Info, error) {
 	return openClaw.Info(), nil
 }
 
+func (r *Registry) setUploadedOpenClawEcosystemPath(path string) (Info, error) {
+	openClaw, ok := r.OpenClawAdapter()
+	if !ok {
+		return Info{}, fmt.Errorf("openclaw runtime is not registered")
+	}
+	if err := openClaw.setUploadedEcosystemPath(path); err != nil {
+		return Info{}, err
+	}
+	return openClaw.Info(), nil
+}
+
 func (r *Registry) RefreshOpenClawEcosystem() (Info, error) {
 	openClaw, ok := r.OpenClawAdapter()
 	if !ok {
@@ -291,14 +343,8 @@ func (r *Registry) RefreshOpenClawEcosystem() (Info, error) {
 
 func (r *Registry) Execute(ctx context.Context, runtimeID string, task Task) Result {
 	runtimeID = strings.ToLower(strings.TrimSpace(runtimeID))
-	if safety.EmergencyStopActive() {
-		return Result{
-			RuntimeID:   runtimeID,
-			Status:      "blocked",
-			Message:     safety.EmergencyStopReason(),
-			ExitCode:    -1,
-			AuditEvents: []string{"emergency stop blocked agent runtime execution"},
-		}
+	if result, blocked := emergencyStopResult(runtimeID); blocked {
+		return result
 	}
 	adapter := r.adapters[runtimeID]
 	if adapter == nil {
@@ -320,13 +366,26 @@ func (r *Registry) Execute(ctx context.Context, runtimeID string, task Task) Res
 			AuditEvents: []string{"runtime registry policy blocked execution"},
 		}
 	}
-	if info.RequiresApproval && !task.HumanApproved {
-		return Result{
-			RuntimeID:   runtimeID,
-			Status:      "blocked",
-			Message:     "agent runtime execution requires a server-side human approval record",
-			ExitCode:    -1,
-			AuditEvents: []string{"agent approval gate blocked execution"},
+	if strings.TrimSpace(task.ID) == "" {
+		return blockedRuntimeResult(runtimeID, "agent runtime task id is required", "untracked agent task rejected")
+	}
+	if strings.TrimSpace(task.OwnerIdentity) == "" {
+		return blockedRuntimeResult(runtimeID, "agent runtime task owner is required", "ownerless agent task rejected")
+	}
+	if info.RequiresApproval {
+		if !task.HumanApproved {
+			return blockedRuntimeResult(
+				runtimeID,
+				"agent runtime execution requires a server-side human approval record",
+				"agent approval gate blocked execution",
+			)
+		}
+		if err := validateRuntimeApprovalSource(task.ApprovalSourceID); err != nil {
+			return blockedRuntimeResult(
+				runtimeID,
+				"agent runtime execution requires exact approval provenance: "+err.Error(),
+				"agent approval provenance gate blocked execution",
+			)
 		}
 	}
 	if strings.TrimSpace(task.Prompt) == "" {
@@ -347,7 +406,7 @@ func (r *Registry) Execute(ctx context.Context, runtimeID string, task Task) Res
 			AuditEvents: []string{"oversized agent task rejected"},
 		}
 	}
-	executionCtx, cancel, registered := r.registerRunningTask(ctx, runtimeID, task.ID)
+	executionCtx, cancel, registered := r.registerRunningTask(ctx, runtimeID, task)
 	if !registered {
 		return Result{
 			RuntimeID:   runtimeID,
@@ -370,6 +429,42 @@ func (r *Registry) Execute(ctx context.Context, runtimeID string, task Task) Res
 		result.AuditEvents = append(result.AuditEvents, "runtime registry cancellation observed")
 	}
 	return result
+}
+
+func validateRuntimeApprovalSource(sourceID string) error {
+	sourceID = strings.TrimSpace(sourceID)
+	for _, prefix := range []string{"task-review:", "workflow-decision:"} {
+		if !strings.HasPrefix(sourceID, prefix) {
+			continue
+		}
+		id, err := uuid.Parse(strings.TrimPrefix(sourceID, prefix))
+		if err != nil || id == uuid.Nil {
+			return fmt.Errorf("approval source must contain a valid decision UUID")
+		}
+		return nil
+	}
+	return fmt.Errorf("approval source type is not supported")
+}
+
+func blockedRuntimeResult(runtimeID, message, auditEvent string) Result {
+	return Result{
+		RuntimeID:   runtimeID,
+		Status:      "blocked",
+		Message:     message,
+		ExitCode:    -1,
+		AuditEvents: []string{auditEvent},
+	}
+}
+
+func emergencyStopResult(runtimeID string) (Result, bool) {
+	if !safety.EmergencyStopActive() {
+		return Result{}, false
+	}
+	return blockedRuntimeResult(
+		runtimeID,
+		safety.EmergencyStopReason(),
+		"emergency stop blocked agent runtime execution",
+	), true
 }
 
 func runtimePolicyBlockMessage(info Info) string {
@@ -561,6 +656,9 @@ func (a *hermesAdapter) ListSkills(context.Context) []Skill {
 
 func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 	started := time.Now()
+	if result, blocked := emergencyStopResult("hermes"); blocked {
+		return result
+	}
 	if reason := a.workspaceBlockedReason(); reason != "" {
 		return Result{RuntimeID: "hermes", Status: "blocked", Message: reason, ExitCode: -1}
 	}
@@ -595,6 +693,9 @@ func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 	var stderr bytes.Buffer
 	cmd.Stdout = &limitedWriter{writer: &stdout, remaining: a.outputLimit}
 	cmd.Stderr = &limitedWriter{writer: &stderr, remaining: a.outputLimit / 4}
+	if result, blocked := emergencyStopResult("hermes"); blocked {
+		return result
+	}
 	err := cmd.Run()
 	output := trimAndRedact(stdout.String(), a.outputLimit)
 	message := "Hermes completed the approved agent task"
@@ -741,20 +842,21 @@ func (a *hermesAdapter) workspaceBlockedReason() string {
 }
 
 type openClawAdapter struct {
-	enabled       bool
-	executable    string
-	workspace     string
-	workspaceRoot string
-	ecosystemPath string
-	stateDir      string
-	configPath    string
-	gatewayURL    string
-	gatewayToken  string
-	thinking      string
-	timeout       time.Duration
-	outputLimit   int64
-	envAllow      []string
-	allowedHost   map[string]bool
+	enabled        bool
+	executable     string
+	workspace      string
+	workspaceRoot  string
+	ecosystemPath  string
+	ecosystemRoots []string
+	stateDir       string
+	configPath     string
+	gatewayURL     string
+	gatewayToken   string
+	thinking       string
+	timeout        time.Duration
+	outputLimit    int64
+	envAllow       []string
+	allowedHost    map[string]bool
 
 	agentCLIEnabled    bool
 	gatewayEnabled     bool
@@ -803,6 +905,7 @@ func newOpenClawAdapterFromEnv() *openClawAdapter {
 		workspace:        strings.TrimSpace(os.Getenv("OPENCLAW_WORKSPACE")),
 		workspaceRoot:    strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
 		ecosystemPath:    strings.TrimSpace(firstNonEmpty(os.Getenv("OPENCLAW_ECOSYSTEM_PATH"), os.Getenv("OPENCLAW_WORKSPACE"))),
+		ecosystemRoots:   csvValues(os.Getenv("OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")),
 		stateDir:         strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")),
 		configPath:       strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")),
 		gatewayURL:       strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_URL")),
@@ -993,6 +1096,9 @@ func (a *openClawAdapter) ListSkills(context.Context) []Skill {
 
 func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result {
 	started := time.Now()
+	if result, blocked := emergencyStopResult("openclaw"); blocked {
+		return result
+	}
 	if !a.agentCLIEnabled {
 		return Result{RuntimeID: "openclaw", Status: "blocked", Message: "OPENCLAW_AGENT_CLI_ENABLED is false", ExitCode: -1}
 	}
@@ -1032,6 +1138,9 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 	var stderr bytes.Buffer
 	cmd.Stdout = &limitedWriter{writer: &stdout, remaining: a.outputLimit}
 	cmd.Stderr = &limitedWriter{writer: &stderr, remaining: a.outputLimit / 4}
+	if result, blocked := emergencyStopResult("openclaw"); blocked {
+		return result
+	}
 	err := cmd.Run()
 	output := trimAndRedact(stdout.String(), a.outputLimit)
 	message := "OpenClaw completed the approved agent task"
@@ -1450,22 +1559,102 @@ func (a *openClawAdapter) ecosystemInventory() openClawEcosystemInventory {
 }
 
 func (a *openClawAdapter) setEcosystemPath(path string) error {
+	return a.setEcosystemPathWithTrust(path, false)
+}
+
+func (a *openClawAdapter) setUploadedEcosystemPath(path string) error {
+	if !isOpenClawUploadArtifactPath(path) {
+		return fmt.Errorf("openclaw uploaded ecosystem path is not a HAI-managed temporary artifact")
+	}
+	return a.setEcosystemPathWithTrust(path, true)
+}
+
+func (a *openClawAdapter) setEcosystemPathWithTrust(path string, trustedUpload bool) error {
 	path = strings.TrimSpace(path)
 	if err := validateOpenClawEcosystemPath(path); err != nil {
 		return err
 	}
+	absolutePath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("openclaw ecosystem path is invalid")
+	}
 	a.inventoryMu.Lock()
+	if len(a.ecosystemRoots) == 0 {
+		a.ecosystemRoots = a.initialEcosystemRoots()
+	}
+	if trustedUpload {
+		absolutePath, err = filepath.EvalSymlinks(absolutePath)
+		if err != nil {
+			a.inventoryMu.Unlock()
+			return fmt.Errorf("openclaw uploaded ecosystem path cannot be resolved")
+		}
+	} else {
+		resolvedPath, allowed := resolvePathWithinAnyRoot(a.ecosystemRoots, absolutePath)
+		if !allowed {
+			a.inventoryMu.Unlock()
+			return fmt.Errorf("openclaw ecosystem path is outside OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")
+		}
+		absolutePath = resolvedPath
+	}
 	previousPath := strings.TrimSpace(a.ecosystemPath)
-	if isOpenClawUploadArtifactPath(previousPath) && !sameFilePath(previousPath, path) {
+	if isOpenClawUploadArtifactPath(previousPath) && !sameFilePath(previousPath, absolutePath) {
 		_ = os.Remove(previousPath)
 	}
-	a.ecosystemPath = path
+	a.ecosystemPath = absolutePath
 	a.inventoryLoaded = false
 	a.inventoryPath = ""
 	a.inventorySignature = ""
 	a.inventory = openClawEcosystemInventory{}
 	a.inventoryMu.Unlock()
 	return nil
+}
+
+func (a *openClawAdapter) initialEcosystemRoots() []string {
+	candidates := append([]string{}, a.ecosystemRoots...)
+	candidates = append(candidates, a.workspaceRoot, a.workspace)
+	if current := strings.TrimSpace(a.ecosystemPath); current != "" && !isOpenClawUploadArtifactPath(current) {
+		if stat, err := os.Stat(current); err == nil && stat.IsDir() {
+			candidates = append(candidates, current)
+		} else {
+			candidates = append(candidates, filepath.Dir(current))
+		}
+	}
+	roots := make([]string, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		absolute, err := filepath.Abs(filepath.Clean(candidate))
+		if err != nil {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		key := strings.ToLower(resolved)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		roots = append(roots, resolved)
+	}
+	return roots
+}
+
+func resolvePathWithinAnyRoot(roots []string, target string) (string, bool) {
+	for _, root := range roots {
+		if resolved, err := pathsafety.ResolveWithinBase(root, target); err == nil {
+			return resolved, true
+		}
+	}
+	return "", false
 }
 
 func validateOpenClawEcosystemPath(path string) error {
@@ -2951,6 +3140,9 @@ func (a *odysseusAdapter) ListSkills(context.Context) []Skill {
 
 func (a *odysseusAdapter) ExecuteTask(parent context.Context, task Task) Result {
 	started := time.Now()
+	if result, blocked := emergencyStopResult("odysseus"); blocked {
+		return result
+	}
 	if reason := a.validBaseURL(); reason != "" {
 		return Result{RuntimeID: "odysseus", Status: "blocked", Message: reason, ExitCode: -1}
 	}
@@ -2978,6 +3170,9 @@ func (a *odysseusAdapter) ExecuteTask(parent context.Context, task Task) Result 
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("User-Agent", "018-HAI-Agent-Runtime/1.0")
 	a.authorize(req)
+	if result, blocked := emergencyStopResult("odysseus"); blocked {
+		return result
+	}
 	resp, err := noRedirectClient(a.timeout).Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {

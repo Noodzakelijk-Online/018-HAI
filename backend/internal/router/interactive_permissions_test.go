@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestInteractiveExecutionRoutesRequireSignedApprovalPermission(t *testing.T) {
+func TestConsequentialTaskExecutionAndReviewRequireOwnerApproval(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	engine.Use(testIdentityMiddleware())
@@ -32,11 +32,18 @@ func TestInteractiveExecutionRoutesRequireSignedApprovalPermission(t *testing.T)
 		want   int
 	}{
 		{name: "viewer cannot run assistant command", method: http.MethodPost, path: "/api/v1/assistant/command", body: `{"message":"Run the safe task","executeAllowed":true}`, role: "viewer", want: http.StatusForbidden},
-		{name: "operator can run assistant command", method: http.MethodPost, path: "/api/v1/assistant/command", body: `{"message":"Run the safe task","executeAllowed":true}`, role: "operator", want: http.StatusOK},
+		{name: "operator cannot run assistant command", method: http.MethodPost, path: "/api/v1/assistant/command", body: `{"message":"Run the safe task","executeAllowed":true}`, role: "operator", want: http.StatusForbidden},
+		{name: "owner can run assistant command", method: http.MethodPost, path: "/api/v1/assistant/command", body: `{"message":"Run the safe task","executeAllowed":true}`, role: "owner", want: http.StatusOK},
 		{name: "viewer cannot execute task", method: http.MethodPost, path: "/api/v1/task/run", body: `{"request":"Run the safe task"}`, role: "viewer", want: http.StatusForbidden},
-		{name: "operator can execute task", method: http.MethodPost, path: "/api/v1/task/run", body: `{"request":"Run the safe task"}`, role: "operator", want: http.StatusOK},
+		{name: "operator cannot execute task", method: http.MethodPost, path: "/api/v1/task/run", body: `{"request":"Run the safe task"}`, role: "operator", want: http.StatusForbidden},
+		{name: "owner can execute task", method: http.MethodPost, path: "/api/v1/task/run", body: `{"request":"Run the safe task"}`, role: "owner", want: http.StatusOK},
+		{name: "operator cannot execute success alias", method: http.MethodPost, path: "/api/v1/task/success", body: `{"request":"Run the safe task"}`, role: "operator", want: http.StatusForbidden},
+		{name: "owner can execute success alias", method: http.MethodPost, path: "/api/v1/task/success", body: `{"request":"Run the safe task"}`, role: "owner", want: http.StatusOK},
 		{name: "viewer cannot resolve review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":true}`, role: "viewer", want: http.StatusForbidden},
-		{name: "operator can resolve review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":true}`, role: "operator", want: http.StatusOK},
+		{name: "operator cannot approve review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":true}`, role: "operator", want: http.StatusForbidden},
+		{name: "operator cannot deny review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":false}`, role: "operator", want: http.StatusForbidden},
+		{name: "owner can approve review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":true}`, role: "owner", want: http.StatusOK},
+		{name: "owner can deny review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":false}`, role: "owner", want: http.StatusOK},
 		{name: "viewer can read review queue", method: http.MethodGet, path: "/api/v1/task/review-queue", role: "viewer", want: http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -51,11 +58,11 @@ func TestInteractiveExecutionRoutesRequireSignedApprovalPermission(t *testing.T)
 		})
 	}
 
-	if tasks.runCalls != 2 {
-		t.Fatalf("executions = %d, want exactly the two approved operator calls", tasks.runCalls)
+	if tasks.runCalls != 3 {
+		t.Fatalf("executions = %d, want exactly the three owner-authorized calls", tasks.runCalls)
 	}
-	if tasks.resolveCalls != 1 {
-		t.Fatalf("review resolutions = %d, want operator call only", tasks.resolveCalls)
+	if tasks.resolveCalls != 2 {
+		t.Fatalf("review resolutions = %d, want the two owner decisions only", tasks.resolveCalls)
 	}
 }
 

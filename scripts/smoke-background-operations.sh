@@ -19,8 +19,10 @@ set -euo pipefail
 PG_PORT="${PG_PORT:-55433}"
 API_PORT="${API_PORT:-18081}"
 API_KEY="${API_KEY:-smoke-key}"
+JWT_SECRET="${JWT_SECRET:-smoke-jwt-secret}"
 BASE="http://127.0.0.1:${API_PORT}/api/v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "${ROOT}/scripts/smoke-auth.sh"
 
 WORKDIR="$(mktemp -d)"
 PGDATA="${WORKDIR}/pgdata"
@@ -60,7 +62,7 @@ JSON
 
 echo "==> Starting throwaway PostgreSQL on :${PG_PORT}"
 initdb -D "${PGDATA}" -U "$(whoami)" --auth=trust --locale=C --encoding=UTF8 >/dev/null
-pg_ctl -D "${PGDATA}" -o "-p ${PG_PORT} -h 127.0.0.1" -l "${PGDATA}/server.log" start >/dev/null
+pg_ctl -D "${PGDATA}" -o "-p ${PG_PORT} -h 127.0.0.1 -k ${WORKDIR}" -l "${PGDATA}/server.log" start >/dev/null
 for i in $(seq 1 30); do
   pg_isready -h 127.0.0.1 -p "${PG_PORT}" >/dev/null 2>&1 && break
   sleep 1
@@ -74,7 +76,7 @@ mkdir -p "${IMAGES}"
 DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
   DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
   BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
-  RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="smoke-jwt-secret" \
+  RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="${JWT_SECRET}" \
   HAI_PHASE2_FEEDS_DIR="${FEEDS}" HAI_PHASE2_WORKSPACE_DIR="${WORKSPACE}" \
   HAI_PHASE2_FEED_FILES="inbox.json" HAI_PHASE2_MODE="autonomous_safe" \
   "${BIN}" > "${WORKDIR}/backend.log" 2>&1 &
@@ -91,7 +93,20 @@ for i in $(seq 1 60); do
 done
 [ -n "${ready}" ] || { echo "backend never became live; log:"; tail -20 "${WORKDIR}/backend.log"; exit 1; }
 
-hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
+owner_jwt="$(hai_smoke_mint_jwt owner "${JWT_SECRET}")"
+forged_jwt="$(hai_smoke_mint_jwt owner "not-${JWT_SECRET}" forged-operator)"
+key_hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
+jwt_hdr=(-H "Content-Type: application/json" -H "Authorization: Bearer ${owner_jwt}")
+hdr=("${key_hdr[@]}" -H "Authorization: Bearer ${owner_jwt}")
+
+echo "==> Authentication boundary"
+check "API key alone is rejected" '401' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" "${BASE}/operations")"
+check "owner JWT alone is rejected" '401' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${jwt_hdr[@]}" "${BASE}/operations")"
+check "wrongly signed owner JWT is rejected" '401' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" \
+    -H "Authorization: Bearer ${forged_jwt}" "${BASE}/operations")"
 
 echo "==> Account feed registered"
 check "inbox feed listed" '"name":"inbox"' "$(curl -sS "${hdr[@]}" "${BASE}/account-feeds")"

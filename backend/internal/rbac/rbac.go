@@ -20,14 +20,15 @@ type Permission string
 const (
 	PermRead    Permission = "read"
 	PermWrite   Permission = "write"
+	PermExecute Permission = "execute"
 	PermApprove Permission = "approve"
 	PermAdmin   Permission = "admin"
 )
 
 // rolePermissions is the canonical grant table.
 var rolePermissions = map[Role]map[Permission]bool{
-	RoleOwner:    {PermRead: true, PermWrite: true, PermApprove: true, PermAdmin: true},
-	RoleOperator: {PermRead: true, PermWrite: true, PermApprove: true},
+	RoleOwner:    {PermRead: true, PermWrite: true, PermExecute: true, PermApprove: true, PermAdmin: true},
+	RoleOperator: {PermRead: true, PermWrite: true, PermExecute: true},
 	RoleViewer:   {PermRead: true},
 }
 

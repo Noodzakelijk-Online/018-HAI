@@ -19,7 +19,7 @@ func TestCreateUser_Success(t *testing.T) {
 	email := "test@example.com"
 	user := models.User{Email: email, Password: "test123"}
 
-	mockError := errors.New("user not found")
+	mockError := irepository.ErrUserNotFound
 	mockRepo.On("FindByEmail", email).Return(nil, mockError)
 
 	expectedUser := user
@@ -58,7 +58,7 @@ func TestCreateUser_RejectsDuplicateEmail(t *testing.T) {
 func TestCreateUser_MapsDuplicateRepositoryError(t *testing.T) {
 	mockRepo := new(MockUserRepository)
 	user := models.User{Email: "existing@example.com", Password: "hashed"}
-	mockRepo.On("FindByEmail", user.Email).Return(nil, errors.New("user not found"))
+	mockRepo.On("FindByEmail", user.Email).Return(nil, irepository.ErrUserNotFound)
 	mockRepo.On("Create", mock.AnythingOfType("*models.User")).Return((*models.User)(nil), irepository.ErrDuplicateUser)
 
 	service := NewUserService(mockRepo, nil, nil)
@@ -67,6 +67,30 @@ func TestCreateUser_MapsDuplicateRepositoryError(t *testing.T) {
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrUserAlreadyExists)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestCreateUserFailsClosedWhenDuplicateLookupFails(t *testing.T) {
+	mockRepo := new(MockUserRepository)
+	mockLogger := new(MockLogger)
+	user := models.User{Email: "operator@example.com", Password: "hashed"}
+	lookupErr := errors.New("database unavailable")
+	mockRepo.On("FindByEmail", user.Email).Return((*models.User)(nil), lookupErr)
+	mockLogger.On(
+		"Error",
+		"Failed to check existing user with email: %s, %v",
+		mock.MatchedBy(func(args []interface{}) bool {
+			return len(args) == 2 && args[0] == user.Email && args[1] == lookupErr
+		}),
+	).Return()
+
+	service := NewUserService(mockRepo, mockLogger, nil)
+	result, err := service.CreateUser(user)
+
+	assert.Nil(t, result)
+	assert.EqualError(t, err, "failed to check existing user")
+	mockRepo.AssertNotCalled(t, "Create", mock.Anything)
+	mockRepo.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
 }
 
 func TestGetUserByID(t *testing.T) {
@@ -237,4 +261,20 @@ func TestGetUserByEmail_RepoError(t *testing.T) {
 	assert.NotNil(t, err)
 	assert.Equal(t, "failed to fetch user", err.Error())
 	mockRepo.AssertExpectations(t)
+}
+
+func TestGetUserByEmailPreservesNotFoundClassification(t *testing.T) {
+	mockRepo := new(MockUserRepository)
+	mockLogger := new(MockLogger)
+	email := "missing@example.com"
+	mockRepo.On("FindByEmail", email).Return((*models.User)(nil), irepository.ErrUserNotFound)
+	mockLogger.On("Error", mock.Anything, mock.Anything).Return()
+	service := NewUserService(mockRepo, mockLogger, nil)
+
+	result, err := service.GetUserByEmail(email)
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrUserNotFound)
+	mockRepo.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
 }

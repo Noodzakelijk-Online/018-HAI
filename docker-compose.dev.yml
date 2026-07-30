@@ -6,7 +6,7 @@ services:
   # Development overrides for easier debugging
   backend:
     ports:
-      - "17070:80"  # Expose backend port for direct access
+      - "${HAI_DEV_BACKEND_BIND_ADDRESS:-127.0.0.1}:17070:80"  # Loopback-only unless explicitly overridden
     environment:
       - GIN_MODE=debug
     volumes:

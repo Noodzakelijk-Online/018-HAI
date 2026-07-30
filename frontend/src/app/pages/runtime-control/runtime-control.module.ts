@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common'
 import { NgModule } from '@angular/core'
 import { FormsModule } from '@angular/forms'
 import { RouterModule, Routes } from '@angular/router'
+import { NzAlertModule } from 'ng-zorro-antd/alert'
 import { NzButtonModule } from 'ng-zorro-antd/button'
 import { NzCardModule } from 'ng-zorro-antd/card'
 import { NzIconModule } from 'ng-zorro-antd/icon'
@@ -23,6 +24,7 @@ const routes: Routes = [{ path: '', component: RuntimeControlComponent }]
     NzCardModule,
     NzIconModule,
     NzNotificationModule,
+    NzAlertModule,
     NzRadioModule,
     NzTableModule,
     NzTagModule,

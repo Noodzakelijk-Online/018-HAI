@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -20,25 +21,36 @@ type kafkaConfig struct {
 }
 
 func newKafkaConfig() (*kafkaConfig, error) {
-	logTopic := getEnvString(loggerTopic, "NULL")
-	if logTopic == "NULL" {
-		return nil, errors.New("error: LoggerTopic is not set, please check the environment variable: " + loggerTopic)
+	logTopic := strings.TrimSpace(getEnvString(loggerTopic, ""))
+	if logTopic == "" {
+		return nil, errors.New("Kafka logger topic is required: set " + loggerTopic)
 	}
-	emailTopic := getEnvString(mailTopic, "NULL")
-	if emailTopic == "NULL" {
-		return nil, errors.New("error: MailTopic is not set, please check the environment variable: " + mailTopic)
+	emailTopic := strings.TrimSpace(getEnvString(mailTopic, ""))
+	if emailTopic == "" {
+		return nil, errors.New("Kafka mail topic is required: set " + mailTopic)
 	}
-	brokers := getEnvString(brokersAddr, "NULL")
-	if brokers == "NULL" {
-		return nil, errors.New("error: Kafka Brokers Logger are not set, please check the environment variable: " + brokersAddr)
+	brokersValue := strings.TrimSpace(getEnvString(brokersAddr, ""))
+	if brokersValue == "" {
+		return nil, errors.New("Kafka broker list is required: set " + brokersAddr)
 	}
-
-	brokersList := strings.Split(brokers, ",")
+	brokersList := make([]string, 0)
+	for _, broker := range strings.Split(brokersValue, ",") {
+		if broker = strings.TrimSpace(broker); broker != "" {
+			brokersList = append(brokersList, broker)
+		}
+	}
+	if len(brokersList) == 0 {
+		return nil, errors.New("Kafka broker list contains no usable addresses: set " + brokersAddr)
+	}
+	client := strings.TrimSpace(getEnvString(clientID, "IDP-AUTOMATIONS-HUB"))
+	if client == "" {
+		return nil, fmt.Errorf("Kafka client ID is required: set %s", clientID)
+	}
 
 	return &kafkaConfig{
 		LoggerTopic: logTopic,
 		MailTopic:   emailTopic,
-		ClientID:    getEnvString(clientID, "IDP-AUTOMATIONS-HUB"),
+		ClientID:    client,
 		BrokersAddr: brokersList,
 	}, nil
 }

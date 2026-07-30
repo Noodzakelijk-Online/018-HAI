@@ -3,58 +3,87 @@
 Records the actual `govulncheck` result, the CI scanning posture, and the exact
 remediation, so nothing is hand-waved.
 
-## Applied this pass (real reduction: 20 → 17)
+## Backend remediation completed (40 to 0)
 
-Upgraded the two most-relevant modules to fixed versions, cleanly (no
-go-directive/vet cascade; build, vet, tests, and the smoke all stayed green):
+The 2026-07-30 scan first found 40 code-affecting vulnerabilities under Go
+1.21.13. The backend was then moved as one coordinated change to Go 1.25.12 and
+the affected module family was upgraded:
 
-- `golang.org/x/net` v0.15.0 → **v0.17.0** (HTTP/2 rapid-reset in the live server path, GO-2023-2102)
-- `github.com/jackc/pgx/v5` v5.3.1 → **v5.5.5** (via `gorm.io/driver/postgres` → v1.5.9)
+- Go toolchain and Docker/CI builder: **1.25.12**
+- `golang.org/x/net`: **v0.56.0**
+- `golang.org/x/text`: **v0.39.0**
+- `github.com/jackc/pgx/v5`: **v5.9.2**
+- `github.com/redis/go-redis/v9`: **v9.6.3**
 
-Code-affecting vulnerabilities dropped from **20 to 17**.
+Go 1.25 vet identified one dynamic `fmt.Errorf` call; it was changed to
+`errors.New`. Full vet, tests, and build then passed.
 
 ## Backend (`govulncheck ./...`)
 
-**Remaining: 17 code-affecting vulnerabilities**, now almost entirely the Go
-**standard library** (fixed across go1.25.7–1.25.11) plus later `x/net`/`pgx`
-releases.
+`govulncheck` v1.6.0 using the 2026-07-27 vulnerability database and Go
+1.25.12 reports:
 
-| Source | Present | Fixed in |
-| --- | --- | --- |
-| Go standard library | build toolchain | go1.25.11+ (crypto/tls, crypto/x509, html/template, net/http, net/url, os, …) |
-| `golang.org/x/net` | v0.17.0 | later: v0.23.0 / v0.38.0 / v0.53.0 |
-| `github.com/jackc/pgx/v5` | v5.5.5 | v5.9.2 |
+- **0** vulnerabilities affecting code
+- **0** vulnerabilities in imported packages
+- 3 advisories in required modules whose vulnerable symbols are not called
+
+The backend scan is pinned and blocking in CI.
+
+## IDP (`govulncheck ./...`)
+
+The same scanner, database snapshot, and Go 1.25.12 toolchain report 0
+vulnerabilities affecting IDP code and 0 in imported packages. Two advisories
+remain in required modules whose vulnerable symbols are not called. The IDP
+scan is also pinned and blocking in CI.
+
+## Nginx configuration manager (`govulncheck ./...`)
+
+The first 2026-07-30 scan found 31 code-affecting vulnerabilities under Go
+1.21.13, including findings in the obsolete Docker SDK reload path. HAI removed
+the Docker SDK and all Compose Docker-socket mounts, upgraded Sarama, and moved
+the service to Go 1.25.12. Enabling automatic reload now fails closed and tells
+the operator to use an approved deployment operation.
+
+Tests, vet, and build pass. The refreshed scan reports 0 vulnerabilities
+affecting code and 0 in imported packages. One advisory remains in a required
+module whose vulnerable symbol is not called. The scan is pinned and blocking
+in CI.
+
+## Frontend (`npm audit --audit-level=high --omit=dev`)
+
+The 2026-07-30 audit reports **13 production dependency advisories: 12 high and
+1 moderate**. The high findings are in the Angular 16 runtime and its compatible
+CDK/ng-zorro dependency chain. The automated remediation proposes Angular
+21.2.19, which is a breaking platform upgrade rather than a safe lockfile patch.
+
+Do not expose this frontend as an untrusted multi-user Internet application
+until the Angular migration is completed and the audit is rerun. The coordinated
+migration must cover Angular core/runtime/compiler, Angular CLI/build tooling,
+CDK, ng-zorro, TypeScript, Zone.js, and `angular-mixed-cdk-drag-drop`; it must
+also retain the authenticated route, drawer, workflow, and 126-test contracts.
+Applying `npm audit fix --force` without that migration and regression pass is
+not an accepted remediation.
 
 ## Why the CI gate is advisory (for now)
 
-`govulncheck` (backend) and `npm audit` (frontend) run in CI as **advisory**
-(`continue-on-error`) rather than hard gates. Reaching zero is **not a one-line
-bump**: pushing `x/net`/`pgx` to their latest releases pulls newer
-`golang.org/x/*` modules and, via `go mod tidy`, **raises the `go` directive in
-`go.mod`**. That activates stricter `go vet` analyzers (e.g. "non-constant format
-string"), which then fail the build on **pre-existing** code
-(`internal/llm/policy.go:467`). And the standard-library CVEs are cleared only by
-building on a newer Go patch (1.25.11+), which is a coordinated toolchain change.
-
-Rather than ship a half-broken tree, the minimal safe fix was applied (20 → 17)
-and the scans kept advisory, with the exact path to zero below.
+The backend scan is no longer advisory. The frontend audit remains advisory
+because its safe remediation is a coordinated Angular platform migration, not a
+lockfile-only patch. CI still surfaces every frontend audit result.
 
 ## Exact next action (to reach zero and make the gate blocking)
 
-1. ~~Minimal fixed versions of `x/net` + `pgx` (via the gorm driver).~~ **Done
-   this pass (20 → 17).**
-2. For the remaining: bump `x/net`→v0.53.0 and `pgx` (via
-   `gorm.io/driver/postgres@latest`); run `go mod tidy`; if it raises the `go`
-   directive, fix the newly-flagged vet issues (start with
-   `internal/llm/policy.go:467` — `fmt.Errorf("%s", msg)`), then `go vet ./...`
-   and `go test ./...`.
-3. Build CI on **Go 1.25.11+** to clear the standard-library CVEs, and align the
-   `go.mod` toolchain accordingly.
-4. Re-run `govulncheck ./...`; confirm the "code is affected" count is 0, then
-   flip both CI scans from `continue-on-error: true` to hard gates.
+1. Migrate the frontend dependency family to a mutually compatible, supported
+   Angular release; run the full unit/build/browser suite and
+   `npm audit --audit-level=high --omit=dev`; make the frontend scan a hard gate
+   only when the remaining findings are zero or explicitly accepted with an
+   owner, scope, and expiry.
 
 ## Current CI posture
 
-- Backend: `go vet` + build + test are **hard gates**; `govulncheck` is advisory.
+- Backend: vet, build, test, race checks, and pinned `govulncheck` are **hard
+  gates**.
+- IDP: vet, build, test, and pinned `govulncheck` are **hard gates**.
+- Nginx configuration manager: vet, build, test, and pinned `govulncheck` are
+  **hard gates**; Docker-socket control is forbidden by an executable contract.
 - Frontend: build + **unit tests (headless Chrome)** are hard gates; `npm audit
   --audit-level=high` is advisory.

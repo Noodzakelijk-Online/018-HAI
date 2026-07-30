@@ -71,14 +71,15 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 
 ## Reproduce the automated evidence
 
-Backend has no local Go toolchain; use the pinned container (Go 1.21.13):
+If the matching local toolchain is unavailable, use the pinned backend
+container (Go 1.25.12):
 
 ```bash
 # Unit tests (no external services)
-docker run --rm -v "$PWD/backend":/app -w /app golang:1.21.13 go test ./...
+docker run --rm -v "$PWD/backend":/app -w /app golang:1.25.12 go test ./...
 
 # Trello connector tests
-docker run --rm -v "$PWD/backend":/app -w /app golang:1.21.13 \
+docker run --rm -v "$PWD/backend":/app -w /app golang:1.25.12 \
   go test ./internal/source/ -run Trello -v
 
 # Migration runner vs REAL Postgres 17 (data dir on tmpfs so it needs no disk)
@@ -87,6 +88,6 @@ docker run -d --name hai-pg --network hai-net --tmpfs /var/lib/postgresql/data \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=automation_hub postgres:17-alpine
 docker run --rm --network hai-net \
   -e HAI_TEST_DATABASE_DSN="host=hai-pg user=postgres password=postgres dbname=automation_hub port=5432 sslmode=disable TimeZone=UTC" \
-  -v "$PWD/backend":/app -w /app golang:1.21.13 \
+  -v "$PWD/backend":/app -w /app golang:1.25.12 \
   go test -tags integration -run 'Migrat|Rollback' ./internal/infra/ -v
 ```

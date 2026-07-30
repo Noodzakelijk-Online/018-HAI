@@ -62,15 +62,12 @@ func TestGoogleStateRoundTrip(t *testing.T) {
 	if err := g.verifyState(state + "x"); err == nil {
 		t.Fatal("a tampered state must be rejected")
 	}
-	// A state signed with a different secret must not verify.
 	other := newGoogleOAuth("different-secret")
 	if err := other.verifyState(state); err == nil {
 		t.Fatal("state must not verify under a different signing secret")
 	}
 }
 
-// Full flow against a mock Google: exchange the code, then read the email from
-// userinfo.
 func TestGoogleExchangeReturnsEmail(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -125,5 +122,58 @@ func TestGoogleExchangeSurfacesError(t *testing.T) {
 	state, _ := g.signState()
 	if _, err := g.Exchange(context.Background(), "code", state); err == nil || !strings.Contains(err.Error(), "invalid_grant") {
 		t.Fatalf("expected invalid_grant error, got %v", err)
+	}
+}
+
+func TestGoogleExchangeRejectsUnverifiedEmail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/token":
+			_, _ = w.Write([]byte(`{"access_token":"at-1","token_type":"Bearer"}`))
+		case "/userinfo":
+			_, _ = w.Write([]byte(`{"email":"person@example.com","verified_email":false}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	g := newTestGoogleOAuth()
+	g.tokenEndpoint = srv.URL + "/token"
+	g.userInfoURL = srv.URL + "/userinfo"
+	state, _ := g.signState()
+
+	if _, err := g.Exchange(context.Background(), "code", state); err == nil || !strings.Contains(err.Error(), "not verified") {
+		t.Fatalf("expected unverified email to be rejected, got %v", err)
+	}
+}
+
+func TestGoogleExchangeDoesNotFollowTokenEndpointRedirects(t *testing.T) {
+	redirectFollowed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			http.Redirect(w, r, "/unexpected", http.StatusFound)
+		case "/unexpected":
+			redirectFollowed = true
+			_, _ = w.Write([]byte(`{"access_token":"redirected-token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	g := newTestGoogleOAuth()
+	g.tokenEndpoint = srv.URL + "/token"
+	state, err := g.signState()
+	if err != nil {
+		t.Fatalf("signState: %v", err)
+	}
+	if _, err := g.Exchange(context.Background(), "code", state); err == nil {
+		t.Fatal("redirect response must not be accepted as a token exchange")
+	}
+	if redirectFollowed {
+		t.Fatal("OAuth client followed a token endpoint redirect")
 	}
 }

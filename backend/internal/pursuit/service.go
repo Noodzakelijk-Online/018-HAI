@@ -5770,7 +5770,10 @@ func sortListItemsByEffectiveActivity(items []PursuitListItem) {
 		if items[i].Pursuit.PriorityScore != items[j].Pursuit.PriorityScore {
 			return items[i].Pursuit.PriorityScore > items[j].Pursuit.PriorityScore
 		}
-		return items[i].Pursuit.Title < items[j].Pursuit.Title
+		if items[i].Pursuit.Title != items[j].Pursuit.Title {
+			return items[i].Pursuit.Title < items[j].Pursuit.Title
+		}
+		return items[i].Pursuit.ID.String() < items[j].Pursuit.ID.String()
 	})
 }
 

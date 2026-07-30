@@ -126,6 +126,27 @@ func TestQueryPaginationSlicesAndCounts(t *testing.T) {
 	}
 }
 
+func TestQueryEqualTimestampsUseStableIDOrderAcrossPages(t *testing.T) {
+	at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	lowID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	highID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	items := []models.ContextMemory{
+		{ID: lowID, Kind: "preference", CreatedAt: at, UpdatedAt: at},
+		{ID: highID, Kind: "preference", CreatedAt: at, UpdatedAt: at},
+	}
+
+	for iteration := 0; iteration < 100; iteration++ {
+		// Reverse the repository order to prove pagination is independent from
+		// map iteration or insertion order when all visible sort keys tie.
+		items[0], items[1] = items[1], items[0]
+		page1 := Query(items, QueryParams{Sort: "updatedAt", Order: "desc", Page: 1, PageSize: 1})
+		page2 := Query(items, QueryParams{Sort: "updatedAt", Order: "desc", Page: 2, PageSize: 1})
+		if page1.Items[0].ID != highID || page2.Items[0].ID != lowID {
+			t.Fatalf("iteration %d IDs = %s/%s, want %s/%s", iteration, page1.Items[0].ID, page2.Items[0].ID, highID, lowID)
+		}
+	}
+}
+
 func TestQueryNormalizesBounds(t *testing.T) {
 	tooBig := Query(sampleMemories(), QueryParams{PageSize: 5000})
 	if tooBig.PageSize != maxPageSize {

@@ -1,0 +1,236 @@
+<div class="recommendation-empty" role="status" aria-live="polite" *ngIf="loading && !selection">
+  <nz-spin nzSimple></nz-spin>
+  <div>
+    <strong>Loading the latest recommendation</strong>
+    <p>HAI is retrieving the owner-scoped selection history.</p>
+  </div>
+</div>
+
+<div class="recommendation-empty recommendation-empty--error" role="alert" *ngIf="!loading && !selection && unavailableMessage">
+  <span nz-icon nzType="warning"></span>
+  <div>
+    <strong>Recommendation history unavailable</strong>
+    <p>{{ unavailableMessage }}</p>
+  </div>
+</div>
+
+<div
+  class="recommendation-empty"
+  role="status"
+  *ngIf="!loading && !selection && !unavailableMessage"
+>
+  <span nz-icon nzType="compass" aria-hidden="true"></span>
+  <div>
+    <strong>No recommendation yet</strong>
+    <p>Describe the work to receive a source-aware framework and governance contract.</p>
+  </div>
+</div>
+
+<ng-container *ngIf="selection as decision">
+  <div class="recommendation-stale" role="status" *ngIf="staleMessage">
+    <span nz-icon nzType="warning" aria-hidden="true"></span>
+    <span>{{ staleMessage }} Showing the last successfully loaded recommendation.</span>
+  </div>
+
+  <div class="recommendation-summary">
+    <div class="recommendation-summary__icon">
+      <span nz-icon nzType="branches" aria-hidden="true"></span>
+    </div>
+    <div>
+      <span class="section-label">Primary framework</span>
+      <h3>{{ primaryFrameworkName }}</h3>
+      <p>{{ decision.selectionReason }}</p>
+    </div>
+  </div>
+
+  <dl class="decision-meta">
+    <div>
+      <dt>Life domain</dt>
+      <dd>{{ humanize(decision.lifeDomain) }}</dd>
+    </div>
+    <div>
+      <dt>Need or commitment</dt>
+      <dd>{{ decision.needOrCommitment || 'Not classified' }}</dd>
+    </div>
+    <div>
+      <dt>Autonomy ceiling</dt>
+      <dd>Level {{ decision.maximumAutonomyLevel }} of 10</dd>
+    </div>
+    <div>
+      <dt>Constitution</dt>
+      <dd>Version {{ decision.constitutionVersion }} &middot; {{ decision.constitutionSource }}</dd>
+    </div>
+    <div>
+      <dt>Recorded</dt>
+      <dd>{{ decision.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC</dd>
+    </div>
+  </dl>
+
+  <div class="selected-frameworks" *ngIf="decision.selected.length">
+    <button
+      type="button"
+      class="selected-framework"
+      *ngFor="let framework of visibleFrameworks; trackBy: trackFramework"
+      [attr.aria-label]="'Inspect ' + framework.name + ' framework'"
+      (click)="inspectFramework.emit(framework.id)"
+    >
+      <span>
+        <strong>{{ framework.name }}</strong>
+        <small>{{ humanize(framework.family) }} &middot; score {{ framework.score | number: '1.1-2' }}</small>
+      </span>
+      <span nz-icon nzType="right" aria-hidden="true"></span>
+    </button>
+    <p class="selected-frameworks__more" *ngIf="hiddenFrameworkCount">
+      {{ hiddenFrameworkCount }} more selected framework{{ hiddenFrameworkCount === 1 ? '' : 's' }}
+      available in Advanced view.
+    </p>
+  </div>
+
+  <div class="approval-callout" role="status" *ngIf="decision.requiresApproval">
+    <span nz-icon nzType="safety-certificate" aria-hidden="true"></span>
+    <div>
+      <strong>Approval remains required</strong>
+      <ul>
+        <li *ngFor="let reason of decision.approvalReasons; trackBy: trackString">{{ reason }}</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="recommendation-detail" *ngIf="advanced">
+    <section>
+      <h4>Required agents</h4>
+      <div class="tag-list">
+        <nz-tag *ngFor="let agent of decision.requiredAgents; trackBy: trackString">
+          {{ humanize(agent) }}
+        </nz-tag>
+      </div>
+      <p class="empty-copy" *ngIf="!decision.requiredAgents.length">No specialist agents required.</p>
+    </section>
+    <section>
+      <h4>Completion criteria</h4>
+      <ul *ngIf="decision.completionCriteria.length; else noCompletionCriteria">
+        <li *ngFor="let criterion of decision.completionCriteria; trackBy: trackString">{{ criterion }}</li>
+      </ul>
+      <ng-template #noCompletionCriteria><p class="empty-copy">No completion criteria returned.</p></ng-template>
+    </section>
+    <section>
+      <h4>Evidence requirements</h4>
+      <ul *ngIf="decision.evidenceRequirements.length; else noEvidenceRequirements">
+        <li *ngFor="let evidence of decision.evidenceRequirements; trackBy: trackString">{{ evidence }}</li>
+      </ul>
+      <ng-template #noEvidenceRequirements><p class="empty-copy">No evidence requirements returned.</p></ng-template>
+    </section>
+    <section>
+      <h4>Authority</h4>
+      <p>{{ decision.authoritySummary }}</p>
+    </section>
+    <section>
+      <h4>Context requirements</h4>
+      <ul *ngIf="decision.contextRequirements.length; else noContextRequirements">
+        <li *ngFor="let context of decision.contextRequirements; trackBy: trackString">{{ context }}</li>
+      </ul>
+      <ng-template #noContextRequirements><p class="empty-copy">No additional context required.</p></ng-template>
+    </section>
+    <section>
+      <h4>Learning plan</h4>
+      <ul *ngIf="decision.learningPlan.length; else noLearningPlan">
+        <li *ngFor="let item of decision.learningPlan; trackBy: trackString">{{ item }}</li>
+      </ul>
+      <ng-template #noLearningPlan><p class="empty-copy">No post-verification learning proposed.</p></ng-template>
+    </section>
+    <section class="recommendation-detail__wide">
+      <h4>Selected framework contracts</h4>
+      <div class="selection-contract-list">
+        <article
+          class="selection-contract"
+          *ngFor="let framework of decision.selected; trackBy: trackFramework"
+        >
+          <div>
+            <strong>{{ framework.name }}</strong>
+            <code>{{ framework.id }}:{{ framework.version }}</code>
+          </div>
+          <p>
+            Level {{ framework.maximumAutonomyLevel }} &middot;
+            {{ framework.authorityRequirement }}
+          </p>
+          <dl>
+            <div>
+              <dt>Selection reasons</dt>
+              <dd>
+                <ul *ngIf="framework.reasons.length; else noSelectionReasons">
+                  <li *ngFor="let reason of framework.reasons; trackBy: trackString">{{ reason }}</li>
+                </ul>
+                <ng-template #noSelectionReasons>None returned.</ng-template>
+              </dd>
+            </div>
+            <div>
+              <dt>Framework evidence</dt>
+              <dd>
+                <ul *ngIf="framework.evidenceRequirements.length; else noFrameworkEvidence">
+                  <li *ngFor="let item of framework.evidenceRequirements; trackBy: trackString">{{ item }}</li>
+                </ul>
+                <ng-template #noFrameworkEvidence>None returned.</ng-template>
+              </dd>
+            </div>
+            <div>
+              <dt>Evaluation method</dt>
+              <dd>
+                <ul *ngIf="framework.evaluationMethod.length; else noFrameworkEvaluation">
+                  <li *ngFor="let item of framework.evaluationMethod; trackBy: trackString">{{ item }}</li>
+                </ul>
+                <ng-template #noFrameworkEvaluation>None returned.</ng-template>
+              </dd>
+            </div>
+          </dl>
+        </article>
+      </div>
+    </section>
+    <section class="recommendation-detail__wide">
+      <h4>Conflict resolution</h4>
+      <ul *ngIf="decision.conflicts.length; else noConflicts">
+        <li *ngFor="let conflict of decision.conflicts; trackBy: trackConflict">
+          Kept <code>{{ conflict.selectedId }}</code>; skipped
+          <code>{{ conflict.skippedId }}</code>: {{ conflict.reason }}
+        </li>
+      </ul>
+      <ng-template #noConflicts><p class="empty-copy">No framework conflicts were recorded.</p></ng-template>
+    </section>
+    <section class="recommendation-detail__wide audit-contract">
+      <h4>Reproducibility and audit contract</h4>
+      <dl>
+        <div>
+          <dt>Selection ID</dt>
+          <dd><code>{{ decision.id }}</code></dd>
+        </div>
+        <div>
+          <dt>Task plan ID</dt>
+          <dd><code>{{ decision.taskPlanId || 'Not linked' }}</code></dd>
+        </div>
+        <div>
+          <dt>Catalog</dt>
+          <dd><code>{{ decision.catalogVersion }}</code></dd>
+        </div>
+        <div>
+          <dt>Selector</dt>
+          <dd><code>{{ decision.selectorAlgorithmVersion }}</code></dd>
+        </div>
+        <div>
+          <dt>Catalog digest</dt>
+          <dd><code>{{ decision.catalogDigest }}</code></dd>
+        </div>
+        <div>
+          <dt>Preference digest</dt>
+          <dd><code>{{ decision.effectivePreferenceDigest }}</code></dd>
+        </div>
+        <div>
+          <dt>Constitution digest</dt>
+          <dd><code>{{ decision.constitutionDigest }}</code></dd>
+        </div>
+        <div>
+          <dt>Constitution source</dt>
+          <dd><code>{{ decision.constitutionSource }}</code></dd>
+        </div>
+      </dl>
+    </section>
+  </div>
+</ng-container>

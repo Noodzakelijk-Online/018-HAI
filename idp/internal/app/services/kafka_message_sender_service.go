@@ -3,51 +3,73 @@ package services
 import (
 	"automation-hub-idp/internal/infra"
 	"encoding/json"
-	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/IBM/sarama"
 )
 
 type KafkaMessageSender struct {
-	Producer *kafka.Producer
+	producer sarama.SyncProducer
+	mu       sync.RWMutex
+	closed   bool
 }
 
 func NewKafkaMessageSender() (*KafkaMessageSender, error) {
 	prod, err := infra.GetDefaultKafkaProducer()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create Kafka message sender: %w", err)
 	}
 	return &KafkaMessageSender{
-		Producer: prod,
+		producer: prod,
 	}, nil
 }
 
 func (k *KafkaMessageSender) Send(topic string, message interface{}) error {
+	if k == nil {
+		return fmt.Errorf("send Kafka message: producer is not configured")
+	}
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	if k.producer == nil {
+		return fmt.Errorf("send Kafka message: producer is not configured")
+	}
+	if k.closed {
+		return fmt.Errorf("send Kafka message: producer is closed")
+	}
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		return fmt.Errorf("send Kafka message: topic is required")
+	}
 
-	// Marshal the message into JSON
 	msgBytes, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode Kafka message for topic %q: %w", topic, err)
 	}
 
-	// Create a Kafka message
-	msg := &kafka.Message{
-		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-		Value:          msgBytes,
+	msg := &sarama.ProducerMessage{
+		Topic: topic,
+		Value: sarama.ByteEncoder(msgBytes),
 	}
-
-	// Produce the message to the Kafka topic
-	deliveryChan := make(chan kafka.Event)
-	err = k.Producer.Produce(msg, deliveryChan)
-	if err != nil {
-		return err
+	if _, _, err = k.producer.SendMessage(msg); err != nil {
+		return fmt.Errorf("send Kafka message to topic %q: %w", topic, err)
 	}
+	return nil
+}
 
-	// Wait for the message to be delivered or an error to occur
-	e := <-deliveryChan
-	m := e.(*kafka.Message)
-
-	if m.TopicPartition.Error != nil {
-		return m.TopicPartition.Error
+func (k *KafkaMessageSender) Close() error {
+	if k == nil {
+		return nil
 	}
-
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.producer == nil || k.closed {
+		return nil
+	}
+	k.closed = true
+	if err := k.producer.Close(); err != nil {
+		return fmt.Errorf("close Kafka message sender: %w", err)
+	}
 	return nil
 }

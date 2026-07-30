@@ -58,14 +58,15 @@ func (h *Handler) Skills(c *gin.Context) {
 }
 
 func (h *Handler) StopTask(c *gin.Context) {
-	if !requireRuntimeOwner(c) {
+	ownerIdentity, ok := runtimeOwner(c)
+	if !ok {
 		return
 	}
 	runtimeID := strings.TrimSpace(c.Param("id"))
 	taskID := strings.TrimSpace(c.Param("taskId"))
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
 	defer cancel()
-	result := h.registry.StopTask(ctx, runtimeID, taskID)
+	result := h.registry.StopTask(ctx, runtimeID, taskID, ownerIdentity)
 	status := http.StatusOK
 	if result.Status == "blocked" {
 		status = http.StatusBadRequest
@@ -192,7 +193,7 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		return
 	}
 
-	info, err := h.registry.SetOpenClawEcosystemPath(dest)
+	info, err := h.registry.setUploadedOpenClawEcosystemPath(dest)
 	if err != nil {
 		_ = os.Remove(dest)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -202,14 +203,19 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 }
 
 func requireRuntimeOwner(c *gin.Context) bool {
+	_, ok := runtimeOwner(c)
+	return ok
+}
+
+func runtimeOwner(c *gin.Context) (string, bool) {
 	value, ok := c.Get(identity.ContextSubjectKey)
 	if ok {
 		if owner, ok := value.(string); ok && strings.TrimSpace(owner) != "" {
-			return true
+			return strings.TrimSpace(owner), true
 		}
 	}
 	c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated owner session is required for runtime control actions"})
-	return false
+	return "", false
 }
 
 func validateOpenClawZip(path string) error {

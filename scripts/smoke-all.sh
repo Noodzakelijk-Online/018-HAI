@@ -27,11 +27,14 @@ for s in "${SUITES[@]}"; do
   echo "############################################################"
   out="$("${ROOT}/scripts/${s}.sh" 2>&1)"
   code=$?
-  echo "${out}" | grep -E 'Result:'
-  line="$(echo "${out}" | grep -E 'Result:' | tail -1)"
-  if [ "${code}" -eq 0 ]; then
+  reported_line="$(printf '%s\n' "${out}" | grep -E '^==> Result:' | tail -1)"
+  valid_line="$(printf '%s\n' "${out}" | grep -E '^==> Result: [1-9][0-9]* passed, 0 failed$' | tail -1)"
+  printf '%s\n' "${reported_line:-==> Result: missing}"
+  if [ "${code}" -eq 0 ] && [ -n "${valid_line}" ]; then
+    line="${valid_line}"
     summary+=("PASS  ${s}  (${line#*==> })")
   else
+    line="${reported_line:-==> Result: missing or invalid}"
     summary+=("FAIL  ${s}  (${line#*==> })")
     overall=1
   fi

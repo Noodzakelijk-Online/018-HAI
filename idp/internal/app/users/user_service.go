@@ -19,7 +19,10 @@ type userServiceImpl struct {
 	hasher   utils.PasswordHasher
 }
 
-var ErrUserAlreadyExists = errors.New("user already exists")
+var (
+	ErrUserAlreadyExists = errors.New("user already exists")
+	ErrUserNotFound      = errors.New("user not found")
+)
 
 func NewUserService(repo irepository.UserRepository, logger iservice.Logger, hasher utils.PasswordHasher) UserService {
 	return &userServiceImpl{
@@ -44,9 +47,14 @@ func GetDefaultUserService() (UserService, error) {
 }
 
 func (s *userServiceImpl) CreateUser(user models.User) (*models.User, error) {
-	if existingUser, _ := s.userRepo.FindByEmail(user.Email); existingUser != nil {
+	existingUser, lookupErr := s.userRepo.FindByEmail(user.Email)
+	if lookupErr == nil && existingUser != nil {
 		s.logger.Error("User already exists with email: %s", user.Email)
 		return nil, ErrUserAlreadyExists
+	}
+	if lookupErr != nil && !errors.Is(lookupErr, irepository.ErrUserNotFound) {
+		s.logger.Error("Failed to check existing user with email: %s, %v", user.Email, lookupErr)
+		return nil, errors.New("failed to check existing user")
 	}
 
 	createdUser, err := s.userRepo.Create(&user)
@@ -123,6 +131,9 @@ func (s *userServiceImpl) GetUserByEmail(email string) (*models.User, error) {
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
 		s.logger.Error("Failed to fetch user with email: %s, %v", email, err)
+		if errors.Is(err, irepository.ErrUserNotFound) {
+			return nil, ErrUserNotFound
+		}
 		return nil, errors.New("failed to fetch user")
 	}
 
@@ -138,6 +149,9 @@ func (s *userServiceImpl) GetUserByResetToken(token string) (*models.User, error
 	user, err := s.userRepo.FindByResetToken(token)
 	if err != nil {
 		s.logger.Error("Failed to fetch user with reset token: %s, %v", token, err)
+		if errors.Is(err, irepository.ErrUserNotFound) {
+			return nil, ErrUserNotFound
+		}
 		return nil, errors.New("failed to fetch user")
 	}
 

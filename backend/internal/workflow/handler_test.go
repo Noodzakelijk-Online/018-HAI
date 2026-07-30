@@ -3,6 +3,7 @@ package workflow
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,118 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+func TestWorkflowHandlerRedactsInternalServerErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const secret = "postgres://admin:super-secret@db.internal/hai?token=api-secret"
+	service := &failingWorkflowHandlerService{
+		Service: NewService(newFakeWorkflowRepo()),
+		err:     errors.New("database query failed: " + secret),
+	}
+	handler := NewHandler(service)
+
+	tests := []struct {
+		name          string
+		method        string
+		path          string
+		expectedError string
+		invoke        func(*gin.Context)
+	}{
+		{
+			name:          "items",
+			method:        http.MethodGet,
+			path:          "/workflow/items",
+			expectedError: workflowItemsUnavailableMessage,
+			invoke:        handler.Items,
+		},
+		{
+			name:          "approval items",
+			method:        http.MethodGet,
+			path:          "/workflow/approval-items",
+			expectedError: workflowApprovalsUnavailableMessage,
+			invoke:        handler.ApprovalItems,
+		},
+		{
+			name:          "dashboard",
+			method:        http.MethodGet,
+			path:          "/workflow/dashboard",
+			expectedError: workflowDashboardUnavailableMessage,
+			invoke:        handler.Dashboard,
+		},
+		{
+			name:          "run due",
+			method:        http.MethodPost,
+			path:          "/workflow/run-due",
+			expectedError: workflowRunFailedMessage,
+			invoke:        handler.RunDue,
+		},
+		{
+			name:          "recover stale claims",
+			method:        http.MethodPost,
+			path:          "/workflow/recover-stale-claims",
+			expectedError: workflowRecoveryFailedMessage,
+			invoke:        handler.RecoverStaleClaims,
+		},
+		{
+			name:          "run due open loops",
+			method:        http.MethodPost,
+			path:          "/workflow/run-due-open-loops",
+			expectedError: workflowOpenLoopRunFailedMessage,
+			invoke:        handler.RunDueOpenLoops,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, bytes.NewBufferString(`{"limit":5}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = request
+			context.Set(identity.ContextSubjectKey, "verified-operator")
+
+			test.invoke(context)
+
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500: %s", response.Code, response.Body.String())
+			}
+			var payload struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if payload.Error != test.expectedError {
+				t.Fatalf("error = %q, want %q", payload.Error, test.expectedError)
+			}
+			for _, sensitive := range []string{secret, "super-secret", "api-secret", "db.internal"} {
+				if strings.Contains(response.Body.String(), sensitive) {
+					t.Fatalf("response exposed sensitive error fragment %q: %s", sensitive, response.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestWorkflowHandlerKeepsUsefulBadRequestValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(newFakeWorkflowRepo()))
+	request := httptest.NewRequest(http.MethodPost, "/workflow/intake", bytes.NewBufferString(`{"input":`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "verified-operator")
+
+	handler.Intake(context)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "unexpected EOF") {
+		t.Fatalf("bad-request validation detail was lost: %s", response.Body.String())
+	}
+}
 
 func TestResolveApprovalHandlerUsesVerifiedActor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -312,3 +425,32 @@ func (e candidatePendingHandlerError) Error() string                  { return e
 func (e candidatePendingHandlerError) CandidatePending() bool         { return true }
 func (e candidatePendingHandlerError) CandidatePursuitID() string     { return e.pursuitID }
 func (e candidatePendingHandlerError) CandidateIntakeMessage() string { return e.message }
+
+type failingWorkflowHandlerService struct {
+	Service
+	err error
+}
+
+func (s *failingWorkflowHandlerService) ItemsForOwner(string, bool) ([]models.WorkflowItem, error) {
+	return nil, s.err
+}
+
+func (s *failingWorkflowHandlerService) ApprovalItemsForOwner(string) ([]models.WorkflowItem, error) {
+	return nil, s.err
+}
+
+func (s *failingWorkflowHandlerService) DashboardForOwner(string) (*WorkflowDashboard, error) {
+	return nil, s.err
+}
+
+func (s *failingWorkflowHandlerService) RunDueForOwner(string, RunDueRequest) (*WorkflowRunSummary, error) {
+	return nil, s.err
+}
+
+func (s *failingWorkflowHandlerService) RecoverStaleClaimsForOwner(string, RunDueRequest) (*ClaimRecoverySummary, error) {
+	return nil, s.err
+}
+
+func (s *failingWorkflowHandlerService) RunDueOpenLoopsForOwner(string, RunDueRequest) (*OpenLoopRunSummary, error) {
+	return nil, s.err
+}

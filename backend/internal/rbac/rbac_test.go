@@ -3,7 +3,7 @@ package rbac
 import "testing"
 
 func TestOwnerHasAllPermissions(t *testing.T) {
-	for _, p := range []Permission{PermRead, PermWrite, PermApprove, PermAdmin} {
+	for _, p := range []Permission{PermRead, PermWrite, PermExecute, PermApprove, PermAdmin} {
 		if !Can(RoleOwner, p) {
 			t.Fatalf("owner should have %s", p)
 		}
@@ -14,19 +14,21 @@ func TestViewerIsReadOnly(t *testing.T) {
 	if !Can(RoleViewer, PermRead) {
 		t.Fatalf("viewer should read")
 	}
-	for _, p := range []Permission{PermWrite, PermApprove, PermAdmin} {
+	for _, p := range []Permission{PermWrite, PermExecute, PermApprove, PermAdmin} {
 		if Can(RoleViewer, p) {
 			t.Fatalf("viewer must not have %s", p)
 		}
 	}
 }
 
-func TestOperatorCanActButNotAdmin(t *testing.T) {
-	if !Can(RoleOperator, PermWrite) || !Can(RoleOperator, PermApprove) {
-		t.Fatalf("operator should write and approve")
+func TestOperatorCanOperateButCannotMakeOwnerDecisions(t *testing.T) {
+	if !Can(RoleOperator, PermWrite) || !Can(RoleOperator, PermExecute) {
+		t.Fatalf("operator should write and execute bounded operations")
 	}
-	if Can(RoleOperator, PermAdmin) {
-		t.Fatalf("operator must not have admin")
+	for _, p := range []Permission{PermApprove, PermAdmin} {
+		if Can(RoleOperator, p) {
+			t.Fatalf("operator must not have %s", p)
+		}
 	}
 }
 

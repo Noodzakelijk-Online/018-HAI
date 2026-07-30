@@ -1,6 +1,7 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"automation-hub-backend/internal/actionresolver"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomygate"
+	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
@@ -21,20 +23,23 @@ import (
 	"github.com/google/uuid"
 )
 
+var ErrTaskLLMRouterNotConfigured = errors.New("task LLM router is not configured")
+
 type IntakeRequest struct {
 	OwnerIdentity string `json:"-"`
 	PursuitID     string `json:"pursuitId,omitempty"`
 	// WorkflowID is internal worker context. It prevents the workflow-owned
 	// task run from being duplicated in the direct pursuit task-attempt ledger.
-	WorkflowID      string   `json:"-"`
-	Request         string   `json:"request"`
-	ProjectKey      string   `json:"projectKey,omitempty"`
-	AutomationID    string   `json:"automationId,omitempty"`
-	SuccessCriteria []string `json:"successCriteria,omitempty"`
-	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
-	HumanApproved   bool     `json:"humanApproved,omitempty"`
-	ApprovalNote    string   `json:"approvalNote,omitempty"`
-	reviewItemID    string
+	WorkflowID       string   `json:"-"`
+	Request          string   `json:"request"`
+	ProjectKey       string   `json:"projectKey,omitempty"`
+	AutomationID     string   `json:"automationId,omitempty"`
+	SuccessCriteria  []string `json:"successCriteria,omitempty"`
+	ExecuteAllowed   bool     `json:"executeAllowed,omitempty"`
+	HumanApproved    bool     `json:"humanApproved,omitempty"`
+	ApprovalNote     string   `json:"approvalNote,omitempty"`
+	ApprovalSourceID string   `json:"-"`
+	reviewItemID     string
 }
 
 type IntakeAnalysis struct {
@@ -62,9 +67,13 @@ type ContextPlan struct {
 }
 
 type ValidationPlan struct {
-	Steps          []string `json:"steps"`
-	FailurePolicy  string   `json:"failurePolicy"`
-	CompletionGate string   `json:"completionGate"`
+	Steps                         []string `json:"steps"`
+	SuccessCriteria               []string `json:"successCriteria"`
+	FrameworkEvidenceRequirements []string `json:"frameworkEvidenceRequirements"`
+	FrameworkCompletionCriteria   []string `json:"frameworkCompletionCriteria"`
+	FrameworkAssuranceCriteria    []string `json:"frameworkAssuranceCriteria"`
+	FailurePolicy                 string   `json:"failurePolicy"`
+	CompletionGate                string   `json:"completionGate"`
 }
 
 type ExecutionPlan struct {
@@ -91,22 +100,25 @@ type TaskStep struct {
 }
 
 type RiskAssessment struct {
-	Level             string   `json:"level"`
-	ApprovalRequired  bool     `json:"approvalRequired"`
-	ApprovalGranted   bool     `json:"approvalGranted"`
-	ActionResolution  string   `json:"actionResolution"`
-	MissingParameters []string `json:"missingParameters,omitempty"`
-	Reasons           []string `json:"reasons"`
-	AllowedNow        bool     `json:"allowedNow"`
+	Level                     string   `json:"level"`
+	ApprovalRequired          bool     `json:"approvalRequired"`
+	ApprovalGranted           bool     `json:"approvalGranted"`
+	ActionResolution          string   `json:"actionResolution"`
+	MissingParameters         []string `json:"missingParameters,omitempty"`
+	FrameworkAutonomyCeiling  int      `json:"frameworkAutonomyCeiling,omitempty"`
+	RequiredFrameworkAutonomy int      `json:"requiredFrameworkAutonomy,omitempty"`
+	Reasons                   []string `json:"reasons"`
+	AllowedNow                bool     `json:"allowedNow"`
 }
 
 type ValidationResult struct {
-	Passed        bool     `json:"passed"`
-	Status        string   `json:"status"`
-	Checked       []string `json:"checked"`
-	Failures      []string `json:"failures"`
-	NextAction    string   `json:"nextAction"`
-	AttemptNumber int      `json:"attemptNumber"`
+	Passed        bool                        `json:"passed"`
+	Status        string                      `json:"status"`
+	Checked       []string                    `json:"checked"`
+	Failures      []string                    `json:"failures"`
+	Criteria      []ValidationCriterionResult `json:"criteria"`
+	NextAction    string                      `json:"nextAction"`
+	AttemptNumber int                         `json:"attemptNumber"`
 }
 
 type RetryPolicy struct {
@@ -156,11 +168,14 @@ type ExecutedAction struct {
 }
 
 type ToolExecutionRequest struct {
-	OwnerIdentity string `json:"-"`
-	AutomationID  string `json:"automationId"`
-	Task          string `json:"task"`
-	ProjectKey    string `json:"projectKey,omitempty"`
-	HumanApproved bool   `json:"humanApproved"`
+	OwnerIdentity    string `json:"-"`
+	AutomationID     string `json:"automationId"`
+	Task             string `json:"task"`
+	OriginalRequest  string `json:"-"`
+	ProjectKey       string `json:"projectKey,omitempty"`
+	WorkflowID       string `json:"-"`
+	ApprovalSourceID string `json:"-"`
+	approvalDecision *automation.TaskApprovalDecisionRequest
 }
 
 type ToolExecutionResult struct {
@@ -182,6 +197,10 @@ type ToolExecutionResult struct {
 
 type ToolExecutor interface {
 	Execute(request ToolExecutionRequest) (*ToolExecutionResult, error)
+}
+
+type FrameworkSelector interface {
+	PlanSelection(request frameworkregistry.SelectionRequest) (*frameworkregistry.SelectionDecision, error)
 }
 
 // PursuitAttemptRecorder stores a compact audit projection for task work that
@@ -222,31 +241,32 @@ type MemoryUpdateProposal struct {
 }
 
 type CompletionPlan struct {
-	ID                    string                 `json:"id"`
-	OwnerIdentity         string                 `json:"-"`
-	PursuitID             string                 `json:"pursuitId,omitempty"`
-	CreatedAt             time.Time              `json:"createdAt"`
-	Request               string                 `json:"request"`
-	ProjectKey            string                 `json:"projectKey,omitempty"`
-	RealGoal              string                 `json:"realGoal"`
-	Intake                IntakeAnalysis         `json:"intake"`
-	ContextPlan           ContextPlan            `json:"contextPlan"`
-	MinimalityDecision    MinimalityDecision     `json:"minimalityDecision"`
-	ModelDecision         llm.RouteDecision      `json:"modelDecision"`
-	ToolDecision          ToolRouteDecision      `json:"toolDecision"`
-	Steps                 []TaskStep             `json:"steps"`
-	RiskAssessment        RiskAssessment         `json:"riskAssessment"`
-	ValidationPlan        ValidationPlan         `json:"validationPlan"`
-	ValidationResult      ValidationResult       `json:"validationResult"`
-	ExecutionPlan         ExecutionPlan          `json:"executionPlan"`
-	ExecutionResult       *ExecutionResult       `json:"executionResult,omitempty"`
-	RetryPolicy           RetryPolicy            `json:"retryPolicy"`
-	ReviewQueueItem       *ReviewQueueItem       `json:"reviewQueueItem,omitempty"`
-	MemoryUpdateProposals []MemoryUpdateProposal `json:"memoryUpdateProposals"`
-	LessonsLearned        []MemoryUpdateProposal `json:"lessonsLearned"`
-	StoredMemoryIDs       []string               `json:"storedMemoryIds"`
-	Events                []TaskEvent            `json:"events"`
-	CompletionStatus      string                 `json:"completionStatus"`
+	ID                    string                               `json:"id"`
+	OwnerIdentity         string                               `json:"-"`
+	PursuitID             string                               `json:"pursuitId,omitempty"`
+	CreatedAt             time.Time                            `json:"createdAt"`
+	Request               string                               `json:"request"`
+	ProjectKey            string                               `json:"projectKey,omitempty"`
+	RealGoal              string                               `json:"realGoal"`
+	Intake                IntakeAnalysis                       `json:"intake"`
+	ContextPlan           ContextPlan                          `json:"contextPlan"`
+	MinimalityDecision    MinimalityDecision                   `json:"minimalityDecision"`
+	FrameworkDecision     *frameworkregistry.SelectionDecision `json:"frameworkDecision,omitempty"`
+	ModelDecision         llm.RouteDecision                    `json:"modelDecision"`
+	ToolDecision          ToolRouteDecision                    `json:"toolDecision"`
+	Steps                 []TaskStep                           `json:"steps"`
+	RiskAssessment        RiskAssessment                       `json:"riskAssessment"`
+	ValidationPlan        ValidationPlan                       `json:"validationPlan"`
+	ValidationResult      ValidationResult                     `json:"validationResult"`
+	ExecutionPlan         ExecutionPlan                        `json:"executionPlan"`
+	ExecutionResult       *ExecutionResult                     `json:"executionResult,omitempty"`
+	RetryPolicy           RetryPolicy                          `json:"retryPolicy"`
+	ReviewQueueItem       *ReviewQueueItem                     `json:"reviewQueueItem,omitempty"`
+	MemoryUpdateProposals []MemoryUpdateProposal               `json:"memoryUpdateProposals"`
+	LessonsLearned        []MemoryUpdateProposal               `json:"lessonsLearned"`
+	StoredMemoryIDs       []string                             `json:"storedMemoryIds"`
+	Events                []TaskEvent                          `json:"events"`
+	CompletionStatus      string                               `json:"completionStatus"`
 }
 
 type Service interface {
@@ -266,6 +286,17 @@ type OwnerScopedService interface {
 	ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
 }
 
+// DurableOwnerScopedService exposes storage failures to authenticated HTTP
+// handlers. The legacy slice-returning methods remain for internal workers and
+// test doubles, but external reads must not turn a failed ledger into an empty
+// and therefore misleading history.
+type DurableOwnerScopedService interface {
+	LogsForOwnerWithError(ownerIdentity string) ([]CompletionPlan, error)
+	ReviewQueueForOwnerWithError(ownerIdentity string) ([]ReviewQueueItem, error)
+}
+
+const internalTaskStateOwnerIdentity = "urn:hai:internal:task-system"
+
 type service struct {
 	memoryService       memory.Service
 	sourceService       source.Service
@@ -273,6 +304,8 @@ type service struct {
 	llmService          *llm.Service
 	toolExecutor        ToolExecutor
 	pursuitAttempts     PursuitAttemptRecorder
+	frameworkSelector   FrameworkSelector
+	stateRepository     TaskStateRepository
 	mu                  sync.Mutex
 	logs                []CompletionPlan
 	reviewQueue         []ReviewQueueItem
@@ -284,11 +317,13 @@ func NewService(memoryService memory.Service, llmService *llm.Service, sourceSer
 		sourceService = sourceServices[0]
 	}
 	return &service{
-		memoryService: memoryService,
-		sourceService: sourceService,
-		llmService:    llmService,
-		logs:          []CompletionPlan{},
-		reviewQueue:   []ReviewQueueItem{},
+		memoryService:     memoryService,
+		sourceService:     sourceService,
+		llmService:        llmService,
+		frameworkSelector: defaultFrameworkSelector(),
+		stateRepository:   NewMemoryTaskStateRepository(),
+		logs:              []CompletionPlan{},
+		reviewQueue:       []ReviewQueueItem{},
 	}
 }
 
@@ -303,12 +338,46 @@ func NewServiceWithEngines(memoryService memory.Service, llmService *llm.Service
 		verificationService: verificationService,
 		llmService:          llmService,
 		toolExecutor:        toolExecutor,
+		frameworkSelector:   defaultFrameworkSelector(),
+		stateRepository:     NewMemoryTaskStateRepository(),
 		logs:                []CompletionPlan{},
 		reviewQueue:         []ReviewQueueItem{},
 	}
 }
 
-func NewServiceWithEnginesAndPursuitAttempts(memoryService memory.Service, llmService *llm.Service, sourceService source.Service, verificationService verification.Service, toolExecutor ToolExecutor, pursuitAttempts PursuitAttemptRecorder) Service {
+func NewServiceWithEnginesAndPursuitAttempts(memoryService memory.Service, llmService *llm.Service, sourceService source.Service, verificationService verification.Service, toolExecutor ToolExecutor, pursuitAttempts PursuitAttemptRecorder, frameworkSelectors ...FrameworkSelector) Service {
+	selector := defaultFrameworkSelector()
+	if len(frameworkSelectors) > 0 && frameworkSelectors[0] != nil {
+		selector = frameworkSelectors[0]
+	}
+	return NewServiceWithDependencies(
+		memoryService,
+		llmService,
+		sourceService,
+		verificationService,
+		toolExecutor,
+		pursuitAttempts,
+		selector,
+		NewMemoryTaskStateRepository(),
+	)
+}
+
+func NewServiceWithDependencies(
+	memoryService memory.Service,
+	llmService *llm.Service,
+	sourceService source.Service,
+	verificationService verification.Service,
+	toolExecutor ToolExecutor,
+	pursuitAttempts PursuitAttemptRecorder,
+	frameworkSelector FrameworkSelector,
+	stateRepository TaskStateRepository,
+) Service {
+	if frameworkSelector == nil {
+		frameworkSelector = defaultFrameworkSelector()
+	}
+	if stateRepository == nil {
+		stateRepository = NewMemoryTaskStateRepository()
+	}
 	return &service{
 		memoryService:       memoryService,
 		sourceService:       sourceService,
@@ -316,9 +385,19 @@ func NewServiceWithEnginesAndPursuitAttempts(memoryService memory.Service, llmSe
 		llmService:          llmService,
 		toolExecutor:        toolExecutor,
 		pursuitAttempts:     pursuitAttempts,
+		frameworkSelector:   frameworkSelector,
+		stateRepository:     stateRepository,
 		logs:                []CompletionPlan{},
 		reviewQueue:         []ReviewQueueItem{},
 	}
+}
+
+func defaultFrameworkSelector() FrameworkSelector {
+	service, err := frameworkregistry.NewService(nil)
+	if err != nil {
+		panic(fmt.Sprintf("initialize framework selector: %v", err))
+	}
+	return service
 }
 
 func DefaultService() (Service, error) {
@@ -326,16 +405,28 @@ func DefaultService() (Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewServiceWithEngines(
+	frameworkService, err := frameworkregistry.DefaultService()
+	if err != nil {
+		return nil, err
+	}
+	stateRepository, err := DefaultTaskStateRepository()
+	if err != nil {
+		return nil, err
+	}
+	return NewServiceWithDependencies(
 		memory.DefaultService(),
 		llmService,
 		source.DefaultService(),
 		verification.DefaultService(),
 		NewAutomationToolExecutor(automation.DefaultService()),
+		nil,
+		frameworkService,
+		stateRepository,
 	), nil
 }
 
 func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
+	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
@@ -346,11 +437,14 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	if err := s.persistPursuitAttempt(plan, request, "plan", true); err != nil {
 		return nil, err
 	}
-	s.addLog(*plan)
+	if err := s.addLog(*plan); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
+	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
@@ -371,17 +465,22 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 			BlockedReason: reason,
 			Actions:       []ExecutedAction{executedAction("governance.emergency_stop", "blocked", plan.Request, reason, started)},
 		}
+		setTaskStepStatus(plan, "execute", "blocked")
 		plan.ValidationResult.Passed = false
 		plan.ValidationResult.Status = "blocked"
 		plan.ValidationResult.Failures = append(plan.ValidationResult.Failures, reason)
 		plan.ValidationResult.NextAction = "clear emergency stop before autonomous execution"
 		plan.CompletionStatus = "review_required"
 		plan.Events = append(plan.Events, event("governance", reason))
-		s.attachReviewItem(plan, reason, "high", request)
+		if err := s.attachReviewItem(plan, reason, "high", request); err != nil {
+			return nil, err
+		}
 		if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
 			return nil, err
 		}
-		s.addLog(*plan)
+		if err := s.addLog(*plan); err != nil {
+			return nil, err
+		}
 		return plan, nil
 	}
 	plan, err := s.buildPlan(request, true)
@@ -393,8 +492,12 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	}
 	if plan.RiskAssessment.AllowedNow {
 		plan.ExecutionResult = s.executeAllowedSteps(plan, request)
+		setExecutionStepStatus(plan)
+	} else {
+		setTaskStepStatus(plan, "execute", "blocked")
 	}
 	plan.ValidationResult = validatePlan(plan, 1)
+	setValidationStepStatus(plan)
 	plan.RetryPolicy.CurrentAttempt = 1
 	plan.RetryPolicy.RetryAvailable = !plan.ValidationResult.Passed && plan.RetryPolicy.CurrentAttempt < plan.RetryPolicy.MaxAttempts
 
@@ -403,20 +506,25 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		plan.ValidationResult.Passed = false
 		plan.ValidationResult.Status = "blocked"
 		plan.ValidationResult.NextAction = "human review required before execution"
-		s.attachReviewItem(plan, taskReviewReason(plan.RiskAssessment), plan.RiskAssessment.Level, request)
+		if err := s.attachReviewItem(plan, taskReviewReason(plan.RiskAssessment), plan.RiskAssessment.Level, request); err != nil {
+			return nil, err
+		}
 	} else if plan.ExecutionResult != nil && plan.ExecutionResult.BlockedReason != "" {
 		plan.CompletionStatus = "review_required"
 		plan.ValidationResult.Passed = false
 		plan.ValidationResult.Status = "blocked"
 		plan.ValidationResult.NextAction = "resolve the execution blocker before retrying"
 		plan.RetryPolicy.RetryAvailable = false
-		s.attachReviewItem(plan, plan.ExecutionResult.BlockedReason, plan.RiskAssessment.Level, request)
+		if err := s.attachReviewItem(plan, plan.ExecutionResult.BlockedReason, plan.RiskAssessment.Level, request); err != nil {
+			return nil, err
+		}
 	} else if plan.ValidationResult.Passed {
 		plan.CompletionStatus = "validated"
 		plan.ValidationResult.Status = "passed"
 		plan.ValidationResult.NextAction = "mark task complete"
 		plan.Events = append(plan.Events, event("validation", "execution result verified against success criteria"))
 		plan.StoredMemoryIDs = s.storeLessons(plan)
+		setMemoryStepStatus(plan)
 	} else if plan.RetryPolicy.RetryAvailable {
 		plan.Events = append(plan.Events, event("retry", "validation failed; retrying with fallback model route"))
 		failed := false
@@ -428,13 +536,17 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 			ValidationPassed:  &failed,
 			PreviousModelID:   plan.ModelDecision.SelectedModelID,
 		}
-		if retryDecision, errRetry := s.llmService.Route(routeRequest); errRetry == nil {
+		if s.llmService == nil {
+			plan.Events = append(plan.Events, event("routing", "fallback model route skipped because the task LLM router is not configured"))
+		} else if retryDecision, errRetry := s.llmService.Route(routeRequest); errRetry == nil {
 			plan.ModelDecision = retryDecision
 			plan.Events = append(plan.Events, event("routing", "fallback model route evaluated after validation failure"))
 		}
 		plan.ExecutionResult = s.executeAllowedSteps(plan, request)
+		setExecutionStepStatus(plan)
 		plan.RetryPolicy.CurrentAttempt = 2
 		plan.ValidationResult = validatePlan(plan, 2)
+		setValidationStepStatus(plan)
 		plan.RetryPolicy.RetryAvailable = !plan.ValidationResult.Passed && plan.RetryPolicy.CurrentAttempt < plan.RetryPolicy.MaxAttempts
 		if plan.ValidationResult.Passed {
 			plan.CompletionStatus = "validated"
@@ -442,21 +554,29 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 			plan.ValidationResult.NextAction = "mark task complete"
 			plan.Events = append(plan.Events, event("validation", "retry validated against success criteria"))
 			plan.StoredMemoryIDs = s.storeLessons(plan)
+			setMemoryStepStatus(plan)
 		} else if plan.RetryPolicy.RetryAvailable {
 			plan.CompletionStatus = "retry_needed"
 		} else {
 			plan.CompletionStatus = "review_required"
-			s.attachReviewItem(plan, "validation failed after retry", "medium", request)
+			if err := s.attachReviewItem(plan, "validation failed after retry", "medium", request); err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		plan.CompletionStatus = "review_required"
-		s.attachReviewItem(plan, "validation failed after available attempts", "medium", request)
+		if err := s.attachReviewItem(plan, "validation failed after available attempts", "medium", request); err != nil {
+			return nil, err
+		}
 	}
+	setMemoryStepStatus(plan)
 
 	if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
 		return nil, err
 	}
-	s.addLog(*plan)
+	if err := s.addLog(*plan); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 
@@ -581,6 +701,33 @@ func planLaunchEventID(plan *CompletionPlan) string {
 
 func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPlan, error) {
 	intake := analyzeIntake(request)
+	if s.llmService == nil {
+		return nil, ErrTaskLLMRouterNotConfigured
+	}
+	planID := uuid.New().String()
+	frameworkDecision, err := s.frameworkSelector.PlanSelection(frameworkregistry.SelectionRequest{
+		OwnerIdentity:       request.OwnerIdentity,
+		TaskPlanID:          planID,
+		Request:             request.Request,
+		ProjectKey:          request.ProjectKey,
+		PursuitID:           request.PursuitID,
+		TaskType:            intake.TaskType,
+		RiskLevel:           intake.RiskLevel,
+		Difficulty:          intake.Difficulty,
+		RequiredReasoning:   intake.RequiredReasoning,
+		SuccessCriteria:     intake.SuccessCriteria,
+		NeedsMemory:         intake.NeedsMemory,
+		NeedsTools:          intake.NeedsTools,
+		NeedsDocuments:      intake.NeedsDocuments,
+		NeedsWebAccess:      intake.NeedsWebAccess,
+		NeedsLocalExecution: intake.NeedsLocalExecution,
+		NeedsApproval:       intake.NeedsApproval,
+		ExecuteRequested:    request.ExecuteAllowed,
+		HumanApproved:       request.HumanApproved,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("select planning frameworks: %w", err)
+	}
 	sourceRefresh, sourceRefreshExplanation := s.refreshSourcesForTask(request, intake)
 	contextResult, err := memory.RetrieveForOwner(s.memoryService, request.OwnerIdentity, memory.RetrieveRequest{
 		Query:      request.Request,
@@ -604,11 +751,13 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 	toolDecision := routeTools(intake)
 	minimalityDecision := decideMinimality(request, intake)
 	risk := assessRisk(intake, request)
+	risk = applyFrameworkRisk(risk, frameworkDecision, intake, request)
 	steps := buildTaskSteps(intake, toolDecision, risk, minimalityDecision)
 	validationPlan := buildValidationPlan(intake, minimalityDecision)
+	validationPlan = applyFrameworkValidation(validationPlan, frameworkDecision)
 	memoryProposals := proposeMemoryUpdates(request, intake)
 	plan := &CompletionPlan{
-		ID:            uuid.New().String(),
+		ID:            planID,
 		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
 		PursuitID:     strings.TrimSpace(request.PursuitID),
 		CreatedAt:     time.Now().UTC(),
@@ -624,6 +773,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 				"refresh due connected sources when the task likely depends on project, local, or document context",
 				"check connected-source extractions before task planning",
 				"preserve source references on returned memories",
+				"apply the selected framework context requirements without loading unrelated private context",
 			},
 			UsedContext:              contextResult.UsedContext,
 			SourceContext:            sourceContext,
@@ -632,18 +782,20 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 			Explanation:              strings.TrimSpace(contextResult.Explanation + " " + sourceRefreshExplanation + " " + sourceExplanation),
 		},
 		MinimalityDecision:    minimalityDecision,
+		FrameworkDecision:     frameworkDecision,
 		ModelDecision:         modelDecision,
 		ToolDecision:          toolDecision,
 		Steps:                 steps,
 		RiskAssessment:        risk,
 		ValidationPlan:        validationPlan,
 		ValidationResult:      initialValidationResult(validationPlan),
-		ExecutionPlan:         buildExecutionPlan(intake),
+		ExecutionPlan:         applyFrameworkExecution(buildExecutionPlan(intake), frameworkDecision),
 		RetryPolicy:           buildRetryPolicy(intake),
 		MemoryUpdateProposals: memoryProposals,
 		LessonsLearned:        proposeLessons(request, intake, toolDecision),
 		Events: []TaskEvent{
 			event("intake", "request classified and real goal inferred"),
+			event("framework-selection", frameworkSelectionSummary(frameworkDecision)),
 			event("source-refresh", sourceRefreshExplanation),
 			event("context", contextResult.Explanation),
 			event("minimality", minimalityDecision.SelectedLevel+": "+minimalityDecision.Reason),
@@ -654,56 +806,79 @@ func (s *service) buildPlan(request IntakeRequest, runMode bool) (*CompletionPla
 		CompletionStatus: "planned",
 	}
 	if request.HumanApproved {
-		plan.Events = append(plan.Events, event("approval", "human approval recorded: "+compact(request.ApprovalNote)))
+		plan.Events = append(plan.Events, event("approval", "human approval recorded for the exact reviewed action"))
 	}
 
-	if runMode {
-		plan.Events = append(plan.Events, event("execution", "only allowed low-risk planning and verification steps were executed"))
-		for i := range plan.Steps {
-			if plan.Steps[i].Allowed {
-				plan.Steps[i].Status = "completed"
-			}
-		}
-	}
+	_ = runMode
 	return plan, nil
 }
 
 func (s *service) Logs() []CompletionPlan {
-	return s.LogsForOwner("")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	copied := make([]CompletionPlan, 0, len(s.logs))
+	for _, plan := range s.logs {
+		copied = append(copied, sanitizeCompletionPlanApprovalData(plan))
+	}
+	return copied
 }
 
 func (s *service) LogsForOwner(ownerIdentity string) []CompletionPlan {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	ownerIdentity = strings.TrimSpace(ownerIdentity)
-	copied := make([]CompletionPlan, 0, len(s.logs))
-	for _, plan := range s.logs {
-		if ownerIdentity != "" && plan.OwnerIdentity != ownerIdentity {
-			continue
-		}
-		copied = append(copied, plan)
+	logs, err := s.LogsForOwnerWithError(ownerIdentity)
+	if err != nil {
+		return nil
 	}
-	return copied
+	return logs
+}
+
+func (s *service) LogsForOwnerWithError(ownerIdentity string) ([]CompletionPlan, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, fmt.Errorf("owner identity is required")
+	}
+	logs, err := s.stateRepository.ListCompletionPlans(ownerIdentity, taskStateDefaultLimit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range logs {
+		logs[i] = sanitizeCompletionPlanApprovalData(logs[i])
+	}
+	return logs, nil
 }
 
 func (s *service) ReviewQueue() []ReviewQueueItem {
-	return s.ReviewQueueForOwner("")
-}
-
-func (s *service) ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	copied := make([]ReviewQueueItem, 0, len(s.reviewQueue))
 	for _, item := range s.reviewQueue {
-		if ownerIdentity != "" && item.Request.OwnerIdentity != ownerIdentity {
-			continue
-		}
-		copied = append(copied, item)
+		copied = append(copied, sanitizeReviewQueueItem(item))
 	}
 	return copied
+}
+
+func (s *service) ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem {
+	items, err := s.ReviewQueueForOwnerWithError(ownerIdentity)
+	if err != nil {
+		return nil
+	}
+	return items
+}
+
+func (s *service) ReviewQueueForOwnerWithError(ownerIdentity string) ([]ReviewQueueItem, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, fmt.Errorf("owner identity is required")
+	}
+	items, err := s.stateRepository.ListReviewItems(ownerIdentity, taskStateDefaultLimit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i] = sanitizeReviewQueueItem(items[i])
+	}
+	return items, nil
 }
 
 func (s *service) ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
@@ -715,127 +890,267 @@ func (s *service) ResolveReviewItemForOwner(ownerIdentity, id string, decision A
 }
 
 func (s *service) resolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
-	ownerIdentity = strings.TrimSpace(ownerIdentity)
-	s.mu.Lock()
-	index := -1
-	var item ReviewQueueItem
-	for i := range s.reviewQueue {
-		if s.reviewQueue[i].ID == id && (ownerIdentity == "" || s.reviewQueue[i].Request.OwnerIdentity == ownerIdentity) {
-			index = i
-			item = s.reviewQueue[i]
-			break
-		}
-	}
-	if index < 0 {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("review item not found")
-	}
-	if item.Status != "open" && item.Status != "needs_review" {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("review item is already resolved")
-	}
-	now := time.Now().UTC()
-	item.ResolvedAt = &now
-	item.ResolutionNote = strings.TrimSpace(decision.Note)
-	if !decision.Approved {
-		item.Status = "rejected"
-		item.Decision = "rejected"
-		s.reviewQueue[index] = item
-		s.mu.Unlock()
-		return &ReviewResolutionResult{Item: item}, nil
-	}
-	item.Status = "approved"
-	item.Decision = "approved"
-	s.reviewQueue[index] = item
-	approvedRequest := item.Request
-	approvedRequest.ExecuteAllowed = true
-	approvedRequest.HumanApproved = true
-	approvedRequest.ApprovalNote = item.ResolutionNote
-	approvedRequest.reviewItemID = item.ID
-	s.mu.Unlock()
-
-	plan, err := s.Run(approvedRequest)
+	ownerIdentity, item, err := s.reviewItemForResolution(ownerIdentity, id)
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	completedAt := time.Now().UTC()
+	if item.Status != "open" && item.Status != "needs_review" {
+		return nil, ErrTaskReviewAlreadyResolved
+	}
+	now := time.Now().UTC()
+	decisionName := "rejected"
+	if decision.Approved {
+		decisionName = "approved"
+	}
+	persisted, err := s.stateRepository.ResolveReviewItem(ownerIdentity, id, ReviewResolution{
+		Decision:   decisionName,
+		Note:       sanitizeApprovalNote(decision.Note),
+		ResolvedAt: now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	item = persisted.Item
+	s.updateReviewMirror(item)
+	if !decision.Approved {
+		return &ReviewResolutionResult{Item: sanitizeReviewQueueItem(item)}, nil
+	}
+
+	approvedRequest := persisted.Item.Request
+	approvedRequest.ExecuteAllowed = true
+	approvedRequest.HumanApproved = true
+	approvedRequest.ApprovalNote = persisted.Decision.ResolutionNote
+	approvedRequest.ApprovalSourceID = persisted.Decision.ApprovalSourceID
+	approvedRequest.reviewItemID = persisted.Item.ID
+
+	plan, err := s.Run(approvedRequest)
+	if err != nil {
+		outcomeAt := time.Now().UTC()
+		updated, outcomeErr := s.stateRepository.MarkReviewOutcome(ownerIdentity, id, ReviewOutcome{
+			TaskPlanID: firstNonEmpty(item.TaskID, persisted.Decision.TaskPlanID),
+			Status:     "needs_review",
+			Reason:     "approved execution ended with an error; inspect the task audit before retrying",
+			At:         outcomeAt,
+		})
+		if outcomeErr == nil {
+			s.updateReviewMirror(*updated)
+		}
+		return nil, err
+	}
+	outcome := ReviewOutcome{
+		TaskPlanID: plan.ID,
+		Status:     "needs_review",
+		Reason:     firstNonEmpty(reviewReasonFromPlan(plan), "approved task requires another review"),
+		At:         time.Now().UTC(),
+	}
 	if plan.CompletionStatus == "validated" {
-		item.Status = "completed"
-		item.ResolvedAt = &completedAt
-	} else {
-		item.Status = "needs_review"
-		item.ResolvedAt = nil
-		if plan.ReviewQueueItem != nil && plan.ReviewQueueItem.ID == item.ID {
-			item.Reason = plan.ReviewQueueItem.Reason
-		}
+		outcome.Status = "completed"
+		outcome.Reason = "approved task completed and passed validation"
 	}
+	updated, err := s.stateRepository.MarkReviewOutcome(ownerIdentity, id, outcome)
+	if err != nil {
+		return nil, err
+	}
+	item = *updated
+	s.updateReviewMirror(item)
 	plan.ReviewQueueItem = &item
-	for i := range s.reviewQueue {
-		if s.reviewQueue[i].ID == item.ID {
-			s.reviewQueue[i] = item
-			break
-		}
-	}
-	s.mu.Unlock()
-	return &ReviewResolutionResult{Item: item, Plan: plan}, nil
+	safePlan := sanitizeCompletionPlanApprovalData(*plan)
+	return &ReviewResolutionResult{
+		Item: sanitizeReviewQueueItem(item),
+		Plan: &safePlan,
+	}, nil
 }
 
-func (s *service) addLog(plan CompletionPlan) {
+func (s *service) reviewItemForResolution(ownerIdentity, id string) (string, ReviewQueueItem, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", ReviewQueueItem{}, ErrTaskStateNotFound
+	}
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		s.mu.Lock()
+		for _, item := range s.reviewQueue {
+			if item.ID == id {
+				ownerIdentity = taskStateOwnerIdentity(item.Request.OwnerIdentity)
+				break
+			}
+		}
+		s.mu.Unlock()
+	}
+	if ownerIdentity == "" {
+		return "", ReviewQueueItem{}, ErrTaskStateNotFound
+	}
+	item, err := s.stateRepository.FindReviewItem(ownerIdentity, id)
+	if err != nil {
+		return "", ReviewQueueItem{}, err
+	}
+	return ownerIdentity, *item, nil
+}
+
+func reviewReasonFromPlan(plan *CompletionPlan) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.ReviewQueueItem != nil && strings.TrimSpace(plan.ReviewQueueItem.Reason) != "" {
+		return plan.ReviewQueueItem.Reason
+	}
+	if plan.ExecutionResult != nil && strings.TrimSpace(plan.ExecutionResult.BlockedReason) != "" {
+		return plan.ExecutionResult.BlockedReason
+	}
+	if len(plan.ValidationResult.Failures) > 0 {
+		return strings.Join(plan.ValidationResult.Failures, "; ")
+	}
+	return ""
+}
+
+func (s *service) verifiedApprovalDecisionForExecution(
+	plan *CompletionPlan,
+	request IntakeRequest,
+) (*automation.TaskApprovalDecisionRequest, error) {
+	sourceID := strings.TrimSpace(request.ApprovalSourceID)
+	sourceKind, err := validateExecutionApprovalSource(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if sourceKind == "workflow-decision" {
+		workflowID, workflowErr := uuid.Parse(strings.TrimSpace(request.WorkflowID))
+		if workflowErr != nil || workflowID == uuid.Nil {
+			return nil, fmt.Errorf("workflow approval has no valid workflow binding")
+		}
+		return nil, nil
+	}
+
+	reviewID := strings.TrimPrefix(sourceID, "task-review:")
+	if strings.TrimSpace(request.reviewItemID) == "" || request.reviewItemID != reviewID {
+		return nil, fmt.Errorf("task approval source does not match the resolved review item")
+	}
+	ownerIdentity := taskStateOwnerIdentity(request.OwnerIdentity)
+	if ownerIdentity != taskStateOwnerIdentity(plan.OwnerIdentity) {
+		return nil, fmt.Errorf("task review owner does not match the execution owner")
+	}
+	item, err := s.stateRepository.FindReviewItem(ownerIdentity, reviewID)
+	if err != nil {
+		return nil, fmt.Errorf("task review decision is no longer present in the review store: %w", err)
+	}
+	approval, err := s.stateRepository.FindApprovedReviewDecision(ownerIdentity, reviewID)
+	if err != nil {
+		return nil, fmt.Errorf("task review decision is not currently approved: %w", err)
+	}
+	if item.Status != "approved" || item.Decision != "approved" || item.ResolvedAt == nil {
+		return nil, fmt.Errorf("task review decision is not currently approved")
+	}
+	if item.Request.OwnerIdentity != ownerIdentity ||
+		taskStateOwnerIdentity(plan.OwnerIdentity) != ownerIdentity {
+		return nil, fmt.Errorf("task review owner does not match the execution owner")
+	}
+	if approval.ApprovalSourceID != sourceID ||
+		approval.ReviewItemID != reviewID ||
+		approval.ResolvedBy != ownerIdentity {
+		return nil, fmt.Errorf("task review approval provenance does not match the execution request")
+	}
+	requestDigest, err := ReviewRequestDigest(ownerIdentity, request)
+	if err != nil {
+		return nil, fmt.Errorf("task review request cannot be verified: %w", err)
+	}
+	if requestDigest != approval.RequestDigest {
+		return nil, fmt.Errorf("task review request no longer matches the approved action")
+	}
+	if strings.TrimSpace(item.Request.AutomationID) != strings.TrimSpace(request.AutomationID) {
+		return nil, fmt.Errorf("task review automation does not match the execution target")
+	}
+	if strings.TrimSpace(item.Request.ProjectKey) != strings.TrimSpace(request.ProjectKey) ||
+		strings.TrimSpace(plan.ProjectKey) != strings.TrimSpace(request.ProjectKey) {
+		return nil, fmt.Errorf("task review project does not match the execution project")
+	}
+	if strings.TrimSpace(item.Request.Request) != strings.TrimSpace(request.Request) ||
+		strings.TrimSpace(plan.Request) != strings.TrimSpace(request.Request) {
+		return nil, fmt.Errorf("task review request does not match the execution request")
+	}
+	return &automation.TaskApprovalDecisionRequest{
+		OwnerIdentity:    plan.OwnerIdentity,
+		Task:             plan.RealGoal,
+		ProjectKey:       plan.ProjectKey,
+		ApprovalSourceID: sourceID,
+		ApprovedAt:       approval.ResolvedAt.UTC(),
+	}, nil
+}
+
+func (s *service) addLog(plan CompletionPlan) error {
+	plan = sanitizeCompletionPlanApprovalData(plan)
+	if err := s.stateRepository.AppendCompletionPlan(taskStateOwnerIdentity(plan.OwnerIdentity), plan); err != nil {
+		return fmt.Errorf("persist task completion plan: %w", err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	s.logs = append([]CompletionPlan{plan}, s.logs...)
 	if len(s.logs) > 50 {
 		s.logs = s.logs[:50]
 	}
+	return nil
 }
 
-func (s *service) addReviewItem(item ReviewQueueItem) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.reviewQueue = append([]ReviewQueueItem{item}, s.reviewQueue...)
-	if len(s.reviewQueue) > 50 {
-		s.reviewQueue = s.reviewQueue[:50]
+func (s *service) addReviewItem(item ReviewQueueItem) (ReviewQueueItem, error) {
+	item = sanitizeReviewQueueItem(item)
+	persisted, err := s.stateRepository.CreateReviewItem(taskStateOwnerIdentity(item.Request.OwnerIdentity), item)
+	if err != nil {
+		return ReviewQueueItem{}, fmt.Errorf("persist task review item: %w", err)
 	}
+	s.updateReviewMirror(*persisted)
+	return sanitizeReviewQueueItem(*persisted), nil
 }
 
-func (s *service) attachReviewItem(plan *CompletionPlan, reason, risk string, request IntakeRequest) {
+func (s *service) attachReviewItem(plan *CompletionPlan, reason, risk string, request IntakeRequest) error {
+	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
 	if request.reviewItemID == "" {
 		item := newReviewItem(plan.ID, reason, risk, request)
-		plan.ReviewQueueItem = &item
-		s.addReviewItem(item)
-		return
+		persisted, err := s.addReviewItem(item)
+		if err != nil {
+			return err
+		}
+		plan.ReviewQueueItem = &persisted
+		return nil
 	}
 
+	ownerIdentity := taskStateOwnerIdentity(request.OwnerIdentity)
+	item, err := s.stateRepository.FindReviewItem(ownerIdentity, request.reviewItemID)
+	if err != nil {
+		return fmt.Errorf("load approved task review item: %w", err)
+	}
+	item.TaskID = plan.ID
+	item.Request = request
+	item.Reason = sanitizeTaskOperationalText(reason, taskStateMaximumReasonRunes)
+	item.Priority = "normal"
+	if risk == "high" {
+		item.Priority = "high"
+	}
+	item.Status = "needs_review"
+	item.ResolvedAt = nil
+	plan.ReviewQueueItem = item
+	return nil
+}
+
+func (s *service) updateReviewMirror(item ReviewQueueItem) {
+	item = sanitizeReviewQueueItem(item)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.reviewQueue {
-		if s.reviewQueue[i].ID != request.reviewItemID {
-			continue
+		if s.reviewQueue[i].ID == item.ID {
+			s.reviewQueue[i] = item
+			return
 		}
-		item := s.reviewQueue[i]
-		item.TaskID = plan.ID
-		item.Request = request
-		item.Reason = reason
-		item.Priority = "normal"
-		if risk == "high" {
-			item.Priority = "high"
-		}
-		item.Status = "needs_review"
-		item.ResolvedAt = nil
-		s.reviewQueue[i] = item
-		plan.ReviewQueueItem = &item
-		return
 	}
-
-	item := newReviewItem(plan.ID, reason, risk, request)
-	plan.ReviewQueueItem = &item
 	s.reviewQueue = append([]ReviewQueueItem{item}, s.reviewQueue...)
 	if len(s.reviewQueue) > 50 {
 		s.reviewQueue = s.reviewQueue[:50]
 	}
+}
+
+func taskStateOwnerIdentity(ownerIdentity string) string {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return internalTaskStateOwnerIdentity
+	}
+	return ownerIdentity
 }
 
 func (s *service) storeLessons(plan *CompletionPlan) []string {
@@ -903,12 +1218,28 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 			if strings.TrimSpace(request.AutomationID) == "" {
 				return blockExecution(result, "task requires controlled runtime execution but no automationId was provided", plan, toolStarted)
 			}
+			approvalSourceID := ""
+			var approvalDecision *automation.TaskApprovalDecisionRequest
+			if request.HumanApproved {
+				approvalSourceID = strings.TrimSpace(request.ApprovalSourceID)
+				if approvalSourceID == "" {
+					return blockExecution(result, "recorded human approval is missing its trusted review-item source", plan, toolStarted)
+				}
+				var approvalErr error
+				approvalDecision, approvalErr = s.verifiedApprovalDecisionForExecution(plan, request)
+				if approvalErr != nil {
+					return blockExecution(result, "recorded human approval could not be verified: "+approvalErr.Error(), plan, toolStarted)
+				}
+			}
 			executed, err := s.toolExecutor.Execute(ToolExecutionRequest{
-				OwnerIdentity: plan.OwnerIdentity,
-				AutomationID:  request.AutomationID,
-				Task:          plan.RealGoal,
-				ProjectKey:    plan.ProjectKey,
-				HumanApproved: plan.RiskAssessment.ApprovalGranted || !plan.RiskAssessment.ApprovalRequired,
+				OwnerIdentity:    plan.OwnerIdentity,
+				AutomationID:     request.AutomationID,
+				Task:             plan.RealGoal,
+				OriginalRequest:  request.Request,
+				ProjectKey:       plan.ProjectKey,
+				WorkflowID:       request.WorkflowID,
+				ApprovalSourceID: approvalSourceID,
+				approvalDecision: approvalDecision,
 			})
 			if err != nil {
 				return blockExecution(result, "controlled runtime execution failed: "+err.Error(), plan, toolStarted)
@@ -977,7 +1308,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 
 	verificationResult, err := s.verificationService.Answer(verification.AnswerRequest{
 		OwnerIdentity:     plan.OwnerIdentity,
-		Question:          plan.RealGoal,
+		Question:          verificationQuestion(plan),
 		ProjectKey:        plan.ProjectKey,
 		PursuitID:         plan.PursuitID,
 		Mode:              result.Mode,
@@ -1019,12 +1350,15 @@ func completedToolExecution(previous *ExecutionResult) *ToolExecutionResult {
 		return nil
 	}
 	copied := *previous.ToolExecution
-	copied.AuditEvents = append([]string{}, previous.ToolExecution.AuditEvents...)
+	copied.Message = sanitizeTaskOperationalText(copied.Message, 2048)
+	copied.Output = sanitizeTaskOperationalText(copied.Output, 8192)
+	copied.AuditEvents = sanitizeTaskAuditEvents(previous.ToolExecution.AuditEvents)
 	copied.RuntimeRouteTrace = copyAutomationRuntimeRouteTrace(previous.ToolExecution.RuntimeRouteTrace)
 	return &copied
 }
 
 func blockExecution(result *ExecutionResult, reason string, plan *CompletionPlan, started time.Time) *ExecutionResult {
+	reason = sanitizeTaskOperationalText(reason, 2048)
 	result.CompletedAt = time.Now().UTC()
 	result.Output = "Execution stopped before completion: " + reason
 	result.VerificationStatus = verification.StatusNeedsReview
@@ -1417,10 +1751,71 @@ func buildValidationPlan(intake IntakeAnalysis, minimality MinimalityDecision) V
 		steps = append(steps, "pause before high-risk execution until human approval is recorded")
 	}
 	return ValidationPlan{
-		Steps:          steps,
-		FailurePolicy:  "retry with stronger context or model; escalate to human review if validation still fails",
-		CompletionGate: "task is complete only after validation passes against success criteria",
+		Steps:                         steps,
+		SuccessCriteria:               uniqueStrings(intake.SuccessCriteria),
+		FrameworkEvidenceRequirements: []string{},
+		FrameworkCompletionCriteria:   []string{},
+		FrameworkAssuranceCriteria:    []string{},
+		FailurePolicy:                 "retry with stronger context or model; escalate to human review if validation still fails",
+		CompletionGate:                "task is complete only after validation passes against success criteria",
 	}
+}
+
+func applyFrameworkValidation(plan ValidationPlan, decision *frameworkregistry.SelectionDecision) ValidationPlan {
+	if decision == nil {
+		return plan
+	}
+	assuranceCriteria := []string{}
+	for _, selected := range decision.Selected {
+		assuranceCriteria = append(assuranceCriteria, selected.EvaluationMethod...)
+	}
+	assuranceCriteria = uniqueStrings(assuranceCriteria)
+	assuranceSet := make(map[string]struct{}, len(assuranceCriteria))
+	for _, criterion := range assuranceCriteria {
+		assuranceSet[strings.TrimSpace(criterion)] = struct{}{}
+	}
+	taskCriteriaSet := make(map[string]struct{}, len(plan.SuccessCriteria))
+	for _, criterion := range plan.SuccessCriteria {
+		taskCriteriaSet[strings.TrimSpace(criterion)] = struct{}{}
+	}
+	taskCompletionCriteria := make([]string, 0, len(decision.CompletionCriteria))
+	for _, criterion := range decision.CompletionCriteria {
+		criterion = strings.TrimSpace(criterion)
+		if criterion == "" {
+			continue
+		}
+		if _, duplicateTaskCriterion := taskCriteriaSet[criterion]; duplicateTaskCriterion {
+			continue
+		}
+		if _, frameworkAssuranceCriterion := assuranceSet[criterion]; frameworkAssuranceCriterion {
+			continue
+		}
+		taskCompletionCriteria = append(taskCompletionCriteria, criterion)
+	}
+	for _, requirement := range decision.EvidenceRequirements {
+		plan.Steps = append(plan.Steps, "framework evidence: "+requirement)
+	}
+	for _, criterion := range taskCompletionCriteria {
+		plan.Steps = append(plan.Steps, "framework completion: "+criterion)
+	}
+	for _, criterion := range assuranceCriteria {
+		plan.Steps = append(plan.Steps, "framework assurance (not a per-task completion gate): "+criterion)
+	}
+	plan.Steps = uniqueStrings(plan.Steps)
+	plan.FrameworkEvidenceRequirements = uniqueStrings(append(
+		plan.FrameworkEvidenceRequirements,
+		decision.EvidenceRequirements...,
+	))
+	plan.FrameworkCompletionCriteria = uniqueStrings(append(
+		plan.FrameworkCompletionCriteria,
+		taskCompletionCriteria...,
+	))
+	plan.FrameworkAssuranceCriteria = uniqueStrings(append(
+		plan.FrameworkAssuranceCriteria,
+		assuranceCriteria...,
+	))
+	plan.CompletionGate = "task is complete only after task success criteria, selected framework evidence, and framework completion criteria are verified"
+	return plan
 }
 
 func buildExecutionPlan(intake IntakeAnalysis) ExecutionPlan {
@@ -1444,6 +1839,22 @@ func buildExecutionPlan(intake IntakeAnalysis) ExecutionPlan {
 			"memory update proposed",
 		},
 	}
+}
+
+func applyFrameworkExecution(plan ExecutionPlan, decision *frameworkregistry.SelectionDecision) ExecutionPlan {
+	if decision == nil {
+		return plan
+	}
+	if decision.RequiresApproval {
+		plan.ApprovalRequiredFor = append(plan.ApprovalRequiredFor, decision.ApprovalReasons...)
+	}
+	plan.ApprovalRequiredFor = uniqueStrings(plan.ApprovalRequiredFor)
+	plan.AuditEvents = uniqueStrings(append(plan.AuditEvents,
+		"framework combination selected",
+		"framework authority ceiling evaluated",
+		"framework evidence and completion gates evaluated",
+	))
+	return plan
 }
 
 func routeTools(intake IntakeAnalysis) ToolRouteDecision {
@@ -1544,6 +1955,73 @@ func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {
 	}
 }
 
+func applyFrameworkRisk(
+	risk RiskAssessment,
+	decision *frameworkregistry.SelectionDecision,
+	intake IntakeAnalysis,
+	request IntakeRequest,
+) RiskAssessment {
+	if decision == nil {
+		return risk
+	}
+	requiredAutonomy := requiredFrameworkAutonomy(intake, request)
+	risk.FrameworkAutonomyCeiling = decision.MaximumAutonomyLevel
+	risk.RequiredFrameworkAutonomy = requiredAutonomy
+	risk.Reasons = append(risk.Reasons,
+		fmt.Sprintf("chief-of-staff framework authority ceiling is level %d", decision.MaximumAutonomyLevel),
+	)
+	if decision.RequiresApproval {
+		risk.ApprovalRequired = true
+		risk.ApprovalGranted = request.ExecuteAllowed && request.HumanApproved
+		risk.Reasons = append(risk.Reasons, decision.ApprovalReasons...)
+		if !risk.ApprovalGranted {
+			risk.AllowedNow = false
+			risk.Reasons = append(risk.Reasons, "selected frameworks require approval before execution")
+		}
+	}
+	if decision.MaximumAutonomyLevel < requiredAutonomy {
+		risk.AllowedNow = false
+		risk.Reasons = append(
+			risk.Reasons,
+			fmt.Sprintf(
+				"selected framework ceiling level %d is below the level %d required for this action; re-plan with a suitable framework rather than treating approval as an authority override",
+				decision.MaximumAutonomyLevel,
+				requiredAutonomy,
+			),
+		)
+	}
+	risk.Reasons = uniqueStrings(risk.Reasons)
+	return risk
+}
+
+func requiredFrameworkAutonomy(intake IntakeAnalysis, request IntakeRequest) int {
+	if request.ExecuteAllowed && (intake.NeedsTools || intake.NeedsLocalExecution) {
+		// Level 6 is the first Constitution tier that permits execution:
+		// execute after case-specific approval. Approval can authorize a
+		// scoped action but cannot raise a framework's own authority ceiling.
+		return 6
+	}
+	// Planning and simulation use level 4. Draft-only work remains a lower
+	// capability inside this ceiling and does not imply permission to execute.
+	return 4
+}
+
+func frameworkSelectionSummary(decision *frameworkregistry.SelectionDecision) string {
+	if decision == nil || len(decision.Selected) == 0 {
+		return "no framework selection was available"
+	}
+	ids := make([]string, 0, len(decision.Selected))
+	for _, selected := range decision.Selected {
+		ids = append(ids, selected.ID+"@"+selected.Version)
+	}
+	return fmt.Sprintf(
+		"selected %s for domain %s with autonomy ceiling %d",
+		strings.Join(ids, ", "),
+		decision.LifeDomain,
+		decision.MaximumAutonomyLevel,
+	)
+}
+
 // requiredExecutionParameters checks deterministic execution prerequisites.
 // It intentionally runs only when a caller requested execution, so planning
 // can still explain a task before Robert chooses a runtime.
@@ -1572,13 +2050,14 @@ func taskReviewReason(risk RiskAssessment) string {
 
 func buildTaskSteps(intake IntakeAnalysis, tools ToolRouteDecision, risk RiskAssessment, minimality MinimalityDecision) []TaskStep {
 	steps := []TaskStep{
-		{ID: "understand", Name: "Understand request", Purpose: "identify the user's real goal", Allowed: true, Status: "planned"},
-		{ID: "criteria", Name: "Define success criteria", Purpose: "make completion measurable", Allowed: true, Status: "planned"},
-		{ID: "minimality", Name: "Apply YAGNI gate", Purpose: "select the least complex capable implementation strategy", Allowed: minimality.Necessary, RequiresApproval: !minimality.Necessary, Status: "planned"},
-		{ID: "context", Name: "Gather context", Purpose: "retrieve only relevant memories and references", Allowed: true, Status: "planned"},
-		{ID: "routing", Name: "Choose model and tools", Purpose: "select capable resources before optimizing cost", Allowed: true, Status: "planned"},
-		{ID: "plan", Name: "Create plan", Purpose: "sequence safe actions and validation", Allowed: true, Status: "planned"},
-		{ID: "risk", Name: "Check risk and approvals", Purpose: "block risky actions before execution", Allowed: true, Status: "planned"},
+		{ID: "understand", Name: "Understand request", Purpose: "identify the user's real goal", Allowed: true, Status: "completed"},
+		{ID: "criteria", Name: "Define success criteria", Purpose: "make completion measurable", Allowed: true, Status: "completed"},
+		{ID: "framework", Name: "Select operating frameworks", Purpose: "choose the smallest capable and safe decision disciplines", Allowed: true, Status: "completed"},
+		{ID: "minimality", Name: "Apply YAGNI gate", Purpose: "select the least complex capable implementation strategy", Allowed: minimality.Necessary, RequiresApproval: !minimality.Necessary, Status: taskStepPlanningStatus(minimality.Necessary)},
+		{ID: "context", Name: "Gather context", Purpose: "retrieve only relevant memories and references", Allowed: true, Status: "completed"},
+		{ID: "routing", Name: "Choose model and tools", Purpose: "select capable resources before optimizing cost", Allowed: true, Status: "completed"},
+		{ID: "plan", Name: "Create plan", Purpose: "sequence safe actions and validation", Allowed: true, Status: "completed"},
+		{ID: "risk", Name: "Check risk and approvals", Purpose: "block risky actions before execution", Allowed: true, Status: "completed"},
 	}
 	blockedHighRisk := len(tools.BlockedTools) > 0 && risk.ApprovalRequired && !risk.ApprovalGranted
 	executionAllowed := risk.AllowedNow && !blockedHighRisk
@@ -1588,6 +2067,13 @@ func buildTaskSteps(intake IntakeAnalysis, tools ToolRouteDecision, risk RiskAss
 		TaskStep{ID: "memory", Name: "Update memory", Purpose: "store useful lessons without bloating context", Allowed: true, Status: "planned"},
 	)
 	return steps
+}
+
+func taskStepPlanningStatus(allowed bool) string {
+	if allowed {
+		return "completed"
+	}
+	return "blocked"
 }
 
 func buildRetryPolicy(intake IntakeAnalysis) RetryPolicy {
@@ -1610,86 +2096,6 @@ func buildRetryPolicy(intake IntakeAnalysis) RetryPolicy {
 		},
 		CurrentAttempt: 0,
 		RetryAvailable: true,
-	}
-}
-
-func initialValidationResult(plan ValidationPlan) ValidationResult {
-	return ValidationResult{
-		Passed:        false,
-		Status:        "not_run",
-		Checked:       plan.Steps,
-		Failures:      []string{},
-		NextAction:    "execute allowed steps, then validate",
-		AttemptNumber: 0,
-	}
-}
-
-func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
-	failures := []string{}
-	checked := append([]string{}, plan.ValidationPlan.Steps...)
-	if len(plan.Intake.SuccessCriteria) == 0 {
-		failures = append(failures, "success criteria are missing")
-	}
-	if plan.ModelDecision.SelectedModelID == "" {
-		failures = append(failures, "no capable model was selected")
-	}
-	if len(plan.ToolDecision.SelectedTools) == 0 {
-		failures = append(failures, "no tools were selected")
-	}
-	if plan.MinimalityDecision.Applicable {
-		if !plan.MinimalityDecision.Necessary {
-			failures = append(failures, "implementation was rejected by the necessity gate")
-		}
-		if strings.TrimSpace(plan.MinimalityDecision.SelectedLevel) == "" {
-			failures = append(failures, "minimality strategy was not selected")
-		}
-	}
-	if plan.RiskAssessment.ApprovalRequired && !plan.RiskAssessment.ApprovalGranted {
-		failures = append(failures, "approval is required before execution")
-	}
-	if attempt > 0 {
-		if plan.ExecutionResult == nil {
-			failures = append(failures, "no execution result was produced")
-		} else {
-			if plan.Intake.NeedsTools || plan.Intake.NeedsLocalExecution {
-				if plan.ExecutionResult.ToolExecution == nil {
-					failures = append(failures, "required controlled runtime execution did not run")
-				} else if plan.ExecutionResult.ToolExecution.Status != "completed" {
-					failures = append(failures, "controlled runtime execution did not complete: "+plan.ExecutionResult.ToolExecution.Status)
-				}
-			}
-			if strings.TrimSpace(plan.ExecutionResult.Output) == "" {
-				failures = append(failures, "execution produced no output")
-			}
-			if !verificationStatusAcceptsCompletion(plan.ExecutionResult.VerificationStatus) {
-				failures = append(failures, "execution output is not verified: "+plan.ExecutionResult.VerificationStatus)
-			}
-			if plan.ExecutionResult.UnsupportedClaims > 0 {
-				failures = append(failures, "execution has unsupported or review-needed claims")
-			}
-			for _, claim := range plan.ExecutionResult.Claims {
-				if claim.NeedsReview || !verificationStatusAcceptsCompletion(claim.Status) {
-					failures = append(failures, "claim requires review: "+compact(claim.ClaimText))
-					break
-				}
-			}
-		}
-	}
-
-	passed := len(failures) == 0
-	status := "passed"
-	next := "mark task complete"
-	if !passed {
-		status = "failed"
-		next = "retry, escalate, or request review"
-	}
-	return ValidationResult{
-		Passed:        passed,
-		Status:        status,
-		Checked:       checked,
-		Failures:      failures,
-		NextAction:    next,
-		AttemptNumber: attempt,
 	}
 }
 
@@ -1751,6 +2157,13 @@ func inferRealGoal(request IntakeRequest, intake IntakeAnalysis) string {
 	}
 }
 
+// ExecutionTask returns the exact task identity used by the automation
+// executor. Approval systems use it before execution so their action digest
+// cannot drift from the task engine's eventual launch request.
+func ExecutionTask(request IntakeRequest) string {
+	return inferRealGoal(request, analyzeIntake(request))
+}
+
 func inferSuccessCriteria(taskType string, needsTools bool) []string {
 	criteria := []string{
 		"the user request is answered or implemented",
@@ -1768,6 +2181,7 @@ func newReviewItem(taskID, reason, risk string, request IntakeRequest) ReviewQue
 	if risk == "high" {
 		priority = "high"
 	}
+	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
 	return ReviewQueueItem{
 		ID:        uuid.New().String(),
 		TaskID:    taskID,
@@ -1786,8 +2200,87 @@ func event(stage, message string) TaskEvent {
 	return TaskEvent{
 		At:      time.Now().UTC(),
 		Stage:   stage,
-		Message: message,
+		Message: sanitizeTaskOperationalText(message, 2048),
 	}
+}
+
+func sanitizeApprovalNote(value string) string {
+	return sanitizeTaskOperationalText(value, 512)
+}
+
+func sanitizeTaskOperationalText(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(safety.RedactSecrets(value))), " ")
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
+}
+
+func sanitizeTaskAuditEvents(events []string) []string {
+	if len(events) == 0 {
+		return nil
+	}
+	const maxEvents = 64
+	result := make([]string, 0, len(events))
+	for _, value := range events {
+		value = sanitizeTaskOperationalText(value, 512)
+		if value != "" {
+			result = append(result, value)
+		}
+		if len(result) == maxEvents {
+			break
+		}
+	}
+	return result
+}
+
+func sanitizeReviewQueueItem(item ReviewQueueItem) ReviewQueueItem {
+	item.ResolutionNote = sanitizeApprovalNote(item.ResolutionNote)
+	item.Request.ApprovalNote = sanitizeApprovalNote(item.Request.ApprovalNote)
+	return item
+}
+
+func sanitizeCompletionPlanApprovalData(plan CompletionPlan) CompletionPlan {
+	if plan.ReviewQueueItem != nil {
+		item := sanitizeReviewQueueItem(*plan.ReviewQueueItem)
+		plan.ReviewQueueItem = &item
+	}
+	if len(plan.Events) > 0 {
+		events := append([]TaskEvent{}, plan.Events...)
+		for i := range events {
+			events[i].Message = sanitizeTaskOperationalText(events[i].Message, 2048)
+		}
+		plan.Events = events
+	}
+	if plan.ExecutionResult != nil {
+		execution := *plan.ExecutionResult
+		execution.Output = sanitizeTaskOperationalText(execution.Output, 8192)
+		execution.BlockedReason = sanitizeTaskOperationalText(execution.BlockedReason, 2048)
+		if execution.ToolExecution != nil {
+			tool := *execution.ToolExecution
+			tool.Message = sanitizeTaskOperationalText(tool.Message, 2048)
+			tool.Output = sanitizeTaskOperationalText(tool.Output, 8192)
+			tool.AuditEvents = sanitizeTaskAuditEvents(tool.AuditEvents)
+			execution.ToolExecution = &tool
+		}
+		if len(execution.Actions) > 0 {
+			actions := append([]ExecutedAction{}, execution.Actions...)
+			for i := range actions {
+				actions[i].Input = sanitizeTaskOperationalText(actions[i].Input, 512)
+				actions[i].Output = sanitizeTaskOperationalText(actions[i].Output, 2048)
+			}
+			execution.Actions = actions
+		}
+		plan.ExecutionResult = &execution
+	}
+	return plan
 }
 
 func containsAny(value string, needles ...string) bool {

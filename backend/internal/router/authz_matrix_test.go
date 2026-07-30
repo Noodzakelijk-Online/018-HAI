@@ -56,6 +56,7 @@ func TestRolePermissionMatrixEnforcement(t *testing.T) {
 	for path, perm := range map[string]rbac.Permission{
 		"/read":    rbac.PermRead,
 		"/write":   rbac.PermWrite,
+		"/execute": rbac.PermExecute,
 		"/approve": rbac.PermApprove,
 		"/admin":   rbac.PermAdmin,
 	} {
@@ -66,9 +67,9 @@ func TestRolePermissionMatrixEnforcement(t *testing.T) {
 
 	// role -> expected-allowed paths
 	expect := map[string]map[string]bool{
-		"owner":    {"/read": true, "/write": true, "/approve": true, "/admin": true},
-		"operator": {"/read": true, "/write": true, "/approve": true, "/admin": false},
-		"viewer":   {"/read": true, "/write": false, "/approve": false, "/admin": false},
+		"owner":    {"/read": true, "/write": true, "/execute": true, "/approve": true, "/admin": true},
+		"operator": {"/read": true, "/write": true, "/execute": true, "/approve": false, "/admin": false},
+		"viewer":   {"/read": true, "/write": false, "/execute": false, "/approve": false, "/admin": false},
 	}
 	for role, paths := range expect {
 		for path, allowed := range paths {
