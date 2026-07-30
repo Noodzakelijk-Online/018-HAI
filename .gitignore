@@ -27,6 +27,8 @@ Thumbs.db
 .verify/
 .playwright-mcp/
 .playwright-cli/
+workflow-*.png
+security-snapshots/
 
 # Environment backups. Never deliver these — a backup of .env.local carries the
 # same real local secrets. Covers .env.local.bak and any *.bak.
@@ -47,3 +49,9 @@ support-bundle-*.tar.gz
 .claude/
 /agent-workspaces/*
 !/agent-workspaces/.gitkeep
+mini-swe-workspaces/
+hai-repo-link/
+
+# Local deployment stamps and extracted frontend bundles.
+backend/.hai-backend-deploy
+frontend/.hai-frontend-deploy/
