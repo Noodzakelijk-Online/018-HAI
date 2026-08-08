@@ -137,6 +137,11 @@ GB) while preserving the ten protected transcripts and all source/worktree
 data. Cleanup remains a separate explicit operation; this ledger does not
 authorize or perform it.
 
+The manifest, preserved terminal reports, reproducible audit script, and this
+ledger were committed and pushed on `main` as
+`7f76cd6671d498edfa8014996e4cab3682a9972c`. The 104 completed rows therefore
+satisfy the `candidate_after_ledger_commit` condition.
+
 ## Verified checkpoint
 
 The integrated source was checkpointed on `main` as commit
