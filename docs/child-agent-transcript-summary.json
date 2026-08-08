@@ -1,0 +1,14 @@
+{
+    "generated_at_utc":  "2026-08-08T18:32:16.2863311Z",
+    "root_session_id":  "019e7acc-44f2-7c90-a04e-253f6d43df28",
+    "audited_transcripts":  114,
+    "completed_transcripts":  104,
+    "retained_transcripts":  10,
+    "completed_logical_bytes":  263110870955,
+    "completed_allocated_bytes":  263110870955,
+    "retained_logical_bytes":  21882851783,
+    "retained_allocated_bytes":  21882851783,
+    "completed_reports_file":  "child-agent-final-reports.md",
+    "manifest_file":  "child-agent-transcript-manifest.csv",
+    "deletion_performed":  false
+}

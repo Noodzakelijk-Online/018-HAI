@@ -9,11 +9,14 @@ permission to delete session data.
 Snapshot date: 2026-08-08
 
 - Pinned HAI root session: `019e7acc-44f2-7c90-a04e-253f6d43df28`.
-- August 4-5 contains 97 child transcripts: 89 completed, two aborted, and six
-  without a terminal marker. The completed set occupies approximately 225.35
-  GiB.
-- Across all August dates, 114 HAI child transcripts were found: 105 completed,
-  two aborted, and seven without a terminal marker.
+- August 4-5 contains 97 child transcripts. Applying the conservative rule that
+  the latest terminal event wins produces 88 completed, three aborted, and six
+  without a terminal marker. The completed set occupies exactly 238,891,183,316
+  bytes: 222.485 GiB or 238.891 decimal GB.
+- Across all audited August dates, 114 HAI child transcripts were found: 104
+  completed, three aborted, and seven without a terminal marker. The completed
+  set occupies exactly 263,110,870,955 allocated bytes: 245.041 GiB or 263.111
+  decimal GB.
 - Forty-seven completed August 4-5 children reported implementation work. The
   181 genuine repository paths declared by those reports were present in the
   shared worktree at audit time.
@@ -46,11 +49,31 @@ tracked in `docs/completion-matrix.md`,
 `docs/framework-operating-contract-matrix.md`, and
 `docs/requirements-traceability.md`.
 
+## Preserved transcript outputs
+
+The provisional audit has been replaced by three generated, reviewable
+artifacts:
+
+- `docs/child-agent-transcript-manifest.csv` has one row per audited transcript,
+  including terminal state, work kind, exact logical and allocated bytes,
+  terminal-report SHA-256, and disposition.
+- `docs/child-agent-final-reports.md` preserves the complete terminal report for
+  every completed child. Potential credential-shaped values are redacted, while
+  the manifest stores the SHA-256 of the original report text.
+- `docs/child-agent-transcript-summary.json` records aggregate counts and exact
+  byte totals.
+
+The artifacts are reproducible with
+`scripts/audit-child-agent-transcripts.ps1`. The script reads session metadata
+and bounded transcript tails; it cannot delete, move, truncate, compress, or
+archive session files.
+
 ## Transcripts that must be retained
 
 Aborted children:
 
 - `019fd061-d940-7c53-b9ce-a5f94cba4f37`
+- `019fd062-611f-7fa1-a245-ceed50c175d2`
 - `019fd062-e4b9-7e01-b26c-757eb8dfdbe3`
 
 Children without a terminal marker:
@@ -63,19 +86,19 @@ Children without a terminal marker:
 - `019fd0e0-89cd-71c1-89ca-fa6ce900c8ac`
 - `019fded0-b7ee-7490-9573-596d47cf4e36` (current August 8 child)
 
-Completed children that explicitly stopped with partial, uncommitted work:
+These ten retained transcripts occupy exactly 21,882,851,783 allocated bytes:
+20.380 GiB or 21.883 decimal GB. This includes the current August 8 child.
 
-- `019fd06b-a244-7f71-bb34-37af1773f85c`
-- `019fd06c-2cca-7ab2-809d-faa9f9f80536`
-
-The read-only whole-system synthesis
-`019fd060-5df4-77e0-949f-e4f6e182944d` should remain available until its
-recommended governed source-to-prioritized-pursuit pipeline is explicitly
-accepted, rejected, or superseded.
+The two completed children that stopped with partial work and the read-only
+whole-system synthesis no longer require their multi-gigabyte transcripts for
+result preservation. Their terminal reports are in
+`docs/child-agent-final-reports.md`, and their applicable source work is covered
+by the verified repository checkpoint. They therefore follow the same cleanup
+disposition as other completed children.
 
 ## Cleanup gate
 
-Completed implementation transcripts become cleanup candidates only after all
+Completed transcripts become cleanup candidates only after all
 of the following are true:
 
 1. The shared worktree has a named Git checkpoint containing the intended HAI
@@ -84,14 +107,35 @@ of the following are true:
    that checkpoint.
 3. Audit-only findings that are not represented in the matrices are distilled
    before their transcripts are removed.
-4. Aborted, non-terminal, current, and explicitly stopped children remain
-   untouched.
+4. Aborted, non-terminal, and current children remain untouched. Completed
+   partial-work reports must be preserved before their transcripts qualify.
 5. Local databases, source attachments, worktrees, credentials, Playwright
    diagnostics, and external-provider evidence are excluded from transcript
    cleanup.
 
 No transcript deletion, movement, truncation, compression, or archival was
 performed while producing this ledger.
+
+## Cleanup disposition
+
+All five cleanup gates are now represented in committed or generated evidence:
+
+1. The integrated source checkpoint exists and is pushed.
+2. Backend, IDP, frontend, build, and Compose validation evidence is recorded.
+3. Every completed child's terminal report is preserved with its original-text
+   SHA-256, including audit-only findings and partial-work reports.
+4. Every aborted, nonterminal, and current child is explicitly marked `retain`
+   in the manifest.
+5. The manifest contains only HAI child transcript JSONL files under the audited
+   August session tree. Databases, attachments, worktrees, credentials,
+   diagnostics, and provider evidence are not cleanup candidates.
+
+After this ledger and its generated artifacts are committed and pushed, the 104
+manifest rows marked `candidate_after_ledger_commit` can become an exact cleanup
+allowlist. Deleting only those paths would reclaim 245.041 GiB (263.111 decimal
+GB) while preserving the ten protected transcripts and all source/worktree
+data. Cleanup remains a separate explicit operation; this ledger does not
+authorize or perform it.
 
 ## Verified checkpoint
 
@@ -115,5 +159,6 @@ Validation completed before the checkpoint:
   redaction and security tests.
 
 After the push, local `main` and `origin/main` both resolved to the checkpoint
-commit and the worktree was clean. This satisfies cleanup gates 1 and 2. Gates
-3 through 5 remain mandatory for every transcript cleanup batch.
+commit and the worktree was clean. This satisfies cleanup gates 1 and 2. The
+generated manifest and terminal-report archive satisfy gates 3 through 5 for
+the audited allowlist; those gates remain mandatory for every future batch.
