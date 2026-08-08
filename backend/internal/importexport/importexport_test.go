@@ -40,3 +40,27 @@ func TestWrapRequiresFormat(t *testing.T) {
 		t.Fatalf("empty format must be rejected")
 	}
 }
+
+func TestWrapRequiresPositiveVersion(t *testing.T) {
+	if _, err := Wrap("018-hai-memories", 0, sample{}); err == nil {
+		t.Fatalf("non-positive version must be rejected")
+	}
+}
+
+func TestUnwrapRequiresExpectedFormatAndValidVersion(t *testing.T) {
+	if _, err := Unwrap([]byte(`{"format":"x","version":1,"payload":{}}`), " "); err == nil {
+		t.Fatalf("empty expected format must be rejected")
+	}
+	if _, err := Unwrap([]byte(`{"format":"x","version":0,"payload":{}}`), "x"); err == nil {
+		t.Fatalf("non-positive envelope version must be rejected")
+	}
+}
+
+func TestUnwrapRejectsEmptyAndOversizedInput(t *testing.T) {
+	if _, err := Unwrap(nil, "x"); err == nil {
+		t.Fatalf("empty envelope must be rejected")
+	}
+	if _, err := Unwrap(make([]byte, maxEnvelopeBytes+1), "x"); err == nil {
+		t.Fatalf("oversized envelope must be rejected")
+	}
+}

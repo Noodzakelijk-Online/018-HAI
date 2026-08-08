@@ -11,6 +11,7 @@ import {
   ILLMProvider,
   ILLMProviderProbe,
   ILLMRouteDecision,
+  ILLMGenerationResult,
 } from '../../models/llm-policy.model.interface';
 import { LLM_POLICY_SERVICE_TOKEN } from '../../services/llm-policy/llm-policy.service.token';
 import { ILLMPolicyService } from '../../services/llm-policy.service.interface';
@@ -51,6 +52,7 @@ export class LLMPolicyComponent implements OnInit {
   probes: ILLMProviderProbe[] = [];
   maintenance: ILLMModelMaintenanceResult[] = [];
   logs: ILLMRouteDecision[] = [];
+  generations: ILLMGenerationResult[] = [];
   decision?: ILLMRouteDecision;
   policyActions: PolicyActionCard[] = [];
   catalogGroups: TierCatalogGroup[] = [];
@@ -99,6 +101,7 @@ export class LLMPolicyComponent implements OnInit {
       },
     });
     this.loadLogs();
+    this.loadGenerationHistory();
     this.loadProbeHistory();
     this.loadModelMaintenanceHistory();
   }
@@ -235,6 +238,19 @@ export class LLMPolicyComponent implements OnInit {
     });
   }
 
+  loadGenerationHistory(): void {
+    this.llmPolicyService.getGenerationHistory().subscribe({
+      next: (records) => {
+        this.generations = records || [];
+        this.rebuildActionCards();
+      },
+      error: () => {
+        this.generations = [];
+        this.rebuildActionCards();
+      },
+    });
+  }
+
   private setPolicy(policy: ILLMPolicy): void {
     this.policy = policy;
     this.catalogGroups = this.buildCatalogByTier(policy);
@@ -270,7 +286,9 @@ export class LLMPolicyComponent implements OnInit {
         ? this.tierLabel(this.decision.tier)
         : 'No capable model under policy'
       : 'No route selected yet';
-    const latestLogMetric = this.logs[0]?.selectedModelName || (this.logs.length ? 'Blocked route recorded' : 'No recent decisions');
+    const latestLogMetric = this.generations[0]
+      ? `${this.validationLabel(this.generations[0].validationStatus)} / ${this.generations[0].modelName || this.generations[0].modelId}`
+      : this.logs[0]?.selectedModelName || (this.logs.length ? 'Blocked route recorded' : 'No recent decisions');
     this.policyActions = [
       {
         title: 'Route task',
@@ -320,7 +338,7 @@ export class LLMPolicyComponent implements OnInit {
         title: 'Review routing log',
         detail: 'Inspect recent choices and fallback paths.',
         icon: 'history',
-        metric: `${this.logs.length} entries`,
+        metric: `${this.generations.length} outcomes`,
         secondaryMetric: latestLogMetric,
         context:
           'Opens the trace of selected models, skipped options, estimated cost, validation pressure, and fallback history.',
@@ -351,6 +369,7 @@ export class LLMPolicyComponent implements OnInit {
         break;
       case 'logs':
         this.loadLogs();
+        this.loadGenerationHistory();
         this.scrollToSection('routing-audit');
         break;
       case 'providers':
@@ -919,6 +938,35 @@ export class LLMPolicyComponent implements OnInit {
     return `${decision.selectedModelName} selected from ${decision.selectedProviderId}`;
   }
 
+  calibrationSummary(decision: ILLMRouteDecision): string {
+    const evidence = decision.calibration;
+    if (!evidence) {
+      return 'No evaluated outcome exists for this model and lane yet.';
+    }
+    return `${evidence.acceptedOutputs}/${evidence.evaluatedRuns} validator-accepted outputs, ${(evidence.wilsonLowerBound * 100).toFixed(1)}% conservative lower bound, ${evidence.confidence} confidence.`;
+  }
+
+  validationLabel(status?: string): string {
+    return (status || 'unvalidated').replace(/_/g, ' ');
+  }
+
+  validationColor(status?: string): string {
+    switch (status) {
+      case 'verified':
+      case 'source_supported':
+      case 'schema_validated':
+      case 'test_passed':
+      case 'human_approved':
+        return 'green';
+      case 'failed':
+        return 'red';
+      case 'needs_review':
+        return 'gold';
+      default:
+        return 'default';
+    }
+  }
+
   tierOrder(policy: ILLMPolicy | undefined = this.policy): string[] {
     return policy?.tierOrder?.length
       ? policy.tierOrder
@@ -981,6 +1029,10 @@ export class LLMPolicyComponent implements OnInit {
 
   trackByFallback(_index: number, item: { providerId: string; modelId: string }): string {
     return `${item.providerId}:${item.modelId}`;
+  }
+
+  trackByGeneration(index: number, generation: ILLMGenerationResult): string {
+    return generation.generationId || `${generation.loggedAt || index}:${generation.providerId}:${generation.modelId}`;
   }
 
   goHome(): void {

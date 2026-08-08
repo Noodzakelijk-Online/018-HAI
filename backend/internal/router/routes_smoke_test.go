@@ -279,12 +279,14 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	workflowRoutes.GET("/overview", mark("workflowOverview"))
 	workflowRoutes.GET("/approvals", mark("workflowApprovals"))
 	workflowRoutes.GET("/dashboard", mark("workflowDashboard"))
+	workflowRoutes.GET("/reminder-proposals", mark("workflowReminderProposals"))
 	workflowRoutes.GET("/", mark("workflowItems"))
 	workflowRoutes.POST("/intake", mark("workflowIntake"))
 	workflowRoutes.POST("/recover-stale", mark("workflowRecoverStale"))
 	workflowRoutes.POST("/run-due", mark("workflowRunDue"))
 	workflowRoutes.POST("/open-loops/run-due", mark("workflowOpenLoopRunDue"))
 	workflowRoutes.GET("/:id", mark("workflowGet"))
+	workflowRoutes.POST("/:id/run", mark("workflowRunOne"))
 	workflowRoutes.POST("/:id/transition", mark("workflowTransition"))
 	workflowRoutes.POST("/:id/approval", mark("workflowApprovalResolve"))
 	workflowRoutes.POST("/:id/interruption/resolve", mark("workflowInterruptionResolve"))
@@ -440,12 +442,14 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/workflow/overview", "workflowOverview"},
 		{"GET", "/api/v1/workflow/approvals", "workflowApprovals"},
 		{"GET", "/api/v1/workflow/dashboard", "workflowDashboard"},
+		{"GET", "/api/v1/workflow/reminder-proposals", "workflowReminderProposals"},
 		{"GET", "/api/v1/workflow/", "workflowItems"},
 		{"POST", "/api/v1/workflow/intake", "workflowIntake"},
 		{"POST", "/api/v1/workflow/recover-stale", "workflowRecoverStale"},
 		{"POST", "/api/v1/workflow/run-due", "workflowRunDue"},
 		{"POST", "/api/v1/workflow/open-loops/run-due", "workflowOpenLoopRunDue"},
 		{"GET", "/api/v1/workflow/abc", "workflowGet"},
+		{"POST", "/api/v1/workflow/abc/run", "workflowRunOne"},
 		{"POST", "/api/v1/workflow/abc/transition", "workflowTransition"},
 		{"POST", "/api/v1/workflow/abc/approval", "workflowApprovalResolve"},
 		{"POST", "/api/v1/workflow/abc/interruption/resolve", "workflowInterruptionResolve"},

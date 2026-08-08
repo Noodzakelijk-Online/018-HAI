@@ -1,6 +1,10 @@
 package workflow
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +78,63 @@ func TestIntakeCreatesApprovalGatedLegalWorkflow(t *testing.T) {
 	}
 }
 
+func TestReminderProposalsAreOwnerScopedCurrentAndNonExecuting(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	reminderService, ok := service.(ReminderProposalService)
+	if !ok {
+		t.Fatalf("workflow service does not expose reminder proposals")
+	}
+	due := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Calendar event: Evidence review\nStart: " + due.Format(time.RFC3339),
+		ProjectKey:    "legal-case",
+		SourceType:    "calendar",
+		SourceID:      "event-1",
+		SourceURI:     "calendar://event-1",
+		SourceLabel:   "Evidence review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "bob",
+		Input:         "Calendar event: Private review\nStart: " + due.Format(time.RFC3339),
+		SourceType:    "calendar",
+		SourceID:      "event-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var reminderAt time.Time
+	for _, item := range record.Checklist {
+		if item.ReminderAt != nil {
+			reminderAt = *item.ReminderAt
+			break
+		}
+	}
+	if reminderAt.IsZero() {
+		t.Fatal("deadline intake did not persist a reminder")
+	}
+	snapshot, err := reminderService.ReminderProposalsForOwner("alice", reminderAt.Add(time.Minute), 168, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Authority != ReminderProposalAuthority || snapshot.CanExecute ||
+		snapshot.Freshness.Status != ReminderProposalFreshness || !snapshot.Freshness.RevalidationRequired ||
+		snapshot.Due != 1 || snapshot.Upcoming != 0 || len(snapshot.Items) != 1 {
+		t.Fatalf("snapshot=%#v", snapshot)
+	}
+	proposal := snapshot.Items[0]
+	if proposal.WorkflowID != record.Item.ID || proposal.Status != "due" || proposal.CanExecute ||
+		proposal.Authority != ReminderProposalAuthority || proposal.SourceURI != "calendar://event-1" {
+		t.Fatalf("proposal=%#v", proposal)
+	}
+	if _, err := reminderService.ReminderProposalsForOwner("alice", time.Now(), 721, 100); err == nil {
+		t.Fatal("oversized reminder horizon was accepted")
+	}
+}
+
 func TestIntakePersistsVerifiedOwnerIdentity(t *testing.T) {
 	service := NewService(newFakeWorkflowRepo())
 	record, err := service.Intake(IntakeRequest{
@@ -87,6 +148,212 @@ func TestIntakePersistsVerifiedOwnerIdentity(t *testing.T) {
 	}
 	if record.Item.OwnerIdentity != "alice" {
 		t.Fatalf("workflow owner = %q, want alice", record.Item.OwnerIdentity)
+	}
+}
+
+func TestIntakePersistsExplicitStandingMandateBinding(t *testing.T) {
+	mandateID := uuid.New()
+	service := NewService(newFakeWorkflowRepo())
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Prepare the low-risk project status summary.",
+		MandateID:     mandateID.String(),
+		SourceType:    "manual",
+		SourceID:      "mandated-intake-1",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.MandateID == nil || *record.Item.MandateID != mandateID {
+		t.Fatalf("workflow mandate = %#v, want %s", record.Item.MandateID, mandateID)
+	}
+}
+
+func TestIntakeRejectsMalformedStandingMandateBinding(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Prepare the project status summary.",
+		MandateID:     "not-a-mandate-id",
+	})
+	if err == nil || !strings.Contains(err.Error(), "standing mandate id must be a UUID") {
+		t.Fatalf("error = %v, want standing mandate UUID validation", err)
+	}
+	if record != nil {
+		t.Fatalf("invalid mandate created workflow: %#v", record)
+	}
+}
+
+func TestIntakeBindsSingleSuitableAutomationBeforeApproval(t *testing.T) {
+	automationID := uuid.NewString()
+	runner := &selectingTaskRunner{
+		bindingTaskRunner: &bindingTaskRunner{
+			fakeTaskRunner: &fakeTaskRunner{},
+			binding:        "automation-action:" + strings.Repeat("a", 64),
+		},
+		candidates: []AutomationCandidate{{
+			ID: automationID, Name: "Mail draft runtime", RuntimeType: "api", Score: 8, Reason: "email draft capability matched",
+		}},
+	}
+	service := NewServiceWithTaskRunner(newFakeWorkflowRepo(), runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Draft an email reply to the lawyer, but do not send it.",
+		SourceType:    "email",
+		SourceID:      "mail-1",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.AutomationID != automationID {
+		t.Fatalf("automationId = %q, want %q", record.Item.AutomationID, automationID)
+	}
+	if len(runner.selectionRequests) != 1 || runner.selectionRequests[0].OwnerIdentity != "alice" {
+		t.Fatalf("selection requests = %#v", runner.selectionRequests)
+	}
+}
+
+func TestAmbiguousAutomationSelectionRequiresReviewedChoiceBeforeExactApproval(t *testing.T) {
+	firstID := uuid.NewString()
+	secondID := uuid.NewString()
+	runner := &selectingTaskRunner{
+		bindingTaskRunner: &bindingTaskRunner{
+			fakeTaskRunner: &fakeTaskRunner{},
+			binding:        "automation-action:" + strings.Repeat("b", 64),
+		},
+		candidates: []AutomationCandidate{
+			{ID: firstID, Name: "First runtime", Score: 7, Reason: "matched"},
+			{ID: secondID, Name: "Second runtime", Score: 7, Reason: "matched"},
+		},
+	}
+	service := NewServiceWithTaskRunner(newFakeWorkflowRepo(), runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Run the project test suite and attach the result.",
+		SourceType:    "github",
+		SourceID:      "issue-12",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.AutomationID != "" || record.Item.CurrentState != StateNeedsApproval {
+		t.Fatalf("ambiguous intake item = %#v", record.Item)
+	}
+	var selection *models.WorkflowProposal
+	for index := range record.Proposals {
+		if isAutomationSelectionProposal(&record.Proposals[index]) {
+			selection = &record.Proposals[index]
+			break
+		}
+	}
+	if selection == nil {
+		t.Fatal("runtime-selection proposal was not created")
+	}
+	if _, err := service.ResolveApproval(record.Item.ID, ApprovalResolutionRequest{
+		Approved: true,
+		Actor:    "alice",
+		Note:     "approve without choosing a runtime",
+	}); err == nil || !strings.Contains(err.Error(), "select the exact automation") {
+		t.Fatalf("direct approval bypass error = %v", err)
+	}
+	selectedOption := strings.Split(selection.Options, "\n")[1]
+	resolved, err := service.ResolveProposal(record.Item.ID, selection.ID, ProposalResolutionRequest{
+		Status:         "approved",
+		SelectedOption: selectedOption,
+		Actor:          "alice",
+		Note:           "Use the reviewed second runtime",
+	})
+	if err != nil {
+		t.Fatalf("ResolveProposal: %v", err)
+	}
+	if resolved.Item.AutomationID != secondID || resolved.Item.ApprovalStatus != "approved" {
+		t.Fatalf("resolved item = %#v, want second runtime and approved", resolved.Item)
+	}
+	if len(runner.bindingRequests) != 2 || runner.bindingRequests[0].AutomationID != secondID || runner.bindingRequests[1].AutomationID != secondID {
+		t.Fatalf("approval binding requests = %#v", runner.bindingRequests)
+	}
+}
+
+func TestReadOnlyAutomationSelectionUsesWorkflowApprovalWithoutActionProof(t *testing.T) {
+	automationID := uuid.NewString()
+	runner := &selectingTaskRunner{
+		bindingTaskRunner: &bindingTaskRunner{
+			fakeTaskRunner: &fakeTaskRunner{},
+			binding:        "automation-action:automation.api.read:" + strings.Repeat("c", 64),
+		},
+		candidates: []AutomationCandidate{
+			{ID: automationID, Name: "Read-only health probe", Score: 20, Reason: "matched"},
+			{ID: uuid.NewString(), Name: "Other health probe", Score: 10, Reason: "matched"},
+		},
+	}
+	service := NewServiceWithTaskRunner(newFakeWorkflowRepo(), runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Email from a lawyer: run the read-only health probe and attach the result.",
+		SourceType:    "email",
+		SourceID:      "message-42",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	var selection *models.WorkflowProposal
+	for index := range record.Proposals {
+		if isAutomationSelectionProposal(&record.Proposals[index]) {
+			selection = &record.Proposals[index]
+			break
+		}
+	}
+	if selection == nil {
+		t.Fatal("runtime-selection proposal was not created")
+	}
+	selectedOption := strings.Split(selection.Options, "\n")[0]
+	resolved, err := service.ResolveProposal(record.Item.ID, selection.ID, ProposalResolutionRequest{
+		Status:         "approved",
+		SelectedOption: selectedOption,
+		Actor:          "alice",
+		Note:           "Approve the read-only runtime for this reviewed legal workflow.",
+	})
+	if err != nil {
+		t.Fatalf("ResolveProposal: %v", err)
+	}
+	if resolved.Item.AutomationID != automationID || resolved.Item.CurrentState != StateReady || resolved.Item.ApprovalStatus != "approved" {
+		t.Fatalf("resolved item = %#v", resolved.Item)
+	}
+	if len(runner.bindingRequests) != 2 {
+		t.Fatalf("approval binding requests = %#v, want selection preflight and recorded workflow approval", runner.bindingRequests)
+	}
+}
+
+func TestAutomationSelectionCannotApproveConfigurePlaceholder(t *testing.T) {
+	runner := &selectingTaskRunner{
+		bindingTaskRunner: &bindingTaskRunner{fakeTaskRunner: &fakeTaskRunner{}},
+	}
+	service := NewServiceWithTaskRunner(newFakeWorkflowRepo(), runner)
+	record, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Run a local code deployment task."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	var selection models.WorkflowProposal
+	for _, proposal := range record.Proposals {
+		if isAutomationSelectionProposal(&proposal) {
+			selection = proposal
+			break
+		}
+	}
+	if selection.ID == uuid.Nil {
+		t.Fatal("configure-automation proposal was not created")
+	}
+	_, err = service.ResolveProposal(record.Item.ID, selection.ID, ProposalResolutionRequest{
+		Status:         "approved",
+		SelectedOption: strings.TrimSpace(selection.Options),
+		Actor:          "alice",
+	})
+	if err == nil || !strings.Contains(err.Error(), "configure a suitable automation") {
+		t.Fatalf("placeholder approval error = %v", err)
+	}
+	stored, getErr := service.Get(record.Item.ID)
+	if getErr != nil || stored.Item.AutomationID != "" || stored.Item.ApprovalStatus == "approved" {
+		t.Fatalf("placeholder approval mutated workflow: record=%#v err=%v", stored, getErr)
 	}
 }
 
@@ -1057,6 +1324,11 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	if updated.Item.LastTaskPlanID != "plan-1" {
 		t.Fatalf("plan id = %q, want plan-1", updated.Item.LastTaskPlanID)
 	}
+	attestation, ok := repo.attestations[record.Item.ID]
+	if !ok || attestation.TaskPlanID != "plan-1" || attestation.VerificationStatus != "verified" ||
+		attestation.RecordDigest == "" || attestation.RuntimeEvidenceURI != runner.result.RuntimeEvidenceURI {
+		t.Fatalf("immutable completion attestation = %#v", attestation)
+	}
 	if len(runner.requests) != 1 {
 		t.Fatalf("runner requests = %d, want 1", len(runner.requests))
 	}
@@ -1205,7 +1477,51 @@ func TestRunDuePassesSingleOwnerPursuitToTaskRunner(t *testing.T) {
 	}
 }
 
-func TestRunDueDoesNotGuessPursuitForAmbiguousWorkflowLinks(t *testing.T) {
+func TestRunOneForOwnerExecutesOnlyTheSelectedReadyWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "exact-workflow-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	selected, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create the selected low-risk workflow."})
+	if err != nil {
+		t.Fatalf("selected Intake: %v", err)
+	}
+	other, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create another low-risk workflow."})
+	if err != nil {
+		t.Fatalf("other Intake: %v", err)
+	}
+
+	result, err := service.RunOneForOwner("alice", selected.Item.ID)
+	if err != nil {
+		t.Fatalf("RunOneForOwner: %v", err)
+	}
+	if result.WorkflowID != selected.Item.ID || result.Status != "completed" || result.State != StateCompleted {
+		t.Fatalf("exact run result = %#v", result)
+	}
+	if len(runner.requests) != 1 || runner.requests[0].WorkflowID != selected.Item.ID.String() {
+		t.Fatalf("task runner requests = %#v, want selected workflow only", runner.requests)
+	}
+	if repo.items[other.Item.ID].CurrentState != StateReady {
+		t.Fatalf("unselected workflow state = %q, want ready", repo.items[other.Item.ID].CurrentState)
+	}
+
+	replay, err := service.RunOneForOwner("alice", selected.Item.ID)
+	if err != nil {
+		t.Fatalf("replay RunOneForOwner: %v", err)
+	}
+	if replay.Status != "skipped" || len(runner.requests) != 1 {
+		t.Fatalf("completed workflow reran: result=%#v requests=%#v", replay, runner.requests)
+	}
+	if _, err := service.RunOneForOwner("bob", other.Item.ID); err == nil {
+		t.Fatal("foreign owner could run Alice workflow")
+	}
+}
+
+func TestRunDueBlocksAmbiguousOwnerPursuitLinksForReview(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	runner := &fakeTaskRunner{result: &TaskRunResult{
 		PlanID:             "ambiguous-pursuit-plan",
@@ -1223,11 +1539,74 @@ func TestRunDueDoesNotGuessPursuitForAmbiguousWorkflowLinks(t *testing.T) {
 		{ID: uuid.New(), OwnerIdentity: "alice", Title: "Second pursuit"},
 	}
 
+	summary, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if len(runner.requests) != 0 {
+		t.Fatalf("ambiguous workflow reached task runner: %#v", runner.requests)
+	}
+	if summary.Blocked != 1 || len(summary.Results) != 1 || summary.Results[0].VerificationStatus != "needs_review" {
+		t.Fatalf("run summary = %#v, want one needs-review blocker", summary)
+	}
+	updated, err := service.GetForOwner("alice", record.Item.ID)
+	if err != nil {
+		t.Fatalf("GetForOwner: %v", err)
+	}
+	if updated.Item.CurrentState != StateBlocked || updated.Item.VerificationStatus != "needs_review" {
+		t.Fatalf("ambiguous workflow state = %#v, want blocked needs_review", updated.Item)
+	}
+	if !strings.Contains(updated.Item.BlockedReason, "multiple pursuits") ||
+		!strings.Contains(updated.Item.NextAction, "review task execution evidence") {
+		t.Fatalf("ambiguous workflow review context = blocker %q, next action %q", updated.Item.BlockedReason, updated.Item.NextAction)
+	}
+}
+
+func TestRunDuePreservesStandaloneWorkflowWithoutPursuitLinks(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "standalone-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	if _, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create a low-risk standalone workflow."}); err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+
 	if _, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1}); err != nil {
 		t.Fatalf("RunDueForOwner: %v", err)
 	}
 	if len(runner.requests) != 1 || runner.requests[0].PursuitID != "" {
-		t.Fatalf("ambiguous workflow was attributed to a pursuit: %#v", runner.requests)
+		t.Fatalf("standalone workflow pursuit context = %#v, want one unscoped request", runner.requests)
+	}
+}
+
+func TestRunDueUsesOnlyOwnerScopedPursuitLink(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "owner-scoped-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create a low-risk owner-scoped workflow."})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	wantPursuitID := uuid.New()
+	repo.pursuits[record.Item.ID] = []WorkflowPursuitContext{
+		{ID: uuid.New(), OwnerIdentity: "bob", Title: "Foreign pursuit"},
+		{ID: wantPursuitID, OwnerIdentity: "alice", Title: "Alice pursuit"},
+	}
+
+	if _, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1}); err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if len(runner.requests) != 1 || runner.requests[0].PursuitID != wantPursuitID.String() {
+		t.Fatalf("owner-scoped pursuit context = %#v, want %s", runner.requests, wantPursuitID)
 	}
 }
 
@@ -1768,6 +2147,9 @@ func TestApprovedWorkflowPassesExactWorkflowReviewAsApprovalSource(t *testing.T)
 	if !request.HumanApproved || !strings.HasPrefix(request.ApprovalSourceID, "workflow-decision:") {
 		t.Fatalf("workflow approval provenance = %#v, want durable workflow decision", request)
 	}
+	if request.ApprovalActorIdentity != "alice" || request.ApprovalApprovedAt == nil {
+		t.Fatalf("workflow approval actor/time evidence = %#v", request)
+	}
 	decisionID, err := uuid.Parse(strings.TrimPrefix(request.ApprovalSourceID, "workflow-decision:"))
 	if err != nil {
 		t.Fatalf("approval source is not a decision UUID: %v", err)
@@ -1792,7 +2174,7 @@ func TestAutomationWorkflowApprovalStoresExactActionBinding(t *testing.T) {
 	repo := newFakeWorkflowRepo()
 	binding := "automation-action:script:" + strings.Repeat("d", 64)
 	runner := &bindingTaskRunner{
-		fakeTaskRunner: &fakeTaskRunner{},
+		fakeTaskRunner: &fakeTaskRunner{result: &TaskRunResult{PlanID: "bound-plan", Passed: true, VerificationStatus: "verified"}},
 		binding:        binding,
 	}
 	service := NewServiceWithTaskRunner(repo, runner)
@@ -1838,6 +2220,16 @@ func TestAutomationWorkflowApprovalStoresExactActionBinding(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("approved workflow decision has no exact automation binding: %#v", approved.Decisions)
+	}
+	if _, err := service.RunDueForOwner("alice", RunDueRequest{Limit: 1}); err != nil {
+		t.Fatalf("RunDueForOwner: %v", err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("runner requests = %d, want one", len(runner.requests))
+	}
+	proof := runner.requests[0]
+	if proof.ApprovalBindingDigest != strings.Repeat("d", 64) || proof.ApprovalActorIdentity != "alice" || proof.ApprovalApprovedAt == nil {
+		t.Fatalf("exact workflow approval proof = %#v", proof)
 	}
 }
 
@@ -2075,6 +2467,88 @@ func TestRunDueDoesNotCompleteWhenFrameworkSelectionProvenanceIsInvalid(t *testi
 	}
 	if len(updated.FrameworkSelections) != 0 {
 		t.Fatalf("invalid framework selection was persisted: %#v", updated.FrameworkSelections)
+	}
+}
+
+func TestRunDuePropagatesWorkflowRiskFloorToTaskRunner(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{
+		PlanID:             "risk-floor-plan",
+		CompletionStatus:   "validated",
+		VerificationStatus: "verified",
+		Output:             "completed",
+		Passed:             true,
+	}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	record, err := service.Intake(IntakeRequest{Input: "Create Trello checklist for low risk admin work"})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if _, err := service.RunDue(RunDueRequest{Limit: 1}); err != nil {
+		t.Fatalf("RunDue: %v", err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("task runner requests = %d, want 1", len(runner.requests))
+	}
+	if runner.requests[0].RiskLevel != record.Item.RiskLevel || runner.requests[0].RiskLevel == "" {
+		t.Fatalf("task runner risk floor = %q, workflow risk = %q", runner.requests[0].RiskLevel, record.Item.RiskLevel)
+	}
+}
+
+func TestFrameworkSelectionV5RiskContractValidation(t *testing.T) {
+	selection := testFrameworkSelection("risk-contract-plan")
+	selection.SelectorAlgorithmVersion = "selector-v5"
+	selection.TaskRiskLevel = "high"
+	selection.EffectiveRiskCeiling = "high"
+	selection.OperatingContractDigest = strings.Repeat("d", 64)
+	maximumAutonomy := 6
+	requiresApproval := true
+	selection.MaximumAutonomyLevel = &maximumAutonomy
+	selection.RequiresApproval = &requiresApproval
+	if err := selection.Validate(selection.TaskPlanID); err != nil {
+		t.Fatalf("valid selector-v5 risk contract rejected: %v", err)
+	}
+
+	for _, test := range []struct {
+		name    string
+		mutate  func(*FrameworkSelectionProvenance)
+		message string
+	}{
+		{name: "missing task risk", mutate: func(value *FrameworkSelectionProvenance) { value.TaskRiskLevel = "" }, message: "task risk level"},
+		{name: "missing ceiling", mutate: func(value *FrameworkSelectionProvenance) { value.EffectiveRiskCeiling = "" }, message: "effective risk ceiling"},
+		{name: "ceiling downgrade", mutate: func(value *FrameworkSelectionProvenance) { value.EffectiveRiskCeiling = "medium" }, message: "below task risk"},
+		{name: "missing autonomy", mutate: func(value *FrameworkSelectionProvenance) { value.MaximumAutonomyLevel = nil }, message: "autonomy and approval"},
+		{name: "missing approval", mutate: func(value *FrameworkSelectionProvenance) { value.RequiresApproval = nil }, message: "autonomy and approval"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := selection
+			test.mutate(&candidate)
+			if err := candidate.Validate(candidate.TaskPlanID); err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("error = %v, want %q", err, test.message)
+			}
+		})
+	}
+}
+
+func TestLegacyFrameworkSelectionRemainsReadableWithoutRiskInference(t *testing.T) {
+	selection := testFrameworkSelection("legacy-plan")
+	selection.SelectorAlgorithmVersion = "selector-v4"
+	selection.TaskRiskLevel = ""
+	selection.EffectiveRiskCeiling = ""
+	payload, err := json.Marshal(selection)
+	if err != nil {
+		t.Fatalf("marshal legacy selection: %v", err)
+	}
+	decoded, err := decodeFrameworkSelectionDecision(models.WorkflowDecision{
+		DecisionType: frameworkSelectionDecisionType,
+		Decision:     selection.SelectionDecisionID,
+		Reason:       string(payload),
+	})
+	if err != nil {
+		t.Fatalf("decode legacy selection: %v", err)
+	}
+	if decoded.TaskRiskLevel != "" || decoded.EffectiveRiskCeiling != "" {
+		t.Fatalf("legacy risk contract was inferred: %#v", decoded)
 	}
 }
 
@@ -2503,6 +2977,14 @@ func TestRetractSourceRefusesWorkflowCurrentlyExecuting(t *testing.T) {
 	}
 }
 
+func TestDetectDueDateUsesCalendarStartBeforeOtherDates(t *testing.T) {
+	due := detectDueDate("Google Calendar event: Review\nStart: 2026-08-05T09:00:00+02:00\nDescription: Evidence from 2025-01-01")
+	want := time.Date(2026, time.August, 5, 7, 0, 0, 0, time.UTC)
+	if due == nil || !due.Equal(want) {
+		t.Fatalf("due = %v, want %v", due, want)
+	}
+}
+
 func hasApprovalChecklist(items []models.WorkflowChecklistItem) bool {
 	for _, item := range items {
 		if item.RequiresApproval {
@@ -2649,27 +3131,31 @@ type fakeWorkflowRepo struct {
 	transitions          map[uuid.UUID][]models.WorkflowTransition
 	sourceLinks          map[uuid.UUID][]models.WorkflowSourceLink
 	decisions            map[uuid.UUID][]models.WorkflowDecision
+	decisionWorkflow     map[uuid.UUID]uuid.UUID
 	events               map[uuid.UUID][]models.WorkflowEvent
+	attestations         map[uuid.UUID]models.WorkflowCompletionAttestation
 	rejectWorkflowClaims bool
 	rejectOpenLoopClaims bool
 }
 
 func newFakeWorkflowRepo() *fakeWorkflowRepo {
 	return &fakeWorkflowRepo{
-		items:       map[uuid.UUID]*models.WorkflowItem{},
-		checklist:   map[uuid.UUID][]models.WorkflowChecklistItem{},
-		intake:      map[uuid.UUID][]models.WorkflowIntakeRecord{},
-		matches:     map[uuid.UUID][]models.WorkflowProjectMatch{},
-		pursuits:    map[uuid.UUID][]WorkflowPursuitContext{},
-		evidence:    map[uuid.UUID][]models.WorkflowEvidenceClaim{},
-		openLoops:   map[uuid.UUID][]models.WorkflowOpenLoop{},
-		proposals:   map[uuid.UUID][]models.WorkflowProposal{},
-		qualityGate: map[uuid.UUID][]models.WorkflowQualityGate{},
-		rules:       map[string]models.WorkflowRule{},
-		transitions: map[uuid.UUID][]models.WorkflowTransition{},
-		sourceLinks: map[uuid.UUID][]models.WorkflowSourceLink{},
-		decisions:   map[uuid.UUID][]models.WorkflowDecision{},
-		events:      map[uuid.UUID][]models.WorkflowEvent{},
+		items:            map[uuid.UUID]*models.WorkflowItem{},
+		checklist:        map[uuid.UUID][]models.WorkflowChecklistItem{},
+		intake:           map[uuid.UUID][]models.WorkflowIntakeRecord{},
+		matches:          map[uuid.UUID][]models.WorkflowProjectMatch{},
+		pursuits:         map[uuid.UUID][]WorkflowPursuitContext{},
+		evidence:         map[uuid.UUID][]models.WorkflowEvidenceClaim{},
+		openLoops:        map[uuid.UUID][]models.WorkflowOpenLoop{},
+		proposals:        map[uuid.UUID][]models.WorkflowProposal{},
+		qualityGate:      map[uuid.UUID][]models.WorkflowQualityGate{},
+		rules:            map[string]models.WorkflowRule{},
+		transitions:      map[uuid.UUID][]models.WorkflowTransition{},
+		sourceLinks:      map[uuid.UUID][]models.WorkflowSourceLink{},
+		decisions:        map[uuid.UUID][]models.WorkflowDecision{},
+		decisionWorkflow: map[uuid.UUID]uuid.UUID{},
+		events:           map[uuid.UUID][]models.WorkflowEvent{},
+		attestations:     map[uuid.UUID]models.WorkflowCompletionAttestation{},
 	}
 }
 
@@ -2864,6 +3350,21 @@ func (r *fakeWorkflowRepo) UpdateClaimedItem(item *models.WorkflowItem, claimID 
 	return &result, true, nil
 }
 
+func (r *fakeWorkflowRepo) CompleteClaimedItem(item *models.WorkflowItem, claimID string, attestation *models.WorkflowCompletionAttestation) (*models.WorkflowItem, bool, error) {
+	if attestation == nil || attestation.WorkflowID != item.ID || attestation.RecordDigest == "" {
+		return nil, false, fmt.Errorf("valid workflow completion attestation is required")
+	}
+	if _, exists := r.attestations[item.ID]; exists {
+		return nil, false, fmt.Errorf("workflow completion attestation already exists")
+	}
+	updated, owned, err := r.UpdateClaimedItem(item, claimID)
+	if err != nil || !owned {
+		return updated, owned, err
+	}
+	r.attestations[item.ID] = *attestation
+	return updated, true, nil
+}
+
 func (r *fakeWorkflowRepo) FindExpiredWorkflowClaims(now time.Time, limit int) ([]models.WorkflowItem, error) {
 	result := []models.WorkflowItem{}
 	for _, item := range r.items {
@@ -2954,6 +3455,34 @@ func (r *fakeWorkflowRepo) UpdateChecklistItem(item *models.WorkflowChecklistIte
 
 func (r *fakeWorkflowRepo) FindChecklist(workflowID uuid.UUID) ([]models.WorkflowChecklistItem, error) {
 	return append([]models.WorkflowChecklistItem{}, r.checklist[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) FindReminderCandidatesForOwner(
+	ownerIdentity string,
+	before time.Time,
+	limit int,
+) ([]WorkflowReminderCandidate, error) {
+	result := []WorkflowReminderCandidate{}
+	for workflowID, checklist := range r.checklist {
+		workflow, ok := r.items[workflowID]
+		if !ok || workflow.OwnerIdentity != ownerIdentity || workflow.Archived ||
+			workflow.CurrentState == StateCompleted || workflow.CurrentState == StateArchived {
+			continue
+		}
+		for _, item := range checklist {
+			if item.Status != "open" || item.ReminderAt == nil || item.ReminderAt.After(before) {
+				continue
+			}
+			result = append(result, WorkflowReminderCandidate{Workflow: *workflow, Reminder: item})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Reminder.ReminderAt.Before(*result[j].Reminder.ReminderAt)
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 
 func (r *fakeWorkflowRepo) SaveIntakeRecord(record *models.WorkflowIntakeRecord) (*models.WorkflowIntakeRecord, error) {
@@ -3324,11 +3853,52 @@ func (r *fakeWorkflowRepo) CreateDecision(decision *models.WorkflowDecision) (*m
 	}
 	decision.CreatedAt = time.Now().UTC()
 	r.decisions[decision.WorkflowID] = append([]models.WorkflowDecision{*decision}, r.decisions[decision.WorkflowID]...)
+	r.decisionWorkflow[decision.ID] = decision.WorkflowID
 	return decision, nil
 }
 
 func (r *fakeWorkflowRepo) FindDecisions(workflowID uuid.UUID) ([]models.WorkflowDecision, error) {
 	return append([]models.WorkflowDecision{}, r.decisions[workflowID]...), nil
+}
+
+func (r *fakeWorkflowRepo) FindApprovalDecisionForOwner(
+	ctx context.Context,
+	ownerIdentity string,
+	decisionID string,
+) (*ApprovalDecisionRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parsedDecisionID, err := uuid.Parse(decisionID)
+	if err != nil || parsedDecisionID == uuid.Nil || decisionID != parsedDecisionID.String() {
+		return nil, gorm.ErrRecordNotFound
+	}
+	workflowID, ok := r.decisionWorkflow[parsedDecisionID]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	item := r.items[workflowID]
+	if item == nil || item.OwnerIdentity != ownerIdentity {
+		return nil, gorm.ErrRecordNotFound
+	}
+	for _, decision := range r.decisions[workflowID] {
+		if decision.ID != parsedDecisionID {
+			continue
+		}
+		return &ApprovalDecisionRecord{
+			DecisionID:    decision.ID.String(),
+			WorkflowID:    decision.WorkflowID.String(),
+			OwnerIdentity: item.OwnerIdentity,
+			DecisionType:  decision.DecisionType,
+			Decision:      decision.Decision,
+			Reason:        decision.Reason,
+			ActionBinding: decision.RuleApplied,
+			Approved:      decision.Approved,
+			Actor:         decision.Actor,
+			CreatedAt:     decision.CreatedAt,
+		}, nil
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *fakeWorkflowRepo) CreateEvent(event *models.WorkflowEvent) (*models.WorkflowEvent, error) {
@@ -3443,4 +4013,16 @@ type bindingTaskRunner struct {
 func (r *bindingTaskRunner) PrepareWorkflowApprovalBinding(request WorkflowApprovalBindingRequest) (string, error) {
 	r.bindingRequests = append(r.bindingRequests, request)
 	return r.binding, r.bindingErr
+}
+
+type selectingTaskRunner struct {
+	*bindingTaskRunner
+	candidates        []AutomationCandidate
+	selectionErr      error
+	selectionRequests []AutomationSelectionRequest
+}
+
+func (r *selectingTaskRunner) SelectWorkflowAutomations(request AutomationSelectionRequest) ([]AutomationCandidate, error) {
+	r.selectionRequests = append(r.selectionRequests, request)
+	return append([]AutomationCandidate(nil), r.candidates...), r.selectionErr
 }

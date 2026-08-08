@@ -68,6 +68,23 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	}
 }
 
+func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	foreignID := uuid.New()
+	handler := NewHandler(NewService(newFakeSourceRepo(
+		&models.ConnectedSource{ID: foreignID, OwnerIdentity: "bob", ConnectorKey: gmailConnectorKey, Name: "Bob Gmail", Enabled: true, Status: "active"},
+	), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/oauth/google/start", handler.StartGoogleOAuth)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/oauth/google/start?sourceId="+foreignID.String(), nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("foreign OAuth start status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := NewService(newFakeSourceRepo(), nil)

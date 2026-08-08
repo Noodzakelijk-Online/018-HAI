@@ -1,6 +1,8 @@
 import { Observable } from 'rxjs';
 import {
   IApprovalDecision,
+	IApprovedReviewReconciliationRequest,
+	IApprovedReviewReconciliationResult,
   ICompletionPlan,
   IReviewQueueItem,
   IReviewResolutionResult,
@@ -13,4 +15,5 @@ export interface ITaskPlanService {
   logs(): Observable<ICompletionPlan[]>;
   reviewQueue(): Observable<IReviewQueueItem[]>;
   resolveReviewItem(id: string, decision: IApprovalDecision): Observable<IReviewResolutionResult>;
+	reconcileApprovedReviews(request: IApprovedReviewReconciliationRequest): Observable<IApprovedReviewReconciliationResult>;
 }

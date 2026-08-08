@@ -3,9 +3,10 @@ package verification
 import "strings"
 
 const (
-	authorityConnectedAccount  = "connected_account"
-	authorityExternalUntrusted = "untrusted_external"
-	trustedExternalPrefix      = "trusted_external:"
+	authorityConnectedProvenance = "connected_source:provenance_verified"
+	authorityConnectedUnverified = "connected_source:unverified"
+	authorityExternalUntrusted   = "untrusted_external"
+	trustedExternalPrefix        = "trusted_external:"
 )
 
 // EvidenceAuthorityResolver is an in-process provenance validation boundary.
@@ -61,5 +62,10 @@ func normalizeAuthorityResolution(resolution EvidenceAuthorityResolution) Eviden
 
 func isTrustedEvidence(evidenceAuthority string) bool {
 	authority := strings.ToLower(strings.TrimSpace(evidenceAuthority))
-	return authority == authorityConnectedAccount || strings.HasPrefix(authority, trustedExternalPrefix)
+	return strings.HasPrefix(authority, trustedExternalPrefix)
+}
+
+func isSourceSupportedEvidence(evidenceAuthority string) bool {
+	authority := strings.ToLower(strings.TrimSpace(evidenceAuthority))
+	return authority == authorityConnectedProvenance || isTrustedEvidence(authority)
 }

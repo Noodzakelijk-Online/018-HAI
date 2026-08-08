@@ -7,6 +7,15 @@ const (
 	StatusExperimental = "experimental"
 	StatusDeprecated   = "deprecated"
 
+	FrameworkVersionStaged  = "staged"
+	FrameworkVersionActive  = "active"
+	FrameworkVersionRetired = "retired"
+
+	FrameworkLifecycleRegistered = "registered"
+	FrameworkLifecycleActivated  = "activated"
+	FrameworkLifecycleRetired    = "retired"
+	FrameworkLifecycleRolledBack = "rolled_back"
+
 	PreferenceDefault  = "default"
 	PreferenceEnabled  = "enabled"
 	PreferenceDisabled = "disabled"
@@ -64,6 +73,101 @@ type FrameworkView struct {
 	PreferenceUpdatedAt    *time.Time `json:"preferenceUpdatedAt,omitempty"`
 }
 
+// FrameworkVersionProvenance identifies where an immutable framework version
+// came from. ContentDigest is computed by the registry and cannot be supplied
+// by callers.
+type FrameworkVersionProvenance struct {
+	Source        string    `json:"source"`
+	Reference     string    `json:"reference,omitempty"`
+	AuthoredBy    string    `json:"authoredBy"`
+	ImportedBy    string    `json:"importedBy"`
+	ImportedAt    time.Time `json:"importedAt"`
+	ParentDigest  string    `json:"parentDigest,omitempty"`
+	ContentDigest string    `json:"contentDigest"`
+}
+
+// FrameworkMigrationMetadata records the compatibility contract for moving
+// from one framework version to another. It is copied into lifecycle events so
+// activation history remains independently auditable.
+type FrameworkMigrationMetadata struct {
+	FromVersion        string   `json:"fromVersion"`
+	Strategy           string   `json:"strategy"`
+	ChangeSummary      string   `json:"changeSummary"`
+	CompatibilityNotes string   `json:"compatibilityNotes"`
+	MigrationSteps     []string `json:"migrationSteps"`
+	ValidationCriteria []string `json:"validationCriteria"`
+}
+
+// FrameworkVersionRecord wraps immutable framework content with its current
+// lifecycle projection. State transitions are preserved separately as
+// hash-linked FrameworkLifecycleEvent records.
+type FrameworkVersionRecord struct {
+	Framework
+	LifecycleState    string                     `json:"lifecycleState"`
+	Supersedes        string                     `json:"supersedes,omitempty"`
+	Migration         FrameworkMigrationMetadata `json:"migration"`
+	VersionProvenance FrameworkVersionProvenance `json:"versionProvenance"`
+	RegisteredAt      time.Time                  `json:"registeredAt"`
+	ActivatedAt       *time.Time                 `json:"activatedAt,omitempty"`
+	RetiredAt         *time.Time                 `json:"retiredAt,omitempty"`
+}
+
+type FrameworkVersionView struct {
+	FrameworkVersionRecord
+	Enabled                bool       `json:"enabled"`
+	Pinned                 bool       `json:"pinned"`
+	EffectiveAutonomyLevel int        `json:"effectiveAutonomyLevel"`
+	Adaptations            []string   `json:"adaptations"`
+	PreferenceUpdatedAt    *time.Time `json:"preferenceUpdatedAt,omitempty"`
+}
+
+// FrameworkLifecycleEvent is append-only and hash-linked. EventDigest covers
+// the full event except EventDigest itself, including PreviousEventDigest.
+type FrameworkLifecycleEvent struct {
+	Sequence              uint64                     `json:"sequence"`
+	ID                    string                     `json:"id"`
+	FrameworkID           string                     `json:"frameworkId"`
+	Version               string                     `json:"version"`
+	Action                string                     `json:"action"`
+	PreviousActiveVersion string                     `json:"previousActiveVersion,omitempty"`
+	ActiveVersion         string                     `json:"activeVersion,omitempty"`
+	Actor                 string                     `json:"actor"`
+	Reason                string                     `json:"reason"`
+	Migration             FrameworkMigrationMetadata `json:"migration"`
+	Provenance            FrameworkVersionProvenance `json:"provenance"`
+	OccurredAt            time.Time                  `json:"occurredAt"`
+	PreviousEventDigest   string                     `json:"previousEventDigest,omitempty"`
+	EventDigest           string                     `json:"eventDigest"`
+}
+
+type StageFrameworkVersionRequest struct {
+	Framework  Framework                  `json:"framework"`
+	Actor      string                     `json:"actor"`
+	Supersedes string                     `json:"supersedes,omitempty"`
+	Migration  FrameworkMigrationMetadata `json:"migration"`
+	Provenance FrameworkVersionProvenance `json:"provenance"`
+}
+
+type ActivateFrameworkVersionRequest struct {
+	Actor                 string `json:"actor"`
+	Reason                string `json:"reason"`
+	ExpectedActiveVersion string `json:"expectedActiveVersion"`
+	ExpectedTargetDigest  string `json:"expectedTargetDigest"`
+}
+
+type RollbackFrameworkVersionRequest struct {
+	Actor                 string `json:"actor"`
+	Reason                string `json:"reason"`
+	ExpectedActiveVersion string `json:"expectedActiveVersion"`
+	ExpectedTargetDigest  string `json:"expectedTargetDigest"`
+}
+
+type RetireFrameworkVersionRequest struct {
+	Actor                string `json:"actor"`
+	Reason               string `json:"reason"`
+	ExpectedTargetDigest string `json:"expectedTargetDigest"`
+}
+
 type PreferencePatch struct {
 	State                 string   `json:"state"`
 	Pinned                *bool    `json:"pinned,omitempty"`
@@ -106,6 +210,7 @@ type SelectedFramework struct {
 	Version              string   `json:"version"`
 	Name                 string   `json:"name"`
 	Family               string   `json:"family"`
+	RiskCeiling          string   `json:"riskCeiling"`
 	Score                float64  `json:"score"`
 	Reasons              []string `json:"reasons"`
 	MaximumAutonomyLevel int      `json:"maximumAutonomyLevel"`
@@ -129,6 +234,8 @@ type SelectionDecision struct {
 	CatalogVersion            string                   `json:"catalogVersion"`
 	CatalogDigest             string                   `json:"catalogDigest"`
 	SelectorAlgorithmVersion  string                   `json:"selectorAlgorithmVersion"`
+	TaskRiskLevel             string                   `json:"taskRiskLevel,omitempty"`
+	EffectiveRiskCeiling      string                   `json:"effectiveRiskCeiling,omitempty"`
 	EffectivePreferenceDigest string                   `json:"effectivePreferenceDigest"`
 	ConstitutionDigest        string                   `json:"constitutionDigest"`
 	LifeDomain                string                   `json:"lifeDomain"`

@@ -6,17 +6,25 @@ package phase2
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/background"
+	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/executionbroker"
+	"automation-hub-backend/internal/frameworkevidence"
+	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/operations"
 	"automation-hub-backend/internal/opscontrol"
+	"automation-hub-backend/internal/sourceevidence"
 
 	"github.com/google/uuid"
 )
@@ -36,10 +44,10 @@ type Config struct {
 // ConfigFromEnv reads the Phase 2 configuration from the environment.
 func ConfigFromEnv() Config {
 	return Config{
-		OwnerUserID:   env("HAI_PHASE2_OWNER", "local-operator"),
-		WorkspaceID:   env("HAI_PHASE2_WORKSPACE_ID", "local"),
-		WorkspaceDir:  env("HAI_PHASE2_WORKSPACE_DIR", filepath.Join("data", "phase2", "workspace")),
-		FeedsDir:      env("HAI_PHASE2_FEEDS_DIR", filepath.Join("data", "phase2", "feeds")),
+		OwnerUserID:  env("HAI_PHASE2_OWNER", "local-operator"),
+		WorkspaceID:  env("HAI_PHASE2_WORKSPACE_ID", "local"),
+		WorkspaceDir: env("HAI_PHASE2_WORKSPACE_DIR", filepath.Join("data", "phase2", "workspace")),
+		FeedsDir:     env("HAI_PHASE2_FEEDS_DIR", filepath.Join("data", "phase2", "feeds")),
 		// No feed is configured until the operator connects or explicitly imports
 		// one. Assuming inbox.json made a fresh local install report a failed pass
 		// before it had any data to read.
@@ -52,18 +60,60 @@ func ConfigFromEnv() Config {
 
 // Module is the composition of the Phase 2 services.
 type Module struct {
-	cfg        Config
-	svc        *operations.Service
-	broker     *executionbroker.Broker
-	worker     *background.Worker
-	readers    []accountfeed.Reader
-	blockRules *BlockRuleStore
-	modelInt   *modelintelligence.Service
-	evidence   *EvidencePackStore
+	cfg         Config
+	svc         *operations.Service
+	broker      *executionbroker.Broker
+	worker      *background.Worker
+	readers     []accountfeed.Reader
+	blockRules  *BlockRuleStore
+	modelInt    *modelintelligence.Service
+	evidence    EvidencePackRepository
+	evidenceErr error
+	control     background.Control
+	runMu       sync.Mutex
+	execAuth    *executionauth.Service
 }
 
-// NewModule wires a module over an operations service and config.
+// NewModule wires a fail-closed module. Execution remains unavailable until a
+// durable executionauth service is explicitly supplied.
 func NewModule(svc *operations.Service, cfg Config) *Module {
+	return newModule(svc, cfg, nil, nil, ErrEvidencePackRepositoryUnavailable)
+}
+
+// NewModuleWithExecutionAuthorization wires the production-safe local worker
+// through durable executionauth receipts and final-boundary consumption.
+func NewModuleWithExecutionAuthorization(
+	svc *operations.Service,
+	cfg Config,
+	execAuth *executionauth.Service,
+) *Module {
+	return newModule(svc, cfg, execAuth, nil, ErrEvidencePackRepositoryUnavailable)
+}
+
+// NewModuleWithEvidencePackRepository supplies the durable evidence-pack
+// boundary explicitly. It is intended for tests and composition roots that
+// already own a database connection.
+func NewModuleWithEvidencePackRepository(
+	svc *operations.Service,
+	cfg Config,
+	execAuth *executionauth.Service,
+	evidence EvidencePackRepository,
+) *Module {
+	if evidence == nil {
+		return newModule(svc, cfg, execAuth, nil, ErrEvidencePackRepositoryUnavailable)
+	}
+	return newModule(svc, cfg, execAuth, evidence, nil)
+}
+
+func newModule(
+	svc *operations.Service,
+	cfg Config,
+	execAuth *executionauth.Service,
+	evidence EvidencePackRepository,
+	evidenceErr error,
+) *Module {
+	cfg.WorkspaceID = strings.TrimSpace(cfg.WorkspaceID)
+	cfg.OwnerUserID = strings.TrimSpace(cfg.OwnerUserID)
 	if cfg.WorkspaceID == "" {
 		cfg.WorkspaceID = "local"
 	}
@@ -73,7 +123,7 @@ func NewModule(svc *operations.Service, cfg Config) *Module {
 	if cfg.Mode == "" {
 		cfg.Mode = autonomypolicy.ModeAutonomousSafe
 	}
-	broker := executionbroker.NewBroker(cfg.WorkspaceDir)
+	broker := brokerForOwner(cfg, cfg.OwnerUserID, execAuth)
 	readers := buildReaders(cfg)
 	worker := background.New(svc, broker, readers, background.Options{
 		OwnerUserID:   cfg.OwnerUserID,
@@ -83,19 +133,45 @@ func NewModule(svc *operations.Service, cfg Config) *Module {
 	})
 	blockRules := NewBlockRuleStore()
 	worker.WithBlockRules(blockRules)
-	return &Module{cfg: cfg, svc: svc, broker: broker, worker: worker, readers: readers, blockRules: blockRules, evidence: NewEvidencePackStore()}
+	return &Module{
+		cfg:         cfg,
+		svc:         svc,
+		broker:      broker,
+		worker:      worker,
+		readers:     readers,
+		blockRules:  blockRules,
+		evidence:    evidence,
+		evidenceErr: evidenceErr,
+		execAuth:    execAuth,
+	}
 }
 
 // DefaultModule builds the module from env over the default (DB-backed) service.
 func DefaultModule() *Module {
-	return NewModule(operations.DefaultService(), ConfigFromEnv())
+	cfg := ConfigFromEnv()
+	evidence, evidenceErr := DefaultEvidencePackRepository()
+	return newModule(
+		operations.DefaultService(),
+		cfg,
+		defaultExecutionAuthorizationService(cfg.OwnerUserID),
+		evidence,
+		evidenceErr,
+	)
 }
 
 // DefaultModuleWithModelIntel builds the default module and attaches a shared
 // model-intelligence service so the background loop drives the fast-triage lane
 // (its telemetry then surfaces on the model-intelligence dashboard).
 func DefaultModuleWithModelIntel(mi *modelintelligence.Service) *Module {
-	m := NewModule(operations.DefaultService(), ConfigFromEnv())
+	cfg := ConfigFromEnv()
+	evidence, evidenceErr := DefaultEvidencePackRepository()
+	m := newModule(
+		operations.DefaultService(),
+		cfg,
+		defaultExecutionAuthorizationService(cfg.OwnerUserID),
+		evidence,
+		evidenceErr,
+	)
 	m.worker.WithModelIntelligence(mi)
 	m.modelInt = mi
 	return m
@@ -122,20 +198,185 @@ func (m *Module) FeedFiles() []string { return m.cfg.FeedFiles }
 // Worker exposes the background worker.
 func (m *Module) Worker() *background.Worker { return m.worker }
 
+func (m *Module) evidencePackRepository() (EvidencePackRepository, error) {
+	if m == nil || m.evidence == nil {
+		if m != nil && m.evidenceErr != nil {
+			return nil, m.evidenceErr
+		}
+		return nil, ErrEvidencePackRepositoryUnavailable
+	}
+	if m.evidenceErr != nil {
+		return nil, m.evidenceErr
+	}
+	return m.evidence, nil
+}
+
 // OpsControl builds the always-on runtime control service, wires its controller
 // into the background worker (so pause/resume/mode take effect live), and
 // registers the background runner used by emergency-stop verification.
 func (m *Module) OpsControl() *opscontrol.Service {
 	svc := opscontrol.NewService(m.cfg.StateDir, m.broker, m.svc, m.cfg.OwnerUserID, m.cfg.WorkspaceID)
-	m.worker.WithControl(svc.Control())
+	m.control = svc.Control()
+	m.worker.WithControl(m.control)
 	svc.SetBackgroundRunner(func(ctx context.Context) (int, error) {
-		rep, err := m.worker.RunOnce(ctx)
+		rep, err := m.RunConfiguredBackground(ctx)
 		if err != nil {
 			return 0, err
 		}
 		return rep.Classified + rep.AutoExecuted, nil
 	})
 	return svc
+}
+
+// RunBackgroundForOwner runs one HTTP-requested background pass scoped to the
+// authenticated caller. It intentionally does not fall back to the configured
+// system owner: every feed and ledger query is rebound to ownerIdentity.
+func (m *Module) RunBackgroundForOwner(ctx context.Context, ownerIdentity string) (background.Report, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return background.Report{}, fmt.Errorf("phase2: authenticated owner identity required")
+	}
+
+	m.runMu.Lock()
+	defer m.runMu.Unlock()
+
+	worker := m.newOwnerWorker(ownerIdentity)
+	return worker.RunOnce(ctx)
+}
+
+// RunConfiguredBackground is the distinct internal scheduler path. It is not
+// called by the HTTP handler and always uses the explicitly configured owner.
+func (m *Module) RunConfiguredBackground(ctx context.Context) (background.Report, error) {
+	m.runMu.Lock()
+	defer m.runMu.Unlock()
+	return m.worker.RunOnce(ctx)
+}
+
+func (m *Module) newOwnerWorker(ownerIdentity string) *background.Worker {
+	readers := make([]accountfeed.Reader, 0, len(m.readers))
+	for _, reader := range m.readers {
+		readers = append(readers, ownerScopedReader{Reader: reader, ownerIdentity: ownerIdentity})
+	}
+	broker := brokerForOwner(m.cfg, ownerIdentity, m.execAuth)
+	worker := background.New(m.svc, broker, readers, background.Options{
+		OwnerUserID:   ownerIdentity,
+		WorkspaceID:   m.cfg.WorkspaceID,
+		Mode:          m.cfg.Mode,
+		EmergencyStop: m.cfg.EmergencyStop,
+	})
+	worker.WithBlockRules(m.blockRules)
+	if m.modelInt != nil {
+		worker.WithModelIntelligence(m.modelInt)
+	}
+	if m.control != nil {
+		worker.WithControl(m.control)
+	}
+	return worker
+}
+
+func brokerForOwner(
+	cfg Config,
+	ownerIdentity string,
+	execAuth *executionauth.Service,
+) *executionbroker.Broker {
+	if execAuth == nil {
+		return executionbroker.NewBroker(cfg.WorkspaceDir)
+	}
+	broker, err := executionbroker.NewAuthorizedBroker(
+		cfg.WorkspaceDir,
+		ownerIdentity,
+		cfg.WorkspaceID,
+		execAuth,
+	)
+	if err != nil {
+		return executionbroker.NewBroker(cfg.WorkspaceDir)
+	}
+	return broker
+}
+
+func defaultExecutionAuthorizationService(ownerIdentity string) *executionauth.Service {
+	frameworks, err := frameworkregistry.DefaultService()
+	if err != nil {
+		return nil
+	}
+	active, _, err := frameworks.ActiveConstitution(ownerIdentity)
+	if err != nil || !hasDurableActiveConstitution(active) {
+		return nil
+	}
+	constitution, err := executionauth.NewConstitutionPolicyAdapter(frameworks)
+	if err != nil {
+		return nil
+	}
+	repository, err := executionauth.DefaultRepository()
+	if err != nil {
+		return nil
+	}
+	service, err := executionauth.NewService(
+		repository,
+		constitution,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		return nil
+	}
+	selectionResolver, err := executionauth.NewFrameworkSelectionResolver(frameworks)
+	if err != nil {
+		return nil
+	}
+	service, err = service.WithFrameworkSelectionResolver(selectionResolver)
+	if err != nil {
+		return nil
+	}
+	preflightRepository, err := frameworkevidence.DefaultRepository()
+	if err != nil {
+		return nil
+	}
+	preflightResolver, err := executionauth.NewFrameworkEvidencePreflightResolver(
+		preflightRepository,
+	)
+	if err != nil {
+		return nil
+	}
+	service, err = service.WithFrameworkEvidencePreflightResolver(preflightResolver)
+	if err != nil {
+		return nil
+	}
+	sourceEvidenceRepository, err := sourceevidence.DefaultRepository()
+	if err != nil {
+		return nil
+	}
+	service, err = service.WithSourceEvidenceRepository(sourceEvidenceRepository)
+	if err != nil {
+		return nil
+	}
+	return service
+}
+
+func hasDurableActiveConstitution(value frameworkregistry.Constitution) bool {
+	if value.Status != frameworkregistry.ConstitutionActive {
+		return false
+	}
+	id, err := uuid.Parse(strings.TrimSpace(value.ID))
+	return err == nil && id != uuid.Nil
+}
+
+type ownerScopedReader struct {
+	accountfeed.Reader
+	ownerIdentity string
+}
+
+func (r ownerScopedReader) Feed() accountfeed.Feed {
+	feed := r.Reader.Feed()
+	feed.OwnerUserID = r.ownerIdentity
+	// The operation repository's dedupe lookup is workspace-scoped. Namespace
+	// the account label with a non-reversible owner digest so identical source
+	// items cannot refresh another owner's operation.
+	sum := sha256.Sum256([]byte(r.ownerIdentity))
+	feed.AccountLabel += "#owner-" + hex.EncodeToString(sum[:8])
+	return feed
 }
 
 // Handler builds the HTTP handler for this module.

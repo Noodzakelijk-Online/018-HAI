@@ -17,6 +17,7 @@ import (
 // so malformed JSON and accidental mutation are caught by the same decoders.
 type MemoryTaskStateRepository struct {
 	mu          sync.RWMutex
+	operations  map[string]models.TaskOperationRecord
 	completions []models.TaskCompletionPlanLog
 	reviews     map[uuid.UUID]models.TaskReviewItemRecord
 	decisions   []models.TaskReviewDecisionRecord
@@ -24,6 +25,7 @@ type MemoryTaskStateRepository struct {
 
 func NewMemoryTaskStateRepository() *MemoryTaskStateRepository {
 	return &MemoryTaskStateRepository{
+		operations:  map[string]models.TaskOperationRecord{},
 		completions: []models.TaskCompletionPlanLog{},
 		reviews:     map[uuid.UUID]models.TaskReviewItemRecord{},
 		decisions:   []models.TaskReviewDecisionRecord{},
@@ -384,6 +386,9 @@ func (r *MemoryTaskStateRepository) FindApprovedReviewDecision(ownerIdentity, re
 }
 
 func (r *MemoryTaskStateRepository) ensureInitialized() {
+	if r.operations == nil {
+		r.operations = map[string]models.TaskOperationRecord{}
+	}
 	if r.completions == nil {
 		r.completions = []models.TaskCompletionPlanLog{}
 	}

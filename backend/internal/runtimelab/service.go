@@ -2,12 +2,15 @@ package runtimelab
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"automation-hub-backend/internal/background"
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/idempotency"
+	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/operations"
 )
 
@@ -81,6 +84,28 @@ func (s *Service) Overview(ctx context.Context) []RuntimeSummary {
 		})
 	}
 	return out
+}
+
+// FeatureParity returns the source-reviewed feature/disposition inventory.
+// Reading it never probes, installs, configures, or executes a runtime.
+func (s *Service) FeatureParity() (RuntimeParityOverview, error) {
+	return RuntimeFeatureParity(s.now().UTC())
+}
+
+// RuntimeFeatureParity returns one runtime inventory without broadening its
+// declared readiness ceiling.
+func (s *Service) RuntimeFeatureParity(runtimeID string) (RuntimeParityInventory, bool, error) {
+	overview, err := s.FeatureParity()
+	if err != nil {
+		return RuntimeParityInventory{}, false, err
+	}
+	runtimeID = normalizeRuntimeID(runtimeID)
+	for _, inventory := range overview.Inventories {
+		if inventory.RuntimeID == runtimeID {
+			return inventory, true, nil
+		}
+	}
+	return RuntimeParityInventory{}, false, nil
 }
 
 // Probe probes a runtime truthfully.
@@ -175,14 +200,22 @@ func (s *Service) selfTestSafeWorker(ctx context.Context, a Adapter, now time.Ti
 
 // Attempts returns the recorded attempts for a runtime (newest first).
 func (s *Service) Attempts(runtimeID string) []RuntimeAttempt {
+	runtimeID = normalizeRuntimeID(runtimeID)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []RuntimeAttempt
+	out := make([]RuntimeAttempt, 0, len(s.attempts))
 	for i := len(s.attempts) - 1; i >= 0; i-- {
 		if s.attempts[i].RuntimeID == runtimeID {
 			out = append(out, s.attempts[i])
 		}
 	}
+	s.mu.Unlock()
+
+	if runtimeID == executionbroker.LocalSafeWorkerID {
+		out = mergeRuntimeAttempts(out, s.safeWorkerLedgerAttempts())
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
 	return out
 }
 
@@ -196,15 +229,94 @@ func (s *Service) record(a RuntimeAttempt) RuntimeAttempt {
 }
 
 func (s *Service) lastAttempt(runtimeID string) *RuntimeAttempt {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := len(s.attempts) - 1; i >= 0; i-- {
-		if s.attempts[i].RuntimeID == runtimeID {
-			cp := s.attempts[i]
-			return &cp
-		}
+	attempts := s.Attempts(runtimeID)
+	if len(attempts) > 0 {
+		attempt := attempts[0]
+		return &attempt
 	}
 	return nil
+}
+
+func (s *Service) safeWorkerLedgerAttempts() []RuntimeAttempt {
+	if s.ops == nil {
+		return nil
+	}
+	ledger, err := s.ops.List(operations.Filter{
+		OwnerUserID: s.owner,
+		WorkspaceID: s.space,
+		Limit:       200,
+	})
+	if err != nil {
+		return nil
+	}
+	attempts := make([]RuntimeAttempt, 0, len(ledger))
+	for _, operation := range ledger {
+		if operation.OperationType != "runtime_self_test" ||
+			operation.SourceType != "runtime_lab" ||
+			operation.RuntimeID != executionbroker.LocalSafeWorkerID {
+			continue
+		}
+		attempts = append(attempts, runtimeAttemptFromOperation(operation))
+	}
+	return attempts
+}
+
+func runtimeAttemptFromOperation(operation models.Operation) RuntimeAttempt {
+	createdAt := operation.UpdatedAt
+	if operation.CompletedAt != nil {
+		createdAt = *operation.CompletedAt
+	}
+	status := AttemptPending
+	switch operations.OperationStatus(operation.Status) {
+	case operations.StatusCompleted:
+		if operations.VerificationStatus(operation.VerificationStatus) == operations.VerificationPassed {
+			status = AttemptSucceeded
+		} else {
+			status = AttemptFailed
+		}
+	case operations.StatusFailed:
+		status = AttemptFailed
+	case operations.StatusBlocked:
+		status = AttemptBlocked
+	case operations.StatusRunning, operations.StatusVerifying:
+		status = AttemptRunning
+	}
+	detail := operation.LastError
+	if detail == "" {
+		detail = "safe worker execution recovered from the durable Operation Ledger"
+	}
+	return RuntimeAttempt{
+		ID:                 "rta-operation-" + operation.ID.String(),
+		RuntimeID:          executionbroker.LocalSafeWorkerID,
+		OperationID:        operation.ID.String(),
+		Status:             status,
+		IdempotencyKey:     operation.DedupeKey,
+		Detail:             detail,
+		BoundedOutput:      operation.ResultSummary,
+		VerificationPassed: operations.VerificationStatus(operation.VerificationStatus) == operations.VerificationPassed,
+		CreatedAt:          createdAt,
+	}
+}
+
+func mergeRuntimeAttempts(primary, recovered []RuntimeAttempt) []RuntimeAttempt {
+	seenOperations := make(map[string]struct{}, len(primary))
+	out := append([]RuntimeAttempt(nil), primary...)
+	for _, attempt := range primary {
+		if attempt.OperationID != "" {
+			seenOperations[attempt.OperationID] = struct{}{}
+		}
+	}
+	for _, attempt := range recovered {
+		if _, exists := seenOperations[attempt.OperationID]; exists {
+			continue
+		}
+		out = append(out, attempt)
+	}
+	return out
+}
+
+func normalizeRuntimeID(runtimeID string) string {
+	return strings.ToLower(strings.TrimSpace(runtimeID))
 }
 
 func itoa(n int) string {

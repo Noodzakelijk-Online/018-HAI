@@ -11,7 +11,7 @@
           <i nz-icon nzType="reload" nzTheme="outline"></i>
           Refresh
         </button>
-        <button nz-button nzType="primary" title="Create a new top-level goal for HAI to keep moving." (click)="showCreate = !showCreate">
+        <button nz-button nzType="primary" data-testid="pursuit-new" title="Create a new top-level goal for HAI to keep moving." (click)="showCreate = !showCreate">
           <i nz-icon nzType="plus" nzTheme="outline"></i>
           New pursuit
         </button>
@@ -113,6 +113,29 @@
         </div>
       </section>
 
+      <hai-progressive-section
+        moduleId="pursuits"
+        sectionId="portfolio-planning"
+        title="Portfolio planning"
+        summary="Compare explicit estimates against owner capacity, dependencies, resource ceilings, and approval policy."
+      >
+        <div class="portfolio-entry">
+          <div>
+            <strong>Build an advisory schedule</strong>
+            <span>{{ pursuits.length }} visible pursuits · no execution authority</span>
+          </div>
+          <div class="portfolio-entry__actions">
+            <nz-tag *ngIf="portfolioAllocationResult as accepted" nzColor="green">
+              Allocation {{ accepted.allocation.status }}
+            </nz-tag>
+            <button nz-button nzType="primary" type="button" (click)="openPortfolioPlanner()" [disabled]="!pursuits.length">
+              <i nz-icon nzType="calendar" nzTheme="outline"></i>
+              Plan portfolio
+            </button>
+          </div>
+        </div>
+      </hai-progressive-section>
+
       <details class="route-intake-panel">
         <summary title="Add a note, source, or signal for HAI to connect to a pursuit">
           <span>Route new input</span>
@@ -139,13 +162,13 @@
       </details>
 
       <section class="create-panel" *ngIf="showCreate">
-        <form [formGroup]="createForm" (ngSubmit)="createPursuit()">
+        <form [formGroup]="createForm" (ngSubmit)="createPursuit()" data-testid="pursuit-create-form">
           <div class="form-heading">
             <strong>Create pursuit</strong>
             <span>Define the outcome once. HAI links the operational records underneath it.</span>
           </div>
-          <input nz-input formControlName="title" placeholder="Pursuit title">
-          <input nz-input formControlName="projectKey" placeholder="Project key">
+          <input nz-input formControlName="title" placeholder="Pursuit title" data-testid="pursuit-title">
+          <input nz-input formControlName="projectKey" placeholder="Project key" data-testid="pursuit-project-key">
           <nz-select formControlName="domain" nzPlaceHolder="Domain">
             <nz-option *ngFor="let domain of domains" [nzValue]="domain" [nzLabel]="domain"></nz-option>
           </nz-select>
@@ -154,8 +177,31 @@
           <textarea nz-input formControlName="desiredOutcome" rows="2" placeholder="Desired outcome"></textarea>
           <textarea nz-input formControlName="currentStateSummary" rows="2" placeholder="Current state (optional)"></textarea>
           <textarea nz-input formControlName="completionDefinition" rows="2" placeholder="Completion definition"></textarea>
+          <details class="contract-editor contract-editor--create">
+            <summary>Outcome contract and resource boundaries</summary>
+            <div class="contract-create-grid">
+              <label>
+                <span>Success criteria, one per line</span>
+                <textarea nz-input formControlName="successCriteriaText" rows="4" placeholder="Evidence-backed result that must be true"></textarea>
+              </label>
+              <label>
+                <span>Stop conditions, one per line</span>
+                <textarea nz-input formControlName="stopConditionsText" rows="4" placeholder="When HAI must stop spending effort and request review"></textarea>
+              </label>
+              <label>
+                <span>Dependencies, one per line</span>
+                <textarea nz-input formControlName="dependenciesText" rows="4" placeholder="Person, document, delivery, or pursuit required first"></textarea>
+              </label>
+              <label><span>Target date</span><input nz-input type="date" formControlName="targetAt"></label>
+              <label><span>Review cadence (days)</span><input nz-input type="number" min="0" max="3650" formControlName="reviewCadenceDays"></label>
+              <label><span>Maximum effort (hours)</span><input nz-input type="number" min="0" step="0.5" formControlName="maxEffortHours"></label>
+              <label><span>Maximum spend (EUR)</span><input nz-input type="number" min="0" step="0.01" formControlName="maxSpendEur"></label>
+              <label><span>Parallel workflow ceiling</span><input nz-input type="number" min="0" formControlName="maxParallelWorkflows"></label>
+              <label class="contract-create-grid__wide"><span>Resource notes</span><input nz-input formControlName="resourceNotes" placeholder="Availability, people, tools, or non-financial constraints"></label>
+            </div>
+          </details>
           <div class="form-actions">
-            <button nz-button nzType="primary" type="submit" [nzLoading]="creating">Create</button>
+            <button nz-button nzType="primary" type="submit" data-testid="pursuit-create" [nzLoading]="creating">Create</button>
             <button nz-button nzType="default" type="button" (click)="showCreate = false">Cancel</button>
           </div>
         </form>
@@ -189,6 +235,7 @@
           <button
             type="button"
             class="pursuit-row"
+            data-testid="pursuit-row"
             *ngFor="let pursuit of pursuits; trackBy: trackPursuit"
             [class.pursuit-row--selected]="selected?.pursuit?.id === pursuit.id"
             [title]="pursuit.currentStateSummary || pursuit.nextRecommendedAction || 'Open pursuit detail'"
@@ -284,11 +331,151 @@
                 <nz-form-label>Completion definition</nz-form-label>
                 <nz-form-control><textarea nz-input formControlName="completionDefinition" rows="3"></textarea></nz-form-control>
               </nz-form-item>
+              <section class="contract-editor">
+                <header>
+                  <div>
+                    <strong>Outcome contract</strong>
+                    <span>Completion remains blocked until criteria and dependencies are resolved. Triggered stop conditions pause planning.</span>
+                  </div>
+                </header>
+
+                <div class="contract-group">
+                  <div class="contract-group__heading">
+                    <strong>Success criteria</strong>
+                    <button nz-button nzType="default" type="button" (click)="addSuccessCriterion()">Add criterion</button>
+                  </div>
+                  <div class="contract-row" *ngFor="let criterion of draftSuccessCriteria; let index = index">
+                    <input nz-input [(ngModel)]="criterion.description" [ngModelOptions]="{standalone: true}" placeholder="Measurable result">
+                    <nz-select [(ngModel)]="criterion.status" [ngModelOptions]="{standalone: true}">
+                      <nz-option nzValue="pending" nzLabel="Pending"></nz-option>
+                      <nz-option nzValue="satisfied" nzLabel="Satisfied"></nz-option>
+                      <nz-option nzValue="waived" nzLabel="Waived"></nz-option>
+                    </nz-select>
+                    <input nz-input [(ngModel)]="criterion.evidenceUri" [ngModelOptions]="{standalone: true}" placeholder="Evidence URI">
+                    <nz-select [(ngModel)]="criterion.verificationStatus" [ngModelOptions]="{standalone: true}" nzPlaceHolder="Verification">
+                      <nz-option nzValue="" nzLabel="Not verified"></nz-option>
+                      <nz-option nzValue="source_supported" nzLabel="Source supported"></nz-option>
+                      <nz-option nzValue="test_passed" nzLabel="Test passed"></nz-option>
+                      <nz-option nzValue="human_approved" nzLabel="Human approved"></nz-option>
+                    </nz-select>
+                    <input nz-input *ngIf="criterion.status === 'waived'" [(ngModel)]="criterion.waiverReason" [ngModelOptions]="{standalone: true}" placeholder="Waiver reason">
+                    <button nz-button nzDanger type="button" (click)="removeSuccessCriterion(index)" aria-label="Remove success criterion"><i nz-icon nzType="delete"></i></button>
+                  </div>
+                </div>
+
+                <div class="contract-group">
+                  <div class="contract-group__heading">
+                    <strong>Stop conditions</strong>
+                    <button nz-button nzType="default" type="button" (click)="addStopCondition()">Add stop condition</button>
+                  </div>
+                  <div class="contract-row contract-row--compact" *ngFor="let condition of draftStopConditions; let index = index">
+                    <input nz-input [(ngModel)]="condition.description" [ngModelOptions]="{standalone: true}" placeholder="Condition that pauses resource use">
+                    <nz-select [(ngModel)]="condition.status" [ngModelOptions]="{standalone: true}">
+                      <nz-option nzValue="monitoring" nzLabel="Monitoring"></nz-option>
+                      <nz-option nzValue="triggered" nzLabel="Triggered"></nz-option>
+                      <nz-option nzValue="resolved" nzLabel="Resolved"></nz-option>
+                    </nz-select>
+                    <input nz-input [(ngModel)]="condition.reason" [ngModelOptions]="{standalone: true}" placeholder="Trigger or resolution reason">
+                    <button nz-button nzDanger type="button" (click)="removeStopCondition(index)" aria-label="Remove stop condition"><i nz-icon nzType="delete"></i></button>
+                  </div>
+                </div>
+
+                <div class="contract-group">
+                  <div class="contract-group__heading">
+                    <strong>Dependencies</strong>
+                    <button nz-button nzType="default" type="button" (click)="addDependency()">Add dependency</button>
+                  </div>
+                  <div class="contract-row" *ngFor="let dependency of draftDependencies; let index = index">
+                    <input nz-input [(ngModel)]="dependency.label" [ngModelOptions]="{standalone: true}" placeholder="Required person, record, delivery, or pursuit">
+                    <nz-select [(ngModel)]="dependency.status" [ngModelOptions]="{standalone: true}">
+                      <nz-option nzValue="pending" nzLabel="Pending"></nz-option>
+                      <nz-option nzValue="blocked" nzLabel="Blocked"></nz-option>
+                      <nz-option nzValue="satisfied" nzLabel="Satisfied"></nz-option>
+                      <nz-option nzValue="waived" nzLabel="Waived"></nz-option>
+                    </nz-select>
+                    <input nz-input [(ngModel)]="dependency.owner" [ngModelOptions]="{standalone: true}" placeholder="Responsible party">
+                    <input nz-input [(ngModel)]="dependency.evidenceUri" [ngModelOptions]="{standalone: true}" placeholder="Evidence URI">
+                    <input nz-input [(ngModel)]="dependency.reason" [ngModelOptions]="{standalone: true}" placeholder="Block or waiver reason">
+                    <button nz-button nzDanger type="button" (click)="removeDependency(index)" aria-label="Remove dependency"><i nz-icon nzType="delete"></i></button>
+                  </div>
+                </div>
+
+                <div class="contract-limits">
+                  <label><span>Target date</span><input nz-input type="date" formControlName="targetAt"></label>
+                  <label><span>Review cadence (days)</span><input nz-input type="number" min="0" max="3650" formControlName="reviewCadenceDays"></label>
+                  <label><span>Maximum effort (hours)</span><input nz-input type="number" min="0" step="0.5" formControlName="maxEffortHours"></label>
+                  <label><span>Maximum spend (EUR)</span><input nz-input type="number" min="0" step="0.01" formControlName="maxSpendEur"></label>
+                  <label><span>Parallel workflows</span><input nz-input type="number" min="0" formControlName="maxParallelWorkflows"></label>
+                  <label><span>Resource notes</span><input nz-input formControlName="resourceNotes"></label>
+                </div>
+              </section>
               <div class="form-actions">
                 <button nz-button nzType="primary" type="submit" [nzLoading]="detailLoading">Save context</button>
                 <button nz-button nzType="default" type="button" (click)="showContextEditor = false">Cancel</button>
               </div>
             </form>
+          </section>
+
+          <section class="goal-contract-summary" *ngIf="detail.pursuit as pursuit">
+            <header>
+              <div>
+                <span class="page-kicker">Outcome contract</span>
+                <h3>{{ detail.summary.criteriaSatisfied }}/{{ detail.summary.criteriaTotal }} criteria satisfied</h3>
+              </div>
+              <nz-tag [nzColor]="detail.summary.triggeredStopConditions ? 'error' : detail.summary.openDependencies ? 'warning' : detail.summary.goalContractReady ? 'success' : 'default'">
+                {{ detail.summary.triggeredStopConditions ? 'stopped' : detail.summary.openDependencies ? 'waiting' : detail.summary.goalContractReady ? 'controlled' : 'incomplete' }}
+              </nz-tag>
+            </header>
+            <div class="goal-contract-summary__grid">
+              <div>
+                <strong>Success</strong>
+                <ul><li *ngFor="let criterion of pursuit.successCriteria"><span [class]="'contract-status contract-status--' + criterion.status">{{ criterion.status }}</span>{{ criterion.description }}</li></ul>
+              </div>
+              <div>
+                <strong>Safe stops</strong>
+                <ul><li *ngFor="let condition of pursuit.stopConditions"><span [class]="'contract-status contract-status--' + condition.status">{{ condition.status }}</span>{{ condition.description }}</li></ul>
+              </div>
+              <div *ngIf="pursuit.dependencies.length">
+                <strong>Dependencies</strong>
+                <ul><li *ngFor="let dependency of pursuit.dependencies"><span [class]="'contract-status contract-status--' + dependency.status">{{ dependency.status }}</span>{{ dependency.label }}</li></ul>
+              </div>
+            </div>
+            <footer>
+              <span *ngIf="pursuit.targetAt">Target {{ pursuit.targetAt | date:'mediumDate' }}</span>
+              <span *ngIf="pursuit.reviewCadenceDays">Review every {{ pursuit.reviewCadenceDays }} days</span>
+              <span *ngIf="pursuit.resourceLimits.maxEffortHours">{{ pursuit.resourceLimits.maxEffortHours }}h ceiling</span>
+              <span *ngIf="pursuit.resourceLimits.maxSpendEur">EUR {{ pursuit.resourceLimits.maxSpendEur }} ceiling</span>
+              <span *ngIf="pursuit.resourceLimits.maxParallelWorkflows">{{ pursuit.resourceLimits.maxParallelWorkflows }} parallel workflows</span>
+            </footer>
+          </section>
+
+          <section
+            class="resource-summary"
+            *ngIf="detail.resourceUsage.limitsConfigured"
+            [class.resource-summary--blocked]="detail.resourceUsage.state === 'exhausted' || detail.resourceUsage.state === 'exceeded' || detail.resourceUsage.state === 'unavailable'"
+          >
+            <header>
+              <div>
+                <span class="page-kicker">Resource guard</span>
+                <h3>{{ resourceUsageLabel(detail.resourceUsage) }}</h3>
+              </div>
+              <span class="resource-summary__freshness">
+                {{ (detail.resourceUsage.latestRecordedAt || detail.resourceUsage.latestReservedAt) ? ('Updated ' + ((detail.resourceUsage.latestRecordedAt || detail.resourceUsage.latestReservedAt) | date:'short')) : 'No usage recorded yet' }}
+              </span>
+            </header>
+            <div class="resource-summary__metrics">
+              <article *ngIf="detail.resourceUsage.effortLimitHours > 0">
+                <span>Effort</span>
+                <strong>{{ detail.resourceUsage.effortCommittedHours | number:'1.0-2' }}h / {{ detail.resourceUsage.effortLimitHours | number:'1.0-2' }}h</strong>
+                <small>{{ detail.resourceUsage.effortRecordedHours | number:'1.0-2' }}h recorded + {{ detail.resourceUsage.effortReservedHours | number:'1.0-2' }}h reserved; {{ detail.resourceUsage.effortRemainingHours | number:'1.0-2' }}h remaining</small>
+              </article>
+              <article *ngIf="detail.resourceUsage.spendLimitEur > 0">
+                <span>Spend</span>
+                <strong>EUR {{ detail.resourceUsage.spendCommittedEur | number:'1.2-2' }} / EUR {{ detail.resourceUsage.spendLimitEur | number:'1.2-2' }}</strong>
+                <small>EUR {{ detail.resourceUsage.spendNetEur | number:'1.2-2' }} recorded + EUR {{ detail.resourceUsage.spendReservedEur | number:'1.2-2' }} reserved; EUR {{ detail.resourceUsage.spendRemainingEur | number:'1.2-2' }} remaining</small>
+              </article>
+            </div>
+            <p *ngIf="detail.resourceUsage.blockingReason" role="alert">{{ detail.resourceUsage.blockingReason }}</p>
           </section>
 
           <div class="detail-summary">
@@ -325,6 +512,97 @@
               <strong>{{ detail.summary.planningNeeded ? 'yes' : 'no' }}</strong>
             </article>
           </div>
+
+          <details class="resource-ledger" (toggle)="loadResourceEvents()">
+            <summary>
+              <span>Resource ledger</span>
+              <small>{{ detail.resourceUsage.eventCount }} immutable records</small>
+            </summary>
+            <div class="resource-ledger__body">
+              <section class="resource-reservations" *ngIf="detail.resourceUsage.reservations.length">
+                <div class="section-title">
+                  <div>
+                    <h3>Active resource holds</h3>
+                    <span>Inspect active operations here. Age alone never releases a hold.</span>
+                  </div>
+                </div>
+                <article
+                  *ngFor="let reservation of detail.resourceUsage.reservations"
+                  [class.resource-reservation--stale]="reservation.stale"
+                >
+                  <div class="resource-reservation__summary">
+                    <div>
+                      <strong>{{ reservation.operationId }}</strong>
+                      <span>{{ reservation.estimatedEffortMinutes }} min / EUR {{ reservation.estimatedCostEur | number:'1.2-6' }}</span>
+                    </div>
+                    <span [class]="reservation.stale ? 'status-tag status-tag--warning' : 'status-tag status-tag--info'">
+                      {{ reservation.stale ? 'reconciliation review' : 'active' }}
+                    </span>
+                  </div>
+                  <p>{{ reservation.reason }} / {{ reservation.actor }} / {{ reservation.reservedAt | date:'medium' }}</p>
+                  <p *ngIf="reservation.reviewReason" role="status">{{ reservation.reviewReason }}</p>
+                  <div class="resource-reservation__release">
+                    <input
+                      nz-input
+                      [value]="reservationReleaseReasons[reservation.id] || ''"
+                      (input)="reservationReleaseReasons[reservation.id] = $any($event.target).value"
+                      placeholder="Why is this operation confirmed stopped?"
+                      [attr.aria-label]="'Release reason for ' + reservation.operationId"
+                    >
+                    <button
+                      nz-button
+                      nzDanger
+                      type="button"
+                      [nzLoading]="releasingReservationId === reservation.id"
+                      [disabled]="!!releasingReservationId"
+                      (click)="releaseReservation(reservation.id)"
+                    >Confirm stopped and release</button>
+                  </div>
+                </article>
+              </section>
+
+              <form [formGroup]="resourceEventForm" (ngSubmit)="recordResourceEvent()" class="resource-ledger__form">
+                <div class="section-title">
+                  <div>
+                    <h3>Record actual usage</h3>
+                    <span>Corrections are appended as refunds. Existing records cannot be edited or deleted.</span>
+                  </div>
+                </div>
+                <nz-select formControlName="kind" aria-label="Resource record type">
+                  <nz-option nzValue="effort_recorded" nzLabel="Effort"></nz-option>
+                  <nz-option nzValue="spend_incurred" nzLabel="Spend"></nz-option>
+                  <nz-option nzValue="spend_refund" nzLabel="Refund"></nz-option>
+                </nz-select>
+                <input *ngIf="resourceEventForm.get('kind')?.value === 'effort_recorded'" nz-input type="number" min="0.0167" step="0.25" formControlName="effortHours" placeholder="Hours" aria-label="Effort hours">
+                <input *ngIf="resourceEventForm.get('kind')?.value !== 'effort_recorded'" nz-input type="number" min="0.01" step="0.01" formControlName="spendEur" placeholder="EUR amount" aria-label="Euro amount">
+                <input nz-input formControlName="note" placeholder="Short accounting note" aria-label="Resource accounting note">
+                <input nz-input formControlName="evidenceUri" placeholder="Evidence URI (required for spend/refund)" aria-label="Resource evidence URI">
+                <input nz-input type="datetime-local" formControlName="occurredAt" aria-label="Resource occurrence time">
+                <button nz-button nzType="primary" type="submit" [nzLoading]="resourceEventSaving">Record</button>
+              </form>
+
+              <div *ngIf="resourceEventsLoading" class="resource-ledger__state" role="status">Loading immutable resource records...</div>
+              <div *ngIf="resourceEventsError" class="resource-ledger__state resource-ledger__state--error" role="alert">
+                <span>{{ resourceEventsError }}</span>
+                <button nz-button type="button" (click)="loadResourceEvents(true)">Retry</button>
+              </div>
+              <div class="resource-ledger__events" *ngIf="!resourceEventsLoading && !resourceEventsError">
+                <article *ngFor="let event of resourceEvents">
+                  <div>
+                    <strong>{{ resourceEventValue(event) }}</strong>
+                    <span>{{ event.kind.replace('_', ' ') }} / {{ event.occurredAt | date:'short' }}</span>
+                  </div>
+                  <p *ngIf="event.note">{{ event.note }}</p>
+                  <div class="resource-ledger__meta">
+                    <span>{{ event.actor }}</span>
+                    <code [title]="event.recordDigest">{{ event.recordDigest | slice:0:12 }}...</code>
+                    <button nz-button nzType="link" type="button" *ngIf="event.evidenceUri" (click)="openSource(event.evidenceUri)">Evidence</button>
+                  </div>
+                </article>
+                <nz-empty *ngIf="!resourceEvents.length" nzNotFoundContent="No actual effort or spend has been recorded."></nz-empty>
+              </div>
+            </div>
+          </details>
 
           <section class="operational-digest" *ngIf="detail.operationalDigest as digest">
             <header [title]="digest.riskLine">
@@ -409,10 +687,20 @@
             <div>
               <span class="page-kicker">Needs planning</span>
               <strong>No linked workflow exists yet.</strong>
-              <p>Create the first operational workflow from this pursuit's goal, outcome, completion definition, risk level, and approval boundaries.</p>
+              <p *ngIf="canCreateFirstWorkflow(detail); else planningBlockedCopy">Create the first operational workflow from this pursuit's goal, outcome, completion definition, risk level, and approval boundaries.</p>
+              <ng-template #planningBlockedCopy>
+                <p role="alert">{{ planningBlockReason(detail) }}</p>
+              </ng-template>
             </div>
             <div class="planning-banner__actions">
-              <button nz-button nzType="primary" [nzLoading]="planning" (click)="createFirstWorkflowPlan()">
+              <button
+                nz-button
+                nzType="primary"
+                [nzLoading]="planning"
+                [disabled]="!canCreateFirstWorkflow(detail)"
+                [title]="canCreateFirstWorkflow(detail) ? 'Create the first governed workflow plan.' : planningBlockReason(detail)"
+                (click)="createFirstWorkflowPlan()"
+              >
                 <i nz-icon nzType="ordered-list" nzTheme="outline"></i>
                 Create first workflow
               </button>
@@ -1134,6 +1422,1112 @@
     </nz-content>
   </nz-layout>
 </section>
+
+<nz-modal
+  [nzVisible]="portfolioPlannerVisible"
+  nzTitle="Advisory portfolio plan"
+  nzWidth="1080px"
+  [nzFooter]="null"
+  [nzMaskClosable]="false"
+  (nzOnCancel)="closePortfolioPlanner()"
+>
+  <ng-container *nzModalContent>
+    <section class="portfolio-planner">
+      <header class="portfolio-planner__boundary">
+        <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+        <div>
+          <strong>Planning only</strong>
+          <span>HAI ranks and schedules explicit inputs. It does not change priorities, reserve capacity, consume approval, or execute work.</span>
+        </div>
+        <nz-tag nzColor="blue">advisory only</nz-tag>
+      </header>
+
+      <div class="portfolio-planner__controls">
+        <label>
+          <span>Available from</span>
+          <input nz-input type="datetime-local" [(ngModel)]="portfolioHorizonStart" [ngModelOptions]="{standalone: true}">
+        </label>
+        <label>
+          <span>Available until</span>
+          <input nz-input type="datetime-local" [(ngModel)]="portfolioHorizonEnd" [ngModelOptions]="{standalone: true}">
+        </label>
+        <label>
+          <span>Duration basis</span>
+          <nz-select [(ngModel)]="portfolioDurationMode" [ngModelOptions]="{standalone: true}">
+            <nz-option nzValue="conservative" nzLabel="Conservative"></nz-option>
+            <nz-option nzValue="expected" nzLabel="Expected"></nz-option>
+          </nz-select>
+        </label>
+        <label title="This planning ceiling does not grant permission to spend money.">
+          <span>Maximum planned cost (EUR)</span>
+          <input nz-input type="number" min="0" step="0.01" [(ngModel)]="portfolioMaxCostEur" [ngModelOptions]="{standalone: true}">
+        </label>
+      </div>
+
+      <div class="portfolio-planner__heading">
+        <div>
+          <h3>Select and estimate pursuits</h3>
+          <span>{{ portfolioSelectedCount() }} selected · every selected pursuit needs an explicit estimate and reviewed factors</span>
+        </div>
+        <button
+          nz-button
+          nzType="default"
+          type="button"
+          (click)="resetPortfolioPlanner()"
+          [disabled]="portfolioPlanningRunning || portfolioAcceptancePending || portfolioAcceptanceRunning"
+        >
+          Reset
+        </button>
+      </div>
+
+      <div class="portfolio-drafts">
+        <article class="portfolio-draft" *ngFor="let draft of portfolioDrafts" [class.portfolio-draft--selected]="draft.selected">
+          <header>
+            <label class="portfolio-draft__selector">
+              <input type="checkbox" [(ngModel)]="draft.selected" [ngModelOptions]="{standalone: true}">
+              <span>
+                <strong>{{ draft.pursuit.title }}</strong>
+                <small>{{ draft.pursuit.projectKey || 'no project' }} · {{ draft.pursuit.riskLevel || 'unknown' }} risk · {{ draft.pursuit.autonomyLevel || 'manual' }}</small>
+              </span>
+            </label>
+            <nz-tag [nzColor]="statusColor(draft.pursuit.status)">{{ draft.pursuit.status }}</nz-tag>
+          </header>
+
+          <div class="portfolio-draft__body" *ngIf="draft.selected">
+            <div class="portfolio-estimates">
+              <label><span>Optimistic minutes</span><input nz-input type="number" min="1" step="15" [(ngModel)]="draft.optimisticMinutes" [ngModelOptions]="{standalone: true}"></label>
+              <label><span>Expected minutes</span><input nz-input type="number" min="1" step="15" [(ngModel)]="draft.expectedMinutes" [ngModelOptions]="{standalone: true}"></label>
+              <label><span>Pessimistic minutes</span><input nz-input type="number" min="1" step="15" [(ngModel)]="draft.pessimisticMinutes" [ngModelOptions]="{standalone: true}"></label>
+              <label><span>Estimated cost (EUR)</span><input nz-input type="number" min="0" step="0.01" [(ngModel)]="draft.estimatedCostEur" [ngModelOptions]="{standalone: true}"></label>
+              <label><span>Input tokens</span><input nz-input type="number" min="0" step="100" [(ngModel)]="draft.inputTokens" [ngModelOptions]="{standalone: true}"></label>
+              <label><span>Output tokens</span><input nz-input type="number" min="0" step="100" [(ngModel)]="draft.outputTokens" [ngModelOptions]="{standalone: true}"></label>
+              <label><span>Tool calls</span><input nz-input type="number" min="0" step="1" [(ngModel)]="draft.toolCalls" [ngModelOptions]="{standalone: true}"></label>
+              <label class="portfolio-estimates__basis"><span>Estimate basis</span><input nz-input [(ngModel)]="draft.estimateBasis" [ngModelOptions]="{standalone: true}" placeholder="Source, prior run, or operator estimate"></label>
+              <label class="portfolio-option"><input type="checkbox" [(ngModel)]="draft.optional" [ngModelOptions]="{standalone: true}"><span>Optional if capacity is insufficient</span></label>
+            </div>
+
+            <div class="portfolio-calibration-binding" *ngIf="draft.calibration as calibration">
+              <i nz-icon nzType="check-circle" nzTheme="outline"></i>
+              <div>
+                <strong>Reviewed estimate selected</strong>
+                <span>{{ calibration.proposalVersion }} will be verified and bound when you recalculate.</span>
+              </div>
+              <button nz-button nzType="link" type="button" (click)="clearPortfolioCalibration(draft)">Clear</button>
+            </div>
+
+            <details class="portfolio-factors">
+              <summary>
+                <span>Priority factors</span>
+                <small>{{ draft.factorsReviewed ? 'reviewed' : 'review required' }}</small>
+              </summary>
+              <div class="portfolio-factors__notice">
+                <span>Neutral values start at 50. Review all 25 values; high effort, duration, dependencies, and opportunity cost reduce the score.</span>
+                <button nz-button nzType="link" type="button" (click)="resetPortfolioFactors(draft)">Reset to neutral</button>
+              </div>
+              <div class="portfolio-factors__grid">
+                <label *ngFor="let field of portfolioFactorFields" [title]="field.hint">
+                  <span>{{ field.label }} <em *ngIf="field.cost">cost</em></span>
+                  <input
+                    nz-input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="5"
+                    [ngModel]="draft.factors[field.key]"
+                    (ngModelChange)="draft.factors[field.key] = $event"
+                    [ngModelOptions]="{standalone: true}"
+                  >
+                </label>
+              </div>
+              <label class="portfolio-factor-confirmation">
+                <input type="checkbox" [(ngModel)]="draft.factorsReviewed" [ngModelOptions]="{standalone: true}">
+                <span>I reviewed these factors for this pursuit.</span>
+              </label>
+            </details>
+          </div>
+        </article>
+      </div>
+
+      <div class="portfolio-planner__error" *ngIf="portfolioPlanningError" role="alert">
+        <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+        <span>{{ portfolioPlanningError }}</span>
+      </div>
+
+      <section class="portfolio-result" *ngIf="portfolioResult as result" aria-live="polite">
+        <header>
+          <div>
+            <span>Plan result</span>
+            <h3>{{ result.status }}</h3>
+          </div>
+          <div class="portfolio-result__counts">
+            <strong>{{ result.pursuitsPlanned }}</strong><span>planned</span>
+            <strong>{{ result.exclusions.length }}</strong><span>excluded</span>
+          </div>
+          <nz-tag nzColor="blue">{{ result.authority }}</nz-tag>
+        </header>
+
+        <div
+          class="portfolio-capacity"
+          [class.portfolio-capacity--attention]="capacity.status !== 'applied'"
+          *ngIf="result.capacity as capacity"
+        >
+          <div class="portfolio-capacity__summary">
+            <i nz-icon [nzType]="capacity.status === 'applied' ? 'check-circle' : 'clock-circle'" nzTheme="outline"></i>
+            <div>
+              <strong>Owner capacity {{ capacity.status }}</strong>
+              <span>{{ capacity.reason }}</span>
+            </div>
+          </div>
+          <dl *ngIf="capacity.status === 'applied'">
+            <div><dt>Applied</dt><dd>{{ capacity.appliedMinutes || 0 }} min</dd></div>
+            <div><dt>Available</dt><dd>{{ capacity.timeAvailableMinutes || 0 }} min</dd></div>
+            <div><dt>State</dt><dd>{{ capacity.snapshotStatus }}</dd></div>
+            <div><dt>Confidence</dt><dd>{{ (capacity.confidence || 0) * 100 | number:'1.0-0' }}%</dd></div>
+            <div><dt>Captured</dt><dd>{{ capacity.capturedAt | date:'short' }}</dd></div>
+            <div><dt>Fresh until</dt><dd>{{ capacity.freshUntil | date:'short' }}</dd></div>
+          </dl>
+          <button
+            nz-button
+            nzType="primary"
+            type="button"
+            *ngIf="capacity.status !== 'applied'"
+            (click)="openCapacityWorkspace()"
+          >
+            <i nz-icon nzType="dashboard" nzTheme="outline"></i>
+            Review capacity
+          </button>
+        </div>
+
+        <div class="portfolio-result__section portfolio-calibrations" *ngIf="result.calibrations?.length">
+          <div class="portfolio-calibrations__heading">
+            <div>
+              <h4>Reviewed estimate suggestions</h4>
+              <p>Derived from verified settlements and approved by the owner. Suggestions never apply themselves.</p>
+            </div>
+            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+          </div>
+          <article
+            class="portfolio-calibration"
+            *ngFor="let calibration of result.calibrations"
+            [class.portfolio-calibration--attention]="calibration.status === 'unavailable'"
+          >
+            <div class="portfolio-calibration__summary">
+              <div>
+                <strong>{{ portfolioPursuitTitle(calibration.pursuitId) }}</strong>
+                <span>{{ calibration.reason }}</span>
+              </div>
+              <nz-tag [nzColor]="calibration.status === 'bound' ? 'green' : calibration.status === 'available' ? 'blue' : 'gold'">
+                {{ calibration.status === 'bound' ? 'used in this plan' : calibration.status }}
+              </nz-tag>
+            </div>
+            <div class="portfolio-calibration__comparison" *ngIf="calibration.status !== 'unavailable'">
+              <div>
+                <span>Current</span>
+                <strong>{{ calibration.sourceExpectedMinutes }} min</strong>
+                <small>EUR {{ (calibration.sourceCostMicros || 0) / 1000000 | number:'1.2-6' }}</small>
+              </div>
+              <i nz-icon nzType="arrow-right" nzTheme="outline"></i>
+              <div>
+                <span>Reviewed suggestion</span>
+                <strong>{{ calibration.suggestedExpectedMinutes }} min</strong>
+                <small>EUR {{ (calibration.suggestedCostMicros || 0) / 1000000 | number:'1.2-6' }}</small>
+              </div>
+            </div>
+            <div class="portfolio-calibration__actions">
+              <details *ngIf="calibration.status !== 'unavailable'">
+                <summary>Evidence and calculation</summary>
+                <dl>
+                  <div><dt>Samples</dt><dd>{{ calibration.sampleCount }}</dd></div>
+                  <div><dt>Confidence</dt><dd>{{ (calibration.confidence || 0) * 100 | number:'1.0-0' }}%</dd></div>
+                  <div><dt>Effort factor</dt><dd>{{ calibration.effortMultiplier | number:'1.3-3' }}</dd></div>
+                  <div><dt>Cost factor</dt><dd>{{ calibration.costMultiplier | number:'1.3-3' }}</dd></div>
+                  <div><dt>Observed</dt><dd>{{ calibration.observedFrom | date:'shortDate' }} - {{ calibration.observedThrough | date:'shortDate' }}</dd></div>
+                  <div><dt>Approved</dt><dd>{{ calibration.appliedAt | date:'medium' }}</dd></div>
+                  <div class="portfolio-calibration__evidence"><dt>Revision</dt><dd><code>{{ calibration.proposalVersion }}</code></dd></div>
+                  <div class="portfolio-calibration__evidence"><dt>Evidence</dt><dd><code>{{ calibration.evidenceDigest }}</code></dd></div>
+                </dl>
+              </details>
+              <button
+                nz-button
+                nzType="primary"
+                type="button"
+                *ngIf="calibration.status === 'available'"
+                (click)="applyPortfolioCalibration(calibration)"
+              >
+                Use suggestion
+              </button>
+            </div>
+          </article>
+        </div>
+
+        <div class="portfolio-result__section" *ngIf="result.decision?.scheduled?.length">
+          <h4>Schedule</h4>
+          <ol class="portfolio-schedule">
+            <li *ngFor="let item of result.decision?.scheduled">
+              <span class="portfolio-schedule__time">{{ item.start | date:'short' }} – {{ item.end | date:'shortTime' }}</span>
+              <strong>{{ portfolioPursuitTitle(item.taskId) }}</strong>
+              <small>{{ item.plannedDurationMinutes }} min · {{ item.durationEstimateBasis }}<ng-container *ngIf="item.critical"> · critical path</ng-container></small>
+            </li>
+          </ol>
+        </div>
+
+        <div class="portfolio-result__section" *ngIf="result.priorities.length">
+          <h4>Priority assessment</h4>
+          <div class="portfolio-priorities">
+            <article *ngFor="let priority of result.priorities">
+              <strong>{{ priority.score }}</strong>
+              <span>{{ priority.title }}</span>
+              <small>{{ priority.band }} · {{ priority.algorithmVersion }}</small>
+            </article>
+          </div>
+        </div>
+
+        <div class="portfolio-result__section portfolio-result__section--warning" *ngIf="result.exclusions.length">
+          <h4>Not scheduled</h4>
+          <ul>
+            <li *ngFor="let exclusion of result.exclusions">
+              <strong>{{ exclusion.title }}</strong>
+              <span>{{ exclusion.reason }}</span>
+              <code>{{ exclusion.code }}</code>
+            </li>
+          </ul>
+        </div>
+
+        <div class="portfolio-result__section portfolio-result__section--warning" *ngIf="result.decision?.approvalFlags?.length">
+          <h4>Approval flags</h4>
+          <ul>
+            <li *ngFor="let flag of result.decision?.approvalFlags">
+              <strong>{{ portfolioPursuitTitle(flag.taskId || '') }}</strong>
+              <span>{{ flag.reason }}</span>
+              <code>{{ flag.code }}</code>
+            </li>
+          </ul>
+        </div>
+
+        <div class="portfolio-allocation-boundary" *ngIf="canAcceptPortfolioAllocation()">
+          <i nz-icon nzType="lock" nzTheme="outline"></i>
+          <div>
+            <strong>Ready for governed allocation</strong>
+            <span>Acceptance reserves only the bounded pursuit capacity shown above. It does not approve risky work, execute tasks, or grant agent authority.</span>
+          </div>
+        </div>
+
+        <div
+          class="portfolio-allocation-boundary portfolio-allocation-boundary--blocked"
+          *ngIf="result.decision?.scheduled?.length && result.decision?.criticalBlockers?.length"
+        >
+          <i nz-icon nzType="stop" nzTheme="outline"></i>
+          <div>
+            <strong>Allocation acceptance is blocked</strong>
+            <span>Resolve the critical planning blockers and calculate a fresh advisory decision before reserving capacity.</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="portfolio-planner__error" *ngIf="portfolioAcceptanceError" role="alert">
+        <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+        <span>{{ portfolioAcceptanceError }}</span>
+      </div>
+
+      <section class="portfolio-allocation" *ngIf="portfolioAllocationResult as accepted" aria-live="polite">
+        <header>
+          <div>
+            <span>Durable capacity reservation</span>
+            <h3>Allocation {{ accepted.allocation.status }}</h3>
+          </div>
+          <div class="portfolio-allocation__tags">
+            <nz-tag nzColor="green">{{ accepted.authority }}</nz-tag>
+            <nz-tag *ngIf="accepted.replayed" nzColor="blue">replayed safely</nz-tag>
+          </div>
+        </header>
+        <dl class="portfolio-allocation__facts">
+          <div><dt>Plan</dt><dd>{{ accepted.allocation.planId }}</dd></div>
+          <div><dt>Accepted</dt><dd>{{ accepted.allocation.acceptedAt | date:'medium' }}</dd></div>
+          <div><dt>Allocation</dt><dd>{{ accepted.allocation.id }}</dd></div>
+          <div><dt>Duration mode</dt><dd>{{ accepted.allocation.durationMode }}</dd></div>
+          <div><dt>Capacity window</dt><dd>{{ accepted.allocation.horizonStart | date:'short' }} - {{ accepted.allocation.horizonEnd | date:'shortTime' }}</dd></div>
+          <div><dt>Accepted by</dt><dd>{{ accepted.allocation.actor }}</dd></div>
+          <div><dt>Decision digest</dt><dd><code>{{ accepted.allocation.decisionDigest }}</code></dd></div>
+          <div><dt>Request digest</dt><dd><code>{{ accepted.allocation.requestDigest }}</code></dd></div>
+          <div><dt>Record digest</dt><dd><code>{{ accepted.allocation.recordDigest }}</code></dd></div>
+        </dl>
+        <div class="portfolio-allocation__items">
+          <h4>Reserved pursuit capacity</h4>
+          <article *ngFor="let item of accepted.items">
+            <div>
+              <strong>{{ portfolioPursuitTitle(item.pursuitId) }}</strong>
+              <span>{{ item.scheduledStart | date:'short' }} - {{ item.scheduledEnd | date:'shortTime' }}</span>
+            </div>
+            <small>{{ item.durationMinutes }} min - EUR {{ item.estimatedCostMicros / 1000000 | number:'1.2-6' }}</small>
+            <nz-tag [nzColor]="item.requiresApproval ? 'gold' : 'green'">
+              {{ item.requiresApproval ? 'approval required' : 'capacity reserved' }}
+            </nz-tag>
+            <div class="portfolio-allocation__item-evidence">
+              <span>Reservation {{ item.reservationId }}</span>
+              <span>Record {{ item.recordDigest }}</span>
+              <span>Created {{ item.createdAt | date:'medium' }}</span>
+              <span *ngFor="let reason of item.approvalReasons">Approval gate: {{ reason }}</span>
+            </div>
+          </article>
+          <p *ngIf="!accepted.items.length">The accepted record did not return allocation item rows. Review the allocation before relying on its capacity holds.</p>
+        </div>
+        <p class="portfolio-allocation__notice">
+          Capacity is reserved only. Approval and execution remain separate governed actions.
+        </p>
+      </section>
+
+      <section class="portfolio-allocation" aria-live="polite" [attr.aria-busy]="portfolioAllocationHistoryLoading">
+        <header>
+          <div>
+            <span>Owner-scoped immutable records</span>
+            <h3>Recent allocation history</h3>
+          </div>
+          <button
+            nz-button
+            nzType="default"
+            nzSize="small"
+            type="button"
+            (click)="loadPortfolioAllocationHistory(true)"
+            [nzLoading]="portfolioAllocationHistoryLoading"
+          >
+            <i nz-icon nzType="reload" nzTheme="outline"></i>
+            Refresh
+          </button>
+        </header>
+
+        <div class="portfolio-allocation__items" *ngIf="portfolioAllocationHistoryLoading">
+          <p><i nz-icon nzType="loading" nzTheme="outline"></i> Loading recent accepted allocations...</p>
+        </div>
+
+        <div class="portfolio-allocation__items" *ngIf="portfolioAllocationHistoryError">
+          <div class="portfolio-planner__error" role="alert">
+            <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+            <span>{{ portfolioAllocationHistoryError }}</span>
+            <button nz-button nzType="default" nzSize="small" type="button" (click)="loadPortfolioAllocationHistory(true)">Retry</button>
+          </div>
+        </div>
+
+        <div
+          class="portfolio-allocation__items"
+          *ngIf="portfolioAllocationHistoryLoaded && !portfolioAllocationHistoryLoading && !portfolioAllocationHistoryError"
+        >
+          <p *ngIf="!portfolioAllocationHistory.length">No accepted portfolio allocations have been recorded yet.</p>
+          <article *ngFor="let record of portfolioAllocationHistory">
+            <div>
+              <strong>{{ record.allocation.planId }}</strong>
+              <span>{{ record.allocation.acceptedAt | date:'medium' }} - {{ record.allocation.status }}</span>
+            </div>
+            <small>
+              {{ record.items.length }} reservations - {{ portfolioAllocationApprovalCount(record) }} approval flags
+            </small>
+            <div class="portfolio-allocation__tags">
+              <nz-tag nzColor="green">{{ record.authority }}</nz-tag>
+              <nz-tag *ngIf="record.replayed" nzColor="blue">replayed</nz-tag>
+            </div>
+            <details class="portfolio-allocation__item-evidence">
+              <summary>Inspect immutable reservation records</summary>
+              <div *ngFor="let item of record.items">
+                <strong>{{ portfolioPursuitTitle(item.pursuitId) }}</strong>
+                <span>{{ item.scheduledStart | date:'short' }} - {{ item.scheduledEnd | date:'shortTime' }} - {{ item.durationMinutes }} min</span>
+                <span>Reservation {{ item.reservationId }}</span>
+                <span>Record {{ item.recordDigest }}</span>
+                <span *ngIf="item.requiresApproval">Approval required: {{ item.approvalReasons.join(', ') }}</span>
+                <span *ngIf="!item.requiresApproval">No approval flag recorded for this capacity hold.</span>
+              </div>
+            </details>
+
+            <div class="portfolio-execution-proposal__action">
+              <div>
+                <strong>Prepare execution evidence</strong>
+                <span>Snapshot proposed actions and current safety gates without granting authority.</span>
+              </div>
+              <button
+                nz-button
+                nzType="default"
+                nzSize="small"
+                type="button"
+                (click)="preparePortfolioExecutionProposals(record)"
+                [nzLoading]="portfolioExecutionProposalRunningId === record.allocation.id"
+                [disabled]="!canPreparePortfolioExecutionProposals(record)"
+              >
+                <i nz-icon nzType="file-protect" nzTheme="outline"></i>
+                {{ portfolioExecutionProposals[record.allocation.id] ? 'Prepare fresh snapshot' : 'Prepare proposals' }}
+              </button>
+            </div>
+
+            <div
+              class="portfolio-planner__error portfolio-execution-proposal__error"
+              *ngIf="portfolioExecutionProposalErrors[record.allocation.id] as proposalError"
+              role="alert"
+            >
+              <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+              <span>{{ proposalError }}</span>
+            </div>
+
+            <section
+              class="portfolio-execution-proposal"
+              *ngIf="portfolioExecutionProposals[record.allocation.id] as proposalResult"
+              aria-live="polite"
+            >
+              <header>
+                <div>
+                  <span>Immutable execution proposal evidence</span>
+                  <strong>{{ proposalResult.proposal.status }}</strong>
+                </div>
+                <div class="portfolio-allocation__tags">
+                  <nz-tag nzColor="blue">{{ proposalResult.authority }}</nz-tag>
+                  <nz-tag *ngIf="proposalResult.replayed" nzColor="cyan">replayed safely</nz-tag>
+                  <nz-tag [nzColor]="portfolioExecutionFreshnessColor(proposalResult.freshness.status)">
+                    {{ portfolioExecutionFreshnessLabel(proposalResult.freshness.status) }}
+                  </nz-tag>
+                </div>
+              </header>
+
+              <p class="portfolio-execution-proposal__freshness" role="status">
+                <i nz-icon nzType="history" nzTheme="outline"></i>
+                <span>
+                  <strong>Revalidation required.</strong>
+                  {{ proposalResult.freshness.reason }}
+                  Checked {{ proposalResult.freshness.checkedAt | date:'medium' }}.
+                </span>
+              </p>
+
+              <dl class="portfolio-execution-proposal__facts">
+                <div><dt>Prepared</dt><dd>{{ proposalResult.proposal.preparedAt | date:'medium' }}</dd></div>
+                <div><dt>Prepared by</dt><dd>{{ proposalResult.proposal.actor }}</dd></div>
+                <div><dt>Proposal</dt><dd>{{ proposalResult.proposal.id }}</dd></div>
+                <div><dt>Allocation</dt><dd>{{ proposalResult.proposal.allocationId }}</dd></div>
+                <div><dt>Allocation digest</dt><dd><code>{{ proposalResult.proposal.allocationRecordDigest }}</code></dd></div>
+                <div><dt>Snapshot digest</dt><dd><code>{{ proposalResult.proposal.snapshotDigest }}</code></dd></div>
+                <div><dt>Proposal record</dt><dd><code>{{ proposalResult.proposal.recordDigest }}</code></dd></div>
+              </dl>
+
+              <section class="portfolio-dispatch" [attr.aria-labelledby]="'portfolio-dispatch-title-' + proposalResult.proposal.id">
+                <header class="portfolio-dispatch__header">
+                  <div>
+                    <span>Governed coordination</span>
+                    <strong [id]="'portfolio-dispatch-title-' + proposalResult.proposal.id">Create approved local workflows</strong>
+                    <small>Explicitly select approved items. Every item is revalidated and remains review-gated.</small>
+                  </div>
+                  <button
+                    nz-button
+                    nzType="default"
+                    nzSize="small"
+                    type="button"
+                    (click)="loadPortfolioDispatchCoordination(proposalResult)"
+                    [nzLoading]="portfolioDispatchCoordinationLoadingId === proposalResult.proposal.id"
+                    [disabled]="!!portfolioDispatchCoordinationLoadingId || !!portfolioDispatchRunningId"
+                  >
+                    <i nz-icon nzType="sync" nzTheme="outline"></i>
+                    Refresh eligibility
+                  </button>
+                </header>
+
+                <div
+                  class="portfolio-planner__error portfolio-dispatch__error"
+                  *ngIf="portfolioDispatchCoordinationErrors[proposalResult.proposal.id] as coordinationError"
+                  role="alert"
+                >
+                  <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+                  <span>{{ coordinationError }}</span>
+                </div>
+
+                <ng-container *ngIf="portfolioDispatchCoordination[proposalResult.proposal.id] as coordination; else portfolioDispatchLoading">
+                  <p class="portfolio-dispatch__freshness" role="status">
+                    <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+                    <span>
+                      Current read-only snapshot checked {{ coordination.freshness.checkedAt | date:'short' }}.
+                      {{ coordination.freshness.reason }}
+                    </span>
+                  </p>
+                  <div class="portfolio-dispatch__metrics" aria-label="Current coordination status">
+                    <div><strong>{{ coordination.eligible }}</strong><span>Eligible</span></div>
+                    <div><strong>{{ coordination.needsApproval }}</strong><span>Need approval</span></div>
+                    <div><strong>{{ coordination.blocked }}</strong><span>Blocked</span></div>
+                    <div><strong>{{ coordination.stale }}</strong><span>Stale</span></div>
+                    <div><strong>{{ coordination.dispatched }}</strong><span>Already created</span></div>
+                  </div>
+
+                  <div class="portfolio-dispatch__selection">
+                    <div
+                      class="portfolio-dispatch__item"
+                      *ngFor="let entry of coordination.items"
+                      [class.portfolio-dispatch__item--selectable]="entry.selectable"
+                      [class.portfolio-dispatch__item--selected]="portfolioDispatchSelections[proposalResult.proposal.id][entry.item.id]"
+                    >
+                      <label
+                        nz-checkbox
+                        [(ngModel)]="portfolioDispatchSelections[proposalResult.proposal.id][entry.item.id]"
+                        [nzDisabled]="!entry.selectable || portfolioDispatchRunningId === proposalResult.proposal.id"
+                      ></label>
+                      <span class="portfolio-dispatch__item-copy">
+                        <strong>{{ portfolioPursuitTitle(entry.item.pursuitId) }}</strong>
+                        <small>{{ entry.reason }}</small>
+                        <span *ngIf="entry.decision">
+                          Approved {{ entry.decision.decidedAt | date:'short' }}
+                          <ng-container *ngIf="entry.decision.expiresAt"> · expires {{ entry.decision.expiresAt | date:'short' }}</ng-container>
+                        </span>
+                        <span *ngIf="entry.latestDispatch?.workflowId">Workflow {{ entry.latestDispatch?.workflowId }} · {{ entry.latestDispatch?.workflowState }}</span>
+                      </span>
+                      <nz-tag [nzColor]="portfolioDispatchEligibilityColor(entry.eligibility)">{{ entry.eligibility }}</nz-tag>
+                    </div>
+                  </div>
+
+                  <div class="portfolio-dispatch__action-row">
+                    <label [attr.for]="'portfolio-dispatch-confirmation-' + proposalResult.proposal.id">
+                      <span>Exact dispatch phrase</span>
+                      <input
+                        nz-input
+                        [id]="'portfolio-dispatch-confirmation-' + proposalResult.proposal.id"
+                        maxlength="48"
+                        autocomplete="off"
+                        placeholder="DISPATCH APPROVED PORTFOLIO WORKFLOWS"
+                        [(ngModel)]="portfolioDispatchConfirmations[proposalResult.proposal.id]"
+                        [disabled]="portfolioDispatchRunningId === proposalResult.proposal.id"
+                      />
+                    </label>
+                    <button
+                      nz-button
+                      nzType="primary"
+                      type="button"
+                      (click)="dispatchPortfolioWorkflows(proposalResult)"
+                      [nzLoading]="portfolioDispatchRunningId === proposalResult.proposal.id"
+                      [disabled]="!canDispatchPortfolioWorkflows(proposalResult)"
+                    >
+                      <i nz-icon nzType="deployment-unit" nzTheme="outline"></i>
+                      Create {{ portfolioDispatchSelectedCount(proposalResult.proposal.id) || 0 }} selected
+                    </button>
+                  </div>
+
+                  <div
+                    class="portfolio-planner__error portfolio-dispatch__error"
+                    *ngIf="portfolioDispatchErrors[proposalResult.proposal.id] as dispatchError"
+                    role="alert"
+                  >
+                    <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+                    <span>{{ dispatchError }}</span>
+                  </div>
+
+                  <section
+                    class="portfolio-dispatch__result"
+                    *ngIf="portfolioDispatchResults[proposalResult.proposal.id] as dispatchResult"
+                    aria-live="polite"
+                  >
+                    <header>
+                      <strong>{{ dispatchResult.status }}</strong>
+                      <nz-tag nzColor="blue">{{ dispatchResult.authority }}</nz-tag>
+                    </header>
+                    <p>{{ dispatchResult.created }} created · {{ dispatchResult.replayed }} recovered · {{ dispatchResult.needsReview }} need review · {{ dispatchResult.failed }} failed</p>
+                    <ul>
+                      <li *ngFor="let outcome of dispatchResult.items">
+                        <span>{{ portfolioDispatchItemTitle(coordination, outcome.proposalItemId) }}</span>
+                        <strong>{{ outcome.outcome }}</strong>
+                        <small>{{ outcome.message }}</small>
+                      </li>
+                    </ul>
+                  </section>
+                </ng-container>
+
+                <ng-template #portfolioDispatchLoading>
+                  <div class="portfolio-dispatch__loading">
+                    <nz-spin nzSimple *ngIf="portfolioDispatchCoordinationBatchLoading || portfolioDispatchCoordinationLoadingId === proposalResult.proposal.id"></nz-spin>
+                    <span *ngIf="portfolioDispatchCoordinationBatchLoading">Restoring current approvals and dispatch history.</span>
+                    <span *ngIf="!portfolioDispatchCoordinationBatchLoading && portfolioDispatchCoordinationLoadingId !== proposalResult.proposal.id">Refresh eligibility to inspect current owner approvals.</span>
+                  </div>
+                </ng-template>
+              </section>
+
+              <div class="portfolio-execution-proposal__items">
+                <div class="portfolio-execution-proposal__item" *ngFor="let item of proposalResult.items">
+                  <div class="portfolio-execution-proposal__item-heading">
+                    <div>
+                      <strong>{{ portfolioPursuitTitle(item.pursuitId) }}</strong>
+                      <span>{{ item.actionSummary }}</span>
+                    </div>
+                    <nz-tag [nzColor]="portfolioExecutionProposalStatusColor(item.status)">{{ item.status }}</nz-tag>
+                  </div>
+                  <dl>
+                    <div><dt>Pursuit state</dt><dd>{{ item.pursuitStatus }}</dd></div>
+                    <div><dt>Risk</dt><dd>{{ item.riskLevel }}</dd></div>
+                    <div><dt>Autonomy</dt><dd>{{ item.autonomyLevel }}</dd></div>
+                    <div><dt>Reservation</dt><dd>{{ item.reservationId }}</dd></div>
+                  </dl>
+                  <div class="portfolio-execution-proposal__reasons" *ngIf="item.approvalReasons.length || item.blockedReasons.length">
+                    <span *ngFor="let reason of item.approvalReasons">Approval gate: {{ reason }}</span>
+                    <span *ngFor="let reason of item.blockedReasons">Blocked: {{ reason }}</span>
+                  </div>
+                  <details class="portfolio-execution-proposal__digests">
+                    <summary>Inspect immutable item evidence</summary>
+                    <span>Allocation item {{ item.allocationItemId }}</span>
+                    <span>Allocation item digest {{ item.allocationItemDigest }}</span>
+                    <span>State digest {{ item.stateDigest }}</span>
+                    <span>Record digest {{ item.recordDigest }}</span>
+                    <span>Prepared {{ item.preparedAt | date:'medium' }}</span>
+                  </details>
+
+                  <section
+                    class="portfolio-proposal-decision"
+                    [class.portfolio-proposal-decision--blocked]="item.status === 'blocked'"
+                  >
+                    <header>
+                      <div>
+                        <strong>Owner decision</strong>
+                        <span *ngIf="item.status !== 'blocked'">Record a review decision against this exact immutable item.</span>
+                        <span *ngIf="item.status === 'blocked'">Decisions are unavailable while the proposal item is blocked.</span>
+                      </div>
+                      <nz-tag nzColor="blue">approval_decision_only</nz-tag>
+                    </header>
+
+                    <ng-container *ngIf="item.status !== 'blocked'">
+                      <label class="portfolio-proposal-decision__reason" [attr.for]="'proposal-decision-reason-' + item.id">
+                        <span>Reason</span>
+                        <textarea
+                          nz-input
+                          [id]="'proposal-decision-reason-' + item.id"
+                          rows="2"
+                          maxlength="2000"
+                          placeholder="State why this exact proposal item should be approved, rejected, or clarified."
+                          [(ngModel)]="portfolioExecutionProposalDecisionReasons[item.id]"
+                          [disabled]="portfolioExecutionProposalDecisionRunningId === item.id"
+                        ></textarea>
+                      </label>
+
+                      <div class="portfolio-proposal-decision__actions">
+                        <button
+                          nz-button
+                          nzType="primary"
+                          nzSize="small"
+                          type="button"
+                          (click)="decidePortfolioExecutionProposalItem(item, 'approved')"
+                          [nzLoading]="portfolioExecutionProposalDecisionRunningId === item.id"
+                          [disabled]="!canDecidePortfolioExecutionProposalItem(item, 'approved')"
+                        >Approve</button>
+                        <button
+                          nz-button
+                          nzType="default"
+                          nzSize="small"
+                          type="button"
+                          (click)="decidePortfolioExecutionProposalItem(item, 'needs_clarification')"
+                          [disabled]="!canDecidePortfolioExecutionProposalItem(item, 'needs_clarification')"
+                        >Request clarification</button>
+                        <button
+                          nz-button
+                          nzDanger
+                          nzType="default"
+                          nzSize="small"
+                          type="button"
+                          (click)="decidePortfolioExecutionProposalItem(item, 'rejected')"
+                          [disabled]="!canDecidePortfolioExecutionProposalItem(item, 'rejected')"
+                        >Reject</button>
+                        <button
+                          nz-button
+                          nzDanger
+                          nzType="default"
+                          nzSize="small"
+                          type="button"
+                          *ngIf="latestPortfolioExecutionProposalDecision(item.id)?.decision?.decision === 'approved'"
+                          (click)="decidePortfolioExecutionProposalItem(item, 'revoked')"
+                          [disabled]="!canDecidePortfolioExecutionProposalItem(item, 'revoked')"
+                        >Revoke approval</button>
+                      </div>
+                    </ng-container>
+
+                    <div
+                      class="portfolio-planner__error portfolio-proposal-decision__error"
+                      *ngIf="portfolioExecutionProposalDecisionErrors[item.id] as decisionError"
+                      role="alert"
+                    >
+                      <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+                      <span>{{ decisionError }}</span>
+                    </div>
+
+                    <div
+                      class="portfolio-proposal-decision__history"
+                      *ngIf="portfolioExecutionProposalDecisionHistory[item.id] as decisionHistory"
+                    >
+                      <header *ngIf="decisionHistory.length">
+                        <strong>Immutable decision history</strong>
+                        <span>{{ decisionHistory.length }} record{{ decisionHistory.length === 1 ? '' : 's' }}</span>
+                      </header>
+                      <article *ngFor="let decisionResult of decisionHistory">
+                        <div class="portfolio-proposal-decision__history-heading">
+                          <nz-tag [nzColor]="portfolioExecutionProposalDecisionColor(decisionResult.decision.decision)">
+                            {{ decisionResult.decision.decision }}
+                          </nz-tag>
+                          <span>{{ decisionResult.decision.decidedAt | date:'medium' }}</span>
+                          <nz-tag *ngIf="decisionResult.replayed" nzColor="cyan">replayed</nz-tag>
+                        </div>
+                        <p>{{ decisionResult.decision.reason }}</p>
+                        <dl>
+                          <div><dt>Actor</dt><dd>{{ decisionResult.decision.actor }}</dd></div>
+                          <div><dt>Authority</dt><dd>{{ decisionResult.authority }}</dd></div>
+                          <div *ngIf="decisionResult.decision.expiresAt"><dt>Expires</dt><dd>{{ decisionResult.decision.expiresAt | date:'medium' }}</dd></div>
+                        </dl>
+                        <details>
+                          <summary>Inspect decision evidence</summary>
+                          <span>Decision {{ decisionResult.decision.id }}</span>
+                          <span>Confirmation {{ decisionResult.decision.confirmation }}</span>
+                          <span>Proposal item digest {{ decisionResult.decision.proposalItemDigest }}</span>
+                          <span>State digest {{ decisionResult.decision.stateDigest }}</span>
+                          <span>Record digest {{ decisionResult.decision.recordDigest }}</span>
+                        </details>
+                      </article>
+                    </div>
+
+                    <p class="portfolio-proposal-decision__notice">
+                      Decision record only. Approval does not queue, execute, or authorize runtime work.
+                    </p>
+
+                    <section
+                      class="portfolio-workflow-authorization"
+                      *ngIf="latestPortfolioExecutionProposalDecision(item.id)?.decision?.decision === 'approved'"
+                    >
+                      <header>
+                        <div>
+                          <strong>Review exact workflow authorization</strong>
+                          <span>One fixed, reversible local workflow-intake effect. No caller-selected tool or runtime.</span>
+                        </div>
+                        <nz-tag nzColor="gold">unconsumed receipt only</nz-tag>
+                      </header>
+
+                      <dl class="portfolio-workflow-authorization__contract">
+                        <div><dt>Action</dt><dd>pursuit.portfolio.create-workflow</dd></div>
+                        <div><dt>Tool</dt><dd>workflow.intake</dd></div>
+                        <div><dt>Runtime</dt><dd>hai-workflow-engine</dd></div>
+                        <div><dt>Effect</dt><dd>Reversible, local, EUR 0</dd></div>
+                      </dl>
+
+                      <label [attr.for]="'workflow-authorization-confirmation-' + item.id">
+                        <span>Type <code>AUTHORIZE PORTFOLIO WORKFLOW EFFECT</code></span>
+                        <input
+                          nz-input
+                          [id]="'workflow-authorization-confirmation-' + item.id"
+                          autocomplete="off"
+                          [(ngModel)]="portfolioWorkflowAuthorizationConfirmations[item.id]"
+                          [disabled]="portfolioWorkflowAuthorizationRunningId === item.id"
+                        >
+                      </label>
+
+                      <div class="portfolio-workflow-authorization__actions">
+                        <button
+                          nz-button
+                          nzType="primary"
+                          nzSize="small"
+                          type="button"
+                          (click)="authorizePortfolioWorkflowEffect(item)"
+                          [nzLoading]="portfolioWorkflowAuthorizationRunningId === item.id"
+                          [disabled]="!canAuthorizePortfolioWorkflowEffect(item)"
+                        >Evaluate exact effect</button>
+                        <span>This evaluates policy only. It cannot create or run a workflow.</span>
+                      </div>
+                    </section>
+
+                    <div
+                      class="portfolio-planner__error portfolio-workflow-authorization__error"
+                      *ngIf="portfolioWorkflowAuthorizationErrors[item.id] as authorizationError"
+                      role="alert"
+                    >
+                      <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+                      <span>{{ authorizationError }}</span>
+                    </div>
+
+                    <section
+                      class="portfolio-workflow-receipt"
+                      *ngIf="portfolioWorkflowAuthorizationResults[item.id] as authorization"
+                      aria-live="polite"
+                    >
+                      <header>
+                        <div>
+                          <strong>Policy receipt</strong>
+                          <span>{{ authorization.receipt.evaluatedAt | date:'medium' }}</span>
+                        </div>
+                        <nz-tag [nzColor]="portfolioWorkflowAuthorizationColor(authorization.receipt.outcome)">
+                          {{ authorization.receipt.outcome }}
+                        </nz-tag>
+                      </header>
+                      <p>{{ authorization.receipt.reason }}</p>
+                      <p class="portfolio-workflow-receipt__boundary">
+                        Receipt issued but not consumed. No workflow was queued, created, or executed.
+                      </p>
+                      <dl>
+                        <div><dt>Receipt</dt><dd>{{ authorization.receipt.id }}</dd></div>
+                        <div><dt>Authority</dt><dd>{{ authorization.authority }}</dd></div>
+                        <div><dt>Risk</dt><dd>{{ authorization.effect.risk }}</dd></div>
+                        <div><dt>Cost</dt><dd>EUR {{ authorization.receipt.estimatedCostEur | number:'1.2-6' }}</dd></div>
+                      </dl>
+                      <details>
+                        <summary>Inspect immutable effect binding</summary>
+                        <span>Effect {{ authorization.effect.effectDigest }}</span>
+                        <span>Approval {{ authorization.effect.approvalSourceId }}</span>
+                        <span>Request {{ authorization.receipt.requestDigest }}</span>
+                        <span>Decision {{ authorization.receipt.decisionDigest }}</span>
+                      </details>
+                    </section>
+
+                    <section
+                      class="portfolio-workflow-authorization portfolio-workflow-execution"
+                      *ngIf="portfolioWorkflowAuthorizationResults[item.id]?.receipt?.outcome === 'authorized' && !portfolioWorkflowExecutionResults[item.id]"
+                    >
+                      <header>
+                        <div>
+                          <strong>Create the approved workflow</strong>
+                          <span>Consumes this receipt once and creates one local review-gated workflow.</span>
+                        </div>
+                        <nz-tag nzColor="blue">single-use effect</nz-tag>
+                      </header>
+
+                      <p class="portfolio-workflow-receipt__boundary">
+                        This creates the workflow record only. It does not run work, contact anyone, settle the resource hold, or perform an external action.
+                      </p>
+                      <label [attr.for]="'workflow-execution-confirmation-' + item.id">
+                        <span>Type <code>CREATE APPROVED PORTFOLIO WORKFLOW</code></span>
+                        <input
+                          nz-input
+                          [id]="'workflow-execution-confirmation-' + item.id"
+                          autocomplete="off"
+                          [(ngModel)]="portfolioWorkflowExecutionConfirmations[item.id]"
+                          [disabled]="portfolioWorkflowExecutionRunningId === item.id"
+                        >
+                      </label>
+                      <div class="portfolio-workflow-authorization__actions">
+                        <button
+                          nz-button
+                          nzType="primary"
+                          nzSize="small"
+                          type="button"
+                          (click)="executePortfolioWorkflowEffect(item)"
+                          [nzLoading]="portfolioWorkflowExecutionRunningId === item.id"
+                          [disabled]="!canExecutePortfolioWorkflowEffect(item)"
+                        >Create review-gated workflow</button>
+                        <span>The consumed receipt cannot be reused.</span>
+                      </div>
+                    </section>
+
+                    <div
+                      class="portfolio-planner__error portfolio-workflow-authorization__error"
+                      *ngIf="portfolioWorkflowExecutionErrors[item.id] as executionError"
+                      role="alert"
+                    >
+                      <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+                      <span>{{ executionError }}</span>
+                    </div>
+
+                    <section
+                      class="portfolio-workflow-receipt portfolio-workflow-execution-result"
+                      *ngIf="portfolioWorkflowExecutionResults[item.id] as execution"
+                      aria-live="polite"
+                    >
+                      <header>
+                        <div>
+                          <strong>{{ execution.replayed ? 'Existing workflow recovered' : 'Workflow created' }}</strong>
+                          <span>{{ execution.consumption.consumedAt | date:'medium' }}</span>
+                        </div>
+                        <nz-tag nzColor="green">receipt consumed</nz-tag>
+                      </header>
+                      <p class="portfolio-workflow-receipt__boundary">
+                        Workflow creation is complete. The workflow remains review-gated and has not executed.
+                      </p>
+                      <dl>
+                        <div><dt>Workflow</dt><dd>{{ execution.workflowId }}</dd></div>
+                        <div><dt>State</dt><dd>{{ execution.workflowState }}</dd></div>
+                        <div><dt>Authority</dt><dd>{{ execution.authority }}</dd></div>
+                        <div><dt>Consumer</dt><dd>{{ execution.consumption.consumer }}</dd></div>
+                      </dl>
+                      <div class="portfolio-workflow-authorization__actions">
+                        <button nz-button nzType="default" nzSize="small" type="button" (click)="openWorkflow(execution.workflowId)">
+                          Open workflow
+                        </button>
+                        <button
+                          nz-button
+                          nzType="default"
+                          nzSize="small"
+                          type="button"
+                          (click)="refreshPortfolioWorkflowVerification(item)"
+                          [nzLoading]="portfolioWorkflowVerificationLoading[item.id]"
+                          [disabled]="portfolioWorkflowVerificationLoading[item.id]"
+                        >Check verified completion</button>
+                        <span>Verification: {{ portfolioWorkflowVerificationLabel(item.id) }}</span>
+                      </div>
+                      <details>
+                        <summary>Inspect consumption evidence</summary>
+                        <span>Receipt {{ execution.consumption.receiptId }}</span>
+                        <span>Target {{ execution.consumption.executionTarget }}</span>
+                        <span>Receipt digest {{ execution.consumption.receiptDigest }}</span>
+                      </details>
+
+                      <div
+                        class="portfolio-planner__error portfolio-workflow-authorization__error"
+                        *ngIf="portfolioWorkflowVerificationErrors[item.id] as verificationError"
+                        role="alert"
+                      >
+                        <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+                        <span>{{ verificationError }}</span>
+                      </div>
+
+                      <section
+                        class="portfolio-workflow-authorization portfolio-workflow-settlement"
+                        *ngIf="portfolioVerifiedWorkflow(item.id) as verifiedWorkflow"
+                      >
+                        <header>
+                          <div>
+                            <strong>Settle verified resource usage</strong>
+                            <span>Completed {{ verifiedWorkflow.item.completedAt | date:'medium' }} with {{ verifiedWorkflow.item.verificationStatus }} verification.</span>
+                          </div>
+                          <nz-tag nzColor="green">verified completion</nz-tag>
+                        </header>
+                        <p class="portfolio-workflow-receipt__boundary">
+                          This records measured accounting against the existing reservation only. It cannot execute or repeat workflow work.
+                        </p>
+
+                        <ng-container *ngIf="!portfolioWorkflowSettlementResults[item.id]">
+                          <div class="portfolio-workflow-settlement__usage">
+                            <label [attr.for]="'workflow-settlement-effort-' + item.id">
+                              <span>Actual effort (minutes)</span>
+                              <input
+                                nz-input
+                                type="number"
+                                min="0"
+                                step="1"
+                                [id]="'workflow-settlement-effort-' + item.id"
+                                [(ngModel)]="portfolioWorkflowSettlementEffortMinutes[item.id]"
+                                [disabled]="portfolioWorkflowSettlementRunningId === item.id"
+                              >
+                            </label>
+                            <label [attr.for]="'workflow-settlement-cost-' + item.id">
+                              <span>Actual cost (micros, EUR)</span>
+                              <input
+                                nz-input
+                                type="number"
+                                min="0"
+                                step="1"
+                                [id]="'workflow-settlement-cost-' + item.id"
+                                [(ngModel)]="portfolioWorkflowSettlementCostMicros[item.id]"
+                                [disabled]="portfolioWorkflowSettlementRunningId === item.id"
+                              >
+                            </label>
+                          </div>
+                          <label [attr.for]="'workflow-settlement-confirmation-' + item.id">
+                            <span>Type <code>SETTLE VERIFIED PORTFOLIO WORK</code></span>
+                            <input
+                              nz-input
+                              [id]="'workflow-settlement-confirmation-' + item.id"
+                              autocomplete="off"
+                              [(ngModel)]="portfolioWorkflowSettlementConfirmations[item.id]"
+                              [disabled]="portfolioWorkflowSettlementRunningId === item.id"
+                            >
+                          </label>
+                          <div class="portfolio-workflow-authorization__actions">
+                            <button
+                              nz-button
+                              nzType="primary"
+                              nzSize="small"
+                              type="button"
+                              (click)="settlePortfolioWorkflow(item)"
+                              [nzLoading]="portfolioWorkflowSettlementRunningId === item.id"
+                              [disabled]="!canSettlePortfolioWorkflow(item)"
+                            >Settle reservation</button>
+                            <span>Whole, non-negative measured values are required.</span>
+                          </div>
+                        </ng-container>
+
+                        <div
+                          class="portfolio-planner__error portfolio-workflow-authorization__error"
+                          *ngIf="portfolioWorkflowSettlementErrors[item.id] as settlementError"
+                          role="alert"
+                        >
+                          <i nz-icon nzType="exclamation-circle" nzTheme="outline"></i>
+                          <span>{{ settlementError }}</span>
+                        </div>
+
+                        <section
+                          class="portfolio-workflow-receipt portfolio-workflow-settlement__result"
+                          *ngIf="portfolioWorkflowSettlementResults[item.id] as settlement"
+                          aria-live="polite"
+                        >
+                          <header>
+                            <div>
+                              <strong>{{ settlement.replayed ? 'Existing settlement recovered' : 'Reservation settled' }}</strong>
+                              <span>{{ settlement.verificationStatus }} evidence retained</span>
+                            </div>
+                            <nz-tag nzColor="green">{{ settlement.disposition }}</nz-tag>
+                          </header>
+                          <dl>
+                            <div><dt>Effort used</dt><dd>{{ settlement.actualEffortMinutes }} minutes</dd></div>
+                            <div><dt>Cost used</dt><dd>{{ settlement.actualCostMicros }} micros</dd></div>
+                            <div><dt>Resource state</dt><dd>{{ settlement.resourceUsage.state }}</dd></div>
+                            <div><dt>Effort remaining</dt><dd>{{ settlement.resourceUsage.effortRemainingHours | number:'1.0-2' }} hours</dd></div>
+                            <div><dt>Spend remaining</dt><dd>EUR {{ settlement.resourceUsage.spendRemainingEur | number:'1.2-6' }}</dd></div>
+                            <div><dt>Learning evidence</dt><dd>{{ settlement.learningStatus }}</dd></div>
+                            <div><dt>Calibration review</dt><dd>{{ settlement.learningProposalStatus }}</dd></div>
+                            <div><dt>Comparable samples</dt><dd>{{ settlement.learningSampleCount }}</dd></div>
+							<div><dt>New since review</dt><dd>{{ settlement.learningNewEvidenceCount }}</dd></div>
+							<div><dt>Material drift</dt><dd>{{ settlement.learningDriftDetected ? 'detected' : 'not detected' }}</dd></div>
+                            <div><dt>Replay</dt><dd>{{ settlement.replayed ? 'yes' : 'no' }}</dd></div>
+                          </dl>
+                          <details>
+                            <summary>Inspect settlement evidence</summary>
+                            <span>Reservation {{ settlement.reservationId }}</span>
+                            <span>Authority {{ settlement.authority }}</span>
+                            <span>Evidence {{ settlement.evidenceUri }}</span>
+                            <span>Completion attestation {{ settlement.completionAttestationId }}</span>
+                            <span>Settlement proof {{ settlement.settlementProofId }}</span>
+                            <span *ngIf="settlement.learningOutcomeId">Review evidence {{ settlement.learningOutcomeId }}</span>
+                            <span *ngIf="settlement.learningProposalId">Review proposal {{ settlement.learningProposalId }}</span>
+                            <span *ngIf="settlement.learningStatus !== 'evidence_recorded'">
+                              The accounting settlement is valid, but controlled-learning evidence needs recovery.
+                            </span>
+                          </details>
+                        </section>
+                      </section>
+                    </section>
+                  </section>
+                </div>
+              </div>
+
+              <p class="portfolio-execution-proposal__notice">
+                Proposal evidence only. This does not approve, queue, or execute work, and it creates no execution authority.
+              </p>
+            </section>
+          </article>
+        </div>
+
+        <p class="portfolio-allocation__notice">
+          History is read-only. Allocation records reserve bounded capacity; they do not approve or execute work.
+        </p>
+      </section>
+
+      <footer class="portfolio-planner__actions">
+        <button
+          nz-button
+          nzType="default"
+          type="button"
+          (click)="closePortfolioPlanner()"
+          [disabled]="portfolioPlanningRunning || portfolioAcceptanceRunning || !!portfolioExecutionProposalPendingId || !!portfolioExecutionProposalRunningId"
+        >Close</button>
+        <button
+          *ngIf="canAcceptPortfolioAllocation()"
+          nz-button
+          nzType="default"
+          type="button"
+          (click)="acceptPortfolioAllocation()"
+        >
+          <i nz-icon nzType="lock" nzTheme="outline"></i>
+          Accept allocation
+        </button>
+        <button
+          nz-button
+          nzType="primary"
+          type="button"
+          (click)="planPortfolio()"
+          [nzLoading]="portfolioPlanningRunning"
+          [disabled]="portfolioAcceptancePending || portfolioAcceptanceRunning || !!portfolioExecutionProposalPendingId || !!portfolioExecutionProposalRunningId"
+        >
+          Calculate advisory plan
+        </button>
+      </footer>
+    </section>
+  </ng-container>
+</nz-modal>
 
 <nz-modal
   [nzVisible]="!!inspectedAction"

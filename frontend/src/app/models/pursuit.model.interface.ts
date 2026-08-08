@@ -19,6 +19,111 @@ import {
   IWorkflowTransition,
 } from './workflow.model.interface';
 
+export interface IPursuitSuccessCriterion {
+  id: string;
+  description: string;
+  status: 'pending' | 'satisfied' | 'waived';
+  evidenceRequired: boolean;
+  evidenceUri?: string;
+  verificationStatus?: string;
+  waiverReason?: string;
+}
+
+export interface IPursuitStopCondition {
+  id: string;
+  description: string;
+  status: 'monitoring' | 'triggered' | 'resolved';
+  reason?: string;
+  triggeredAt?: string;
+  resolvedAt?: string;
+}
+
+export interface IPursuitDependency {
+  id: string;
+  label: string;
+  status: 'pending' | 'satisfied' | 'blocked' | 'waived';
+  owner?: string;
+  relatedPursuitId?: string;
+  dueAt?: string;
+  evidenceUri?: string;
+  reason?: string;
+}
+
+export interface IPursuitResourceLimits {
+  maxEffortHours?: number;
+  maxSpendEur?: number;
+  maxParallelWorkflows?: number;
+  notes?: string;
+}
+
+export type PursuitResourceUsageState = 'not_configured' | 'within_limits' | 'reserved' | 'exhausted' | 'exceeded' | 'unavailable';
+
+export interface IPursuitActiveResourceReservation {
+  id: string;
+  operationId: string;
+  estimatedEffortMinutes: number;
+  estimatedCostEur: number;
+  reason: string;
+  actor: string;
+  reservedAt: string;
+  stale: boolean;
+  reviewReason?: string;
+}
+
+export interface IPursuitResourceUsage {
+  state: PursuitResourceUsageState;
+  available: boolean;
+  limitsConfigured: boolean;
+  effortRecordedHours: number;
+  effortReservedHours: number;
+  effortCommittedHours: number;
+  effortLimitHours: number;
+  effortRemainingHours: number;
+  effortExhausted: boolean;
+  effortExceeded: boolean;
+  spendIncurredEur: number;
+  spendRefundedEur: number;
+  spendNetEur: number;
+  spendReservedEur: number;
+  spendCommittedEur: number;
+  spendLimitEur: number;
+  spendRemainingEur: number;
+  spendExhausted: boolean;
+  spendExceeded: boolean;
+  eventCount: number;
+  activeReservations: number;
+  latestRecordedAt?: string;
+  latestReservedAt?: string;
+  blockingReason?: string;
+  reservations: IPursuitActiveResourceReservation[];
+}
+
+export interface IPursuitResourceEvent {
+  id: string;
+  pursuitId: string;
+  kind: 'effort_recorded' | 'spend_incurred' | 'spend_refund';
+  effortMinutes: number;
+  amountMinor: number;
+  currency?: string;
+  note?: string;
+  evidenceUri?: string;
+  actor: string;
+  idempotencyKey: string;
+  recordDigest: string;
+  occurredAt: string;
+  recordedAt: string;
+}
+
+export interface IPursuitResourceEventRequest {
+  kind: IPursuitResourceEvent['kind'];
+  effortHours?: number;
+  spendEur?: number;
+  note?: string;
+  evidenceUri?: string;
+  idempotencyKey: string;
+  occurredAt?: string;
+}
+
 export interface IPursuit {
   id: string;
   ownerIdentity?: string;
@@ -26,6 +131,7 @@ export interface IPursuit {
   description?: string;
   whyItMatters?: string;
   projectKey?: string;
+  mandateId?: string;
   domain?: string;
   desiredOutcome?: string;
   currentStateSummary?: string;
@@ -38,9 +144,15 @@ export interface IPursuit {
   sourceOfCreation?: string;
   nextRecommendedAction?: string;
   completionDefinition?: string;
+  successCriteria: IPursuitSuccessCriterion[];
+  stopConditions: IPursuitStopCondition[];
+  dependencies: IPursuitDependency[];
+  resourceLimits: IPursuitResourceLimits;
   completionState: string;
   lastActivityAt?: string;
   nextReviewAt?: string;
+  targetAt?: string;
+  reviewCadenceDays: number;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -193,6 +305,12 @@ export interface IPursuitSummary {
   planningNeeded: boolean;
   reviewDue: boolean;
   completionCandidate: boolean;
+  goalContractReady: boolean;
+  criteriaSatisfied: number;
+  criteriaTotal: number;
+  triggeredStopConditions: number;
+  openDependencies: number;
+  targetOverdue: boolean;
 }
 
 export interface IPursuitOperationalDigest {
@@ -389,6 +507,7 @@ export interface IPursuitDetail {
   approvalItems: IWorkflowItem[];
   summary: IPursuitSummary;
   operationalDigest: IPursuitOperationalDigest;
+  resourceUsage: IPursuitResourceUsage;
 }
 
 export interface IPursuitDelegationChecklistItem {
@@ -473,6 +592,7 @@ export interface IPursuitCreateRequest {
   description?: string;
   whyItMatters?: string;
   projectKey?: string;
+  mandateId?: string;
   domain?: string;
   desiredOutcome?: string;
   currentStateSummary?: string;
@@ -486,6 +606,12 @@ export interface IPursuitCreateRequest {
   nextRecommendedAction?: string;
   completionDefinition?: string;
   nextReviewAt?: string;
+  successCriteria?: IPursuitSuccessCriterion[];
+  stopConditions?: IPursuitStopCondition[];
+  dependencies?: IPursuitDependency[];
+  resourceLimits?: IPursuitResourceLimits;
+  targetAt?: string;
+  reviewCadenceDays?: number;
 }
 
 export interface IPursuitUpdateRequest extends Partial<IPursuitCreateRequest> {
@@ -498,6 +624,7 @@ export interface IPursuitIntakeRequest {
   input: string;
   projectKey?: string;
   automationId?: string;
+  mandateId?: string;
   sourceType?: string;
   sourceId?: string;
   sourceUri?: string;
@@ -569,4 +696,598 @@ export interface IPursuitMatchCandidate {
   score: number;
   reasons: string[];
   confidence: string;
+}
+
+export interface IPursuitPortfolioPriorityFactors {
+  importance: number;
+  urgency: number;
+  humanNeedAffected: number;
+  deadlinePressure: number;
+  costOfDelay: number;
+  expectedValue: number;
+  harmAvoided: number;
+  probabilityOfSuccess: number;
+  effort: number;
+  duration: number;
+  dependencies: number;
+  reversibility: number;
+  risk: number;
+  legalObligation: number;
+  relationshipConsequences: number;
+  availableCapacity: number;
+  energyFit: number;
+  opportunityCost: number;
+  strategicAlignment: number;
+  learningValue: number;
+  compoundingValue: number;
+  staleness: number;
+  commitmentAge: number;
+  peopleBlocked: number;
+  delegability: number;
+}
+
+export interface IPursuitPortfolioCapacityWindow {
+  start: string;
+  end: string;
+}
+
+export interface IPursuitPortfolioDurationEstimate {
+  optimisticMinutes: number;
+  expectedMinutes: number;
+  pessimisticMinutes: number;
+  basis?: string;
+}
+
+export interface IPursuitPortfolioUsage {
+  costMicros: number;
+  inputTokens: number;
+  outputTokens: number;
+  toolCalls: number;
+}
+
+export interface IPursuitPortfolioEstimateCalibrationBinding {
+  scopeKey: string;
+  proposalId: string;
+  proposalVersion: string;
+  applicationId: string;
+  evidenceDigest: string;
+  sourceDuration: IPursuitPortfolioDurationEstimate;
+  sourceEstimatedUsage: IPursuitPortfolioUsage;
+}
+
+export interface IPursuitPortfolioPlanningInput {
+  pursuitId: string;
+  duration: IPursuitPortfolioDurationEstimate;
+  estimatedUsage: IPursuitPortfolioUsage;
+  factors: IPursuitPortfolioPriorityFactors;
+  calibration?: IPursuitPortfolioEstimateCalibrationBinding;
+  optional?: boolean;
+}
+
+export interface IPursuitPortfolioBudget {
+  maxCostMicros?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  maxToolCalls?: number;
+}
+
+export interface IPursuitPortfolioApprovalPolicy {
+  costThresholdMicros?: number;
+  inputTokenThreshold?: number;
+  outputTokenThreshold?: number;
+  toolCallThreshold?: number;
+  uncertaintyThresholdPct?: number;
+  softDeadlineMiss: boolean;
+}
+
+export interface IPursuitPortfolioPlanningRequest {
+  planId: string;
+  asOf: string;
+  horizonStart: string;
+  horizonEnd: string;
+  durationMode: 'expected' | 'conservative';
+  availability: IPursuitPortfolioCapacityWindow[];
+  pursuits: IPursuitPortfolioPlanningInput[];
+  budget: IPursuitPortfolioBudget;
+  approvalPolicy: IPursuitPortfolioApprovalPolicy;
+}
+
+export interface IPursuitPortfolioFactorContribution {
+  factor: string;
+  input: number;
+  effectiveInput: number;
+  weight: number;
+  contribution: number;
+  costFactor: boolean;
+  reason: string;
+}
+
+export interface IPursuitPortfolioPriority {
+  pursuitId: string;
+  title: string;
+  score: number;
+  band: string;
+  factors: IPursuitPortfolioPriorityFactors;
+  contributions: IPursuitPortfolioFactorContribution[];
+  reasons: string[];
+  algorithmVersion: string;
+}
+
+export interface IPursuitPortfolioExclusion {
+  pursuitId: string;
+  title: string;
+  code: string;
+  reason: string;
+}
+
+export interface IPursuitPortfolioScheduledTask {
+  taskId: string;
+  start: string;
+  end: string;
+  plannedDurationMinutes: number;
+  deadlineSlackMinutes?: number;
+  dependencySlackMinutes: number;
+  networkSlackMinutes: number;
+  critical: boolean;
+  dependencies?: string[];
+  durationEstimateBasis: string;
+  durationUncertaintyPct: number;
+}
+
+export interface IPursuitPortfolioBlocker {
+  code: string;
+  taskId?: string;
+  resourceId?: string;
+  detail: string;
+  blocksFeasibility: boolean;
+}
+
+export interface IPursuitPortfolioApprovalFlag {
+  code: string;
+  taskId?: string;
+  reason: string;
+  mandatory: boolean;
+}
+
+export interface IPursuitPortfolioDecision {
+  planId: string;
+  algorithmVersion: string;
+  asOf: string;
+  inputDigest: string;
+  decisionDigest: string;
+  feasibility: 'feasible' | 'feasible_with_approvals' | 'infeasible';
+  scheduled: IPursuitPortfolioScheduledTask[];
+  unscheduledTaskIds?: string[];
+  criticalBlockers?: IPursuitPortfolioBlocker[];
+  advisories?: IPursuitPortfolioBlocker[];
+  approvalFlags?: IPursuitPortfolioApprovalFlag[];
+  authority: string;
+  canExecute: boolean;
+  grantsAuthority: boolean;
+}
+
+export interface IPursuitPortfolioCapacityAssessment {
+  status: 'not_enforced' | 'applied' | 'missing' | 'stale' | 'needs_review' | 'unavailable' | 'owner_mismatch';
+  snapshotId?: string;
+  snapshotStatus?: string;
+  capturedAt?: string;
+  freshUntil?: string;
+  confidence?: number;
+  timeAvailableMinutes?: number;
+  appliedMinutes?: number;
+  concurrentWorkLimit?: number;
+  currentLoad?: number;
+  planningStepLimit?: number;
+  constraints?: string[];
+  sourceLabel?: string;
+  reason: string;
+}
+
+export interface IPursuitPortfolioEstimateCalibrationRecommendation {
+  pursuitId: string;
+  scopeKey: string;
+  status: 'available' | 'bound' | 'unavailable';
+  reason: string;
+  proposalId?: string;
+  proposalVersion?: string;
+  applicationId?: string;
+  evidenceDigest?: string;
+  sampleCount?: number;
+  effortMultiplier?: number;
+  costMultiplier?: number;
+  effortDispersion?: number;
+  costDispersion?: number;
+  confidence?: number;
+  observedFrom?: string;
+  observedThrough?: string;
+  sourceOptimisticMinutes?: number;
+  sourceExpectedMinutes?: number;
+  sourcePessimisticMinutes?: number;
+  sourceCostMicros?: number;
+  suggestedOptimisticMinutes?: number;
+  suggestedExpectedMinutes?: number;
+  suggestedPessimisticMinutes?: number;
+  suggestedCostMicros?: number;
+  appliedAt?: string;
+  applied: boolean;
+}
+
+export interface IPursuitPortfolioPlanningResult {
+  planId: string;
+  asOf: string;
+  status: string;
+  pursuitsConsidered: number;
+  pursuitsPlanned: number;
+  priorities: IPursuitPortfolioPriority[];
+  exclusions: IPursuitPortfolioExclusion[];
+  decision?: IPursuitPortfolioDecision;
+  capacity?: IPursuitPortfolioCapacityAssessment;
+  calibrations?: IPursuitPortfolioEstimateCalibrationRecommendation[];
+  authority: 'advisory_only';
+  canExecute: false;
+}
+
+export interface IPursuitPortfolioAllocationAcceptanceRequest {
+  planningRequest: IPursuitPortfolioPlanningRequest;
+  expectedDecisionDigest: string;
+  confirmation: 'ACCEPT PORTFOLIO ALLOCATION';
+}
+
+export interface IPursuitPortfolioAllocation {
+  id: string;
+  planId: string;
+  requestDigest: string;
+  decisionDigest: string;
+  status: string;
+  durationMode: IPursuitPortfolioPlanningRequest['durationMode'];
+  horizonStart: string;
+  horizonEnd: string;
+  actor: string;
+  confirmation: 'ACCEPT PORTFOLIO ALLOCATION';
+  recordDigest: string;
+  acceptedAt: string;
+}
+
+export interface IPursuitPortfolioAllocationItem {
+  id: string;
+  allocationId: string;
+  pursuitId: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  durationMinutes: number;
+  estimatedCostMicros: number;
+  requiresApproval: boolean;
+  approvalReasons: string[];
+  reservationId: string;
+  recordDigest: string;
+  createdAt: string;
+}
+
+export interface IPursuitPortfolioAllocationAcceptanceResult {
+  allocation: IPursuitPortfolioAllocation;
+  items: IPursuitPortfolioAllocationItem[];
+  replayed: boolean;
+  authority: 'allocation_only';
+  canExecute: false;
+}
+
+export interface IPursuitPortfolioExecutionProposalRequest {
+  expectedAllocationDigest: string;
+  confirmation: 'PREPARE EXECUTION PROPOSALS';
+}
+
+export interface IPursuitPortfolioExecutionProposal {
+  id: string;
+  allocationId: string;
+  allocationRecordDigest: string;
+  snapshotDigest: string;
+  status: 'prepared' | 'prepared_needs_approval' | 'prepared_blocked';
+  actor: string;
+  confirmation: 'PREPARE EXECUTION PROPOSALS';
+  authority: 'proposal_only';
+  recordDigest: string;
+  preparedAt: string;
+}
+
+export interface IPursuitPortfolioExecutionProposalItem {
+  id: string;
+  proposalId: string;
+  allocationItemId: string;
+  pursuitId: string;
+  reservationId: string;
+  actionSummary: string;
+  pursuitStatus: string;
+  riskLevel: string;
+  autonomyLevel: string;
+  status: 'proposed' | 'needs_approval' | 'blocked';
+  requiresApproval: boolean;
+  approvalReasons: string[];
+  blockedReasons: string[];
+  allocationItemDigest: string;
+  stateDigest: string;
+  recordDigest: string;
+  preparedAt: string;
+}
+
+export interface IPursuitPortfolioExecutionProposalResult {
+  proposal: IPursuitPortfolioExecutionProposal;
+  items: IPursuitPortfolioExecutionProposalItem[];
+  replayed: boolean;
+  authority: 'proposal_only';
+  canExecute: false;
+  freshness: {
+    status: 'prepared_snapshot' | 'recovered_snapshot';
+    revalidationRequired: true;
+    checkedAt: string;
+    reason: string;
+  };
+}
+
+export type PursuitPortfolioDispatchOutcome =
+  | 'workflow_created'
+  | 'replayed'
+  | 'needs_approval'
+  | 'blocked'
+  | 'stale'
+  | 'failed'
+  | 'cancelled';
+
+export interface IPursuitPortfolioDispatchRun {
+  id: string;
+  proposalId: string;
+  proposalDigest: string;
+  selectedItemIds: string[];
+  selectedItemsDigest: string;
+  requestDigest: string;
+  actor: string;
+  confirmation: 'DISPATCH APPROVED PORTFOLIO WORKFLOWS';
+  recordDigest: string;
+  requestedAt: string;
+}
+
+export interface IPursuitPortfolioDispatchItemResult {
+  id: string;
+  dispatchRunId: string;
+  proposalId: string;
+  proposalItemId: string;
+  attemptNumber: number;
+  proposalItemDigest: string;
+  approvalDecisionId?: string;
+  approvalDecisionDigest?: string;
+  outcome: PursuitPortfolioDispatchOutcome;
+  message: string;
+  authorizationReceiptId?: string;
+  workflowId?: string;
+  workflowState?: string;
+  replayed: boolean;
+  recordDigest: string;
+  attemptedAt: string;
+}
+
+export interface IPursuitPortfolioCoordinationItem {
+  item: IPursuitPortfolioExecutionProposalItem;
+  eligibility: 'eligible' | 'dispatched' | PursuitPortfolioDispatchOutcome;
+  reason: string;
+  decision?: IPursuitPortfolioExecutionProposalDecisionRecord;
+  latestDispatch?: IPursuitPortfolioDispatchItemResult;
+  selectable: boolean;
+}
+
+export interface IPursuitPortfolioCoordinationResult {
+  proposal: IPursuitPortfolioExecutionProposal;
+  items: IPursuitPortfolioCoordinationItem[];
+  dispatchRuns: IPursuitPortfolioDispatchRun[];
+  eligible: number;
+  needsApproval: number;
+  blocked: number;
+  stale: number;
+  dispatched: number;
+  authority: 'coordination_preview_only';
+  canExecute: false;
+  freshness: {
+    status: 'current_coordination_snapshot';
+    revalidationRequired: true;
+    checkedAt: string;
+    reason: string;
+  };
+}
+
+export interface IPursuitPortfolioDispatchItemRequest {
+  proposalItemId: string;
+  expectedItemDigest: string;
+  expectedDecisionDigest: string;
+}
+
+export interface IPursuitPortfolioDispatchRequest {
+  expectedProposalDigest: string;
+  items: IPursuitPortfolioDispatchItemRequest[];
+  confirmation: 'DISPATCH APPROVED PORTFOLIO WORKFLOWS';
+}
+
+export interface IPursuitPortfolioDispatchResult {
+  run: IPursuitPortfolioDispatchRun;
+  items: IPursuitPortfolioDispatchItemResult[];
+  status: 'workflows_created' | 'needs_review' | 'partial_failure';
+  created: number;
+  replayed: number;
+  needsReview: number;
+  failed: number;
+  resumed: boolean;
+  authority: 'portfolio_dispatch_result';
+  canExecute: false;
+}
+
+export type PursuitPortfolioExecutionProposalDecision =
+  | 'approved'
+  | 'rejected'
+  | 'needs_clarification'
+  | 'revoked';
+
+export type PursuitPortfolioExecutionProposalDecisionConfirmation =
+  | 'APPROVE EXECUTION PROPOSAL ITEM'
+  | 'REJECT EXECUTION PROPOSAL ITEM'
+  | 'REQUEST CLARIFICATION FOR EXECUTION PROPOSAL ITEM'
+  | 'REVOKE EXECUTION PROPOSAL ITEM';
+
+export interface IPursuitPortfolioExecutionProposalDecisionRequest {
+  expectedItemDigest: string;
+  decision: PursuitPortfolioExecutionProposalDecision;
+  reason: string;
+  confirmation: PursuitPortfolioExecutionProposalDecisionConfirmation;
+}
+
+export interface IPursuitPortfolioExecutionProposalDecisionRecord {
+  id: string;
+  proposalItemId: string;
+  proposalId: string;
+  pursuitId: string;
+  decision: PursuitPortfolioExecutionProposalDecision;
+  reason: string;
+  actor: string;
+  confirmation: PursuitPortfolioExecutionProposalDecisionConfirmation;
+  proposalItemDigest: string;
+  stateDigest: string;
+  authority: 'approval_decision_only';
+  requestDigest: string;
+  recordDigest: string;
+  previousDecisionId?: string;
+  decidedAt: string;
+  expiresAt?: string;
+}
+
+export interface IPursuitPortfolioExecutionProposalDecisionResult {
+  decision: IPursuitPortfolioExecutionProposalDecisionRecord;
+  replayed: boolean;
+  authority: 'approval_decision_only';
+  canExecute: false;
+}
+
+export interface IPursuitPortfolioExecutionProposalDecisionHistoryResult {
+  decisions: IPursuitPortfolioExecutionProposalDecisionRecord[];
+  authority: 'approval_decision_only';
+  canExecute: false;
+}
+
+export interface IPursuitPortfolioWorkflowEffectAuthorizationRequest {
+  expectedItemDigest: string;
+  expectedDecisionDigest: string;
+  confirmation: 'AUTHORIZE PORTFOLIO WORKFLOW EFFECT';
+}
+
+export interface IPursuitPortfolioWorkflowEffect {
+  action: 'pursuit.portfolio.create-workflow';
+  stage: 'execution';
+  resourceType: 'workflow-intake';
+  resourceId: string;
+  projectKey?: string;
+  domain?: string;
+  toolId: 'workflow.intake';
+  runtimeId: 'hai-workflow-engine';
+  risk: 'low' | 'medium' | 'high' | 'critical';
+  reversible: true;
+  estimatedCostMicros: 0;
+  actionSummary: string;
+  effectDigest: string;
+  approvalSourceId: string;
+}
+
+export interface IPursuitPortfolioWorkflowAuthorizationReceipt {
+  id: string;
+  contractVersion: number;
+  ownerIdentity: string;
+  actorIdentity: string;
+  actorKind: 'human';
+  taskId: string;
+  action: string;
+  stage: string;
+  resourceType: string;
+  resourceId: string;
+  projectKey?: string;
+  domain?: string;
+  runtimeId: string;
+  approvalSourceId: string;
+  effectDigest: string;
+  outcome: 'authorized' | 'requires_approval' | 'denied';
+  reason: string;
+  requestDigest: string;
+  decisionDigest: string;
+  requiredAuthority: number;
+  requestedAutonomy: number;
+  effectiveAutonomy: number;
+  risk: 'low' | 'medium' | 'high' | 'critical';
+  reversible: boolean;
+  estimatedCostEur: number;
+  notificationRequired: boolean;
+  evaluatedAt: string;
+}
+
+export interface IPursuitPortfolioWorkflowEffectAuthorizationResult {
+  effect: IPursuitPortfolioWorkflowEffect;
+  receipt: IPursuitPortfolioWorkflowAuthorizationReceipt;
+  authority: 'execution_authorization_only';
+  canExecute: false;
+}
+
+export interface IPursuitPortfolioWorkflowEffectExecutionRequest {
+  authorizationReceiptId: string;
+  expectedItemDigest: string;
+  expectedDecisionDigest: string;
+  confirmation: 'CREATE APPROVED PORTFOLIO WORKFLOW';
+}
+
+export interface IPursuitPortfolioWorkflowEffectConsumption {
+  receiptId: string;
+  ownerIdentity: string;
+  consumer: 'pursuit-portfolio-workflow';
+  executionTarget: string;
+  receiptDigest: string;
+  consumedAt: string;
+}
+
+export interface IPursuitPortfolioWorkflowEffectExecutionResult {
+  effect: IPursuitPortfolioWorkflowEffect;
+  receipt: IPursuitPortfolioWorkflowAuthorizationReceipt;
+  consumption: IPursuitPortfolioWorkflowEffectConsumption;
+  pursuitId: string;
+  workflowId: string;
+  workflowState: string;
+  replayed: boolean;
+  authority: 'workflow_effect_executed';
+  canExecute: false;
+}
+
+export interface IPursuitPortfolioWorkflowSettlementRequest {
+  workflowId: string;
+  expectedItemDigest: string;
+  actualEffortMinutes: number;
+  actualCostMicros: number;
+  confirmation: 'SETTLE VERIFIED PORTFOLIO WORK';
+}
+
+export interface IPursuitPortfolioWorkflowSettlementResult {
+  pursuitId: string;
+  proposalItemId: string;
+  reservationId: string;
+  workflowId: string;
+  disposition: 'consumed';
+  actualEffortMinutes: number;
+  actualCostMicros: number;
+  verificationStatus: string;
+  evidenceUri: string;
+  completionAttestationId: string;
+  completionAttestationDigest: string;
+  settlementProofId: string;
+  settlementProofDigest: string;
+  learningOutcomeId?: string;
+  learningStatus: 'evidence_recorded' | 'unavailable' | 'recording_failed';
+  learningProposalId?: string;
+  learningProposalStatus: 'proposal_unavailable' | 'proposal_failed' | 'insufficient_evidence' | 'monitoring' | 'stable' | 'review_required' | 'changes_requested' | 'governance_required' | 'approved' | 'rejected';
+  learningSampleCount: number;
+  learningNewEvidenceCount: number;
+  learningDriftDetected: boolean;
+  learningReviewRequired: boolean;
+  replayed: boolean;
+  authority: 'verified_accounting_only';
+  canExecute: false;
+  resourceUsage: IPursuitResourceUsage;
 }

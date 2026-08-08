@@ -41,6 +41,7 @@ type Task struct {
 	OwnerIdentity    string
 	HumanApproved    bool
 	ApprovalSourceID string
+	FinalEffectProof FinalEffectAuthorizationProof
 }
 
 type Result struct {
@@ -136,9 +137,10 @@ type Adapter interface {
 }
 
 type Registry struct {
-	adapters map[string]Adapter
-	running  map[string]runningTask
-	mu       sync.Mutex
+	adapters            map[string]Adapter
+	finalEffectVerifier FinalEffectProofVerifier
+	running             map[string]runningTask
+	mu                  sync.Mutex
 }
 
 type runningTask struct {
@@ -147,21 +149,51 @@ type runningTask struct {
 }
 
 func NewRegistry(adapters ...Adapter) *Registry {
+	return NewRegistryWithFinalEffectVerifier(nil, adapters...)
+}
+
+// NewRegistryWithFinalEffectVerifier builds a registry with an explicit
+// final-effect proof boundary. A nil verifier intentionally leaves runtime
+// discovery and health available while all adapter execution fails closed.
+func NewRegistryWithFinalEffectVerifier(verifier FinalEffectProofVerifier, adapters ...Adapter) *Registry {
 	registry := &Registry{
-		adapters: map[string]Adapter{},
-		running:  map[string]runningTask{},
+		adapters:            map[string]Adapter{},
+		finalEffectVerifier: verifier,
+		running:             map[string]runningTask{},
 	}
 	for _, adapter := range adapters {
 		if adapter == nil {
 			continue
 		}
-		registry.adapters[adapter.Info().ID] = adapter
+		id := ""
+		if identified, ok := adapter.(interface{ RuntimeID() string }); ok {
+			id = strings.TrimSpace(identified.RuntimeID())
+		}
+		if id == "" {
+			id = strings.TrimSpace(adapter.Info().ID)
+		}
+		if id != "" {
+			registry.adapters[id] = adapter
+		}
 	}
 	return registry
 }
 
 func DefaultRegistry() *Registry {
-	return NewRegistry(newHermesAdapterFromEnv(), newOdysseusAdapterFromEnv(), newOpenClawAdapterFromEnv())
+	// Production composition must inject its authoritative execution service
+	// before enabling effects. The default registry is intentionally read-only.
+	return DefaultRegistryWithFinalEffectVerifier(nil)
+}
+
+// DefaultRegistryWithFinalEffectVerifier is the production composition point
+// for enabling runtime effects without exporting concrete adapter types.
+func DefaultRegistryWithFinalEffectVerifier(verifier FinalEffectProofVerifier) *Registry {
+	return NewRegistryWithFinalEffectVerifier(
+		verifier,
+		newHermesAdapterFromEnv(),
+		newOdysseusAdapterFromEnv(),
+		newOpenClawAdapterFromEnv(),
+	)
 }
 
 func (r *Registry) List() []Info {
@@ -191,6 +223,46 @@ func (r *Registry) Skills(ctx context.Context, runtimeID string) ([]Skill, error
 		return nil, fmt.Errorf("agent runtime %q is not registered", runtimeID)
 	}
 	return adapter.ListSkills(ctx), nil
+}
+
+// BindConsumedAuthorizationProof attaches an already-issued execution receipt
+// to the exact runtime task without re-authorizing or consuming it. The caller
+// must pass the receipt's stored request and decision digests. Execute still
+// requires the injected verifier to load and validate the durable records.
+//
+// runtimeProof is optional opaque evidence for verifier implementations that
+// use a signed or separately persisted handoff. It is never treated as
+// authority by Registry itself.
+func (r *Registry) BindConsumedAuthorizationProof(
+	runtimeID string,
+	task Task,
+	receiptID string,
+	authorizationRequestDigest string,
+	decisionDigest string,
+	runtimeProof string,
+) (Task, error) {
+	runtimeID = strings.ToLower(strings.TrimSpace(runtimeID))
+	adapter := r.adapters[runtimeID]
+	if adapter == nil {
+		return Task{}, fmt.Errorf("agent runtime %q is not registered", runtimeID)
+	}
+	if strings.TrimSpace(task.ID) == "" ||
+		strings.TrimSpace(task.OwnerIdentity) == "" ||
+		strings.TrimSpace(task.Prompt) == "" {
+		return Task{}, fmt.Errorf("runtime task id, owner, and prompt are required before binding authorization")
+	}
+	request := runtimeFinalEffectRequest(runtimeID, task, adapter.Info())
+	task.FinalEffectProof = FinalEffectAuthorizationProof{
+		ReceiptID:                  strings.TrimSpace(receiptID),
+		AuthorizationRequestDigest: strings.ToLower(strings.TrimSpace(authorizationRequestDigest)),
+		DecisionDigest:             strings.ToLower(strings.TrimSpace(decisionDigest)),
+		RuntimeRequestDigest:       finalEffectRequestDigest(request),
+		RuntimeProof:               strings.TrimSpace(runtimeProof),
+	}
+	if err := validateFinalEffectAuthorizationProof(request, task.FinalEffectProof); err != nil {
+		return Task{}, err
+	}
+	return task, nil
 }
 
 func (r *Registry) StopTask(_ context.Context, runtimeID string, taskID string, ownerIdentity string) StopResult {
@@ -418,7 +490,34 @@ func (r *Registry) Execute(ctx context.Context, runtimeID string, task Task) Res
 	}
 	defer cancel()
 	defer r.finishRunningTask(runtimeID, task.ID)
+
+	effectRequest := runtimeFinalEffectRequest(runtimeID, task, info)
+	if validationErr := validateFinalEffectAuthorizationProof(effectRequest, task.FinalEffectProof); validationErr != nil {
+		return finalEffectDeniedResult(runtimeID, validationErr.Error(), false)
+	}
+	if r.finalEffectVerifier == nil {
+		return finalEffectDeniedResult(runtimeID, "proof verifier is not configured", true)
+	}
+	if err := r.finalEffectVerifier.VerifyFinalEffectProof(executionCtx, effectRequest, task.FinalEffectProof); err != nil {
+		return finalEffectDeniedResult(runtimeID, "", true)
+	}
+	if executionCtx.Err() != nil {
+		return blockedRuntimeResult(
+			runtimeID,
+			"agent runtime task was cancelled before adapter execution",
+			"runtime cancellation observed after final-effect proof verification",
+		)
+	}
+	// Re-evaluate after proof verification and immediately before the adapter
+	// call. A stop engaged while durable verification was running wins over the
+	// already-consumed receipt.
+	if result, blocked := emergencyStopResult(runtimeID); blocked {
+		result.AuditEvents = append(result.AuditEvents, "verified final-effect proof was not exercised")
+		return result
+	}
+
 	result := adapter.ExecuteTask(executionCtx, task)
+	result.AuditEvents = append(result.AuditEvents, "runtime adapter invoked with verified consumed authorization proof")
 	if executionCtx.Err() == context.Canceled {
 		result.RuntimeID = firstNonEmpty(result.RuntimeID, runtimeID)
 		result.Status = "blocked"
@@ -457,12 +556,13 @@ func blockedRuntimeResult(runtimeID, message, auditEvent string) Result {
 }
 
 func emergencyStopResult(runtimeID string) (Result, bool) {
-	if !safety.EmergencyStopActive() {
+	decision := safety.EvaluateEmergencyStop()
+	if !decision.Active {
 		return Result{}, false
 	}
 	return blockedRuntimeResult(
 		runtimeID,
-		safety.EmergencyStopReason(),
+		decision.Reason,
 		"emergency stop blocked agent runtime execution",
 	), true
 }
@@ -897,6 +997,11 @@ type openClawAdapter struct {
 	inventorySignature string
 	inventory          openClawEcosystemInventory
 }
+
+// RuntimeID lets registry composition identify this adapter without scanning
+// the configured OpenClaw ecosystem. Full inventory remains lazy until an
+// operator explicitly opens runtime detail.
+func (*openClawAdapter) RuntimeID() string { return "openclaw" }
 
 func newOpenClawAdapterFromEnv() *openClawAdapter {
 	return &openClawAdapter{
@@ -1569,43 +1674,108 @@ func (a *openClawAdapter) setUploadedEcosystemPath(path string) error {
 	return a.setEcosystemPathWithTrust(path, true)
 }
 
+type preparedOpenClawEcosystemPath struct {
+	targetPath        string
+	targetSignature   string
+	previousPath      string
+	previousSignature string
+	deleteManagedPath string
+}
+
 func (a *openClawAdapter) setEcosystemPathWithTrust(path string, trustedUpload bool) error {
 	path = strings.TrimSpace(path)
-	if err := validateOpenClawEcosystemPath(path); err != nil {
+	prepared, err := a.prepareEcosystemPath(path, trustedUpload)
+	if err != nil {
 		return err
+	}
+	return a.applyPreparedEcosystemPath(prepared)
+}
+
+func (a *openClawAdapter) prepareEcosystemPath(
+	path string,
+	trustedUpload bool,
+) (preparedOpenClawEcosystemPath, error) {
+	path = strings.TrimSpace(path)
+	if trustedUpload && !isOpenClawUploadArtifactPath(path) {
+		return preparedOpenClawEcosystemPath{},
+			fmt.Errorf("openclaw uploaded ecosystem path is not a HAI-managed temporary artifact")
+	}
+	if err := validateOpenClawEcosystemPath(path); err != nil {
+		return preparedOpenClawEcosystemPath{}, err
 	}
 	absolutePath, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
-		return fmt.Errorf("openclaw ecosystem path is invalid")
+		return preparedOpenClawEcosystemPath{},
+			fmt.Errorf("openclaw ecosystem path is invalid")
 	}
+
 	a.inventoryMu.Lock()
-	if len(a.ecosystemRoots) == 0 {
-		a.ecosystemRoots = a.initialEcosystemRoots()
+	roots := append([]string{}, a.ecosystemRoots...)
+	if len(roots) == 0 {
+		roots = a.initialEcosystemRoots()
 	}
+	previousPath := strings.TrimSpace(a.ecosystemPath)
+	a.inventoryMu.Unlock()
+
 	if trustedUpload {
 		absolutePath, err = filepath.EvalSymlinks(absolutePath)
 		if err != nil {
-			a.inventoryMu.Unlock()
-			return fmt.Errorf("openclaw uploaded ecosystem path cannot be resolved")
+			return preparedOpenClawEcosystemPath{},
+				fmt.Errorf("openclaw uploaded ecosystem path cannot be resolved")
 		}
 	} else {
-		resolvedPath, allowed := resolvePathWithinAnyRoot(a.ecosystemRoots, absolutePath)
+		resolvedPath, allowed := resolvePathWithinAnyRoot(roots, absolutePath)
 		if !allowed {
-			a.inventoryMu.Unlock()
-			return fmt.Errorf("openclaw ecosystem path is outside OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")
+			return preparedOpenClawEcosystemPath{},
+				fmt.Errorf("openclaw ecosystem path is outside OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")
 		}
 		absolutePath = resolvedPath
 	}
-	previousPath := strings.TrimSpace(a.ecosystemPath)
+
+	deleteManagedPath := ""
 	if isOpenClawUploadArtifactPath(previousPath) && !sameFilePath(previousPath, absolutePath) {
-		_ = os.Remove(previousPath)
+		deleteManagedPath = previousPath
 	}
-	a.ecosystemPath = absolutePath
+	return preparedOpenClawEcosystemPath{
+		targetPath:        absolutePath,
+		targetSignature:   openClawEcosystemSignature(absolutePath),
+		previousPath:      previousPath,
+		previousSignature: openClawEcosystemSignature(previousPath),
+		deleteManagedPath: deleteManagedPath,
+	}, nil
+}
+
+func (a *openClawAdapter) applyPreparedEcosystemPath(
+	prepared preparedOpenClawEcosystemPath,
+) error {
+	if err := validateOpenClawEcosystemPath(prepared.targetPath); err != nil {
+		return err
+	}
+	if openClawEcosystemSignature(prepared.targetPath) != prepared.targetSignature {
+		return ErrEcosystemMutationConflict
+	}
+
+	a.inventoryMu.Lock()
+	defer a.inventoryMu.Unlock()
+	currentPath := strings.TrimSpace(a.ecosystemPath)
+	if currentPath != prepared.previousPath ||
+		openClawEcosystemSignature(currentPath) != prepared.previousSignature {
+		return ErrEcosystemMutationConflict
+	}
+	if prepared.deleteManagedPath != "" {
+		if prepared.deleteManagedPath != currentPath ||
+			!isOpenClawUploadArtifactPath(prepared.deleteManagedPath) {
+			return ErrEcosystemMutationConflict
+		}
+		if err := os.Remove(prepared.deleteManagedPath); err != nil {
+			return fmt.Errorf("remove previous managed OpenClaw ecosystem archive: %w", err)
+		}
+	}
+	a.ecosystemPath = prepared.targetPath
 	a.inventoryLoaded = false
 	a.inventoryPath = ""
 	a.inventorySignature = ""
 	a.inventory = openClawEcosystemInventory{}
-	a.inventoryMu.Unlock()
 	return nil
 }
 
@@ -1740,6 +1910,31 @@ func (a *openClawAdapter) refreshEcosystemInventory() {
 	a.inventorySignature = ""
 	a.inventory = openClawEcosystemInventory{}
 	a.inventoryMu.Unlock()
+}
+
+func (a *openClawAdapter) ecosystemState() (string, string) {
+	a.inventoryMu.Lock()
+	path := strings.TrimSpace(a.ecosystemPath)
+	a.inventoryMu.Unlock()
+	return path, openClawEcosystemSignature(path)
+}
+
+func (a *openClawAdapter) refreshEcosystemInventoryIfCurrent(
+	expectedPath string,
+	expectedSignature string,
+) error {
+	a.inventoryMu.Lock()
+	defer a.inventoryMu.Unlock()
+	currentPath := strings.TrimSpace(a.ecosystemPath)
+	if currentPath != expectedPath ||
+		openClawEcosystemSignature(currentPath) != expectedSignature {
+		return ErrEcosystemMutationConflict
+	}
+	a.inventoryLoaded = false
+	a.inventoryPath = ""
+	a.inventorySignature = ""
+	a.inventory = openClawEcosystemInventory{}
+	return nil
 }
 
 func openClawEcosystemSignature(path string) string {

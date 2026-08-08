@@ -1,0 +1,28 @@
+import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing'
+import { TestBed } from '@angular/core/testing'
+import { ModelIntelligenceService } from './model-intelligence.service'
+
+describe('ModelIntelligenceService', () => {
+  let service: ModelIntelligenceService
+  let http: HttpTestingController
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({ imports: [HttpClientTestingModule] })
+    service = TestBed.inject(ModelIntelligenceService)
+    http = TestBed.inject(HttpTestingController)
+  })
+
+  afterEach(() => http.verify())
+
+  it('loads the durable completion-first calibration summary', () => {
+    service.calibration().subscribe((summary) => expect(summary.unvalidatedRuns).toBe(3))
+
+    const request = http.expectOne('/api/v1/model-intelligence/calibration')
+    expect(request.request.method).toBe('GET')
+    request.flush({
+      totalRuns: 3, evaluatedRuns: 0, acceptedOutputs: 0, rejectedOutputs: 0,
+      needsReview: 0, unvalidatedRuns: 3, models: [], laneLeaders: [],
+      generatedAt: '2026-08-04T10:00:00Z', explanation: 'Outcome evidence first.',
+    })
+  })
+})

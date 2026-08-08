@@ -12,7 +12,19 @@ import {
   IWorkflowOverview,
   IWorkflowProposalResolutionRequest,
   IWorkflowRecord,
+  IWorkflowReminderProposalSnapshot,
+  IWorkflowReminderActivationPrepareRequest,
+  IWorkflowReminderActivationRequestResult,
+  IWorkflowReminderActivationDecisionRequest,
+  IWorkflowReminderActivationDecisionResult,
+  IWorkflowReminderActivationHistorySnapshot,
+  IWorkflowReminderActivationDecisionHistory,
+  IWorkflowReminderDeliveryAuthorizeRequest,
+  IWorkflowReminderDeliveryAuthorizationResult,
+  IWorkflowReminderDeliveryHistory,
+  IWorkflowReminderDeliveryRunSummary,
   IWorkflowRunDueRequest,
+  IWorkflowRunResult,
   IWorkflowRunSummary,
   IWorkflowTransitionRequest,
 } from '../models/workflow.model.interface';
@@ -20,6 +32,14 @@ import {
 export interface IWorkflowService {
   overview(): Observable<IWorkflowOverview>;
   dashboard(): Observable<IWorkflowDashboard>;
+  reminderProposals(horizonHours?: number, limit?: number): Observable<IWorkflowReminderProposalSnapshot>;
+  prepareReminderActivation(itemId: string, request: IWorkflowReminderActivationPrepareRequest): Observable<IWorkflowReminderActivationRequestResult>;
+  reminderActivationHistory(limit?: number): Observable<IWorkflowReminderActivationHistorySnapshot>;
+  decideReminderActivation(requestId: string, request: IWorkflowReminderActivationDecisionRequest): Observable<IWorkflowReminderActivationDecisionResult>;
+  reminderActivationDecisionHistory(requestId: string, limit?: number): Observable<IWorkflowReminderActivationDecisionHistory>;
+  authorizeReminderDelivery(requestId: string, request: IWorkflowReminderDeliveryAuthorizeRequest): Observable<IWorkflowReminderDeliveryAuthorizationResult>;
+  reminderDeliveryHistory(limit?: number): Observable<IWorkflowReminderDeliveryHistory>;
+  runDueReminderDeliveries(request: IWorkflowRunDueRequest): Observable<IWorkflowReminderDeliveryRunSummary>;
   items(includeArchived: boolean): Observable<IWorkflowItem[]>;
   approvals(): Observable<IWorkflowItem[]>;
   intake(request: IWorkflowIntakeRequest): Observable<IWorkflowRecord>;
@@ -32,5 +52,6 @@ export interface IWorkflowService {
   updateChecklistItem(id: string, itemId: string, request: IWorkflowChecklistUpdateRequest): Observable<IWorkflowRecord>;
   recoverStaleClaims(request: IWorkflowRunDueRequest): Observable<IWorkflowClaimRecoverySummary>;
   runDue(request: IWorkflowRunDueRequest): Observable<IWorkflowRunSummary>;
+  runOne(id: string): Observable<IWorkflowRunResult>;
   runDueOpenLoops(request: IWorkflowRunDueRequest): Observable<IWorkflowOpenLoopRunSummary>;
 }

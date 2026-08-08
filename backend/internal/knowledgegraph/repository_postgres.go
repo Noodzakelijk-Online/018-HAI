@@ -74,6 +74,9 @@ func (r *GormRepository) UpdateNode(ctx context.Context, node Node) (Node, error
 		if current.DeletedAt != nil {
 			return fmt.Errorf("%w: node %q is tombstoned", ErrConcurrentUpdate, node.ID)
 		}
+		if isTemporalClaimNode(current) && !sameImmutableClaimEnvelope(current, node) {
+			return ErrImmutableClaim
+		}
 		updated, err = r.updateNodeLocked(
 			tx,
 			currentRow,
@@ -405,6 +408,9 @@ func (r *GormRepository) CorrectNode(
 		}
 		if current.DeletedAt != nil {
 			return fmt.Errorf("%w: node %q is tombstoned", ErrConcurrentUpdate, current.ID)
+		}
+		if isTemporalClaimNode(current) {
+			return ErrImmutableClaim
 		}
 		if !reflect.DeepEqual(current, previous) {
 			return ErrConcurrentUpdate

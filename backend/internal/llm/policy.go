@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
 	"bytes"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -142,21 +145,45 @@ type RouteDecision struct {
 	Classification        TaskClassification `json:"classification"`
 	FallbackPath          []FallbackOption   `json:"fallbackPath"`
 	Skipped               []SkippedModel     `json:"skipped"`
+	Calibration           *RouteCalibration  `json:"calibration,omitempty"`
 	LoggedAt              time.Time          `json:"loggedAt"`
 }
 
+// RouteCalibration is the bounded, redacted outcome evidence used by a route.
+// It reports validator acceptance, not model truth or provider marketing data.
+type RouteCalibration struct {
+	Lane             string  `json:"lane"`
+	EvaluatedRuns    int     `json:"evaluatedRuns"`
+	AcceptedOutputs  int     `json:"acceptedOutputs"`
+	AcceptanceRate   float64 `json:"acceptanceRate"`
+	WilsonLowerBound float64 `json:"wilsonLowerBound"`
+	Confidence       string  `json:"confidence"`
+}
+
 type GenerateRequest struct {
-	Task              string         `json:"task"`
-	SystemPrompt      string         `json:"systemPrompt,omitempty"`
-	Context           []string       `json:"context,omitempty"`
-	RouteRequest      *RouteRequest  `json:"routeRequest,omitempty"`
-	RouteDecision     *RouteDecision `json:"routeDecision,omitempty"`
-	AllowPaidApproved bool           `json:"allowPaidApproved,omitempty"`
-	Temperature       float64        `json:"temperature,omitempty"`
-	MaxTokens         int            `json:"maxTokens,omitempty"`
+	Task          string         `json:"task"`
+	SystemPrompt  string         `json:"systemPrompt,omitempty"`
+	Context       []string       `json:"context,omitempty"`
+	RouteRequest  *RouteRequest  `json:"routeRequest,omitempty"`
+	RouteDecision *RouteDecision `json:"routeDecision,omitempty"`
+	// EffectContext must be populated by trusted server-side composition from
+	// authenticated task state. It is never accepted from public JSON.
+	EffectContext *EffectContext `json:"-"`
+	// AllowPaidApproved is retained for wire compatibility but no longer grants
+	// authority. Paid execution requires an approval source in EffectContext
+	// that the injected final-effect authorizer validates.
+	AllowPaidApproved bool    `json:"allowPaidApproved,omitempty"`
+	Temperature       float64 `json:"temperature,omitempty"`
+	MaxTokens         int     `json:"maxTokens,omitempty"`
+	// OperationID and FallbackDepth are trusted orchestration metadata. Public
+	// callers cannot bind them from JSON.
+	OperationID   string `json:"-"`
+	FallbackDepth int    `json:"-"`
 }
 
 type GenerationResult struct {
+	GenerationID     string    `json:"generationId,omitempty"`
+	TelemetryID      string    `json:"telemetryId,omitempty"`
 	ProviderID       string    `json:"providerId"`
 	ModelID          string    `json:"modelId"`
 	ModelName        string    `json:"modelName"`
@@ -171,6 +198,10 @@ type GenerationResult struct {
 	AuditStatus      string    `json:"auditStatus"`
 	DurationMs       int64     `json:"durationMs"`
 	FallbackPath     []string  `json:"fallbackPath"`
+	FallbackDepth    int       `json:"fallbackDepth"`
+	ValidationStatus string    `json:"validationStatus"`
+	ValidationMethod string    `json:"validationMethod,omitempty"`
+	CalibrationAudit string    `json:"calibrationAudit"`
 	LoggedAt         time.Time `json:"loggedAt"`
 }
 
@@ -231,15 +262,27 @@ type SkippedModel struct {
 }
 
 type Service struct {
-	policy             Policy
-	mu                 sync.Mutex
-	logs               []RouteDecision
-	usage              map[string]UsageCounter
-	probeHistory       ProbeHistoryRepository
-	maintenanceHistory ModelMaintenanceRepository
-	generationHistory  GenerationHistoryRepository
-	maintenanceMu      sync.Mutex
-	maintenanceRunning map[string]*sync.Mutex
+	policy                   Policy
+	mu                       sync.Mutex
+	logs                     []RouteDecision
+	usage                    map[string]UsageCounter
+	probeHistory             ProbeHistoryRepository
+	maintenanceHistory       ModelMaintenanceRepository
+	generationHistory        GenerationHistoryRepository
+	modelTelemetry           modelintelligence.TelemetryRepository
+	finalEffectAuthorizer    FinalEffectAuthorizer
+	emergencyStop            EmergencyStopEvaluator
+	maintenanceEffectContext *EffectContext
+	maintenanceMu            sync.Mutex
+	maintenanceRunning       map[string]*sync.Mutex
+}
+
+// WithModelTelemetryRepository connects actual routed generations to the same
+// durable outcome ledger used by Model Intelligence. Direct generations remain
+// unvalidated until a trusted task validator records their outcome.
+func (s *Service) WithModelTelemetryRepository(repo modelintelligence.TelemetryRepository) *Service {
+	s.modelTelemetry = repo
+	return s
 }
 
 type UsageCounter struct {
@@ -288,7 +331,12 @@ func newServiceFromEnv(probeHistory ProbeHistoryRepository, maintenanceHistory M
 	}
 
 	policy = annotateInfrastructure(annotatePolicyReadiness(normalizeProbePolicy(policy)))
-	return &Service{policy: policy, logs: []RouteDecision{}, usage: map[string]UsageCounter{}, probeHistory: probeHistory, maintenanceHistory: maintenanceHistory, generationHistory: generationHistory, maintenanceRunning: map[string]*sync.Mutex{}}, nil
+	return &Service{
+		policy: policy, logs: []RouteDecision{}, usage: map[string]UsageCounter{},
+		probeHistory: probeHistory, maintenanceHistory: maintenanceHistory,
+		generationHistory: generationHistory, emergencyStop: processEmergencyStopEvaluator{},
+		maintenanceRunning: map[string]*sync.Mutex{},
+	}, nil
 }
 
 func (s *Service) Policy() Policy {
@@ -345,13 +393,24 @@ func (s *Service) GenerationHistory(limit int) ([]GenerationResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load generation history: %w", err)
 	}
+	validationByID := map[string]modelintelligence.ModelRunTelemetry{}
+	if s.modelTelemetry != nil {
+		if telemetry, loadErr := s.modelTelemetry.LoadAll(); loadErr == nil {
+			for _, record := range telemetry {
+				validationByID[record.ID] = record
+			}
+		}
+	}
 	results := make([]GenerationResult, 0, len(records))
 	for _, record := range records {
 		fallbackPath := []string{}
 		if strings.TrimSpace(record.FallbackPathJSON) != "" {
 			_ = json.Unmarshal([]byte(record.FallbackPathJSON), &fallbackPath)
 		}
-		results = append(results, GenerationResult{
+		telemetryID := generationTelemetryID(record.ID.String())
+		result := GenerationResult{
+			GenerationID:     record.ID.String(),
+			TelemetryID:      telemetryID,
 			ProviderID:       record.ProviderID,
 			ModelID:          record.ModelID,
 			ModelName:        record.ModelName,
@@ -366,14 +425,58 @@ func (s *Service) GenerationHistory(limit int) ([]GenerationResult, error) {
 			DurationMs:       record.DurationMs,
 			FallbackPath:     fallbackPath,
 			LoggedAt:         record.LoggedAt,
-		})
+			ValidationStatus: string(modelintelligence.ValidationUnvalidated),
+			CalibrationAudit: "not_recorded",
+		}
+		if telemetry, ok := validationByID[telemetryID]; ok {
+			result.ValidationStatus = string(telemetry.ValidationStatus)
+			result.ValidationMethod = telemetry.ValidationMethod
+			result.FallbackDepth = telemetry.FallbackDepth
+			result.CalibrationAudit = "recorded"
+		}
+		results = append(results, result)
 	}
 	return results, nil
 }
 
-func (s *Service) recordGeneration(result *GenerationResult) {
+func (s *Service) recordGeneration(result *GenerationResult, request GenerateRequest) {
 	if result == nil {
 		return
+	}
+	generationUUID, parseErr := uuid.Parse(result.GenerationID)
+	if parseErr != nil {
+		generationUUID = uuid.New()
+		result.GenerationID = generationUUID.String()
+	}
+	result.TelemetryID = generationTelemetryID(result.GenerationID)
+	result.FallbackDepth = boundedFallbackDepth(request.FallbackDepth)
+	result.ValidationStatus = string(modelintelligence.ValidationUnvalidated)
+	result.CalibrationAudit = "not_configured"
+	if s.modelTelemetry != nil && strings.TrimSpace(result.ProviderID) != "" && strings.TrimSpace(result.ModelID) != "" {
+		classification := classifyTask(RouteRequest{Task: request.Task})
+		if request.RouteRequest != nil {
+			classification = classifyTask(*request.RouteRequest)
+		}
+		if request.RouteDecision != nil && request.RouteDecision.SelectedModelID != "" {
+			classification = request.RouteDecision.Classification
+		}
+		tokensPerSecond := 0.0
+		if result.DurationMs > 0 && result.OutputTokens > 0 {
+			tokensPerSecond = float64(result.OutputTokens) / (float64(result.DurationMs) / 1000)
+		}
+		if err := s.modelTelemetry.Save(modelintelligence.ModelRunTelemetry{
+			ID: result.TelemetryID, ProviderID: result.ProviderID, ModelID: result.ModelID,
+			Lane: routingLaneForClassification(classification), OperationID: strings.TrimSpace(request.OperationID),
+			InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
+			DurationMs: result.DurationMs, TokensPerSecond: tokensPerSecond,
+			OK: result.Status == "completed", ValidationStatus: modelintelligence.ValidationUnvalidated,
+			EstimatedCostEUR: result.EstimatedCostEUR, FallbackDepth: result.FallbackDepth,
+			CreatedAt: result.LoggedAt,
+		}); err != nil {
+			result.CalibrationAudit = "record_failed"
+		} else {
+			result.CalibrationAudit = "recorded"
+		}
 	}
 	if s.generationHistory == nil {
 		result.AuditStatus = "not_configured"
@@ -385,6 +488,7 @@ func (s *Service) recordGeneration(result *GenerationResult) {
 		return
 	}
 	record := &models.LLMGenerationRecord{
+		ID:               generationUUID,
 		ProviderID:       result.ProviderID,
 		ModelID:          result.ModelID,
 		ModelName:        result.ModelName,
@@ -404,6 +508,41 @@ func (s *Service) recordGeneration(result *GenerationResult) {
 		return
 	}
 	result.AuditStatus = "recorded"
+}
+
+func generationTelemetryID(generationID string) string {
+	return "llm-generation:" + strings.TrimSpace(generationID)
+}
+
+func boundedFallbackDepth(depth int) int {
+	if depth < 0 {
+		return 0
+	}
+	if depth > 32 {
+		return 32
+	}
+	return depth
+}
+
+// RecordGenerationValidation attaches a trusted validator outcome to a routed
+// generation. It cannot be called successfully for unknown or synthetic rows.
+func (s *Service) RecordGenerationValidation(telemetryID, status, method string) error {
+	if s.modelTelemetry == nil {
+		return fmt.Errorf("model outcome telemetry is not configured")
+	}
+	parsed := modelintelligence.ValidationStatus(strings.TrimSpace(status))
+	switch parsed {
+	case modelintelligence.ValidationSchemaValidated,
+		modelintelligence.ValidationSourceSupported,
+		modelintelligence.ValidationTestPassed,
+		modelintelligence.ValidationHumanApproved,
+		modelintelligence.ValidationVerified,
+		modelintelligence.ValidationFailed,
+		modelintelligence.ValidationNeedsReview:
+	default:
+		return fmt.Errorf("unsupported model validation status %q", status)
+	}
+	return s.modelTelemetry.UpdateValidation(telemetryID, parsed, method)
 }
 
 func (s *Service) ProbeProviders() []ProviderProbeResult {
@@ -488,11 +627,11 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 	estimatedInputTokens := estimateTokens(request.Task)
 	estimatedOutputTokens := estimateRouteOutputTokens(classification)
 	for len(candidates) > 0 {
-		maintenance := s.ensureModelFresh(candidates[0].provider, candidates[0].model)
-		if !maintenance.BlocksExecution {
+		blockReason := s.modelMaintenanceRoutingBlockReason(candidates[0].provider, candidates[0].model)
+		if blockReason == "" {
 			break
 		}
-		skipped = append(skipped, SkippedModel{ProviderID: candidates[0].provider.ID, ModelID: candidates[0].model.ID, Reason: "daily model maintenance blocked this model: " + maintenance.Reason})
+		skipped = append(skipped, SkippedModel{ProviderID: candidates[0].provider.ID, ModelID: candidates[0].model.ID, Reason: "daily model maintenance blocked this model: " + blockReason})
 		candidates = candidates[1:]
 	}
 	if len(candidates) == 0 {
@@ -526,6 +665,18 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 		Skipped:               skipped,
 		LoggedAt:              time.Now().UTC(),
 	}
+	if selected.calibration != nil {
+		decision.Calibration = routeCalibration(selected.calibration)
+		decision.Reason += fmt.Sprintf(
+			" Historical validator evidence: %d/%d accepted, conservative lower bound %.1f%% (%s confidence).",
+			selected.calibration.AcceptedOutputs,
+			selected.calibration.EvaluatedRuns,
+			selected.calibration.WilsonLowerBound*100,
+			selected.calibration.Confidence,
+		)
+	} else {
+		decision.Reason += " No evaluated historical output exists for this model and lane; the result must remain unvalidated until checked."
+	}
 
 	s.addLog(decision)
 
@@ -533,12 +684,21 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 }
 
 func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, err error) {
-	defer func() { s.recordGeneration(result) }()
+	defer func() { s.recordGeneration(result, request) }()
 	started := time.Now().UTC()
-	if safety.EmergencyStopActive() {
+	stopState, stopErr := s.evaluateEmergencyStop(context.Background())
+	if stopErr != nil {
 		return &GenerationResult{
 			Status:     "blocked",
-			Reason:     safety.EmergencyStopReason(),
+			Reason:     "emergency-stop state is unavailable",
+			DurationMs: time.Since(started).Milliseconds(),
+			LoggedAt:   time.Now().UTC(),
+		}, nil
+	}
+	if stopState.Active {
+		return &GenerationResult{
+			Status:     "blocked",
+			Reason:     safety.RedactSecrets(stopState.Reason),
 			DurationMs: time.Since(started).Milliseconds(),
 			LoggedAt:   time.Now().UTC(),
 		}, nil
@@ -572,7 +732,8 @@ func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, e
 	if !ok {
 		return nil, fmt.Errorf("selected provider/model not found: %s/%s", decision.SelectedProviderID, decision.SelectedModelID)
 	}
-	if (provider.Paid || model.EstimatedCostEUR > 0 || model.Tier == TierExpensive || model.RequiresApproval) && !request.AllowPaidApproved {
+	if (provider.Paid || model.EstimatedCostEUR > 0 || model.Tier == TierExpensive || model.RequiresApproval) &&
+		(request.EffectContext == nil || strings.TrimSpace(request.EffectContext.ApprovalSourceID) == "") {
 		return &GenerationResult{
 			ProviderID:       provider.ID,
 			ModelID:          model.ID,
@@ -602,13 +763,13 @@ func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, e
 			LoggedAt:         time.Now().UTC(),
 		}, nil
 	}
-	maintenance := s.ensureModelFresh(provider, model)
+	maintenance := s.ensureModelFresh(provider, model, request.EffectContext)
 	if maintenance.BlocksExecution {
 		// A supplied decision can be older than its per-model maintenance
 		// record. Re-run the full policy once so a failed refresh does not
 		// strand an otherwise eligible task when a safe fallback exists.
-		// Route performs the same maintenance gate for every candidate, so
-		// this cannot bypass a failed or stale model.
+		// Route remains read-only: the selected fallback must pass its own
+		// maintenance gate below before any provider effect is attempted.
 		rerouted, routeErr := s.Route(routeRequest)
 		if routeErr != nil {
 			return nil, routeErr
@@ -619,7 +780,8 @@ func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, e
 			if !ok {
 				return nil, fmt.Errorf("rerouted provider/model not found: %s/%s", decision.SelectedProviderID, decision.SelectedModelID)
 			}
-			if (provider.Paid || model.EstimatedCostEUR > 0 || model.Tier == TierExpensive || model.RequiresApproval) && !request.AllowPaidApproved {
+			if (provider.Paid || model.EstimatedCostEUR > 0 || model.Tier == TierExpensive || model.RequiresApproval) &&
+				(request.EffectContext == nil || strings.TrimSpace(request.EffectContext.ApprovalSourceID) == "") {
 				return &GenerationResult{
 					ProviderID:       provider.ID,
 					ModelID:          model.ID,
@@ -643,6 +805,21 @@ func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, e
 					Tier:             model.Tier,
 					Status:           generationStatusForReadiness(readiness.status),
 					Reason:           readiness.reason,
+					EstimatedCostEUR: model.EstimatedCostEUR,
+					DurationMs:       time.Since(started).Milliseconds(),
+					FallbackPath:     fallbackLabels(decision.FallbackPath),
+					LoggedAt:         time.Now().UTC(),
+				}, nil
+			}
+			maintenance = s.ensureModelFresh(provider, model, request.EffectContext)
+			if maintenance.BlocksExecution {
+				return &GenerationResult{
+					ProviderID:       provider.ID,
+					ModelID:          model.ID,
+					ModelName:        model.Name,
+					Tier:             model.Tier,
+					Status:           "skipped",
+					Reason:           "daily model maintenance blocked the selected fallback: " + maintenance.Reason,
 					EstimatedCostEUR: model.EstimatedCostEUR,
 					DurationMs:       time.Since(started).Milliseconds(),
 					FallbackPath:     fallbackLabels(decision.FallbackPath),
@@ -775,13 +952,25 @@ func (s *Service) callProvider(ctx context.Context, provider Provider, model Mod
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 	prompt := buildPrompt(request)
+	maxOutputTokens := request.MaxTokens
+	if maxOutputTokens <= 0 {
+		maxOutputTokens = 800
+	}
+	estimatedCostEUR := estimateModelUsageCostEUR(
+		model,
+		estimateTokens(prompt),
+		maxOutputTokens,
+	)
+	if estimatedCostEUR == 0 {
+		estimatedCostEUR = model.EstimatedCostEUR
+	}
 	switch provider.ID {
 	case "ollama":
-		return callOllama(ctx, endpoint, model.ID, prompt, request)
+		return s.callOllama(ctx, endpoint, provider, model, prompt, estimatedCostEUR, request)
 	case "odysseus":
 		return "", providerUsage{}, errors.New(odysseusExecutionBlockedReason())
 	default:
-		return callOpenAICompatible(ctx, endpoint, provider, model.ID, prompt, request)
+		return s.callOpenAICompatible(ctx, endpoint, provider, model, prompt, estimatedCostEUR, request)
 	}
 }
 
@@ -952,9 +1141,17 @@ func probeModelIDs(provider Provider, raw []byte) []string {
 	return uniqueStrings(ids)
 }
 
-func callOllama(ctx context.Context, endpoint, modelID, prompt string, request GenerateRequest) (string, providerUsage, error) {
+func (s *Service) callOllama(
+	ctx context.Context,
+	endpoint string,
+	provider Provider,
+	model Model,
+	prompt string,
+	estimatedCostEUR float64,
+	request GenerateRequest,
+) (string, providerUsage, error) {
 	payload := map[string]interface{}{
-		"model":  modelID,
+		"model":  model.ID,
 		"prompt": prompt,
 		"stream": false,
 	}
@@ -970,6 +1167,23 @@ func callOllama(ctx context.Context, endpoint, modelID, prompt string, request G
 		return "", providerUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	authorization, err := buildFinalEffectAuthorizationRequest(
+		EffectOperationGenerate,
+		request.EffectContext,
+		provider,
+		model,
+		endpoint,
+		estimatedCostEUR,
+		[]byte(prompt),
+		body,
+		"",
+	)
+	if err != nil {
+		return "", providerUsage{}, err
+	}
+	if err := s.authorizeFinalEffect(ctx, authorization); err != nil {
+		return "", providerUsage{}, err
+	}
 	resp, err := noRedirectHTTPClient().Do(req)
 	if err != nil {
 		return "", providerUsage{}, err
@@ -1003,13 +1217,21 @@ func callOllama(ctx context.Context, endpoint, modelID, prompt string, request G
 	return decoded.Response, usage, nil
 }
 
-func callOpenAICompatible(ctx context.Context, endpoint string, provider Provider, modelID, prompt string, request GenerateRequest) (string, providerUsage, error) {
+func (s *Service) callOpenAICompatible(
+	ctx context.Context,
+	endpoint string,
+	provider Provider,
+	model Model,
+	prompt string,
+	estimatedCostEUR float64,
+	request GenerateRequest,
+) (string, providerUsage, error) {
 	maxTokens := request.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 800
 	}
 	payload := map[string]interface{}{
-		"model": modelID,
+		"model": model.ID,
 		"messages": []map[string]string{
 			{"role": "system", "content": firstNonEmpty(request.SystemPrompt, "You are a careful local-first assistant. Use only provided context when factual grounding is required.")},
 			{"role": "user", "content": prompt},
@@ -1030,6 +1252,23 @@ func callOpenAICompatible(ctx context.Context, endpoint string, provider Provide
 		if key := strings.TrimSpace(os.Getenv(provider.APIKeyEnv)); key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
+	}
+	authorization, err := buildFinalEffectAuthorizationRequest(
+		EffectOperationGenerate,
+		request.EffectContext,
+		provider,
+		model,
+		endpoint,
+		estimatedCostEUR,
+		[]byte(prompt),
+		body,
+		"",
+	)
+	if err != nil {
+		return "", providerUsage{}, err
+	}
+	if err := s.authorizeFinalEffect(ctx, authorization); err != nil {
+		return "", providerUsage{}, err
 	}
 	resp, err := noRedirectHTTPClient().Do(req)
 	if err != nil {
@@ -1192,8 +1431,9 @@ func estimateTokens(value string) int {
 }
 
 type candidate struct {
-	provider Provider
-	model    Model
+	provider    Provider
+	model       Model
+	calibration *modelintelligence.ModelCalibration
 }
 
 func (s *Service) candidates(classification TaskClassification, request RouteRequest) ([]candidate, []SkippedModel) {
@@ -1255,9 +1495,51 @@ func (s *Service) candidates(classification TaskClassification, request RouteReq
 		}
 	}
 
+	calibration := s.calibrationByModel(classification)
+	for index := range candidates {
+		if observed, ok := calibration[modelCalibrationKey(candidates[index].provider.ID, candidates[index].model.ID)]; ok {
+			copy := observed
+			candidates[index].calibration = &copy
+		}
+	}
+	eligible := make([]candidate, 0, len(candidates))
+	knownWeak := make([]candidate, 0)
+	for _, current := range candidates {
+		if current.calibration != nil && current.calibration.EvaluatedRuns >= 5 && current.calibration.AcceptedOutputs == 0 {
+			knownWeak = append(knownWeak, current)
+			continue
+		}
+		eligible = append(eligible, current)
+	}
+	// Do not turn finite calibration evidence into a dead-end. Known weak models
+	// are skipped only when at least one otherwise suitable candidate remains.
+	if len(eligible) > 0 {
+		for _, current := range knownWeak {
+			skipped = append(skipped, SkippedModel{
+				ProviderID: current.provider.ID,
+				ModelID:    current.model.ID,
+				Reason:     "five or more evaluated outputs produced no validator-accepted result for this routing lane",
+			})
+		}
+		candidates = eligible
+	}
+
 	sort.SliceStable(candidates, func(i, j int) bool {
 		left := candidates[i]
 		right := candidates[j]
+		leftAccepted := left.calibration != nil && left.calibration.AcceptedOutputs > 0
+		rightAccepted := right.calibration != nil && right.calibration.AcceptedOutputs > 0
+		if leftAccepted != rightAccepted {
+			return leftAccepted
+		}
+		if leftAccepted && rightAccepted {
+			if left.calibration.WilsonLowerBound != right.calibration.WilsonLowerBound {
+				return left.calibration.WilsonLowerBound > right.calibration.WilsonLowerBound
+			}
+			if left.calibration.EvaluatedRuns != right.calibration.EvaluatedRuns {
+				return left.calibration.EvaluatedRuns > right.calibration.EvaluatedRuns
+			}
+		}
 		if policy.LocalFirst && left.provider.Local != right.provider.Local {
 			return left.provider.Local
 		}
@@ -1271,6 +1553,55 @@ func (s *Service) candidates(classification TaskClassification, request RouteReq
 	})
 
 	return candidates, skipped
+}
+
+func (s *Service) calibrationByModel(classification TaskClassification) map[string]modelintelligence.ModelCalibration {
+	result := map[string]modelintelligence.ModelCalibration{}
+	if s.modelTelemetry == nil {
+		return result
+	}
+	rows, err := s.modelTelemetry.LoadAll()
+	if err != nil {
+		return result
+	}
+	store := modelintelligence.NewTelemetryStore()
+	store.Seed(rows)
+	lane := routingLaneForClassification(classification)
+	for _, model := range store.Calibration().Models {
+		if model.Lane == lane {
+			result[modelCalibrationKey(model.ProviderID, model.ModelID)] = model
+		}
+	}
+	return result
+}
+
+func modelCalibrationKey(providerID, modelID string) string {
+	return strings.TrimSpace(providerID) + "\x00" + strings.TrimSpace(modelID)
+}
+
+func routeCalibration(model *modelintelligence.ModelCalibration) *RouteCalibration {
+	if model == nil {
+		return nil
+	}
+	return &RouteCalibration{
+		Lane: string(model.Lane), EvaluatedRuns: model.EvaluatedRuns,
+		AcceptedOutputs: model.AcceptedOutputs, AcceptanceRate: model.AcceptanceRate,
+		WilsonLowerBound: model.WilsonLowerBound, Confidence: model.Confidence,
+	}
+}
+
+func routingLaneForClassification(classification TaskClassification) modelintelligence.RoutingLane {
+	taskType := strings.ToLower(strings.TrimSpace(classification.TaskType))
+	switch {
+	case taskType == "high_stakes" || hasCapability(classification.RequiredCapabilities, "verification"):
+		return modelintelligence.LaneVerifier
+	case taskType == "architecture" || classification.Difficulty >= 4 || reasoningRank[classification.RequiredReasoning] >= reasoningRank["high"]:
+		return modelintelligence.LaneRecursiveDeepReview
+	case taskType == "extraction" || classification.Difficulty <= 1:
+		return modelintelligence.LaneFastTriage
+	default:
+		return modelintelligence.LaneDrafting
+	}
 }
 
 // strictProbeReason keeps optional strict routing fail-closed. It deliberately

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/automation"
+	"automation-hub-backend/internal/executionauth"
 
 	"github.com/google/uuid"
 )
@@ -41,6 +42,7 @@ func (e *AutomationToolExecutor) Execute(request ToolExecutionRequest) (*ToolExe
 	}
 	var proof *automation.ApprovalProof
 	approvalSourceID := strings.TrimSpace(request.ApprovalSourceID)
+	launchApprovalSourceID := approvalSourceID
 	if approvalSourceID != "" {
 		sourceKind, err := validateExecutionApprovalSource(approvalSourceID)
 		if err != nil {
@@ -58,7 +60,10 @@ func (e *AutomationToolExecutor) Execute(request ToolExecutionRequest) (*ToolExe
 			if decision.ApprovalSourceID != approvalSourceID ||
 				strings.TrimSpace(decision.OwnerIdentity) != strings.TrimSpace(request.OwnerIdentity) ||
 				strings.TrimSpace(decision.Task) != strings.TrimSpace(request.Task) ||
-				strings.TrimSpace(decision.ProjectKey) != strings.TrimSpace(request.ProjectKey) {
+				strings.TrimSpace(decision.ProjectKey) != strings.TrimSpace(request.ProjectKey) ||
+				strings.TrimSpace(decision.MandateID) != strings.TrimSpace(request.MandateID) ||
+				strings.TrimSpace(decision.ApprovalBindingDigest) !=
+					strings.TrimSpace(request.ApprovalBindingDigest) {
 				return nil, fmt.Errorf("task review decision does not match the exact execution request")
 			}
 			if err := recorder.RecordApprovalDecision(id, decision); err != nil {
@@ -70,37 +75,63 @@ func (e *AutomationToolExecutor) Execute(request ToolExecutionRequest) (*ToolExe
 				return nil, fmt.Errorf("workflow approval requires a valid workflow binding")
 			}
 		}
-		issuer, ok := e.launcher.(automationApprovalProofIssuer)
-		if !ok {
-			return nil, fmt.Errorf("automation runtime approval proof issuer is not configured")
+		requiresActionProof := true
+		if inspector, ok := e.launcher.(automation.ActionApprovalRequirementInspector); ok {
+			requiresActionProof, err = inspector.ActionApprovalRequired(id)
+			if err != nil {
+				return nil, fmt.Errorf("inspect automation approval requirement: %w", err)
+			}
 		}
-		proof, err = issuer.IssueApprovalProof(id, automation.TaskApprovalProofRequest{
-			OwnerIdentity:    request.OwnerIdentity,
-			Task:             request.Task,
-			OriginalRequest:  request.OriginalRequest,
-			ProjectKey:       request.ProjectKey,
-			WorkflowID:       request.WorkflowID,
-			ApprovalSourceID: approvalSourceID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("issue action-bound automation approval proof: %w", err)
-		}
-		if err := automation.ValidateIssuedApprovalProofEnvelope(
-			proof,
-			request.OwnerIdentity,
-			id,
-			approvalSourceID,
-			time.Now().UTC(),
-		); err != nil {
-			return nil, fmt.Errorf("validate issued automation approval proof: %w", err)
+		if requiresActionProof {
+			issuer, ok := e.launcher.(automationApprovalProofIssuer)
+			if !ok {
+				return nil, fmt.Errorf("automation runtime approval proof issuer is not configured")
+			}
+			proof, err = issuer.IssueApprovalProof(id, automation.TaskApprovalProofRequest{
+				OwnerIdentity:    request.OwnerIdentity,
+				Task:             request.Task,
+				OriginalRequest:  request.OriginalRequest,
+				ProjectKey:       request.ProjectKey,
+				MandateID:        strings.TrimSpace(request.MandateID),
+				WorkflowID:       request.WorkflowID,
+				ApprovalSourceID: approvalSourceID,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("issue action-bound automation approval proof: %w", err)
+			}
+			if err := automation.ValidateIssuedApprovalProofEnvelope(
+				proof,
+				request.OwnerIdentity,
+				id,
+				approvalSourceID,
+				time.Now().UTC(),
+			); err != nil {
+				return nil, fmt.Errorf("validate issued automation approval proof: %w", err)
+			}
+			// The queued review digest proves the upstream human decision. The
+			// execution boundary must instead consume authority for the exact
+			// current automation action that the proof issuer derived from stored
+			// configuration. This also gives workflow approvals the same
+			// final-effect binding without trusting caller-supplied digest material.
+			request.ApprovalBindingDigest = proof.ActionDigest
+		} else {
+			// Read-only actions do not need a one-use final-effect proof, but a
+			// valid exact workflow decision still determines the case-approved
+			// autonomy level and remains part of the authorization audit.
 		}
 	}
 	result, err := e.launcher.LaunchTask(id, automation.TaskLaunchRequest{
-		OwnerIdentity:    request.OwnerIdentity,
-		Task:             request.Task,
-		ProjectKey:       request.ProjectKey,
-		ApprovalSourceID: approvalSourceID,
-		ApprovalProof:    proof,
+		OwnerIdentity:         request.OwnerIdentity,
+		ActorIdentity:         "hai-task-engine",
+		ActorKind:             executionauth.ActorSystem,
+		TaskID:                request.TaskID,
+		Task:                  request.Task,
+		ProjectKey:            request.ProjectKey,
+		MandateID:             strings.TrimSpace(request.MandateID),
+		ApprovalSourceID:      launchApprovalSourceID,
+		ApprovalBindingDigest: request.ApprovalBindingDigest,
+		Governance:            request.Governance,
+		ApprovalProof:         proof,
 	})
 	if err != nil {
 		return nil, err

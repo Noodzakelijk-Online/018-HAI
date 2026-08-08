@@ -33,6 +33,26 @@ func requirePermission(perm rbac.Permission) gin.HandlerFunc {
 	}
 }
 
+// requireRecognizedRole rejects malformed or newly introduced role values at
+// security-sensitive module boundaries. The legacy permission middleware keeps
+// its viewer fallback for existing read-only routes, but governance modules
+// must not silently reinterpret an unknown verified claim as a known role.
+func requireRecognizedRole() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roleValue, _ := c.Get(contextRoleKey)
+		role := rbac.Role(toRoleString(roleValue))
+		if !rbac.IsRole(role) {
+			err := apierror.New(
+				apierror.CodeForbidden,
+				"identity token contains an unsupported role",
+			).WithDetail("role", string(role))
+			c.AbortWithStatusJSON(err.HTTPStatus(), err.Envelope())
+			return
+		}
+		c.Next()
+	}
+}
+
 func toRoleString(v any) string {
 	if s, ok := v.(string); ok {
 		return strings.ToLower(strings.TrimSpace(s))

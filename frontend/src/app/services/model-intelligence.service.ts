@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core'
 import { Observable } from 'rxjs'
 import {
   IBenchmarkResult,
+  ICalibrationSummary,
   IHardwareResponse,
   IModelIntelligenceOverview,
   IModelProfile,
@@ -27,6 +28,10 @@ export class ModelIntelligenceService {
 
   telemetry(): Observable<{ telemetry: IModelTelemetry[] }> {
     return this.http.get<{ telemetry: IModelTelemetry[] }>(`${this.apiUrl}/model-intelligence/telemetry`)
+  }
+
+  calibration(): Observable<ICalibrationSummary> {
+    return this.http.get<ICalibrationSummary>(`${this.apiUrl}/model-intelligence/calibration`)
   }
 
   benchmark(providerId: string, modelId: string): Observable<IBenchmarkResult> {

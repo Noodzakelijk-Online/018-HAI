@@ -5,6 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,29 +20,52 @@ import (
 )
 
 const (
-	googleProvider    = "google"
-	gmailConnectorKey = "gmail"
-	gmailFetchLimit   = 25
+	googleProvider       = "google"
+	gmailConnectorKey    = "gmail"
+	driveConnectorKey    = "google-drive"
+	contactsConnectorKey = "google-contacts"
+	calendarConnectorKey = "google-calendar"
+	gmailFetchLimit      = 25
+	driveFetchLimit      = 100
 )
 
-// googleOAuthConfig builds the OAuth client from the environment.
+// googleOAuthConfig builds the base OAuth client from the environment. Callers
+// must set the connector-specific least-privilege scope before authorization.
 func googleOAuthConfig() googleoauth.Config {
 	return googleoauth.Config{
 		ClientID:     config.AppConfig.GoogleOAuthClientID,
 		ClientSecret: config.AppConfig.GoogleOAuthClientSecret,
 		RedirectURL:  config.AppConfig.GoogleOAuthRedirectURL,
-		Scopes:       []string{googleoauth.GmailReadonlyScope},
 	}
 }
 
-// tokenCodec encrypts tokens at rest with the configured encryption secret,
-// falling back to the backend key (the same precedence doctor documents).
-func tokenCodec() (*googleoauth.Codec, error) {
-	secret := strings.TrimSpace(config.AppConfig.MemoryEngineKey)
-	if secret == "" {
-		secret = strings.TrimSpace(config.AppConfig.BackendAPIKey)
+func googleOAuthConfigForConnector(connectorKey string) (googleoauth.Config, error) {
+	cfg := googleOAuthConfig()
+	switch strings.TrimSpace(connectorKey) {
+	case gmailConnectorKey:
+		cfg.Scopes = []string{googleoauth.GmailReadonlyScope}
+	case driveConnectorKey:
+		cfg.Scopes = []string{googleoauth.DriveReadonlyScope}
+	case contactsConnectorKey:
+		cfg.Scopes = []string{googleoauth.ContactsReadonlyScope}
+	case calendarConnectorKey:
+		cfg.Scopes = []string{googleoauth.CalendarReadonlyScope}
+	default:
+		return googleoauth.Config{}, fmt.Errorf("connector %q does not use Google OAuth", connectorKey)
 	}
-	return googleoauth.NewCodec(secret)
+	return cfg, nil
+}
+
+func googleOAuthReady() bool {
+	return googleOAuthConfig().Configured() &&
+		strings.TrimSpace(config.AppConfig.OAuthTokenEncryptionKey) != "" &&
+		strings.TrimSpace(config.AppConfig.OAuthStateSigningKey) != ""
+}
+
+// tokenCodec uses a dedicated secret. OAuth refresh tokens are account
+// credentials and must not silently fall back to an unrelated application key.
+func tokenCodec() (*googleoauth.Codec, error) {
+	return googleoauth.NewCodec(config.AppConfig.OAuthTokenEncryptionKey)
 }
 
 // --- signed, stateless CSRF state -------------------------------------------
@@ -48,13 +73,13 @@ func tokenCodec() (*googleoauth.Codec, error) {
 // secret. It needs no server-side storage, so it survives a restart mid-flow
 // and cannot be forged without the secret. Format: base64(payload)."."base64(mac).
 
-func stateSecret() []byte {
-	s := strings.TrimSpace(config.AppConfig.JWTSecret)
+func stateSecret() ([]byte, error) {
+	s := strings.TrimSpace(config.AppConfig.OAuthStateSigningKey)
 	if s == "" {
-		s = strings.TrimSpace(config.AppConfig.BackendAPIKey)
+		return nil, fmt.Errorf("oauth state signing key is not configured")
 	}
 	sum := sha256.Sum256([]byte("oauth-state|" + s))
-	return sum[:]
+	return sum[:], nil
 }
 
 func signState(sourceID uuid.UUID) (string, error) {
@@ -64,7 +89,11 @@ func signState(sourceID uuid.UUID) (string, error) {
 	}
 	payload := fmt.Sprintf("%s|%d|%s", sourceID.String(), time.Now().Add(10*time.Minute).Unix(), nonce)
 	enc := base64.RawURLEncoding.EncodeToString([]byte(payload))
-	mac := hmac.New(sha256.New, stateSecret())
+	secret, err := stateSecret()
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(enc))
 	return enc + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
@@ -74,7 +103,11 @@ func verifyState(state string) (uuid.UUID, error) {
 	if len(parts) != 2 {
 		return uuid.Nil, fmt.Errorf("malformed oauth state")
 	}
-	mac := hmac.New(sha256.New, stateSecret())
+	secret, err := stateSecret()
+	if err != nil {
+		return uuid.Nil, err
+	}
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(parts[0]))
 	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
@@ -99,18 +132,19 @@ func verifyState(state string) (uuid.UUID, error) {
 	return id, nil
 }
 
-// StartGoogleOAuth returns the Google consent URL for connecting a gmail source.
+// StartGoogleOAuth returns the least-privilege Google consent URL for the
+// selected Gmail, Drive, Contacts, or Calendar source.
 func (s *service) StartGoogleOAuth(sourceID uuid.UUID) (string, error) {
-	cfg := googleOAuthConfig()
-	if !cfg.Configured() {
-		return "", fmt.Errorf("google oauth is not configured; set GOOGLE_OAUTH_CLIENT_ID, _SECRET and _REDIRECT_URL")
+	if !googleOAuthReady() {
+		return "", fmt.Errorf("google oauth is not configured; set the GOOGLE_OAUTH_* values and dedicated HAI OAuth encryption/signing keys")
 	}
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
 		return "", err
 	}
-	if source.ConnectorKey != gmailConnectorKey {
-		return "", fmt.Errorf("source is a %q connector, not gmail", source.ConnectorKey)
+	cfg, err := googleOAuthConfigForConnector(source.ConnectorKey)
+	if err != nil {
+		return "", err
 	}
 	state, err := signState(sourceID)
 	if err != nil {
@@ -122,14 +156,21 @@ func (s *service) StartGoogleOAuth(sourceID uuid.UUID) (string, error) {
 // CompleteGoogleOAuth handles the callback: verify state, exchange the code, and
 // store the encrypted tokens against the source.
 func (s *service) CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error) {
-	cfg := googleOAuthConfig()
-	if !cfg.Configured() {
+	if !googleOAuthReady() {
 		return uuid.Nil, fmt.Errorf("google oauth is not configured")
 	}
 	if strings.TrimSpace(code) == "" {
 		return uuid.Nil, fmt.Errorf("missing authorization code")
 	}
 	sourceID, err := verifyState(state)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	source, err := s.repo.FindSource(sourceID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	cfg, err := googleOAuthConfigForConnector(source.ConnectorKey)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -140,7 +181,7 @@ func (s *service) CompleteGoogleOAuth(ctx context.Context, code, state string) (
 	if err := s.storeToken(sourceID, token); err != nil {
 		return uuid.Nil, err
 	}
-	s.audit(sourceID, "source.oauth_connected", "google account connected for gmail sync")
+	s.audit(sourceID, "source.oauth_connected", "google account connected with least-privilege "+source.ConnectorKey+" read scope")
 	return sourceID, nil
 }
 
@@ -153,9 +194,20 @@ func (s *service) storeToken(sourceID uuid.UUID, token *googleoauth.Token) error
 	if err != nil {
 		return err
 	}
-	refreshCt, err := codec.Encrypt(token.RefreshToken)
-	if err != nil {
-		return err
+	var refreshCt []byte
+	if strings.TrimSpace(token.RefreshToken) == "" {
+		if existing, findErr := s.repo.FindOAuthToken(sourceID); findErr == nil {
+			refreshCt = append([]byte(nil), existing.RefreshToken...)
+			if strings.TrimSpace(token.Scope) == "" {
+				token.Scope = existing.Scope
+			}
+		}
+	}
+	if refreshCt == nil {
+		refreshCt, err = codec.Encrypt(token.RefreshToken)
+		if err != nil {
+			return err
+		}
 	}
 	return s.repo.SaveOAuthToken(&models.SourceOAuthToken{
 		SourceID:     sourceID,
@@ -167,9 +219,16 @@ func (s *service) storeToken(sourceID uuid.UUID, token *googleoauth.Token) error
 	})
 }
 
-// gmailAccessToken returns a currently-valid access token, transparently
-// refreshing and persisting a new one when the stored token has expired.
-func (s *service) gmailAccessToken(ctx context.Context, sourceID uuid.UUID) (string, error) {
+// googleAccessToken returns a currently-valid access token for exactly the
+// source connector that received the grant.
+func (s *service) googleAccessToken(ctx context.Context, sourceID uuid.UUID, connectorKey string) (string, error) {
+	source, err := s.repo.FindSource(sourceID)
+	if err != nil {
+		return "", err
+	}
+	if source.ConnectorKey != connectorKey {
+		return "", fmt.Errorf("google grant connector mismatch")
+	}
 	stored, err := s.repo.FindOAuthToken(sourceID)
 	if err != nil {
 		return "", fmt.Errorf("no connected google account for this source; connect it first")
@@ -187,20 +246,113 @@ func (s *service) gmailAccessToken(ctx context.Context, sourceID uuid.UUID) (str
 		return "", err
 	}
 	tok := googleoauth.Token{AccessToken: access, RefreshToken: refresh, Expiry: stored.Expiry, Scope: stored.Scope}
+	requiredScope, err := requiredGoogleScope(connectorKey)
+	if err != nil {
+		return "", err
+	}
+	if !hasOAuthScope(tok.Scope, requiredScope) {
+		return "", fmt.Errorf("stored google grant does not include the required read-only scope; reconnect the source")
+	}
 	if tok.Valid(time.Now()) {
 		return tok.AccessToken, nil
 	}
 	if strings.TrimSpace(refresh) == "" {
 		return "", fmt.Errorf("access token expired and no refresh token stored; reconnect the google account")
 	}
-	refreshed, err := googleOAuthConfig().Refresh(ctx, refresh)
+	cfg, err := googleOAuthConfigForConnector(connectorKey)
+	if err != nil {
+		return "", err
+	}
+	refreshed, err := cfg.Refresh(ctx, refresh)
 	if err != nil {
 		return "", fmt.Errorf("token refresh failed: %w", err)
+	}
+	if strings.TrimSpace(refreshed.Scope) == "" {
+		refreshed.Scope = stored.Scope
 	}
 	if err := s.storeToken(sourceID, refreshed); err != nil {
 		return "", err
 	}
 	return refreshed.AccessToken, nil
+}
+
+func requiredGoogleScope(connectorKey string) (string, error) {
+	switch strings.TrimSpace(connectorKey) {
+	case gmailConnectorKey:
+		return googleoauth.GmailReadonlyScope, nil
+	case driveConnectorKey:
+		return googleoauth.DriveReadonlyScope, nil
+	case contactsConnectorKey:
+		return googleoauth.ContactsReadonlyScope, nil
+	case calendarConnectorKey:
+		return googleoauth.CalendarReadonlyScope, nil
+	default:
+		return "", fmt.Errorf("connector %q does not use Google OAuth", connectorKey)
+	}
+}
+
+func isGoogleOAuthConnector(connectorKey string) bool {
+	switch strings.TrimSpace(connectorKey) {
+	case gmailConnectorKey, driveConnectorKey, contactsConnectorKey, calendarConnectorKey:
+		return true
+	default:
+		return false
+	}
+}
+
+func hasOAuthScope(granted, required string) bool {
+	for _, scope := range strings.Fields(granted) {
+		if scope == required {
+			return true
+		}
+	}
+	return false
+}
+
+const gmailCursorPrefix = "gmail:v1:"
+
+type gmailCursor struct {
+	Version   int    `json:"v"`
+	Phase     string `json:"phase"`
+	PageToken string `json:"pageToken,omitempty"`
+	HistoryID string `json:"historyId,omitempty"`
+}
+
+func encodeGmailCursor(cursor gmailCursor) (string, error) {
+	cursor.Version = 1
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return gmailCursorPrefix + base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeGmailCursor(value string) (gmailCursor, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return gmailCursor{Version: 1, Phase: "backfill"}, nil
+	}
+	// Timestamp cursors came from the previous best-effort implementation. A
+	// bounded provider-native backfill safely upgrades them; raw-item upserts
+	// prevent duplicates.
+	if _, err := time.Parse(time.RFC3339, value); err == nil {
+		return gmailCursor{Version: 1, Phase: "backfill"}, nil
+	}
+	if !strings.HasPrefix(value, gmailCursorPrefix) {
+		return gmailCursor{}, fmt.Errorf("unsupported Gmail cursor; reset or reconnect this source")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, gmailCursorPrefix))
+	if err != nil {
+		return gmailCursor{}, fmt.Errorf("decode Gmail cursor: %w", err)
+	}
+	var cursor gmailCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil {
+		return gmailCursor{}, fmt.Errorf("decode Gmail cursor: %w", err)
+	}
+	if cursor.Version != 1 || (cursor.Phase != "backfill" && cursor.Phase != "history") {
+		return gmailCursor{}, fmt.Errorf("unsupported Gmail cursor version or phase")
+	}
+	return cursor, nil
 }
 
 // gmailIncrementalQuery turns a stored cursor into a Gmail search query so a
@@ -216,40 +368,102 @@ func gmailIncrementalQuery(cursor string) string {
 	return fmt.Sprintf("after:%d", parsed.UTC().Unix())
 }
 
-// fetchGmailSource pulls recent message metadata as import items and returns the
-// advanced cursor (the newest message timestamp seen).
+// fetchGmailSource performs bounded historical backfill and then advances using
+// Gmail's historyId feed. Expired history IDs restart a deduplicated backfill,
+// as required by Gmail's synchronization contract.
 func (s *service) fetchGmailSource(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
-	access, err := s.gmailAccessToken(ctx, source.ID)
+	access, err := s.googleAccessToken(ctx, source.ID, gmailConnectorKey)
 	if err != nil {
 		return nil, "", err
 	}
-	query := gmailIncrementalQuery(source.Cursor)
-	messages, err := (googleoauth.GmailClient{AccessToken: access}).FetchRecent(ctx, gmailFetchLimit, query)
+	return fetchGmailSourceWithClient(ctx, googleoauth.GmailClient{AccessToken: access}, source)
+}
+
+func fetchGmailSourceWithClient(ctx context.Context, client googleoauth.GmailClient, source *models.ConnectedSource) ([]ImportItem, string, error) {
+	cursor, err := decodeGmailCursor(source.Cursor)
 	if err != nil {
 		return nil, "", err
 	}
+	if cursor.Phase == "backfill" {
+		if cursor.HistoryID == "" {
+			cursor.HistoryID, err = client.GetProfileHistoryID(ctx)
+			if err != nil {
+				return nil, "", fmt.Errorf("capture Gmail history boundary: %w", err)
+			}
+		}
+		page, err := client.ListMessageIDsPage(ctx, gmailFetchLimit, "", cursor.PageToken)
+		if err != nil {
+			return nil, "", err
+		}
+		messages := client.FetchMessageIDs(ctx, page.IDs)
+		if page.NextPageToken != "" {
+			cursor.PageToken = page.NextPageToken
+		} else {
+			cursor.Phase = "history"
+			cursor.PageToken = ""
+		}
+		next, err := encodeGmailCursor(cursor)
+		return gmailMessagesToImportItems(messages, source), next, err
+	}
+
+	page, err := client.ListHistoryPage(ctx, cursor.HistoryID, cursor.PageToken, gmailFetchLimit)
+	if errors.Is(err, googleoauth.ErrHistoryCursorExpired) {
+		reset := *source
+		reset.Cursor = ""
+		return fetchGmailSourceWithClient(ctx, client, &reset)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	messages := client.FetchMessageIDs(ctx, page.MessageIDs)
+	if page.NextPageToken != "" {
+		cursor.PageToken = page.NextPageToken
+	} else {
+		cursor.PageToken = ""
+		cursor.HistoryID = firstNonEmpty(page.HistoryID, cursor.HistoryID)
+	}
+	next, err := encodeGmailCursor(cursor)
+	return gmailMessagesToImportItems(messages, source), next, err
+}
+
+func gmailMessagesToImportItems(messages []googleoauth.GmailMessage, source *models.ConnectedSource) []ImportItem {
 	projectKey := firstNonEmpty(source.DefaultProjectKey, "Robert-life-os")
-	newest := time.Time{}
 	items := make([]ImportItem, 0, len(messages))
 	for _, m := range messages {
-		if m.Date.After(newest) {
-			newest = m.Date
+		content := strings.Join([]string{
+			"From: " + m.From,
+			"To: " + m.To,
+			"Subject: " + m.Subject,
+			"Date: " + formatOptionalTime(m.Date),
+			"Thread: " + m.ThreadID,
+		}, "\n")
+		messageText := firstNonEmpty(strings.TrimSpace(m.Body), strings.TrimSpace(m.Snippet))
+		if messageText != "" {
+			content += "\n\nMessage:\n" + messageText
 		}
+		if len(m.Attachments) > 0 {
+			content += fmt.Sprintf("\n\nAttachments (%d):", len(m.Attachments))
+			for _, attachment := range m.Attachments {
+				content += fmt.Sprintf("\n- %s (%s, %d bytes; content fetched=%t)", firstNonEmpty(attachment.Filename, "unnamed"), firstNonEmpty(attachment.MimeType, "unknown"), attachment.Size, attachment.Fetched)
+				if attachment.Fetched && strings.TrimSpace(attachment.Content) != "" {
+					content += "\n  Extracted attachment text: " + attachment.Content
+				}
+			}
+		}
+		metadata, _ := json.Marshal(map[string]any{
+			"source": "gmail", "from": m.From, "to": m.To,
+			"date": formatOptionalTime(m.Date), "threadId": m.ThreadID,
+			"historyId": m.HistoryID, "attachments": len(m.Attachments), "readonly": true,
+		})
 		items = append(items, ImportItem{
 			ExternalID: "gmail:" + m.ID,
 			Title:      firstNonEmpty(m.Subject, "(no subject)"),
-			Content:    fmt.Sprintf("From: %s\nSubject: %s\nDate: %s\n\n%s", m.From, m.Subject, m.Date.Format(time.RFC3339), m.Snippet),
+			Content:    content,
 			SourceURI:  "https://mail.google.com/mail/u/0/#all/" + m.ID,
 			ItemType:   "email_message",
 			ProjectKey: projectKey,
-			Metadata:   fmt.Sprintf("source=gmail;from=%s;date=%s", m.From, m.Date.Format(time.RFC3339)),
+			Metadata:   string(metadata),
 		})
 	}
-	// Keep the previous cursor when nothing new arrived, so an empty incremental
-	// run cannot rewind the window and re-ingest old mail next time.
-	nextCursor := strings.TrimSpace(source.Cursor)
-	if !newest.IsZero() {
-		nextCursor = newest.UTC().Format(time.RFC3339)
-	}
-	return items, nextCursor, nil
+	return items
 }

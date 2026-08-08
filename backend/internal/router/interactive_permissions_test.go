@@ -44,6 +44,9 @@ func TestConsequentialTaskExecutionAndReviewRequireOwnerApproval(t *testing.T) {
 		{name: "operator cannot deny review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":false}`, role: "operator", want: http.StatusForbidden},
 		{name: "owner can approve review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":true}`, role: "owner", want: http.StatusOK},
 		{name: "owner can deny review", method: http.MethodPost, path: "/api/v1/task/review-queue/item/resolve", body: `{"approved":false}`, role: "owner", want: http.StatusOK},
+		{name: "viewer cannot reconcile reviews", method: http.MethodPost, path: "/api/v1/task/review-queue/reconcile", body: `{}`, role: "viewer", want: http.StatusForbidden},
+		{name: "operator cannot reconcile reviews", method: http.MethodPost, path: "/api/v1/task/review-queue/reconcile", body: `{}`, role: "operator", want: http.StatusForbidden},
+		{name: "owner can preview review reconciliation", method: http.MethodPost, path: "/api/v1/task/review-queue/reconcile", body: `{}`, role: "owner", want: http.StatusOK},
 		{name: "viewer can read review queue", method: http.MethodGet, path: "/api/v1/task/review-queue", role: "viewer", want: http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -107,6 +110,10 @@ type interactiveTaskService struct {
 	planCalls    int
 	runCalls     int
 	resolveCalls int
+}
+
+func (s *interactiveTaskService) ReconcileApprovedReviewsForOwner(string, task.ApprovedReviewReconciliationRequest) (*task.ApprovedReviewReconciliationResult, error) {
+	return &task.ApprovedReviewReconciliationResult{DryRun: true, Items: []task.ApprovedReviewReconciliationItem{}}, nil
 }
 
 func (s *interactiveTaskService) Plan(request task.IntakeRequest) (*task.CompletionPlan, error) {

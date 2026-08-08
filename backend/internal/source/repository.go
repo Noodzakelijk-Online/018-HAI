@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -14,6 +15,7 @@ type Repository interface {
 	FindConnectors() ([]models.SourceConnector, error)
 	CreateSource(source *models.ConnectedSource) (*models.ConnectedSource, error)
 	UpdateSource(source *models.ConnectedSource) (*models.ConnectedSource, error)
+	RevokeSource(source *models.ConnectedSource, ownerIdentity string, revokedAt time.Time) (*models.ConnectedSource, error)
 	FindSources(includeDisabled bool) ([]models.ConnectedSource, error)
 	FindSource(id uuid.UUID) (*models.ConnectedSource, error)
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
@@ -27,7 +29,11 @@ type Repository interface {
 	FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtraction(id uuid.UUID) (*models.SourceExtraction, error)
-	DeleteExtraction(id uuid.UUID) error
+	DeleteExtractionForOwner(
+		extraction *models.SourceExtraction,
+		source *models.ConnectedSource,
+		ownerIdentity string,
+	) error
 	SaveIndexEntry(entry *models.SourceIndexEntry) (*models.SourceIndexEntry, error)
 	DeletePendingVectorIndex(extractionID uuid.UUID) error
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
@@ -107,6 +113,59 @@ func (r *GormRepository) UpdateSource(source *models.ConnectedSource) (*models.C
 		return nil, err
 	}
 	return source, nil
+}
+
+func (r *GormRepository) RevokeSource(
+	expected *models.ConnectedSource,
+	ownerIdentity string,
+	revokedAt time.Time,
+) (*models.ConnectedSource, error) {
+	if expected == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var updated models.ConnectedSource
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var source models.ConnectedSource
+		if err := tx.Where(
+			"id = ? AND owner_identity = ? AND connector_key = ? AND default_project_key = ? AND updated_at = ?",
+			expected.ID,
+			ownerIdentity,
+			expected.ConnectorKey,
+			expected.DefaultProjectKey,
+			expected.UpdatedAt,
+		).First(&source).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_id = ?", expected.ID).
+			Delete(&models.SourceOAuthToken{}).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.ConnectedSource{}).
+			Where(
+				"id = ? AND owner_identity = ? AND connector_key = ? AND default_project_key = ? AND updated_at = ?",
+				expected.ID,
+				ownerIdentity,
+				expected.ConnectorKey,
+				expected.DefaultProjectKey,
+				expected.UpdatedAt,
+			).
+			Updates(map[string]any{
+				"enabled":    false,
+				"status":     "revoked",
+				"revoked_at": revokedAt.UTC(),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.First(&updated, "id = ?", expected.ID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 func (r *GormRepository) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
@@ -222,12 +281,48 @@ func (r *GormRepository) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 	return &extraction, nil
 }
 
-func (r *GormRepository) DeleteExtraction(id uuid.UUID) error {
+func (r *GormRepository) DeleteExtractionForOwner(
+	expected *models.SourceExtraction,
+	expectedSource *models.ConnectedSource,
+	ownerIdentity string,
+) error {
+	if expected == nil || expectedSource == nil ||
+		expected.SourceID != expectedSource.ID {
+		return gorm.ErrRecordNotFound
+	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("extraction_id = ?", id).Delete(&models.SourceIndexEntry{}).Error; err != nil {
+		var source models.ConnectedSource
+		if err := tx.Where(
+			"id = ? AND owner_identity = ? AND connector_key = ? AND updated_at = ?",
+			expectedSource.ID,
+			ownerIdentity,
+			expectedSource.ConnectorKey,
+			expectedSource.UpdatedAt,
+		).First(&source).Error; err != nil {
 			return err
 		}
-		return tx.Delete(&models.SourceExtraction{}, id).Error
+		if err := tx.Where("extraction_id = ?", expected.ID).
+			Delete(&models.SourceIndexEntry{}).Error; err != nil {
+			return err
+		}
+		result := tx.Where(
+			"id = ? AND source_id = ? AND project_key = ? AND raw_item_id = ? AND content_hash = ? AND source_uri = ? AND updated_at = ?",
+			expected.ID,
+			expected.SourceID,
+			expected.ProjectKey,
+			expected.RawItemID,
+			expected.ContentHash,
+			expected.SourceURI,
+			expected.UpdatedAt,
+		).
+			Delete(&models.SourceExtraction{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
 	})
 }
 

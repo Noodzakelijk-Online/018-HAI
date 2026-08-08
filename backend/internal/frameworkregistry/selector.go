@@ -221,6 +221,7 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 	lifeDomain, domainNeed, domainBoosts := classifyLifeDomain(taskText)
 	needOrCommitment := classifyNeedOrCommitment(request, taskText, domainNeed)
 	highRisk := isHighRisk(request, taskText, lifeDomain)
+	effectiveRisk := effectiveSelectionRisk(request, highRisk)
 	requiresApproval, approvalReasons := approvalRequirement(request, taskText, highRisk)
 	capabilities := requestedConstitutionCapabilities(request, taskText, lifeDomain, highRisk)
 	requiresApproval, approvalReasons, err = applyEffectiveConstitutionRules(
@@ -276,10 +277,21 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 		if statusOf(view) == StatusExperimental {
 			return SelectionDecision{}, fmt.Errorf("required framework %q cannot be experimental", id)
 		}
+		if !frameworkSupportsRisk(view, effectiveRisk) {
+			return SelectionDecision{}, fmt.Errorf(
+				"required framework %q risk ceiling %q is below task risk %q",
+				id,
+				view.RiskCeiling,
+				effectiveRisk,
+			)
+		}
 	}
 
 	candidates := make([]selectionCandidate, 0, len(views))
 	for _, view := range views {
+		if !frameworkSupportsRisk(view, effectiveRisk) {
+			continue
+		}
 		status := statusOf(view)
 		score, reasons := scoreFramework(view, taskText, request, lifeDomain, domainBoosts)
 		requiredReason, isRequired := required[view.ID]
@@ -319,6 +331,10 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 	if len(selectedCandidates) == 0 {
 		return SelectionDecision{}, fmt.Errorf("no enabled frameworks were suitable")
 	}
+	effectiveRiskCeiling, err := selectedRiskCeiling(selectedCandidates)
+	if err != nil {
+		return SelectionDecision{}, err
+	}
 
 	selected := make([]SelectedFramework, 0, len(selectedCandidates))
 	requiredAgents := make([]string, 0)
@@ -332,6 +348,7 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 			Version:              view.Version,
 			Name:                 view.Name,
 			Family:               view.Family,
+			RiskCeiling:          normalizedRiskLevel(view.RiskCeiling),
 			Score:                candidate.score,
 			Reasons:              append([]string(nil), candidate.reasons...),
 			MaximumAutonomyLevel: view.EffectiveAutonomyLevel,
@@ -373,6 +390,8 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 	createdAt := now.UTC()
 	operating, err := buildOperatingContract(
 		request,
+		effectiveRisk,
+		effectiveRiskCeiling,
 		lifeDomains,
 		requiredAgents,
 		maximumAutonomy,
@@ -391,6 +410,8 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 		CreatedAt:            createdAt,
 		LifeDomain:           lifeDomain,
 		NeedOrCommitment:     needOrCommitment,
+		TaskRiskLevel:        effectiveRisk,
+		EffectiveRiskCeiling: effectiveRiskCeiling,
 		Selected:             selected,
 		Conflicts:            conflicts,
 		RequiredAgents:       requiredAgents,
@@ -407,8 +428,8 @@ func BuildSelection(catalog []FrameworkView, constitution Constitution, request 
 		LearningPlan:         learningPlan,
 		ContextRequirements:  contextRequirements,
 		SelectionReason: fmt.Sprintf(
-			"Selected %d enabled frameworks for %s and %s; mandatory policies were retained and optional frameworks form the deterministic smallest non-conflicting capability cover.",
-			len(selected), lifeDomain, needOrCommitment,
+			"Selected %d enabled frameworks for %s and %s at %s task risk; mandatory policies were retained and optional frameworks form the deterministic smallest non-conflicting risk-compatible capability cover.",
+			len(selected), lifeDomain, needOrCommitment, effectiveRisk,
 		),
 		ConstitutionVersion:     constitution.Version,
 		ConstitutionSource:      constitutionSource(constitution),
@@ -448,6 +469,9 @@ func indexSelectableFrameworks(catalog []FrameworkView) (map[string]FrameworkVie
 		}
 		if view.EffectiveAutonomyLevel < 0 || view.EffectiveAutonomyLevel > 10 {
 			return nil, fmt.Errorf("framework %q has invalid effective autonomy level %d", view.ID, view.EffectiveAutonomyLevel)
+		}
+		if _, ok := selectionRiskRank(view.RiskCeiling); !ok {
+			return nil, fmt.Errorf("framework %q has invalid risk ceiling %q", view.ID, view.RiskCeiling)
 		}
 		result[view.ID] = view
 	}
@@ -525,6 +549,69 @@ func isHighRisk(request SelectionRequest, text, lifeDomain string) bool {
 		"publish", "pay", "transfer money", "delete", "account change",
 		"sign contract", "medical decision",
 	})
+}
+
+func effectiveSelectionRisk(request SelectionRequest, highRisk bool) string {
+	if highRisk {
+		return "high"
+	}
+	if normalizedRiskLevel(request.RiskLevel) == "medium" {
+		return "medium"
+	}
+	if normalizedRiskLevel(request.RiskLevel) == "low" {
+		return "low"
+	}
+	if request.NeedsTools || request.NeedsDocuments || request.NeedsWebAccess ||
+		request.NeedsLocalExecution || request.NeedsApproval || request.ExecuteRequested {
+		return "medium"
+	}
+	return "low"
+}
+
+func frameworkSupportsRisk(view FrameworkView, taskRisk string) bool {
+	ceilingRank, ceilingOK := selectionRiskRank(view.RiskCeiling)
+	taskRank, taskOK := selectionRiskRank(taskRisk)
+	return ceilingOK && taskOK && ceilingRank >= taskRank
+}
+
+func selectedRiskCeiling(selected []selectionCandidate) (string, error) {
+	if len(selected) == 0 {
+		return "", fmt.Errorf("selected frameworks are required to derive a risk ceiling")
+	}
+	minimumRank := 4
+	minimum := ""
+	for _, candidate := range selected {
+		rank, ok := selectionRiskRank(candidate.view.RiskCeiling)
+		if !ok {
+			return "", fmt.Errorf(
+				"selected framework %q has invalid risk ceiling %q",
+				candidate.view.ID,
+				candidate.view.RiskCeiling,
+			)
+		}
+		if rank < minimumRank {
+			minimumRank = rank
+			minimum = normalizedRiskLevel(candidate.view.RiskCeiling)
+		}
+	}
+	return minimum, nil
+}
+
+func selectionRiskRank(value string) (int, bool) {
+	switch normalizedRiskLevel(value) {
+	case "low":
+		return 1, true
+	case "medium":
+		return 2, true
+	case "high":
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
+func normalizedRiskLevel(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func approvalRequirement(request SelectionRequest, text string, highRisk bool) (bool, []string) {
@@ -1299,6 +1386,11 @@ func deterministicSelectionID(decision SelectionDecision, request SelectionReque
 		normalizeText(request.Request),
 		decision.LifeDomain,
 		decision.NeedOrCommitment,
+		decision.CatalogVersion,
+		decision.CatalogDigest,
+		decision.SelectorAlgorithmVersion,
+		decision.TaskRiskLevel,
+		decision.EffectiveRiskCeiling,
 		decision.OperatingContractDigest,
 		strconv.Itoa(decision.ConstitutionVersion),
 		strconv.FormatBool(decision.RequiresApproval),
@@ -1308,6 +1400,7 @@ func deterministicSelectionID(decision SelectionDecision, request SelectionReque
 		parts = append(parts,
 			framework.ID,
 			framework.Version,
+			framework.RiskCeiling,
 			strconv.FormatFloat(framework.Score, 'f', 4, 64),
 			strconv.Itoa(framework.MaximumAutonomyLevel),
 		)

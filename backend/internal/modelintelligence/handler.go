@@ -60,6 +60,10 @@ func (h *Handler) Telemetry(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"telemetry": h.svc.Telemetry()})
 }
 
+func (h *Handler) Calibration(c *gin.Context) {
+	c.JSON(http.StatusOK, h.svc.Calibration())
+}
+
 func (h *Handler) LaneWinners(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"laneWinners": h.svc.LaneWinners()})
 }

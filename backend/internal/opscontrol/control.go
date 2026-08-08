@@ -2,6 +2,8 @@ package opscontrol
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +12,8 @@ import (
 	"automation-hub-backend/internal/autonomypolicy"
 )
 
+var ErrAutonomyModeStateChanged = errors.New("autonomy mode changed concurrently")
+
 // Controller is the dynamic background control consulted by the worker each
 // pass: current autonomy mode + emergency-stop state. Both survive restart.
 type Controller struct {
@@ -17,6 +21,7 @@ type Controller struct {
 	emergency *EmergencyStopStore
 	modePath  string
 	mode      autonomypolicy.Mode
+	modeErr   error
 }
 
 // NewController builds a controller rooted at dir (persisting mode + stop).
@@ -33,24 +38,36 @@ func NewController(dir string) *Controller {
 func (c *Controller) loadMode() {
 	data, err := os.ReadFile(c.modePath)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			c.modeErr = fmt.Errorf("read persisted autonomy mode: %w", err)
+		}
 		return
 	}
 	var wrap struct {
 		Mode string `json:"mode"`
 	}
-	if json.Unmarshal(data, &wrap) == nil {
-		if m := autonomypolicy.Mode(wrap.Mode); m.AllowsBackgroundProcessing() || wrap.Mode != "" {
-			if _, err := autonomypolicy.ParseMode(wrap.Mode); err == nil {
-				c.mode = m
-			}
-		}
+	if err := json.Unmarshal(data, &wrap); err != nil {
+		c.modeErr = fmt.Errorf("decode persisted autonomy mode: %w", err)
+		return
 	}
+	mode, err := autonomypolicy.ParseMode(wrap.Mode)
+	if err != nil {
+		c.modeErr = fmt.Errorf("validate persisted autonomy mode: %w", err)
+		return
+	}
+	c.mode = mode
+	c.modeErr = nil
 }
 
-func (c *Controller) persistMode() {
-	data, _ := json.MarshalIndent(map[string]string{"mode": string(c.mode)}, "", "  ")
-	_ = os.MkdirAll(filepath.Dir(c.modePath), 0o755)
-	_ = os.WriteFile(c.modePath, data, 0o600)
+func (c *Controller) persistMode(mode autonomypolicy.Mode) error {
+	data, err := json.MarshalIndent(map[string]string{"mode": string(mode)}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(c.modePath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(c.modePath, data, 0o600)
 }
 
 // Mode returns the current autonomy mode. When the emergency stop is engaged the
@@ -61,6 +78,9 @@ func (c *Controller) Mode() autonomypolicy.Mode {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.modeErr != nil {
+		return autonomypolicy.ModePaused
+	}
 	return c.mode
 }
 
@@ -68,7 +88,21 @@ func (c *Controller) Mode() autonomypolicy.Mode {
 func (c *Controller) StoredMode() autonomypolicy.Mode {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.modeErr != nil {
+		return autonomypolicy.ModePaused
+	}
 	return c.mode
+}
+
+// ModePersistenceStatus returns the fail-closed stored mode and any error that
+// prevents the persisted mode from being trusted.
+func (c *Controller) ModePersistenceStatus() (autonomypolicy.Mode, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.modeErr != nil {
+		return autonomypolicy.ModePaused, c.modeErr
+	}
+	return c.mode, nil
 }
 
 // EmergencyStop reports whether the emergency stop is engaged (the worker's
@@ -92,8 +126,41 @@ func (c *Controller) SetMode(m autonomypolicy.Mode) (autonomypolicy.Mode, error)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	current := c.mode
+	if c.modeErr != nil {
+		current = autonomypolicy.ModePaused
+	}
+	if err := c.persistMode(m); err != nil {
+		return current, err
+	}
 	c.mode = m
-	c.persistMode()
+	c.modeErr = nil
+	return c.mode, nil
+}
+
+// SetModeIfCurrent updates the mode only if the authorization was derived from
+// the still-current source mode.
+func (c *Controller) SetModeIfCurrent(
+	expected autonomypolicy.Mode,
+	target autonomypolicy.Mode,
+) (autonomypolicy.Mode, error) {
+	if _, err := autonomypolicy.ParseMode(string(target)); err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current := c.mode
+	if c.modeErr != nil {
+		current = autonomypolicy.ModePaused
+	}
+	if current != expected {
+		return current, ErrAutonomyModeStateChanged
+	}
+	if err := c.persistMode(target); err != nil {
+		return current, err
+	}
+	c.mode = target
+	c.modeErr = nil
 	return c.mode, nil
 }
 
@@ -105,6 +172,22 @@ func (c *Controller) Engage(reason, actor string, now time.Time) (EmergencyStopS
 // Disengage clears the emergency stop.
 func (c *Controller) Disengage(actor string, now time.Time) (EmergencyStopState, error) {
 	return c.emergency.Disengage(actor, now)
+}
+
+func (c *Controller) DisengageIfRevision(
+	revision uint64,
+	actor string,
+	now time.Time,
+) (EmergencyStopState, error) {
+	return c.emergency.DisengageIfRevision(revision, actor, now)
+}
+
+func (c *Controller) RestoreIfRevision(
+	revision uint64,
+	state EmergencyStopState,
+	now time.Time,
+) (EmergencyStopState, error) {
+	return c.emergency.RestoreIfRevision(revision, state, now)
 }
 
 // EmergencyState returns the persisted emergency-stop state.

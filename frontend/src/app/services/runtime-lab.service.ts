@@ -3,6 +3,9 @@ import { Injectable } from '@angular/core'
 import { Observable } from 'rxjs'
 import {
   IRuntimeAttempt,
+  IRuntimeCapabilityOverview,
+  IRuntimeParityInventory,
+  IRuntimeParityOverview,
   IRuntimeProbe,
   IRuntimeSummary,
 } from '../models/runtime-lab.model.interface'
@@ -15,6 +18,18 @@ export class RuntimeLabService {
 
   overview(): Observable<{ runtimes: IRuntimeSummary[] }> {
     return this.http.get<{ runtimes: IRuntimeSummary[] }>(`${this.apiUrl}/overview`)
+  }
+
+  featureParity(): Observable<IRuntimeParityOverview> {
+    return this.http.get<IRuntimeParityOverview>(`${this.apiUrl}/feature-parity`)
+  }
+
+  capabilities(): Observable<IRuntimeCapabilityOverview> {
+    return this.http.get<IRuntimeCapabilityOverview>(`${this.apiUrl}/capabilities`)
+  }
+
+  runtimeFeatureParity(runtimeId: string): Observable<IRuntimeParityInventory> {
+    return this.http.get<IRuntimeParityInventory>(`${this.apiUrl}/${runtimeId}/feature-parity`)
   }
 
   probe(runtimeId: string): Observable<IRuntimeProbe> {

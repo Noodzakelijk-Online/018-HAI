@@ -636,6 +636,38 @@ details {
   }
 }
 
+.projection-warning {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 11px 12px;
+  color: var(--text);
+  background: var(--gold-soft);
+  border: 1px solid color-mix(in srgb, var(--gold) 34%, var(--border));
+  border-radius: 8px;
+
+  > i {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    color: var(--gold);
+    place-items: center;
+  }
+
+  strong,
+  small {
+    display: block;
+  }
+
+  small {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+}
+
 .search-results p {
   color: var(--muted);
   margin: 0 0 4px;

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,10 +10,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"automation-hub-backend/internal/autonomy"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/plangraph"
 	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
@@ -41,23 +44,26 @@ const (
 )
 
 type IntakeRequest struct {
-	OwnerIdentity  string `json:"-"`
-	Input          string `json:"input"`
-	ProjectKey     string `json:"projectKey,omitempty"`
-	AutomationID   string `json:"automationId,omitempty"`
-	SourceType     string `json:"sourceType,omitempty"`
-	SourceID       string `json:"sourceId,omitempty"`
-	RawItemID      string `json:"rawItemId,omitempty"`
-	ExtractionID   string `json:"extractionId,omitempty"`
-	SourceURI      string `json:"sourceUri,omitempty"`
-	SourceLabel    string `json:"sourceLabel,omitempty"`
-	ContentType    string `json:"contentType,omitempty"`
-	Sender         string `json:"sender,omitempty"`
-	ReceivedAt     string `json:"receivedAt,omitempty"`
-	Trigger        string `json:"trigger,omitempty"`
-	Actor          string `json:"actor,omitempty"`
-	RequiresReview bool   `json:"requiresReview,omitempty"`
-	ReviewReason   string `json:"reviewReason,omitempty"`
+	OwnerIdentity            string                              `json:"-"`
+	Input                    string                              `json:"input"`
+	ProjectKey               string                              `json:"projectKey,omitempty"`
+	AutomationID             string                              `json:"automationId,omitempty"`
+	MandateID                string                              `json:"mandateId,omitempty"`
+	SourceType               string                              `json:"sourceType,omitempty"`
+	SourceID                 string                              `json:"sourceId,omitempty"`
+	RawItemID                string                              `json:"rawItemId,omitempty"`
+	ExtractionID             string                              `json:"extractionId,omitempty"`
+	SourceURI                string                              `json:"sourceUri,omitempty"`
+	SourceLabel              string                              `json:"sourceLabel,omitempty"`
+	ContentType              string                              `json:"contentType,omitempty"`
+	Sender                   string                              `json:"sender,omitempty"`
+	ReceivedAt               string                              `json:"receivedAt,omitempty"`
+	Trigger                  string                              `json:"trigger,omitempty"`
+	Actor                    string                              `json:"actor,omitempty"`
+	RequiresReview           bool                                `json:"requiresReview,omitempty"`
+	ReviewReason             string                              `json:"reviewReason,omitempty"`
+	CoordinationPlan         plangraph.AcceptedRevisionReference `json:"coordinationPlan,omitempty"`
+	resolvedCoordinationPlan *plangraph.AcceptedRevisionBinding
 }
 
 type TransitionRequest struct {
@@ -100,16 +106,22 @@ type ProposalResolutionRequest struct {
 }
 
 type TaskRunRequest struct {
-	OwnerIdentity    string     `json:"-"`
-	PursuitID        string     `json:"pursuitId,omitempty"`
-	WorkflowID       string     `json:"workflowId"`
-	Request          string     `json:"request"`
-	ProjectKey       string     `json:"projectKey,omitempty"`
-	AutomationID     string     `json:"automationId,omitempty"`
-	HumanApproved    bool       `json:"humanApproved"`
-	ApprovalNote     string     `json:"approvalNote,omitempty"`
-	ApprovalSourceID string     `json:"-"`
-	Deadline         *time.Time `json:"-"`
+	OwnerIdentity         string                              `json:"-"`
+	PursuitID             string                              `json:"pursuitId,omitempty"`
+	WorkflowID            string                              `json:"workflowId"`
+	Request               string                              `json:"request"`
+	ProjectKey            string                              `json:"projectKey,omitempty"`
+	AutomationID          string                              `json:"automationId,omitempty"`
+	MandateID             string                              `json:"-"`
+	RiskLevel             string                              `json:"riskLevel,omitempty"`
+	HumanApproved         bool                                `json:"humanApproved"`
+	ApprovalNote          string                              `json:"approvalNote,omitempty"`
+	ApprovalSourceID      string                              `json:"-"`
+	ApprovalBindingDigest string                              `json:"-"`
+	ApprovalActorIdentity string                              `json:"-"`
+	ApprovalApprovedAt    *time.Time                          `json:"-"`
+	Deadline              *time.Time                          `json:"-"`
+	CoordinationPlan      plangraph.AcceptedRevisionReference `json:"-"`
 }
 
 type FrameworkSelectionProvenance struct {
@@ -118,6 +130,10 @@ type FrameworkSelectionProvenance struct {
 	CatalogVersion            string `json:"catalogVersion"`
 	CatalogDigest             string `json:"catalogDigest"`
 	SelectorAlgorithmVersion  string `json:"selectorAlgorithmVersion"`
+	TaskRiskLevel             string `json:"taskRiskLevel,omitempty"`
+	EffectiveRiskCeiling      string `json:"effectiveRiskCeiling,omitempty"`
+	MaximumAutonomyLevel      *int   `json:"maximumAutonomyLevel,omitempty"`
+	RequiresApproval          *bool  `json:"requiresApproval,omitempty"`
 	EffectivePreferenceDigest string `json:"effectivePreferenceDigest"`
 	ConstitutionVersion       int    `json:"constitutionVersion"`
 	ConstitutionDigest        string `json:"constitutionDigest"`
@@ -175,7 +191,42 @@ func (p FrameworkSelectionProvenance) Validate(taskPlanID string) error {
 	if p.ConstitutionVersion < 1 {
 		return fmt.Errorf("constitution version must be positive")
 	}
+	if strings.EqualFold(strings.TrimSpace(p.SelectorAlgorithmVersion), "selector-v5") {
+		taskRisk, taskRank, err := frameworkRiskRank(p.TaskRiskLevel)
+		if err != nil {
+			return fmt.Errorf("selector-v5 task risk level: %w", err)
+		}
+		ceiling, ceilingRank, err := frameworkRiskRank(p.EffectiveRiskCeiling)
+		if err != nil {
+			return fmt.Errorf("selector-v5 effective risk ceiling: %w", err)
+		}
+		if ceilingRank < taskRank {
+			return fmt.Errorf("selector-v5 effective risk ceiling %q is below task risk %q", ceiling, taskRisk)
+		}
+		if p.MaximumAutonomyLevel == nil || p.RequiresApproval == nil {
+			return fmt.Errorf("selector-v5 autonomy and approval contracts are required")
+		}
+		if *p.MaximumAutonomyLevel < 0 || *p.MaximumAutonomyLevel > 10 {
+			return fmt.Errorf("selector-v5 maximum autonomy level must be between 0 and 10")
+		}
+	} else if p.MaximumAutonomyLevel != nil || p.RequiresApproval != nil {
+		return fmt.Errorf("legacy framework selection cannot assert a selector-v5 execution contract")
+	}
 	return nil
+}
+
+func frameworkRiskRank(value string) (string, int, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "low":
+		return normalized, 1, nil
+	case "medium":
+		return normalized, 2, nil
+	case "high":
+		return normalized, 3, nil
+	default:
+		return "", 0, fmt.Errorf("must be one of low, medium, or high")
+	}
 }
 
 type TaskRunResult struct {
@@ -202,12 +253,33 @@ type WorkflowApprovalBindingRequest struct {
 	OwnerIdentity string
 	WorkflowID    string
 	AutomationID  string
+	MandateID     string
 	Request       string
 	ProjectKey    string
 }
 
 type ApprovalBindingPreparer interface {
 	PrepareWorkflowApprovalBinding(request WorkflowApprovalBindingRequest) (string, error)
+}
+
+type AutomationSelectionRequest struct {
+	OwnerIdentity string
+	TaskType      string
+	Request       string
+	ProjectKey    string
+}
+
+type AutomationCandidate struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	RuntimeType string `json:"runtimeType,omitempty"`
+	LaunchType  string `json:"launchType,omitempty"`
+	Score       int    `json:"score"`
+	Reason      string `json:"reason"`
+}
+
+type AutomationSelector interface {
+	SelectWorkflowAutomations(request AutomationSelectionRequest) ([]AutomationCandidate, error)
 }
 
 type WorkflowRunResult struct {
@@ -348,15 +420,28 @@ type Service interface {
 	RecoverStaleClaimsForOwner(ownerIdentity string, request RunDueRequest) (*ClaimRecoverySummary, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
 	RunDueForOwner(ownerIdentity string, request RunDueRequest) (*WorkflowRunSummary, error)
+	RunOneForOwner(ownerIdentity string, id uuid.UUID) (*WorkflowRunResult, error)
 	RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error)
 	RunDueOpenLoopsForOwner(ownerIdentity string, request RunDueRequest) (*OpenLoopRunSummary, error)
 	Overview() Overview
 }
 
+// AuthorizedEffectRecoveryIntake is a narrow internal recovery boundary for
+// an effect whose exact authorization receipt has already been consumed. It
+// preserves historical plan provenance but does not grant workflow execution.
+type AuthorizedEffectRecoveryIntake interface {
+	IntakeAuthorizedEffectRecovery(request IntakeRequest) (*WorkflowRecord, error)
+}
+
 type service struct {
-	repo          Repository
-	taskRunner    TaskRunner
-	memoryService memory.Service
+	repo                  Repository
+	taskRunner            TaskRunner
+	memoryService         memory.Service
+	controlledLearning    ControlledLearningRecorder
+	lifeOntologyProjector LifeOntologyProjector
+	acceptedPlanResolver  plangraph.AcceptedRevisionResolver
+	coordinationProjector CoordinationPlanProjector
+	reminderDeliverySink  ReminderDeliverySink
 }
 
 func NewService(repo Repository, memoryServices ...memory.Service) Service {
@@ -399,6 +484,7 @@ func (s *service) approvalDecisionRule(item *models.WorkflowItem) (string, error
 		OwnerIdentity: strings.TrimSpace(item.OwnerIdentity),
 		WorkflowID:    item.ID.String(),
 		AutomationID:  strings.TrimSpace(item.AutomationID),
+		MandateID:     uuidPointerString(item.MandateID),
 		Request:       strings.TrimSpace(item.Description),
 		ProjectKey:    strings.TrimSpace(item.ProjectKey),
 	})
@@ -416,13 +502,31 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	if input == "" {
 		return nil, fmt.Errorf("input is required")
 	}
+	var err error
+	coordinationBinding := request.resolvedCoordinationPlan
+	if coordinationBinding == nil {
+		coordinationBinding, err = s.resolveAcceptedCoordinationPlan(request.OwnerIdentity, request.CoordinationPlan)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if coordinationBinding != nil && coordinationBinding.CanExecute {
+		return nil, fmt.Errorf("accepted coordination plan violated the advisory-only invariant")
+	}
+	var mandateID *uuid.UUID
+	if rawMandateID := strings.TrimSpace(request.MandateID); rawMandateID != "" {
+		parsedMandateID, parseErr := uuid.Parse(rawMandateID)
+		if parseErr != nil || parsedMandateID == uuid.Nil {
+			return nil, fmt.Errorf("standing mandate id must be a UUID")
+		}
+		mandateID = &parsedMandateID
+	}
 	_ = s.ensureDefaultRules()
 	sourceType := strings.TrimSpace(request.SourceType)
 	sourceID := strings.TrimSpace(request.SourceID)
 	sourceRevision := workflowSourceRevision(request, input)
 	var existing *models.WorkflowItem
 	var dedupeRule string
-	var err error
 	if sourceType != "" && sourceID != "" {
 		existing, err = s.repo.FindActiveItemBySourceIdentityForOwner(strings.TrimSpace(request.OwnerIdentity), sourceType, sourceID)
 		if err != nil {
@@ -438,6 +542,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	}
 	if existing != nil {
 		if existing.SourceRevision == sourceRevision {
+			s.ensureWorkflowCoordinationDraft(existing, firstNonEmpty(request.Actor, "engine"))
 			s.audit(existing.ID, "workflow.intake_deduped", "", existing.CurrentState, "existing workflow reused for unchanged source revision", request.Trigger, dedupeRule, request.SourceURI, firstNonEmpty(request.Actor, "engine"))
 			return s.Get(existing.ID)
 		}
@@ -458,6 +563,44 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		}
 		analysis.ruleApplied += "; explicit connected-source review gate"
 	}
+	selectionCandidates := []AutomationCandidate{}
+	selectionRequired := false
+	automationSelectionReason := ""
+	if strings.TrimSpace(request.AutomationID) == "" && workflowNeedsAutomation(input, analysis) {
+		if selector, ok := s.taskRunner.(AutomationSelector); ok && selector != nil {
+			candidates, selectionErr := selector.SelectWorkflowAutomations(AutomationSelectionRequest{
+				OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
+				TaskType:      analysis.taskType,
+				Request:       input,
+				ProjectKey:    firstNonEmpty(request.ProjectKey, analysis.projectKey),
+			})
+			switch {
+			case selectionErr != nil:
+				selectionRequired = true
+				automationSelectionReason = "automation selection failed: " + selectionErr.Error()
+			case len(candidates) == 1:
+				request.AutomationID = candidates[0].ID
+				selectionCandidates = candidates
+				automationSelectionReason = candidates[0].Reason
+			default:
+				selectionRequired = true
+				selectionCandidates = candidates
+				if len(candidates) == 0 {
+					automationSelectionReason = "no suitable configured automation was found"
+				} else {
+					automationSelectionReason = "multiple suitable automations require an operator choice"
+				}
+			}
+		}
+	}
+	if selectionRequired {
+		analysis.requiresApproval = true
+		analysis.approvalReason = automationSelectionReason
+		analysis.autonomyLevel = "approve_before_execute"
+		analysis.initialState = StateNeedsApproval
+		analysis.nextAction = "select the exact automation before controlled execution"
+		analysis.ruleApplied += "; exact automation selection required before approval"
+	}
 	projectKey := firstNonEmpty(request.ProjectKey, analysis.projectKey)
 	item := &models.WorkflowItem{
 		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
@@ -465,6 +608,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		Description:      input,
 		ProjectKey:       projectKey,
 		AutomationID:     strings.TrimSpace(request.AutomationID),
+		MandateID:        mandateID,
 		CurrentState:     analysis.initialState,
 		TaskType:         analysis.taskType,
 		RiskLevel:        analysis.riskLevel,
@@ -484,9 +628,24 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		DueAt:            analysis.dueAt,
 		MaxRetries:       maxRetriesForAnalysis(analysis),
 	}
-	created, err := s.repo.CreateItem(item)
+	applyWorkflowCoordinationBinding(item, coordinationBinding)
+	createdNew := true
+	var created *models.WorkflowItem
+	if sourceType != "" && sourceID != "" {
+		if idempotent, ok := s.repo.(idempotentWorkflowItemRepository); ok {
+			created, createdNew, err = idempotent.CreateItemIdempotent(item)
+		} else {
+			created, err = s.repo.CreateItem(item)
+		}
+	} else {
+		created, err = s.repo.CreateItem(item)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if !createdNew {
+		s.audit(created.ID, "workflow.intake_deduped", "", created.CurrentState, "existing workflow reused after concurrent receipt-bound intake", request.Trigger, "source identity unique boundary", request.SourceURI, firstNonEmpty(request.Actor, "engine"))
+		return s.Get(created.ID)
 	}
 	intakeRecord, _ := s.repo.SaveIntakeRecord(&models.WorkflowIntakeRecord{
 		WorkflowID:        created.ID,
@@ -522,6 +681,7 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 			ReminderAt: reminderBefore(*analysis.dueAt),
 		})
 	}
+	s.ensureWorkflowCoordinationDraft(created, firstNonEmpty(request.Actor, "engine"))
 	s.applyMemoryContext(created.ID, input, projectKey, request.OwnerIdentity, firstNonEmpty(request.Actor, "engine"))
 	if created.SourceURI != "" || created.SourceLabel != "" {
 		s.linkSource(created.ID, created.SourceType, request.SourceID, created.SourceURI, created.SourceLabel, "origin")
@@ -548,6 +708,9 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	if proposal := proposalForAnalysis(created.ID, analysis); proposal != nil {
 		_, _ = s.repo.CreateProposal(proposal)
 	}
+	if selectionRequired {
+		_, _ = s.repo.CreateProposal(automationSelectionProposal(created.ID, selectionCandidates))
+	}
 	for _, gate := range qualityGatesForAnalysis(created.ID, analysis) {
 		_, _ = s.repo.CreateQualityGate(&gate)
 	}
@@ -558,6 +721,11 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		s.decide(created.ID, "approval_gate", "required", analysis.approvalReason, "approval rule engine", false, "engine")
 	} else {
 		s.decide(created.ID, "approval_gate", "not_required", "low-risk workflow can enter worker queue", "approval rule engine", false, "engine")
+	}
+	if strings.TrimSpace(created.AutomationID) != "" {
+		s.decide(created.ID, "automation_selection", created.AutomationID, automationSelectionReason, "conservative automation capability match", false, "engine")
+	} else if selectionRequired {
+		s.decide(created.ID, "automation_selection", "needs_review", automationSelectionReason, "conservative automation capability match", false, "engine")
 	}
 	if analysis.blockedReason != "" {
 		s.decide(created.ID, "missing_info", "blocked", analysis.blockedReason, "missing information detection", false, "engine")
@@ -570,6 +738,35 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 	}
 	s.audit(created.ID, "workflow.intake", "", created.CurrentState, "input classified and workflow state initialized", request.Trigger, analysis.ruleApplied, request.SourceURI, firstNonEmpty(request.Actor, "engine"))
 	return s.Get(created.ID)
+}
+
+func (s *service) IntakeAuthorizedEffectRecovery(request IntakeRequest) (*WorkflowRecord, error) {
+	ownerIdentity := strings.TrimSpace(request.OwnerIdentity)
+	sourceID := strings.TrimSpace(request.SourceID)
+	if ownerIdentity == "" || sourceID == "" || strings.TrimSpace(request.SourceType) == "" ||
+		!request.RequiresReview || request.CoordinationPlan.IsZero() {
+		return nil, fmt.Errorf("authorized effect recovery requires owner, receipt source, review gate, and coordination plan")
+	}
+	if _, err := uuid.Parse(sourceID); err != nil {
+		return nil, fmt.Errorf("authorized effect recovery source id must be a receipt UUID")
+	}
+	expectedURI := "hai://execution-authorization-receipts/" + sourceID
+	if strings.TrimSpace(request.SourceURI) != expectedURI {
+		return nil, fmt.Errorf("authorized effect recovery source URI does not match its receipt")
+	}
+	historyResolver, ok := s.acceptedPlanResolver.(plangraph.AcceptedRevisionHistoryResolver)
+	if !ok || historyResolver == nil {
+		return nil, fmt.Errorf("historical coordination plan validation is unavailable")
+	}
+	binding, err := historyResolver.ResolveAcceptedRevision(context.Background(), ownerIdentity, request.CoordinationPlan)
+	if err != nil {
+		return nil, fmt.Errorf("validate historical accepted coordination plan: %w", err)
+	}
+	if binding == nil || binding.CanExecute {
+		return nil, fmt.Errorf("historical coordination plan violated the advisory-only invariant")
+	}
+	request.resolvedCoordinationPlan = binding
+	return s.Intake(request)
 }
 
 func (s *service) applyMemoryContext(workflowID uuid.UUID, input, projectKey, ownerIdentity, actor string) {
@@ -1277,6 +1474,15 @@ func (s *service) ResolveApproval(id uuid.UUID, request ApprovalResolutionReques
 		return nil, fmt.Errorf("interrupted execution must be resolved before approval can continue")
 	}
 	if request.Approved {
+		proposals, proposalErr := s.repo.FindProposals(id)
+		if proposalErr != nil {
+			return nil, proposalErr
+		}
+		for index := range proposals {
+			if proposals[index].Status == "open" && isAutomationSelectionProposal(&proposals[index]) {
+				return nil, fmt.Errorf("select the exact automation candidate before approving controlled execution")
+			}
+		}
 		record, err := s.Transition(id, TransitionRequest{
 			TargetState: StateReady,
 			Message:     firstNonEmpty(request.Note, "workflow approved for controlled execution"),
@@ -1438,6 +1644,23 @@ func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request Pr
 	if err != nil {
 		return nil, err
 	}
+	if status == "approved" && isAutomationSelectionProposal(proposal) {
+		automationID, selectionErr := selectedAutomationID(proposal.Options, request.SelectedOption)
+		if selectionErr != nil {
+			return nil, selectionErr
+		}
+		item.AutomationID = automationID
+		item.NextAction = "approve the exact automation action and queue controlled execution"
+		if item.RequiresApproval {
+			if _, bindingErr := s.approvalDecisionRule(item); bindingErr != nil {
+				return nil, fmt.Errorf("selected automation cannot be bound to approval: %w", bindingErr)
+			}
+		}
+		if _, err := s.repo.UpdateItem(item); err != nil {
+			return nil, err
+		}
+		s.decide(id, "automation_selection", automationID, "operator selected the exact automation candidate", "runtime-selection proposal", true, firstNonEmpty(request.Actor, "operator"))
+	}
 	now := time.Now().UTC()
 	proposal.Status = status
 	proposal.SelectedOption = strings.TrimSpace(request.SelectedOption)
@@ -1496,7 +1719,11 @@ func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request Pr
 }
 
 func (s *service) rememberCorrection(item *models.WorkflowItem, signal, note, actor string) {
-	if s.memoryService == nil || item == nil || !feedbackNoteUseful(signal, note) {
+	if item == nil || !feedbackNoteUseful(signal, note) {
+		return
+	}
+	s.recordControlledCorrection(item, signal, note, actor)
+	if s.memoryService == nil {
 		return
 	}
 	note = strings.TrimSpace(note)
@@ -1672,34 +1899,7 @@ func (s *service) RunDueForOwner(ownerIdentity string, request RunDueRequest) (*
 		return summary, nil
 	}
 	for _, item := range items {
-		claimedAt := time.Now().UTC()
-		claimID := uuid.NewString()
-		claimed, acquired, claimErr := s.repo.ClaimRunnableItemForOwner(ownerIdentity, item.ID, claimID, claimedAt, claimedAt.Add(claimLeaseDuration()))
-		if claimErr != nil {
-			summary.Blocked++
-			summary.Results = append(summary.Results, WorkflowRunResult{
-				WorkflowID: item.ID,
-				Status:     "blocked",
-				State:      item.CurrentState,
-				Attempts:   item.RetryCount,
-				Message:    "failed to claim runnable workflow: " + claimErr.Error(),
-			})
-			continue
-		}
-		if !acquired || claimed == nil {
-			summary.Skipped++
-			summary.Results = append(summary.Results, WorkflowRunResult{
-				WorkflowID: item.ID,
-				Status:     "skipped",
-				State:      item.CurrentState,
-				Attempts:   item.RetryCount,
-				Message:    "workflow was already claimed or is no longer runnable",
-			})
-			continue
-		}
-		s.recordTransition(claimed.ID, StateReady, StateInProgress, "worker_claim", "workflow-worker", claimed.ApprovalStatus == "approved", "worker atomically claimed runnable workflow")
-		s.audit(claimed.ID, "workflow.worker_started", StateReady, StateInProgress, "worker atomically claimed runnable workflow", "worker_claim", "single-consumer execution claim", claimed.SourceURI, "workflow-worker")
-		result := s.runWorkflowItem(*claimed, claimID)
+		result := s.claimAndRunWorkflow(ownerIdentity, item)
 		summary.Results = append(summary.Results, result)
 		switch result.Status {
 		case "completed":
@@ -1713,6 +1913,58 @@ func (s *service) RunDueForOwner(ownerIdentity string, request RunDueRequest) (*
 		}
 	}
 	return summary, nil
+}
+
+// RunOneForOwner claims and runs exactly one owner-scoped workflow. It is the
+// precise operator command used after review; all concrete task/runtime effects
+// still pass through the task runner's authorization and verification gates.
+func (s *service) RunOneForOwner(ownerIdentity string, id uuid.UUID) (*WorkflowRunResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	item, err := s.repo.FindItem(id)
+	if err != nil || item == nil || strings.TrimSpace(item.OwnerIdentity) != ownerIdentity {
+		return nil, fmt.Errorf("workflow not found")
+	}
+	if safety.EmergencyStopActive() {
+		reason := safety.EmergencyStopReason()
+		s.decide(item.ID, "worker_execution", "blocked", reason, "emergency stop", false, "workflow-worker")
+		s.audit(item.ID, "workflow.worker_blocked", item.CurrentState, item.CurrentState, reason, "emergency_stop", "emergency stop", item.SourceURI, "workflow-worker")
+		return &WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: item.CurrentState, Attempts: item.RetryCount, Message: reason}, nil
+	}
+	result := s.claimAndRunWorkflow(ownerIdentity, *item)
+	return &result, nil
+}
+
+func (s *service) claimAndRunWorkflow(ownerIdentity string, item models.WorkflowItem) WorkflowRunResult {
+	claimedAt := time.Now().UTC()
+	claimID := uuid.NewString()
+	claimed, acquired, err := s.repo.ClaimRunnableItemForOwner(
+		ownerIdentity,
+		item.ID,
+		claimID,
+		claimedAt,
+		claimedAt.Add(claimLeaseDuration()),
+	)
+	if err != nil {
+		return WorkflowRunResult{
+			WorkflowID: item.ID,
+			Status:     "blocked",
+			State:      item.CurrentState,
+			Attempts:   item.RetryCount,
+			Message:    "failed to claim runnable workflow: " + err.Error(),
+		}
+	}
+	if !acquired || claimed == nil {
+		return WorkflowRunResult{
+			WorkflowID: item.ID,
+			Status:     "skipped",
+			State:      item.CurrentState,
+			Attempts:   item.RetryCount,
+			Message:    "workflow was already claimed, is not approved and ready, or is not due",
+		}
+	}
+	s.recordTransition(claimed.ID, StateReady, StateInProgress, "worker_claim", "workflow-worker", claimed.ApprovalStatus == "approved", "worker atomically claimed runnable workflow")
+	s.audit(claimed.ID, "workflow.worker_started", StateReady, StateInProgress, "worker atomically claimed runnable workflow", "worker_claim", "single-consumer execution claim", claimed.SourceURI, "workflow-worker")
+	return s.runWorkflowItem(*claimed, claimID)
 }
 
 func (s *service) RunDueOpenLoops(request RunDueRequest) (*OpenLoopRunSummary, error) {
@@ -1893,6 +2145,9 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	if item.MaxRetries <= 0 {
 		item.MaxRetries = 2
 	}
+	if _, err := s.resolveWorkflowItemCoordinationPlan(item); err != nil {
+		return s.handleRunReviewRequired(&item, claimID, "accepted coordination plan is no longer current: "+err.Error(), "needs_review")
+	}
 	if item.RequiresApproval && item.ApprovalStatus != "approved" {
 		message := "approval is required before worker execution"
 		from := item.CurrentState
@@ -1953,10 +2208,10 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		return s.handleRunReviewRequired(&item, claimID, "linked pursuit context could not be resolved before task execution: "+pursuitErr.Error(), "needs_review")
 	}
 	humanApproved := item.ApprovalStatus == "approved"
-	approvalSourceID := ""
+	approvalProof := workflowApprovalProof{}
 	if humanApproved {
 		var approvalErr error
-		approvalSourceID, approvalErr = s.workflowApprovalSourceID(item)
+		approvalProof, approvalErr = s.workflowApprovalProof(item)
 		if approvalErr != nil {
 			return s.handleRunApprovalRequired(
 				&item,
@@ -1967,16 +2222,22 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		}
 	}
 	runResult, err := s.runTaskWithLease(item.ID, claimID, TaskRunRequest{
-		OwnerIdentity:    item.OwnerIdentity,
-		PursuitID:        pursuitID,
-		WorkflowID:       item.ID.String(),
-		Request:          item.Description,
-		ProjectKey:       item.ProjectKey,
-		AutomationID:     item.AutomationID,
-		HumanApproved:    humanApproved,
-		ApprovalNote:     item.ApprovalReason,
-		ApprovalSourceID: approvalSourceID,
-		Deadline:         item.DueAt,
+		OwnerIdentity:         item.OwnerIdentity,
+		PursuitID:             pursuitID,
+		WorkflowID:            item.ID.String(),
+		Request:               item.Description,
+		ProjectKey:            item.ProjectKey,
+		AutomationID:          item.AutomationID,
+		MandateID:             uuidPointerString(item.MandateID),
+		RiskLevel:             item.RiskLevel,
+		HumanApproved:         humanApproved,
+		ApprovalNote:          item.ApprovalReason,
+		ApprovalSourceID:      approvalProof.SourceID,
+		ApprovalBindingDigest: approvalProof.BindingDigest,
+		ApprovalActorIdentity: approvalProof.ActorIdentity,
+		ApprovalApprovedAt:    approvalProof.ApprovedAt,
+		Deadline:              item.DueAt,
+		CoordinationPlan:      workflowCoordinationReference(item),
 	})
 	if err != nil {
 		return s.handleRunFailure(&item, claimID, "task engine failed: "+err.Error(), "")
@@ -2017,6 +2278,11 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	}
 	gateResult := s.evaluateQualityGates(item, runResult)
 	if runResult.Passed && !runResult.ReviewRequired && gateResult.Passed {
+		if _, err := s.resolveWorkflowItemCoordinationPlan(item); err != nil {
+			result := s.handleRunReviewRequired(&item, claimID, "coordination plan changed before completion attestation: "+err.Error(), "needs_review")
+			result.FrameworkSelection = runResult.FrameworkSelection
+			return result
+		}
 		completed := time.Now().UTC()
 		item.CurrentState = StateCompleted
 		if item.RecoveryStatus == RecoveryRetryConfirmed {
@@ -2026,7 +2292,11 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 		item.NextRunAt = nil
 		item.LastWorkerError = ""
 		item.NextAction = "write completion summary and archive when reviewed"
-		if _, owned, err := s.repo.UpdateClaimedItem(&item, claimID); err != nil {
+		attestation, err := newWorkflowCompletionAttestation(item, runResult, completed)
+		if err != nil {
+			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: err.Error(), FrameworkSelection: runResult.FrameworkSelection}
+		}
+		if _, owned, err := s.repo.CompleteClaimedItem(&item, claimID, attestation); err != nil {
 			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateInProgress, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: err.Error(), FrameworkSelection: runResult.FrameworkSelection}
 		} else if !owned {
 			return WorkflowRunResult{WorkflowID: item.ID, Status: "blocked", State: StateBlocked, Attempts: item.RetryCount, VerificationStatus: item.VerificationStatus, Message: "worker claim was lost before completion could be persisted", FrameworkSelection: runResult.FrameworkSelection}
@@ -2052,11 +2322,17 @@ func (s *service) runWorkflowItem(item models.WorkflowItem, claimID string) Work
 	return result
 }
 
+func uuidPointerString(value *uuid.UUID) string {
+	if value == nil || *value == uuid.Nil {
+		return ""
+	}
+	return value.String()
+}
+
 // workflowTaskPursuitID only attributes a workflow worker run when exactly
-// one pursuit link belongs to the same owner. A workflow can legitimately be
-// supporting context for several pursuits; guessing would attach task and
-// verification evidence to the wrong objective. The workflow evidence ledger
-// remains linked in that ambiguous case.
+// one pursuit link belongs to the same owner. Zero owner-matching links retain
+// the existing standalone workflow semantics. Multiple matches are ambiguous
+// and must be reviewed instead of executing without pursuit governance.
 func (s *service) workflowTaskPursuitID(item models.WorkflowItem) (string, error) {
 	linked, err := s.repo.FindLinkedPursuits(item.ID)
 	if err != nil {
@@ -2069,7 +2345,7 @@ func (s *service) workflowTaskPursuitID(item models.WorkflowItem) (string, error
 			continue
 		}
 		if matched != uuid.Nil {
-			return "", nil
+			return "", fmt.Errorf("workflow has multiple pursuits for owner %q; select exactly one pursuit before automatic execution", ownerIdentity)
 		}
 		matched = pursuit.ID
 	}
@@ -2079,10 +2355,17 @@ func (s *service) workflowTaskPursuitID(item models.WorkflowItem) (string, error
 	return matched.String(), nil
 }
 
-func (s *service) workflowApprovalSourceID(item models.WorkflowItem) (string, error) {
+type workflowApprovalProof struct {
+	SourceID      string
+	BindingDigest string
+	ActorIdentity string
+	ApprovedAt    *time.Time
+}
+
+func (s *service) workflowApprovalProof(item models.WorkflowItem) (workflowApprovalProof, error) {
 	decisions, err := s.repo.FindDecisions(item.ID)
 	if err != nil {
-		return "", err
+		return workflowApprovalProof{}, err
 	}
 	for _, decision := range decisions {
 		if !strings.EqualFold(strings.TrimSpace(decision.DecisionType), "approval") {
@@ -2091,15 +2374,44 @@ func (s *service) workflowApprovalSourceID(item models.WorkflowItem) (string, er
 		if decision.ID == uuid.Nil ||
 			!decision.Approved ||
 			!strings.EqualFold(strings.TrimSpace(decision.Decision), "approved") {
-			return "", fmt.Errorf("latest workflow approval decision is not an approval")
+			return workflowApprovalProof{}, fmt.Errorf("latest workflow approval decision is not an approval")
 		}
-		if strings.TrimSpace(item.AutomationID) != "" &&
-			!strings.HasPrefix(strings.TrimSpace(decision.RuleApplied), "automation-action:") {
-			return "", fmt.Errorf("latest workflow approval decision has no exact automation action binding")
+		if strings.TrimSpace(decision.Actor) == "" || strings.TrimSpace(decision.Actor) != strings.TrimSpace(item.OwnerIdentity) {
+			return workflowApprovalProof{}, fmt.Errorf("latest workflow approval decision actor does not match the workflow owner")
 		}
-		return "workflow-decision:" + decision.ID.String(), nil
+		bindingDigest := ""
+		if strings.TrimSpace(item.AutomationID) != "" {
+			var bindingErr error
+			bindingDigest, bindingErr = workflowApprovalBindingDigest(decision.RuleApplied)
+			if bindingErr != nil {
+				return workflowApprovalProof{}, bindingErr
+			}
+		}
+		approvedAt := decision.CreatedAt.UTC()
+		if approvedAt.IsZero() {
+			return workflowApprovalProof{}, fmt.Errorf("latest workflow approval decision has no approval time")
+		}
+		return workflowApprovalProof{
+			SourceID:      "workflow-decision:" + decision.ID.String(),
+			BindingDigest: bindingDigest,
+			ActorIdentity: strings.TrimSpace(decision.Actor),
+			ApprovedAt:    &approvedAt,
+		}, nil
 	}
-	return "", fmt.Errorf("no approved workflow decision record exists")
+	return workflowApprovalProof{}, fmt.Errorf("no approved workflow decision record exists")
+}
+
+func workflowApprovalBindingDigest(binding string) (string, error) {
+	parts := strings.Split(strings.TrimSpace(binding), ":")
+	if len(parts) != 3 || parts[0] != "automation-action" || strings.TrimSpace(parts[1]) == "" {
+		return "", fmt.Errorf("latest workflow approval decision has no exact automation action binding")
+	}
+	digest := strings.ToLower(strings.TrimSpace(parts[2]))
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", fmt.Errorf("latest workflow approval decision has an invalid automation action binding")
+	}
+	return digest, nil
 }
 
 func normalizeFrameworkSelection(selection FrameworkSelectionProvenance) FrameworkSelectionProvenance {
@@ -2108,6 +2420,8 @@ func normalizeFrameworkSelection(selection FrameworkSelectionProvenance) Framewo
 	selection.CatalogVersion = strings.TrimSpace(selection.CatalogVersion)
 	selection.CatalogDigest = strings.ToLower(strings.TrimSpace(selection.CatalogDigest))
 	selection.SelectorAlgorithmVersion = strings.TrimSpace(selection.SelectorAlgorithmVersion)
+	selection.TaskRiskLevel = strings.ToLower(strings.TrimSpace(selection.TaskRiskLevel))
+	selection.EffectiveRiskCeiling = strings.ToLower(strings.TrimSpace(selection.EffectiveRiskCeiling))
 	selection.EffectivePreferenceDigest = strings.ToLower(strings.TrimSpace(selection.EffectivePreferenceDigest))
 	selection.ConstitutionDigest = strings.ToLower(strings.TrimSpace(selection.ConstitutionDigest))
 	selection.ConstitutionSource = strings.TrimSpace(selection.ConstitutionSource)
@@ -2116,7 +2430,7 @@ func normalizeFrameworkSelection(selection FrameworkSelectionProvenance) Framewo
 }
 
 func frameworkSelectionRule(selection FrameworkSelectionProvenance) string {
-	return fmt.Sprintf(
+	rule := fmt.Sprintf(
 		"catalog=%s selector=%s constitution_version=%d constitution_source=%s operating_contract=%s",
 		selection.CatalogVersion,
 		selection.SelectorAlgorithmVersion,
@@ -2124,6 +2438,10 @@ func frameworkSelectionRule(selection FrameworkSelectionProvenance) string {
 		selection.ConstitutionSource,
 		selection.OperatingContractDigest,
 	)
+	if strings.EqualFold(selection.SelectorAlgorithmVersion, "selector-v5") {
+		rule += fmt.Sprintf(" task_risk=%s effective_risk_ceiling=%s", selection.TaskRiskLevel, selection.EffectiveRiskCeiling)
+	}
+	return rule
 }
 
 func decodeFrameworkSelectionDecision(decision models.WorkflowDecision) (FrameworkSelectionProvenance, error) {
@@ -2748,7 +3066,7 @@ func (s *service) audit(workflowID uuid.UUID, eventType, from, to, message, trig
 }
 
 func (s *service) recordTransition(workflowID uuid.UUID, from, to, trigger, actor string, approved bool, reason string) {
-	_, _ = s.repo.CreateTransition(&models.WorkflowTransition{
+	_, err := s.repo.CreateTransition(&models.WorkflowTransition{
 		WorkflowID: workflowID,
 		FromState:  from,
 		ToState:    to,
@@ -2757,6 +3075,32 @@ func (s *service) recordTransition(workflowID uuid.UUID, from, to, trigger, acto
 		Approved:   approved,
 		Reason:     reason,
 	})
+	if err != nil {
+		return
+	}
+	if err := s.projectWorkflowToLifeGraph(context.Background(), workflowID); err != nil {
+		_, _ = s.repo.CreateEvent(&models.WorkflowEvent{
+			WorkflowID:  workflowID,
+			EventType:   "workflow.life_graph_projection_failed",
+			FromState:   from,
+			ToState:     to,
+			Message:     compactWorkflowProjectionText(safety.RedactSecrets(err.Error()), 300),
+			Trigger:     trigger,
+			RuleApplied: "operational life graph is advisory and cannot roll back durable workflow state",
+			Actor:       "workflow-engine",
+		})
+	} else if s.lifeOntologyProjector != nil {
+		_, _ = s.repo.CreateEvent(&models.WorkflowEvent{
+			WorkflowID:  workflowID,
+			EventType:   "workflow.life_graph_projected",
+			FromState:   from,
+			ToState:     to,
+			Message:     "durable workflow state projected into the advisory owner-scoped life graph",
+			Trigger:     trigger,
+			RuleApplied: "graph presence grants no approval or execution authority",
+			Actor:       "workflow-engine",
+		})
+	}
 }
 
 func (s *service) linkSource(workflowID uuid.UUID, sourceType, sourceID, sourceURI, sourceLabel, relationship string) {
@@ -2833,7 +3177,7 @@ func analyzeInput(request IntakeRequest) inputAnalysis {
 	requiresApproval, approvalReason := approvalNeed(text, taskType)
 	priority := priorityScore(text, taskType, risk)
 	title := compactTitle(request.Input)
-	dueAt := detectDueDate(text)
+	dueAt := detectDueDate(request.Input)
 	projectKey, projectConfidence, matchReasons, trelloRef, driveRef := matchProject(request, text, taskType)
 	entities := extractEntities(request.Input)
 	state := StateReady
@@ -2940,15 +3284,40 @@ func priorityScore(text, taskType, risk string) int {
 
 func detectDueDate(text string) *time.Time {
 	now := time.Now().UTC()
-	if strings.Contains(text, "tomorrow") {
+	lower := strings.ToLower(text)
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(trimmed), "start:") {
+			continue
+		}
+		if parsed, ok := parseWorkflowDate(strings.TrimSpace(trimmed[len("start:"):])); ok {
+			return &parsed
+		}
+	}
+	if strings.Contains(lower, "tomorrow") {
 		due := now.Add(24 * time.Hour)
 		return &due
 	}
-	if strings.Contains(text, "today") || strings.Contains(text, "urgent") {
+	if strings.Contains(lower, "today") || strings.Contains(lower, "urgent") {
 		due := now
 		return &due
 	}
+	for _, token := range strings.Fields(text) {
+		if parsed, ok := parseWorkflowDate(strings.Trim(token, " ,.;()[]")); ok {
+			return &parsed
+		}
+	}
 	return nil
+}
+
+func parseWorkflowDate(value string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+		parsed, err := time.Parse(layout, strings.TrimSpace(value))
+		if err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 func matchProject(request IntakeRequest, text, taskType string) (string, float64, []string, string, string) {
@@ -3052,6 +3421,100 @@ func proposalForAnalysis(workflowID uuid.UUID, analysis inputAnalysis) *models.W
 		Options:           strings.Join(options, "\n"),
 		Status:            "open",
 	}
+}
+
+const automationSelectionProposalAction = "Select an automation for controlled execution"
+
+func automationSelectionProposal(workflowID uuid.UUID, candidates []AutomationCandidate) *models.WorkflowProposal {
+	options := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, err := uuid.Parse(strings.TrimSpace(candidate.ID)); err != nil {
+			continue
+		}
+		label := firstNonEmpty(candidate.Name, candidate.RuntimeType, "Automation")
+		options = append(options, fmt.Sprintf(
+			"Use %s [automation:%s] - %s",
+			label,
+			strings.TrimSpace(candidate.ID),
+			firstNonEmpty(candidate.Reason, "matched configured automation"),
+		))
+	}
+	if len(options) == 0 {
+		options = append(options, "Configure a suitable automation before approving execution")
+	}
+	return &models.WorkflowProposal{
+		WorkflowID:        workflowID,
+		RecommendedAction: automationSelectionProposalAction,
+		Options:           strings.Join(options, "\n"),
+		Status:            "open",
+	}
+}
+
+func isAutomationSelectionProposal(proposal *models.WorkflowProposal) bool {
+	return proposal != nil && strings.TrimSpace(proposal.RecommendedAction) == automationSelectionProposalAction
+}
+
+func selectedAutomationID(options string, selectedOption string) (string, error) {
+	selectedOption = strings.TrimSpace(selectedOption)
+	if selectedOption == "" {
+		return "", fmt.Errorf("select one automation before approving controlled execution")
+	}
+	matched := false
+	for _, option := range strings.Split(options, "\n") {
+		if strings.TrimSpace(option) == selectedOption {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return "", fmt.Errorf("selected automation is not one of the reviewed candidates")
+	}
+	const marker = "[automation:"
+	start := strings.Index(selectedOption, marker)
+	if start < 0 {
+		return "", fmt.Errorf("configure a suitable automation before approving controlled execution")
+	}
+	start += len(marker)
+	end := strings.Index(selectedOption[start:], "]")
+	if end < 0 {
+		return "", fmt.Errorf("selected automation candidate is malformed")
+	}
+	automationID := strings.TrimSpace(selectedOption[start : start+end])
+	parsed, err := uuid.Parse(automationID)
+	if err != nil || parsed == uuid.Nil {
+		return "", fmt.Errorf("selected automation candidate has an invalid id")
+	}
+	return parsed.String(), nil
+}
+
+func workflowNeedsAutomation(input string, analysis inputAnalysis) bool {
+	if workflowContainsWordOrPhrase(input, "run", "execute", "deploy", "install", "launch", "invoke") {
+		return true
+	}
+	action := workflowContainsWordOrPhrase(input,
+		"add", "apply", "build", "call", "change", "commit", "create", "delete", "fix",
+		"implement", "merge", "modify", "move", "post", "publish", "push", "rename",
+		"send", "start", "update", "write",
+	)
+	target := workflowContainsWordOrPhrase(input,
+		"account", "api", "build", "code", "command", "deployment", "docker", "email",
+		"file", "files", "message", "post", "posting", "repo", "repository", "request",
+		"script", "test", "tests",
+	)
+	return action && target
+}
+
+func workflowContainsWordOrPhrase(value string, terms ...string) bool {
+	normalized := " " + strings.Join(strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	}), " ") + " "
+	for _, term := range terms {
+		normalizedTerm := strings.Join(strings.Fields(strings.ToLower(term)), " ")
+		if normalizedTerm != "" && strings.Contains(normalized, " "+normalizedTerm+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 func qualityGatesForAnalysis(workflowID uuid.UUID, analysis inputAnalysis) []models.WorkflowQualityGate {
@@ -3243,7 +3706,7 @@ func engineCapabilities() []EngineCapability {
 	return []EngineCapability{
 		{ID: "state-machine", Name: "Workflow state machine", Status: "implemented", Implemented: []string{"persistent workflow states", "validated transitions", "blocked/waiting/completed/archive states"}, Next: []string{"per-project custom states"}},
 		{ID: "event-triggers", Name: "Event-driven trigger logic", Status: "implemented", Implemented: []string{"intake trigger field", "audit trigger log", "connected-source extraction creates workflow candidates", "stable source-record deduplication", "source retraction blocks stale work"}, Next: []string{"webhook workers per connector"}},
-		{ID: "adapters", Name: "Integration adapter layer", Status: "partial", Implemented: []string{"adapter capability names", "source-local-folder path", "allowlisted incremental JSON source bridge", "task-engine runner adapter"}, Next: []string{"Gmail/Trello/Drive concrete adapters"}},
+		{ID: "adapters", Name: "Integration adapter layer", Status: "partial", Implemented: []string{"adapter capability names", "source-local-folder path", "allowlisted incremental JSON source bridge", "read-only Gmail, Drive, Contacts, Calendar, Trello, and GitHub adapters", "task-engine runner adapter"}, Next: []string{"retained sandbox acceptance for every configured account", "provider webhooks and scoped write adapters"}},
 		{ID: "context-memory", Name: "Context and memory layer", Status: "implemented", Implemented: []string{"project key", "separate source links", "memory/task/source retrieval"}, Next: []string{"project dossier projection"}},
 		{ID: "decision-rules", Name: "Autonomous decision rules", Status: "implemented", Implemented: []string{"separate decision records", "approval rules", "autonomy levels", "blocked reasons", "next action"}, Next: []string{"configurable per-contact rules"}},
 		{ID: "ai-reasoning", Name: "AI reasoning layer", Status: "partial", Implemented: []string{"deterministic classification fallback", "task type/risk/priority extraction"}, Next: []string{"LLM structured extractor with schema validation"}},
@@ -3263,7 +3726,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "autonomy-levels", Name: "Autonomy level engine", Status: "implemented", Implemented: []string{"approve_before_execute", "autonomous_safe", "blocked/waiting handling"}, Next: []string{"per-source/per-contact autonomy settings"}},
 		{ID: "risk-scoring", Name: "Risk scoring engine", Status: "implemented", Implemented: []string{"legal/financial/public/destructive risk scoring", "approval reason surfaced"}, Next: []string{"weighted project/client/irreversibility risk model"}},
 		{ID: "evidence-linking", Name: "Evidence and source linking engine", Status: "implemented", Implemented: []string{"source link table", "evidence claim table", "unsupported claim review flag"}, Next: []string{"claim-source precision checks against extracted snippets"}},
-		{ID: "deadline-detection", Name: "Deadline detection engine", Status: "partial", Implemented: []string{"today/tomorrow/urgent detection", "due dates", "check reminder checklist items"}, Next: []string{"date parser for letters, PDFs, and calendar phrases"}},
+		{ID: "deadline-detection", Name: "Deadline detection engine", Status: "partial", Implemented: []string{"today/tomorrow/urgent detection", "RFC3339 and ISO calendar start parsing", "due dates", "check reminder checklist items"}, Next: []string{"locale-aware date parser for letters and PDFs"}},
 		{ID: "follow-up", Name: "Follow-up engine", Status: "implemented", Implemented: []string{"open loop records", "follow-up date", "dashboard due-open-loop queue", "due follow-up worker creates proposals and checklist steps"}, Next: []string{"calendar reminder adapter and message draft generation"}},
 		{ID: "waiting-state", Name: "Waiting-state engine", Status: "implemented", Implemented: []string{"blocked/waiting states", "responsible party", "waiting-for reason"}, Next: []string{"automatic Trello On-Hold transitions"}},
 		{ID: "delegation", Name: "Delegation engine", Status: "partial", Implemented: []string{"proposal/options records", "checklist output suitable for VA/developer handoff"}, Next: []string{"dedicated delegation package templates"}},
@@ -3278,7 +3741,7 @@ func engineCapabilities() []EngineCapability {
 		{ID: "public-accountability", Name: "Public accountability engine", Status: "partial", Implemented: []string{"public-post approval gate", "evidence claim records", "risk-gated publishing flow"}, Next: []string{"safer wording reviewer and source-backed timeline builder"}},
 		{ID: "medium-publishing", Name: "Medium/blog publishing engine", Status: "partial", Implemented: []string{"publishing task type", "draft-only rule", "article checklist"}, Next: []string{"Medium draft adapter and image prompt workflow"}},
 		{ID: "client-operations", Name: "Client job operations engine", Status: "partial", Implemented: []string{"administrative workflow path", "deadline/priority/checklist support"}, Next: []string{"quote, travel, materials, and invoice templates"}},
-		{ID: "calendar-availability", Name: "Calendar and availability engine", Status: "partial", Implemented: []string{"scheduling classification", "deadline/check reminders"}, Next: []string{"calendar adapter and travel-time checks"}},
+		{ID: "calendar-availability", Name: "Calendar and availability engine", Status: "partial", Implemented: []string{"read-only Google Calendar adapter", "bounded upcoming-event preparation proposals", "source-backed due dates and check reminders", "review-gated cancellation retraction", "stable overlap detection with stale-conflict retraction"}, Next: []string{"travel-time checks", "approved reminder write adapter"}},
 		{ID: "negotiation-support", Name: "Negotiation support engine", Status: "planned", Implemented: []string{"proposal record foundation"}, Next: []string{"preferred/fallback/boundary proposal generator"}},
 		{ID: "admin-monitoring", Name: "Admin monitoring dashboard engine", Status: "implemented", Implemented: []string{"dashboard endpoint", "approvals, blocked, ready, high-risk, due open loops, missing next action", "connected-source sync job history", "failed source sync review workflows"}, Next: []string{"operator notification channel"}},
 		{ID: "error-recovery", Name: "Error recovery engine", Status: "implemented", Implemented: []string{"retry backoff", "blocked after retry limit", "expired lease recovery", "operator-confirmed retry", "evidence-backed interrupted completion", "idempotent follow-up replay"}, Next: []string{"connector-specific recovery playbooks"}},
@@ -3309,6 +3772,10 @@ func workflowSourceRevision(request IntakeRequest, input string) string {
 		strings.TrimSpace(request.ReceivedAt),
 		fmt.Sprintf("%t", request.RequiresReview),
 		strings.TrimSpace(request.ReviewReason),
+		request.CoordinationPlan.PlanID.String(),
+		fmt.Sprintf("%d", request.CoordinationPlan.Revision),
+		strings.ToLower(strings.TrimSpace(request.CoordinationPlan.Digest)),
+		strings.TrimSpace(request.CoordinationPlan.NodeID),
 	}, "\x1f")
 	sum := sha256.Sum256([]byte(canonical))
 	return fmt.Sprintf("%x", sum)

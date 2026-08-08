@@ -7,6 +7,7 @@ export interface IAssistantCommandRequest {
   projectKey?: string;
   pursuitId?: string;
   automationId?: string;
+  mandateId?: string;
   successCriteria?: string[];
   includeRagflowCandidates?: boolean;
   executeAllowed?: boolean;

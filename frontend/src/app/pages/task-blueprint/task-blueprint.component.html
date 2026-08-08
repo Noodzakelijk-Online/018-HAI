@@ -288,6 +288,10 @@
           <span>Automation ID</span>
           <input nz-input formControlName="automationId" placeholder="Only needed for controlled runtime execution" title="Optional automation target for safe local execution" />
         </label>
+        <label>
+          <span>Standing mandate</span>
+          <input nz-input formControlName="mandateId" placeholder="Optional mandate UUID" title="Selects one owner-scoped standing mandate. HAI still rechecks scope, risk, approval rules, expiry, and stop conditions immediately before execution." />
+        </label>
         <label class="criteria-field">
           <span>Success criteria</span>
           <textarea nz-input rows="3" formControlName="successCriteria" placeholder="One criterion per line" title="HAI validates against these criteria before treating work as complete"></textarea>
@@ -332,6 +336,32 @@
           <h3>Plan Summary <span title="The actual goal HAI inferred">?</span></h3>
           <p>{{ plan?.realGoal || 'No current plan. Start by asking HAI for an outcome.' }}</p>
           <nz-tag *ngIf="plan" [nzColor]="statusTone(plan.completionStatus)">{{ plan.completionStatus }}</nz-tag>
+        </article>
+
+        <article class="inspector-card" *ngIf="plan?.coordinationDraft as draft">
+          <div class="validation-summary__header">
+            <h3>Coordination draft <span title="An immutable advisory graph projected from this durable task plan. It cannot execute work or grant approval.">?</span></h3>
+            <a nz-button nzType="default" nzSize="small" routerLink="/plans">Review graph</a>
+          </div>
+          <dl>
+            <div><dt>Status</dt><dd>{{ draft.status }}</dd></div>
+            <div><dt>Revision</dt><dd>{{ draft.revision }}</dd></div>
+            <div><dt>Work nodes</dt><dd>{{ draft.nodes.length }}</dd></div>
+          </dl>
+          <p>Review and explicitly accept this graph before using it as coordination provenance. Acceptance still does not authorize execution.</p>
+        </article>
+
+        <article class="inspector-card" *ngIf="!plan?.coordinationDraft && plan?.coordinationPlan as accepted">
+          <div class="validation-summary__header">
+            <h3>Accepted coordination <span title="The exact accepted plan revision and node used as advisory provenance for this task.">?</span></h3>
+            <a nz-button nzType="default" nzSize="small" routerLink="/plans">Inspect plan</a>
+          </div>
+          <dl>
+            <div><dt>Plan</dt><dd>{{ accepted.planTitle }}</dd></div>
+            <div><dt>Revision</dt><dd>{{ accepted.revision }}</dd></div>
+            <div><dt>Node</dt><dd><code>{{ accepted.nodeId }}</code></dd></div>
+          </dl>
+          <p>This accepted revision coordinates work only. Runtime policy, approval, authorization, and verification remain separate gates.</p>
         </article>
 
         <article class="inspector-card">
@@ -404,6 +434,19 @@
               </small>
             </div>
           </div>
+        </article>
+
+        <article class="inspector-card" *ngIf="plan as currentPlan">
+          <div class="validation-summary__header">
+            <h3>Time &amp; capacity <span title="HAI combines owner-confirmed capacity with read-only Calendar busy time. It cannot move meetings or grant execution authority.">?</span></h3>
+            <button type="button" nz-button nzType="link" nzSize="small" (click)="openResourceSchedule()">Inspect schedule</button>
+          </div>
+          <dl>
+            <div><dt>Feasibility</dt><dd>{{ currentPlan.resourceDecision?.feasibility || 'Not evaluated' }}</dd></div>
+            <div><dt>Calendar reserved</dt><dd>{{ currentPlan.calendarCapacity?.busyIntervals?.length || 0 }} interval(s)</dd></div>
+            <div><dt>Blockers</dt><dd>{{ currentPlan.resourceDecision?.criticalBlockers?.length || 0 }}</dd></div>
+          </dl>
+          <p>{{ currentPlan.calendarCapacity?.explanation || 'Calendar capacity was not available for this plan.' }}</p>
         </article>
 
         <article class="inspector-card">
@@ -544,24 +587,52 @@
               nz-button
               nzSize="small"
               nzType="primary"
-              [disabled]="item.status !== 'open'"
+								[disabled]="!canResolveReview(item)"
               [nzLoading]="resolvingReviewId === item.id"
+							[title]="isOperationReview(item) ? 'Inspect the audit trail, then create a separate durable attempt. The prior attempt is never resumed.' : 'Approve this reviewed task.'"
               (click)="resolveReviewItem(item, true)"
             >
-              Approve
+				{{ reviewApproveLabel(item) }}
             </button>
             <button
               type="button"
               nz-button
               nzSize="small"
-              [disabled]="item.status !== 'open'"
+								[disabled]="!canResolveReview(item)"
               [nzLoading]="resolvingReviewId === item.id"
+							[title]="isOperationReview(item) ? 'Close this uncertain operation without retrying it.' : 'Reject this reviewed task.'"
               (click)="resolveReviewItem(item, false)"
             >
-              Reject
+				{{ reviewRejectLabel(item) }}
             </button>
           </div>
           <nz-empty *ngIf="!reviewQueue.length" nzNotFoundContent="No tasks waiting for review."></nz-empty>
+
+						<div class="reconciliation-control" *ngIf="approvedReviewCount() || reconciliation">
+							<strong>Interrupted approved work</strong>
+							<p>{{ approvedReviewCount() }} approved items may need outcome recovery. HAI inspects durable evidence and never repeats the action.</p>
+							<div class="reconciliation-actions">
+								<button type="button" nz-button nzSize="small" [nzLoading]="reconcilingReviews" (click)="previewApprovedReviewRecovery()">
+									Preview recovery
+								</button>
+								<button
+									type="button"
+									nz-button
+									nzSize="small"
+									nzType="primary"
+									[disabled]="!reconciliation?.dryRun || !reconciliation?.eligible"
+									[nzLoading]="reconcilingReviews"
+									title="Apply the preview. Verified evidence may close an item; every uncertain outcome returns to review. No action is retried."
+									(click)="applyApprovedReviewRecovery()"
+								>
+									Apply preview
+								</button>
+							</div>
+							<p *ngIf="reconciliation">
+								{{ reconciliation.eligible }} eligible · {{ reconciliation.completed }} verified complete ·
+								{{ reconciliation.returnedToReview }} need review · {{ reconciliation.conflicts }} changed
+							</p>
+						</div>
         </article>
       </section>
 
@@ -728,6 +799,44 @@
           </div>
         </article>
 
+        <article class="inspector-card" *ngIf="plan as currentPlan">
+          <h3>Calendar-aware resource schedule <span title="Deterministic advisory schedule using conservative step durations, owner capacity, deadlines, and source-backed busy intervals.">?</span></h3>
+          <p>{{ currentPlan.calendarCapacity?.explanation }}</p>
+          <dl>
+            <div><dt>Feasibility</dt><dd>{{ currentPlan.resourceDecision?.feasibility || 'Not evaluated' }}</dd></div>
+            <div><dt>Authority</dt><dd>{{ currentPlan.resourceDecision?.authority || 'advisory only' }}</dd></div>
+            <div><dt>Algorithm</dt><dd>{{ currentPlan.resourceDecision?.algorithmVersion || '-' }}</dd></div>
+          </dl>
+
+          <h4 *ngIf="currentPlan.calendarCapacity?.busyIntervals?.length">Reserved Calendar time</h4>
+          <div class="mini-table capacity-record" *ngFor="let interval of currentPlan.calendarCapacity?.busyIntervals || []">
+            <div>
+              <strong>{{ interval.title || 'Busy Calendar interval' }}</strong>
+              <span>{{ interval.start | date: 'short' }} - {{ interval.end | date: 'shortTime' }}</span>
+            </div>
+            <a *ngIf="interval.sourceUri" [href]="interval.sourceUri" target="_blank" rel="noopener noreferrer">Source</a>
+          </div>
+
+          <h4 *ngIf="currentPlan.resourceDecision?.scheduled?.length">Scheduled task steps</h4>
+          <div class="mini-table capacity-record" *ngFor="let scheduled of currentPlan.resourceDecision?.scheduled || []">
+            <div>
+              <strong>{{ scheduled.taskId }}</strong>
+              <span>{{ scheduled.start | date: 'short' }} - {{ scheduled.end | date: 'shortTime' }}</span>
+            </div>
+            <span>{{ scheduled.plannedDurationMinutes }} min</span>
+          </div>
+
+          <h4 *ngIf="currentPlan.resourceDecision?.criticalBlockers?.length">Blocking constraints</h4>
+          <div class="mini-table capacity-record capacity-record--blocked" *ngFor="let blocker of currentPlan.resourceDecision?.criticalBlockers || []">
+            <div><strong>{{ blocker.code }}</strong><span>{{ blocker.detail }}</span></div>
+          </div>
+
+          <h4 *ngIf="currentPlan.resourceDecision?.approvalFlags?.length">Required review</h4>
+          <div class="mini-table capacity-record" *ngFor="let flag of currentPlan.resourceDecision?.approvalFlags || []">
+            <div><strong>{{ flag.code }}</strong><span>{{ flag.reason }}</span></div>
+          </div>
+        </article>
+
         <article class="inspector-card" *ngIf="plan?.toolDecision?.capabilityRecommendations?.length">
           <h3>Reviewed capability options <span title="Catalog matches are planning context only. HAI still requires a configured adapter, health evidence, and any required approval before it can use one.">?</span></h3>
           <p>Matched from the reviewed HAI catalog. No external project was installed, configured, or executed.</p>
@@ -826,6 +935,38 @@
             <span>{{ item.extraction.sourceLabel || item.extraction.sourceUri || '-' }}</span>
           </div>
           <nz-empty *ngIf="!plan?.contextPlan?.sourceContext?.length" nzNotFoundContent="No source context loaded."></nz-empty>
+        </article>
+
+        <article class="inspector-card">
+          <h3>
+            Durable life graph
+            <span title="Owner-scoped operational records derived from this durable plan. Graph records are advisory and never grant approval or execution authority.">?</span>
+          </h3>
+          <div class="section-error" *ngIf="plan?.lifeGraphProjectionError" role="alert">
+            {{ plan?.lifeGraphProjectionError }}
+          </div>
+          <ng-container *ngIf="plan?.lifeGraphProjection as graph; else noLifeGraphProjection">
+            <div class="validation-counts" aria-label="Life graph projection counts">
+              <span><strong>1</strong><small>Task record</small></span>
+              <span><strong>{{ graph.linkedEntities.length }}</strong><small>Linked records</small></span>
+              <span><strong>{{ graph.relations.length }}</strong><small>Relations</small></span>
+              <span><strong>{{ graph.advisoryOnly ? 'Yes' : 'No' }}</strong><small>Advisory only</small></span>
+            </div>
+            <div class="source-row">
+              <strong>{{ graph.primary.name }}</strong>
+              <span>{{ graph.primary.type }} &middot; {{ graph.primary.domain }} &middot; {{ graph.primary.verificationStatus }}</span>
+            </div>
+            <div class="source-row" *ngFor="let entity of graph.linkedEntities">
+              <strong>{{ entity.name }}</strong>
+              <span>{{ entity.type }} &middot; {{ entity.status }} &middot; {{ entity.verificationStatus }}</span>
+            </div>
+          </ng-container>
+          <ng-template #noLifeGraphProjection>
+            <nz-empty
+              *ngIf="plan && !plan.lifeGraphProjectionError"
+              nzNotFoundContent="This preview or older plan has no durable life-graph projection."
+            ></nz-empty>
+          </ng-template>
         </article>
 
         <article

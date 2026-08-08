@@ -14,8 +14,9 @@ import (
 type Clock func() time.Time
 
 type Service struct {
-	repo  Repository
-	clock Clock
+	repo   Repository
+	claims ClaimRepository
+	clock  Clock
 }
 
 type atomicNodeCorrectionRepository interface {
@@ -29,7 +30,11 @@ func NewService(repo Repository, clock Clock) *Service {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{repo: repo, clock: clock}
+	return &Service{
+		repo:   repo,
+		claims: NewGraphClaimRepository(repo),
+		clock:  clock,
+	}
 }
 
 func (s *Service) CreateNode(ctx context.Context, request CreateNodeRequest) (NodeWriteResult, error) {
@@ -200,6 +205,9 @@ func (s *Service) CorrectNode(ctx context.Context, ownerIdentity, id string, cor
 	}
 	if old.DeletedAt != nil {
 		return NodeWriteResult{}, fmt.Errorf("cannot correct deleted node")
+	}
+	if isTemporalClaimNode(old) {
+		return NodeWriteResult{}, ErrImmutableClaim
 	}
 
 	correction.OwnerIdentity = old.OwnerIdentity

@@ -9,11 +9,26 @@ import (
 )
 
 type Handler struct {
-	service *Service
+	service               *Service
+	effectContextResolver func(*gin.Context) (EffectContext, error)
 }
 
 func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
+}
+
+// NewHandlerWithEffectContext keeps identity and approval provenance out of
+// public JSON. The composition root derives it from authenticated request
+// state; without a resolver the service remains fail closed at the provider
+// boundary.
+func NewHandlerWithEffectContext(
+	service *Service,
+	resolver func(*gin.Context) (EffectContext, error),
+) *Handler {
+	return &Handler{
+		service:               service,
+		effectContextResolver: resolver,
+	}
 }
 
 func DefaultHandler() (*Handler, error) {
@@ -101,6 +116,14 @@ func (h *Handler) Generate(c *gin.Context) {
 	// Public API callers may request generation, but paid-model approval must
 	// come from a server-side approval workflow, not a client-supplied flag.
 	request.AllowPaidApproved = false
+	if h.effectContextResolver != nil {
+		effectContext, err := h.effectContextResolver(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		request.EffectContext = &effectContext
+	}
 	result, err := h.service.Generate(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

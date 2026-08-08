@@ -297,6 +297,7 @@
             <details class="detail-block" open>
               <summary>Why this model was selected</summary>
               <p>{{ d.reason }}</p>
+              <p><strong>Outcome evidence:</strong> {{ calibrationSummary(d) }}</p>
               <p>
                 {{ d.classification.taskType }} / difficulty {{ d.classification.difficulty }} /
                 {{ d.classification.requiredReasoning }}
@@ -566,6 +567,40 @@
                 </small>
               </div>
               <nz-tag [nzColor]="maintenanceColor(record)">{{ record.status }}</nz-tag>
+            </article>
+          </div>
+        </article>
+
+        <article class="surface-panel">
+          <div class="panel-heading compact">
+            <button
+              type="button"
+              class="section-title-button"
+              (click)="loadGenerationHistory()"
+              title="Reload redacted generation outcomes joined to trusted validation evidence"
+            >
+              <h2>Validated generation outcomes</h2>
+              <p>Real routed calls only. Prompts, outputs, credentials, and source content are excluded.</p>
+            </button>
+          </div>
+          <nz-empty *ngIf="!generations.length" nzNotFoundContent="No routed generation outcomes recorded yet."></nz-empty>
+          <div class="event-list" *ngIf="generations.length">
+            <article *ngFor="let generation of generations; trackBy: trackByGeneration">
+              <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+              <div>
+                <strong>{{ generation.modelName || generation.modelId || 'No model selected' }}</strong>
+                <span>
+                  {{ generation.providerId || 'routing blocked before provider selection' }} /
+                  {{ generation.loggedAt | date: 'short' }} /
+                  fallback depth {{ generation.fallbackDepth || 0 }}
+                </span>
+                <small>{{ generation.reason }}</small>
+                <small *ngIf="generation.validationMethod">Validator: {{ generation.validationMethod }}</small>
+                <small *ngIf="!generation.validationMethod">No trusted validator has accepted or rejected this output yet.</small>
+              </div>
+              <nz-tag [nzColor]="validationColor(generation.validationStatus)">
+                {{ validationLabel(generation.validationStatus) }}
+              </nz-tag>
             </article>
           </div>
         </article>

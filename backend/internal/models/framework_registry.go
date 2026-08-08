@@ -34,6 +34,8 @@ type FrameworkSelectionRecord struct {
 	CatalogVersion            string    `gorm:"type:varchar(32);not null" json:"catalogVersion"`
 	CatalogDigest             string    `gorm:"type:char(64);not null;index:idx_framework_selection_records_reproducibility,priority:1" json:"catalogDigest"`
 	SelectorAlgorithmVersion  string    `gorm:"type:varchar(64);not null;index:idx_framework_selection_records_reproducibility,priority:2" json:"selectorAlgorithmVersion"`
+	TaskRiskLevel             *string   `gorm:"type:varchar(16)" json:"taskRiskLevel,omitempty"`
+	EffectiveRiskCeiling      *string   `gorm:"type:varchar(16)" json:"effectiveRiskCeiling,omitempty"`
 	EffectivePreferenceDigest string    `gorm:"type:char(64);not null;index:idx_framework_selection_records_reproducibility,priority:3" json:"effectivePreferenceDigest"`
 	ConstitutionDigest        string    `gorm:"type:char(64);not null;index:idx_framework_selection_records_reproducibility,priority:4" json:"constitutionDigest"`
 	LifeDomain                string    `gorm:"type:varchar(120);not null;index" json:"lifeDomain"`

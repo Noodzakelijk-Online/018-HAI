@@ -2,7 +2,10 @@ package domainpack
 
 import "time"
 
-const CatalogVersion = "1.1.0"
+const (
+	CatalogVersion  = "2.0.0"
+	PlaybookVersion = "1.0.0"
+)
 
 type PackID string
 
@@ -120,6 +123,56 @@ type RetentionPolicy struct {
 	ArchiveProvenance bool `json:"archiveProvenance"`
 }
 
+type MethodLifecycleStatus string
+
+const (
+	MethodLifecycleActive       MethodLifecycleStatus = "active"
+	MethodLifecycleExperimental MethodLifecycleStatus = "experimental"
+	MethodLifecycleDeprecated   MethodLifecycleStatus = "deprecated"
+	MethodLifecycleRetired      MethodLifecycleStatus = "retired"
+)
+
+type MethodEvaluation struct {
+	Method             string   `json:"method"`
+	Criteria           []string `json:"criteria"`
+	FailureDisposition string   `json:"failureDisposition"`
+}
+
+type MethodProvenance struct {
+	SourceType string `json:"sourceType"`
+	Title      string `json:"title"`
+	Section    string `json:"section"`
+	Reference  string `json:"reference"`
+}
+
+// PlaybookMethod is an immutable catalog-owned advisory method. A method can
+// shape planning and evaluation, but its presence or selection never grants
+// permission to execute a tool, external effect, or consequential action.
+type PlaybookMethod struct {
+	ID                    string                `json:"id"`
+	Version               string                `json:"version"`
+	Name                  string                `json:"name"`
+	Group                 string                `json:"group"`
+	Domain                string                `json:"domain"`
+	Purpose               string                `json:"purpose"`
+	TriggerConditions     []string              `json:"triggerConditions"`
+	RequiredInputs        []string              `json:"requiredInputs"`
+	ProducedOutputs       []string              `json:"producedOutputs"`
+	AuthorityRequirements []string              `json:"authorityRequirements"`
+	SafetyInvariants      []string              `json:"safetyInvariants"`
+	RiskCeiling           RiskLevel             `json:"riskCeiling"`
+	EvidenceRequirements  []string              `json:"evidenceRequirements"`
+	Evaluation            MethodEvaluation      `json:"evaluation"`
+	Provenance            MethodProvenance      `json:"provenance"`
+	LifecycleStatus       MethodLifecycleStatus `json:"lifecycleStatus"`
+}
+
+type DomainPlaybook struct {
+	Version string           `json:"version"`
+	Digest  string           `json:"digest"`
+	Methods []PlaybookMethod `json:"methods"`
+}
+
 type DomainPack struct {
 	ID                          PackID                    `json:"id"`
 	Version                     string                    `json:"version"`
@@ -141,6 +194,7 @@ type DomainPack struct {
 	Retention                   RetentionPolicy           `json:"retention"`
 	SuitableAgentCapabilities   []string                  `json:"suitableAgentCapabilities"`
 	AuditEvents                 []string                  `json:"auditEvents"`
+	Playbook                    DomainPlaybook            `json:"playbook"`
 }
 
 type CatalogMetadata struct {
@@ -225,4 +279,34 @@ type SuppressedMatch struct {
 type ClassificationResult struct {
 	Matches    []ClassificationMatch `json:"matches"`
 	Suppressed []SuppressedMatch     `json:"suppressed"`
+}
+
+type MethodSelectionRequest struct {
+	Text              string   `json:"text"`
+	ClassifiedPackIDs []PackID `json:"classifiedPackIds"`
+	ExplicitMethodIDs []string `json:"explicitMethodIds,omitempty"`
+	Limit             int      `json:"limit,omitempty"`
+	OwnerIdentity     string   `json:"-"`
+}
+
+type MethodSelection struct {
+	PackID   PackID         `json:"packId"`
+	Method   PlaybookMethod `json:"method"`
+	Score    int            `json:"score"`
+	Explicit bool           `json:"explicit"`
+	Reasons  []string       `json:"reasons"`
+}
+
+type SuppressedMethodGroup struct {
+	PackID PackID `json:"packId"`
+	Reason string `json:"reason"`
+}
+
+type MethodSelectionResult struct {
+	CatalogVersion            string                  `json:"catalogVersion"`
+	CatalogDigest             string                  `json:"catalogDigest"`
+	AdvisoryOnly              bool                    `json:"advisoryOnly"`
+	ExecutionAuthorityGranted bool                    `json:"executionAuthorityGranted"`
+	Selections                []MethodSelection       `json:"selections"`
+	Suppressed                []SuppressedMethodGroup `json:"suppressed,omitempty"`
 }

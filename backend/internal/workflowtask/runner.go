@@ -1,11 +1,16 @@
 package workflowtask
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"automation-hub-backend/internal/automation"
+	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/workflow"
 
@@ -20,6 +25,11 @@ type DeferredRunner struct {
 type Runner struct {
 	service                 task.Service
 	approvalBindingPreparer automation.WorkflowApprovalBindingPreparer
+	automationCatalog       automationCatalog
+}
+
+type automationCatalog interface {
+	FindAll() ([]*models.Automation, error)
 }
 
 func NewDeferredRunner() *DeferredRunner {
@@ -56,11 +66,28 @@ func (r *DeferredRunner) PrepareWorkflowApprovalBinding(request workflow.Workflo
 	return preparer.PrepareWorkflowApprovalBinding(request)
 }
 
+func (r *DeferredRunner) SelectWorkflowAutomations(request workflow.AutomationSelectionRequest) ([]workflow.AutomationCandidate, error) {
+	r.mu.RLock()
+	delegate := r.delegate
+	r.mu.RUnlock()
+	if delegate == nil {
+		return nil, fmt.Errorf("workflow task runner is not initialized")
+	}
+	selector, ok := delegate.(workflow.AutomationSelector)
+	if !ok {
+		return nil, fmt.Errorf("workflow task runner cannot select automations")
+	}
+	return selector.SelectWorkflowAutomations(request)
+}
+
 func NewRunner(service task.Service, preparers ...automation.WorkflowApprovalBindingPreparer) *Runner {
 	runner := &Runner{service: service}
 	for _, preparer := range preparers {
 		if preparer != nil {
 			runner.approvalBindingPreparer = preparer
+			if catalog, ok := preparer.(automationCatalog); ok {
+				runner.automationCatalog = catalog
+			}
 			break
 		}
 	}
@@ -82,6 +109,7 @@ func (r *Runner) PrepareWorkflowApprovalBinding(request workflow.WorkflowApprova
 	request.OwnerIdentity = strings.TrimSpace(request.OwnerIdentity)
 	request.WorkflowID = strings.TrimSpace(request.WorkflowID)
 	request.AutomationID = strings.TrimSpace(request.AutomationID)
+	request.MandateID = strings.TrimSpace(request.MandateID)
 	request.Request = strings.TrimSpace(request.Request)
 	request.ProjectKey = strings.TrimSpace(request.ProjectKey)
 	if request.OwnerIdentity == "" {
@@ -103,6 +131,7 @@ func (r *Runner) PrepareWorkflowApprovalBinding(request workflow.WorkflowApprova
 		Request:        request.Request,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
+		MandateID:      request.MandateID,
 		ExecuteAllowed: true,
 		HumanApproved:  true,
 	})
@@ -112,8 +141,179 @@ func (r *Runner) PrepareWorkflowApprovalBinding(request workflow.WorkflowApprova
 			OwnerIdentity: request.OwnerIdentity,
 			Task:          executionTask,
 			ProjectKey:    request.ProjectKey,
+			MandateID:     request.MandateID,
 		},
 	)
+}
+
+func (r *Runner) SelectWorkflowAutomations(request workflow.AutomationSelectionRequest) ([]workflow.AutomationCandidate, error) {
+	if r == nil || r.automationCatalog == nil {
+		return nil, fmt.Errorf("automation catalog is not configured")
+	}
+	automations, err := r.automationCatalog.FindAll()
+	if err != nil {
+		return nil, fmt.Errorf("load automation catalog: %w", err)
+	}
+
+	requestTerms := automationSelectionTerms(request.Request)
+	taskTerms := automationSelectionTerms(request.TaskType)
+	projectTerms := automationSelectionTerms(request.ProjectKey)
+	candidates := make([]workflow.AutomationCandidate, 0, len(automations))
+	for _, candidate := range automations {
+		score, reasons, eligible := rankAutomationCandidate(candidate, taskTerms, projectTerms, requestTerms)
+		if !eligible {
+			continue
+		}
+		candidates = append(candidates, workflow.AutomationCandidate{
+			ID:          candidate.ID.String(),
+			Name:        strings.TrimSpace(candidate.Name),
+			RuntimeType: strings.ToLower(strings.TrimSpace(candidate.RuntimeType)),
+			LaunchType:  strings.ToLower(strings.TrimSpace(candidate.LaunchType)),
+			Score:       score,
+			Reason:      strings.Join(reasons, "; "),
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score != candidates[j].Score {
+			return candidates[i].Score > candidates[j].Score
+		}
+		left := strings.ToLower(candidates[i].Name)
+		right := strings.ToLower(candidates[j].Name)
+		if left != right {
+			return left < right
+		}
+		return candidates[i].ID < candidates[j].ID
+	})
+	return candidates, nil
+}
+
+func rankAutomationCandidate(
+	candidate *models.Automation,
+	taskTerms []string,
+	projectTerms []string,
+	requestTerms []string,
+) (int, []string, bool) {
+	if !configuredAutomationCandidate(candidate) {
+		return 0, nil, false
+	}
+
+	metadata := strings.ToLower(strings.Join([]string{
+		candidate.Name,
+		candidate.URLPath,
+		candidate.RuntimeType,
+		candidate.LaunchType,
+		candidate.ServiceName,
+		candidate.RoutePath,
+		candidate.DependencyNotes,
+	}, " "))
+	metadataTerms := make(map[string]struct{})
+	for _, term := range automationSelectionTerms(metadata) {
+		metadataTerms[term] = struct{}{}
+	}
+
+	score := 10
+	reasons := []string{"configured controlled-runtime automation"}
+	matched := false
+	if count := matchingAutomationTerms(taskTerms, metadataTerms); count > 0 {
+		score += 30 + minInt(count-1, 3)*5
+		reasons = append(reasons, fmt.Sprintf("task capability match (%d term(s))", count))
+		matched = true
+	}
+	if count := matchingAutomationTerms(projectTerms, metadataTerms); count > 0 {
+		score += 20 + minInt(count-1, 2)*4
+		reasons = append(reasons, fmt.Sprintf("project match (%d term(s))", count))
+		matched = true
+	}
+	if count := matchingAutomationTerms(requestTerms, metadataTerms); count > 0 {
+		score += minInt(count, 6) * 4
+		reasons = append(reasons, fmt.Sprintf("request metadata match (%d term(s))", count))
+		matched = true
+	}
+	if !matched {
+		return 0, nil, false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(candidate.Status)) {
+	case "healthy":
+		score += 15
+		reasons = append(reasons, "health status healthy")
+	case "warning":
+		score += 5
+		reasons = append(reasons, "health status warning")
+	case "degraded":
+		score -= 10
+		reasons = append(reasons, "health status degraded")
+	default:
+		reasons = append(reasons, "health status not yet verified")
+	}
+	return score, reasons, true
+}
+
+func configuredAutomationCandidate(candidate *models.Automation) bool {
+	if candidate == nil || candidate.ID == uuid.Nil || strings.TrimSpace(candidate.Name) == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(candidate.Status)) {
+	case "broken", "disabled":
+		return false
+	}
+	launchType := strings.ToLower(strings.TrimSpace(candidate.LaunchType))
+	target := strings.TrimSpace(candidate.LaunchTarget)
+	switch launchType {
+	case "api", "script":
+		return target != ""
+	case "docker_service":
+		return target != "" || strings.TrimSpace(candidate.ServiceName) != ""
+	case "agent_runtime":
+		return target != "" && strings.TrimSpace(candidate.RuntimeType) != ""
+	default:
+		return false
+	}
+}
+
+func automationSelectionTerms(value string) []string {
+	terms := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, field := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		field = strings.TrimSpace(field)
+		if len(field) < 3 || automationSelectionStopWord(field) {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		terms = append(terms, field)
+	}
+	return terms
+}
+
+func matchingAutomationTerms(terms []string, metadata map[string]struct{}) int {
+	count := 0
+	for _, term := range terms {
+		if _, ok := metadata[term]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+func automationSelectionStopWord(value string) bool {
+	switch value {
+	case "and", "the", "for", "from", "with", "this", "that", "into", "then", "task", "workflow", "automation":
+		return true
+	default:
+		return false
+	}
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.TaskRunResult, error) {
@@ -121,25 +321,63 @@ func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.Tas
 	if err != nil {
 		return nil, err
 	}
-	plan, err := r.service.Run(task.IntakeRequest{
-		OwnerIdentity:    request.OwnerIdentity,
-		PursuitID:        request.PursuitID,
-		WorkflowID:       request.WorkflowID,
-		Request:          request.Request,
-		ProjectKey:       request.ProjectKey,
-		AutomationID:     request.AutomationID,
-		ExecuteAllowed:   true,
-		HumanApproved:    request.HumanApproved,
-		ApprovalNote:     request.ApprovalNote,
-		ApprovalSourceID: request.ApprovalSourceID,
-		Deadline:         request.Deadline,
-	})
+	intake := task.IntakeRequest{
+		OwnerIdentity:         request.OwnerIdentity,
+		IdempotencyKey:        workflowTaskOperationKey(request),
+		PursuitID:             request.PursuitID,
+		WorkflowID:            request.WorkflowID,
+		Request:               request.Request,
+		ProjectKey:            request.ProjectKey,
+		AutomationID:          request.AutomationID,
+		MandateID:             request.MandateID,
+		ExecuteAllowed:        true,
+		HumanApproved:         request.HumanApproved,
+		ApprovalNote:          request.ApprovalNote,
+		ApprovalSourceID:      request.ApprovalSourceID,
+		ApprovalBindingDigest: request.ApprovalBindingDigest,
+		ApprovalActorIdentity: request.ApprovalActorIdentity,
+		ApprovalApprovedAt:    request.ApprovalApprovedAt,
+		Deadline:              request.Deadline,
+		CoordinationPlan:      request.CoordinationPlan,
+	}
+	previewer, ok := r.service.(task.PreviewService)
+	if !ok {
+		return nil, fmt.Errorf("workflow task execution requires a side-effect-free framework selection preview")
+	}
+	previewRequest := intake
+	previewRequest.ExecutionRequested = true
+	previewRequest.ExecuteAllowed = false
+	previewRequest.HumanApproved = false
+	previewRequest.ApprovalNote = ""
+	previewRequest.ApprovalSourceID = ""
+	previewRequest.ApprovalBindingDigest = ""
+	previewRequest.ApprovalActorIdentity = ""
+	previewRequest.ApprovalApprovedAt = nil
+	preview, err := previewer.Preview(previewRequest)
+	if err != nil {
+		return nil, fmt.Errorf("workflow task framework selection preflight: %w", err)
+	}
+	preflightSelection, err := frameworkSelectionFromPlan(preview)
+	if err != nil {
+		return nil, fmt.Errorf("workflow task framework selection preflight: %w", err)
+	}
+	if err := enforceFrameworkRiskFloor(preflightSelection, request.RiskLevel); err != nil {
+		return nil, fmt.Errorf("workflow task framework selection preflight: %w", err)
+	}
+
+	plan, err := r.service.Run(intake)
 	if err != nil {
 		return nil, err
 	}
 	frameworkSelection, err := frameworkSelectionFromPlan(plan)
 	if err != nil {
 		return nil, fmt.Errorf("workflow task framework selection: %w", err)
+	}
+	if err := enforceFrameworkRiskFloor(frameworkSelection, request.RiskLevel); err != nil {
+		return nil, fmt.Errorf("workflow task framework selection: %w", err)
+	}
+	if err := compareFrameworkRiskContracts(preflightSelection, frameworkSelection); err != nil {
+		return nil, fmt.Errorf("workflow task framework selection changed after preflight: %w", err)
 	}
 	result := &workflow.TaskRunResult{
 		PlanID:             plan.ID,
@@ -185,12 +423,43 @@ func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.Tas
 	return result, nil
 }
 
+func workflowTaskOperationKey(request workflow.TaskRunRequest) string {
+	key := "workflow:" + strings.TrimSpace(request.WorkflowID) + ":unapproved"
+	if sourceID := strings.TrimSpace(request.ApprovalSourceID); sourceID != "" {
+		key = "workflow:" + strings.TrimSpace(request.WorkflowID) + ":approval:" + sourceID
+	}
+	if !request.CoordinationPlan.IsZero() {
+		binding := strings.Join([]string{
+			request.CoordinationPlan.PlanID.String(),
+			fmt.Sprintf("%d", request.CoordinationPlan.Revision),
+			strings.ToLower(strings.TrimSpace(request.CoordinationPlan.Digest)),
+			strings.TrimSpace(request.CoordinationPlan.NodeID),
+		}, "\x1f")
+		digest := sha256.Sum256([]byte(binding))
+		key += fmt.Sprintf(":plan:%x", digest[:12])
+	}
+	if len(key) > 120 {
+		digest := sha256.Sum256([]byte(key))
+		key = "workflow:" + strings.TrimSpace(request.WorkflowID) + fmt.Sprintf(":operation:%x", digest[:16])
+	}
+	return key
+}
+
 func normalizeWorkflowTaskRequest(request workflow.TaskRunRequest) (workflow.TaskRunRequest, error) {
 	request.OwnerIdentity = strings.TrimSpace(request.OwnerIdentity)
 	request.WorkflowID = strings.TrimSpace(request.WorkflowID)
 	request.Request = strings.TrimSpace(request.Request)
 	request.ProjectKey = strings.TrimSpace(request.ProjectKey)
 	request.AutomationID = strings.TrimSpace(request.AutomationID)
+	request.MandateID = strings.TrimSpace(request.MandateID)
+	if request.MandateID != "" {
+		mandateID, err := uuid.Parse(request.MandateID)
+		if err != nil || mandateID == uuid.Nil {
+			return workflow.TaskRunRequest{}, fmt.Errorf("workflow task standing mandate ID must be a UUID")
+		}
+		request.MandateID = mandateID.String()
+	}
+	request.RiskLevel = strings.ToLower(strings.TrimSpace(request.RiskLevel))
 	request.ApprovalNote = strings.TrimSpace(request.ApprovalNote)
 	request.ApprovalSourceID = strings.TrimSpace(request.ApprovalSourceID)
 	if request.OwnerIdentity == "" {
@@ -202,9 +471,18 @@ func normalizeWorkflowTaskRequest(request workflow.TaskRunRequest) (workflow.Tas
 	if request.Request == "" {
 		return workflow.TaskRunRequest{}, fmt.Errorf("workflow task request is required")
 	}
+	if request.RiskLevel == "" {
+		request.RiskLevel = "low"
+	}
+	if _, _, err := workflowFrameworkRiskRank(request.RiskLevel); err != nil {
+		return workflow.TaskRunRequest{}, fmt.Errorf("workflow task risk level %w", err)
+	}
 	if !request.HumanApproved {
 		request.ApprovalNote = ""
 		request.ApprovalSourceID = ""
+		request.ApprovalBindingDigest = ""
+		request.ApprovalActorIdentity = ""
+		request.ApprovalApprovedAt = nil
 		return request, nil
 	}
 	const prefix = "workflow-decision:"
@@ -226,22 +504,137 @@ func frameworkSelectionFromPlan(plan *task.CompletionPlan) (*workflow.FrameworkS
 		return nil, fmt.Errorf("task plan %q has no framework selection decision", strings.TrimSpace(plan.ID))
 	}
 	decision := plan.FrameworkDecision
+	riskContract, err := frameworkRiskContractFromDecision(decision)
+	if err != nil {
+		return nil, err
+	}
 	provenance := &workflow.FrameworkSelectionProvenance{
 		SelectionDecisionID:       strings.TrimSpace(decision.ID),
 		TaskPlanID:                strings.TrimSpace(decision.TaskPlanID),
 		CatalogVersion:            strings.TrimSpace(decision.CatalogVersion),
 		CatalogDigest:             strings.TrimSpace(decision.CatalogDigest),
 		SelectorAlgorithmVersion:  strings.TrimSpace(decision.SelectorAlgorithmVersion),
+		TaskRiskLevel:             riskContract.TaskRiskLevel,
+		EffectiveRiskCeiling:      riskContract.EffectiveRiskCeiling,
 		EffectivePreferenceDigest: strings.TrimSpace(decision.EffectivePreferenceDigest),
 		ConstitutionVersion:       decision.ConstitutionVersion,
 		ConstitutionDigest:        strings.TrimSpace(decision.ConstitutionDigest),
 		ConstitutionSource:        strings.TrimSpace(decision.ConstitutionSource),
 		OperatingContractDigest:   strings.TrimSpace(decision.OperatingContractDigest),
 	}
+	if strings.EqualFold(strings.TrimSpace(decision.SelectorAlgorithmVersion), "selector-v5") {
+		maximumAutonomy := decision.MaximumAutonomyLevel
+		requiresApproval := decision.RequiresApproval
+		provenance.MaximumAutonomyLevel = &maximumAutonomy
+		provenance.RequiresApproval = &requiresApproval
+	}
 	if err := provenance.Validate(plan.ID); err != nil {
 		return nil, err
 	}
+	if err := enforceFrameworkPlanRisk(provenance, plan); err != nil {
+		return nil, err
+	}
 	return provenance, nil
+}
+
+type frameworkRiskContract struct {
+	TaskRiskLevel        string `json:"taskRiskLevel"`
+	EffectiveRiskCeiling string `json:"effectiveRiskCeiling"`
+}
+
+func frameworkRiskContractFromDecision(decision interface{}) (frameworkRiskContract, error) {
+	payload, err := json.Marshal(decision)
+	if err != nil {
+		return frameworkRiskContract{}, fmt.Errorf("encode framework selection risk contract: %w", err)
+	}
+	var contract frameworkRiskContract
+	if err := json.Unmarshal(payload, &contract); err != nil {
+		return frameworkRiskContract{}, fmt.Errorf("decode framework selection risk contract: %w", err)
+	}
+	contract.TaskRiskLevel = strings.ToLower(strings.TrimSpace(contract.TaskRiskLevel))
+	contract.EffectiveRiskCeiling = strings.ToLower(strings.TrimSpace(contract.EffectiveRiskCeiling))
+	return contract, nil
+}
+
+func enforceFrameworkRiskFloor(selection *workflow.FrameworkSelectionProvenance, requestedRisk string) error {
+	if selection == nil {
+		return fmt.Errorf("framework selection provenance is required")
+	}
+	if err := selection.Validate(selection.TaskPlanID); err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(selection.SelectorAlgorithmVersion), "selector-v5") {
+		return nil
+	}
+	requested, requestedRank, err := workflowFrameworkRiskRank(requestedRisk)
+	if err != nil {
+		return fmt.Errorf("workflow risk floor %w", err)
+	}
+	selected, selectedRank, err := workflowFrameworkRiskRank(selection.TaskRiskLevel)
+	if err != nil {
+		return fmt.Errorf("selector-v5 task risk level %w", err)
+	}
+	if selectedRank < requestedRank {
+		return fmt.Errorf("selector-v5 task risk %q is below workflow risk floor %q", selected, requested)
+	}
+	return nil
+}
+
+func enforceFrameworkPlanRisk(selection *workflow.FrameworkSelectionProvenance, plan *task.CompletionPlan) error {
+	if selection == nil || plan == nil || !strings.EqualFold(selection.SelectorAlgorithmVersion, "selector-v5") {
+		return nil
+	}
+	planRisk := firstNonEmpty(plan.RiskAssessment.Level, plan.Intake.RiskLevel, "low")
+	if err := enforceFrameworkRiskFloor(selection, planRisk); err != nil {
+		return fmt.Errorf("selector-v5 risk contract does not cover task plan risk: %w", err)
+	}
+	return nil
+}
+
+func compareFrameworkRiskContracts(preflight, executed *workflow.FrameworkSelectionProvenance) error {
+	if preflight == nil || executed == nil {
+		return fmt.Errorf("preflight and executed framework selections are required")
+	}
+	if !strings.EqualFold(preflight.SelectorAlgorithmVersion, "selector-v5") &&
+		!strings.EqualFold(executed.SelectorAlgorithmVersion, "selector-v5") {
+		return nil
+	}
+	if !strings.EqualFold(preflight.SelectorAlgorithmVersion, executed.SelectorAlgorithmVersion) ||
+		preflight.CatalogVersion != executed.CatalogVersion ||
+		preflight.CatalogDigest != executed.CatalogDigest ||
+		preflight.TaskRiskLevel != executed.TaskRiskLevel ||
+		preflight.EffectiveRiskCeiling != executed.EffectiveRiskCeiling ||
+		!equalOptionalInt(preflight.MaximumAutonomyLevel, executed.MaximumAutonomyLevel) ||
+		!equalOptionalBool(preflight.RequiresApproval, executed.RequiresApproval) ||
+		preflight.EffectivePreferenceDigest != executed.EffectivePreferenceDigest ||
+		preflight.ConstitutionDigest != executed.ConstitutionDigest {
+		return fmt.Errorf("selector-v5 risk contract or governing digests differ from the side-effect-free preview")
+	}
+	return nil
+}
+
+func equalOptionalInt(left, right *int) bool {
+	return (left == nil && right == nil) ||
+		(left != nil && right != nil && *left == *right)
+}
+
+func equalOptionalBool(left, right *bool) bool {
+	return (left == nil && right == nil) ||
+		(left != nil && right != nil && *left == *right)
+}
+
+func workflowFrameworkRiskRank(value string) (string, int, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "low":
+		return normalized, 1, nil
+	case "medium":
+		return normalized, 2, nil
+	case "high":
+		return normalized, 3, nil
+	default:
+		return "", 0, fmt.Errorf("must be one of low, medium, or high")
+	}
 }
 
 func firstNonEmpty(values ...string) string {

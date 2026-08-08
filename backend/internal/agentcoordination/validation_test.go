@@ -159,6 +159,35 @@ func TestValidateAcknowledgmentBindsMessageAndRecipient(t *testing.T) {
 	}
 }
 
+func TestComputeAcknowledgmentDigestIsStableAndContentBound(t *testing.T) {
+	t.Parallel()
+
+	now := fixedNow().Add(time.Minute)
+	acknowledgment := Acknowledgment{
+		ID:             uuid.NewString(),
+		MessageID:      uuid.NewString(),
+		CorrelationID:  uuid.NewString(),
+		RecipientID:    " Reviewer ",
+		Status:         AcknowledgmentRejected,
+		Reason:         " Source was not available. ",
+		CreatedAt:      now,
+		IdempotencyKey: uuid.NewString(),
+	}
+	first, err := ComputeAcknowledgmentDigest(acknowledgment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ComputeAcknowledgmentDigest(acknowledgment)
+	if err != nil || first != second || len(first) != 64 {
+		t.Fatalf("stable acknowledgment digest = %q / %q, err %v", first, second, err)
+	}
+	acknowledgment.Status = AcknowledgmentAccepted
+	changed, err := ComputeAcknowledgmentDigest(acknowledgment)
+	if err != nil || changed == first {
+		t.Fatalf("content-bound acknowledgment digest = %q, err %v", changed, err)
+	}
+}
+
 func validMessage(t *testing.T, now time.Time) Message {
 	t.Helper()
 	message := Message{

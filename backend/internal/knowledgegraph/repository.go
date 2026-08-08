@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("knowledge graph entity not found")
-	ErrExists   = errors.New("knowledge graph entity already exists")
+	ErrNotFound       = errors.New("knowledge graph entity not found")
+	ErrExists         = errors.New("knowledge graph entity already exists")
+	ErrImmutableClaim = errors.New("temporal claim is immutable; append a lifecycle record instead")
 )
 
 // MemoryRepository is deterministic and copy-safe. It is suitable for tests,
@@ -56,6 +57,9 @@ func (r *MemoryRepository) UpdateNode(_ context.Context, node Node) (Node, error
 	current, ok := r.nodes[node.ID]
 	if !ok || current.OwnerIdentity != node.OwnerIdentity {
 		return Node{}, ErrNotFound
+	}
+	if isTemporalClaimNode(current) && !sameImmutableClaimEnvelope(current, node) {
+		return Node{}, ErrImmutableClaim
 	}
 	node = cloneNode(node)
 	r.nodes[node.ID] = node

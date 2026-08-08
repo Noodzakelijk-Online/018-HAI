@@ -346,6 +346,35 @@ func TestPriorityAssessmentUsesAllCriteriaAndExplainsScore(t *testing.T) {
 	}
 }
 
+func TestEvaluatePriorityIsPureAndUsesThePersistedAssessmentAlgorithm(t *testing.T) {
+	now := time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC)
+	repo := NewMemoryRepository()
+	request := PriorityAssessmentRequest{
+		OwnerIdentity: "alice", EntityType: "pursuit", EntityID: "p-1",
+		Title: "Compare portfolio work", Factors: filledFactors(70),
+	}
+	evaluation, err := EvaluatePriority(request, now)
+	if err != nil {
+		t.Fatalf("EvaluatePriority: %v", err)
+	}
+	if evaluation.ID != uuid.Nil || evaluation.Score == 0 || len(evaluation.Contributions) != 25 {
+		t.Fatalf("pure priority evaluation = %#v", evaluation)
+	}
+	history, err := repo.PriorityAssessments("alice", "pursuit", "p-1", 10)
+	if err != nil || len(history) != 0 {
+		t.Fatalf("pure evaluation persisted history: %#v, %v", history, err)
+	}
+
+	service := NewService(repo, WithClock(func() time.Time { return now }))
+	persisted, err := service.AssessPriority(request)
+	if err != nil {
+		t.Fatalf("AssessPriority: %v", err)
+	}
+	if persisted.ID == uuid.Nil || persisted.Score != evaluation.Score || persisted.AlgorithmVersion != evaluation.AlgorithmVersion {
+		t.Fatalf("persisted assessment diverged from pure evaluation: persisted=%#v evaluation=%#v", persisted, evaluation)
+	}
+}
+
 func TestPriorityAssessmentAppliesCapacityWithoutCrossOwnerLeak(t *testing.T) {
 	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
 	service := NewService(nil, WithClock(func() time.Time { return now }))

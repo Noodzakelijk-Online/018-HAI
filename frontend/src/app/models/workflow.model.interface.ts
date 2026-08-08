@@ -4,6 +4,15 @@ export interface IWorkflowItem {
   description?: string;
   projectKey?: string;
   automationId?: string;
+  mandateId?: string;
+  coordinationPlanId?: string;
+  coordinationPlanRevision?: number;
+  coordinationPlanDigest?: string;
+  coordinationPlanNodeId?: string;
+  coordinationDraftPlanId?: string;
+  coordinationDraftRevision?: number;
+  coordinationDraftDigest?: string;
+  coordinationDraftNodeId?: string;
   currentState: string;
   taskType: string;
   riskLevel: string;
@@ -216,6 +225,10 @@ export interface IWorkflowFrameworkSelectionProvenance {
   catalogVersion: string;
   catalogDigest: string;
   selectorAlgorithmVersion: string;
+  taskRiskLevel?: 'low' | 'medium' | 'high';
+  effectiveRiskCeiling?: 'low' | 'medium' | 'high';
+  maximumAutonomyLevel?: number;
+  requiresApproval?: boolean;
   effectivePreferenceDigest: string;
   constitutionVersion: number;
   constitutionDigest: string;
@@ -227,6 +240,7 @@ export interface IWorkflowSelectedFramework {
   version: string;
   name: string;
   family: string;
+  riskCeiling?: 'low' | 'medium' | 'high';
   score: number;
   reasons: string[];
   maximumAutonomyLevel: number;
@@ -248,6 +262,8 @@ export interface IWorkflowFrameworkSelectionDecision {
   catalogVersion: string;
   catalogDigest: string;
   selectorAlgorithmVersion: string;
+  taskRiskLevel?: 'low' | 'medium' | 'high';
+  effectiveRiskCeiling?: 'low' | 'medium' | 'high';
   effectivePreferenceDigest: string;
   constitutionDigest: string;
   lifeDomain: string;
@@ -289,6 +305,7 @@ export interface IWorkflowIntakeRequest {
   input: string;
   projectKey?: string;
   automationId?: string;
+  mandateId?: string;
   requiresReview?: boolean;
   reviewReason?: string;
   sourceType?: string;
@@ -416,4 +433,193 @@ export interface IWorkflowDashboard {
   itemsWithoutNextAction: IWorkflowItem[];
   dueOpenLoops: IWorkflowOpenLoop[];
   rules: IWorkflowRule[];
+}
+
+export interface IWorkflowReminderProposal {
+  id: string;
+  workflowId: string;
+  checklistItemId: string;
+  title: string;
+  label: string;
+  projectKey?: string;
+  workflowState: string;
+  riskLevel: string;
+  requiresApproval: boolean;
+  reminderAt: string;
+  dueAt?: string;
+  status: 'due' | 'upcoming';
+  sourceUri?: string;
+  sourceLabel?: string;
+  nextAction: string;
+  evidenceDigest: string;
+  authority: 'reminder_proposal_only';
+  canExecute: false;
+}
+
+export interface IWorkflowReminderActivationPrepareRequest {
+  expectedReminderDigest: string;
+  idempotencyKey: string;
+  activationKind: 'internal_notification';
+  confirmation: 'PREPARE INTERNAL REMINDER ONLY';
+}
+
+export interface IWorkflowReminderActivationRequest {
+  id: string;
+  workflowId: string;
+  checklistItemId: string;
+  activationKind: 'internal_notification';
+  workflowState: string;
+  checklistStatus: 'open';
+  reminderAt: string;
+  dueAt?: string;
+  reminderDigest: string;
+  idempotencyKey: string;
+  authority: 'reminder_activation_request_only';
+  confirmation: 'PREPARE INTERNAL REMINDER ONLY';
+  requestDigest: string;
+  recordDigest: string;
+  requestedAt: string;
+  expiresAt: string;
+}
+
+export interface IWorkflowReminderActivationDecisionRequest {
+  decision: 'approved' | 'rejected' | 'needs_clarification' | 'revoked';
+  reason: string;
+  confirmation:
+    | 'APPROVE INTERNAL REMINDER PREPARATION'
+    | 'REJECT INTERNAL REMINDER PREPARATION'
+    | 'REQUEST REMINDER CLARIFICATION'
+    | 'REVOKE INTERNAL REMINDER PREPARATION';
+  expectedActivationRequestDigest: string;
+  expectedPreviousDecisionId?: string;
+}
+
+export interface IWorkflowReminderActivationDecision {
+  id: string;
+  activationRequestId: string;
+  decision: 'approved' | 'rejected' | 'needs_clarification' | 'revoked';
+  reason: string;
+  confirmation: IWorkflowReminderActivationDecisionRequest['confirmation'];
+  activationRequestDigest: string;
+  previousDecisionId?: string;
+  authority: 'reminder_activation_decision_only';
+  requestDigest: string;
+  recordDigest: string;
+  decidedAt: string;
+  expiresAt?: string;
+}
+
+export interface IWorkflowReminderActivationRequestResult {
+  request: IWorkflowReminderActivationRequest;
+  replayed: boolean;
+  authority: 'reminder_activation_request_only';
+  canExecute: false;
+}
+
+export interface IWorkflowReminderActivationDecisionResult {
+  decision: IWorkflowReminderActivationDecision;
+  replayed: boolean;
+  authority: 'reminder_activation_decision_only';
+  canExecute: false;
+}
+
+export interface IWorkflowReminderActivationHistoryItem {
+  request: IWorkflowReminderActivationRequest;
+  latestDecision?: IWorkflowReminderActivationDecision;
+  status: 'prepared' | 'approved' | 'rejected' | 'needs_clarification' | 'revoked' | 'expired' | 'stale';
+  current: boolean;
+  canExecute: false;
+}
+
+export interface IWorkflowReminderActivationHistorySnapshot {
+  items: IWorkflowReminderActivationHistoryItem[];
+  authority: 'reminder_activation_history_only';
+  canExecute: false;
+  checkedAt: string;
+}
+
+export interface IWorkflowReminderActivationDecisionHistory {
+  decisions: IWorkflowReminderActivationDecision[];
+  authority: 'reminder_activation_decision_only';
+  canExecute: false;
+}
+
+export interface IWorkflowReminderDeliveryAuthorizeRequest {
+  expectedActivationRequestDigest: string;
+  expectedActivationDecisionDigest: string;
+  expectedReminderDigest: string;
+  idempotencyKey: string;
+  channel: 'in_app';
+  confirmation: 'AUTHORIZE ONE INTERNAL HAI REMINDER';
+}
+
+export interface IWorkflowReminderDeliveryAuthorization {
+  id: string;
+  activationRequestId: string;
+  activationDecisionId: string;
+  workflowId: string;
+  checklistItemId: string;
+  reminderAt: string;
+  reminderDigest: string;
+  activationRequestDigest: string;
+  activationDecisionDigest: string;
+  channel: 'in_app';
+  idempotencyKey: string;
+  authority: 'internal_reminder_delivery_authorization';
+  confirmation: 'AUTHORIZE ONE INTERNAL HAI REMINDER';
+  requestDigest: string;
+  recordDigest: string;
+  authorizedAt: string;
+  expiresAt: string;
+}
+
+export interface IWorkflowReminderDeliveryAttempt {
+  id: string;
+  authorizationId: string;
+  attemptNumber: number;
+  status: 'delivered' | 'retryable_failure' | 'suppressed' | 'dead_lettered';
+  reason: string;
+  reminderDigest: string;
+  authorizationDigest: string;
+  authority: 'internal_reminder_delivery_receipt';
+  recordDigest: string;
+  attemptedAt: string;
+}
+
+export interface IWorkflowReminderDeliveryAuthorizationResult {
+  authorization: IWorkflowReminderDeliveryAuthorization;
+  replayed: boolean;
+  authority: 'internal_reminder_delivery_authorization';
+  deliveryAuthorized: true;
+  canExecute: false;
+}
+
+export interface IWorkflowReminderDeliveryHistory {
+  authorizations: IWorkflowReminderDeliveryAuthorization[];
+  attempts: IWorkflowReminderDeliveryAttempt[];
+  authority: 'internal_reminder_delivery_receipt';
+  canExecute: false;
+}
+
+export interface IWorkflowReminderDeliveryRunSummary {
+  checked: number;
+  delivered: number;
+  retried: number;
+  suppressed: number;
+  deadLettered: number;
+  results: Array<{ authorizationId: string; status: IWorkflowReminderDeliveryAttempt['status']; reason: string }>;
+}
+
+export interface IWorkflowReminderProposalSnapshot {
+  items: IWorkflowReminderProposal[];
+  due: number;
+  upcoming: number;
+  authority: 'reminder_proposal_only';
+  canExecute: false;
+  freshness: {
+    status: 'current_internal_reminder_snapshot';
+    revalidationRequired: true;
+    checkedAt: string;
+    reason: string;
+  };
 }

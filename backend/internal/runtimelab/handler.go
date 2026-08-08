@@ -18,6 +18,37 @@ func (h *Handler) Overview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"runtimes": h.svc.Overview(c.Request.Context())})
 }
 
+func (h *Handler) FeatureParity(c *gin.Context) {
+	overview, err := h.svc.FeatureParity()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, overview)
+}
+
+func (h *Handler) RuntimeFeatureParity(c *gin.Context) {
+	inventory, ok, err := h.svc.RuntimeFeatureParity(c.Param("runtimeId"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "runtime parity inventory not found"})
+		return
+	}
+	c.JSON(http.StatusOK, inventory)
+}
+
+func (h *Handler) Capabilities(c *gin.Context) {
+	overview, err := h.svc.CapabilityCards(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, overview)
+}
+
 func (h *Handler) Probe(c *gin.Context) {
 	res, ok := h.svc.Probe(c.Request.Context(), c.Param("runtimeId"))
 	if !ok {

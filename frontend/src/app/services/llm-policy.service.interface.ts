@@ -6,6 +6,7 @@ import {
   ILLMProviderProbe,
   ILLMRouteDecision,
   ILLMRouteRequest,
+  ILLMGenerationResult,
 } from '../models/llm-policy.model.interface';
 
 export interface ILLMPolicyService {
@@ -16,4 +17,5 @@ export interface ILLMPolicyService {
   runDueModelMaintenance(): Observable<ILLMModelMaintenanceRun>;
   routeTask(request: ILLMRouteRequest): Observable<ILLMRouteDecision>;
   getLogs(): Observable<ILLMRouteDecision[]>;
+  getGenerationHistory(limit?: number): Observable<ILLMGenerationResult[]>;
 }

@@ -235,6 +235,263 @@
   grid-column: 1 / -1;
 }
 
+.contract-editor {
+  background: var(--hai-surface-muted);
+  border: 1px solid var(--hai-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  grid-column: 1 / -1;
+  padding: 16px;
+}
+
+.contract-editor summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.contract-editor header,
+.contract-group__heading,
+.goal-contract-summary header,
+.goal-contract-summary footer {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.contract-editor header span,
+.contract-create-grid label span,
+.contract-limits label span {
+  color: var(--hai-muted);
+  display: block;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.contract-create-grid,
+.contract-limits {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.contract-create-grid__wide {
+  grid-column: span 2;
+}
+
+.contract-group {
+  display: grid;
+  gap: 8px;
+}
+
+.contract-row {
+  align-items: flex-start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(220px, 2fr) minmax(120px, 0.7fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
+}
+
+.contract-row--compact {
+  grid-template-columns: minmax(240px, 2fr) minmax(120px, 0.7fr) minmax(180px, 1fr) auto;
+}
+
+.goal-contract-summary {
+  background: var(--hai-surface);
+  border: 1px solid var(--hai-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.goal-contract-summary h3,
+.goal-contract-summary ul {
+  margin: 0;
+}
+
+.goal-contract-summary__grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.goal-contract-summary ul {
+  display: grid;
+  gap: 7px;
+  list-style: none;
+  padding: 8px 0 0;
+}
+
+.goal-contract-summary li {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.goal-contract-summary footer {
+  border-top: 1px solid var(--hai-border);
+  color: var(--hai-muted);
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  padding-top: 12px;
+}
+
+.contract-status {
+  background: var(--hai-surface-muted);
+  border: 1px solid var(--hai-border);
+  border-radius: 4px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  text-transform: uppercase;
+}
+
+.contract-status--satisfied,
+.contract-status--resolved,
+.contract-status--waived {
+  color: var(--hai-success);
+}
+
+.contract-status--triggered,
+.contract-status--blocked {
+  color: var(--hai-danger);
+}
+
+.resource-summary,
+.resource-ledger {
+  background: var(--hai-surface);
+  border: 1px solid var(--hai-border);
+  border-radius: 8px;
+}
+
+.resource-summary {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.resource-summary--blocked {
+  border-color: color-mix(in srgb, var(--hai-danger) 55%, var(--hai-border));
+}
+
+.resource-summary header,
+.resource-ledger summary,
+.resource-ledger__meta,
+.resource-ledger__state {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.resource-summary h3,
+.resource-summary p,
+.resource-ledger p {
+  margin: 0;
+}
+
+.resource-summary__freshness,
+.resource-summary small,
+.resource-ledger small,
+.resource-ledger__events span,
+.resource-ledger__meta {
+  color: var(--hai-muted);
+}
+
+.resource-summary__metrics {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.resource-summary__metrics article {
+  background: var(--hai-surface-muted);
+  border: 1px solid var(--hai-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.resource-summary__metrics strong,
+.resource-summary__metrics span,
+.resource-summary__metrics small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.resource-ledger summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 14px 16px;
+}
+
+.resource-ledger__body {
+  border-top: 1px solid var(--hai-border);
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.resource-ledger__form {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(120px, 0.5fr) minmax(180px, 1fr) minmax(220px, 1.2fr) minmax(180px, 0.8fr) auto;
+}
+
+.resource-ledger__form .section-title {
+  grid-column: 1 / -1;
+}
+
+.resource-ledger__state {
+  background: var(--hai-surface-muted);
+  border: 1px solid var(--hai-border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.resource-ledger__state--error {
+  border-color: color-mix(in srgb, var(--hai-danger) 55%, var(--hai-border));
+  color: var(--hai-danger);
+}
+
+.resource-ledger__events {
+  display: grid;
+  gap: 8px;
+}
+
+.resource-ledger__events article {
+  background: var(--hai-surface-muted);
+  border: 1px solid var(--hai-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.resource-ledger__events article > div:first-child {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.resource-ledger__meta {
+  flex-wrap: wrap;
+  font-size: 12px;
+  justify-content: flex-start;
+}
+
+.resource-ledger__meta code {
+  overflow-wrap: anywhere;
+}
+
 .form-heading strong,
 .form-heading span,
 .pursuit-row strong,
@@ -517,7 +774,7 @@
 .action-lanes {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   margin-bottom: 12px;
 }
 
@@ -527,7 +784,13 @@
   border-radius: 8px;
   display: grid;
   gap: 10px;
+  min-width: 0;
   padding: 12px;
+}
+
+:host ::ng-deep .action-lane .ant-empty-image {
+  max-width: 96px;
+  width: 100%;
 }
 
 .action-lane--robert {
@@ -849,8 +1112,14 @@ button.next-action:focus-visible {
   .detail-grid,
   .action-lanes,
   .link-form,
-  .metric-strip {
+  .metric-strip,
+  .contract-row,
+  .contract-row--compact {
     grid-template-columns: 1fr;
+  }
+
+  .resource-ledger__form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .pursuit-list {
@@ -873,6 +1142,12 @@ button.next-action:focus-visible {
   .route-intake-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .contract-create-grid,
+  .contract-limits {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
 }
 
 @media (max-width: 700px) {
@@ -896,6 +1171,27 @@ button.next-action:focus-visible {
   .intake-fields,
   .decision-card dl,
   .activity-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .contract-create-grid,
+  .contract-limits {
+    grid-template-columns: 1fr;
+  }
+
+  .contract-create-grid__wide {
+    grid-column: auto;
+  }
+
+  .resource-summary header,
+  .resource-ledger summary,
+  .resource-ledger__state {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .resource-summary__metrics,
+  .resource-ledger__form {
     grid-template-columns: 1fr;
   }
 

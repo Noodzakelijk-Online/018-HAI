@@ -44,6 +44,8 @@ func TestLegacyControlPlaneRejectsAPIKeyWithoutAuthenticatedOwner(t *testing.T) 
 		{method: http.MethodPatch, path: "/api/v1/power/policy", body: `{}`},
 		{method: http.MethodPost, path: "/api/v1/privacy/scan", body: `{"content":"private"}`},
 		{method: http.MethodPost, path: "/api/v1/runtime-lab/missing/self-test"},
+		{method: http.MethodGet, path: "/api/v1/runtime-lab/feature-parity"},
+		{method: http.MethodGet, path: "/api/v1/runtime-lab/capabilities"},
 		{method: http.MethodGet, path: "/api/v1/system/info"},
 		{method: http.MethodGet, path: "/api/v1/flags"},
 	} {
@@ -61,6 +63,9 @@ func TestLegacyControlPlaneViewerCanReadButCannotMutate(t *testing.T) {
 		"/api/v1/operations",
 		"/api/v1/model-intelligence/overview",
 		"/api/v1/privacy/scans",
+		"/api/v1/runtime-lab/feature-parity",
+		"/api/v1/runtime-lab/capabilities",
+		"/api/v1/runtime-lab/openclaw/feature-parity",
 		"/api/v1/system/info",
 		"/api/v1/flags",
 	} {

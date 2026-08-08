@@ -35,3 +35,33 @@ func TestBuildMarksNotReadyOnFailure(t *testing.T) {
 		t.Fatalf("a failing check must mark the bundle not ready")
 	}
 }
+
+func TestBuildRemovesDiagnosticDetailsAndUnsafeCountLabels(t *testing.T) {
+	report := doctor.Report{Checks: []doctor.Check{{
+		Name:     "database.host",
+		Severity: doctor.SeverityOK,
+		Detail:   "db.internal.example password=do-not-export",
+	}}}
+	bundle := Build(report, buildinfo.Snapshot(), map[string]int{
+		"memories":          12,
+		"api_token_secret":  1,
+		"Authorization":     2,
+		"invalid count key": 3,
+		"negative":          -1,
+	})
+	if got := bundle.Readiness.Check[0].Detail; got != "" {
+		t.Fatalf("diagnostic detail leaked: %q", got)
+	}
+	if len(bundle.Counts) != 1 || bundle.Counts["memories"] != 12 {
+		t.Fatalf("unsafe count labels were retained: %+v", bundle.Counts)
+	}
+}
+
+func TestBuildDoesNotRetainCallerCheckSlice(t *testing.T) {
+	checks := []doctor.Check{{Name: "database.host", Severity: doctor.SeverityOK}}
+	bundle := Build(doctor.Report{Checks: checks}, buildinfo.Snapshot(), nil)
+	checks[0].Name = "changed"
+	if bundle.Readiness.Check[0].Name != "database.host" {
+		t.Fatalf("bundle retained caller check slice")
+	}
+}

@@ -665,6 +665,7 @@
               <th>Recorded</th>
               <th>Domain</th>
               <th>Primary framework</th>
+              <th>Primary ceiling</th>
               <th>Authority</th>
               <th>Review</th>
             </tr>
@@ -674,6 +675,9 @@
               <td>{{ selection.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC</td>
               <td>{{ humanize(selection.lifeDomain) }}</td>
               <td>{{ selection.selected.length ? selection.selected[0].name : 'No suitable framework' }}</td>
+              <td>
+                {{ selectionRiskCeilingLabel(selection) }}
+              </td>
               <td>
                 Level {{ selection.maximumAutonomyLevel }}
                 <nz-tag *ngIf="selection.requiresApproval" nzColor="gold">Approval required</nz-tag>

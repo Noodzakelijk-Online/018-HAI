@@ -11,6 +11,11 @@ import (
 
 var ErrPreferenceConflict = errors.New("domain pack preference revision conflict")
 
+var compatibleCatalogVersions = map[string]struct{}{
+	"1.1.0":        {},
+	CatalogVersion: {},
+}
+
 type PreferenceRepository interface {
 	Upsert(preference PackPreference) (PackPreference, error)
 	Get(ownerIdentity string, packID PackID) (PackPreference, bool, error)
@@ -153,8 +158,10 @@ func normalizePreference(
 	if !validPreferenceStatus(preference.Status) {
 		return PackPreference{}, fmt.Errorf("invalid domain pack preference status %q", preference.Status)
 	}
-	if preference.CatalogVersion != "" && preference.CatalogVersion != CatalogVersion {
-		return PackPreference{}, fmt.Errorf("domain pack preference catalog version must be %s", CatalogVersion)
+	if preference.CatalogVersion != "" {
+		if _, compatible := compatibleCatalogVersions[preference.CatalogVersion]; !compatible {
+			return PackPreference{}, fmt.Errorf("domain pack preference catalog version must be compatible with %s", CatalogVersion)
+		}
 	}
 	registry, err := NewBuiltinRegistry()
 	if err != nil {

@@ -22,8 +22,8 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | `/memory` | owner-gated GET `/`, **GET `/query`**, GET `/:id`, `/export`; POST `/`, `/retrieve`, `/:id/archive|restore`; PATCH/DELETE `/:id` |
 | `/memory-engine` | owner-gated import, dashboard, search, conversations, insights |
 | `/sources` | owner-gated connectors, list/create, search, sync-due, sync-jobs, extractions, audit-logs, per-source sync/pause/resume/revoke |
-| `/workflow` | overview, approvals, dashboard, list, intake, owner-scoped run-due/recovery/follow-up controls, transitions, approval/interruption/proposal resolve, checklist |
-| `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals, read-only VA delegation package |
+| `/workflow` | overview, approvals, dashboard, list, intake, owner-scoped exact `/:id/run`, run-due/recovery/follow-up controls, transitions, approval/interruption/proposal resolve, checklist |
+| `/pursuits` | list/create, dashboard, brief, decisions, per-pursuit evidence/activity/next-actions/blockers/approvals, read-only VA delegation package, governed portfolio workflow authorization/creation/verified settlement |
 | `/verification` | owner-gated POST `/answer`, GET `/runs`, `/runs/:id` |
 | `/task` | owner-gated plan, run, success, logs, review-queue, review resolution |
 | `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | owner-gated command/logs, run, overview/stress, scan/needs/proposal resolution, overview |
@@ -40,6 +40,16 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 - Workflow browser/API routes require a verified owner. Their worker controls
   operate only on that owner's work; global workflow scheduling remains an
   in-process system-worker operation rather than a dashboard capability.
+- `POST /workflow/:id/run` atomically claims only the named owner-scoped
+  workflow. It runs only when the item is due, ready, and approved where
+  required; emergency stop, task/runtime authorization, verification, audit,
+  retry, and review handling remain enforced by the existing worker path.
+- `POST /pursuits/portfolio-execution-proposal-items/:itemId/settle-workflow`
+  is a separate owner/execute-capability command. It revalidates the immutable
+  item, original approval, receipt and exact consumption, single pursuit link,
+  completed workflow projection, and immutable `verified`/`test_passed`
+  completion attestation before atomically appending measured usage and its
+  portfolio settlement proof. It cannot rerun work or grant authority.
 - A manual source `sync-due` request requires a verified owner and refreshes only that owner's explicitly owned sources. The global source scheduler remains in-process.
 - Task HTTP requests require a verified owner for planning, controlled execution,
   history, review visibility, and review resolution. The task service's

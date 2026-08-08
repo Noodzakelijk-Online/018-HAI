@@ -8,6 +8,7 @@ import {
   IConnectedSource,
   ISourceAuditLog,
   ISourceConnector,
+  ISourceConnectionHealth,
   ISourceExtraction,
   IKnowledgeGraphResult,
   IKnowledgeGraphSourceRef,
@@ -15,6 +16,7 @@ import {
   ISourceSearchResult,
   ISourceSyncJob,
   ISourceSyncResult,
+  ISourceLifeGraphProjectionOutcome,
 } from '../../models/connected-source.model.interface';
 import { CONNECTED_SOURCE_SERVICE_TOKEN } from '../../services/connected-source/connected-source.service.token';
 import { IConnectedSourceService } from '../../services/connected-source.service.interface';
@@ -50,6 +52,7 @@ export class ConnectedSourcesComponent implements OnInit {
   extractions: ISourceExtraction[] = [];
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
+  connectionHealth: Record<string, ISourceConnectionHealth> = {};
   searchResult?: ISourceSearchResult;
   knowledgeGraph?: IKnowledgeGraphResult;
   graphLoading = false;
@@ -58,6 +61,7 @@ export class ConnectedSourcesComponent implements OnInit {
   includeDisabled = true;
   includeArchived = false;
   loading = false;
+  connecting = false;
   syncing = false;
   selectedAction: SourceAction = 'connect';
   sourceActions: SourceActionCard[] = [];
@@ -178,12 +182,13 @@ export class ConnectedSourcesComponent implements OnInit {
         this.auditLogs = auditLogs;
         this.syncJobs = syncJobs || [];
         this.applySourceDefaults(sources);
+        this.loadConnectionHealth(sources);
         this.updateSourceActions();
       });
   }
 
   connectSource(): void {
-    if (this.sourceForm.invalid) {
+    if (this.sourceForm.invalid || this.connecting) {
       return;
     }
     const connector = this.connectors.find(
@@ -278,10 +283,10 @@ export class ConnectedSourcesComponent implements OnInit {
       },
       {
         id: 'gmail',
-        title: 'Connect Gmail',
-        detail: 'Live read-only sync over Google OAuth.',
+        title: 'Connect Google',
+        detail: 'Read-only Gmail, Drive, Contacts, and Calendar sync.',
         icon: 'mail',
-        metric: `${this.operationalConnectorCount()} live`,
+        metric: this.googleConnectorMetric(),
         tone: 'blue',
       },
       {
@@ -333,6 +338,18 @@ export class ConnectedSourcesComponent implements OnInit {
 
   selectSource(source: IConnectedSource): void {
     this.selectedSourceId = source.id;
+    this.refreshConnectionHealth(source);
+  }
+
+  sourceHealth(source?: IConnectedSource): ISourceConnectionHealth | undefined {
+    return source ? this.connectionHealth[source.id] : undefined;
+  }
+
+  isGoogleSource(source?: IConnectedSource): boolean {
+    return source?.connectorKey === 'gmail'
+      || source?.connectorKey === 'google-drive'
+      || source?.connectorKey === 'google-contacts'
+      || source?.connectorKey === 'google-calendar';
   }
 
   enabledSources(): IConnectedSource[] {
@@ -356,6 +373,22 @@ export class ConnectedSourcesComponent implements OnInit {
 
   modeledConnectorCount(): number {
     return this.connectorCountByStatus('modeled');
+  }
+
+  googleConnectorMetric(): string {
+    const googleConnectors = this.connectors.filter(
+      (connector) => connector.connectorKey === 'gmail'
+        || connector.connectorKey === 'google-drive'
+        || connector.connectorKey === 'google-contacts'
+        || connector.connectorKey === 'google-calendar'
+    );
+    const ready = googleConnectors.filter(
+      (connector) => connector.enabled && connector.adapterStatus === 'operational'
+    ).length;
+    if (ready === googleConnectors.length && ready > 0) {
+      return `${ready} ready`;
+    }
+    return ready > 0 ? `${ready}/${googleConnectors.length} ready` : 'setup needed';
   }
 
   private connectorCountByStatus(status: string): number {
@@ -807,42 +840,89 @@ export class ConnectedSourcesComponent implements OnInit {
     });
   }
 
-  // Creates a gmail source, then opens Google's consent screen so the user
-  // authorizes in their own browser. On return, Google redirects to the backend
-  // callback which stores the tokens.
+  // Creates a read-only Google source, then opens Google's consent screen.
   connectGmail(): void {
-    const connector = this.connectors.find((item) => item.connectorKey === 'gmail');
+    this.connectGoogleSource('gmail');
+  }
+
+  lifeGraphProjections(): ISourceLifeGraphProjectionOutcome[] {
+    return this.lastSyncResult?.lifeGraphProjections || [];
+  }
+
+  lifeGraphWarnings(): string[] {
+    return this.lastSyncResult?.warnings || [];
+  }
+
+  openLifeGraph(): void {
+    this.router.navigate(['/governance-control']);
+  }
+
+  connectGoogleDrive(): void {
+    this.connectGoogleSource('google-drive');
+  }
+
+  connectGoogleContacts(): void {
+    this.connectGoogleSource('google-contacts');
+  }
+
+  connectGoogleCalendar(): void {
+    this.connectGoogleSource('google-calendar');
+  }
+
+  authorizeGoogleSource(source: IConnectedSource): void {
+    this.sourceService.startGoogleOAuth(source.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
+      next: ({ authorizeUrl }) => {
+        this.notification.info('Google authorization opened', 'Approve read-only access, then return here and refresh.');
+        window.open(authorizeUrl, '_blank', 'noopener,noreferrer');
+      },
+      error: (error) =>
+        this.notification.error('Authorization failed', error?.error?.error || 'Could not start Google authorization.'),
+    });
+  }
+
+  private connectGoogleSource(connectorKey: 'gmail' | 'google-drive' | 'google-contacts' | 'google-calendar'): void {
+    const connector = this.connectors.find((item) => item.connectorKey === connectorKey);
+    const labels: Record<typeof connectorKey, string> = {
+      gmail: 'Gmail',
+      'google-drive': 'Google Drive',
+      'google-contacts': 'Google Contacts',
+      'google-calendar': 'Google Calendar',
+    };
+    const scopes: Record<typeof connectorKey, string> = {
+      gmail: 'gmail.readonly',
+      'google-drive': 'drive.readonly',
+      'google-contacts': 'contacts.readonly',
+      'google-calendar': 'calendar.readonly',
+    };
+    const label = labels[connectorKey];
     if (!connector?.enabled || connector.adapterStatus === 'not_implemented') {
       this.notification.warning(
-        'Gmail not configured',
-        'The backend needs GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REDIRECT_URL set before Gmail can be connected.'
+        `${label} not configured`,
+        'Configure the Google OAuth client, redirect URL, token encryption key, and state signing key first.'
       );
       return;
     }
+    this.connecting = true;
     this.sourceService
       .createSource({
-        connectorKey: 'gmail',
-        name: 'Gmail (Google account)',
-        category: 'email',
+        connectorKey,
+        name: `${label} (Google account)`,
+        category: connector.category,
         enabled: true,
         localOnly: false,
-        syncFrequency: 'manual',
-        permissions: ['metadata:read', 'gmail.readonly'],
+        syncFrequency: '15m',
+        permissions: ['metadata:read', scopes[connectorKey]],
       })
-      .pipe(timeout(this.operationTimeoutMs))
+      .pipe(
+        timeout(this.operationTimeoutMs),
+        finalize(() => (this.connecting = false))
+      )
       .subscribe({
         next: (source) => {
-          this.sourceService.startGoogleOAuth(source.id).subscribe({
-            next: ({ authorizeUrl }) => {
-              this.notification.info('Redirecting to Google', 'Approve access in the window that opens.');
-              window.open(authorizeUrl, '_blank', 'noopener,noreferrer');
-              this.refresh();
-            },
-            error: (error) =>
-              this.notification.error('Error', error?.error?.error || 'Could not start Google authorization.'),
-          });
+          this.authorizeGoogleSource(source);
+          this.refresh();
         },
-        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to create Gmail source.'),
+        error: (error) => this.notification.error('Error', error?.error?.error || `Failed to create ${label} source.`),
       });
   }
 
@@ -1042,11 +1122,13 @@ export class ConnectedSourcesComponent implements OnInit {
   private notifySyncResult(label: string, result: ISourceSyncResult): void {
     this.lastSyncResult = result;
     const summary = `${result.job.itemsSeen} seen, ${result.job.itemsFailed || 0} failed. ${result.message}`;
-    if (result.job.status === 'completed') {
+    if (result.job.status === 'completed' && !(result.warnings || []).length) {
       this.notification.success(label, summary);
       return;
     }
-    this.notification.warning(`${label} requires attention`, summary);
+    const warningCount = (result.warnings || []).length;
+    const warningSuffix = warningCount ? ` ${warningCount} graph projection warning(s) are available for review.` : '';
+    this.notification.warning(`${label} requires attention`, summary + warningSuffix);
   }
 
   search(): void {
@@ -1190,6 +1272,33 @@ export class ConnectedSourcesComponent implements OnInit {
         this.syncJobs = [];
         this.updateSourceActions();
       },
+    });
+  }
+
+  private loadConnectionHealth(sources: IConnectedSource[]): void {
+    if (!sources.length) {
+      this.connectionHealth = {};
+      return;
+    }
+    forkJoin(
+      sources.map((source) =>
+        this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined)))
+      )
+    ).subscribe((results) => {
+      this.connectionHealth = results.reduce<Record<string, ISourceConnectionHealth>>((health, item) => {
+        if (item) {
+          health[item.sourceId] = item;
+        }
+        return health;
+      }, {});
+    });
+  }
+
+  private refreshConnectionHealth(source: IConnectedSource): void {
+    this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined))).subscribe((health) => {
+      if (health) {
+        this.connectionHealth = { ...this.connectionHealth, [source.id]: health };
+      }
     });
   }
 

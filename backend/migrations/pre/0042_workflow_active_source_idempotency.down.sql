@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS public.idx_workflow_items_active_owner_source_identity;

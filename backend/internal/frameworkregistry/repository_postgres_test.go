@@ -343,6 +343,13 @@ func TestFrameworkRegistryPostgresOwnerScopeConstraintsAndHistory(t *testing.T) 
 		if err != nil || len(bob) != 1 || bob[0].ID != bobDecision.ID {
 			t.Fatalf("bob selections = %#v, %v", bob, err)
 		}
+		exact, err := repo.GetSelection(context.Background(), "alice", aliceDecision.ID)
+		if err != nil || exact.ID != aliceDecision.ID {
+			t.Fatalf("exact alice selection = %#v, %v", exact, err)
+		}
+		if _, err := repo.GetSelection(context.Background(), "bob", aliceDecision.ID); err == nil {
+			t.Fatal("exact selection lookup crossed the owner boundary")
+		}
 
 		var row models.FrameworkSelectionRecord
 		if err := db.Where("id = ?", aliceDecision.ID).First(&row).Error; err != nil {
@@ -613,6 +620,10 @@ func TestFrameworkRegistryPostgresOwnerScopeConstraintsAndHistory(t *testing.T) 
 			"chk_framework_selection_records_need",
 			"chk_framework_selection_records_authority",
 			"chk_framework_selection_records_reason",
+			"chk_framework_selection_records_task_risk_level",
+			"chk_framework_selection_records_effective_risk_ceiling",
+			"chk_framework_selection_records_v5_risk_contract",
+			"chk_framework_selection_records_risk_ceiling_rank",
 			"chk_robert_constitution_approval",
 			"chk_robert_constitution_base_version",
 			"chk_robert_constitution_change_summary",

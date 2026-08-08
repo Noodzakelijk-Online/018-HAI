@@ -22,15 +22,16 @@ type observed struct {
 // router, budgets, cache, and telemetry, and runs bounded lane calls that
 // record real telemetry. It never fabricates provider state or telemetry.
 type Service struct {
-	reg       *Registry
-	router    *Router
-	telemetry *TelemetryStore
-	cache     *Cache
-	now       func() time.Time
+	reg           *Registry
+	router        *Router
+	telemetry     *TelemetryStore
+	cache         *Cache
+	now           func() time.Time
+	telemetryRepo TelemetryRepository
 
-	mu             sync.Mutex
-	budgetDefaults OperationBudget
-	observedByKey  map[string]*observed
+	mu              sync.Mutex
+	budgetDefaults  OperationBudget
+	observedByKey   map[string]*observed
 	maintenanceGate ModelMaintenanceGate
 }
 
@@ -60,8 +61,15 @@ func DefaultService() *Service {
 // WithTelemetryRepository seeds the store from durable telemetry and persists
 // every future row. Returns the service for chaining.
 func (s *Service) WithTelemetryRepository(repo TelemetryRepository) *Service {
+	if repo == nil {
+		return s
+	}
+	s.telemetryRepo = repo
 	if rows, err := repo.LoadAll(); err == nil {
-		s.telemetry.Seed(rows)
+		s.telemetry.Replace(rows)
+		for _, row := range rows {
+			s.observeTelemetry(row)
+		}
 	}
 	s.telemetry.SetPersist(func(t ModelRunTelemetry) { _ = repo.Save(t) })
 	return s
@@ -79,14 +87,17 @@ type ProviderSummary struct {
 
 // Overview is the model-intelligence dashboard roll-up.
 type Overview struct {
-	Providers     []ProviderSummary `json:"providers"`
-	Lanes         []RoutingLane     `json:"lanes"`
-	TotalProfiles int               `json:"totalProfiles"`
-	ActiveModels  int               `json:"activeModels"`
-	TelemetryRuns int               `json:"telemetryRuns"`
-	CacheHits     int               `json:"cacheHits"`
-	CacheMisses   int               `json:"cacheMisses"`
-	LaneWinners   []LaneWinner      `json:"laneWinners"`
+	Providers       []ProviderSummary `json:"providers"`
+	Lanes           []RoutingLane     `json:"lanes"`
+	TotalProfiles   int               `json:"totalProfiles"`
+	ActiveModels    int               `json:"activeModels"`
+	TelemetryRuns   int               `json:"telemetryRuns"`
+	EvaluatedRuns   int               `json:"evaluatedRuns"`
+	AcceptedOutputs int               `json:"acceptedOutputs"`
+	UnvalidatedRuns int               `json:"unvalidatedRuns"`
+	CacheHits       int               `json:"cacheHits"`
+	CacheMisses     int               `json:"cacheMisses"`
+	LaneWinners     []LaneWinner      `json:"laneWinners"`
 }
 
 // Overview returns the dashboard roll-up with truthful provider states.
@@ -112,15 +123,19 @@ func (s *Service) Overview() Overview {
 		providers = append(providers, *byProvider[id])
 	}
 	hits, misses := s.cache.Stats()
+	calibration := s.Calibration()
 	return Overview{
-		Providers:     providers,
-		Lanes:         allLanes(),
-		TotalProfiles: len(profs),
-		ActiveModels:  active,
-		TelemetryRuns: len(s.telemetry.All()),
-		CacheHits:     hits,
-		CacheMisses:   misses,
-		LaneWinners:   s.LaneWinners(),
+		Providers:       providers,
+		Lanes:           allLanes(),
+		TotalProfiles:   len(profs),
+		ActiveModels:    active,
+		TelemetryRuns:   calibration.TotalRuns,
+		EvaluatedRuns:   calibration.EvaluatedRuns,
+		AcceptedOutputs: calibration.AcceptedOutputs,
+		UnvalidatedRuns: calibration.UnvalidatedRuns,
+		CacheHits:       hits,
+		CacheMisses:     misses,
+		LaneWinners:     calibration.LaneLeaders,
 	}
 }
 
@@ -128,10 +143,27 @@ func (s *Service) Overview() Overview {
 func (s *Service) Cache() *Cache { return s.cache }
 
 // Telemetry returns all recorded telemetry.
-func (s *Service) Telemetry() []ModelRunTelemetry { return s.telemetry.All() }
+func (s *Service) Telemetry() []ModelRunTelemetry {
+	s.refreshTelemetry()
+	return s.telemetry.All()
+}
+
+func (s *Service) Calibration() CalibrationSummary {
+	s.refreshTelemetry()
+	return s.telemetry.Calibration()
+}
 
 // LaneWinners returns the fastest observed model per lane.
-func (s *Service) LaneWinners() []LaneWinner { return s.telemetry.LaneWinners() }
+func (s *Service) LaneWinners() []LaneWinner { return s.Calibration().LaneLeaders }
+
+func (s *Service) refreshTelemetry() {
+	if s.telemetryRepo == nil {
+		return
+	}
+	if rows, err := s.telemetryRepo.LoadAll(); err == nil {
+		s.telemetry.Replace(rows)
+	}
+}
 
 // Profiles returns every profile merged with observed metrics.
 func (s *Service) Profiles() []ModelProfile {
@@ -231,7 +263,7 @@ func (s *Service) Benchmark(ctx context.Context, providerID, modelID string) (Be
 		lane = prof.Lanes[0]
 	}
 	res, err := p.Generate(ctx, InferenceRequest{Lane: lane, Prompt: "CLAIM: benchmark ping\nEVIDENCE: benchmark ping", MaxOutputTokens: 32, Effort: EffortLow}, now)
-	s.recordTelemetry(res, lane, "", err == nil, false)
+	s.recordTelemetry(res, lane, "", err == nil, false, ValidationUnvalidated, "", 0, 0)
 	out := BenchmarkResult{ProviderID: providerID, ModelID: modelID, OK: err == nil}
 	if err != nil {
 		out.Detail = err.Error()
@@ -271,6 +303,18 @@ func (s *Service) RouteLanes(in LaneInput) []RouteDecision {
 // telemetry and (when safe) caching the result. Returns the decision and, if a
 // call was made, the inference result.
 func (s *Service) RunLane(ctx context.Context, lane RoutingLane, in LaneInput, prompt, operationID string) (RouteDecision, *InferenceResult, error) {
+	return s.runLane(ctx, lane, in, prompt, operationID, nil)
+}
+
+type resultValidator func(InferenceResult) (ValidationStatus, string)
+
+func (s *Service) runLane(
+	ctx context.Context,
+	lane RoutingLane,
+	in LaneInput,
+	prompt, operationID string,
+	validator resultValidator,
+) (RouteDecision, *InferenceResult, error) {
 	now := s.now().UTC()
 	dec := s.router.Route(lane, in, now)
 	if !dec.Routable {
@@ -281,7 +325,11 @@ func (s *Service) RunLane(ctx context.Context, lane RoutingLane, in LaneInput, p
 		return dec, nil, err
 	}
 	res, err := p.Generate(ctx, InferenceRequest{Lane: lane, Prompt: prompt, MaxOutputTokens: 256, Effort: EffortLow}, now)
-	s.recordTelemetry(res, lane, operationID, err == nil, false)
+	validationStatus, validationMethod := ValidationUnvalidated, ""
+	if err == nil && validator != nil {
+		validationStatus, validationMethod = validator(res)
+	}
+	s.recordTelemetry(res, lane, operationID, err == nil, false, validationStatus, validationMethod, 0, 0)
 	if err != nil {
 		return dec, nil, err
 	}
@@ -305,19 +353,28 @@ type TriageResult struct {
 func (s *Service) Triage(ctx context.Context, operationType, title, content string, safeForCloud, highRisk bool, operationID string) (TriageResult, error) {
 	in := LaneInput{OperationType: operationType, Title: title, Content: content, SafeForCloud: safeForCloud, HighRisk: highRisk}
 	prompt := title + "\n" + content
-	dec, res, err := s.RunLane(ctx, LaneFastTriage, in, prompt, operationID)
+	dec, res, err := s.runLane(ctx, LaneFastTriage, in, prompt, operationID, func(result InferenceResult) (ValidationStatus, string) {
+		_, _, valid := parseTriageOutput(result.Output)
+		if !valid {
+			return ValidationFailed, "triage_schema_v1"
+		}
+		return ValidationSchemaValidated, "triage_schema_v1"
+	})
 	if err != nil {
 		return TriageResult{}, err
 	}
 	if res == nil {
 		return TriageResult{Routed: false}, nil
 	}
-	category, summary := parseTriageOutput(res.Output)
+	category, summary, valid := parseTriageOutput(res.Output)
+	if !valid {
+		return TriageResult{}, fmt.Errorf("modelintelligence: triage output failed triage_schema_v1 validation")
+	}
 	return TriageResult{Category: category, Summary: summary, ProviderID: dec.ProviderID, ModelID: dec.ModelID, Routed: true}, nil
 }
 
-func parseTriageOutput(out string) (string, string) {
-	category, summary := "general", ""
+func parseTriageOutput(out string) (string, string, bool) {
+	category, summary := "", ""
 	for _, part := range strings.Split(out, ";") {
 		part = strings.TrimSpace(part)
 		if v := strings.TrimPrefix(part, "category="); v != part {
@@ -326,7 +383,7 @@ func parseTriageOutput(out string) (string, string) {
 			summary = v
 		}
 	}
-	return category, summary
+	return category, summary, category != "" && summary != ""
 }
 
 // TokenBudgetDefaults returns the current default budget.
@@ -353,25 +410,41 @@ func (s *Service) SetTokenBudgetDefaults(b OperationBudget) (OperationBudget, er
 	return s.budgetDefaults, nil
 }
 
-func (s *Service) recordTelemetry(res InferenceResult, lane RoutingLane, operationID string, ok, cacheHit bool) {
-	s.telemetry.Record(ModelRunTelemetry{
+func (s *Service) recordTelemetry(
+	res InferenceResult,
+	lane RoutingLane,
+	operationID string,
+	ok, cacheHit bool,
+	validationStatus ValidationStatus,
+	validationMethod string,
+	estimatedCostEUR float64,
+	fallbackDepth int,
+) {
+	record := s.telemetry.Record(ModelRunTelemetry{
 		ProviderID: res.ProviderID, ModelID: res.ModelID, Lane: lane, OperationID: operationID,
 		InputTokens: res.InputTokensEstimate, OutputTokens: res.OutputTokensEstimate,
 		DurationMs: res.DurationMs, TokensPerSecond: res.TokensPerSecond, OK: ok, CacheHit: cacheHit,
+		ValidationStatus: validationStatus, ValidationMethod: validationMethod,
+		EstimatedCostEUR: estimatedCostEUR, FallbackDepth: fallbackDepth,
 		CreatedAt: s.now().UTC(),
 	})
-	if res.ProviderID == "" || res.ModelID == "" {
+	s.observeTelemetry(record)
+}
+
+func (s *Service) observeTelemetry(record ModelRunTelemetry) {
+	if record.ProviderID == "" || record.ModelID == "" {
 		return
 	}
-	key := res.ProviderID + "/" + res.ModelID
+	key := record.ProviderID + "/" + record.ModelID
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	o := s.ensureObserved(key)
 	o.runs++
-	if !ok {
+	if !record.OK {
 		o.failures++
 	}
-	o.sumTPS += res.TokensPerSecond
-	s.mu.Unlock()
+	o.sumTPS += record.TokensPerSecond
+	return
 }
 
 // ensureObserved must be called with s.mu held.

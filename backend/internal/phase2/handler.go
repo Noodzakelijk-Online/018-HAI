@@ -1,8 +1,10 @@
 package phase2
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"automation-hub-backend/internal/background"
@@ -216,7 +218,17 @@ func (h *Handler) Approvals(c *gin.Context) {
 
 // GenerateEvidencePack builds + stores an evidence pack for an operation (§10.18).
 func (h *Handler) GenerateEvidencePack(c *gin.Context) {
-	owner, workspace := h.owner(c)
+	owner, ok := authenticatedOwner(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authenticated owner identity required"})
+		return
+	}
+	workspace := h.m.cfg.WorkspaceID
+	repository, err := h.m.evidencePackRepository()
+	if err != nil {
+		writeEvidenceStorageError(c, err)
+		return
+	}
 	op, ok := h.loadOp(c, owner, workspace)
 	if !ok {
 		return
@@ -236,18 +248,49 @@ func (h *Handler) GenerateEvidencePack(c *gin.Context) {
 		}
 	}
 	pack := buildEvidencePack(*op, events, scan, telemetry, time.Now().UTC())
-	stored := h.m.evidence.put(pack)
+	stored, err := repository.Create(c.Request.Context(), pack)
+	if err != nil {
+		writeEvidenceStorageError(c, err)
+		return
+	}
 	c.JSON(http.StatusCreated, stored)
 }
 
 // GetEvidencePack returns a stored evidence pack (§10.19).
 func (h *Handler) GetEvidencePack(c *gin.Context) {
-	pack, ok := h.m.evidence.Get(c.Param("id"))
+	owner, ok := authenticatedOwner(c)
 	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authenticated owner identity required"})
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid evidence pack id"})
+		return
+	}
+	repository, err := h.m.evidencePackRepository()
+	if err != nil {
+		writeEvidenceStorageError(c, err)
+		return
+	}
+	pack, err := repository.Get(c.Request.Context(), owner, h.m.cfg.WorkspaceID, id)
+	if errors.Is(err, ErrEvidencePackNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "evidence pack not found"})
 		return
 	}
+	if err != nil {
+		writeEvidenceStorageError(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, pack)
+}
+
+func writeEvidenceStorageError(c *gin.Context, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, ErrEvidencePackRepositoryUnavailable) {
+		status = http.StatusServiceUnavailable
+	}
+	c.JSON(status, gin.H{"error": "durable evidence pack storage unavailable"})
 }
 
 func (h *Handler) loadOp(c *gin.Context, owner, workspace string) (*models.Operation, bool) {
@@ -287,14 +330,34 @@ func (h *Handler) RunOperation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"operation": outcome.Operation, "verified": outcome.Verified, "failed": outcome.Failed})
 }
 
-// RunBackground triggers a single background pass and returns its report.
+// RunBackground triggers a caller-scoped background pass and returns its
+// report. Unlike read-only endpoints, this execution path never falls back to
+// the module's configured owner.
 func (h *Handler) RunBackground(c *gin.Context) {
-	rep, err := h.m.worker.RunOnce(c.Request.Context())
+	owner, ok := authenticatedOwner(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authenticated owner identity required"})
+		return
+	}
+	rep, err := h.m.RunBackgroundForOwner(c.Request.Context(), owner)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, rep)
+}
+
+func authenticatedOwner(c *gin.Context) (string, bool) {
+	sub, ok := c.Get("subject")
+	if !ok {
+		return "", false
+	}
+	owner, ok := sub.(string)
+	if !ok {
+		return "", false
+	}
+	owner = strings.TrimSpace(owner)
+	return owner, owner != ""
 }
 
 // ListFeeds returns the configured account feeds.

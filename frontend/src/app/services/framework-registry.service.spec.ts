@@ -48,9 +48,11 @@ describe('FrameworkRegistryService', () => {
     id: 'selection-1',
     taskPlanId: 'plan-1',
     createdAt: '2026-07-30T10:00:00Z',
-    catalogVersion: 'v1',
+    catalogVersion: 'v2',
     catalogDigest: 'a'.repeat(64),
-    selectorAlgorithmVersion: 'selector-v4',
+    selectorAlgorithmVersion: 'selector-v5',
+    taskRiskLevel: 'high',
+    effectiveRiskCeiling: 'high',
     effectivePreferenceDigest: 'b'.repeat(64),
     constitutionDigest: 'c'.repeat(64),
     lifeDomain: 'legal',
@@ -60,6 +62,7 @@ describe('FrameworkRegistryService', () => {
       version: framework.version,
       name: framework.name,
       family: framework.family,
+      riskCeiling: 'high',
       score: 9,
       reasons: ['evidence is required'],
       maximumAutonomyLevel: 3,
@@ -199,6 +202,54 @@ describe('FrameworkRegistryService', () => {
     const request = http.expectOne('/api/v1/framework-registry/selections');
     expect(request.request.method).toBe('GET');
     request.flush({ selections: [selection] });
+  });
+
+  it('accepts legacy selection history without a recorded risk ceiling', () => {
+    const {
+      taskRiskLevel: _taskRiskLevel,
+      effectiveRiskCeiling: _effectiveRiskCeiling,
+      ...selectionWithoutRiskContract
+    } = selection;
+    const legacySelection = {
+      ...selectionWithoutRiskContract,
+      selectorAlgorithmVersion: 'selector-v4',
+      selected: selection.selected.map(({ riskCeiling: _riskCeiling, ...item }) => item),
+    };
+    service.selections().subscribe((result) => {
+      expect(result[0].selected[0].riskCeiling).toBeUndefined();
+    });
+
+    const request = http.expectOne('/api/v1/framework-registry/selections');
+    request.flush({ selections: [legacySelection] });
+  });
+
+  it('rejects an unsupported selected-framework risk ceiling', () => {
+    let error: unknown;
+    service.selections().subscribe({ error: (value) => (error = value) });
+
+    const request = http.expectOne('/api/v1/framework-registry/selections');
+    request.flush({
+      selections: [{
+        ...selection,
+        selected: [{ ...selection.selected[0], riskCeiling: 'critical' }],
+      }],
+    });
+
+    expect(error).toEqual(jasmine.any(Error));
+    expect((error as Error).message).toBe(
+      'Invalid Framework Registry selection history item 1 selected framework 1 response.'
+    );
+  });
+
+  it('rejects selector-v5 history without its top-level risk contract', () => {
+    let error: unknown;
+    const { taskRiskLevel: _taskRiskLevel, ...missingRisk } = selection;
+    service.selections().subscribe({ error: (value) => (error = value) });
+
+    const request = http.expectOne('/api/v1/framework-registry/selections');
+    request.flush({ selections: [missingRisk] });
+
+    expect(error).toEqual(jasmine.any(Error));
   });
 
   it('normalizes the chief-of-staff operating contract', () => {

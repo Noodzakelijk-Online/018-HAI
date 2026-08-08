@@ -125,6 +125,44 @@ func (handler *Handler) Effective(c *gin.Context) {
 	handler.Detail(c)
 }
 
+// Playbook exposes the immutable method catalog alongside the owner's
+// conservative effective pack state. It does not return executable actions.
+func (handler *Handler) Playbook(c *gin.Context) {
+	owner, ok := domainPackOwner(c)
+	if !ok {
+		return
+	}
+	view, err := handler.registry.Resolve(owner, PackID(c.Param("id")), handler.preferences)
+	if err != nil {
+		respondDomainPack(c, nil, err, http.StatusOK)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"packId":                    view.Pack.ID,
+		"enabled":                   view.Enabled,
+		"localOnly":                 view.LocalOnly,
+		"playbook":                  view.Pack.Playbook,
+		"advisoryOnly":              true,
+		"executionAuthorityGranted": false,
+	})
+}
+
+// SelectMethods resolves planning methods for an already classified task. The
+// returned result is explicitly advisory and cannot authorize execution.
+func (handler *Handler) SelectMethods(c *gin.Context) {
+	owner, ok := domainPackOwner(c)
+	if !ok {
+		return
+	}
+	var request MethodSelectionRequest
+	if !decodeDomainPackJSON(c, &request) {
+		return
+	}
+	request.OwnerIdentity = owner
+	result, err := handler.registry.SelectMethods(request, handler.preferences)
+	respondDomainPack(c, result, err, http.StatusOK)
+}
+
 func domainPackOwner(c *gin.Context) (string, bool) {
 	value, exists := c.Get(identity.ContextSubjectKey)
 	owner, ok := value.(string)

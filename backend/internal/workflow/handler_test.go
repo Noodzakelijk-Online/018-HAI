@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
@@ -125,6 +126,44 @@ func TestWorkflowHandlerKeepsUsefulBadRequestValidation(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), "unexpected EOF") {
 		t.Fatalf("bad-request validation detail was lost: %s", response.Body.String())
+	}
+}
+
+func TestReminderProposalHandlerIsBoundedOwnerScopedAndNonExecuting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+	due := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	if _, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "verified-operator",
+		Input:         "Calendar event: Review\nStart: " + due,
+		SourceType:    "calendar",
+		SourceID:      "review-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(service)
+
+	request := httptest.NewRequest(http.MethodGet, "/workflow/reminder-proposals?horizonHours=168&limit=10", nil)
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "verified-operator")
+	handler.ReminderProposals(context)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"authority":"reminder_proposal_only"`) ||
+		!strings.Contains(response.Body.String(), `"canExecute":false`) ||
+		!strings.Contains(response.Body.String(), `"revalidationRequired":true`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	invalidRequest := httptest.NewRequest(http.MethodGet, "/workflow/reminder-proposals?horizonHours=721", nil)
+	invalidResponse := httptest.NewRecorder()
+	invalidContext, _ := gin.CreateTestContext(invalidResponse)
+	invalidContext.Request = invalidRequest
+	invalidContext.Set(identity.ContextSubjectKey, "verified-operator")
+	handler.ReminderProposals(invalidContext)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid horizon status=%d body=%s", invalidResponse.Code, invalidResponse.Body.String())
 	}
 }
 
@@ -353,6 +392,51 @@ func TestRunDueHandlerRunsOnlyVerifiedOwnerWorkflow(t *testing.T) {
 	}
 }
 
+func TestRunOneHandlerRunsOnlyTheSelectedVerifiedOwnerWorkflow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{PlanID: "handler-exact-plan", CompletionStatus: "validated", VerificationStatus: "verified", Passed: true}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	selected, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create Alice's selected low-risk admin checklist."})
+	if err != nil {
+		t.Fatalf("selected Intake: %v", err)
+	}
+	other, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create Alice's other low-risk admin checklist."})
+	if err != nil {
+		t.Fatalf("other Intake: %v", err)
+	}
+	handler := NewHandler(service)
+	request := httptest.NewRequest(http.MethodPost, "/workflow/"+selected.Item.ID.String()+"/run", bytes.NewReader(nil))
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Params = gin.Params{{Key: "id", Value: selected.Item.ID.String()}}
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
+
+	handler.RunOne(context)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if len(runner.requests) != 1 || runner.requests[0].WorkflowID != selected.Item.ID.String() {
+		t.Fatalf("handler executed wrong workflow: %#v", runner.requests)
+	}
+	if repo.items[other.Item.ID].CurrentState != StateReady {
+		t.Fatalf("handler executed unselected workflow: %#v", repo.items[other.Item.ID])
+	}
+
+	foreignRequest := httptest.NewRequest(http.MethodPost, "/workflow/"+other.Item.ID.String()+"/run", bytes.NewReader(nil))
+	foreignResponse := httptest.NewRecorder()
+	foreignContext, _ := gin.CreateTestContext(foreignResponse)
+	foreignContext.Params = gin.Params{{Key: "id", Value: other.Item.ID.String()}}
+	foreignContext.Request = foreignRequest
+	foreignContext.Set(identity.ContextSubjectKey, "bob")
+	handler.RunOne(foreignContext)
+	if foreignResponse.Code != http.StatusNotFound || len(runner.requests) != 1 {
+		t.Fatalf("foreign exact run = %d %s, requests=%#v", foreignResponse.Code, foreignResponse.Body.String(), runner.requests)
+	}
+}
+
 func TestIntakeHandlerRoutesLegacyRequestThroughPursuitGateway(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeWorkflowRepo()
@@ -444,6 +528,10 @@ func (s *failingWorkflowHandlerService) DashboardForOwner(string) (*WorkflowDash
 }
 
 func (s *failingWorkflowHandlerService) RunDueForOwner(string, RunDueRequest) (*WorkflowRunSummary, error) {
+	return nil, s.err
+}
+
+func (s *failingWorkflowHandlerService) RunOneForOwner(string, uuid.UUID) (*WorkflowRunResult, error) {
 	return nil, s.err
 }
 

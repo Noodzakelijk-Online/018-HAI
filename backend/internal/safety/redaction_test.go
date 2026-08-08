@@ -6,10 +6,10 @@ import (
 )
 
 func TestRedactSecretsRemovesCommonSecretValues(t *testing.T) {
-	input := "password=hunter2 token: abcdefghij Authorization: Bearer secret-token-value"
+	input := "password=hunter2 token: abcdefghij Authorization: Bearer secret-token-value sk-abcdefghijklmnopqrstuvwxyz123456"
 	output := RedactSecrets(input)
 
-	for _, leaked := range []string{"hunter2", "abcdefghij", "secret-token-value"} {
+	for _, leaked := range []string{"hunter2", "abcdefghij", "secret-token-value", "sk-abcdefghijklmnopqrstuvwxyz123456"} {
 		if strings.Contains(output, leaked) {
 			t.Fatalf("redacted output leaked %q: %s", leaked, output)
 		}

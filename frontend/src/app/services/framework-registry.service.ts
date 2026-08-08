@@ -14,6 +14,7 @@ import {
   IFrameworkSelectionDecision,
   IFrameworkSelectionRequest,
   IFrameworkView,
+  ISelectedFramework,
 } from '../models/framework-registry.model.interface';
 
 type FrameworkListResponse =
@@ -331,11 +332,17 @@ export class FrameworkRegistryService {
     resource: string
   ): IFrameworkSelectionDecision {
     const record = this.requireRecord(this.sanitizeInbound(value), resource);
+    const selectorAlgorithmVersion = this.requireString(
+      record,
+      'selectorAlgorithmVersion',
+      resource
+    );
+    const requiresRiskContract = selectorAlgorithmVersion === 'selector-v5';
     const selected = this.requireArray(record, 'selected', resource).map(
       (entry, index) => {
         const itemResource = `${resource} selected framework ${index + 1}`;
         const item = this.requireRecord(entry, itemResource);
-        return {
+        const selectedFramework: ISelectedFramework = {
           id: this.requireString(item, 'id', itemResource),
           version: this.requireString(item, 'version', itemResource),
           name: this.requireString(item, 'name', itemResource),
@@ -365,6 +372,16 @@ export class FrameworkRegistryService {
             itemResource
           ),
         };
+        const riskCeiling = item['riskCeiling'];
+        if (requiresRiskContract || (riskCeiling !== undefined && riskCeiling !== '')) {
+          selectedFramework.riskCeiling = this.requireEnum(
+            item,
+            'riskCeiling',
+            itemResource,
+            ['low', 'medium', 'high'] as const
+          );
+        }
+        return selectedFramework;
       }
     );
     const conflicts = this.requireArray(record, 'conflicts', resource).map(
@@ -383,11 +400,7 @@ export class FrameworkRegistryService {
       createdAt: this.requireDateString(record, 'createdAt', resource),
       catalogVersion: this.requireString(record, 'catalogVersion', resource),
       catalogDigest: this.requireDigest(record, 'catalogDigest', resource),
-      selectorAlgorithmVersion: this.requireString(
-        record,
-        'selectorAlgorithmVersion',
-        resource
-      ),
+      selectorAlgorithmVersion,
       effectivePreferenceDigest: this.requireDigest(
         record,
         'effectivePreferenceDigest',
@@ -440,6 +453,28 @@ export class FrameworkRegistryService {
     };
     if (record['taskPlanId'] !== undefined) {
       result.taskPlanId = this.requireString(record, 'taskPlanId', resource, true);
+    }
+    if (
+      requiresRiskContract ||
+      record['taskRiskLevel'] !== undefined ||
+      record['effectiveRiskCeiling'] !== undefined
+    ) {
+      result.taskRiskLevel = this.requireEnum(
+        record,
+        'taskRiskLevel',
+        resource,
+        ['low', 'medium', 'high'] as const
+      );
+      result.effectiveRiskCeiling = this.requireEnum(
+        record,
+        'effectiveRiskCeiling',
+        resource,
+        ['low', 'medium', 'high'] as const
+      );
+      const riskRank = { low: 1, medium: 2, high: 3 } as const;
+      if (riskRank[result.taskRiskLevel] > riskRank[result.effectiveRiskCeiling]) {
+        throw this.contractError(resource);
+      }
     }
     Object.assign(result, this.normalizeOperatingContract(record, resource));
     return result;

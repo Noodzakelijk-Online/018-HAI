@@ -28,6 +28,20 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestExecutionAuthorizationProfileUsesBoundedAutomationTarget(t *testing.T) {
+	id := uuid.New()
+	automation := &models.Automation{
+		ID:           id,
+		LaunchType:   "api",
+		LaunchTarget: "GET https://example.test/health?verbose=true",
+	}
+
+	_, _, _, _, _, _, _, target := executionAuthorizationProfile(automation, http.MethodGet)
+	if target != "automation:"+id.String() {
+		t.Fatalf("authorization target = %q, want bounded automation identity", target)
+	}
+}
+
 func TestMain(m *testing.M) {
 	switch os.Getenv("HAI_TEST_SCRIPT_MODE") {
 	case "ok":
@@ -69,7 +83,7 @@ func TestLaunchExecutesAPITargetAndAuditsResult(t *testing.T) {
 		LaunchTarget:       server.URL,
 		ExpectedHTTPStatus: http.StatusOK,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity: "alice",
@@ -113,7 +127,7 @@ func TestLaunchBlocksMutatingAPIWithoutApprovalBeforeNetworkAccess(t *testing.T)
 		LaunchType:   "api",
 		LaunchTarget: "POST " + server.URL + "/mutate",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
 	if err != nil {
@@ -141,7 +155,7 @@ func TestLaunchRejectsApprovalAfterAutomationTargetChangesBeforeNetworkAccess(t 
 		LaunchType:   "api",
 		LaunchTarget: "POST " + server.URL + "/approved-target",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity: "alice",
 		Task:          "Perform the reviewed mutation.",
@@ -177,7 +191,7 @@ func TestLaunchRejectsMismatchedApprovalBindingBeforeNetworkAccess(t *testing.T)
 	}{
 		{name: "owner", mutate: func(request *TaskLaunchRequest) { request.OwnerIdentity = "bob" }, expectedError: "owner mismatch"},
 		{name: "task", mutate: func(request *TaskLaunchRequest) { request.Task = "Different action" }, expectedError: "action digest mismatch"},
-		{name: "review item", mutate: func(request *TaskLaunchRequest) { request.ApprovalSourceID = "task-review:different" }, expectedError: "approval source mismatch"},
+		{name: "review item", mutate: func(request *TaskLaunchRequest) { request.ApprovalSourceID = "task-review:" + uuid.NewString() }, expectedError: "approval source mismatch"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -189,7 +203,7 @@ func TestLaunchRejectsMismatchedApprovalBindingBeforeNetworkAccess(t *testing.T)
 				LaunchType:   "api",
 				LaunchTarget: "POST " + server.URL + "/mutate",
 			})
-			service := NewService(repo, events.Publisher{})
+			service := newTestService(repo, events.Publisher{})
 			request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 				OwnerIdentity: "alice",
 				Task:          "Perform the reviewed action.",
@@ -231,7 +245,7 @@ func TestLaunchConsumesApprovalProofOnceBeforeMutatingAPI(t *testing.T) {
 		LaunchTarget:       "POST " + server.URL + "/mutate",
 		ExpectedHTTPStatus: http.StatusNoContent,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity: "alice",
 		Task:          "Perform this mutation once.",
@@ -278,7 +292,7 @@ func TestLaunchRejectsExpiredApprovalBeforeMutatingAPI(t *testing.T) {
 		LaunchType:   "api",
 		LaunchTarget: "POST " + server.URL + "/mutate",
 	})
-	service := NewServiceWithRuntimeRegistryAndApprovalProofs(
+	service := newTestServiceWithRuntimeRegistryAndApprovalProofs(
 		repo,
 		events.Publisher{},
 		agentruntime.DefaultRegistry(),
@@ -324,7 +338,7 @@ func TestLaunchAllowsReadOnlyAPIProbeWithoutApproval(t *testing.T) {
 				LaunchTarget:       method + " " + server.URL + "/health",
 				ExpectedHTTPStatus: http.StatusOK,
 			})
-			service := NewService(repo, events.Publisher{})
+			service := newTestService(repo, events.Publisher{})
 
 			result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
 			if err != nil {
@@ -336,8 +350,11 @@ func TestLaunchAllowsReadOnlyAPIProbeWithoutApproval(t *testing.T) {
 			if result.Status != "completed" || result.RequiresApproval {
 				t.Fatalf("read-only result = %#v, want completed without approval", result)
 			}
-			if !containsString(result.AuditEvents, "read-only api probe allowed without launcher approval") {
-				t.Fatalf("read-only approval exemption missing from audit: %#v", result.AuditEvents)
+			if !containsAuditFragment(
+				result.AuditEvents,
+				"unified execution authorization receipt",
+			) {
+				t.Fatalf("read-only authorization receipt missing from audit: %#v", result.AuditEvents)
 			}
 		})
 	}
@@ -402,7 +419,7 @@ func TestProcessImageFileRejectsCorruptImage(t *testing.T) {
 
 func TestCreateRejectsUnsafeHostForGeneratedNginxConfig(t *testing.T) {
 	repo := newFakeAutomationRepo(&models.Automation{ID: uuid.New(), Name: "Existing", URLPath: "existing", Host: "backend", Port: 80})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	created, err := service.Create(&models.Automation{
 		Name: "Unsafe Host",
@@ -455,7 +472,7 @@ func TestHealthCheckBlocksHTTPOutsideAllowlist(t *testing.T) {
 		HealthCheckURL:     "http://example.com/health",
 		ExpectedHTTPStatus: http.StatusOK,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.RunHealthCheck(id)
 	if err != nil {
@@ -479,7 +496,7 @@ func TestHealthCheckBlocksTCPOutsideAllowlist(t *testing.T) {
 		Port:            443,
 		HealthCheckType: "tcp",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.RunHealthCheck(id)
 	if err != nil {
@@ -516,7 +533,7 @@ func TestHealthCheckDoesNotFollowHTTPRedirect(t *testing.T) {
 		HealthCheckURL:     server.URL,
 		ExpectedHTTPStatus: http.StatusOK,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.RunHealthCheck(id)
 	if err != nil {
@@ -554,7 +571,7 @@ func TestLaunchDoesNotFollowAPIRedirect(t *testing.T) {
 		LaunchTarget:       server.URL,
 		ExpectedHTTPStatus: http.StatusOK,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -585,7 +602,7 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 		LaunchType:   "script",
 		LaunchTarget: target,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -617,7 +634,7 @@ func TestLaunchBlocksScriptWithoutApprovalBeforeProcessExecution(t *testing.T) {
 		LaunchType:   "script",
 		LaunchTarget: "launch.sh",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
 	if err != nil {
@@ -647,7 +664,7 @@ func TestLaunchRunsScriptWithMinimalEnvironment(t *testing.T) {
 		LaunchType:   "script",
 		LaunchTarget: target,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -678,7 +695,7 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 		LaunchType:   "script",
 		LaunchTarget: target,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -743,6 +760,22 @@ func scriptPin(t *testing.T, path string) string {
 	return filepath.Base(path) + "=" + hex.EncodeToString(sum[:])
 }
 
+func TestBoundedOutputCapsCombinedProcessOutput(t *testing.T) {
+	output := newBoundedOutput(8)
+	if _, err := output.Write([]byte("12345")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte("67890")); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(output.Bytes()); got != "12345678" {
+		t.Fatalf("bounded output = %q, want %q", got, "12345678")
+	}
+	if !output.Truncated() {
+		t.Fatal("overflow was not recorded")
+	}
+}
+
 func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "launch.sh")
@@ -762,7 +795,7 @@ func TestLaunchBlocksScriptWhenPolicyDisabled(t *testing.T) {
 		LaunchType:   "script",
 		LaunchTarget: "launch.sh",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -791,7 +824,7 @@ func TestLaunchBlocksScriptOutsideAllowlist(t *testing.T) {
 		LaunchType:   "script",
 		LaunchTarget: "../outside.sh",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -828,7 +861,7 @@ func TestLaunchBlocksScriptSymlinkEscape(t *testing.T) {
 		LaunchType:   "script",
 		LaunchTarget: "link.sh",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -855,7 +888,7 @@ func TestLaunchBlocksDockerWhenPolicyDisabled(t *testing.T) {
 		LaunchType:   "docker_service",
 		LaunchTarget: "container-name",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -882,7 +915,7 @@ func TestLaunchBlocksWhenEmergencyStopActive(t *testing.T) {
 		LaunchType:   "browser_url",
 		LaunchTarget: "http://localhost:8080",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.Launch(id)
 	if err != nil {
@@ -915,7 +948,7 @@ func TestLaunchBlocksWhenPersistedEmergencyStopActive(t *testing.T) {
 		LaunchType:   "browser_url",
 		LaunchTarget: "http://localhost:8080",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	result, err := service.Launch(id)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
@@ -928,7 +961,6 @@ func TestLaunchBlocksWhenPersistedEmergencyStopActive(t *testing.T) {
 func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	id := uuid.New()
 	adapter := &fakeAgentRuntimeAdapter{id: "hermes"}
-	registry := agentruntime.NewRegistry(adapter)
 	repo := newFakeAutomationRepo(&models.Automation{
 		ID:           id,
 		Name:         "Hermes Runtime",
@@ -939,16 +971,31 @@ func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 		RuntimeType:  "hermes",
 		LaunchTarget: "runtime://hermes",
 	})
-	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
+	service := newTestServiceWithAuthorizedRuntime(
+		t,
+		repo,
+		events.Publisher{},
+		adapter,
+	)
 
-	blocked, err := service.Launch(id)
+	blocked, err := service.LaunchTask(
+		id,
+		TaskLaunchRequest{
+			OwnerIdentity: "alice",
+			Task:          "Inspect the project without an approval.",
+		},
+	)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	if blocked.Status != "blocked" || adapter.called {
 		t.Fatalf("direct launch bypassed approval: %#v", blocked)
 	}
-	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "action-bound approval proof rejected before agent runtime access") {
+	if len(repo.launchEvents) != 1 ||
+		!containsString(
+			repo.launchEvents[0].AuditEvents,
+			"action-bound approval proof rejected before agent runtime access",
+		) {
 		t.Fatalf("blocked runtime audit was not persisted: %#v", repo.launchEvents)
 	}
 
@@ -993,7 +1040,7 @@ func TestStopRuntimeTaskUsesVerifiedOwnerAutomationRuntimeAndTaskID(t *testing.T
 		RuntimeType:  "openclaw",
 		LaunchTarget: "runtime://openclaw",
 	})
-	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
+	service := newTestServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
 
 	result, err := service.StopRuntimeTaskForOwner(id, "alice")
 	if err != nil {
@@ -1028,7 +1075,6 @@ func TestStopRuntimeTaskUsesVerifiedOwnerAutomationRuntimeAndTaskID(t *testing.T
 func TestAgentRuntimeLaunchAllowsOpenClaw(t *testing.T) {
 	id := uuid.New()
 	adapter := &fakeAgentRuntimeAdapter{id: "openclaw"}
-	registry := agentruntime.NewRegistry(adapter)
 	repo := newFakeAutomationRepo(&models.Automation{
 		ID:           id,
 		Name:         "OpenClaw Runtime",
@@ -1039,7 +1085,12 @@ func TestAgentRuntimeLaunchAllowsOpenClaw(t *testing.T) {
 		RuntimeType:  "openclaw",
 		LaunchTarget: "runtime://openclaw",
 	})
-	service := NewServiceWithRuntimeRegistry(repo, events.Publisher{}, registry)
+	service := newTestServiceWithAuthorizedRuntime(
+		t,
+		repo,
+		events.Publisher{},
+		adapter,
+	)
 
 	completed, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		Task:       "Move approved OpenClaw work forward safely.",
@@ -1076,7 +1127,7 @@ func TestLaunchBlocksDockerWithoutApprovalBeforeSocketAccess(t *testing.T) {
 		LaunchType:   "docker_service",
 		LaunchTarget: "safe-container",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: "alice"})
 	if err != nil {
@@ -1102,7 +1153,7 @@ func TestLaunchAllowsDockerWithApproval(t *testing.T) {
 		LaunchType:   "docker_service",
 		LaunchTarget: "safe-container",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity: "alice",
@@ -1135,7 +1186,7 @@ func TestLaunchBlocksDockerWhenContainerNotAllowlisted(t *testing.T) {
 		LaunchType:   "docker_service",
 		LaunchTarget: "dangerous-container",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -1160,7 +1211,7 @@ func TestLaunchBlocksAPITargetOutsideAllowlist(t *testing.T) {
 		LaunchType:   "api",
 		LaunchTarget: "POST https://example.com/start",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -1187,7 +1238,7 @@ func TestLaunchBlocksAPILinkLocalTarget(t *testing.T) {
 		LaunchType:   "api",
 		LaunchTarget: "POST http://169.254.169.254/latest/meta-data",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -1215,7 +1266,7 @@ func TestLaunchRedactsAPITargetAndResponseSecrets(t *testing.T) {
 		LaunchType:   "api",
 		LaunchTarget: "POST " + server.URL + "/start?token=super-secret-token",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 
 	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
 	if err != nil {
@@ -1293,6 +1344,7 @@ func approvedTaskLaunchRequest(
 		t.Fatalf("IssueApprovalProof: %v", err)
 	}
 	request.ApprovalProof = proof
+	request.ApprovalBindingDigest = proof.ActionDigest
 	return request
 }
 
@@ -1403,6 +1455,15 @@ func firstNonEmptyString(values ...string) string {
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAuditFragment(values []string, fragment string) bool {
+	for _, value := range values {
+		if strings.Contains(value, fragment) {
 			return true
 		}
 	}

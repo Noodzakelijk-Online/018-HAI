@@ -92,6 +92,14 @@ func (s *Scheduler) runOnce() {
 			log.Printf("workflow open-loop scheduler checked=%d triggered=%d resolved=%d skipped=%d", openLoops.Checked, openLoops.Triggered, openLoops.Resolved, openLoops.Skipped)
 		}
 	}
+	if delivery, ok := s.service.(ReminderDeliveryService); ok && schedulerEnabled("WORKFLOW_REMINDER_DELIVERY_ENABLED", true) {
+		reminders, err := delivery.RunDueReminderDeliveries(request)
+		if err != nil {
+			log.Printf("workflow reminder delivery failed: %v", err)
+		} else if reminders != nil && (reminders.Delivered > 0 || reminders.Retried > 0 || reminders.Suppressed > 0 || reminders.DeadLettered > 0) {
+			log.Printf("workflow reminder delivery checked=%d delivered=%d retried=%d suppressed=%d dead_lettered=%d", reminders.Checked, reminders.Delivered, reminders.Retried, reminders.Suppressed, reminders.DeadLettered)
+		}
+	}
 
 	result, err := s.service.RunDue(request)
 	if err != nil {

@@ -57,6 +57,48 @@ func TestFrameworkRegistryMigrationDeclaresVersionedImmutableConstitutionContrac
 	}
 }
 
+func TestFrameworkSelectorV5MigrationRequiresRealOperatingDigest(t *testing.T) {
+	t.Parallel()
+
+	upBytes, err := migrations.Files.ReadFile("pre/0029_framework_selector_v5_digest.up.sql")
+	if err != nil {
+		t.Fatalf("read selector-v5 digest migration: %v", err)
+	}
+	downBytes, err := migrations.Files.ReadFile("pre/0029_framework_selector_v5_digest.down.sql")
+	if err != nil {
+		t.Fatalf("read selector-v5 digest rollback: %v", err)
+	}
+
+	up := strings.ToLower(string(upBytes))
+	down := strings.ToLower(string(downBytes))
+	for _, fragment := range []string{
+		"add column if not exists task_risk_level varchar(16)",
+		"add column if not exists effective_risk_ceiling varchar(16)",
+		"drop constraint if exists chk_framework_selection_records_operating_digest",
+		"selector_algorithm_version not in ('selector-v4', 'selector-v5')",
+		"operating_contract_digest <>\n                    '0000000000000000000000000000000000000000000000000000000000000000'",
+		"selector_algorithm_version <> 'selector-v5'",
+		"task_risk_level is not null and effective_risk_ceiling is not null",
+		"chk_framework_selection_records_risk_ceiling_rank",
+	} {
+		if !strings.Contains(up, fragment) {
+			t.Errorf("selector-v5 migration missing %q", fragment)
+		}
+	}
+	if !strings.Contains(down, "selector_algorithm_version <> 'selector-v4'") {
+		t.Error("selector-v5 rollback does not restore the selector-v4 digest contract")
+	}
+	for _, fragment := range []string{
+		"cannot roll back selector-v5 risk contract while selector-v5 records exist",
+		"drop column if exists effective_risk_ceiling",
+		"drop column if exists task_risk_level",
+	} {
+		if !strings.Contains(down, fragment) {
+			t.Errorf("selector-v5 rollback missing %q", fragment)
+		}
+	}
+}
+
 func TestFrameworkOperatingContractMigrationIsTypedIndexedAndReversible(t *testing.T) {
 	t.Parallel()
 

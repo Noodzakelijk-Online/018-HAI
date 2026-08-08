@@ -1,15 +1,12 @@
 import { CommonModule } from '@angular/common'
 import { NgModule } from '@angular/core'
-import { FormsModule } from '@angular/forms'
 import { RouterModule, Routes } from '@angular/router'
 import { NzButtonModule } from 'ng-zorro-antd/button'
-import { NzCardModule } from 'ng-zorro-antd/card'
-import { NzEmptyModule } from 'ng-zorro-antd/empty'
 import { NzIconModule } from 'ng-zorro-antd/icon'
 import { NzNotificationModule } from 'ng-zorro-antd/notification'
-import { NzTableModule } from 'ng-zorro-antd/table'
-import { NzTagModule } from 'ng-zorro-antd/tag'
+import { NzSpinModule } from 'ng-zorro-antd/spin'
 import { ModelIntelligenceComponent } from './model-intelligence.component'
+import { ControlRoomModule } from '../../control-room/control-room.module'
 
 const routes: Routes = [{ path: '', component: ModelIntelligenceComponent }]
 
@@ -17,15 +14,12 @@ const routes: Routes = [{ path: '', component: ModelIntelligenceComponent }]
   declarations: [ModelIntelligenceComponent],
   imports: [
     CommonModule,
-    FormsModule,
     RouterModule.forChild(routes),
+    ControlRoomModule,
     NzButtonModule,
-    NzCardModule,
-    NzEmptyModule,
     NzIconModule,
     NzNotificationModule,
-    NzTableModule,
-    NzTagModule,
+    NzSpinModule,
   ],
 })
 export class ModelIntelligenceModule {}

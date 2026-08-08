@@ -1,10 +1,15 @@
 package verification
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/sourceevidence"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -27,7 +32,7 @@ func TestForgedExternalAuthorityCannotCreateVerifiedFact(t *testing.T) {
 			SourceURI:   "https://example.invalid/forged",
 			SourceLabel: "Forged official record",
 			Snippet:     "The hearing is on 9 September.",
-			Authority:   authorityConnectedAccount,
+			Authority:   authorityConnectedProvenance,
 			Official:    true,
 			Primary:     true,
 		}},
@@ -84,14 +89,17 @@ func TestTrustedInProcessResolverCanAuthenticateExternalEvidence(t *testing.T) {
 	if got := result.Evidence[0].Authority; got != trustedExternalPrefix+"government_register" {
 		t.Fatalf("authority = %q", got)
 	}
-	if len(result.Claims) != 1 || result.Claims[0].Status != StatusVerified || result.Claims[0].NeedsReview {
-		t.Fatalf("trusted authority did not verify claim: %#v", result.Claims)
+	if len(result.Claims) != 1 || result.Claims[0].Status != StatusSourceSupported || result.Claims[0].NeedsReview {
+		t.Fatalf("trusted authority did not source-support claim: %#v", result.Claims)
 	}
 }
 
-func TestConnectedAccountAuthorityRemainsTrusted(t *testing.T) {
-	if !isTrustedEvidence(authorityConnectedAccount) {
-		t.Fatal("authenticated connected-account evidence must remain trusted")
+func TestConnectedSourceProvenanceSupportsButDoesNotVerifyTruth(t *testing.T) {
+	if isTrustedEvidence(authorityConnectedProvenance) {
+		t.Fatal("authenticated provenance must not be treated as semantic authority")
+	}
+	if !isSourceSupportedEvidence(authorityConnectedProvenance) {
+		t.Fatal("authenticated connected-source provenance must support grounded claims")
 	}
 	if isTrustedEvidence("connected_source") || isTrustedEvidence("official_government") {
 		t.Fatal("caller-like authority labels must not be trusted")
@@ -103,16 +111,118 @@ func TestConnectedAccountAuthorityRemainsTrusted(t *testing.T) {
 			SourceType:   "connected_source",
 			SourceID:     "authenticated-extraction",
 			Snippet:      "The hearing is on 9 September.",
-			Authority:    authorityConnectedAccount,
+			Authority:    authorityConnectedProvenance,
 			QualityScore: 0.9,
 			Used:         true,
 		}},
 		AnswerRequest{},
 		ModeGrounded,
 	)
-	if len(claims) != 1 || claims[0].Status != StatusVerified || claims[0].NeedsReview {
-		t.Fatalf("connected-account evidence no longer verifies matching claims: %#v", claims)
+	if len(claims) != 1 || claims[0].Status != StatusSourceSupported || claims[0].NeedsReview {
+		t.Fatalf("connected-source evidence did not remain source-supported: %#v", claims)
 	}
+}
+
+func TestConnectedSourceRequiresExactDurableProvenance(t *testing.T) {
+	now := time.Date(2026, time.August, 4, 8, 0, 0, 0, time.UTC)
+	extraction := models.SourceExtraction{
+		ID: uuid.New(), SourceID: uuid.New(), RawItemID: uuid.New(), ProjectKey: "vivare",
+		ContentType: "email", Text: "The hearing is on 9 September.",
+		Summary: "The hearing is on 9 September.", SourceURI: "https://mail.example/message/42",
+		SourceLabel: "Hearing notice", ContentHash: strings.Repeat("a", 64), UpdatedAt: now,
+	}
+	snapshot := sourceevidence.Snapshot{
+		OwnerIdentity: "alice", ExtractionID: extraction.ID.String(), SourceID: extraction.SourceID.String(),
+		RawItemID: extraction.RawItemID.String(), ProjectKey: extraction.ProjectKey,
+		RawProjectKey: extraction.ProjectKey, ExtractionURI: extraction.SourceURI, RawItemURI: extraction.SourceURI,
+		ExtractionHash: extraction.ContentHash, RawItemHash: extraction.ContentHash,
+		ExtractionPayloadDigest: sourceevidence.ExtractionPayloadDigest(extraction),
+		FetchedAt:               now.Add(-time.Hour), ExtractionAt: extraction.UpdatedAt,
+		ConnectorKey: "gmail",
+	}
+	snapshot.SnapshotDigest = sourceevidence.SnapshotDigest(snapshot)
+	searcher := staticConnectedSourceSearcher{result: &source.SearchResult{UsedContext: []source.RankedExtraction{{
+		Extraction: extraction, Score: 0.95,
+	}}}}
+	memoryRepo := &capturingMemoryRepository{}
+	service := NewServiceWithEvidenceResolvers(
+		&fakeVerificationRepository{}, searcher, memory.NewService(memoryRepo), nil,
+		staticSourceEvidenceRepository{snapshot: snapshot},
+	)
+
+	result, err := service.Answer(AnswerRequest{
+		OwnerIdentity: "alice", ProjectKey: "vivare", Question: "When is the hearing?",
+		DraftAnswer: "The hearing is on 9 September.", Mode: ModeGrounded, AllowMemoryUpdate: true,
+	})
+	if err != nil {
+		t.Fatalf("Answer returned error: %v", err)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].Authority != authorityConnectedProvenance ||
+		result.Evidence[0].Rejected || !result.Evidence[0].Used {
+		t.Fatalf("connected evidence was not provenance-authenticated: %#v", result.Evidence)
+	}
+	if len(result.Claims) != 1 || result.Claims[0].Status != StatusSourceSupported {
+		t.Fatalf("claim status = %#v, want source_supported", result.Claims)
+	}
+	if result.Run.Status != StatusSourceSupported {
+		t.Fatalf("run status = %q, want source_supported", result.Run.Status)
+	}
+	if len(memoryRepo.created) != 1 || memoryRepo.created[0].SourceURI != extraction.SourceURI {
+		t.Fatalf("source-supported memory was not retained with provenance: %#v", memoryRepo.created)
+	}
+
+	withoutResolver := NewService(&fakeVerificationRepository{}, searcher, memory.NewService(&capturingMemoryRepository{}))
+	rejected, err := withoutResolver.Answer(AnswerRequest{
+		OwnerIdentity: "alice", ProjectKey: "vivare", Question: "When is the hearing?",
+		DraftAnswer: "The hearing is on 9 September.", Mode: ModeGrounded,
+	})
+	if err != nil {
+		t.Fatalf("Answer without source resolver returned error: %v", err)
+	}
+	if len(rejected.Evidence) == 0 || !rejected.Evidence[0].Rejected || rejected.Evidence[0].Used ||
+		rejected.Evidence[0].Authority != authorityConnectedUnverified {
+		t.Fatalf("unresolved connected evidence did not fail closed: %#v", rejected.Evidence)
+	}
+	if len(rejected.Claims) != 1 || rejected.Claims[0].Status != StatusUnsupported {
+		t.Fatalf("unresolved claim status = %#v, want unsupported", rejected.Claims)
+	}
+}
+
+func TestContradictionDetectionUsesOnlyAcceptedEvidenceAndWholeTokens(t *testing.T) {
+	claim := "The request was approved and enabled."
+	if containsContradiction(claim, []models.VerificationEvidence{{
+		Snippet: "The request was rejected and disabled.", Used: true,
+	}}) != true {
+		t.Fatal("accepted opposite-polarity evidence did not produce a conflict")
+	}
+	if containsContradiction(claim, []models.VerificationEvidence{{
+		Snippet: "The request was rejected and disabled.", Rejected: true,
+	}}) {
+		t.Fatal("rejected evidence influenced contradiction status")
+	}
+	if containsContradiction(claim, []models.VerificationEvidence{{
+		Snippet: "The notice confirms the approved request.", Used: true,
+	}}) {
+		t.Fatal("the substring 'no' inside notice was treated as a negative token")
+	}
+}
+
+type staticConnectedSourceSearcher struct {
+	result *source.SearchResult
+	err    error
+}
+
+func (s staticConnectedSourceSearcher) Search(source.SearchRequest) (*source.SearchResult, error) {
+	return s.result, s.err
+}
+
+type staticSourceEvidenceRepository struct {
+	snapshot sourceevidence.Snapshot
+	err      error
+}
+
+func (r staticSourceEvidenceRepository) Resolve(context.Context, string, string) (sourceevidence.Snapshot, error) {
+	return r.snapshot, r.err
 }
 
 type capturingMemoryRepository struct {

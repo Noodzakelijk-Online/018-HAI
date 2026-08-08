@@ -1,9 +1,11 @@
 package automation
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,7 +19,7 @@ func TestApprovalProofBindsActionAndConsumesOnce(t *testing.T) {
 	service := newApprovalProofTestService(t, func() time.Time { return now })
 	automationID := uuid.New()
 	digest := approvalTestDigest("approved action")
-	sourceID := "task-review:review-1"
+	sourceID := "task-review:11111111-1111-4111-8111-111111111111"
 
 	proof, err := service.Issue(ApprovalProofIssueRequest{
 		OwnerIdentity:    "alice",
@@ -36,11 +38,28 @@ func TestApprovalProofBindsActionAndConsumesOnce(t *testing.T) {
 		Scope:            ApprovalScopeScript,
 		ApprovalSourceID: sourceID,
 	}
-	if err := service.VerifyAndConsume(proof, expected); err != nil {
+	if err := service.VerifyAndConsume(context.Background(), proof, expected); err != nil {
 		t.Fatalf("VerifyAndConsume: %v", err)
 	}
-	if err := service.VerifyAndConsume(proof, expected); !errors.Is(err, ErrApprovalProofConsumed) {
+	if err := service.VerifyAndConsume(context.Background(), proof, expected); !errors.Is(err, ErrApprovalProofConsumed) {
 		t.Fatalf("replay error = %v, want ErrApprovalProofConsumed", err)
+	}
+}
+
+func TestApprovalPolicySnapshotBindsScriptExecutionLimitsAndPin(t *testing.T) {
+	t.Setenv("AUTOMATION_SCRIPT_TIMEOUT_SECONDS", "17")
+	t.Setenv("AUTOMATION_SCRIPT_OUTPUT_LIMIT_BYTES", "2048")
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", "reviewed.sh="+strings.Repeat("a", 64))
+
+	snapshot := strings.Join(approvalPolicySnapshot(), "\n")
+	for _, expected := range []string{
+		"AUTOMATION_SCRIPT_TIMEOUT_SECONDS=17",
+		"AUTOMATION_SCRIPT_OUTPUT_LIMIT_BYTES=2048",
+		"AUTOMATION_SCRIPT_SHA256_ALLOWLIST=reviewed.sh=" + strings.Repeat("a", 64),
+	} {
+		if !strings.Contains(snapshot, expected) {
+			t.Fatalf("approval policy snapshot does not bind %q: %s", expected, snapshot)
+		}
 	}
 }
 
@@ -51,7 +70,7 @@ func TestApprovalProofAllowsOnlyOneConcurrentConsumer(t *testing.T) {
 		AutomationID:     uuid.New(),
 		ActionDigest:     approvalTestDigest("single consumer"),
 		Scope:            ApprovalScopeDocker,
-		ApprovalSourceID: "task-review:review-1",
+		ApprovalSourceID: "task-review:11111111-1111-4111-8111-111111111111",
 	}
 	proof, err := service.Issue(request)
 	if err != nil {
@@ -72,7 +91,7 @@ func TestApprovalProofAllowsOnlyOneConcurrentConsumer(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			err := service.VerifyAndConsume(proof, expected)
+			err := service.VerifyAndConsume(context.Background(), proof, expected)
 			if err == nil {
 				successes.Add(1)
 				return
@@ -88,6 +107,92 @@ func TestApprovalProofAllowsOnlyOneConcurrentConsumer(t *testing.T) {
 	}
 }
 
+func TestApprovalProofCanBeIssuedAndConsumedAcrossServiceInstances(t *testing.T) {
+	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
+	secret := make([]byte, 32)
+	for index := range secret {
+		secret[index] = byte(index + 1)
+	}
+	store := &memoryApprovalProofConsumptionStore{consumed: map[string]time.Time{}}
+	issuer, err := NewApprovalProofService(secret, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("NewApprovalProofService issuer: %v", err)
+	}
+	consumer, err := NewApprovalProofService(secret, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("NewApprovalProofService consumer: %v", err)
+	}
+	request := ApprovalProofIssueRequest{
+		OwnerIdentity:    "alice",
+		AutomationID:     uuid.New(),
+		ActionDigest:     approvalTestDigest("cross-instance action"),
+		Scope:            ApprovalScopeAgentRuntime,
+		ApprovalSourceID: "workflow-decision:" + uuid.NewString(),
+	}
+	proof, err := issuer.Issue(request)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	expected := ApprovalProofExpectation{
+		OwnerIdentity:    request.OwnerIdentity,
+		AutomationID:     request.AutomationID,
+		ActionDigest:     request.ActionDigest,
+		Scope:            request.Scope,
+		ApprovalSourceID: request.ApprovalSourceID,
+	}
+	if err := consumer.VerifyAndConsume(context.Background(), proof, expected); err != nil {
+		t.Fatalf("cross-instance VerifyAndConsume: %v", err)
+	}
+	restarted, err := NewApprovalProofService(secret, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("NewApprovalProofService restart: %v", err)
+	}
+	if err := restarted.VerifyAndConsume(context.Background(), proof, expected); !errors.Is(err, ErrApprovalProofConsumed) {
+		t.Fatalf("restart replay error = %v, want ErrApprovalProofConsumed", err)
+	}
+}
+
+func TestApprovalProofRejectsDifferentInstanceSigningKeyWithoutConsuming(t *testing.T) {
+	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
+	validKey := []byte("0123456789abcdef0123456789abcdef")
+	wrongKey := []byte("abcdef0123456789abcdef0123456789")
+	store := &memoryApprovalProofConsumptionStore{consumed: map[string]time.Time{}}
+	issuer, err := NewApprovalProofService(validKey, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongConsumer, err := NewApprovalProofService(wrongKey, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	validConsumer, err := NewApprovalProofService(validKey, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ApprovalProofIssueRequest{
+		OwnerIdentity:    "alice",
+		AutomationID:     uuid.New(),
+		ActionDigest:     approvalTestDigest("key mismatch"),
+		Scope:            ApprovalScopeScript,
+		ApprovalSourceID: "task-review:" + uuid.NewString(),
+	}
+	proof, err := issuer.Issue(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := ApprovalProofExpectation{
+		OwnerIdentity: request.OwnerIdentity, AutomationID: request.AutomationID,
+		ActionDigest: request.ActionDigest, Scope: request.Scope,
+		ApprovalSourceID: request.ApprovalSourceID,
+	}
+	if err := wrongConsumer.VerifyAndConsume(context.Background(), proof, expected); !errors.Is(err, ErrApprovalProofInvalid) {
+		t.Fatalf("wrong-key error = %v, want ErrApprovalProofInvalid", err)
+	}
+	if err := validConsumer.VerifyAndConsume(context.Background(), proof, expected); err != nil {
+		t.Fatalf("wrong-key attempt consumed proof: %v", err)
+	}
+}
+
 func TestApprovalProofFailsClosedOnBindingMismatch(t *testing.T) {
 	now := time.Date(2026, time.July, 30, 10, 0, 0, 0, time.UTC)
 	automationID := uuid.New()
@@ -97,7 +202,7 @@ func TestApprovalProofFailsClosedOnBindingMismatch(t *testing.T) {
 		AutomationID:     automationID,
 		ActionDigest:     digest,
 		Scope:            ApprovalScopeScript,
-		ApprovalSourceID: "task-review:review-1",
+		ApprovalSourceID: "task-review:11111111-1111-4111-8111-111111111111",
 	}
 	tests := []struct {
 		name   string
@@ -107,7 +212,9 @@ func TestApprovalProofFailsClosedOnBindingMismatch(t *testing.T) {
 		{name: "automation", mutate: func(value *ApprovalProofExpectation) { value.AutomationID = uuid.New() }},
 		{name: "action digest", mutate: func(value *ApprovalProofExpectation) { value.ActionDigest = approvalTestDigest("different action") }},
 		{name: "scope", mutate: func(value *ApprovalProofExpectation) { value.Scope = ApprovalScopeDocker }},
-		{name: "approval source", mutate: func(value *ApprovalProofExpectation) { value.ApprovalSourceID = "task-review:review-2" }},
+		{name: "approval source", mutate: func(value *ApprovalProofExpectation) {
+			value.ApprovalSourceID = "task-review:22222222-2222-4222-8222-222222222222"
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -124,10 +231,10 @@ func TestApprovalProofFailsClosedOnBindingMismatch(t *testing.T) {
 			}
 			expected := base
 			test.mutate(&expected)
-			if err := service.VerifyAndConsume(proof, expected); !errors.Is(err, ErrApprovalProofInvalid) {
+			if err := service.VerifyAndConsume(context.Background(), proof, expected); !errors.Is(err, ErrApprovalProofInvalid) {
 				t.Fatalf("mismatch error = %v, want ErrApprovalProofInvalid", err)
 			}
-			if err := service.VerifyAndConsume(proof, base); err != nil {
+			if err := service.VerifyAndConsume(context.Background(), proof, base); err != nil {
 				t.Fatalf("mismatch consumed proof or corrupted valid binding: %v", err)
 			}
 		})
@@ -142,7 +249,7 @@ func TestApprovalProofRejectsTamperingAndExpiry(t *testing.T) {
 		AutomationID:     uuid.New(),
 		ActionDigest:     approvalTestDigest("approved action"),
 		Scope:            ApprovalScopeAPIMutate,
-		ApprovalSourceID: "workflow-review:workflow-1",
+		ApprovalSourceID: "workflow-decision:33333333-3333-4333-8333-333333333333",
 		TTL:              time.Minute,
 	}
 	expected := ApprovalProofExpectation{
@@ -158,7 +265,7 @@ func TestApprovalProofRejectsTamperingAndExpiry(t *testing.T) {
 		t.Fatalf("Issue tampered proof: %v", err)
 	}
 	tampered.Signature = "tampered"
-	if err := service.VerifyAndConsume(tampered, expected); !errors.Is(err, ErrApprovalProofInvalid) {
+	if err := service.VerifyAndConsume(context.Background(), tampered, expected); !errors.Is(err, ErrApprovalProofInvalid) {
 		t.Fatalf("tamper error = %v, want ErrApprovalProofInvalid", err)
 	}
 
@@ -167,7 +274,7 @@ func TestApprovalProofRejectsTamperingAndExpiry(t *testing.T) {
 		t.Fatalf("Issue expiring proof: %v", err)
 	}
 	now = now.Add(time.Minute)
-	if err := service.VerifyAndConsume(expired, expected); !errors.Is(err, ErrApprovalProofExpired) {
+	if err := service.VerifyAndConsume(context.Background(), expired, expected); !errors.Is(err, ErrApprovalProofExpired) {
 		t.Fatalf("expiry error = %v, want ErrApprovalProofExpired", err)
 	}
 }
@@ -179,7 +286,7 @@ func TestApprovalProofRequiresCompleteTrustedBinding(t *testing.T) {
 		AutomationID:     uuid.New(),
 		ActionDigest:     approvalTestDigest("approved action"),
 		Scope:            ApprovalScopeDocker,
-		ApprovalSourceID: "task-review:review-1",
+		ApprovalSourceID: "task-review:11111111-1111-4111-8111-111111111111",
 	}
 	tests := []struct {
 		name   string
@@ -190,6 +297,7 @@ func TestApprovalProofRequiresCompleteTrustedBinding(t *testing.T) {
 		{name: "digest", mutate: func(value *ApprovalProofIssueRequest) { value.ActionDigest = "" }},
 		{name: "scope", mutate: func(value *ApprovalProofIssueRequest) { value.Scope = "" }},
 		{name: "source", mutate: func(value *ApprovalProofIssueRequest) { value.ApprovalSourceID = "" }},
+		{name: "unsupported source", mutate: func(value *ApprovalProofIssueRequest) { value.ApprovalSourceID = "manual:" + uuid.NewString() }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

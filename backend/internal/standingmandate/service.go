@@ -14,6 +14,7 @@ type Clock func() time.Time
 type Service struct {
 	repository Repository
 	now        Clock
+	lifeGraph  LifeOntologyProjector
 }
 
 func NewService(repository Repository, now Clock) (*Service, error) {
@@ -24,6 +25,14 @@ func NewService(repository Repository, now Clock) (*Service, error) {
 		now = time.Now
 	}
 	return &Service{repository: repository, now: now}, nil
+}
+
+func (s *Service) WithLifeOntologyProjection(projector LifeOntologyProjector) (*Service, error) {
+	if s == nil || projector == nil {
+		return nil, fmt.Errorf("standing mandate service and life ontology projector are required")
+	}
+	s.lifeGraph = projector
+	return s, nil
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (*StandingMandate, error) {
@@ -52,6 +61,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*StandingM
 	if err := s.repository.Create(ctx, mandate); err != nil {
 		return nil, err
 	}
+	s.projectMandate(ctx, &mandate)
 	return cloneMandatePointer(&mandate), nil
 }
 
@@ -82,6 +92,7 @@ func (s *Service) Activate(
 	if err := s.repository.Update(ctx, *mandate, expectedRevision); err != nil {
 		return nil, err
 	}
+	s.projectMandate(ctx, mandate)
 	return cloneMandatePointer(mandate), nil
 }
 
@@ -118,11 +129,39 @@ func (s *Service) Revoke(
 	if err := s.repository.Update(ctx, *mandate, expectedRevision); err != nil {
 		return nil, err
 	}
+	s.projectMandate(ctx, mandate)
 	return cloneMandatePointer(mandate), nil
 }
 
 func (s *Service) Get(ctx context.Context, ownerIdentity string, id uuid.UUID) (*StandingMandate, error) {
 	return s.repository.Get(ctx, strings.TrimSpace(ownerIdentity), id)
+}
+
+// GetAuthorizationSnapshot resolves the current owner-scoped policy identity
+// without exposing mutable authority to the caller. Execution authorization
+// uses this immediately before a final effect to detect revocation, expiry,
+// revision changes, or persisted policy drift.
+func (s *Service) GetAuthorizationSnapshot(
+	ctx context.Context,
+	ownerIdentity string,
+	id uuid.UUID,
+) (AuthorizationSnapshot, error) {
+	mandate, err := s.repository.Get(ctx, strings.TrimSpace(ownerIdentity), id)
+	if err != nil {
+		return AuthorizationSnapshot{}, err
+	}
+	value, err := digest(normalizedMandate(*mandate))
+	if err != nil {
+		return AuthorizationSnapshot{}, fmt.Errorf("digest standing mandate snapshot: %w", err)
+	}
+	return AuthorizationSnapshot{
+		ID:            mandate.ID,
+		OwnerIdentity: mandate.OwnerIdentity,
+		Status:        mandate.Status,
+		Revision:      mandate.Revision,
+		ExpiresAt:     cloneTime(mandate.ExpiresAt),
+		Digest:        value,
+	}, nil
 }
 
 func (s *Service) List(ctx context.Context, ownerIdentity string) ([]StandingMandate, error) {

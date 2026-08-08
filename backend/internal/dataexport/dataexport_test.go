@@ -7,9 +7,9 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestBuildMemoryExportIsVersioned(t *testing.T) {
+func TestInternalMemoryExportIsVersioned(t *testing.T) {
 	mems := []models.ContextMemory{{ID: uuid.New(), Content: "a"}, {ID: uuid.New(), Content: "b"}}
-	exp := BuildMemoryExport(mems)
+	exp := buildMemoryExport(mems)
 	if exp.Format != exportFormat || exp.Version != exportVersion {
 		t.Fatalf("envelope wrong: %+v", exp)
 	}

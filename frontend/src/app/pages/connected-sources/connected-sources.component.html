@@ -31,7 +31,7 @@
         <strong>{{ enabledSources().length }}</strong>
         <span>active sources</span>
       </div>
-      <div title="Live connectors fetch from the external service directly (GitHub, JSON feed). Local connectors read exported files from an allowlisted folder. Modeled connectors generate built-in records. None connect to Gmail/Drive/Calendar/Trello via OAuth yet.">
+      <div title="Live connectors fetch directly from their provider. Gmail, Google Drive, Google Contacts, and Google Calendar use separate read-only OAuth grants and provider-native incremental cursors.">
         <strong>{{ operationalConnectorCount() }} live · {{ localOnlyConnectorCount() }} local · {{ modeledConnectorCount() }} modeled</strong>
         <span>of {{ connectors.length }} connectors</span>
       </div>
@@ -84,6 +84,7 @@
           <article
             *ngFor="let source of sources"
             class="source-row"
+            data-testid="source-row"
             [class.source-row--selected]="selectedSource()?.id === source.id"
             (click)="selectSource(source)"
             [title]="source.name + ': open details and controls'"
@@ -110,6 +111,7 @@
                 type="button"
                 *ngIf="syncButtonVisible(source)"
                 class="icon-button"
+                data-testid="source-sync"
                 (click)="$event.stopPropagation(); syncSource(source)"
                 [disabled]="syncing"
                 title="Run an incremental sync for this source"
@@ -138,10 +140,10 @@
                 <p>Register only the connector, permissions, target, and project scope HAI needs.</p>
               </div>
             </div>
-            <form nz-form [formGroup]="sourceForm" class="operation-form">
+            <form nz-form [formGroup]="sourceForm" class="operation-form" data-testid="source-connect-form">
               <label>
                 <span>Connector</span>
-                <nz-select formControlName="connectorKey" (ngModelChange)="connectorChanged($event)">
+                <nz-select formControlName="connectorKey" (ngModelChange)="connectorChanged($event)" data-testid="source-connector">
                   <nz-option
                     *ngFor="let connector of connectors"
                     [nzValue]="connector.connectorKey"
@@ -152,7 +154,7 @@
               </label>
               <label>
                 <span>Name</span>
-                <input nz-input formControlName="name" />
+                <input nz-input formControlName="name" data-testid="source-name" />
               </label>
               <div class="field-grid">
                 <label>
@@ -166,7 +168,7 @@
               </div>
               <label>
                 <span>Sync target</span>
-                <input nz-input formControlName="syncTarget" [placeholder]="syncTargetPlaceholder()" />
+                <input nz-input formControlName="syncTarget" [placeholder]="syncTargetPlaceholder()" data-testid="source-target" />
               </label>
               <label>
                 <span>Exclude patterns</span>
@@ -174,7 +176,17 @@
               </label>
               <div class="form-footer">
                 <label nz-checkbox formControlName="localOnly">Local only</label>
-                <button type="button" nz-button nzType="primary" (click)="connectSource()">Connect source</button>
+                <button
+                  type="button"
+                  nz-button
+                  nzType="primary"
+                  data-testid="source-connect"
+                  (click)="connectSource()"
+                  [nzLoading]="connecting"
+                  [disabled]="sourceForm.invalid || connecting"
+                >
+                  Connect source
+                </button>
               </div>
             </form>
           </div>
@@ -227,25 +239,41 @@
           <div *ngSwitchCase="'gmail'" class="operation">
             <div class="panel-heading compact">
               <div>
-                <h2>Connect Gmail</h2>
+                <h2>Connect Google sources</h2>
                 <p>
-                  Live, read-only Gmail sync over Google OAuth (message metadata only —
-                  headers and snippet, never full bodies). You approve access in your own
-                  Google account; the tokens are stored encrypted and can be revoked.
+                  Connect Gmail, Google Drive, Google Contacts, or Google Calendar with separate read-only grants.
+                  HAI performs a bounded initial backfill, then uses each provider's native
+                  incremental cursor.
                 </p>
               </div>
             </div>
             <div class="operation-form">
               <p *ngIf="operationalConnectorCount() === 0" class="hint">
-                The backend needs GOOGLE_OAUTH_CLIENT_ID, _SECRET and _REDIRECT_URL set
-                before Gmail can be connected.
+                Google OAuth also requires dedicated token-encryption and state-signing keys
+                before either connector can be authorized.
               </p>
               <div class="form-footer">
                 <button type="button" nz-button nzType="primary" (click)="connectGmail()">
                   <span nz-icon nzType="google"></span>
-                  Connect Google account
+                  Connect Gmail
+                </button>
+                <button type="button" nz-button nzType="default" (click)="connectGoogleDrive()">
+                  <span nz-icon nzType="folder-open"></span>
+                  Connect Drive
+                </button>
+                <button type="button" nz-button nzType="default" (click)="connectGoogleContacts()">
+                  <span nz-icon nzType="contacts"></span>
+                  Connect Contacts
+                </button>
+                <button type="button" nz-button nzType="default" (click)="connectGoogleCalendar()">
+                  <span nz-icon nzType="calendar"></span>
+                  Connect Calendar
                 </button>
               </div>
+              <p class="hint">
+                Contacts remain candidates until reviewed. Calendar cancellations remain
+                non-destructive tombstones. HAI never writes back to either provider.
+              </p>
             </div>
           </div>
 
@@ -539,6 +567,14 @@
                 <dt>Latest job</dt>
                 <dd>{{ latestJobFor(source)?.status || 'no job yet' }}</dd>
               </div>
+              <div *ngIf="sourceHealth(source) as health">
+                <dt>Connection</dt>
+                <dd>{{ statusText(health.status) }} - {{ health.reason }}</dd>
+              </div>
+              <div *ngIf="sourceHealth(source)?.cursorPhase">
+                <dt>Incremental cursor</dt>
+                <dd>{{ sourceHealth(source)?.cursorPhase }} - provider checkpoint stored</dd>
+              </div>
             </dl>
             <div class="inspector-actions">
               <button
@@ -553,6 +589,15 @@
                 {{ sourceActionLabel(source) }}
               </button>
               <button type="button" nz-button nzType="default" (click)="reindex(source)">Re-index</button>
+              <button
+                type="button"
+                *ngIf="isGoogleSource(source) && (!sourceHealth(source)?.authorized || sourceHealth(source)?.requiresReconnect)"
+                nz-button
+                nzType="primary"
+                (click)="authorizeGoogleSource(source)"
+              >
+                {{ sourceHealth(source)?.requiresReconnect ? 'Reconnect Google' : 'Authorize Google' }}
+              </button>
               <button type="button" *ngIf="source.enabled" nz-button nzType="default" (click)="pause(source)">Pause</button>
               <button type="button" *ngIf="!source.enabled && source.status !== 'revoked'" nz-button nzType="default" (click)="resume(source)">Resume</button>
             </div>
@@ -597,6 +642,38 @@
         </span>
         <em>{{ outcome.pursuitId ? 'Open pursuit' : 'Open inbox' }}</em>
       </button>
+    </section>
+
+    <section class="source-routing-outcomes" *ngIf="lifeGraphProjections().length || lifeGraphWarnings().length">
+      <header>
+        <div>
+          <p class="eyebrow">Durable life graph</p>
+          <h2>Source provenance was recorded</h2>
+          <span>Private graph records are advisory only and never grant approval or execution authority.</span>
+        </div>
+      </header>
+      <button
+        type="button"
+        *ngFor="let projection of lifeGraphProjections()"
+        class="routing-outcome"
+        data-status="good"
+        title="Inspect owner-scoped source and document provenance"
+        (click)="openLifeGraph()"
+      >
+        <i nz-icon nzType="node-index" nzTheme="outline"></i>
+        <span>
+          <strong>Document linked to the operational graph</strong>
+          <small>{{ projection.linkedEntityIds?.length || 0 }} related records · {{ projection.relationIds?.length || 0 }} provenance links</small>
+        </span>
+        <em>{{ projection.alreadyExisted ? 'Already current' : 'Inspect graph' }}</em>
+      </button>
+      <article class="projection-warning" *ngFor="let warning of lifeGraphWarnings()">
+        <i nz-icon nzType="warning" nzTheme="outline"></i>
+        <span>
+          <strong>Graph projection needs review</strong>
+          <small>{{ warning }}</small>
+        </span>
+      </article>
     </section>
 
     <section class="lower-grid">

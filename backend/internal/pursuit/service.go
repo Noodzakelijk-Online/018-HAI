@@ -2,6 +2,7 @@ package pursuit
 
 import (
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/plangraph"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
 	"errors"
@@ -26,6 +27,19 @@ const (
 	CompletionCandidate = "candidate"
 	CompletionVerified  = "verified"
 
+	CriterionPending   = "pending"
+	CriterionSatisfied = "satisfied"
+	CriterionWaived    = "waived"
+
+	StopMonitoring = "monitoring"
+	StopTriggered  = "triggered"
+	StopResolved   = "resolved"
+
+	DependencyPending   = "pending"
+	DependencySatisfied = "satisfied"
+	DependencyBlocked   = "blocked"
+	DependencyWaived    = "waived"
+
 	LinkWorkflow           = "workflow"
 	LinkMemory             = "memory"
 	LinkAIConversation     = "ai_conversation"
@@ -46,47 +60,60 @@ const defaultAutoLinkMinimumScore = 0.45
 var ErrLifecycleRouterRequired = errors.New("pursuit lifecycle router is required when a pursuit linker is configured")
 
 type CreateRequest struct {
-	Actor                 string  `json:"-"`
-	OwnerIdentity         string  `json:"ownerIdentity,omitempty"`
-	Title                 string  `json:"title"`
-	Description           string  `json:"description,omitempty"`
-	WhyItMatters          string  `json:"whyItMatters,omitempty"`
-	ProjectKey            string  `json:"projectKey,omitempty"`
-	Domain                string  `json:"domain,omitempty"`
-	DesiredOutcome        string  `json:"desiredOutcome,omitempty"`
-	CurrentStateSummary   string  `json:"currentStateSummary,omitempty"`
-	Status                string  `json:"status,omitempty"`
-	PriorityScore         int     `json:"priorityScore,omitempty"`
-	RiskLevel             string  `json:"riskLevel,omitempty"`
-	Confidence            float64 `json:"confidence,omitempty"`
-	AutonomyLevel         string  `json:"autonomyLevel,omitempty"`
-	NeedCategory          string  `json:"needCategory,omitempty"`
-	SourceOfCreation      string  `json:"sourceOfCreation,omitempty"`
-	NextRecommendedAction string  `json:"nextRecommendedAction,omitempty"`
-	CompletionDefinition  string  `json:"completionDefinition,omitempty"`
-	NextReviewAt          string  `json:"nextReviewAt,omitempty"`
+	Actor                 string                           `json:"-"`
+	OwnerIdentity         string                           `json:"ownerIdentity,omitempty"`
+	Title                 string                           `json:"title"`
+	Description           string                           `json:"description,omitempty"`
+	WhyItMatters          string                           `json:"whyItMatters,omitempty"`
+	ProjectKey            string                           `json:"projectKey,omitempty"`
+	MandateID             string                           `json:"mandateId,omitempty"`
+	Domain                string                           `json:"domain,omitempty"`
+	DesiredOutcome        string                           `json:"desiredOutcome,omitempty"`
+	CurrentStateSummary   string                           `json:"currentStateSummary,omitempty"`
+	Status                string                           `json:"status,omitempty"`
+	PriorityScore         int                              `json:"priorityScore,omitempty"`
+	RiskLevel             string                           `json:"riskLevel,omitempty"`
+	Confidence            float64                          `json:"confidence,omitempty"`
+	AutonomyLevel         string                           `json:"autonomyLevel,omitempty"`
+	NeedCategory          string                           `json:"needCategory,omitempty"`
+	SourceOfCreation      string                           `json:"sourceOfCreation,omitempty"`
+	NextRecommendedAction string                           `json:"nextRecommendedAction,omitempty"`
+	CompletionDefinition  string                           `json:"completionDefinition,omitempty"`
+	NextReviewAt          string                           `json:"nextReviewAt,omitempty"`
+	SuccessCriteria       []models.PursuitSuccessCriterion `json:"successCriteria,omitempty"`
+	StopConditions        []models.PursuitStopCondition    `json:"stopConditions,omitempty"`
+	Dependencies          []models.PursuitDependency       `json:"dependencies,omitempty"`
+	ResourceLimits        models.PursuitResourceLimits     `json:"resourceLimits,omitempty"`
+	TargetAt              string                           `json:"targetAt,omitempty"`
+	ReviewCadenceDays     int                              `json:"reviewCadenceDays,omitempty"`
 }
 
 type UpdateRequest struct {
-	Title                 string   `json:"title,omitempty"`
-	Description           *string  `json:"description,omitempty"`
-	WhyItMatters          *string  `json:"whyItMatters,omitempty"`
-	ProjectKey            *string  `json:"projectKey,omitempty"`
-	Domain                *string  `json:"domain,omitempty"`
-	DesiredOutcome        *string  `json:"desiredOutcome,omitempty"`
-	CurrentStateSummary   *string  `json:"currentStateSummary,omitempty"`
-	Status                string   `json:"status,omitempty"`
-	PriorityScore         *int     `json:"priorityScore,omitempty"`
-	RiskLevel             string   `json:"riskLevel,omitempty"`
-	Confidence            *float64 `json:"confidence,omitempty"`
-	AutonomyLevel         string   `json:"autonomyLevel,omitempty"`
-	NeedCategory          *string  `json:"needCategory,omitempty"`
-	NextRecommendedAction *string  `json:"nextRecommendedAction,omitempty"`
-	CompletionDefinition  *string  `json:"completionDefinition,omitempty"`
-	CompletionState       string   `json:"completionState,omitempty"`
-	NextReviewAt          *string  `json:"nextReviewAt,omitempty"`
-	Archived              *bool    `json:"archived,omitempty"`
-	Actor                 string   `json:"actor,omitempty"`
+	Title                 string                            `json:"title,omitempty"`
+	Description           *string                           `json:"description,omitempty"`
+	WhyItMatters          *string                           `json:"whyItMatters,omitempty"`
+	ProjectKey            *string                           `json:"projectKey,omitempty"`
+	Domain                *string                           `json:"domain,omitempty"`
+	DesiredOutcome        *string                           `json:"desiredOutcome,omitempty"`
+	CurrentStateSummary   *string                           `json:"currentStateSummary,omitempty"`
+	Status                string                            `json:"status,omitempty"`
+	PriorityScore         *int                              `json:"priorityScore,omitempty"`
+	RiskLevel             string                            `json:"riskLevel,omitempty"`
+	Confidence            *float64                          `json:"confidence,omitempty"`
+	AutonomyLevel         string                            `json:"autonomyLevel,omitempty"`
+	NeedCategory          *string                           `json:"needCategory,omitempty"`
+	NextRecommendedAction *string                           `json:"nextRecommendedAction,omitempty"`
+	CompletionDefinition  *string                           `json:"completionDefinition,omitempty"`
+	CompletionState       string                            `json:"completionState,omitempty"`
+	NextReviewAt          *string                           `json:"nextReviewAt,omitempty"`
+	SuccessCriteria       *[]models.PursuitSuccessCriterion `json:"successCriteria,omitempty"`
+	StopConditions        *[]models.PursuitStopCondition    `json:"stopConditions,omitempty"`
+	Dependencies          *[]models.PursuitDependency       `json:"dependencies,omitempty"`
+	ResourceLimits        *models.PursuitResourceLimits     `json:"resourceLimits,omitempty"`
+	TargetAt              *string                           `json:"targetAt,omitempty"`
+	ReviewCadenceDays     *int                              `json:"reviewCadenceDays,omitempty"`
+	Archived              *bool                             `json:"archived,omitempty"`
+	Actor                 string                            `json:"actor,omitempty"`
 }
 
 type ReviewRequest struct {
@@ -98,10 +125,11 @@ type ReviewRequest struct {
 }
 
 type PlanRequest struct {
-	Input          string `json:"input,omitempty"`
-	Actor          string `json:"actor,omitempty"`
-	RequiresReview bool   `json:"requiresReview,omitempty"`
-	ReviewReason   string `json:"reviewReason,omitempty"`
+	Input            string                              `json:"input,omitempty"`
+	Actor            string                              `json:"actor,omitempty"`
+	RequiresReview   bool                                `json:"requiresReview,omitempty"`
+	ReviewReason     string                              `json:"reviewReason,omitempty"`
+	CoordinationPlan plangraph.AcceptedRevisionReference `json:"coordinationPlan,omitempty"`
 }
 
 type DecisionResolutionRequest struct {
@@ -148,6 +176,7 @@ type AutoLinkWorkflowRequest struct {
 	WorkflowID            uuid.UUID `json:"workflowId"`
 	Input                 string    `json:"input,omitempty"`
 	ProjectKey            string    `json:"projectKey,omitempty"`
+	MandateID             string    `json:"mandateId,omitempty"`
 	SourceType            string    `json:"sourceType,omitempty"`
 	SourceID              string    `json:"sourceId,omitempty"`
 	SourceURI             string    `json:"sourceUri,omitempty"`
@@ -188,23 +217,25 @@ type AutoLinkResult struct {
 }
 
 type IntakeRequest struct {
-	OwnerIdentity  string `json:"-"`
-	Input          string `json:"input"`
-	ProjectKey     string `json:"projectKey,omitempty"`
-	AutomationID   string `json:"automationId,omitempty"`
-	SourceType     string `json:"sourceType,omitempty"`
-	SourceID       string `json:"sourceId,omitempty"`
-	RawItemID      string `json:"rawItemId,omitempty"`
-	ExtractionID   string `json:"extractionId,omitempty"`
-	SourceURI      string `json:"sourceUri,omitempty"`
-	SourceLabel    string `json:"sourceLabel,omitempty"`
-	ContentType    string `json:"contentType,omitempty"`
-	Sender         string `json:"sender,omitempty"`
-	ReceivedAt     string `json:"receivedAt,omitempty"`
-	Trigger        string `json:"trigger,omitempty"`
-	Actor          string `json:"actor,omitempty"`
-	RequiresReview bool   `json:"requiresReview,omitempty"`
-	ReviewReason   string `json:"reviewReason,omitempty"`
+	OwnerIdentity    string                              `json:"-"`
+	Input            string                              `json:"input"`
+	ProjectKey       string                              `json:"projectKey,omitempty"`
+	AutomationID     string                              `json:"automationId,omitempty"`
+	MandateID        string                              `json:"mandateId,omitempty"`
+	SourceType       string                              `json:"sourceType,omitempty"`
+	SourceID         string                              `json:"sourceId,omitempty"`
+	RawItemID        string                              `json:"rawItemId,omitempty"`
+	ExtractionID     string                              `json:"extractionId,omitempty"`
+	SourceURI        string                              `json:"sourceUri,omitempty"`
+	SourceLabel      string                              `json:"sourceLabel,omitempty"`
+	ContentType      string                              `json:"contentType,omitempty"`
+	Sender           string                              `json:"sender,omitempty"`
+	ReceivedAt       string                              `json:"receivedAt,omitempty"`
+	Trigger          string                              `json:"trigger,omitempty"`
+	Actor            string                              `json:"actor,omitempty"`
+	RequiresReview   bool                                `json:"requiresReview,omitempty"`
+	ReviewReason     string                              `json:"reviewReason,omitempty"`
+	CoordinationPlan plangraph.AcceptedRevisionReference `json:"coordinationPlan,omitempty"`
 }
 
 type RoutedIntakeResult struct {
@@ -387,6 +418,7 @@ type PursuitDetail struct {
 	ApprovalItems        []models.WorkflowItem          `json:"approvalItems"`
 	Summary              PursuitSummary                 `json:"summary"`
 	OperationalDigest    PursuitOperationalDigest       `json:"operationalDigest"`
+	ResourceUsage        PursuitResourceUsage           `json:"resourceUsage"`
 }
 
 // PursuitConversation exposes only archive metadata needed for provenance.
@@ -629,6 +661,12 @@ type PursuitSummary struct {
 	Confidence                float64 `json:"confidence"`
 	PlanningNeeded            bool    `json:"planningNeeded"`
 	CompletionCandidate       bool    `json:"completionCandidate"`
+	GoalContractReady         bool    `json:"goalContractReady"`
+	CriteriaSatisfied         int     `json:"criteriaSatisfied"`
+	CriteriaTotal             int     `json:"criteriaTotal"`
+	TriggeredStopConditions   int     `json:"triggeredStopConditions"`
+	OpenDependencies          int     `json:"openDependencies"`
+	TargetOverdue             bool    `json:"targetOverdue"`
 }
 
 type PursuitOperationalDigest struct {
@@ -706,6 +744,13 @@ type Service interface {
 	ReviewForOwner(ownerIdentity string, id uuid.UUID, request ReviewRequest) (*PursuitDetail, error)
 	Activity(id uuid.UUID) ([]models.PursuitActivity, error)
 	ActivityForOwner(ownerIdentity string, id uuid.UUID) ([]models.PursuitActivity, error)
+	AppendResourceEvent(id uuid.UUID, request AppendPursuitResourceEventRequest) (*models.PursuitResourceEvent, error)
+	AppendResourceEventForOwner(ownerIdentity string, id uuid.UUID, request AppendPursuitResourceEventRequest) (*models.PursuitResourceEvent, error)
+	ResourceUsage(id uuid.UUID) (*PursuitResourceUsage, error)
+	ResourceUsageForOwner(ownerIdentity string, id uuid.UUID) (*PursuitResourceUsage, error)
+	ResourceEventsForOwner(ownerIdentity string, id uuid.UUID, limit int) ([]models.PursuitResourceEvent, error)
+	ReleaseResourceReservationForOwner(ownerIdentity string, pursuitID, reservationID uuid.UUID, request ReleasePursuitResourceReservationRequest) (*PursuitResourceUsage, error)
+	PlanPortfolioForOwner(ownerIdentity string, request PortfolioPlanningRequest) (*PortfolioPlanningResult, error)
 }
 
 type ownerScopedRepository interface {
@@ -728,8 +773,15 @@ type workflowOwnerScopedRecordReader interface {
 }
 
 type service struct {
-	repo            Repository
-	workflowService workflowIntakeService
+	repo                        Repository
+	workflowService             workflowIntakeService
+	portfolioCapacity           PortfolioCapacityReader
+	portfolioCapacityNow        func() time.Time
+	portfolioWorkflowAuthorizer portfolioWorkflowEffectAuthorizer
+	portfolioWorkflowExecutor   portfolioWorkflowEffectExecutor
+	controlledLearning          ControlledLearningRecorder
+	portfolioCalibration        PortfolioCalibrationReader
+	acceptedPlanResolver        plangraph.AcceptedRevisionResolver
 }
 
 func NewService(repo Repository, workflowService workflowIntakeService) Service {
@@ -745,17 +797,39 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 	if title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
+	mandateID, err := parseOptionalStandingMandateID(request.MandateID)
+	if err != nil {
+		return nil, err
+	}
+	successCriteria, stopConditions, dependencies, resourceLimits, targetAt, reviewCadenceDays, err := normalizePursuitGoalContract(
+		request.SuccessCriteria,
+		request.StopConditions,
+		request.Dependencies,
+		request.ResourceLimits,
+		request.TargetAt,
+		request.ReviewCadenceDays,
+		firstNonEmpty(request.CompletionDefinition, request.DesiredOutcome, title),
+		true,
+	)
+	if err != nil {
+		return nil, err
+	}
 	contextText := title + " " + request.Description + " " + request.WhyItMatters + " " + request.DesiredOutcome
 	riskLevel := conservativeRisk(request.RiskLevel, classifyRisk(contextText))
 	autonomyLevel := conservativeAutonomy(request.AutonomyLevel, riskLevel)
 	now := time.Now().UTC()
 	nextReviewAt := parseOptionalTime(request.NextReviewAt)
+	if nextReviewAt == nil && reviewCadenceDays > 0 {
+		next := now.AddDate(0, 0, reviewCadenceDays)
+		nextReviewAt = &next
+	}
 	pursuit := &models.Pursuit{
 		OwnerIdentity:         strings.TrimSpace(request.OwnerIdentity),
 		Title:                 title,
 		Description:           strings.TrimSpace(request.Description),
 		WhyItMatters:          strings.TrimSpace(request.WhyItMatters),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		MandateID:             mandateID,
 		Domain:                firstNonEmpty(request.Domain, classifyDomain(contextText)),
 		DesiredOutcome:        strings.TrimSpace(request.DesiredOutcome),
 		CurrentStateSummary:   strings.TrimSpace(request.CurrentStateSummary),
@@ -768,9 +842,15 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		SourceOfCreation:      firstNonEmpty(request.SourceOfCreation, "manual"),
 		NextRecommendedAction: strings.TrimSpace(request.NextRecommendedAction),
 		CompletionDefinition:  strings.TrimSpace(request.CompletionDefinition),
+		SuccessCriteria:       successCriteria,
+		StopConditions:        stopConditions,
+		Dependencies:          dependencies,
+		ResourceLimits:        resourceLimits,
 		CompletionState:       CompletionOpen,
 		LastActivityAt:        &now,
 		NextReviewAt:          nextReviewAt,
+		TargetAt:              targetAt,
+		ReviewCadenceDays:     reviewCadenceDays,
 	}
 	if pursuit.CurrentStateSummary == "" {
 		pursuit.CurrentStateSummary = "New pursuit created. HAI should gather context, link operational work, and propose the next concrete action."
@@ -820,6 +900,7 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 		if !allowed {
 			return nil, fmt.Errorf("pursuit completion requires verified evidence, linked verification, or a verified completed workflow before it can be marked complete: %s", reason)
 		}
+		satisfyImplicitSuccessCriteria(pursuit)
 	}
 	priorRiskLevel := pursuit.RiskLevel
 	priorAutonomyLevel := pursuit.AutonomyLevel
@@ -835,6 +916,34 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 	assignString(request.NeedCategory, &pursuit.NeedCategory)
 	assignString(request.NextRecommendedAction, &pursuit.NextRecommendedAction)
 	assignString(request.CompletionDefinition, &pursuit.CompletionDefinition)
+	if request.SuccessCriteria != nil {
+		criteria, err := normalizeSuccessCriteria(*request.SuccessCriteria, "", false)
+		if err != nil {
+			return nil, err
+		}
+		pursuit.SuccessCriteria = criteria
+	}
+	if request.StopConditions != nil {
+		conditions, err := normalizeStopConditions(*request.StopConditions, false)
+		if err != nil {
+			return nil, err
+		}
+		pursuit.StopConditions = conditions
+	}
+	if request.Dependencies != nil {
+		dependencies, err := normalizeDependencies(*request.Dependencies)
+		if err != nil {
+			return nil, err
+		}
+		pursuit.Dependencies = dependencies
+	}
+	if request.ResourceLimits != nil {
+		limits, err := normalizeResourceLimits(*request.ResourceLimits)
+		if err != nil {
+			return nil, err
+		}
+		pursuit.ResourceLimits = limits
+	}
 	if request.Status != "" {
 		pursuit.Status = strings.TrimSpace(request.Status)
 	}
@@ -855,6 +964,23 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 	}
 	if request.NextReviewAt != nil {
 		pursuit.NextReviewAt = parseOptionalTime(*request.NextReviewAt)
+	}
+	if request.TargetAt != nil {
+		targetAt, err := parseOptionalStrictTime(*request.TargetAt, "targetAt")
+		if err != nil {
+			return nil, err
+		}
+		pursuit.TargetAt = targetAt
+	}
+	if request.ReviewCadenceDays != nil {
+		if *request.ReviewCadenceDays < 0 || *request.ReviewCadenceDays > 3650 {
+			return nil, fmt.Errorf("reviewCadenceDays must be between 0 and 3650")
+		}
+		pursuit.ReviewCadenceDays = *request.ReviewCadenceDays
+		if request.NextReviewAt == nil && *request.ReviewCadenceDays > 0 {
+			next := time.Now().UTC().AddDate(0, 0, *request.ReviewCadenceDays)
+			pursuit.NextReviewAt = &next
+		}
 	}
 	if request.Archived != nil {
 		pursuit.Archived = *request.Archived
@@ -1153,8 +1279,18 @@ func (s *service) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
 // builds a pursuit-scoped plan. It prevents an unaccepted candidate or closed
 // pursuit from receiving task work through APIs that do not create workflows.
 func (s *service) ValidatePursuitTaskAttempt(pursuitID uuid.UUID, ownerIdentity string) error {
-	_, err := s.taskAttemptPursuit(pursuitID, ownerIdentity)
-	return err
+	pursuit, err := s.taskAttemptPursuit(pursuitID, ownerIdentity)
+	if err != nil {
+		return err
+	}
+	detail, err := s.DetailForOwner(ownerIdentity, pursuitID)
+	if err != nil {
+		return err
+	}
+	if reason := s.newWorkBlockerReasonForOwner(ownerIdentity, *pursuit, detail.Workflows); reason != "" {
+		return fmt.Errorf("pursuit cannot accept direct task work: %s", reason)
+	}
+	return nil
 }
 
 func (s *service) taskAttemptPursuit(pursuitID uuid.UUID, ownerIdentity string) (*models.Pursuit, error) {
@@ -1366,6 +1502,9 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	resolvedDecisions := resolvedPursuitDecisions(activity)
 	sourceBlockers := sourceRetractionBlockers(links, extractions)
 	qualityGateBlockers := qualityGateBlockers(qualityGates)
+	contractBlockers := pursuitGoalContractBlockers(*pursuit)
+	resourceUsage := s.resourceUsageForPursuit(ownerIdentity, *pursuit)
+	contractBlockers = append(contractBlockers, pursuitResourceBlockers(*pursuit, resourceUsage)...)
 
 	detail := &PursuitDetail{
 		Pursuit:              *pursuit,
@@ -1393,6 +1532,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 		RuntimeAttempts:      runtimeAttempts,
 		SourceItems:          compactSourceItems(sourceItems),
 		SourceExtractions:    extractions,
+		ResourceUsage:        resourceUsage,
 	}
 	detail.ApprovalItems = approvalWorkflows(workflows)
 	detail.DecisionQueue = decisionQueue(*pursuit, workflows, proposals, decisions, runtimeAttempts, resolvedDecisions)
@@ -1400,9 +1540,10 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	detail.Blockers = append(blockers(workflows, openLoops), runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedDecisions)...)
 	detail.Blockers = append(detail.Blockers, sourceBlockers...)
 	detail.Blockers = append(detail.Blockers, qualityGateBlockers...)
-	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions, len(qualityGateBlockers) > 0)
+	detail.Blockers = append(detail.Blockers, contractBlockers...)
+	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions, len(qualityGateBlockers) > 0, len(contractBlockers) > 0)
 	detail.ActionQueues = actionQueues(*pursuit, detail.NextActions, detail.Blockers)
-	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts, activity, sourceBlockers, qualityGateBlockers)
+	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts, activity, sourceBlockers, qualityGateBlockers, contractBlockers)
 	detail.Summary.QualityGatesNeedingReview = len(qualityGateBlockers)
 	if len(detail.Timeline) > 0 {
 		detail.Summary.WhatChanged = timelineChangeSummary(detail.Timeline[0])
@@ -1843,7 +1984,9 @@ func (s *service) Link(id uuid.UUID, request LinkRequest) (*models.PursuitLink, 
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.recordActivity(id, "pursuit.linked", fmt.Sprintf("Linked %s %s", linkType, linkID), firstNonEmpty(request.Actor, "system"), linkType, linkID, request.SourceURI)
+	if link.ID != uuid.Nil && created != nil && created.ID == link.ID {
+		_, _ = s.recordActivity(id, "pursuit.linked", fmt.Sprintf("Linked %s %s", linkType, linkID), firstNonEmpty(request.Actor, "system"), linkType, linkID, request.SourceURI)
+	}
 	return created, nil
 }
 
@@ -2140,6 +2283,11 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	if s.workflowService == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
+	normalizedMandateID, err := parseOptionalStandingMandateID(request.MandateID)
+	if err != nil {
+		return nil, err
+	}
+	request.MandateID = pursuitMandateIDString(normalizedMandateID)
 	actor := firstNonEmpty(request.Actor, "operator")
 	matches, err := s.Match(MatchRequest{
 		OwnerIdentity: request.OwnerIdentity,
@@ -2156,6 +2304,9 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 	minimumScore := defaultAutoLinkMinimumScore
 	if len(matches) > 0 && matches[0].Score >= minimumScore && !pursuitClosed(matches[0].Pursuit) {
 		if isPursuitCandidate(matches[0].Pursuit) {
+			if !samePursuitMandate(matches[0].Pursuit.MandateID, normalizedMandateID) {
+				return nil, fmt.Errorf("matched pursuit candidate uses a different standing mandate; review the candidate before changing authority")
+			}
 			detail, err := s.DetailForOwner(request.OwnerIdentity, matches[0].Pursuit.ID)
 			if err != nil {
 				return nil, err
@@ -2211,6 +2362,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		Input:          request.Input,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
+		MandateID:      request.MandateID,
 		SourceType:     request.SourceType,
 		SourceID:       request.SourceID,
 		SourceURI:      request.SourceURI,
@@ -2239,6 +2391,7 @@ func (s *service) RouteIntake(request IntakeRequest) (*RoutedIntakeResult, error
 		WorkflowID:            record.Item.ID,
 		Input:                 request.Input,
 		ProjectKey:            request.ProjectKey,
+		MandateID:             request.MandateID,
 		SourceType:            request.SourceType,
 		SourceID:              request.SourceID,
 		SourceURI:             request.SourceURI,
@@ -2296,6 +2449,7 @@ func (s *service) createIntakeCandidate(request IntakeRequest, matches []MatchCa
 		Title:                 candidateTitle(sourceLabel, request.Input),
 		Description:           candidateDescription("intake", request.Input, request.SourceURI, sourceLabel),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		MandateID:             request.MandateID,
 		DesiredOutcome:        "Turn this intake into a verified, governed outcome.",
 		CurrentStateSummary:   "Created as a reviewable pursuit candidate before operational workflow work because no active pursuit matched the intake.",
 		Status:                StatusWaiting,
@@ -2509,6 +2663,7 @@ func (s *service) RouteWorkflowIntake(request workflow.IntakeRequest) (*workflow
 		Input:          request.Input,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
+		MandateID:      request.MandateID,
 		SourceType:     request.SourceType,
 		SourceID:       request.SourceID,
 		RawItemID:      request.RawItemID,
@@ -2602,6 +2757,7 @@ func (s *service) createWorkflowCandidate(request AutoLinkWorkflowRequest) (*Aut
 		Title:                 candidateTitle(sourceLabel, request.Input),
 		Description:           candidateDescription("workflow", request.Input, request.SourceURI, sourceLabel),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
+		MandateID:             request.MandateID,
 		DesiredOutcome:        "Turn this source-derived work into a verified, governed outcome.",
 		CurrentStateSummary:   "Created as a reviewable pursuit candidate after no existing pursuit matched the source-derived workflow.",
 		Status:                StatusWaiting,
@@ -2841,29 +2997,42 @@ func (s *service) IntakeForOwner(ownerIdentity string, id uuid.UUID, request Int
 	if isPursuitCandidate(*pursuit) {
 		return nil, fmt.Errorf("pursuit candidate must be accepted through the explicit plan action before adding operational work")
 	}
+	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity, request.OwnerIdentity)
+	coordinationPlan, err := s.resolvePursuitCoordinationPlan(effectiveOwner, pursuit.ID, request.CoordinationPlan)
+	if err != nil {
+		return nil, err
+	}
+	detail, err := s.DetailForOwner(ownerIdentity, id)
+	if err != nil {
+		return nil, err
+	}
+	if reason := s.newWorkBlockerReasonForOwner(ownerIdentity, *pursuit, detail.Workflows); reason != "" {
+		return nil, fmt.Errorf("pursuit cannot accept new operational work: %s", reason)
+	}
 	if strings.TrimSpace(request.Input) == "" {
 		return nil, fmt.Errorf("input is required")
 	}
 	if s.workflowService == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
-	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity, request.OwnerIdentity)
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
-		OwnerIdentity:  effectiveOwner,
-		Input:          request.Input,
-		ProjectKey:     firstNonEmpty(request.ProjectKey, pursuit.ProjectKey),
-		AutomationID:   request.AutomationID,
-		SourceType:     request.SourceType,
-		SourceID:       request.SourceID,
-		SourceURI:      request.SourceURI,
-		SourceLabel:    request.SourceLabel,
-		ContentType:    request.ContentType,
-		Sender:         request.Sender,
-		ReceivedAt:     request.ReceivedAt,
-		Trigger:        firstNonEmpty(request.Trigger, "pursuit_intake"),
-		Actor:          firstNonEmpty(request.Actor, "operator"),
-		RequiresReview: request.RequiresReview,
-		ReviewReason:   request.ReviewReason,
+		OwnerIdentity:    effectiveOwner,
+		Input:            request.Input,
+		ProjectKey:       firstNonEmpty(request.ProjectKey, pursuit.ProjectKey),
+		AutomationID:     request.AutomationID,
+		MandateID:        request.MandateID,
+		SourceType:       request.SourceType,
+		SourceID:         request.SourceID,
+		SourceURI:        request.SourceURI,
+		SourceLabel:      request.SourceLabel,
+		ContentType:      request.ContentType,
+		Sender:           request.Sender,
+		ReceivedAt:       request.ReceivedAt,
+		Trigger:          firstNonEmpty(request.Trigger, "pursuit_intake"),
+		Actor:            firstNonEmpty(request.Actor, "operator"),
+		RequiresReview:   request.RequiresReview,
+		ReviewReason:     request.ReviewReason,
+		CoordinationPlan: coordinationReferenceFromBinding(coordinationPlan),
 	})
 	if err != nil {
 		return nil, err
@@ -3030,6 +3199,11 @@ func (s *service) planForOwner(ownerIdentity string, id uuid.UUID, request PlanR
 	if acceptingCandidate && !isPursuitCandidate(*pursuit) {
 		return nil, fmt.Errorf("only an unaccepted pursuit candidate can use the candidate acceptance action")
 	}
+	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity)
+	coordinationPlan, err := s.resolvePursuitCoordinationPlan(effectiveOwner, pursuit.ID, request.CoordinationPlan)
+	if err != nil {
+		return nil, err
+	}
 	existing, err := s.DetailForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
@@ -3043,6 +3217,9 @@ func (s *service) planForOwner(ownerIdentity string, id uuid.UUID, request PlanR
 		}
 		return existing, nil
 	}
+	if reason := s.newWorkBlockerReasonForOwner(ownerIdentity, *pursuit, existing.Workflows); reason != "" {
+		return nil, fmt.Errorf("pursuit planning is paused: %s", reason)
+	}
 	if s.workflowService == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
 	}
@@ -3052,20 +3229,21 @@ func (s *service) planForOwner(ownerIdentity string, id uuid.UUID, request PlanR
 		reviewReason = firstNonEmpty(request.ReviewReason, "high-risk pursuit planning requires Robert approval before execution")
 	}
 	input := firstNonEmpty(request.Input, pursuitPlanInput(*pursuit))
-	effectiveOwner := firstNonEmpty(pursuit.OwnerIdentity, ownerIdentity)
 	record, err := s.workflowService.Intake(workflow.IntakeRequest{
-		OwnerIdentity:  effectiveOwner,
-		Input:          input,
-		ProjectKey:     pursuit.ProjectKey,
-		SourceType:     LinkPursuit,
-		SourceID:       pursuit.ID.String(),
-		SourceURI:      "pursuit://" + pursuit.ID.String(),
-		SourceLabel:    pursuit.Title,
-		ContentType:    "pursuit_plan",
-		Trigger:        "pursuit_planning",
-		Actor:          firstNonEmpty(request.Actor, "pursuit-engine"),
-		RequiresReview: requiresReview,
-		ReviewReason:   reviewReason,
+		OwnerIdentity:    effectiveOwner,
+		Input:            input,
+		ProjectKey:       pursuit.ProjectKey,
+		MandateID:        pursuitMandateIDString(pursuit.MandateID),
+		SourceType:       LinkPursuit,
+		SourceID:         pursuit.ID.String(),
+		SourceURI:        "pursuit://" + pursuit.ID.String(),
+		SourceLabel:      pursuit.Title,
+		ContentType:      "pursuit_plan",
+		Trigger:          "pursuit_planning",
+		Actor:            firstNonEmpty(request.Actor, "pursuit-engine"),
+		RequiresReview:   requiresReview,
+		ReviewReason:     reviewReason,
+		CoordinationPlan: coordinationReferenceFromBinding(coordinationPlan),
 	})
 	if err != nil {
 		return nil, err
@@ -3234,6 +3412,9 @@ func (s *service) createNextActionWorkflowForOwner(ownerIdentity string, id uuid
 	}
 	if !pursuitNeedsPlanning(detail.Pursuit, len(detail.Workflows)) {
 		return nil
+	}
+	if reason := s.newWorkBlockerReasonForOwner(ownerIdentity, detail.Pursuit, detail.Workflows); reason != "" {
+		return fmt.Errorf("approved pursuit action cannot create new work: %s", reason)
 	}
 	actor := firstNonEmpty(request.Actor, "Robert")
 	sourceURI := firstNonEmpty(strings.TrimSpace(request.EvidenceURI), "pursuit://"+id.String())
@@ -3415,7 +3596,8 @@ func (s *service) ReviewForOwner(ownerIdentity string, id uuid.UUID, request Rev
 	switch action {
 	case "complete", "reviewed", "done":
 		if nextReviewAt == nil {
-			next := now.Add(7 * 24 * time.Hour)
+			days := clampInt(pursuit.ReviewCadenceDays, 1, 365, 7)
+			next := now.Add(time.Duration(days) * 24 * time.Hour)
 			nextReviewAt = &next
 		}
 		pursuit.NextReviewAt = nextReviewAt
@@ -3594,14 +3776,22 @@ func optionalTime(value time.Time) *time.Time {
 }
 
 func (s *service) recordActivity(id uuid.UUID, eventType, message, actor, sourceType, sourceID, sourceURI string) (*models.PursuitActivity, error) {
+	return s.recordActivityIdempotent(id, eventType, message, actor, sourceType, sourceID, sourceURI, "")
+}
+
+func (s *service) recordActivityIdempotent(
+	id uuid.UUID,
+	eventType, message, actor, sourceType, sourceID, sourceURI, idempotencyKey string,
+) (*models.PursuitActivity, error) {
 	activity, err := s.repo.CreateActivity(&models.PursuitActivity{
-		PursuitID:  id,
-		EventType:  eventType,
-		Message:    strings.TrimSpace(message),
-		Actor:      strings.TrimSpace(actor),
-		SourceType: strings.TrimSpace(sourceType),
-		SourceID:   strings.TrimSpace(sourceID),
-		SourceURI:  strings.TrimSpace(sourceURI),
+		PursuitID:      id,
+		EventType:      eventType,
+		Message:        strings.TrimSpace(message),
+		Actor:          strings.TrimSpace(actor),
+		SourceType:     strings.TrimSpace(sourceType),
+		SourceID:       strings.TrimSpace(sourceID),
+		SourceURI:      strings.TrimSpace(sourceURI),
+		IdempotencyKey: strings.TrimSpace(idempotencyKey),
 	})
 	if err != nil {
 		return activity, err
@@ -3806,7 +3996,7 @@ func sourceExtractionLinkRequiresEvidenceReview(relationship string) bool {
 		strings.Contains(relationship, "provenance")
 }
 
-func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, proposals []models.WorkflowProposal, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool, qualityGateNeedsReview bool) []PursuitAction {
+func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, proposals []models.WorkflowProposal, runtimeAttempts []models.AutomationLaunchEvent, resolvedDecisions map[string]bool, qualityGateNeedsReview bool, newWorkBlocked bool) []PursuitAction {
 	actions := []PursuitAction{}
 	if pursuitClosed(pursuit) {
 		return actions
@@ -3820,6 +4010,28 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 			Reason:           "auto-created pursuit candidates must be accepted before HAI treats them as planned work",
 			YesLabel:         "Accept and plan",
 			NoLabel:          "Archive candidate",
+		})
+	}
+	if !pursuitGoalContractReady(pursuit) {
+		actions = append(actions, PursuitAction{
+			Label:            "Define measurable success criteria and safe stop conditions",
+			Owner:            "Robert",
+			RiskLevel:        "low",
+			RequiresApproval: false,
+			Reason:           "the pursuit needs an explicit outcome contract before HAI can verify completion and control resource use",
+			YesLabel:         "Define contract",
+			NoLabel:          "Keep draft",
+		})
+	}
+	if reason := triggeredStopConditionReason(pursuit); reason != "" {
+		actions = append(actions, PursuitAction{
+			Label:            "Review the triggered stop condition before continuing",
+			Owner:            "Robert",
+			RiskLevel:        firstNonEmpty(pursuit.RiskLevel, "medium"),
+			RequiresApproval: true,
+			Reason:           reason,
+			YesLabel:         "Review stop",
+			NoLabel:          "Keep paused",
 		})
 	}
 	if isReviewDue(pursuit) {
@@ -3894,7 +4106,7 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 		})
 		break
 	}
-	if len(workflows) == 0 {
+	if len(workflows) == 0 && !newWorkBlocked {
 		actions = append(actions, PursuitAction{
 			Label:            "Create the first workflow item for this pursuit",
 			Owner:            "System",
@@ -3916,7 +4128,7 @@ func nextActions(pursuit models.Pursuit, workflows []models.WorkflowItem, loops 
 			NoLabel:          "Keep active",
 		})
 	}
-	if len(actions) == 0 && !qualityGateNeedsReview {
+	if len(actions) == 0 && !qualityGateNeedsReview && !newWorkBlocked {
 		if resolvedDecisions["pursuit:"+pursuit.ID.String()+":next-action"] {
 			return actions
 		}
@@ -4565,10 +4777,10 @@ func firstTime(values ...time.Time) time.Time {
 	return time.Time{}
 }
 
-func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, taskAttempts []models.PursuitTaskAttempt, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker, qualityGateBlockers []PursuitBlocker) PursuitSummary {
+func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []models.WorkflowItem, loops []models.WorkflowOpenLoop, evidence []models.WorkflowEvidenceClaim, memories []models.ContextMemory, sourceItems []PursuitSourceItem, extractions []models.SourceExtraction, taskRuns []PursuitTaskRun, taskAttempts []models.PursuitTaskAttempt, verificationRuns []models.VerificationRun, runtimeAttempts []models.AutomationLaunchEvent, activity []models.PursuitActivity, sourceBlockers []PursuitBlocker, qualityGateBlockers []PursuitBlocker, contractBlockers []PursuitBlocker) PursuitSummary {
 	approvals := len(approvalWorkflows(workflows))
 	needsRobert := approvals
-	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers) + len(qualityGateBlockers)
+	blocked := len(blockers(workflows, loops)) + len(runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedPursuitDecisions(activity))) + len(sourceBlockers) + len(qualityGateBlockers) + len(contractBlockers)
 	linkedEvidence := len(evidence) + len(memories) + len(sourceItems) + activeSourceExtractions(extractions) + acceptedVerificationRuns(verificationRuns) + completedRuntimeAttempts(runtimeAttempts) + acceptedWorkflowCompletionEvidence(workflows) + acceptedAmbientOpportunityLinks(links)
 	completed := 0
 	for _, item := range workflows {
@@ -4597,6 +4809,9 @@ func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []m
 	if len(qualityGateBlockers) > 0 {
 		state = state + " A linked workflow quality gate needs review before this pursuit can move forward."
 	}
+	if len(contractBlockers) > 0 {
+		state = state + " The pursuit outcome contract has an active deadline, dependency, or stop-condition blocker."
+	}
 	reviewDue := isReviewDue(pursuit)
 	if reviewDue {
 		state = state + " Scheduled pursuit review is due."
@@ -4605,20 +4820,29 @@ func summarize(pursuit models.Pursuit, links []models.PursuitLink, workflows []m
 	if len(activity) > 0 {
 		changed = activity[0].Message
 	}
+	criteriaSatisfied, triggeredStops, openDependencies := pursuitGoalContractCounts(pursuit)
+	goalContractReady := pursuitGoalContractReady(pursuit)
+	targetOverdue := pursuitTargetOverdue(pursuit)
 	return PursuitSummary{
-		CurrentState:        state,
-		WhatChanged:         changed,
-		NeedsRobert:         needsRobert,
-		Blocked:             blocked,
-		OpenLoops:           len(loops),
-		TaskRuns:            len(taskRuns) + len(taskAttempts),
-		LinkedEvidence:      linkedEvidence,
-		VerificationRuns:    len(verificationRuns),
-		RuntimeAttempts:     len(runtimeAttempts),
-		Confidence:          pursuit.Confidence,
-		PlanningNeeded:      planningNeeded,
-		ReviewDue:           reviewDue,
-		CompletionCandidate: !pursuitClosed(pursuit) && !isPursuitCandidate(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0,
+		CurrentState:            state,
+		WhatChanged:             changed,
+		NeedsRobert:             needsRobert,
+		Blocked:                 blocked,
+		OpenLoops:               len(loops),
+		TaskRuns:                len(taskRuns) + len(taskAttempts),
+		LinkedEvidence:          linkedEvidence,
+		VerificationRuns:        len(verificationRuns),
+		RuntimeAttempts:         len(runtimeAttempts),
+		Confidence:              pursuit.Confidence,
+		PlanningNeeded:          planningNeeded,
+		ReviewDue:               reviewDue,
+		CompletionCandidate:     !pursuitClosed(pursuit) && !isPursuitCandidate(pursuit) && len(workflows) > 0 && completed == len(workflows) && approvals == 0 && blocked == 0 && pursuitGoalContractCompletionBlocker(pursuit) == "",
+		GoalContractReady:       goalContractReady,
+		CriteriaSatisfied:       criteriaSatisfied,
+		CriteriaTotal:           len(pursuit.SuccessCriteria),
+		TriggeredStopConditions: triggeredStops,
+		OpenDependencies:        openDependencies,
+		TargetOverdue:           targetOverdue,
 	}
 }
 
@@ -4798,6 +5022,16 @@ func (s *service) completionActiveBlockerReason(id uuid.UUID) (string, error) {
 }
 
 func (s *service) completionActiveBlockerReasonForOwner(ownerIdentity string, id uuid.UUID) (string, error) {
+	pursuit, err := s.repo.FindByID(id)
+	if err != nil {
+		return "", err
+	}
+	if !pursuitVisibleTo(*pursuit, ownerIdentity) {
+		return "", fmt.Errorf("pursuit not found")
+	}
+	if reason := pursuitGoalContractCompletionBlocker(*pursuit); reason != "" {
+		return reason, nil
+	}
 	links, err := s.repo.FindLinks(id)
 	if err != nil {
 		return "", err
@@ -5233,6 +5467,29 @@ func acceptedCandidateSource(source string) string {
 		return "pursuit_intake"
 	}
 	return source + "_accepted"
+}
+
+func parseOptionalStandingMandateID(raw string) (*uuid.UUID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil || id == uuid.Nil {
+		return nil, fmt.Errorf("standing mandate id must be a UUID")
+	}
+	return &id, nil
+}
+
+func pursuitMandateIDString(value *uuid.UUID) string {
+	if value == nil || *value == uuid.Nil {
+		return ""
+	}
+	return value.String()
+}
+
+func samePursuitMandate(left, right *uuid.UUID) bool {
+	return pursuitMandateIDString(left) == pursuitMandateIDString(right)
 }
 
 func isVAReady(item PursuitListItem) bool {
@@ -5800,11 +6057,168 @@ func isReviewDue(pursuit models.Pursuit) bool {
 	return pursuit.NextReviewAt != nil && !pursuit.NextReviewAt.After(time.Now().UTC())
 }
 
+func pursuitGoalContractReady(pursuit models.Pursuit) bool {
+	return len(pursuit.SuccessCriteria) > 0 && len(pursuit.StopConditions) > 0
+}
+
+func pursuitGoalContractCounts(pursuit models.Pursuit) (criteriaSatisfied, triggeredStops, openDependencies int) {
+	for _, criterion := range pursuit.SuccessCriteria {
+		if oneOf(strings.ToLower(strings.TrimSpace(criterion.Status)), CriterionSatisfied, CriterionWaived) {
+			criteriaSatisfied++
+		}
+	}
+	for _, condition := range pursuit.StopConditions {
+		if strings.EqualFold(strings.TrimSpace(condition.Status), StopTriggered) {
+			triggeredStops++
+		}
+	}
+	for _, dependency := range pursuit.Dependencies {
+		if !oneOf(strings.ToLower(strings.TrimSpace(dependency.Status)), DependencySatisfied, DependencyWaived) {
+			openDependencies++
+		}
+	}
+	return criteriaSatisfied, triggeredStops, openDependencies
+}
+
+func pursuitTargetOverdue(pursuit models.Pursuit) bool {
+	return pursuit.TargetAt != nil && pursuit.TargetAt.Before(time.Now().UTC()) && !pursuitClosed(pursuit)
+}
+
+func triggeredStopConditionReason(pursuit models.Pursuit) string {
+	for _, condition := range pursuit.StopConditions {
+		if strings.EqualFold(strings.TrimSpace(condition.Status), StopTriggered) {
+			return firstNonEmpty(condition.Reason, condition.Description, "a pursuit stop condition is active")
+		}
+	}
+	return ""
+}
+
+func pursuitGoalContractCompletionBlocker(pursuit models.Pursuit) string {
+	if len(pursuit.SuccessCriteria) == 0 {
+		return "no measurable success criteria are defined"
+	}
+	if len(pursuit.StopConditions) == 0 {
+		return "no resource stop conditions are defined"
+	}
+	pendingCriteria := 0
+	for _, criterion := range pursuit.SuccessCriteria {
+		if !oneOf(strings.ToLower(strings.TrimSpace(criterion.Status)), CriterionSatisfied, CriterionWaived) && !implicitSuccessCriterion(criterion) {
+			pendingCriteria++
+		}
+	}
+	if pendingCriteria > 0 {
+		return fmt.Sprintf("%d success criterion%s remain unresolved", pendingCriteria, pluralSuffix(pendingCriteria))
+	}
+	if reason := triggeredStopConditionReason(pursuit); reason != "" {
+		return "a stop condition is still triggered: " + reason
+	}
+	openDependencies := 0
+	for _, dependency := range pursuit.Dependencies {
+		if !oneOf(strings.ToLower(strings.TrimSpace(dependency.Status)), DependencySatisfied, DependencyWaived) {
+			openDependencies++
+		}
+	}
+	if openDependencies > 0 {
+		return fmt.Sprintf("%d dependenc%s remain unresolved", openDependencies, map[bool]string{true: "y", false: "ies"}[openDependencies == 1])
+	}
+	return ""
+}
+
+func implicitSuccessCriterion(criterion models.PursuitSuccessCriterion) bool {
+	return oneOf(strings.TrimSpace(criterion.ID), "default-success-criterion", "legacy-completion-definition")
+}
+
+func satisfyImplicitSuccessCriteria(pursuit *models.Pursuit) {
+	if pursuit == nil {
+		return
+	}
+	for index := range pursuit.SuccessCriteria {
+		criterion := &pursuit.SuccessCriteria[index]
+		if implicitSuccessCriterion(*criterion) && strings.EqualFold(strings.TrimSpace(criterion.Status), CriterionPending) {
+			criterion.Status = CriterionSatisfied
+			criterion.VerificationStatus = "human_approved"
+		}
+	}
+}
+
+func pursuitGoalContractBlockers(pursuit models.Pursuit) []PursuitBlocker {
+	if pursuitClosed(pursuit) {
+		return []PursuitBlocker{}
+	}
+	result := []PursuitBlocker{}
+	if !pursuitGoalContractReady(pursuit) {
+		result = append(result, PursuitBlocker{
+			Label:  "Outcome contract incomplete",
+			Reason: "Define at least one measurable success criterion and one stop condition.",
+			Owner:  "Robert",
+		})
+	}
+	for _, condition := range pursuit.StopConditions {
+		if strings.EqualFold(strings.TrimSpace(condition.Status), StopTriggered) {
+			result = append(result, PursuitBlocker{
+				Label:  firstNonEmpty(condition.Description, "Triggered stop condition"),
+				Reason: firstNonEmpty(condition.Reason, "HAI must pause resource use until Robert resolves this stop condition."),
+				Owner:  "Robert",
+			})
+		}
+	}
+	for _, dependency := range pursuit.Dependencies {
+		status := strings.ToLower(strings.TrimSpace(dependency.Status))
+		if oneOf(status, DependencySatisfied, DependencyWaived) {
+			continue
+		}
+		result = append(result, PursuitBlocker{
+			Label:      firstNonEmpty(dependency.Label, "Unresolved pursuit dependency"),
+			Reason:     firstNonEmpty(dependency.Reason, "This prerequisite must be satisfied or explicitly waived before completion."),
+			Owner:      firstNonEmpty(dependency.Owner, "External or Robert"),
+			FollowUpAt: dependency.DueAt,
+		})
+	}
+	if pursuitTargetOverdue(pursuit) {
+		result = append(result, PursuitBlocker{
+			Label:      "Target date passed",
+			Reason:     "Review the target, scope, dependencies, and next action before spending more effort.",
+			Owner:      "Robert",
+			FollowUpAt: pursuit.TargetAt,
+		})
+	}
+	return result
+}
+
 func pursuitNeedsPlanning(pursuit models.Pursuit, workflowCount int) bool {
 	if pursuit.Archived || strings.EqualFold(pursuit.Status, StatusCompleted) || strings.EqualFold(pursuit.CompletionState, CompletionVerified) {
 		return false
 	}
 	return workflowCount == 0
+}
+
+func pursuitNewWorkBlockerReason(pursuit models.Pursuit, workflows []models.WorkflowItem) string {
+	if reason := triggeredStopConditionReason(pursuit); reason != "" {
+		return "triggered stop condition: " + reason
+	}
+	if pursuitTargetOverdue(pursuit) {
+		return "the target date has passed; review or update the goal contract before spending more effort"
+	}
+	for _, dependency := range pursuit.Dependencies {
+		if strings.EqualFold(strings.TrimSpace(dependency.Status), DependencyBlocked) {
+			return "dependency is blocked: " + firstNonEmpty(dependency.Label, dependency.Reason, "unnamed dependency")
+		}
+	}
+	limit := pursuit.ResourceLimits.MaxParallelWorkflows
+	if limit <= 0 {
+		return ""
+	}
+	active := 0
+	for _, item := range workflows {
+		if item.Archived || strings.EqualFold(item.CurrentState, workflow.StateArchived) || strings.EqualFold(item.CurrentState, workflow.StateCompleted) {
+			continue
+		}
+		active++
+	}
+	if active >= limit {
+		return fmt.Sprintf("parallel workflow ceiling reached (%d of %d active)", active, limit)
+	}
+	return ""
 }
 
 func pursuitPlanInput(pursuit models.Pursuit) string {
@@ -5829,6 +6243,36 @@ func pursuitPlanInput(pursuit models.Pursuit) string {
 	}
 	if strings.TrimSpace(pursuit.CompletionDefinition) != "" {
 		parts = append(parts, "Completion definition: "+strings.TrimSpace(pursuit.CompletionDefinition))
+	}
+	if len(pursuit.SuccessCriteria) > 0 {
+		parts = append(parts, "Success criteria:")
+		for _, criterion := range pursuit.SuccessCriteria {
+			parts = append(parts, "- ["+firstNonEmpty(criterion.Status, CriterionPending)+"] "+criterion.Description)
+		}
+	}
+	if len(pursuit.StopConditions) > 0 {
+		parts = append(parts, "Stop conditions:")
+		for _, condition := range pursuit.StopConditions {
+			parts = append(parts, "- ["+firstNonEmpty(condition.Status, StopMonitoring)+"] "+condition.Description)
+		}
+	}
+	if len(pursuit.Dependencies) > 0 {
+		parts = append(parts, "Dependencies:")
+		for _, dependency := range pursuit.Dependencies {
+			parts = append(parts, "- ["+firstNonEmpty(dependency.Status, DependencyPending)+"] "+dependency.Label)
+		}
+	}
+	if pursuit.TargetAt != nil {
+		parts = append(parts, "Target date: "+pursuit.TargetAt.UTC().Format(time.RFC3339))
+	}
+	if pursuit.ResourceLimits.MaxEffortHours > 0 {
+		parts = append(parts, fmt.Sprintf("Maximum effort: %.1f hours", pursuit.ResourceLimits.MaxEffortHours))
+	}
+	if pursuit.ResourceLimits.MaxSpendEUR > 0 {
+		parts = append(parts, fmt.Sprintf("Maximum spend: EUR %.2f (still subject to global paid-use policy and approval)", pursuit.ResourceLimits.MaxSpendEUR))
+	}
+	if pursuit.ResourceLimits.MaxParallelWorkflows > 0 {
+		parts = append(parts, fmt.Sprintf("Maximum parallel workflows: %d", pursuit.ResourceLimits.MaxParallelWorkflows))
 	}
 	if strings.TrimSpace(pursuit.RiskLevel) != "" {
 		parts = append(parts, "Risk level: "+strings.TrimSpace(pursuit.RiskLevel))
@@ -6089,6 +6533,241 @@ func normalizeConfidence(value, fallback float64) float64 {
 		return 1
 	}
 	return value
+}
+
+func normalizePursuitGoalContract(
+	criteria []models.PursuitSuccessCriterion,
+	conditions []models.PursuitStopCondition,
+	dependencies []models.PursuitDependency,
+	limits models.PursuitResourceLimits,
+	targetAt string,
+	reviewCadenceDays int,
+	fallbackCriterion string,
+	allowDefaults bool,
+) ([]models.PursuitSuccessCriterion, []models.PursuitStopCondition, []models.PursuitDependency, models.PursuitResourceLimits, *time.Time, int, error) {
+	normalizedCriteria, err := normalizeSuccessCriteria(criteria, fallbackCriterion, allowDefaults)
+	if err != nil {
+		return nil, nil, nil, models.PursuitResourceLimits{}, nil, 0, err
+	}
+	normalizedConditions, err := normalizeStopConditions(conditions, allowDefaults)
+	if err != nil {
+		return nil, nil, nil, models.PursuitResourceLimits{}, nil, 0, err
+	}
+	normalizedDependencies, err := normalizeDependencies(dependencies)
+	if err != nil {
+		return nil, nil, nil, models.PursuitResourceLimits{}, nil, 0, err
+	}
+	normalizedLimits, err := normalizeResourceLimits(limits)
+	if err != nil {
+		return nil, nil, nil, models.PursuitResourceLimits{}, nil, 0, err
+	}
+	target, err := parseOptionalStrictTime(targetAt, "targetAt")
+	if err != nil {
+		return nil, nil, nil, models.PursuitResourceLimits{}, nil, 0, err
+	}
+	if reviewCadenceDays < 0 || reviewCadenceDays > 3650 {
+		return nil, nil, nil, models.PursuitResourceLimits{}, nil, 0, fmt.Errorf("reviewCadenceDays must be between 0 and 3650")
+	}
+	return normalizedCriteria, normalizedConditions, normalizedDependencies, normalizedLimits, target, reviewCadenceDays, nil
+}
+
+func normalizeSuccessCriteria(values []models.PursuitSuccessCriterion, fallback string, allowDefault bool) ([]models.PursuitSuccessCriterion, error) {
+	if len(values) == 0 && allowDefault {
+		values = []models.PursuitSuccessCriterion{{
+			ID:               "default-success-criterion",
+			Description:      firstNonEmpty(strings.TrimSpace(fallback), "The stated pursuit outcome is achieved and supported by accepted evidence."),
+			Status:           CriterionPending,
+			EvidenceRequired: true,
+		}}
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("at least one success criterion is required")
+	}
+	if len(values) > 25 {
+		return nil, fmt.Errorf("success criteria cannot contain more than 25 items")
+	}
+	result := make([]models.PursuitSuccessCriterion, 0, len(values))
+	seen := map[string]bool{}
+	for index, value := range values {
+		value.Description = strings.TrimSpace(value.Description)
+		if value.Description == "" {
+			return nil, fmt.Errorf("successCriteria[%d].description is required", index)
+		}
+		if len(value.Description) > 2000 {
+			return nil, fmt.Errorf("successCriteria[%d].description is too long", index)
+		}
+		value.ID = normalizeContractItemID(value.ID)
+		if seen[value.ID] {
+			return nil, fmt.Errorf("successCriteria contains duplicate id %q", value.ID)
+		}
+		seen[value.ID] = true
+		value.Status = strings.ToLower(strings.TrimSpace(value.Status))
+		if value.Status == "" {
+			value.Status = CriterionPending
+		}
+		if !oneOf(value.Status, CriterionPending, CriterionSatisfied, CriterionWaived) {
+			return nil, fmt.Errorf("successCriteria[%d].status must be pending, satisfied, or waived", index)
+		}
+		value.EvidenceURI = strings.TrimSpace(value.EvidenceURI)
+		value.VerificationStatus = strings.ToLower(strings.TrimSpace(value.VerificationStatus))
+		value.WaiverReason = strings.TrimSpace(value.WaiverReason)
+		if value.Status == CriterionSatisfied && value.EvidenceRequired && value.EvidenceURI == "" && !acceptedCriterionVerificationStatus(value.VerificationStatus) {
+			return nil, fmt.Errorf("successCriteria[%d] requires evidence or an accepted verification status before it can be satisfied", index)
+		}
+		if value.Status == CriterionWaived && (value.WaiverReason == "" || value.VerificationStatus != "human_approved") {
+			return nil, fmt.Errorf("successCriteria[%d] requires a waiver reason and human_approved verification status", index)
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func normalizeStopConditions(values []models.PursuitStopCondition, allowDefault bool) ([]models.PursuitStopCondition, error) {
+	if len(values) == 0 && allowDefault {
+		values = []models.PursuitStopCondition{{
+			ID:          "default-safe-stop",
+			Description: "Stop and request review when the pursuit no longer serves its outcome or exceeds an approved boundary.",
+			Status:      StopMonitoring,
+		}}
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("at least one stop condition is required")
+	}
+	if len(values) > 25 {
+		return nil, fmt.Errorf("stop conditions cannot contain more than 25 items")
+	}
+	result := make([]models.PursuitStopCondition, 0, len(values))
+	seen := map[string]bool{}
+	now := time.Now().UTC()
+	for index, value := range values {
+		value.Description = strings.TrimSpace(value.Description)
+		if value.Description == "" {
+			return nil, fmt.Errorf("stopConditions[%d].description is required", index)
+		}
+		value.ID = normalizeContractItemID(value.ID)
+		if seen[value.ID] {
+			return nil, fmt.Errorf("stopConditions contains duplicate id %q", value.ID)
+		}
+		seen[value.ID] = true
+		value.Status = strings.ToLower(strings.TrimSpace(value.Status))
+		if value.Status == "" {
+			value.Status = StopMonitoring
+		}
+		if !oneOf(value.Status, StopMonitoring, StopTriggered, StopResolved) {
+			return nil, fmt.Errorf("stopConditions[%d].status must be monitoring, triggered, or resolved", index)
+		}
+		value.Reason = strings.TrimSpace(value.Reason)
+		if value.Status == StopTriggered && value.TriggeredAt == nil {
+			triggeredAt := now
+			value.TriggeredAt = &triggeredAt
+		}
+		if value.Status == StopResolved {
+			if value.Reason == "" {
+				return nil, fmt.Errorf("stopConditions[%d] requires a resolution reason", index)
+			}
+			if value.ResolvedAt == nil {
+				resolvedAt := now
+				value.ResolvedAt = &resolvedAt
+			}
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func normalizeDependencies(values []models.PursuitDependency) ([]models.PursuitDependency, error) {
+	if len(values) > 50 {
+		return nil, fmt.Errorf("dependencies cannot contain more than 50 items")
+	}
+	result := make([]models.PursuitDependency, 0, len(values))
+	seen := map[string]bool{}
+	for index, value := range values {
+		value.Label = strings.TrimSpace(value.Label)
+		if value.Label == "" {
+			return nil, fmt.Errorf("dependencies[%d].label is required", index)
+		}
+		value.ID = normalizeContractItemID(value.ID)
+		if seen[value.ID] {
+			return nil, fmt.Errorf("dependencies contains duplicate id %q", value.ID)
+		}
+		seen[value.ID] = true
+		value.Status = strings.ToLower(strings.TrimSpace(value.Status))
+		if value.Status == "" {
+			value.Status = DependencyPending
+		}
+		if !oneOf(value.Status, DependencyPending, DependencySatisfied, DependencyBlocked, DependencyWaived) {
+			return nil, fmt.Errorf("dependencies[%d].status must be pending, satisfied, blocked, or waived", index)
+		}
+		value.Owner = strings.TrimSpace(value.Owner)
+		value.RelatedPursuitID = strings.TrimSpace(value.RelatedPursuitID)
+		value.EvidenceURI = strings.TrimSpace(value.EvidenceURI)
+		value.Reason = strings.TrimSpace(value.Reason)
+		if value.RelatedPursuitID != "" {
+			if _, err := uuid.Parse(value.RelatedPursuitID); err != nil {
+				return nil, fmt.Errorf("dependencies[%d].relatedPursuitId must be a UUID", index)
+			}
+		}
+		if value.Status == DependencySatisfied && value.EvidenceURI == "" && value.RelatedPursuitID == "" {
+			return nil, fmt.Errorf("dependencies[%d] needs evidence or a related pursuit before it can be satisfied", index)
+		}
+		if value.Status == DependencyWaived && value.Reason == "" {
+			return nil, fmt.Errorf("dependencies[%d] requires a waiver reason", index)
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func normalizeResourceLimits(value models.PursuitResourceLimits) (models.PursuitResourceLimits, error) {
+	value.Notes = strings.TrimSpace(value.Notes)
+	if math.IsNaN(value.MaxEffortHours) || math.IsInf(value.MaxEffortHours, 0) || value.MaxEffortHours < 0 || value.MaxEffortHours > 1_000_000 {
+		return models.PursuitResourceLimits{}, fmt.Errorf("resourceLimits.maxEffortHours must be between 0 and 1000000")
+	}
+	if math.IsNaN(value.MaxSpendEUR) || math.IsInf(value.MaxSpendEUR, 0) || value.MaxSpendEUR < 0 || value.MaxSpendEUR > 1_000_000_000 {
+		return models.PursuitResourceLimits{}, fmt.Errorf("resourceLimits.maxSpendEur must be between 0 and 1000000000")
+	}
+	if value.MaxParallelWorkflows < 0 || value.MaxParallelWorkflows > 1000 {
+		return models.PursuitResourceLimits{}, fmt.Errorf("resourceLimits.maxParallelWorkflows must be between 0 and 1000")
+	}
+	if len(value.Notes) > 4000 {
+		return models.PursuitResourceLimits{}, fmt.Errorf("resourceLimits.notes is too long")
+	}
+	return value, nil
+}
+
+func normalizeContractItemID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 120 {
+		return uuid.NewString()
+	}
+	return value
+}
+
+func acceptedCriterionVerificationStatus(status string) bool {
+	return oneOf(strings.ToLower(strings.TrimSpace(status)), "verified", "source_supported", "schema_validated", "test_passed", "human_approved")
+}
+
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func parseOptionalStrictTime(value, field string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			utc := parsed.UTC()
+			return &utc, nil
+		}
+	}
+	return nil, fmt.Errorf("%s must be an RFC3339 timestamp or YYYY-MM-DD date", field)
 }
 
 func parseOptionalTime(value string) *time.Time {

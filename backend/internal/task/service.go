@@ -3,6 +3,7 @@ package task
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,39 +14,66 @@ import (
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomygate"
 	"automation-hub-backend/internal/braincatalog"
+	"automation-hub-backend/internal/executionauth"
+	"automation-hub-backend/internal/frameworkevidence"
 	"automation-hub-backend/internal/frameworkregistry"
+	"automation-hub-backend/internal/lifeontology"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/plangraph"
+	"automation-hub-backend/internal/resourceplanner"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/sourceevidence"
 	"automation-hub-backend/internal/verification"
 
 	"github.com/google/uuid"
 )
 
-var ErrTaskLLMRouterNotConfigured = errors.New("task LLM router is not configured")
+var (
+	ErrTaskLLMRouterNotConfigured = errors.New("task LLM router is not configured")
+	ErrInvalidStandingMandateID   = errors.New("invalid standing mandate id")
+)
 
 type IntakeRequest struct {
 	OwnerIdentity string `json:"-"`
-	PursuitID     string `json:"pursuitId,omitempty"`
+	// IdempotencyKey identifies one caller intent. Reusing it with the same
+	// request replays the durable result; reusing it for changed work fails.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+	PursuitID      string `json:"pursuitId,omitempty"`
 	// WorkflowID is internal worker context. It prevents the workflow-owned
 	// task run from being duplicated in the direct pursuit task-attempt ledger.
-	WorkflowID       string                                  `json:"-"`
-	Request          string                                  `json:"request"`
-	ProjectKey       string                                  `json:"projectKey,omitempty"`
-	AutomationID     string                                  `json:"automationId,omitempty"`
-	SuccessCriteria  []string                                `json:"successCriteria,omitempty"`
-	ExecuteAllowed   bool                                    `json:"executeAllowed,omitempty"`
-	HumanApproved    bool                                    `json:"humanApproved,omitempty"`
-	ApprovalNote     string                                  `json:"approvalNote,omitempty"`
-	ApprovalSourceID string                                  `json:"-"`
-	ObservedNeeds    []frameworkregistry.NeedStateAssessment `json:"-"`
-	Capacity         *frameworkregistry.CapacitySnapshot     `json:"-"`
-	AvailableAgents  []frameworkregistry.AgentCard           `json:"-"`
-	CoordinationMode string                                  `json:"-"`
-	Deadline         *time.Time                              `json:"-"`
-	reviewItemID     string
+	WorkflowID string `json:"-"`
+	// CoordinationPlan is exact advisory provenance. Resolving it never grants
+	// execution authority; all normal approval and executionauth gates remain.
+	CoordinationPlan plangraph.AcceptedRevisionReference `json:"coordinationPlan,omitempty"`
+	Request          string                              `json:"request"`
+	ProjectKey       string                              `json:"projectKey,omitempty"`
+	AutomationID     string                              `json:"automationId,omitempty"`
+	// MandateID selects a bounded standing mandate for the eventual controlled
+	// effect. It never grants authority by itself; executionauth resolves it
+	// against the authenticated owner and exact action.
+	MandateID       string   `json:"mandateId,omitempty"`
+	SuccessCriteria []string `json:"successCriteria,omitempty"`
+	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
+	// ExecutionRequested preserves the caller's execution intent during a
+	// side-effect-free preview. It is internal context only and never grants
+	// execution authority.
+	ExecutionRequested    bool                                    `json:"-"`
+	HumanApproved         bool                                    `json:"humanApproved,omitempty"`
+	ApprovalNote          string                                  `json:"approvalNote,omitempty"`
+	ApprovalSourceID      string                                  `json:"-"`
+	ApprovalBindingDigest string                                  `json:"-"`
+	ApprovalActorIdentity string                                  `json:"-"`
+	ApprovalApprovedAt    *time.Time                              `json:"-"`
+	ObservedNeeds         []frameworkregistry.NeedStateAssessment `json:"-"`
+	Capacity              *frameworkregistry.CapacitySnapshot     `json:"-"`
+	AvailableAgents       []frameworkregistry.AgentCard           `json:"-"`
+	CoordinationMode      string                                  `json:"-"`
+	Deadline              *time.Time                              `json:"-"`
+	operationID           string
+	reviewItemID          string
 }
 
 type IntakeAnalysis struct {
@@ -81,22 +109,29 @@ type OperatingContextRecorder interface {
 }
 
 type ContextPlan struct {
-	Strategy                 []string                  `json:"strategy"`
-	UsedContext              []memory.RankedMemory     `json:"usedContext"`
-	SourceContext            []source.RankedExtraction `json:"sourceContext"`
-	SourceRefresh            *source.ScheduledSyncRun  `json:"sourceRefresh,omitempty"`
-	SourceRefreshExplanation string                    `json:"sourceRefreshExplanation,omitempty"`
-	Explanation              string                    `json:"explanation"`
+	Strategy                 []string                         `json:"strategy"`
+	UsedContext              []memory.RankedMemory            `json:"usedContext"`
+	SourceContext            []source.RankedExtraction        `json:"sourceContext"`
+	LifeContext              []lifeontology.ContextSuggestion `json:"lifeContext,omitempty"`
+	SourceRefresh            *source.ScheduledSyncRun         `json:"sourceRefresh,omitempty"`
+	SourceRefreshExplanation string                           `json:"sourceRefreshExplanation,omitempty"`
+	LifeContextExplanation   string                           `json:"lifeContextExplanation,omitempty"`
+	Explanation              string                           `json:"explanation"`
 }
 
 type ValidationPlan struct {
-	Steps                         []string `json:"steps"`
-	SuccessCriteria               []string `json:"successCriteria"`
-	FrameworkEvidenceRequirements []string `json:"frameworkEvidenceRequirements"`
-	FrameworkCompletionCriteria   []string `json:"frameworkCompletionCriteria"`
-	FrameworkAssuranceCriteria    []string `json:"frameworkAssuranceCriteria"`
-	FailurePolicy                 string   `json:"failurePolicy"`
-	CompletionGate                string   `json:"completionGate"`
+	Steps                          []string                    `json:"steps"`
+	SuccessCriteria                []string                    `json:"successCriteria"`
+	FrameworkEvidenceRequirements  []string                    `json:"frameworkEvidenceRequirements"`
+	FrameworkCompletionCriteria    []string                    `json:"frameworkCompletionCriteria"`
+	FrameworkAssuranceCriteria     []string                    `json:"frameworkAssuranceCriteria"`
+	FrameworkEvidenceContracts     []FrameworkEvidenceContract `json:"frameworkEvidenceContracts"`
+	DomainPackEvidenceRequirements []string                    `json:"domainPackEvidenceRequirements"`
+	DomainPackSuccessCriteria      []string                    `json:"domainPackSuccessCriteria"`
+	DomainPackValidators           []string                    `json:"domainPackValidators"`
+	DomainPackMethodEvaluation     []string                    `json:"domainPackMethodEvaluation"`
+	FailurePolicy                  string                      `json:"failurePolicy"`
+	CompletionGate                 string                      `json:"completionGate"`
 }
 
 type ExecutionPlan struct {
@@ -106,12 +141,17 @@ type ExecutionPlan struct {
 	AuditEvents                    []string                                   `json:"auditEvents"`
 	CapacityConstraints            []string                                   `json:"capacityConstraints"`
 	AgentCards                     []frameworkregistry.AgentCard              `json:"agentCards"`
+	AgentTeams                     []frameworkregistry.AgentTeamContract      `json:"agentTeams,omitempty"`
+	AgentTeamAuthorityBoundary     string                                     `json:"agentTeamAuthorityBoundary,omitempty"`
 	Delegations                    []frameworkregistry.DelegationContract     `json:"delegations"`
 	Communication                  frameworkregistry.CommunicationContract    `json:"communication"`
 	Coordination                   frameworkregistry.CoordinationPlan         `json:"coordination"`
 	ActionAutonomy                 []frameworkregistry.ActionAutonomyDecision `json:"actionAutonomy"`
 	StopConditions                 []string                                   `json:"stopConditions"`
 	OutcomeMonitoring              []string                                   `json:"outcomeMonitoring"`
+	DomainPackLocalOnly            bool                                       `json:"domainPackLocalOnly"`
+	DomainPackAuthorityBoundary    string                                     `json:"domainPackAuthorityBoundary,omitempty"`
+	AdvisoryAgentCapabilities      []string                                   `json:"advisoryAgentCapabilities"`
 }
 
 type ToolRouteDecision struct {
@@ -136,6 +176,8 @@ type RiskAssessment struct {
 	Level                     string   `json:"level"`
 	ApprovalRequired          bool     `json:"approvalRequired"`
 	ApprovalGranted           bool     `json:"approvalGranted"`
+	ApprovalSourceID          string   `json:"approvalSourceId,omitempty"`
+	ApprovalActorIdentity     string   `json:"approvalActorIdentity,omitempty"`
 	ActionResolution          string   `json:"actionResolution"`
 	MissingParameters         []string `json:"missingParameters,omitempty"`
 	FrameworkAutonomyCeiling  int      `json:"frameworkAutonomyCeiling,omitempty"`
@@ -176,13 +218,17 @@ type ReviewQueueItem struct {
 }
 
 type ApprovalDecision struct {
-	Approved bool   `json:"approved"`
-	Note     string `json:"note,omitempty"`
+	Approved     bool   `json:"approved"`
+	Note         string `json:"note,omitempty"`
+	Confirmation string `json:"confirmation,omitempty"`
 }
 
+const TaskOperationRetryConfirmation = "RETRY UNCERTAIN OPERATION"
+
 type ReviewResolutionResult struct {
-	Item ReviewQueueItem `json:"item"`
-	Plan *CompletionPlan `json:"plan,omitempty"`
+	Item              ReviewQueueItem `json:"item"`
+	Plan              *CompletionPlan `json:"plan,omitempty"`
+	LearningOutcomeID string          `json:"learningOutcomeId,omitempty"`
 }
 
 type TaskEvent struct {
@@ -201,14 +247,18 @@ type ExecutedAction struct {
 }
 
 type ToolExecutionRequest struct {
-	OwnerIdentity    string `json:"-"`
-	AutomationID     string `json:"automationId"`
-	Task             string `json:"task"`
-	OriginalRequest  string `json:"-"`
-	ProjectKey       string `json:"projectKey,omitempty"`
-	WorkflowID       string `json:"-"`
-	ApprovalSourceID string `json:"-"`
-	approvalDecision *automation.TaskApprovalDecisionRequest
+	OwnerIdentity         string                           `json:"-"`
+	TaskID                string                           `json:"-"`
+	AutomationID          string                           `json:"automationId"`
+	Task                  string                           `json:"task"`
+	OriginalRequest       string                           `json:"-"`
+	ProjectKey            string                           `json:"projectKey,omitempty"`
+	MandateID             string                           `json:"-"`
+	WorkflowID            string                           `json:"-"`
+	ApprovalSourceID      string                           `json:"-"`
+	ApprovalBindingDigest string                           `json:"-"`
+	Governance            executionauth.GovernanceEvidence `json:"-"`
+	approvalDecision      *automation.TaskApprovalDecisionRequest
 }
 
 type ToolExecutionResult struct {
@@ -250,6 +300,14 @@ type PursuitTaskGuard interface {
 	ValidatePursuitTaskAttempt(pursuitID uuid.UUID, ownerIdentity string) error
 }
 
+// PursuitResourceReservationManager is the atomic accounting boundary used
+// only for pursuit-scoped execution attempts. Planning and preview never hold
+// capacity, and every retry receives its own independently checked hold.
+type PursuitResourceReservationManager interface {
+	ReservePursuitTaskResources(pursuitID uuid.UUID, ownerIdentity, operationID string, effortMinutes, costMicros int64) error
+	SettlePursuitTaskResources(pursuitID uuid.UUID, ownerIdentity, operationID, disposition string, actualEffortMinutes, actualCostMicros int64) error
+}
+
 type ExecutionResult struct {
 	StartedAt          time.Time                  `json:"startedAt"`
 	CompletedAt        time.Time                  `json:"completedAt"`
@@ -274,32 +332,55 @@ type MemoryUpdateProposal struct {
 }
 
 type CompletionPlan struct {
-	ID                    string                               `json:"id"`
-	OwnerIdentity         string                               `json:"-"`
-	PursuitID             string                               `json:"pursuitId,omitempty"`
-	CreatedAt             time.Time                            `json:"createdAt"`
-	Request               string                               `json:"request"`
-	ProjectKey            string                               `json:"projectKey,omitempty"`
-	RealGoal              string                               `json:"realGoal"`
-	Intake                IntakeAnalysis                       `json:"intake"`
-	ContextPlan           ContextPlan                          `json:"contextPlan"`
-	MinimalityDecision    MinimalityDecision                   `json:"minimalityDecision"`
-	FrameworkDecision     *frameworkregistry.SelectionDecision `json:"frameworkDecision,omitempty"`
-	ModelDecision         llm.RouteDecision                    `json:"modelDecision"`
-	ToolDecision          ToolRouteDecision                    `json:"toolDecision"`
-	Steps                 []TaskStep                           `json:"steps"`
-	RiskAssessment        RiskAssessment                       `json:"riskAssessment"`
-	ValidationPlan        ValidationPlan                       `json:"validationPlan"`
-	ValidationResult      ValidationResult                     `json:"validationResult"`
-	ExecutionPlan         ExecutionPlan                        `json:"executionPlan"`
-	ExecutionResult       *ExecutionResult                     `json:"executionResult,omitempty"`
-	RetryPolicy           RetryPolicy                          `json:"retryPolicy"`
-	ReviewQueueItem       *ReviewQueueItem                     `json:"reviewQueueItem,omitempty"`
-	MemoryUpdateProposals []MemoryUpdateProposal               `json:"memoryUpdateProposals"`
-	LessonsLearned        []MemoryUpdateProposal               `json:"lessonsLearned"`
-	StoredMemoryIDs       []string                             `json:"storedMemoryIds"`
-	Events                []TaskEvent                          `json:"events"`
-	CompletionStatus      string                               `json:"completionStatus"`
+	ID                         string                                    `json:"id"`
+	OperationID                string                                    `json:"operationId"`
+	IdempotencyKey             string                                    `json:"idempotencyKey"`
+	OwnerIdentity              string                                    `json:"-"`
+	ReviewItemID               string                                    `json:"reviewItemId,omitempty"`
+	PursuitID                  string                                    `json:"pursuitId,omitempty"`
+	CoordinationPlan           *plangraph.AcceptedRevisionBinding        `json:"coordinationPlan,omitempty"`
+	CoordinationDraft          *plangraph.Plan                           `json:"coordinationDraft,omitempty"`
+	CreatedAt                  time.Time                                 `json:"createdAt"`
+	Request                    string                                    `json:"request"`
+	ProjectKey                 string                                    `json:"projectKey,omitempty"`
+	RealGoal                   string                                    `json:"realGoal"`
+	Intake                     IntakeAnalysis                            `json:"intake"`
+	ContextPlan                ContextPlan                               `json:"contextPlan"`
+	MinimalityDecision         MinimalityDecision                        `json:"minimalityDecision"`
+	FrameworkDecision          *frameworkregistry.SelectionDecision      `json:"frameworkDecision,omitempty"`
+	DomainPackDecision         *DomainPackDecision                       `json:"domainPackDecision,omitempty"`
+	CalendarCapacity           CalendarCapacityContext                   `json:"calendarCapacity"`
+	ResourceDecision           *resourceplanner.Decision                 `json:"resourceDecision,omitempty"`
+	ModelDecision              llm.RouteDecision                         `json:"modelDecision"`
+	ToolDecision               ToolRouteDecision                         `json:"toolDecision"`
+	Steps                      []TaskStep                                `json:"steps"`
+	RiskAssessment             RiskAssessment                            `json:"riskAssessment"`
+	ValidationPlan             ValidationPlan                            `json:"validationPlan"`
+	FrameworkEvidencePreflight *FrameworkEvidencePreflightResult         `json:"frameworkEvidencePreflight,omitempty"`
+	ValidationResult           ValidationResult                          `json:"validationResult"`
+	ExecutionPlan              ExecutionPlan                             `json:"executionPlan"`
+	ExecutionResult            *ExecutionResult                          `json:"executionResult,omitempty"`
+	RetryPolicy                RetryPolicy                               `json:"retryPolicy"`
+	ReviewQueueItem            *ReviewQueueItem                          `json:"reviewQueueItem,omitempty"`
+	MemoryUpdateProposals      []MemoryUpdateProposal                    `json:"memoryUpdateProposals"`
+	LessonsLearned             []MemoryUpdateProposal                    `json:"lessonsLearned"`
+	StoredMemoryIDs            []string                                  `json:"storedMemoryIds"`
+	LifeGraphProjection        *lifeontology.OperationalProjectionResult `json:"lifeGraphProjection,omitempty"`
+	LifeGraphProjectionError   string                                    `json:"lifeGraphProjectionError,omitempty"`
+	Events                     []TaskEvent                               `json:"events"`
+	CompletionStatus           string                                    `json:"completionStatus"`
+}
+
+type CalendarCapacityContext struct {
+	Status        string                        `json:"status"`
+	WindowStart   time.Time                     `json:"windowStart"`
+	WindowEnd     time.Time                     `json:"windowEnd"`
+	BusyIntervals []source.CalendarBusyInterval `json:"busyIntervals"`
+	Explanation   string                        `json:"explanation"`
+}
+
+type calendarCapacityProvider interface {
+	CalendarBusyIntervalsForOwner(ownerIdentity string, start, end time.Time) ([]source.CalendarBusyInterval, error)
 }
 
 type Service interface {
@@ -339,19 +420,29 @@ type PreviewService interface {
 }
 
 type service struct {
-	memoryService       memory.Service
-	sourceService       source.Service
-	verificationService verification.Service
-	llmService          *llm.Service
-	toolExecutor        ToolExecutor
-	pursuitAttempts     PursuitAttemptRecorder
-	frameworkSelector   FrameworkSelector
-	stateRepository     TaskStateRepository
-	operatingContext    OperatingContextProvider
-	agentContext        AgentContextProvider
-	mu                  sync.Mutex
-	logs                []CompletionPlan
-	reviewQueue         []ReviewQueueItem
+	memoryService         memory.Service
+	sourceService         source.Service
+	verificationService   verification.Service
+	llmService            *llm.Service
+	toolExecutor          ToolExecutor
+	pursuitAttempts       PursuitAttemptRecorder
+	frameworkSelector     FrameworkSelector
+	frameworkEvidence     frameworkevidence.Repository
+	sourceEvidence        sourceevidence.Repository
+	domainPackPlanner     DomainPackPlanner
+	resourcePlanner       ResourcePlanner
+	lifeOntology          LifeOntologyContextProvider
+	lifeOntologyProjector LifeOntologyProjectionRecorder
+	agentTeams            AgentTeamContextProvider
+	stateRepository       TaskStateRepository
+	operatingContext      OperatingContextProvider
+	agentContext          AgentContextProvider
+	controlledLearning    ControlledLearningRecorder
+	acceptedPlanResolver  plangraph.AcceptedRevisionResolver
+	coordinationProjector CoordinationPlanProjector
+	mu                    sync.Mutex
+	logs                  []CompletionPlan
+	reviewQueue           []ReviewQueueItem
 }
 
 func NewService(memoryService memory.Service, llmService *llm.Service, sourceServices ...source.Service) Service {
@@ -364,6 +455,8 @@ func NewService(memoryService memory.Service, llmService *llm.Service, sourceSer
 		sourceService:     sourceService,
 		llmService:        llmService,
 		frameworkSelector: defaultFrameworkSelector(),
+		frameworkEvidence: frameworkevidence.NewMemoryRepository(),
+		domainPackPlanner: defaultDomainPackPlanner(),
 		stateRepository:   NewMemoryTaskStateRepository(),
 		logs:              []CompletionPlan{},
 		reviewQueue:       []ReviewQueueItem{},
@@ -382,6 +475,8 @@ func NewServiceWithEngines(memoryService memory.Service, llmService *llm.Service
 		llmService:          llmService,
 		toolExecutor:        toolExecutor,
 		frameworkSelector:   defaultFrameworkSelector(),
+		frameworkEvidence:   frameworkevidence.NewMemoryRepository(),
+		domainPackPlanner:   defaultDomainPackPlanner(),
 		stateRepository:     NewMemoryTaskStateRepository(),
 		logs:                []CompletionPlan{},
 		reviewQueue:         []ReviewQueueItem{},
@@ -497,6 +592,8 @@ func newServiceWithDependencies(
 		toolExecutor:        toolExecutor,
 		pursuitAttempts:     pursuitAttempts,
 		frameworkSelector:   frameworkSelector,
+		frameworkEvidence:   frameworkevidence.NewMemoryRepository(),
+		domainPackPlanner:   defaultDomainPackPlanner(),
 		stateRepository:     stateRepository,
 		operatingContext:    operatingContext,
 		agentContext:        agentContext,
@@ -526,7 +623,15 @@ func DefaultService() (Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewServiceWithDependencies(
+	frameworkEvidenceRepository, err := frameworkevidence.DefaultRepository()
+	if err != nil {
+		return nil, err
+	}
+	sourceEvidenceRepository, err := sourceevidence.DefaultRepository()
+	if err != nil {
+		return nil, err
+	}
+	result := NewServiceWithDependencies(
 		memory.DefaultService(),
 		llmService,
 		source.DefaultService(),
@@ -535,11 +640,24 @@ func DefaultService() (Service, error) {
 		nil,
 		frameworkService,
 		stateRepository,
-	), nil
+	)
+	result, err = WithFrameworkEvidenceRepository(result, frameworkEvidenceRepository)
+	if err != nil {
+		return nil, err
+	}
+	return WithSourceEvidenceRepository(result, sourceEvidenceRepository)
 }
 
 func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
+	return s.withTaskOperation(request, "plan", s.planOperation)
+}
+
+func (s *service) planOperation(request IntakeRequest) (*CompletionPlan, error) {
 	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
+	binding, err := s.resolveCoordinationPlan(request)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
@@ -547,9 +665,16 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	plan.CoordinationPlan = binding
+	if binding == nil {
+		if err := s.projectCoordinationDraft(plan, request); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.persistPursuitAttempt(plan, request, "plan", true); err != nil {
 		return nil, err
 	}
+	s.projectDurableCompletionPlan(plan, request, "plan")
 	if err := s.addLog(*plan); err != nil {
 		return nil, err
 	}
@@ -561,17 +686,33 @@ func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
 // action. It is deliberately separate from Plan so an external protocol peer
 // can never turn a request into durable operational work by accident.
 func (s *service) Preview(request IntakeRequest) (*CompletionPlan, error) {
+	binding, err := s.resolveCoordinationPlan(request)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
 	request.ExecuteAllowed = false
 	request.HumanApproved = false
 	request.ApprovalNote = ""
-	return s.buildPlan(request, false, false)
+	plan, err := s.buildPlan(request, false, false)
+	if plan != nil {
+		plan.CoordinationPlan = binding
+	}
+	return plan, err
 }
 
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
+	return s.withTaskOperation(request, "run", s.runOperation)
+}
+
+func (s *service) runOperation(request IntakeRequest) (*CompletionPlan, error) {
 	request.ApprovalNote = sanitizeApprovalNote(request.ApprovalNote)
+	binding, err := s.resolveCoordinationPlan(request)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.validatePursuitAttemptRequest(request); err != nil {
 		return nil, err
 	}
@@ -582,6 +723,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		if err != nil {
 			return nil, err
 		}
+		plan.CoordinationPlan = binding
 		reason := safety.EmergencyStopReason()
 		started := time.Now().UTC()
 		plan.ExecutionResult = &ExecutionResult{
@@ -605,6 +747,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
 			return nil, err
 		}
+		s.projectDurableCompletionPlan(plan, request, "run")
 		if err := s.addLog(*plan); err != nil {
 			return nil, err
 		}
@@ -614,11 +757,33 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	plan.CoordinationPlan = binding
 	if err := s.persistPursuitAttempt(plan, request, "run", false); err != nil {
 		return nil, err
 	}
 	if plan.RiskAssessment.AllowedNow {
-		plan.ExecutionResult = s.executeAllowedSteps(plan, request)
+		// Revalidate immediately before any effect. A replan between intake and
+		// execution invalidates the prior accepted revision.
+		binding, err = s.resolveCoordinationPlan(request)
+		if err != nil {
+			return nil, err
+		}
+		plan.CoordinationPlan = binding
+		preflight := s.evaluateFrameworkEvidencePreflight(plan, request)
+		plan.FrameworkEvidencePreflight = &preflight
+		if preflight.Passed {
+			if frameworkEvidenceDurabilityRequired(plan) {
+				if persistErr := s.persistFrameworkEvidencePreflight(plan); persistErr != nil {
+					plan.ExecutionResult = frameworkEvidencePersistenceBlockedExecution(plan, persistErr)
+				} else {
+					plan.ExecutionResult = s.executeWithPursuitReservation(plan, request, 1)
+				}
+			} else {
+				plan.ExecutionResult = s.executeWithPursuitReservation(plan, request, 1)
+			}
+		} else {
+			plan.ExecutionResult = frameworkEvidenceBlockedExecution(plan, preflight)
+		}
 		setExecutionStepStatus(plan)
 	} else {
 		setTaskStepStatus(plan, "execute", "blocked")
@@ -627,6 +792,7 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 	setValidationStepStatus(plan)
 	plan.RetryPolicy.CurrentAttempt = 1
 	plan.RetryPolicy.RetryAvailable = !plan.ValidationResult.Passed && plan.RetryPolicy.CurrentAttempt < plan.RetryPolicy.MaxAttempts
+	s.recordGenerationValidation(plan)
 
 	if !plan.RiskAssessment.AllowedNow {
 		plan.CompletionStatus = "review_required"
@@ -669,12 +835,13 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 			plan.ModelDecision = retryDecision
 			plan.Events = append(plan.Events, event("routing", "fallback model route evaluated after validation failure"))
 		}
-		plan.ExecutionResult = s.executeAllowedSteps(plan, request)
+		plan.ExecutionResult = s.executeWithPursuitReservation(plan, request, 2)
 		setExecutionStepStatus(plan)
 		plan.RetryPolicy.CurrentAttempt = 2
 		plan.ValidationResult = validatePlan(plan, 2)
 		setValidationStepStatus(plan)
 		plan.RetryPolicy.RetryAvailable = !plan.ValidationResult.Passed && plan.RetryPolicy.CurrentAttempt < plan.RetryPolicy.MaxAttempts
+		s.recordGenerationValidation(plan)
 		if plan.ValidationResult.Passed {
 			plan.CompletionStatus = "validated"
 			plan.ValidationResult.Status = "passed"
@@ -697,10 +864,12 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 		}
 	}
 	setMemoryStepStatus(plan)
+	s.recordVerifiedLearningOutcome(plan)
 
 	if err := s.persistPursuitAttempt(plan, request, "run", true); err != nil {
 		return nil, err
 	}
+	s.projectDurableCompletionPlan(plan, request, "run")
 	if err := s.addLog(*plan); err != nil {
 		return nil, err
 	}
@@ -708,6 +877,13 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 }
 
 func (s *service) validatePursuitAttemptRequest(request IntakeRequest) error {
+	mandateID := strings.TrimSpace(request.MandateID)
+	if mandateID != "" {
+		parsedMandateID, err := uuid.Parse(mandateID)
+		if err != nil || parsedMandateID == uuid.Nil {
+			return ErrInvalidStandingMandateID
+		}
+	}
 	pursuitID := strings.TrimSpace(request.PursuitID)
 	if pursuitID == "" {
 		return nil
@@ -854,7 +1030,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 		NeedsWebAccess:            intake.NeedsWebAccess,
 		NeedsLocalExecution:       intake.NeedsLocalExecution,
 		NeedsApproval:             intake.NeedsApproval,
-		ExecuteRequested:          request.ExecuteAllowed,
+		ExecuteRequested:          request.ExecuteAllowed || request.ExecutionRequested,
 		HumanApproved:             request.HumanApproved,
 		ObservedNeeds:             request.ObservedNeeds,
 		Capacity:                  request.Capacity,
@@ -864,6 +1040,25 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	})
 	if err != nil {
 		return nil, fmt.Errorf("select planning frameworks: %w", err)
+	}
+	domainPackPlanner := s.domainPackPlanner
+	if domainPackPlanner == nil {
+		domainPackPlanner = defaultDomainPackPlanner()
+	}
+	domainPackDecision, err := domainPackPlanner.PlanDomainPacks(DomainPackPlanningRequest{
+		OwnerIdentity:       request.OwnerIdentity,
+		Text:                strings.TrimSpace(request.Request + "\n" + request.ProjectKey),
+		TaskType:            intake.TaskType,
+		RiskLevel:           intake.RiskLevel,
+		SuccessCriteria:     intake.SuccessCriteria,
+		ExecuteRequested:    request.ExecuteAllowed,
+		NeedsTools:          intake.NeedsTools,
+		NeedsDocuments:      intake.NeedsDocuments,
+		NeedsWebAccess:      intake.NeedsWebAccess,
+		NeedsLocalExecution: intake.NeedsLocalExecution,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("plan advisory domain packs: %w", err)
 	}
 	if recorder, ok := s.operatingContext.(OperatingContextRecorder); ok {
 		if err := recorder.RecordTaskDomains(
@@ -900,24 +1095,73 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	if err != nil {
 		return nil, err
 	}
+	lifeContext, lifeContextExplanation, err := s.retrieveLifeOntologyContext(
+		request,
+		frameworkDecision,
+		modelDecision,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("retrieve whole-life context: %w", err)
+	}
 
 	toolDecision := routeTools(intake, request.Request)
 	minimalityDecision := decideMinimality(request, intake)
 	risk := assessRisk(intake, request)
 	risk = applyFrameworkRisk(risk, frameworkDecision, intake, request)
+	risk = applyDomainPackRisk(risk, domainPackDecision)
+	selectedAgentTeams, agentTeamExplanation, err := s.selectTaskAgentTeams(request, risk)
+	if err != nil {
+		return nil, fmt.Errorf("select advisory agent-team context: %w", err)
+	}
 	steps := buildTaskSteps(intake, toolDecision, risk, minimalityDecision)
+	createdAt := time.Now().UTC()
+	calendarCapacity, err := s.calendarCapacityForTask(request.OwnerIdentity, createdAt, request.Deadline)
+	if err != nil {
+		return nil, fmt.Errorf("load calendar-backed capacity: %w", err)
+	}
+	resourcePlannerService := s.resourcePlanner
+	if resourcePlannerService == nil {
+		resourcePlannerService = defaultResourcePlanner()
+	}
+	paidAllowed, paidBudget, paidUsed := taskResourceBudget(s.llmService)
+	resourceDecision, err := resourcePlannerService.PlanResources(ResourcePlanningRequest{
+		OwnerIdentity:  request.OwnerIdentity,
+		WorkspaceID:    firstNonEmpty(request.ProjectKey, request.PursuitID),
+		PlanID:         planID,
+		CreatedAt:      createdAt,
+		Deadline:       request.Deadline,
+		Difficulty:     intake.Difficulty,
+		Steps:          steps,
+		Risk:           risk,
+		ModelDecision:  modelDecision,
+		SelectedTools:  toolDecision.SelectedTools,
+		Capacity:       request.Capacity,
+		CalendarBusy:   calendarCapacity.BusyIntervals,
+		PaidAllowed:    paidAllowed,
+		PaidBudgetEUR:  paidBudget,
+		PaidBudgetUsed: paidUsed,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("plan resource and time feasibility: %w", err)
+	}
+	risk = applyResourcePlanningRisk(risk, resourceDecision)
+	steps = buildTaskSteps(intake, toolDecision, risk, minimalityDecision)
 	validationPlan := buildValidationPlan(intake, minimalityDecision)
 	validationPlan = applyFrameworkValidation(validationPlan, frameworkDecision)
+	validationPlan = applyDomainPackValidation(validationPlan, domainPackDecision)
 	memoryProposals := proposeMemoryUpdates(request, intake)
 	plan := &CompletionPlan{
-		ID:            planID,
-		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
-		PursuitID:     strings.TrimSpace(request.PursuitID),
-		CreatedAt:     time.Now().UTC(),
-		Request:       request.Request,
-		ProjectKey:    request.ProjectKey,
-		RealGoal:      inferRealGoal(request, intake),
-		Intake:        intake,
+		ID:             planID,
+		OperationID:    strings.TrimSpace(request.operationID),
+		IdempotencyKey: strings.TrimSpace(request.IdempotencyKey),
+		OwnerIdentity:  strings.TrimSpace(request.OwnerIdentity),
+		ReviewItemID:   strings.TrimSpace(request.reviewItemID),
+		PursuitID:      strings.TrimSpace(request.PursuitID),
+		CreatedAt:      createdAt,
+		Request:        request.Request,
+		ProjectKey:     request.ProjectKey,
+		RealGoal:       inferRealGoal(request, intake),
+		Intake:         intake,
 		ContextPlan: ContextPlan{
 			Strategy: []string{
 				"filter by project key when provided",
@@ -927,30 +1171,40 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 				"check connected-source extractions before task planning",
 				"preserve source references on returned memories",
 				"apply the selected framework context requirements without loading unrelated private context",
+				"retrieve only source-backed whole-life entities from task-relevant domains",
 			},
 			UsedContext:              contextResult.UsedContext,
 			SourceContext:            sourceContext,
+			LifeContext:              lifeContext,
 			SourceRefresh:            sourceRefresh,
 			SourceRefreshExplanation: sourceRefreshExplanation,
-			Explanation:              strings.TrimSpace(contextResult.Explanation + " " + sourceRefreshExplanation + " " + sourceExplanation),
+			LifeContextExplanation:   lifeContextExplanation,
+			Explanation:              strings.TrimSpace(contextResult.Explanation + " " + sourceRefreshExplanation + " " + sourceExplanation + " " + lifeContextExplanation),
 		},
 		MinimalityDecision:    minimalityDecision,
 		FrameworkDecision:     frameworkDecision,
+		DomainPackDecision:    domainPackDecision,
+		CalendarCapacity:      calendarCapacity,
+		ResourceDecision:      resourceDecision,
 		ModelDecision:         modelDecision,
 		ToolDecision:          toolDecision,
 		Steps:                 steps,
 		RiskAssessment:        risk,
 		ValidationPlan:        validationPlan,
 		ValidationResult:      initialValidationResult(validationPlan),
-		ExecutionPlan:         applyFrameworkExecution(buildExecutionPlan(intake), frameworkDecision),
+		ExecutionPlan:         applyAgentTeamExecution(applyResourcePlanningExecution(applyDomainPackExecution(applyFrameworkExecution(buildExecutionPlan(intake), frameworkDecision), domainPackDecision), resourceDecision), selectedAgentTeams),
 		RetryPolicy:           buildRetryPolicy(intake),
 		MemoryUpdateProposals: memoryProposals,
 		LessonsLearned:        proposeLessons(request, intake, toolDecision),
 		Events: []TaskEvent{
 			event("intake", "request classified and real goal inferred"),
 			event("framework-selection", frameworkSelectionSummary(frameworkDecision)),
+			event("domain-pack-selection", domainPackSelectionSummary(domainPackDecision)),
+			event("calendar-capacity", calendarCapacity.Explanation),
+			event("resource-planning", resourcePlanningSummary(resourceDecision)),
 			event("source-refresh", sourceRefreshExplanation),
 			event("context", contextResult.Explanation),
+			event("agent-team-selection", agentTeamExplanation),
 			event("minimality", minimalityDecision.SelectedLevel+": "+minimalityDecision.Reason),
 			event("routing", modelDecision.Reason),
 			event("tool-routing", toolDecision.Reason),
@@ -964,6 +1218,40 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 
 	_ = runMode
 	return plan, nil
+}
+
+func (s *service) calendarCapacityForTask(ownerIdentity string, start time.Time, deadline *time.Time) (CalendarCapacityContext, error) {
+	start = start.UTC().Truncate(time.Minute)
+	end := start.Add(7 * 24 * time.Hour)
+	if deadline != nil && deadline.After(start) {
+		end = deadline.UTC().Truncate(time.Minute)
+	}
+	if maximum := start.Add(31 * 24 * time.Hour); end.After(maximum) {
+		end = maximum
+	}
+	result := CalendarCapacityContext{
+		Status: "unavailable", WindowStart: start, WindowEnd: end,
+		BusyIntervals: []source.CalendarBusyInterval{},
+		Explanation:   "No owner-scoped Calendar capacity provider is available; the resource plan relies on explicit Life Ops capacity only.",
+	}
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		result.Status = "not_applicable"
+		result.Explanation = "Calendar capacity was not loaded for an unowned planning preview."
+		return result, nil
+	}
+	provider, ok := s.sourceService.(calendarCapacityProvider)
+	if !ok || provider == nil {
+		return result, nil
+	}
+	intervals, err := provider.CalendarBusyIntervalsForOwner(ownerIdentity, start, end)
+	if err != nil {
+		return CalendarCapacityContext{}, err
+	}
+	result.Status = "source_backed"
+	result.BusyIntervals = append([]source.CalendarBusyInterval(nil), intervals...)
+	result.Explanation = fmt.Sprintf("Reserved %d owner-scoped read-only Google Calendar interval(s) between %s and %s; no Calendar write authority was granted.", len(intervals), start.Format(time.RFC3339), end.Format(time.RFC3339))
+	return result, nil
 }
 
 func (s *service) loadOperatingContext(request IntakeRequest) (IntakeRequest, error) {
@@ -1079,6 +1367,10 @@ func (s *service) resolveReviewItemForOwner(ownerIdentity, id string, decision A
 	if item.Status != "open" && item.Status != "needs_review" {
 		return nil, ErrTaskReviewAlreadyResolved
 	}
+	if decision.Approved && strings.HasPrefix(item.TaskID, "operation:") &&
+		strings.TrimSpace(decision.Confirmation) != TaskOperationRetryConfirmation {
+		return nil, ErrTaskOperationRetryConfirmation
+	}
 	now := time.Now().UTC()
 	decisionName := "rejected"
 	if decision.Approved {
@@ -1095,7 +1387,14 @@ func (s *service) resolveReviewItemForOwner(ownerIdentity, id string, decision A
 	item = persisted.Item
 	s.updateReviewMirror(item)
 	if !decision.Approved {
-		return &ReviewResolutionResult{Item: sanitizeReviewQueueItem(item)}, nil
+		return &ReviewResolutionResult{
+			Item: sanitizeReviewQueueItem(item),
+			LearningOutcomeID: s.recordHumanCorrection(
+				ownerIdentity,
+				item,
+				persisted.Decision,
+			),
+		}, nil
 	}
 
 	approvedRequest := persisted.Item.Request
@@ -1199,7 +1498,29 @@ func (s *service) verifiedApprovalDecisionForExecution(
 		if workflowErr != nil || workflowID == uuid.Nil {
 			return nil, fmt.Errorf("workflow approval has no valid workflow binding")
 		}
-		return nil, nil
+		if strings.TrimSpace(request.ApprovalActorIdentity) != strings.TrimSpace(request.OwnerIdentity) ||
+			strings.TrimSpace(request.ApprovalActorIdentity) != strings.TrimSpace(plan.OwnerIdentity) {
+			return nil, fmt.Errorf("workflow approval actor does not match the execution owner")
+		}
+		if request.ApprovalApprovedAt == nil {
+			return nil, fmt.Errorf("workflow approval time is missing")
+		}
+		decision := &automation.TaskApprovalDecisionRequest{
+			OwnerIdentity:         plan.OwnerIdentity,
+			Task:                  plan.RealGoal,
+			ProjectKey:            plan.ProjectKey,
+			MandateID:             strings.TrimSpace(request.MandateID),
+			ApprovalSourceID:      sourceID,
+			ApprovalBindingDigest: strings.ToLower(strings.TrimSpace(request.ApprovalBindingDigest)),
+			ApprovedAt:            request.ApprovalApprovedAt.UTC(),
+		}
+		if err := automation.ValidateTaskApprovalDecisionRequest(*decision, time.Now().UTC()); err != nil {
+			return nil, fmt.Errorf("workflow approval is not valid for execution: %w", err)
+		}
+		if strings.TrimSpace(request.AutomationID) != "" && decision.ApprovalBindingDigest == "" {
+			return nil, fmt.Errorf("workflow approval has no exact automation action binding")
+		}
+		return decision, nil
 	}
 
 	reviewID := strings.TrimPrefix(sourceID, "task-review:")
@@ -1248,13 +1569,28 @@ func (s *service) verifiedApprovalDecisionForExecution(
 		strings.TrimSpace(plan.Request) != strings.TrimSpace(request.Request) {
 		return nil, fmt.Errorf("task review request does not match the execution request")
 	}
-	return &automation.TaskApprovalDecisionRequest{
-		OwnerIdentity:    plan.OwnerIdentity,
-		Task:             plan.RealGoal,
-		ProjectKey:       plan.ProjectKey,
-		ApprovalSourceID: sourceID,
-		ApprovedAt:       approval.ResolvedAt.UTC(),
-	}, nil
+	decision := &automation.TaskApprovalDecisionRequest{
+		OwnerIdentity:         plan.OwnerIdentity,
+		Task:                  plan.RealGoal,
+		ProjectKey:            plan.ProjectKey,
+		MandateID:             strings.TrimSpace(request.MandateID),
+		ApprovalSourceID:      sourceID,
+		ApprovalBindingDigest: approval.RequestDigest,
+		ApprovedAt:            approval.ResolvedAt.UTC(),
+	}
+	if err := automation.ValidateTaskApprovalDecisionRequest(*decision, time.Now().UTC()); err != nil {
+		return nil, fmt.Errorf("task review approval is not valid for execution: %w", err)
+	}
+	return decision, nil
+}
+
+func firstApprovalBindingDigest(
+	decision *automation.TaskApprovalDecisionRequest,
+) string {
+	if decision == nil {
+		return ""
+	}
+	return strings.TrimSpace(decision.ApprovalBindingDigest)
 }
 
 func (s *service) addLog(plan CompletionPlan) error {
@@ -1400,6 +1736,23 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 			if strings.TrimSpace(request.AutomationID) == "" {
 				return blockExecution(result, "task requires controlled runtime execution but no automationId was provided", plan, toolStarted)
 			}
+			if strings.TrimSpace(plan.OwnerIdentity) == "" {
+				return blockExecution(
+					result,
+					"controlled runtime execution requires a verified owner identity",
+					plan,
+					toolStarted,
+				)
+			}
+			governance, governanceErr := executionGovernanceEvidence(plan)
+			if governanceErr != nil {
+				return blockExecution(
+					result,
+					"task governance evidence could not be bound to execution: "+governanceErr.Error(),
+					plan,
+					toolStarted,
+				)
+			}
 			approvalSourceID := ""
 			var approvalDecision *automation.TaskApprovalDecisionRequest
 			if request.HumanApproved {
@@ -1415,12 +1768,18 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 			}
 			executed, err := s.toolExecutor.Execute(ToolExecutionRequest{
 				OwnerIdentity:    plan.OwnerIdentity,
+				TaskID:           plan.ID,
 				AutomationID:     request.AutomationID,
 				Task:             plan.RealGoal,
 				OriginalRequest:  request.Request,
 				ProjectKey:       plan.ProjectKey,
+				MandateID:        strings.TrimSpace(request.MandateID),
 				WorkflowID:       request.WorkflowID,
 				ApprovalSourceID: approvalSourceID,
+				ApprovalBindingDigest: firstApprovalBindingDigest(
+					approvalDecision,
+				),
+				Governance:       governance,
 				approvalDecision: approvalDecision,
 			})
 			if err != nil {
@@ -1443,13 +1802,67 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	result.Actions = append(result.Actions,
 		executedAction("memory.retrieve", "completed", request.Request, countLabel(len(plan.ContextPlan.UsedContext), "memory item"), started),
 		executedAction("source.search", "completed", request.Request, countLabel(len(plan.ContextPlan.SourceContext), "source extraction"), started),
+		executedAction("life-ontology.retrieve", "completed", request.Request, countLabel(len(plan.ContextPlan.LifeContext), "whole-life record"), started),
 	)
+	if deterministicReadOnlyRuntimeCompleted(result.ToolExecution) {
+		evidenceURI := "automation-launch://" + result.ToolExecution.LaunchEventID
+		claimText := "The controlled read-only runtime completed successfully: " + result.ToolExecution.Message
+		result.Output = claimText + ". Evidence: " + evidenceURI
+		result.VerificationStatus = verification.StatusTestPassed
+		result.Claims = []models.VerificationClaim{{
+			ID:                 uuid.New(),
+			ClaimText:          claimText,
+			Status:             verification.StatusTestPassed,
+			SourceRefs:         evidenceURI,
+			SupportExplanation: "the immutable controlled-runtime launch record and deterministic HTTP status satisfy the bounded probe",
+			Confidence:         1,
+		}}
+		result.UnsupportedClaims = 0
+		result.CompletedAt = time.Now().UTC()
+		result.Actions = append(result.Actions, executedAction(
+			"verification.deterministic_runtime",
+			"completed",
+			request.Request,
+			"read-only runtime postconditions passed with immutable launch evidence",
+			time.Now().UTC(),
+		))
+		plan.Events = append(plan.Events, event(
+			"verification",
+			"read-only controlled-runtime result passed deterministic postcondition verification",
+		))
+		return result
+	}
 	draft := ""
 	generateStarted := time.Now().UTC()
 	if s.llmService != nil {
 		context := generationContext(plan)
 		if result.ToolExecution != nil {
 			context = append(context, toolExecutionSnippet(result.ToolExecution))
+		}
+		effectContext := &llm.EffectContext{
+			OwnerIdentity: plan.OwnerIdentity,
+			ActorIdentity: "hai:task-engine",
+			ActorKind:     "system",
+			TaskID:        plan.ID,
+			ProjectKey:    plan.ProjectKey,
+		}
+		if request.HumanApproved {
+			approvalDecision, approvalErr := s.verifiedApprovalDecisionForExecution(
+				plan,
+				request,
+			)
+			if approvalErr != nil {
+				plan.Events = append(
+					plan.Events,
+					event(
+						"approval",
+						"model effect approval could not be verified; only autonomous-safe local execution remains eligible",
+					),
+				)
+			} else if approvalDecision != nil {
+				effectContext.ApprovalSourceID = approvalDecision.ApprovalSourceID
+				effectContext.ApprovalBindingDigest = approvalDecision.ApprovalBindingDigest
+			}
 		}
 		generation, err := s.llmService.Generate(llm.GenerateRequest{
 			Task:         plan.RealGoal,
@@ -1462,8 +1875,11 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 				RequiredReasoning: plan.Intake.RequiredReasoning,
 			},
 			RouteDecision: &plan.ModelDecision,
+			EffectContext: effectContext,
 			Temperature:   0.1,
 			MaxTokens:     900,
+			OperationID:   plan.ID + ":attempt:" + strconv.Itoa(maxInt(plan.RetryPolicy.CurrentAttempt+1, 1)),
+			FallbackDepth: plan.RetryPolicy.CurrentAttempt,
 		})
 		if err == nil && generation != nil {
 			result.LLMGeneration = generation
@@ -1525,6 +1941,80 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	result.Actions = append(result.Actions, executedAction("verification.answer", "completed", request.Request, verificationResult.Run.Status, verifyStarted))
 	plan.Events = append(plan.Events, event("verification", "claims were checked against retrieved evidence before completion"))
 	return result
+}
+
+func (s *service) recordGenerationValidation(plan *CompletionPlan) {
+	if s.llmService == nil || plan == nil || plan.ExecutionResult == nil || plan.ExecutionResult.LLMGeneration == nil {
+		return
+	}
+	generation := plan.ExecutionResult.LLMGeneration
+	if strings.TrimSpace(generation.TelemetryID) == "" {
+		return
+	}
+	status := "failed"
+	method := "task_success_criteria_v1"
+	verificationStatus := strings.TrimSpace(plan.ExecutionResult.VerificationStatus)
+	if generation.Status == "completed" && plan.ValidationResult.Passed {
+		switch verificationStatus {
+		case verification.StatusVerified,
+			verification.StatusSourceSupported,
+			verification.StatusSchemaValidated,
+			verification.StatusTestPassed,
+			verification.StatusHumanApproved:
+			status = verificationStatus
+			method += "+verification_engine"
+		default:
+			status = verification.StatusSchemaValidated
+		}
+	} else {
+		switch verificationStatus {
+		case verification.StatusNeedsReview,
+			verification.StatusUncertain,
+			verification.StatusConflicting,
+			verification.StatusUnsupported:
+			status = verification.StatusNeedsReview
+		}
+	}
+	if err := s.llmService.RecordGenerationValidation(generation.TelemetryID, status, method); err != nil {
+		plan.Events = append(plan.Events, event("model-calibration", "validation outcome could not be attached to the routed generation: "+err.Error()))
+		return
+	}
+	generation.ValidationStatus = status
+	generation.ValidationMethod = method
+	generation.CalibrationAudit = "recorded"
+	plan.Events = append(plan.Events, event("model-calibration", "routed generation recorded as "+status+" by "+method))
+}
+
+func deterministicReadOnlyRuntimeCompleted(result *ToolExecutionResult) bool {
+	if result == nil ||
+		!strings.EqualFold(strings.TrimSpace(result.LaunchType), "api") ||
+		!strings.EqualFold(strings.TrimSpace(result.Status), "completed") ||
+		result.ExitCode < http.StatusOK || result.ExitCode >= http.StatusBadRequest ||
+		result.ExecutedAt.IsZero() {
+		return false
+	}
+	if id, err := uuid.Parse(strings.TrimSpace(result.AutomationID)); err != nil || id == uuid.Nil {
+		return false
+	}
+	if id, err := uuid.Parse(strings.TrimSpace(result.LaunchEventID)); err != nil || id == uuid.Nil {
+		return false
+	}
+	fields := strings.Fields(strings.TrimSpace(result.Message))
+	if len(fields) == 0 || (fields[0] != http.MethodGet && fields[0] != http.MethodHead) {
+		return false
+	}
+	return containsAuditFragment(result.AuditEvents, "unified execution authorization receipt") &&
+		containsAuditFragment(result.AuditEvents, "api request executed") &&
+		containsAuditFragment(result.AuditEvents, "response captured with bounded output")
+}
+
+func containsAuditFragment(events []string, fragment string) bool {
+	for _, value := range events {
+		if strings.Contains(strings.ToLower(value), strings.ToLower(fragment)) {
+			return true
+		}
+	}
+	return false
 }
 
 func completedToolExecution(previous *ExecutionResult) *ToolExecutionResult {
@@ -1699,6 +2189,24 @@ func evidenceFromPlan(plan *CompletionPlan) []verification.EvidenceInput {
 			Primary:     true,
 		})
 	}
+	for _, suggestion := range plan.ContextPlan.LifeContext {
+		entity := suggestion.Entity
+		snippet := firstNonEmpty(entity.Summary, entity.Name)
+		if strings.TrimSpace(snippet) == "" {
+			continue
+		}
+		for _, provenance := range entity.Provenance {
+			evidence = append(evidence, verification.EvidenceInput{
+				SourceType:  "life_ontology",
+				SourceID:    firstNonEmpty(provenance.ReferenceID, entity.ID),
+				SourceURI:   provenance.URI,
+				SourceLabel: firstNonEmpty(provenance.Authority, string(entity.Type), "whole-life context"),
+				Snippet:     snippet,
+				Authority:   firstNonEmpty(provenance.Authority, "owner_scoped_context"),
+				Primary:     true,
+			})
+		}
+	}
 	return evidence
 }
 
@@ -1712,6 +2220,13 @@ func generationContext(plan *CompletionPlan) []string {
 	}
 	for _, ranked := range plan.ContextPlan.SourceContext {
 		snippet := firstNonEmpty(ranked.Extraction.Summary, ranked.Extraction.Text)
+		if strings.TrimSpace(snippet) != "" {
+			context = append(context, compact(snippet))
+		}
+	}
+	for _, suggestion := range plan.ContextPlan.LifeContext {
+		entity := suggestion.Entity
+		snippet := firstNonEmpty(entity.Summary, entity.Name)
 		if strings.TrimSpace(snippet) != "" {
 			context = append(context, compact(snippet))
 		}
@@ -1939,6 +2454,7 @@ func buildValidationPlan(intake IntakeAnalysis, minimality MinimalityDecision) V
 		FrameworkEvidenceRequirements: []string{},
 		FrameworkCompletionCriteria:   []string{},
 		FrameworkAssuranceCriteria:    []string{},
+		FrameworkEvidenceContracts:    []FrameworkEvidenceContract{},
 		FailurePolicy:                 "retry with stronger context or model; escalate to human review if validation still fails",
 		CompletionGate:                "task is complete only after validation passes against success criteria",
 	}
@@ -1978,6 +2494,7 @@ func applyFrameworkValidation(plan ValidationPlan, decision *frameworkregistry.S
 	for _, requirement := range decision.EvidenceRequirements {
 		plan.Steps = append(plan.Steps, "framework evidence: "+requirement)
 	}
+	plan.FrameworkEvidenceContracts = compileFrameworkEvidenceContracts(decision)
 	for _, criterion := range taskCompletionCriteria {
 		plan.Steps = append(plan.Steps, "framework completion: "+criterion)
 	}
@@ -2120,7 +2637,12 @@ func applyCatalogBoundary(id string, status braincatalog.Status, skipped, blocke
 func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {
 	reasons := []string{"read-only planning is allowed"}
 	needsExplicitExecution := intake.NeedsTools || intake.NeedsLocalExecution
-	approvalGranted := intake.NeedsApproval && request.ExecuteAllowed && request.HumanApproved
+	// Approval is a property of the reviewed run, not only of the intake
+	// classifier's first risk estimate. Later framework, domain, or resource
+	// planning may add an approval requirement. Preserve the recorded decision
+	// so those advisory gates can recognize it; the execution boundary still
+	// verifies ApprovalSourceID against the durable review ledger before effects.
+	approvalGranted := request.ExecuteAllowed && request.HumanApproved
 	gateDecision := autonomygate.Decide(autonomygate.Signals{
 		Confidence: 0.9,
 		Risk:       intake.RiskLevel,
@@ -2168,9 +2690,16 @@ func assessRisk(intake IntakeAnalysis, request IntakeRequest) RiskAssessment {
 		allowedNow = false
 	}
 	return RiskAssessment{
-		Level:             intake.RiskLevel,
-		ApprovalRequired:  intake.NeedsApproval,
-		ApprovalGranted:   approvalGranted,
+		Level:            intake.RiskLevel,
+		ApprovalRequired: intake.NeedsApproval,
+		ApprovalGranted:  approvalGranted,
+		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
+		ApprovalActorIdentity: func() string {
+			if !approvalGranted {
+				return ""
+			}
+			return strings.TrimSpace(request.OwnerIdentity)
+		}(),
 		ActionResolution:  string(actionResolution),
 		MissingParameters: missingParameters,
 		Reasons:           reasons,

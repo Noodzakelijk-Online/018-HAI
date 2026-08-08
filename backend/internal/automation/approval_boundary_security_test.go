@@ -2,6 +2,7 @@ package automation
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -39,7 +40,7 @@ func TestAutomationLaunchHandlerIgnoresClientApprovalClaims(t *testing.T) {
 		LaunchTarget:       "POST " + target.URL + "/mutate",
 		ExpectedHTTPStatus: http.StatusNoContent,
 	})
-	handler := NewHandler(NewService(repo, events.Publisher{}))
+	handler := NewHandler(newTestService(repo, events.Publisher{}))
 	body := []byte(`{
 		"humanApproved": true,
 		"approvalSourceId": "task-review:forged",
@@ -126,7 +127,7 @@ func TestDirectLaunchPathsCannotBypassApproval(t *testing.T) {
 				LaunchTarget:       "POST " + target.URL + "/mutate",
 				ExpectedHTTPStatus: http.StatusNoContent,
 			})
-			result, err := test.run(NewService(repo, events.Publisher{}), id)
+			result, err := test.run(newTestService(repo, events.Publisher{}), id)
 			if err != nil {
 				t.Fatalf("launch: %v", err)
 			}
@@ -165,7 +166,7 @@ func TestApprovalProofBindsOwnerTaskProjectConfigurationAndSource(t *testing.T) 
 			repo.automation.LaunchTarget = "POST " + target.URL + "/changed"
 		}},
 		{name: "approval source", mutate: func(request *TaskLaunchRequest, _ *fakeAutomationRepo) {
-			request.ApprovalSourceID = "task-review:different"
+			request.ApprovalSourceID = "task-review:" + uuid.NewString()
 		}},
 		{name: "proof automation", mutate: func(request *TaskLaunchRequest, _ *fakeAutomationRepo) {
 			request.ApprovalProof.AutomationID = uuid.New()
@@ -182,7 +183,7 @@ func TestApprovalProofBindsOwnerTaskProjectConfigurationAndSource(t *testing.T) 
 				LaunchTarget:       "POST " + target.URL + "/approved",
 				ExpectedHTTPStatus: http.StatusNoContent,
 			})
-			service := NewService(repo, events.Publisher{})
+			service := newTestService(repo, events.Publisher{})
 			request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 				OwnerIdentity: "alice",
 				Task:          "Perform the exact reviewed action",
@@ -231,7 +232,7 @@ func TestApprovalProofExpiryAndConcurrentReplayFailClosed(t *testing.T) {
 		t.Fatalf("issue expiring proof: %v", err)
 	}
 	now = now.Add(time.Minute)
-	if err := service.VerifyAndConsume(expired, expected); !errors.Is(err, ErrApprovalProofExpired) {
+	if err := service.VerifyAndConsume(context.Background(), expired, expected); !errors.Is(err, ErrApprovalProofExpired) {
 		t.Fatalf("expired proof error = %v, want ErrApprovalProofExpired", err)
 	}
 
@@ -248,7 +249,7 @@ func TestApprovalProofExpiryAndConcurrentReplayFailClosed(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			err := service.VerifyAndConsume(proof, expected)
+			err := service.VerifyAndConsume(context.Background(), proof, expected)
 			switch {
 			case err == nil:
 				successes.Add(1)
@@ -292,7 +293,10 @@ func TestReadOnlyAPIProbesAreExemptButMutationsRequireProof(t *testing.T) {
 				LaunchTarget:       method + " " + target.URL,
 				ExpectedHTTPStatus: http.StatusNoContent,
 			})
-			result, err := NewService(repo, events.Publisher{}).Launch(id)
+			result, err := newTestService(repo, events.Publisher{}).LaunchTask(
+				id,
+				TaskLaunchRequest{OwnerIdentity: "alice"},
+			)
 			if err != nil {
 				t.Fatalf("Launch: %v", err)
 			}
@@ -331,7 +335,7 @@ func TestApprovalProofIssuerRejectsReadOnlyAndUnsupportedActions(t *testing.T) {
 				LaunchType:   test.launchType,
 				LaunchTarget: test.target,
 			})
-			service := NewService(repo, events.Publisher{})
+			service := newTestService(repo, events.Publisher{})
 			issuer := service.(ApprovalProofIssuer)
 			proof, err := issuer.IssueApprovalProof(id, TaskApprovalProofRequest{
 				OwnerIdentity:    "alice",
@@ -362,7 +366,7 @@ func TestApprovalProofServiceUnavailableFailsClosed(t *testing.T) {
 		LaunchTarget:       "POST " + target.URL,
 		ExpectedHTTPStatus: http.StatusNoContent,
 	})
-	automationService := NewServiceWithRuntimeRegistryAndApprovalProofs(repo, events.Publisher{}, nil, nil)
+	automationService := newTestServiceWithRuntimeRegistryAndApprovalProofs(repo, events.Publisher{}, nil, nil)
 	issuer := automationService.(ApprovalProofIssuer)
 	if proof, err := issuer.IssueApprovalProof(id, TaskApprovalProofRequest{
 		OwnerIdentity:    "alice",
@@ -398,7 +402,7 @@ func TestApprovalProofIssuerRequiresRecordedApprovalProvenance(t *testing.T) {
 		LaunchType:   "api",
 		LaunchTarget: "POST http://localhost/mutate",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	issuer := service.(ApprovalProofIssuer)
 
 	proof, err := issuer.IssueApprovalProof(id, TaskApprovalProofRequest{
@@ -420,7 +424,7 @@ func TestApprovalProofIssuerRejectsNilDecisionUUID(t *testing.T) {
 		LaunchType:   "api",
 		LaunchTarget: "POST http://localhost/mutate",
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	issuer := service.(ApprovalProofIssuer)
 
 	proof, err := issuer.IssueApprovalProof(id, TaskApprovalProofRequest{
@@ -448,7 +452,7 @@ func TestLaunchAuditDoesNotExposeApprovalCapabilityMaterial(t *testing.T) {
 		LaunchTarget:       "POST " + target.URL,
 		ExpectedHTTPStatus: http.StatusNoContent,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity:    "alice",
 		Task:             "Perform the reviewed mutation token=approval-secret-value",
@@ -489,7 +493,7 @@ func TestPrepareWorkflowApprovalBindingMatchesProofDigestContract(t *testing.T) 
 		LaunchTarget: "reviewed-script.cmd",
 		RuntimeType:  "script",
 	})
-	automationService := NewService(repo, events.Publisher{})
+	automationService := newTestService(repo, events.Publisher{})
 	preparer, ok := automationService.(WorkflowApprovalBindingPreparer)
 	if !ok {
 		t.Fatalf("automation service does not expose workflow approval binding preparation")
@@ -498,6 +502,7 @@ func TestPrepareWorkflowApprovalBindingMatchesProofDigestContract(t *testing.T) 
 		OwnerIdentity: " alice ",
 		Task:          " Run the reviewed script ",
 		ProjectKey:    " 018-hai ",
+		MandateID:     " " + uuid.NewString() + " ",
 	}
 
 	binding, err := preparer.PrepareWorkflowApprovalBinding(id, request)
@@ -508,6 +513,7 @@ func TestPrepareWorkflowApprovalBindingMatchesProofDigestContract(t *testing.T) 
 		OwnerIdentity: "alice",
 		Task:          "Run the reviewed script",
 		ProjectKey:    "018-hai",
+		MandateID:     strings.TrimSpace(request.MandateID),
 	}
 	expectedAutomation := *repo.automation
 	automationService.(*service).applyAutomationDefaults(&expectedAutomation)
@@ -516,13 +522,18 @@ func TestPrepareWorkflowApprovalBindingMatchesProofDigestContract(t *testing.T) 
 	if binding != want {
 		t.Fatalf("binding = %q, want %q", binding, want)
 	}
+	changedMandate := normalized
+	changedMandate.MandateID = uuid.NewString()
+	if automationActionDigest(&expectedAutomation, changedMandate) == expectedDigest {
+		t.Fatal("changing the standing mandate did not change the action-bound approval digest")
+	}
 	scope, digest, err := parseWorkflowApprovalBinding(binding)
 	if err != nil || scope != ApprovalScopeScript || digest != expectedDigest {
 		t.Fatalf("prepared binding did not round-trip: scope=%q digest=%q error=%v", scope, digest, err)
 	}
 }
 
-func TestPrepareWorkflowApprovalBindingRejectsOwnerlessAndUnsupportedActions(t *testing.T) {
+func TestPrepareWorkflowApprovalBindingSupportsReadOnlyIdentityAndRejectsOwnerlessActions(t *testing.T) {
 	id := uuid.New()
 	repo := newFakeAutomationRepo(&models.Automation{
 		ID:           id,
@@ -531,9 +542,9 @@ func TestPrepareWorkflowApprovalBindingRejectsOwnerlessAndUnsupportedActions(t *
 		LaunchType:   "api",
 		LaunchTarget: "GET http://localhost/health",
 	})
-	preparer := NewService(repo, events.Publisher{}).(WorkflowApprovalBindingPreparer)
-	if binding, err := preparer.PrepareWorkflowApprovalBinding(id, TaskLaunchRequest{OwnerIdentity: "alice"}); err == nil || binding != "" {
-		t.Fatalf("unsupported action binding=%q error=%v", binding, err)
+	preparer := newTestService(repo, events.Publisher{}).(WorkflowApprovalBindingPreparer)
+	if binding, err := preparer.PrepareWorkflowApprovalBinding(id, TaskLaunchRequest{OwnerIdentity: "alice"}); err != nil || !strings.HasPrefix(binding, "automation-action:"+string(ApprovalScopeAPIRead)+":") {
+		t.Fatalf("read-only action binding=%q error=%v", binding, err)
 	}
 	repo.automation.LaunchTarget = "POST http://localhost/mutate"
 	if binding, err := preparer.PrepareWorkflowApprovalBinding(id, TaskLaunchRequest{}); err == nil || binding != "" {
@@ -557,7 +568,7 @@ func TestApprovalProofIssuerRejectsStaleAndFutureDecisions(t *testing.T) {
 	}
 
 	repo := newFakeAutomationRepo(automation)
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	repo.approvalDecisions[request.ApprovalSourceID] = ApprovalDecisionRecord{
 		SourceID:      request.ApprovalSourceID,
 		DecisionType:  "task-review",
@@ -577,7 +588,7 @@ func TestApprovalProofIssuerRejectsStaleAndFutureDecisions(t *testing.T) {
 	}
 
 	repo = newFakeAutomationRepo(automation)
-	service = NewService(repo, events.Publisher{})
+	service = newTestService(repo, events.Publisher{})
 	err = service.(ApprovalDecisionRecorder).RecordApprovalDecision(id, TaskApprovalDecisionRequest{
 		OwnerIdentity:    request.OwnerIdentity,
 		Task:             request.Task,
@@ -607,7 +618,7 @@ func TestApprovalProofCannotSurviveExecutionPolicyMutation(t *testing.T) {
 		LaunchTarget:       "POST " + target.URL,
 		ExpectedHTTPStatus: http.StatusNoContent,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity: "alice",
 		Task:          "Perform the reviewed mutation",
@@ -645,7 +656,7 @@ func TestLaunchFailsClosedWhenImmutableIntentCannotBePersisted(t *testing.T) {
 		LaunchTarget:       "POST " + target.URL,
 		ExpectedHTTPStatus: http.StatusNoContent,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity: "alice",
 		Task:          "Perform the reviewed mutation",
@@ -681,7 +692,7 @@ func TestLaunchDoesNotClaimCompletionWhenOutcomeAuditFails(t *testing.T) {
 		LaunchTarget:       "POST " + target.URL,
 		ExpectedHTTPStatus: http.StatusNoContent,
 	})
-	service := NewService(repo, events.Publisher{})
+	service := newTestService(repo, events.Publisher{})
 	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
 		OwnerIdentity: "alice",
 		Task:          "Perform the reviewed mutation",

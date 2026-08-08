@@ -1,6 +1,8 @@
 package automation
 
 import (
+	"automation-hub-backend/internal/executionauth"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"net/http"
@@ -21,7 +23,25 @@ func (h *Handler) Launch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
 		return
 	}
-	result, err := h.service.LaunchTask(id, TaskLaunchRequest{OwnerIdentity: verifiedAutomationActor(c)})
+	actor := verifiedAutomationActor(c)
+	request := TaskLaunchRequest{}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid launch request"})
+			return
+		}
+	}
+	// Authority-bearing identity and approval fields remain server-owned. The
+	// optional mandateId is only a reference to owner-scoped policy evaluated
+	// by executionauth; it is never accepted as proof of authorization.
+	request.OwnerIdentity = actor
+	request.ActorIdentity = actor
+	request.ActorKind = executionauth.ActorHuman
+	request.ExecutionContext = c.Request.Context()
+	request.ApprovalSourceID = ""
+	request.ApprovalBindingDigest = ""
+	request.ApprovalProof = nil
+	result, err := h.service.LaunchTask(id, request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

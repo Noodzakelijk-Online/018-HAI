@@ -64,6 +64,38 @@ func (h *Handler) List(c *gin.Context) {
 	respondFramework(c, gin.H{"frameworks": result}, err, http.StatusOK)
 }
 
+// FamilyTaxonomy returns the immutable, versioned 55-family architecture
+// contract used by the selector. Authentication and read permission are
+// enforced by the production router before this handler runs.
+func (h *Handler) FamilyTaxonomy(c *gin.Context) {
+	if _, ok := frameworkOwner(c); !ok {
+		return
+	}
+	if h == nil || h.service == nil {
+		respondFramework(
+			c,
+			nil,
+			errors.New("framework registry service is unavailable"),
+			http.StatusOK,
+		)
+		return
+	}
+	taxonomy, err := h.service.FamilyTaxonomy()
+	if err != nil {
+		respondFramework(c, nil, err, http.StatusOK)
+		return
+	}
+
+	etag := `"` + taxonomy.Digest + `"`
+	c.Header("Cache-Control", "private, max-age=86400, immutable")
+	c.Header("ETag", etag)
+	if strings.TrimSpace(c.GetHeader("If-None-Match")) == etag {
+		c.Status(http.StatusNotModified)
+		return
+	}
+	c.JSON(http.StatusOK, taxonomy)
+}
+
 func (h *Handler) Get(c *gin.Context) {
 	owner, ok := frameworkOwner(c)
 	if !ok {
@@ -121,7 +153,15 @@ func (h *Handler) Selections(c *gin.Context) {
 	if !ok {
 		return
 	}
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit, ok := frameworkListLimit(
+		c,
+		"selection",
+		defaultSelectionLimit,
+		maxSelectionLimit,
+	)
+	if !ok {
+		return
+	}
 	result, err := h.service.Selections(owner, limit)
 	respondFramework(c, gin.H{"selections": result}, err, http.StatusOK)
 }
@@ -144,7 +184,15 @@ func (h *Handler) ConstitutionHistory(c *gin.Context) {
 	if !ok {
 		return
 	}
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit, ok := frameworkListLimit(
+		c,
+		"Constitution history",
+		defaultHistoryLimit,
+		maxHistoryLimit,
+	)
+	if !ok {
+		return
+	}
 	result, err := h.service.ConstitutionHistory(owner, limit)
 	respondFramework(c, result, err, http.StatusOK)
 }
@@ -208,6 +256,37 @@ func decodeFrameworkJSON(c *gin.Context, target any) bool {
 		return false
 	}
 	return true
+}
+
+func frameworkListLimit(
+	c *gin.Context,
+	resource string,
+	defaultLimit int,
+	maxLimit int,
+) (int, bool) {
+	values, exists := c.Request.URL.Query()["limit"]
+	if !exists {
+		return defaultLimit, true
+	}
+	if len(values) != 1 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": resource + " limit must be provided exactly once",
+		})
+		return 0, false
+	}
+	raw := strings.TrimSpace(values[0])
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > maxLimit {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf(
+				"%s limit must be between 1 and %d",
+				resource,
+				maxLimit,
+			),
+		})
+		return 0, false
+	}
+	return limit, true
 }
 
 func respondFramework(c *gin.Context, value any, err error, successStatus int) {

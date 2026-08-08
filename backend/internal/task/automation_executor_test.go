@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/automation"
+	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/models"
 
 	"github.com/google/uuid"
@@ -61,6 +62,82 @@ func TestAutomationToolExecutorMapsControlledLaunchResult(t *testing.T) {
 	}
 }
 
+func TestAutomationToolExecutorForwardsReadOnlyWorkflowDecisionWithoutMintingProof(t *testing.T) {
+	id := uuid.New()
+	approvalSourceID := "workflow-decision:" + uuid.NewString()
+	approvalDigest := strings.Repeat("d", 64)
+	requiresActionApproval := false
+	launcher := &fakeAutomationLauncher{
+		actionApprovalRequired: &requiresActionApproval,
+		result: &automation.LaunchResult{
+			AutomationID:  id,
+			LaunchEventID: uuid.New(),
+			LaunchType:    "api",
+			Status:        "completed",
+			LaunchedAt:    time.Now().UTC(),
+		},
+	}
+
+	result, err := NewAutomationToolExecutor(launcher).Execute(ToolExecutionRequest{
+		OwnerIdentity:         "alice",
+		WorkflowID:            uuid.NewString(),
+		AutomationID:          id.String(),
+		Task:                  "Run the reviewed read-only health probe.",
+		ApprovalSourceID:      approvalSourceID,
+		ApprovalBindingDigest: approvalDigest,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result == nil || result.Status != "completed" {
+		t.Fatalf("result = %#v", result)
+	}
+	if launcher.approvalInspectionCalls != 1 || launcher.issueCalls != 0 {
+		t.Fatalf("approval inspection/proof calls = %d/%d, want 1/0", launcher.approvalInspectionCalls, launcher.issueCalls)
+	}
+	if launcher.request.ApprovalSourceID != approvalSourceID || launcher.request.ApprovalBindingDigest != approvalDigest || launcher.request.ApprovalProof != nil {
+		t.Fatalf("launch request = %#v, want exact workflow decision without a final-effect proof", launcher.request)
+	}
+}
+
+func TestAutomationToolExecutorForwardsImmutableGovernanceEvidence(t *testing.T) {
+	id := uuid.New()
+	mandateID := uuid.NewString()
+	digest := strings.Repeat("a", 64)
+	launcher := &fakeAutomationLauncher{result: &automation.LaunchResult{
+		AutomationID: id,
+		Status:       "completed",
+		LaunchedAt:   time.Now().UTC(),
+	}}
+	governance := executionauth.GovernanceEvidence{
+		TaskPlanID:                       "plan-1",
+		TaskPlanDigest:                   digest,
+		FrameworkSelectionID:             "selection-1",
+		FrameworkCatalogVersion:          "catalog-v1",
+		FrameworkCatalogDigest:           digest,
+		FrameworkPreferenceDigest:        digest,
+		FrameworkConstitutionDigest:      digest,
+		FrameworkOperatingContractDigest: digest,
+		EvidenceReferences:               []string{"task-plan://plan-1"},
+	}
+
+	_, err := NewAutomationToolExecutor(launcher).Execute(ToolExecutionRequest{
+		OwnerIdentity: "alice",
+		AutomationID:  id.String(),
+		Task:          "Run governed task",
+		MandateID:     mandateID,
+		Governance:    governance,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if launcher.request.Governance.TaskPlanDigest != digest ||
+		launcher.request.Governance.FrameworkSelectionID != "selection-1" ||
+		launcher.request.MandateID != mandateID {
+		t.Fatalf("governance evidence was not forwarded: %#v", launcher.request.Governance)
+	}
+}
+
 func TestAutomationToolExecutorIssuesActionBoundProofForRecordedReview(t *testing.T) {
 	id := uuid.New()
 	sourceID := "task-review:" + uuid.NewString()
@@ -86,18 +163,21 @@ func TestAutomationToolExecutorIssuesActionBoundProofForRecordedReview(t *testin
 		},
 	}
 	executor := NewAutomationToolExecutor(launcher)
+	reviewDigest := strings.Repeat("b", 64)
 	result, err := executor.Execute(ToolExecutionRequest{
-		OwnerIdentity:    "alice",
-		AutomationID:     id.String(),
-		Task:             "Run the exact reviewed action.",
-		ProjectKey:       "018-hai",
-		ApprovalSourceID: sourceID,
+		OwnerIdentity:         "alice",
+		AutomationID:          id.String(),
+		Task:                  "Run the exact reviewed action.",
+		ProjectKey:            "018-hai",
+		ApprovalSourceID:      sourceID,
+		ApprovalBindingDigest: reviewDigest,
 		approvalDecision: &automation.TaskApprovalDecisionRequest{
-			OwnerIdentity:    "alice",
-			Task:             "Run the exact reviewed action.",
-			ProjectKey:       "018-hai",
-			ApprovalSourceID: sourceID,
-			ApprovedAt:       issuedAt.Add(-time.Second),
+			OwnerIdentity:         "alice",
+			Task:                  "Run the exact reviewed action.",
+			ProjectKey:            "018-hai",
+			ApprovalSourceID:      sourceID,
+			ApprovalBindingDigest: reviewDigest,
+			ApprovedAt:            issuedAt.Add(-time.Second),
 		},
 	})
 	if err != nil {
@@ -120,6 +200,13 @@ func TestAutomationToolExecutorIssuesActionBoundProofForRecordedReview(t *testin
 	}
 	if launcher.request.ApprovalProof != proof || launcher.request.ApprovalSourceID != sourceID {
 		t.Fatalf("launch request did not carry issued proof: %#v", launcher.request)
+	}
+	if launcher.request.ApprovalBindingDigest != proof.ActionDigest {
+		t.Fatalf(
+			"launch binding digest = %q, want exact proof action digest %q",
+			launcher.request.ApprovalBindingDigest,
+			proof.ActionDigest,
+		)
 	}
 }
 
@@ -144,6 +231,64 @@ func TestAutomationToolExecutorFailsClosedWhenProofIssuerIsUnavailable(t *testin
 	}
 }
 
+func TestAutomationToolExecutorUsesIssuedActionBindingForWorkflowApproval(t *testing.T) {
+	automationID := uuid.New()
+	workflowID := uuid.NewString()
+	sourceID := "workflow-decision:" + uuid.NewString()
+	now := time.Now().UTC()
+	proof := &automation.ApprovalProof{
+		ID:               "workflow-proof",
+		OwnerIdentity:    "alice",
+		AutomationID:     automationID,
+		ActionDigest:     strings.Repeat("c", 64),
+		Scope:            automation.ApprovalScopeScript,
+		ApprovalSourceID: sourceID,
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Minute),
+		Nonce:            "workflow-proof-nonce",
+		Signature:        "workflow-proof-signature",
+	}
+	launcher := &fakeAutomationLauncher{
+		proof: proof,
+		result: &automation.LaunchResult{
+			AutomationID: automationID,
+			Status:       "completed",
+			LaunchedAt:   now,
+		},
+	}
+
+	_, err := NewAutomationToolExecutor(launcher).Execute(ToolExecutionRequest{
+		OwnerIdentity:    "alice",
+		TaskID:           "task-1",
+		AutomationID:     automationID.String(),
+		Task:             "Execute the approved workflow step.",
+		OriginalRequest:  "Complete the reviewed workflow.",
+		ProjectKey:       "018-hai",
+		WorkflowID:       workflowID,
+		ApprovalSourceID: sourceID,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if launcher.recordCalls != 0 {
+		t.Fatalf("workflow approval must not be rewritten as a task review")
+	}
+	if launcher.issueRequest.WorkflowID != workflowID {
+		t.Fatalf(
+			"proof workflow binding = %q, want %q",
+			launcher.issueRequest.WorkflowID,
+			workflowID,
+		)
+	}
+	if launcher.request.ApprovalBindingDigest != proof.ActionDigest {
+		t.Fatalf(
+			"launch binding digest = %q, want proof action digest %q",
+			launcher.request.ApprovalBindingDigest,
+			proof.ActionDigest,
+		)
+	}
+}
+
 func TestAutomationToolExecutorRejectsInvalidAutomationID(t *testing.T) {
 	executor := NewAutomationToolExecutor(&fakeAutomationLauncher{})
 	if _, err := executor.Execute(ToolExecutionRequest{AutomationID: "not-a-uuid"}); err == nil {
@@ -152,16 +297,19 @@ func TestAutomationToolExecutorRejectsInvalidAutomationID(t *testing.T) {
 }
 
 type fakeAutomationLauncher struct {
-	result        *automation.LaunchResult
-	err           error
-	request       automation.TaskLaunchRequest
-	proof         *automation.ApprovalProof
-	issueErr      error
-	issueID       uuid.UUID
-	issueRequest  automation.TaskApprovalProofRequest
-	issueCalls    int
-	recordRequest automation.TaskApprovalDecisionRequest
-	recordCalls   int
+	result                  *automation.LaunchResult
+	err                     error
+	request                 automation.TaskLaunchRequest
+	proof                   *automation.ApprovalProof
+	issueErr                error
+	issueID                 uuid.UUID
+	issueRequest            automation.TaskApprovalProofRequest
+	issueCalls              int
+	recordRequest           automation.TaskApprovalDecisionRequest
+	recordCalls             int
+	actionApprovalRequired  *bool
+	approvalInspectionErr   error
+	approvalInspectionCalls int
 }
 
 func (f *fakeAutomationLauncher) Launch(id uuid.UUID) (*automation.LaunchResult, error) {
@@ -185,6 +333,17 @@ func (f *fakeAutomationLauncher) RecordApprovalDecision(id uuid.UUID, request au
 	f.issueID = id
 	f.recordRequest = request
 	return nil
+}
+
+func (f *fakeAutomationLauncher) ActionApprovalRequired(id uuid.UUID) (bool, error) {
+	f.approvalInspectionCalls++
+	if f.approvalInspectionErr != nil {
+		return false, f.approvalInspectionErr
+	}
+	if f.actionApprovalRequired != nil {
+		return *f.actionApprovalRequired, nil
+	}
+	return true, nil
 }
 
 type launchOnlyAutomationLauncher struct {

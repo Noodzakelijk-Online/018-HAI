@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"automation-hub-backend/internal/identity"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -53,6 +54,10 @@ func (h *Handler) Command(c *gin.Context) {
 	}
 	result, err := h.service.Command(request)
 	if err != nil {
+		if errors.Is(err, ErrInvalidStandingMandateID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
 		return
 	}

@@ -391,6 +391,7 @@ func buildPack(def packDefinition) DomainPack {
 			"risk_triggered", "approval_required", "approval_resolved", "execution_blocked",
 			"evidence_attached", "validation_completed", "outcome_verified", "retention_applied",
 		},
+		Playbook: playbookForPack(def.id),
 	}
 	return pack
 }

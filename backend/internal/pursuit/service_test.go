@@ -190,9 +190,494 @@ func TestCreateClassifiesAndAuditsPursuit(t *testing.T) {
 	if created.NeedCategory != "safety_and_stability" {
 		t.Fatalf("need category = %q", created.NeedCategory)
 	}
+	if len(created.SuccessCriteria) != 1 || created.SuccessCriteria[0].Status != CriterionPending {
+		t.Fatalf("default success criteria = %#v", created.SuccessCriteria)
+	}
+	if len(created.StopConditions) != 1 || created.StopConditions[0].Status != StopMonitoring {
+		t.Fatalf("default stop conditions = %#v", created.StopConditions)
+	}
 	activity, _ := repo.FindActivities(created.ID, 10)
 	if len(activity) != 1 || activity[0].EventType != "pursuit.created" {
 		t.Fatalf("activity = %#v", activity)
+	}
+}
+
+func TestExplicitSuccessCriterionBlocksFalseCompletion(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{
+		Title: "Ship verified feature",
+		SuccessCriteria: []models.PursuitSuccessCriterion{{
+			ID:               "acceptance-test",
+			Description:      "Acceptance test passes against the live workflow",
+			Status:           CriterionPending,
+			EvidenceRequired: true,
+		}},
+		StopConditions: []models.PursuitStopCondition{{ID: "stop-on-regression", Description: "Stop when regression tests fail", Status: StopMonitoring}},
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	_, err = service.Update(created.ID, UpdateRequest{Status: StatusCompleted, CompletionState: CompletionVerified})
+	if err == nil || !strings.Contains(err.Error(), "success criterion") {
+		t.Fatalf("completion error = %v, want unresolved success criterion guard", err)
+	}
+}
+
+func TestSuccessCriterionCannotBeSatisfiedWithoutRequiredEvidence(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Evidence-backed outcome"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	criteria := []models.PursuitSuccessCriterion{{
+		ID: "explicit-criterion", Description: "Source-backed answer is delivered", Status: CriterionSatisfied, EvidenceRequired: true,
+	}}
+	_, err = service.Update(created.ID, UpdateRequest{SuccessCriteria: &criteria})
+	if err == nil || !strings.Contains(err.Error(), "requires evidence") {
+		t.Fatalf("Update error = %v, want evidence requirement", err)
+	}
+}
+
+func TestTriggeredStopConditionPausesPlanning(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{
+		Title:          "Bounded pursuit",
+		StopConditions: []models.PursuitStopCondition{{ID: "budget-stop", Description: "Budget boundary exceeded", Status: StopTriggered, Reason: "The approved ceiling was reached"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Plan(created.ID, PlanRequest{})
+	if err == nil || !strings.Contains(err.Error(), "triggered stop condition") {
+		t.Fatalf("Plan error = %v, want stop-condition guard", err)
+	}
+}
+
+func TestDetailSurfacesGoalContractDeadlineAndDependencyBlockers(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	target := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	created, err := service.Create(CreateRequest{
+		Title:        "Time-bounded pursuit",
+		TargetAt:     target,
+		Dependencies: []models.PursuitDependency{{ID: "external-answer", Label: "External answer arrives", Status: DependencyPending, Owner: "External"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := service.Detail(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Summary.TargetOverdue || detail.Summary.OpenDependencies != 1 || len(detail.Blockers) < 2 {
+		t.Fatalf("goal contract summary/blockers = %#v / %#v", detail.Summary, detail.Blockers)
+	}
+}
+
+func TestGoalContractGuardsRejectNewOperationalWork(t *testing.T) {
+	tests := []struct {
+		name        string
+		request     CreateRequest
+		wantMessage string
+	}{
+		{
+			name: "triggered stop",
+			request: CreateRequest{Title: "Paused pursuit", StopConditions: []models.PursuitStopCondition{{
+				ID: "stop", Description: "Stop after a safety failure", Status: StopTriggered, Reason: "safety check failed",
+			}}},
+			wantMessage: "triggered stop condition",
+		},
+		{
+			name:        "overdue target",
+			request:     CreateRequest{Title: "Overdue pursuit", TargetAt: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)},
+			wantMessage: "target date has passed",
+		},
+		{
+			name: "blocked dependency",
+			request: CreateRequest{Title: "Dependent pursuit", Dependencies: []models.PursuitDependency{{
+				ID: "external", Label: "External authorization", Status: DependencyBlocked, Reason: "authorization was refused",
+			}}},
+			wantMessage: "dependency is blocked",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			workflowService := &fakeWorkflowIntake{repo: repo}
+			service := NewService(repo, workflowService)
+			created, err := service.Create(test.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.Intake(created.ID, IntakeRequest{Input: "Create additional operational work"})
+			if err == nil || !strings.Contains(err.Error(), test.wantMessage) {
+				t.Fatalf("Intake error = %v, want %q", err, test.wantMessage)
+			}
+			if workflowService.calls != 0 {
+				t.Fatalf("guarded intake created %d workflow(s)", workflowService.calls)
+			}
+		})
+	}
+}
+
+func TestParallelWorkflowCeilingBlocksAdditionalIntake(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{
+		Title:          "Bounded parallel work",
+		ResourceLimits: models.PursuitResourceLimits{MaxParallelWorkflows: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowID := uuid.New()
+	repo.workflows[workflowID] = models.WorkflowItem{ID: workflowID, CurrentState: workflow.StateWaitingInput}
+	if _, err := service.Link(created.ID, LinkRequest{LinkType: LinkWorkflow, LinkID: workflowID.String(), Relationship: "operational_work"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.Intake(created.ID, IntakeRequest{Input: "Create a second workflow"})
+	if err == nil || !strings.Contains(err.Error(), "parallel workflow ceiling reached (1 of 1 active)") {
+		t.Fatalf("Intake error = %v, want parallel ceiling guard", err)
+	}
+	if workflowService.calls != 0 {
+		t.Fatalf("parallel ceiling created %d workflow(s)", workflowService.calls)
+	}
+
+	completed := repo.workflows[workflowID]
+	completed.CurrentState = workflow.StateCompleted
+	repo.workflows[workflowID] = completed
+	if _, err := service.Intake(created.ID, IntakeRequest{Input: "Create work after completion"}); err != nil {
+		t.Fatalf("terminal workflow still consumed parallel capacity: %v", err)
+	}
+	if workflowService.calls != 1 {
+		t.Fatalf("workflow intake calls = %d, want 1", workflowService.calls)
+	}
+}
+
+func TestPursuitResourceLedgerProjectsUsageIdempotentlyAndEnforcesCeilings(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+	created, err := service.Create(CreateRequest{
+		OwnerIdentity: "alice@example.com",
+		Title:         "Resource-bounded pursuit",
+		ResourceLimits: models.PursuitResourceLimits{
+			MaxEffortHours: 2,
+			MaxSpendEUR:    100,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effortRequest := AppendPursuitResourceEventRequest{
+		Kind: ResourceKindEffort, EffortHours: 1.25, Note: "Reviewed source documents",
+		IdempotencyKey: "effort-1", Actor: "alice@example.com",
+	}
+	first, err := service.AppendResourceEventForOwner("alice@example.com", created.ID, effortRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := service.AppendResourceEventForOwner("alice@example.com", created.ID, effortRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate.ID != first.ID {
+		t.Fatalf("idempotent duplicate id = %s, want %s", duplicate.ID, first.ID)
+	}
+	if _, err := service.AppendResourceEventForOwner("alice@example.com", created.ID, AppendPursuitResourceEventRequest{
+		Kind: ResourceKindEffort, EffortHours: 1.5, Note: "Different event",
+		IdempotencyKey: "effort-1", Actor: "alice@example.com",
+	}); err == nil || !strings.Contains(err.Error(), "idempotency key") {
+		t.Fatalf("conflicting idempotency error = %v", err)
+	}
+
+	for _, request := range []AppendPursuitResourceEventRequest{
+		{Kind: ResourceKindSpend, SpendEUR: 80, EvidenceURI: "receipt://one", IdempotencyKey: "spend-1", Actor: "alice@example.com"},
+		{Kind: ResourceKindSpend, SpendEUR: 25, EvidenceURI: "receipt://two", IdempotencyKey: "spend-2", Actor: "alice@example.com"},
+	} {
+		if _, err := service.AppendResourceEventForOwner("alice@example.com", created.ID, request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usage, err := service.ResourceUsageForOwner("alice@example.com", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.EventCount != 3 || usage.EffortRecordedHours != 1.25 || usage.SpendNetEUR != 105 || !usage.SpendExceeded || usage.State != "exceeded" {
+		t.Fatalf("resource usage = %#v", usage)
+	}
+	detail, err := service.DetailForOwner("alice@example.com", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.ActionQueues.SystemReady) != 0 {
+		t.Fatalf("resource-blocked pursuit advertised system-ready work: %#v", detail.ActionQueues.SystemReady)
+	}
+	if len(detail.ActionQueues.NeedsRobert) == 0 || !strings.Contains(strings.ToLower(detail.ActionQueues.NeedsRobert[0].Reason), "resource ceiling") {
+		t.Fatalf("resource blocker was not routed to Robert: %#v", detail.ActionQueues.NeedsRobert)
+	}
+	if _, err := service.IntakeForOwner("alice@example.com", created.ID, IntakeRequest{Input: "Create more work"}); err == nil || !strings.Contains(err.Error(), "spend ceiling exceeded") {
+		t.Fatalf("intake ceiling error = %v", err)
+	}
+	validator := service.(interface {
+		ValidatePursuitTaskAttempt(uuid.UUID, string) error
+	})
+	if err := validator.ValidatePursuitTaskAttempt(created.ID, "alice@example.com"); err == nil || !strings.Contains(err.Error(), "spend ceiling exceeded") {
+		t.Fatalf("direct task ceiling error = %v", err)
+	}
+
+	if _, err := service.AppendResourceEventForOwner("alice@example.com", created.ID, AppendPursuitResourceEventRequest{
+		Kind: ResourceKindRefund, SpendEUR: 10, EvidenceURI: "refund://one", IdempotencyKey: "refund-1", Actor: "alice@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	usage, err = service.ResourceUsageForOwner("alice@example.com", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.SpendNetEUR != 95 || usage.SpendExhausted || usage.State != "within_limits" {
+		t.Fatalf("refunded resource usage = %#v", usage)
+	}
+	if _, err := service.IntakeForOwner("alice@example.com", created.ID, IntakeRequest{Input: "Create work within the restored ceiling"}); err != nil {
+		t.Fatalf("intake after refund: %v", err)
+	}
+}
+
+func TestPursuitResourceLedgerFailsClosedAndProtectsOwnerScope(t *testing.T) {
+	base := newFakeRepo()
+	wrapped := pursuitRepositoryWithoutResourceLedger{Repository: base}
+	workflowService := &fakeWorkflowIntake{repo: base}
+	service := NewService(wrapped, workflowService)
+	created, err := service.Create(CreateRequest{
+		OwnerIdentity:  "alice@example.com",
+		Title:          "Ledger-required pursuit",
+		ResourceLimits: models.PursuitResourceLimits{MaxEffortHours: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := service.ResourceUsageForOwner("alice@example.com", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.State != "unavailable" || usage.BlockingReason == "" {
+		t.Fatalf("unavailable usage = %#v", usage)
+	}
+	if _, err := service.IntakeForOwner("alice@example.com", created.ID, IntakeRequest{Input: "Unsafe unmetered work"}); err == nil || !strings.Contains(err.Error(), "cannot be verified") {
+		t.Fatalf("unavailable-ledger intake error = %v", err)
+	}
+	if _, err := service.ResourceUsageForOwner("bob@example.com", created.ID); err == nil {
+		t.Fatal("cross-owner resource usage read succeeded")
+	}
+}
+
+func TestPursuitTaskResourceReservationIsIdempotentAndSettlesActualUsage(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, &fakeWorkflowIntake{})
+	created, err := service.Create(CreateRequest{
+		OwnerIdentity: "alice@example.com",
+		Title:         "Atomic task reservation", DesiredOutcome: "Complete one bounded local task",
+		RiskLevel: "low", AutonomyLevel: "autonomous_safe",
+		ResourceLimits: models.PursuitResourceLimits{MaxEffortHours: 2, MaxSpendEUR: 1},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	manager := service.(interface {
+		ReservePursuitTaskResources(uuid.UUID, string, string, int64, int64) error
+		SettlePursuitTaskResources(uuid.UUID, string, string, string, int64, int64) error
+	})
+	if err := manager.ReservePursuitTaskResources(created.ID, "alice@example.com", "task-plan:attempt:1", 45, 2_500); err != nil {
+		t.Fatalf("ReservePursuitTaskResources: %v", err)
+	}
+	if err := manager.ReservePursuitTaskResources(created.ID, "alice@example.com", "task-plan:attempt:1", 45, 2_500); err != nil {
+		t.Fatalf("idempotent reservation replay: %v", err)
+	}
+	if len(repo.resourceReservations) != 1 {
+		t.Fatalf("reservations = %d, want one idempotent hold", len(repo.resourceReservations))
+	}
+	if countPursuitActivities(repo.activity[created.ID], "pursuit.resource_reserved") != 1 {
+		t.Fatalf("reservation replay duplicated audit activity: %#v", repo.activity[created.ID])
+	}
+	if err := manager.SettlePursuitTaskResources(created.ID, "alice@example.com", "task-plan:attempt:1", ResourceReservationConsumed, 7, 2_000); err != nil {
+		t.Fatalf("SettlePursuitTaskResources: %v", err)
+	}
+	if err := manager.SettlePursuitTaskResources(created.ID, "alice@example.com", "task-plan:attempt:1", ResourceReservationConsumed, 7, 2_000); err != nil {
+		t.Fatalf("idempotent settlement replay: %v", err)
+	}
+	if len(repo.resourceSettlements) != 1 {
+		t.Fatalf("settlements = %d, want one immutable settlement", len(repo.resourceSettlements))
+	}
+	if countPursuitActivities(repo.activity[created.ID], "pursuit.resource_reservation_settled") != 1 {
+		t.Fatalf("settlement replay duplicated audit activity: %#v", repo.activity[created.ID])
+	}
+	if repo.pursuits[created.ID].LastActivityAt == nil {
+		t.Fatal("resource ledger activity did not update pursuit freshness")
+	}
+	usage, err := service.ResourceUsageForOwner("alice@example.com", created.ID)
+	if err != nil {
+		t.Fatalf("ResourceUsageForOwner: %v", err)
+	}
+	if usage.EffortRecordedHours != 0.12 || usage.SpendNetEUR != 0.01 || usage.ActiveReservations != 0 {
+		t.Fatalf("settled usage = %#v, want 7 minutes, rounded cent spend, and no active hold", usage)
+	}
+}
+
+func TestPursuitResourceMutationRollsBackWhenAuditCannotCommit(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, &fakeWorkflowIntake{})
+	created, err := service.Create(CreateRequest{
+		OwnerIdentity: "alice@example.com", Title: "Atomic resource audit",
+		RiskLevel: "low", AutonomyLevel: "autonomous_safe",
+		ResourceLimits: models.PursuitResourceLimits{MaxEffortHours: 2, MaxSpendEUR: 1},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	manager := service.(interface {
+		ReservePursuitTaskResources(uuid.UUID, string, string, int64, int64) error
+		SettlePursuitTaskResources(uuid.UUID, string, string, string, int64, int64) error
+	})
+	operationID := "audit-failure:attempt:1"
+	activityBefore := len(repo.activity[created.ID])
+	repo.resourceAuditErr = errors.New("audit store unavailable")
+	if err := manager.ReservePursuitTaskResources(created.ID, "alice@example.com", operationID, 30, 2_500); err == nil || !strings.Contains(err.Error(), "audit store unavailable") {
+		t.Fatalf("reservation audit failure = %v", err)
+	}
+	if len(repo.resourceReservations) != 0 || len(repo.activity[created.ID]) != activityBefore {
+		t.Fatalf("failed reservation mutated state: reservations=%d activities=%d", len(repo.resourceReservations), len(repo.activity[created.ID]))
+	}
+
+	repo.resourceAuditErr = nil
+	if err := manager.ReservePursuitTaskResources(created.ID, "alice@example.com", operationID, 30, 2_500); err != nil {
+		t.Fatalf("reservation after audit recovery: %v", err)
+	}
+	activityBefore = len(repo.activity[created.ID])
+	repo.resourceAuditErr = errors.New("audit store unavailable")
+	if err := manager.SettlePursuitTaskResources(created.ID, "alice@example.com", operationID, ResourceReservationConsumed, 5, 1_500); err == nil || !strings.Contains(err.Error(), "audit store unavailable") {
+		t.Fatalf("settlement audit failure = %v", err)
+	}
+	if len(repo.resourceSettlements) != 0 || len(repo.resourceEvents[created.ID]) != 0 || len(repo.activity[created.ID]) != activityBefore {
+		t.Fatalf("failed settlement mutated state: settlements=%d events=%d activities=%d", len(repo.resourceSettlements), len(repo.resourceEvents[created.ID]), len(repo.activity[created.ID]))
+	}
+	usage, err := service.ResourceUsageForOwner("alice@example.com", created.ID)
+	if err != nil {
+		t.Fatalf("ResourceUsageForOwner after failed settlement: %v", err)
+	}
+	if usage.ActiveReservations != 1 {
+		t.Fatalf("failed settlement released reservation: %#v", usage)
+	}
+
+	repo.resourceAuditErr = nil
+	if err := manager.SettlePursuitTaskResources(created.ID, "alice@example.com", operationID, ResourceReservationConsumed, 5, 1_500); err != nil {
+		t.Fatalf("settlement after audit recovery: %v", err)
+	}
+	if len(repo.resourceSettlements) != 1 || len(repo.resourceEvents[created.ID]) != 2 {
+		t.Fatalf("recovered settlement = %d settlements, %d events", len(repo.resourceSettlements), len(repo.resourceEvents[created.ID]))
+	}
+}
+
+func TestConfirmedOrphanReservationReleaseIsAppendOnlyAndOwnerScoped(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, &fakeWorkflowIntake{})
+	created, err := service.Create(CreateRequest{
+		OwnerIdentity: "alice@example.com", Title: "Reconcile crashed task",
+		RiskLevel: "low", AutonomyLevel: "autonomous_safe",
+		ResourceLimits: models.PursuitResourceLimits{MaxEffortHours: 2, MaxSpendEUR: 1},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	manager := service.(interface {
+		ReservePursuitTaskResources(uuid.UUID, string, string, int64, int64) error
+	})
+	if err := manager.ReservePursuitTaskResources(created.ID, "alice@example.com", "crashed-plan:attempt:1", 30, 125_000); err != nil {
+		t.Fatalf("ReservePursuitTaskResources: %v", err)
+	}
+	var reservation models.PursuitResourceReservation
+	for key, stored := range repo.resourceReservations {
+		stored.ReservedAt = time.Now().UTC().Add(-25 * time.Hour)
+		repo.resourceReservations[key] = stored
+		reservation = stored
+	}
+	usage, err := service.ResourceUsageForOwner("alice@example.com", created.ID)
+	if err != nil {
+		t.Fatalf("ResourceUsageForOwner: %v", err)
+	}
+	if len(usage.Reservations) != 1 || !usage.Reservations[0].Stale || usage.Reservations[0].ReviewReason == "" {
+		t.Fatalf("stale reservation projection = %#v", usage.Reservations)
+	}
+	if _, err := service.ReleaseResourceReservationForOwner("bob@example.com", created.ID, reservation.ID, ReleasePursuitResourceReservationRequest{
+		ConfirmedOrphan: true, Reason: "Bob cannot release Alice's reservation.", Actor: "bob@example.com",
+	}); err == nil {
+		t.Fatal("cross-owner reservation release succeeded")
+	}
+	if _, err := service.ReleaseResourceReservationForOwner("alice@example.com", created.ID, reservation.ID, ReleasePursuitResourceReservationRequest{
+		Reason: "The worker crashed and no process remains.", Actor: "alice@example.com",
+	}); err == nil || !strings.Contains(err.Error(), "confirmedOrphan") {
+		t.Fatalf("unconfirmed release error = %v", err)
+	}
+	usage, err = service.ReleaseResourceReservationForOwner("alice@example.com", created.ID, reservation.ID, ReleasePursuitResourceReservationRequest{
+		ConfirmedOrphan: true, Reason: "The worker crashed and no process remains.", Actor: "alice@example.com",
+	})
+	if err != nil {
+		t.Fatalf("ReleaseResourceReservationForOwner: %v", err)
+	}
+	if usage.ActiveReservations != 0 || len(usage.Reservations) != 0 {
+		t.Fatalf("released usage = %#v", usage)
+	}
+	if len(repo.resourceReservations) != 1 || len(repo.resourceSettlements) != 1 {
+		t.Fatalf("append-only ledger = %d reservations, %d settlements", len(repo.resourceReservations), len(repo.resourceSettlements))
+	}
+	if settlement := repo.resourceSettlements[reservation.ID]; settlement.Disposition != ResourceReservationReleased || settlement.Actor != "alice@example.com" || settlement.Reason != "The worker crashed and no process remains." {
+		t.Fatalf("release settlement = %#v", settlement)
+	}
+	if countPursuitActivities(repo.activity[created.ID], "pursuit.resource_reservation_settled") != 1 ||
+		countPursuitActivities(repo.activity[created.ID], "pursuit.resource_reservation_reconciled") != 1 {
+		t.Fatalf("release audit activities = %#v", repo.activity[created.ID])
+	}
+	activityBeforeReplay := len(repo.activity[created.ID])
+	if _, err := service.ReleaseResourceReservationForOwner("alice@example.com", created.ID, reservation.ID, ReleasePursuitResourceReservationRequest{
+		ConfirmedOrphan: true, Reason: "The worker crashed and no process remains.", Actor: "alice@example.com",
+	}); err != nil {
+		t.Fatalf("idempotent release replay: %v", err)
+	}
+	if len(repo.activity[created.ID]) != activityBeforeReplay {
+		t.Fatalf("release replay added duplicate audit activity: before=%d after=%d", activityBeforeReplay, len(repo.activity[created.ID]))
+	}
+}
+
+func countPursuitActivities(items []models.PursuitActivity, eventType string) int {
+	count := 0
+	for _, item := range items {
+		if item.EventType == eventType {
+			count++
+		}
+	}
+	return count
+}
+
+func TestReviewUsesPursuitCadenceWhenNoDateIsProvided(t *testing.T) {
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{Title: "Review on its own cadence", ReviewCadenceDays: 21})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC().Add(20*24*time.Hour + 23*time.Hour)
+	detail, err := service.Review(created.ID, ReviewRequest{Action: "complete", Actor: "Robert"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(21*24*time.Hour + time.Hour)
+	if detail.Pursuit.NextReviewAt == nil || detail.Pursuit.NextReviewAt.Before(before) || detail.Pursuit.NextReviewAt.After(after) {
+		t.Fatalf("next review = %v, want approximately 21 days", detail.Pursuit.NextReviewAt)
 	}
 }
 
@@ -1305,10 +1790,12 @@ func TestCandidateFirstIntakeCreatesWorkflowOnlyAfterExplicitAcceptance(t *testi
 	workflowService := &fakeWorkflowIntake{repo: repo}
 	service := NewService(repo, workflowService)
 
+	mandateID := uuid.NewString()
 	routed, err := service.RouteIntake(IntakeRequest{
 		OwnerIdentity: "alice",
 		Input:         "Collect the evidence and prepare the formal response for the new legal matter.",
 		ProjectKey:    "legal",
+		MandateID:     mandateID,
 		SourceType:    "email",
 		SourceID:      "new-legal-matter",
 		SourceURI:     "email://legal/new-matter",
@@ -1321,6 +1808,9 @@ func TestCandidateFirstIntakeCreatesWorkflowOnlyAfterExplicitAcceptance(t *testi
 	if !routed.CreatedCandidate || workflowService.calls != 0 {
 		t.Fatalf("candidate-first intake = %#v calls=%d", routed, workflowService.calls)
 	}
+	if routed.Detail == nil || routed.Detail.Pursuit.MandateID == nil || routed.Detail.Pursuit.MandateID.String() != mandateID {
+		t.Fatalf("candidate standing mandate = %#v, want %s", routed.Detail, mandateID)
+	}
 
 	detail, err := service.AcceptCandidateForOwner("alice", routed.PursuitID, PlanRequest{Actor: "Robert"})
 	if err != nil {
@@ -1328,6 +1818,41 @@ func TestCandidateFirstIntakeCreatesWorkflowOnlyAfterExplicitAcceptance(t *testi
 	}
 	if workflowService.calls != 1 || len(detail.Workflows) != 1 || isPursuitCandidate(detail.Pursuit) {
 		t.Fatalf("accepted candidate did not create exactly one governed workflow: calls=%d detail=%#v", workflowService.calls, detail)
+	}
+	if workflowService.received.MandateID != mandateID {
+		t.Fatalf("accepted candidate workflow mandate = %q, want %q", workflowService.received.MandateID, mandateID)
+	}
+}
+
+func TestCandidateIntakeRejectsMalformedAndConflictingMandateReferences(t *testing.T) {
+	repo := newFakeRepo()
+	workflowService := &fakeWorkflowIntake{repo: repo}
+	service := NewService(repo, workflowService)
+
+	if result, err := service.RouteIntake(IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Prepare a governed project recovery plan.",
+		MandateID:     "invalid",
+	}); err == nil || !strings.Contains(err.Error(), "standing mandate id must be a UUID") || result != nil {
+		t.Fatalf("malformed mandate result=%#v error=%v", result, err)
+	}
+
+	request := IntakeRequest{
+		OwnerIdentity: "alice",
+		Input:         "Prepare a governed project recovery plan.",
+		ProjectKey:    "018-hai",
+		SourceType:    LinkAssistantCommand,
+		SourceID:      "assistant-mandate-conflict",
+		SourceURI:     "assistant://command/mandate-conflict",
+		MandateID:     uuid.NewString(),
+	}
+	first, err := service.RouteIntake(request)
+	if err != nil || first == nil || !first.CreatedCandidate {
+		t.Fatalf("create candidate: result=%#v error=%v", first, err)
+	}
+	request.MandateID = uuid.NewString()
+	if second, err := service.RouteIntake(request); err == nil || !strings.Contains(err.Error(), "different standing mandate") || second != nil {
+		t.Fatalf("conflicting mandate result=%#v error=%v", second, err)
 	}
 }
 
@@ -4544,6 +5069,12 @@ type fakeRepo struct {
 	links                map[uuid.UUID]models.PursuitLink
 	activity             map[uuid.UUID][]models.PursuitActivity
 	taskAttempts         map[string]models.PursuitTaskAttempt
+	resourceEvents       map[uuid.UUID][]models.PursuitResourceEvent
+	resourceReservations map[string]models.PursuitResourceReservation
+	resourceSettlements  map[uuid.UUID]models.PursuitResourceReservationSettlement
+	workflowAttestations map[uuid.UUID]models.WorkflowCompletionAttestation
+	portfolioProofs      map[uuid.UUID]models.PursuitPortfolioWorkflowSettlementProof
+	resourceAuditErr     error
 	workflows            map[uuid.UUID]models.WorkflowItem
 	checklistItems       []models.WorkflowChecklistItem
 	openLoops            []models.WorkflowOpenLoop
@@ -4568,12 +5099,21 @@ type fakeRepo struct {
 	linkedWorkflowErr    error
 }
 
+// Embedding only the base contract intentionally hides the optional resource
+// ledger capability so fail-closed service behavior can be tested.
+type pursuitRepositoryWithoutResourceLedger struct{ Repository }
+
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		pursuits:             map[uuid.UUID]models.Pursuit{},
 		links:                map[uuid.UUID]models.PursuitLink{},
 		activity:             map[uuid.UUID][]models.PursuitActivity{},
 		taskAttempts:         map[string]models.PursuitTaskAttempt{},
+		resourceEvents:       map[uuid.UUID][]models.PursuitResourceEvent{},
+		resourceReservations: map[string]models.PursuitResourceReservation{},
+		resourceSettlements:  map[uuid.UUID]models.PursuitResourceReservationSettlement{},
+		workflowAttestations: map[uuid.UUID]models.WorkflowCompletionAttestation{},
+		portfolioProofs:      map[uuid.UUID]models.PursuitPortfolioWorkflowSettlementProof{},
 		workflows:            map[uuid.UUID]models.WorkflowItem{},
 		memories:             map[uuid.UUID]models.ContextMemory{},
 		conversations:        map[uuid.UUID]models.AIConversationArchive{},
@@ -4796,6 +5336,14 @@ func (r *fakeRepo) findVisibleLink(ownerIdentity string, matches func(models.Pur
 }
 
 func (r *fakeRepo) CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error) {
+	if activity.IdempotencyKey != "" {
+		for _, existing := range r.activity[activity.PursuitID] {
+			if existing.IdempotencyKey == activity.IdempotencyKey {
+				copyExisting := existing
+				return &copyExisting, nil
+			}
+		}
+	}
 	if activity.ID == uuid.Nil {
 		activity.ID = uuid.New()
 	}
@@ -4812,6 +5360,20 @@ func (r *fakeRepo) FindActivities(pursuitID uuid.UUID, limit int) ([]models.Purs
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+func (r *fakeRepo) FindActivityByIdentity(
+	pursuitID uuid.UUID,
+	eventType, sourceType, sourceID, sourceURI string,
+) (*models.PursuitActivity, bool, error) {
+	for _, activity := range r.activity[pursuitID] {
+		if activity.EventType == eventType && activity.SourceType == sourceType &&
+			activity.SourceID == sourceID && activity.SourceURI == sourceURI {
+			copyActivity := activity
+			return &copyActivity, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 func (r *fakeRepo) UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error) {
@@ -4844,6 +5406,253 @@ func (r *fakeRepo) FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.Pu
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+func (r *fakeRepo) AppendResourceEvent(event *models.PursuitResourceEvent) (*models.PursuitResourceEvent, bool, error) {
+	for _, existing := range r.resourceEvents[event.PursuitID] {
+		if existing.OwnerIdentity == event.OwnerIdentity && existing.IdempotencyKey == event.IdempotencyKey {
+			if existing.RecordDigest != event.RecordDigest {
+				return nil, false, fmt.Errorf("idempotency key was already used for a different pursuit resource event")
+			}
+			copyExisting := existing
+			return &copyExisting, false, nil
+		}
+	}
+	copyEvent := *event
+	if copyEvent.ID == uuid.Nil {
+		copyEvent.ID = uuid.New()
+	}
+	if copyEvent.RecordedAt.IsZero() {
+		copyEvent.RecordedAt = time.Now().UTC()
+	}
+	r.resourceEvents[event.PursuitID] = append(r.resourceEvents[event.PursuitID], copyEvent)
+	return &copyEvent, true, nil
+}
+
+func (r *fakeRepo) FindResourceEventsForOwner(ownerIdentity string, pursuitID uuid.UUID, limit int) ([]models.PursuitResourceEvent, error) {
+	result := []models.PursuitResourceEvent{}
+	for _, event := range r.resourceEvents[pursuitID] {
+		if event.OwnerIdentity == ownerIdentity {
+			result = append(result, event)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].OccurredAt.After(result[j].OccurredAt) })
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) SummarizeResourceEventsForOwner(ownerIdentity string, pursuitID uuid.UUID) (PursuitResourceTotals, error) {
+	totals := PursuitResourceTotals{}
+	for _, event := range r.resourceEvents[pursuitID] {
+		if event.OwnerIdentity != ownerIdentity {
+			continue
+		}
+		totals.EventCount++
+		switch event.Kind {
+		case ResourceKindEffort:
+			totals.EffortMinutes += event.EffortMinutes
+		case ResourceKindSpend:
+			totals.IncurredMinor += event.AmountMinor
+		case ResourceKindRefund:
+			totals.RefundedMinor += event.AmountMinor
+		}
+		if totals.LatestRecordedAt == nil || event.RecordedAt.After(*totals.LatestRecordedAt) {
+			value := event.RecordedAt
+			totals.LatestRecordedAt = &value
+		}
+	}
+	return totals, nil
+}
+
+func resourceReservationFakeKey(ownerIdentity string, pursuitID uuid.UUID, operationID string) string {
+	return ownerIdentity + ":" + pursuitID.String() + ":" + operationID
+}
+
+func (r *fakeRepo) ReserveResource(reservation *models.PursuitResourceReservation, activity *models.PursuitActivity) (*models.PursuitResourceReservation, bool, error) {
+	key := resourceReservationFakeKey(reservation.OwnerIdentity, reservation.PursuitID, reservation.OperationID)
+	if existing, ok := r.resourceReservations[key]; ok {
+		if existing.RecordDigest != reservation.RecordDigest {
+			return nil, false, fmt.Errorf("resource reservation operation was already used with different estimates")
+		}
+		copyExisting := existing
+		return &copyExisting, false, nil
+	}
+	if r.resourceAuditErr != nil {
+		return nil, false, r.resourceAuditErr
+	}
+	copyReservation := *reservation
+	if copyReservation.ID == uuid.Nil {
+		copyReservation.ID = uuid.New()
+	}
+	r.resourceReservations[key] = copyReservation
+	if activity != nil {
+		copyActivity := *activity
+		if copyActivity.ID == uuid.Nil {
+			copyActivity.ID = uuid.New()
+		}
+		if copyActivity.CreatedAt.IsZero() {
+			copyActivity.CreatedAt = time.Now().UTC()
+		}
+		r.activity[copyActivity.PursuitID] = append([]models.PursuitActivity{copyActivity}, r.activity[copyActivity.PursuitID]...)
+		pursuit := r.pursuits[copyActivity.PursuitID]
+		if pursuit.LastActivityAt == nil || pursuit.LastActivityAt.Before(copyActivity.CreatedAt) {
+			activityAt := copyActivity.CreatedAt
+			pursuit.LastActivityAt = &activityAt
+			r.pursuits[pursuit.ID] = pursuit
+		}
+	}
+	return &copyReservation, true, nil
+}
+
+func (r *fakeRepo) FindResourceReservation(ownerIdentity string, pursuitID uuid.UUID, operationID string) (*models.PursuitResourceReservation, error) {
+	reservation, ok := r.resourceReservations[resourceReservationFakeKey(ownerIdentity, pursuitID, operationID)]
+	if !ok {
+		return nil, fmt.Errorf("resource reservation not found")
+	}
+	copyReservation := reservation
+	return &copyReservation, nil
+}
+
+func (r *fakeRepo) FindResourceReservationByID(ownerIdentity string, pursuitID, reservationID uuid.UUID) (*models.PursuitResourceReservation, error) {
+	for _, reservation := range r.resourceReservations {
+		if reservation.OwnerIdentity == ownerIdentity && reservation.PursuitID == pursuitID && reservation.ID == reservationID {
+			copyReservation := reservation
+			return &copyReservation, nil
+		}
+	}
+	return nil, fmt.Errorf("resource reservation not found")
+}
+
+func (r *fakeRepo) FindActiveResourceReservations(ownerIdentity string, pursuitID uuid.UUID, limit int) ([]models.PursuitResourceReservation, error) {
+	result := []models.PursuitResourceReservation{}
+	for _, reservation := range r.resourceReservations {
+		if reservation.OwnerIdentity != ownerIdentity || reservation.PursuitID != pursuitID {
+			continue
+		}
+		if _, settled := r.resourceSettlements[reservation.ID]; settled {
+			continue
+		}
+		result = append(result, reservation)
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].ReservedAt.Before(result[right].ReservedAt) })
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (r *fakeRepo) SettleResourceReservation(settlement *models.PursuitResourceReservationSettlement, events []models.PursuitResourceEvent, activities []models.PursuitActivity) (*models.PursuitResourceReservationSettlement, bool, error) {
+	if existing, ok := r.resourceSettlements[settlement.ReservationID]; ok {
+		if existing.RecordDigest != settlement.RecordDigest {
+			return nil, false, fmt.Errorf("resource reservation was already settled with a different outcome")
+		}
+		copyExisting := existing
+		return &copyExisting, false, nil
+	}
+	if r.resourceAuditErr != nil {
+		return nil, false, r.resourceAuditErr
+	}
+	copySettlement := *settlement
+	if copySettlement.ID == uuid.Nil {
+		copySettlement.ID = uuid.New()
+	}
+	r.resourceSettlements[settlement.ReservationID] = copySettlement
+	for index := range events {
+		if _, _, err := r.AppendResourceEvent(&events[index]); err != nil {
+			return nil, false, err
+		}
+	}
+	for index := range activities {
+		copyActivity := activities[index]
+		if copyActivity.ID == uuid.Nil {
+			copyActivity.ID = uuid.New()
+		}
+		if copyActivity.CreatedAt.IsZero() {
+			copyActivity.CreatedAt = time.Now().UTC()
+		}
+		r.activity[copyActivity.PursuitID] = append([]models.PursuitActivity{copyActivity}, r.activity[copyActivity.PursuitID]...)
+		pursuit := r.pursuits[copyActivity.PursuitID]
+		if pursuit.LastActivityAt == nil || pursuit.LastActivityAt.Before(copyActivity.CreatedAt) {
+			activityAt := copyActivity.CreatedAt
+			pursuit.LastActivityAt = &activityAt
+			r.pursuits[pursuit.ID] = pursuit
+		}
+	}
+	return &copySettlement, true, nil
+}
+
+func (r *fakeRepo) FindWorkflowCompletionAttestation(ownerIdentity string, workflowID uuid.UUID) (*models.WorkflowCompletionAttestation, error) {
+	attestation, ok := r.workflowAttestations[workflowID]
+	if !ok || attestation.OwnerIdentity != ownerIdentity {
+		return nil, nil
+	}
+	copyAttestation := attestation
+	return &copyAttestation, nil
+}
+
+func (r *fakeRepo) FindPortfolioWorkflowSettlementProof(ownerIdentity string, itemID, workflowID uuid.UUID) (*models.PursuitPortfolioWorkflowSettlementProof, *models.PursuitResourceReservationSettlement, error) {
+	for _, proof := range r.portfolioProofs {
+		if proof.OwnerIdentity != ownerIdentity || proof.ProposalItemID != itemID || proof.WorkflowID != workflowID {
+			continue
+		}
+		settlement, ok := r.resourceSettlements[proof.ReservationID]
+		if !ok {
+			return nil, nil, fmt.Errorf("portfolio proof settlement is missing")
+		}
+		copyProof, copySettlement := proof, settlement
+		return &copyProof, &copySettlement, nil
+	}
+	return nil, nil, nil
+}
+
+func (r *fakeRepo) SettleVerifiedPortfolioWorkflow(commit portfolioWorkflowSettlementCommit) (*models.PursuitPortfolioWorkflowSettlementProof, *models.PursuitResourceReservationSettlement, bool, error) {
+	if err := validatePortfolioWorkflowSettlementCommit(commit); err != nil {
+		return nil, nil, false, err
+	}
+	proof := commit.Proof
+	if existing, ok := r.portfolioProofs[proof.ReservationID]; ok {
+		if existing.RequestDigest != proof.RequestDigest || existing.RecordDigest != proof.RecordDigest {
+			return nil, nil, false, fmt.Errorf("portfolio workflow reservation was already settled with different proof")
+		}
+		settlement := r.resourceSettlements[proof.ReservationID]
+		return &existing, &settlement, false, nil
+	}
+	workflowItem, ok := r.workflows[proof.WorkflowID]
+	attestation, attested := r.workflowAttestations[proof.WorkflowID]
+	if !ok || !attested || workflowItem.OwnerIdentity != proof.OwnerIdentity ||
+		workflowItem.CurrentState != workflow.StateCompleted || attestation.RecordDigest != proof.CompletionAttestationDigest ||
+		!portfolioSettlementAcceptsVerification(attestation.VerificationStatus) {
+		return nil, nil, false, fmt.Errorf("immutable verified workflow completion is unavailable")
+	}
+	settlement, _, err := r.SettleResourceReservation(commit.Settlement, commit.Events, commit.Activities)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	r.portfolioProofs[proof.ReservationID] = *proof
+	copyProof := *proof
+	return &copyProof, settlement, true, nil
+}
+
+func (r *fakeRepo) SummarizeActiveResourceReservations(ownerIdentity string, pursuitID uuid.UUID) (PursuitResourceReservationTotals, error) {
+	totals := PursuitResourceReservationTotals{}
+	for _, reservation := range r.resourceReservations {
+		if reservation.OwnerIdentity != ownerIdentity || reservation.PursuitID != pursuitID {
+			continue
+		}
+		if _, settled := r.resourceSettlements[reservation.ID]; settled {
+			continue
+		}
+		totals.EffortMinutes += reservation.EstimatedEffortMinutes
+		totals.CostMicros += reservation.EstimatedCostMicros
+		totals.ReservationCount++
+		if totals.LatestReservedAt == nil || reservation.ReservedAt.After(*totals.LatestReservedAt) {
+			value := reservation.ReservedAt
+			totals.LatestReservedAt = &value
+		}
+	}
+	return totals, nil
 }
 
 func (r *fakeRepo) FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error) {

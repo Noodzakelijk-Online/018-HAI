@@ -396,8 +396,8 @@ separate from the dated 2026-07-14 host evidence above.
 
 - A code-owned Framework Registry catalog with exactly 55 version `1.0.0`
   records: 50 `active`, five `experimental`, and zero `deprecated`.
-- A deterministic `selector-v4` contract with required overlays, conflict
-  handling, a 12-framework limit, authority ceilings, and evidence/completion
+- A deterministic `selector-v5` contract with required overlays, risk-ceiling
+  enforcement, conflict handling, a 16-framework limit, authority ceilings, and evidence/completion
   requirements.
 - A durable operating contract containing multi-domain classification,
   needs-state and capacity constraints, fresh verified agent cards, explicit
@@ -461,8 +461,9 @@ therefore not green and remains an explicit release gate; see
 
 ### Known recovery and deployment gaps
 
-- The action approval proof signing state and consumed-nonce set are
-  process-local and are not coordinated across backend instances.
+- Automation approval-proof replay state is owner-scoped and durable in the
+  append-only PostgreSQL consumption ledger. Its signing key is deployment
+  configuration and must remain consistent across backend instances.
 - A durable task review can remain `approved` if the backend stops after the
   decision is committed but before the execution outcome is committed.
 - There is no automatic review-reconciliation worker and no public recovery

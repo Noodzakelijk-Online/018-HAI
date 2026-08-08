@@ -44,6 +44,26 @@ func TestBuildSelectionCreatesMultiDomainWholeLifeContract(t *testing.T) {
 	}
 }
 
+func TestOperatingContractDigestCoversRiskContract(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 12, 15, 0, 0, time.UTC)
+	request := SelectionRequest{Request: "Prepare a bounded internal plan."}
+	low, err := buildOperatingContract(
+		request, "low", "high", nil, nil, 2, false, nil, nil, nil, nil, now,
+	)
+	if err != nil {
+		t.Fatalf("build low-risk operating contract: %v", err)
+	}
+	medium, err := buildOperatingContract(
+		request, "medium", "high", nil, nil, 2, false, nil, nil, nil, nil, now,
+	)
+	if err != nil {
+		t.Fatalf("build medium-risk operating contract: %v", err)
+	}
+	if low.Digest == medium.Digest {
+		t.Fatal("operating contract digest did not bind task risk")
+	}
+}
+
 func TestBuildSelectionCoversAdditionalWholeLifeDomains(t *testing.T) {
 	t.Parallel()
 

@@ -23,6 +23,29 @@ type TaskCompletionPlanLog struct {
 
 func (TaskCompletionPlanLog) TableName() string { return "task_completion_plan_logs" }
 
+// TaskOperationRecord is the mutable claim head for one owner-scoped task
+// intake operation. The request identity is immutable; only its fenced lease
+// and terminal outcome may advance. CompletionPlanLog remains the immutable
+// result record referenced by TaskPlanID.
+type TaskOperationRecord struct {
+	ID              uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	OwnerIdentity   string     `gorm:"type:varchar(255);not null;uniqueIndex:uq_task_operations_owner_key,priority:1" json:"-"`
+	IdempotencyKey  string     `gorm:"type:varchar(120);not null;uniqueIndex:uq_task_operations_owner_key,priority:2" json:"idempotencyKey"`
+	RequestDigest   string     `gorm:"type:char(64);not null;index" json:"requestDigest"`
+	Mode            string     `gorm:"type:varchar(16);not null" json:"mode"`
+	Status          string     `gorm:"type:varchar(32);not null;index" json:"status"`
+	TaskPlanID      string     `gorm:"type:varchar(160);not null;default:'';index" json:"taskPlanId,omitempty"`
+	LeaseOwner      string     `gorm:"type:varchar(120);not null;default:''" json:"-"`
+	LeaseGeneration int64      `gorm:"not null;default:0" json:"leaseGeneration"`
+	LeasedAt        *time.Time `json:"leasedAt,omitempty"`
+	LastError       string     `gorm:"type:varchar(1024);not null;default:''" json:"lastError,omitempty"`
+	CreatedAt       time.Time  `gorm:"not null" json:"createdAt"`
+	UpdatedAt       time.Time  `gorm:"not null" json:"updatedAt"`
+	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+}
+
+func (TaskOperationRecord) TableName() string { return "task_operations" }
+
 // TaskReviewItemRecord is the durable queue state for an action requiring
 // human review. RequestJSON and RequestDigest are immutable provenance. Queue
 // state may advance, but it cannot be rebound to a different action or owner.

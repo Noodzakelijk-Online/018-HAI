@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 )
+
+var ErrInvalidStandingMandateID = errors.New("invalid standing mandate id")
 
 type TaskEngine interface {
 	Plan(request task.IntakeRequest) (*task.CompletionPlan, error)
@@ -38,6 +41,7 @@ type CommandRequest struct {
 	ProjectKey      string   `json:"projectKey,omitempty"`
 	PursuitID       string   `json:"pursuitId,omitempty"`
 	AutomationID    string   `json:"automationId,omitempty"`
+	MandateID       string   `json:"mandateId,omitempty"`
 	SuccessCriteria []string `json:"successCriteria,omitempty"`
 	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
 	RunCycle        bool     `json:"runCycle,omitempty"`
@@ -99,6 +103,9 @@ func NewService(tasks TaskEngine, cycle AgentCycleRunner, pursuitRouters ...Purs
 }
 
 func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
+	if err := validateStandingMandateID(request.MandateID); err != nil {
+		return nil, err
+	}
 	message := strings.TrimSpace(request.Message)
 	if message == "" {
 		message = "Run the HAI autonomous maintenance cycle and surface the next best action."
@@ -120,6 +127,7 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 		Request:         message,
 		ProjectKey:      request.ProjectKey,
 		AutomationID:    request.AutomationID,
+		MandateID:       request.MandateID,
 		SuccessCriteria: request.SuccessCriteria,
 		ExecuteAllowed:  request.ExecuteAllowed,
 	}
@@ -201,12 +209,25 @@ func (s *Service) Command(request CommandRequest) (*CommandResult, error) {
 	return result, nil
 }
 
+func validateStandingMandateID(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil || id == uuid.Nil {
+		return ErrInvalidStandingMandateID
+	}
+	return nil
+}
+
 func (s *Service) routePursuit(message string, request CommandRequest) (*CommandPursuitContext, error) {
 	input := pursuit.IntakeRequest{
 		OwnerIdentity:  request.OwnerIdentity,
 		Input:          message,
 		ProjectKey:     request.ProjectKey,
 		AutomationID:   request.AutomationID,
+		MandateID:      request.MandateID,
 		SourceType:     "assistant_command",
 		SourceID:       assistantCommandSourceID(message, request),
 		SourceURI:      "assistant://command/" + assistantCommandSourceID(message, request),
@@ -334,6 +355,7 @@ func assistantCommandSourceID(message string, request CommandRequest) string {
 		strings.ToLower(strings.Join(strings.Fields(message), " ")),
 		strings.ToLower(strings.TrimSpace(request.ProjectKey)),
 		strings.ToLower(strings.TrimSpace(request.AutomationID)),
+		strings.ToLower(strings.TrimSpace(request.MandateID)),
 		strings.Join(request.SuccessCriteria, "\n"),
 	}, "\n")
 	sum := sha256.Sum256([]byte(value))

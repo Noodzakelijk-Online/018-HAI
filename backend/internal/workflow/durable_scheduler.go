@@ -66,6 +66,14 @@ func runWorkflowSweep(service ScheduledWorkflowService, limit int) error {
 				openLoops.Checked, openLoops.Triggered, openLoops.Resolved, openLoops.Skipped)
 		}
 	}
+	if delivery, ok := service.(ReminderDeliveryService); ok && schedulerEnabled("WORKFLOW_REMINDER_DELIVERY_ENABLED", true) {
+		reminders, reminderErr := delivery.RunDueReminderDeliveries(request)
+		if reminderErr != nil {
+			problems = append(problems, "reminder deliveries: "+reminderErr.Error())
+		} else if reminders != nil && (reminders.Delivered > 0 || reminders.Retried > 0 || reminders.Suppressed > 0 || reminders.DeadLettered > 0) {
+			log.Printf("workflow reminder delivery checked=%d delivered=%d retried=%d suppressed=%d dead_lettered=%d", reminders.Checked, reminders.Delivered, reminders.Retried, reminders.Suppressed, reminders.DeadLettered)
+		}
+	}
 
 	result, err := service.RunDue(request)
 	if err != nil {

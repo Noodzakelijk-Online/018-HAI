@@ -16,16 +16,19 @@ for a one-to-one status and boundary statement across all 55 families.
 
 | Surface | Current status | Boundary |
 | --- | --- | --- |
-| Catalog | Implemented: 55 records at version `1.0.0`; catalog contract `v1` | Records 51-55 describe candidate implementation families. They do not install or trust those products. |
-| Selector | Implemented: deterministic `selector-v4` scoring, exact minimum capability coverage, conflicts, required overlays, a 12-framework cap, and a Chief-of-Staff operating contract | The selector retains every applicable mandatory overlay, then uses bounded branch-and-bound search to find the smallest non-conflicting optional capability cover. A new call has a new timestamp, so its selection ID can differ even when the normalized request is otherwise identical. |
+| Catalog | Implemented: 55 stable records; catalog contract `v2` | The mandatory evaluation record is `1.1.0`; the other built-in records remain `1.0.0`. Records 51-55 describe candidate implementation families. They do not install or trust those products. |
+| Selector | Implemented: deterministic `selector-v5` scoring, risk-ceiling enforcement, exact minimum capability coverage, conflicts, required overlays, a 16-framework cap, and a Chief-of-Staff operating contract | The selector fails closed when a mandatory framework cannot support the effective task risk, filters incompatible optional frameworks, retains every applicable mandatory overlay, then finds the smallest non-conflicting capability cover. A new call has a new timestamp, so its selection ID can differ even when the normalized request is otherwise identical. |
 | Preferences | Implemented and owner-scoped | Preferences can enable experimental records, pin relevant records, lower autonomy, and add bounded adaptations. They cannot raise autonomy or disable protected overlays. |
 | Constitution | Implemented with an exact built-in source, owner-scoped drafts, explicit activation, and immutable history | A draft has no authority until the authenticated owner activates it. |
 | Persistence | Implemented in PostgreSQL with versioned SQL and immutable selection/Constitution controls | Applying the migration still requires the target database and the normal migration process. |
 | API | Implemented under `/api/v1/framework-registry` with authentication and RBAC | The nginx allowlist routes the namespace to the Go backend; a deployed signed-in browser exercise remains target-environment evidence. |
 | Angular UI | Implemented at `/framework-registry`, including catalog, inspector, selection preview/history, preferences, and Constitution controls | Component/service tests do not replace a clean-machine operator acceptance run. |
 | Task engine | Implemented: the task planner records a `frameworkDecision` before context, model, and tool routing | Framework selection narrows authority. It never replaces task approval, runtime policy, verification, or audit. |
-| Task review state | Implemented as owner-scoped completion logs, review items, and immutable approval/rejection decisions | PostgreSQL persistence survives an ordinary restart, but no automatic worker currently reconciles a review left `approved` by a crash. |
-| Controlled execution | Implemented as an internal, action-bound approval-proof boundary for mutating automation paths | Proof state is process-local. External runtimes and real provider/account paths still need configured, approved end-to-end validation. |
+| Task review state | Implemented as owner-scoped completion logs, review items, immutable approval/rejection decisions, and an explicit dry-run-first reconciliation action | PostgreSQL persistence survives an ordinary restart. Reconciliation never retries work and is intentionally operator-triggered rather than automatic. |
+| Controlled execution | Implemented as an internal, action-bound approval-proof boundary for mutating automation paths, plus exact server-owned contracts for built-in system workloads | Approval-proof consumption is durable and owner-scoped. Unknown system identities and policy mismatches fail closed. External runtimes and real provider/account paths still need configured, approved end-to-end validation. |
+| Selector-v5 execution resolution | Implemented as an exact immutable lookup by authenticated owner and selection UUID, followed by field-for-field authorization comparison and a second check immediately before receipt consumption | Resolution does not use a bounded history page or accept caller-supplied selection fields as proof. Missing, cross-owner, unavailable, or mismatched selections fail closed. |
+| Typed framework evidence contract | Implemented for deterministic requirement IDs, source-framework attribution, `pre_authorization`, `execution`, and `postcondition` phases, validator names, required state, freshness limits, and pre-authorization assertions | Pre-authorization is enforced before tool/runtime effects. Execution and postcondition requirements are phase-structured, but some still use the existing task-level evidence/verification path rather than an independent requirement-specific verifier. |
+| Exact source-evidence preauthorization | Implemented as an exact owner-scoped extraction, raw-item, and connected-source resolution during authorization and again immediately before receipt consumption | Freshness is measured from the raw item's `fetched_at`. Provenance and freshness do not establish semantic authority or truth. Inspection exposes only claim counts and digest fingerprints, not raw sensitive content. |
 
 Focused unit, route, repository-integration, task, frontend, and approval-proof
 tests exist in the repository. Those checks establish local implementation
@@ -40,7 +43,7 @@ authenticated operator or task planner
      -> 55-record built-in catalog
      -> owner preferences
      -> active owner Constitution or built-in fallback
-     -> selector-v4
+     -> selector-v5 risk-compatible selection
      -> immutable selection record and reproducibility metadata
      -> whole-life, capacity, agent, delegation, communication, coordination,
         per-action autonomy, stop-condition, and outcome-monitoring contract
@@ -86,7 +89,7 @@ owner preference. A protected safety overlay rejects an attempted
 for a directly matching request. A deprecated record remains unselectable.
 Neither preference installs a candidate product or grants runtime authority.
 
-### Complete V1 Taxonomy
+### Complete V1.1 Taxonomy
 
 | No. | ID | Name | Family | Default status |
 | ---: | --- | --- | --- | --- |
@@ -356,9 +359,11 @@ action, weaken a protected overlay, or raise an authority ceiling.
 
 Every persisted selection includes:
 
-- catalog version `v1`;
+- catalog version `v2`;
 - canonical SHA-256 catalog digest;
-- selector algorithm version `selector-v4`;
+- selector algorithm version `selector-v5`;
+- effective task risk and the minimum selected-framework risk ceiling;
+- the selected maximum autonomy level and whether exact case approval is required;
 - canonical SHA-256 effective-preference digest;
 - canonical SHA-256 Constitution digest;
 - exact Constitution source;
@@ -439,7 +444,12 @@ adds the typed JSONB operating-contract columns and indexed 64-character
 digest to immutable framework selections. Existing rows receive a zero digest
 sentinel because they predate selector v4; repository reads omit the v4
 contract for those rows instead of fabricating evidence from empty migration
-defaults. New selector-v4 records must contain the real computed digest. Its
+defaults. New selector-v4 and selector-v5 records must contain the real computed digest. Migration
+`pre/0029_framework_selector_v5_digest` extends that check to selector-v5 and
+stores the selector-v5 task risk plus effective risk ceiling as nullable columns.
+The fields stay null for pre-v5 history; they are never inferred from today's
+catalog. Selector-v5 writes require both values, require `low`, `medium`, or
+`high`, and require task risk to be at or below the effective ceiling. The
 exact destructive rollback command is:
 
 ```text
@@ -448,6 +458,55 @@ backend migrate down pre/0005_framework_operating_contract
 
 Rollback removes only the selector-v4 operating-contract columns and index.
 Stop writers and deploy a selector-v3-compatible binary before using it.
+
+The selector-v5 migration refuses rollback while selector-v5 rows exist. Export
+and retain those immutable decisions, stop v5 writers, and remove the rows only
+through an explicitly reviewed retention process before attempting rollback.
+
+Selector-v5 execution provenance additionally carries the selected maximum
+autonomy level and approval requirement in task-plan digests, workflow decision
+history, and unified execution-authorization evidence. Authorization rejects a
+requested autonomy level above that ceiling before policy evaluation. A
+framework-required approval must resolve to an exact server-side case approval;
+a standing mandate does not silently replace that requirement. Historical
+selector-v4 records keep these fields absent and are never upgraded by inference.
+
+### Exact Immutable Resolution At Authorization Time
+
+`frameworkregistry.Service.Selection(ctx, owner, id)` is the execution-facing
+lookup. The PostgreSQL repository parses the UUID and queries
+`owner_identity = ? AND id = ?`; the in-memory repository applies the same owner
+and ID boundary and returns a decoded copy. This lookup is independent of the
+paginated selection-history API and cannot accidentally omit an older valid
+selection because of a history limit.
+
+For selector-v5, `executionauth` resolves that record and compares the immutable
+snapshot against the authorization request:
+
+- selection and task-plan IDs;
+- catalog and selector versions;
+- task risk and effective framework risk ceiling;
+- maximum autonomy and exact approval requirement;
+- catalog, effective-preference, Constitution, and operating-contract digests.
+
+Any lookup error, missing resolver, incomplete selector-v5 contract, wrong-owner
+record, or field mismatch produces a durable denied receipt with the bounded
+public reason `framework.selection_unverified`. The authorization service does
+not continue to Constitution, mandate, agent, approval, or ordinary policy
+evaluation after that denial. Before `AuthorizeAndConsume` writes the single
+consumption reservation, it resolves and compares the selection again; drift or
+unavailability is returned as `ErrAuthorizationChanged` and no consumption is
+recorded.
+
+The resolver is installed in both application compositions that construct the
+execution-authorization service:
+
+- the main API/router path in `backend/internal/router/routes.go`;
+- the Phase2/background path in `backend/internal/phase2/module.go`.
+
+This verifies an HAI-owned immutable selection record. It does not verify that
+a selected external framework product, model, connector, or runtime is installed
+or healthy.
 
 ## API
 
@@ -518,6 +577,74 @@ The current implementation creates a new plan decision when a plan is built.
 It does not claim cached decision reuse or automatic re-selection of existing
 plans after a catalog, preference, or Constitution change.
 
+### Typed Evidence Phases
+
+The task service no longer treats the selected framework evidence list only as
+undifferentiated text. During planning it compiles
+`ValidationPlan.frameworkEvidenceContracts`. Each
+`FrameworkEvidenceContract` retains the originating `frameworkId`, normalized
+requirement, deterministic `fer-...` ID, phase, validator name, required flag,
+and an optional maximum age.
+
+The three phases deliberately separate evidence that must exist before an
+effect from evidence that an effect itself must create:
+
+1. `pre_authorization` covers trusted inputs and governance records such as the
+   active Constitution, authenticated owner, exact approval, source context,
+   calendar freshness, agent cards, allowlists, privacy/policy context, and
+   planning records. Applicability is evaluated per task. Required applicable
+   evidence is recorded as `verified` or `missing`; non-applicable requirements
+   are explicit rather than silently treated as passed.
+2. `execution` covers runtime-bound records such as action receipts, runtime
+   boundaries, provenance, decisions, and recovery receipts.
+3. `postcondition` covers evidence that can be assessed only after execution,
+   including postcondition verification, validation results, reproducible
+   results, before/after evidence, and deliverable evidence.
+
+`Run` evaluates the pre-authorization phase before calling
+`executeAllowedSteps`. A failed preflight creates a blocked, review-required
+execution result stating that no external effect was attempted. Freshness-aware
+validators currently use bounded ages for health/route evidence and fresh
+source or calendar evidence. The assertions and failures remain attached to the
+completion plan for inspection.
+
+The `execution` and `postcondition` labels are implemented contract structure
+and feed exact requirement-specific completion checks. Typed contracts do not
+fall back to fuzzy description/token matching: absent or unsupported execution
+and postcondition evidence fails closed. Historical plans without typed
+contracts retain the legacy matcher for read/compatibility behavior only.
+
+The preflight receives a canonical SHA-256 digest over its owner, task-plan and
+framework-selection identity, timestamp, counts, assertions, evidence, and
+failures. That digest is included explicitly in governance, the task-plan
+digest, the authorization request/receipt, and a
+`framework-evidence-preflight://sha256:...` reference. It is therefore bound and
+tamper-evident. Before controlled tool or local execution, the task engine now
+stores the passing record in the append-only, owner-scoped
+`framework_evidence_preflights` ledger. Selector-v5 authorization resolves the
+exact owner/task-plan/framework-selection/digest tuple independently and
+requires `passed`; `AuthorizeAndConsume` repeats that resolution immediately
+before the one-shot receipt is consumed. Missing, foreign-owner, failed,
+forged, or drifted records fail closed with
+`framework.evidence_preflight_unverified`. This independently verifies the HAI
+preflight record, not the truth of an unconfigured external provider.
+
+For source-backed assertions, authorization also re-resolves each exact claim
+against its owner-scoped extraction, raw item, and active connected source. The
+same resolution and claim comparison run before authorization and again
+immediately before the one-shot receipt is consumed. Freshness is calculated
+from the exact raw item's `fetched_at`; a newer source-wide `LastSyncedAt` does
+not refresh an older item. These checks prove bounded provenance, identity,
+integrity, and freshness only. They do not prove that the source is
+semantically authoritative or that its contents are true. Authorization
+inspection reports only the verified claim count and digest fingerprint; it
+does not expose source claims, URIs, extracted payloads, or other raw sensitive
+content.
+
+These checks should not be read as a claim that every external provider has a
+live assertion producer. Provider-specific postconditions still require
+configured credentials, runtime instrumentation, and retained acceptance runs.
+
 ## Durable Task-State Approval Flow
 
 Framework selection supplies evidence requirements, completion criteria, and
@@ -561,10 +688,14 @@ Persistence prevents review history from disappearing on a normal backend
 restart. It does not make a side effect automatically resumable. In
 particular:
 
-- the short-lived action approval proof and its consumed-nonce set are
-  process-local;
-- there is no automatic task-review reconciliation worker or public
-  `approved -> needs_review` recovery endpoint;
+- short-lived action approval proof consumption is durable and single-use, but
+  it cannot establish whether an external target committed a side effect after
+  a network or process failure;
+- there is no automatic task-review reconciliation worker;
+- `POST /api/v1/task/review-queue/reconcile` provides an owner-scoped,
+  dry-run-first recovery action. It only closes a review when linked durable
+  evidence already proves verified completion; otherwise it returns the item
+  to `needs_review` without re-executing anything;
 - a crash after durable approval but before durable outcome can leave the item
   `approved`.
 
@@ -598,13 +729,17 @@ authentication, enablement, host allowlists, timeout, audit, and safety policy.
 
 Focused tests cover binding mismatch, tampering, expiry, single-use
 consumption, and rejection before network, process/filesystem, Docker-socket,
-or agent-runtime access.
+or agent-runtime access. PostgreSQL acceptance tests cover cross-instance
+issuance/consumption, restart replay refusal, concurrent atomic consumption,
+immutability, and rollback refusal for a populated ledger.
 
 Current limitations:
 
-- the proof signing key and consumed-proof set are in memory;
-- proof replay state is not durable across process restart;
-- proof state is not coordinated across multiple backend instances;
+- the stable signing key must be configured consistently across instances and
+  rotated deliberately; rotation invalidates unexpired proofs;
+- durable proof consumption prevents HAI replay but cannot guarantee
+  exactly-once behavior inside an external API, process, Docker daemon, or
+  agent runtime after an ambiguous failure;
 - the review-to-proof bridge is implemented for approved task execution, not
   as a durable direct-launch approval workflow;
 - upstream Hermes, Odysseus, OpenClaw, and other runtime products still require
@@ -622,7 +757,7 @@ Current limitations:
 - digest and redacted audit persistence;
 - authenticated route/RBAC contracts;
 - task-plan and Angular integration;
-- selector-v4 whole-life, needs, capacity, agent-card, delegation,
+- selector-v5 risk-compatible whole-life, needs, capacity, agent-card, delegation,
   communication, coordination, exact autonomy-ladder, stop-condition, and
   outcome-monitoring contracts;
 - typed agent-message envelope validation for schema, correlation, authority,
@@ -645,7 +780,9 @@ Current limitations:
   life domain;
 - a standing-mandate issuance workflow for autonomy level 7 or above;
 - durable or distributed approval-proof consumption;
-- automatic recovery of a task review left `approved` by process failure;
+- automatic recovery of a task review left `approved` by process failure is
+  intentionally absent; the manual no-retry reconciler still needs retained
+  live crash-recovery acceptance evidence;
 - production load, high availability, and multi-worker operation.
 
 The registry should be described as locally implemented decision and governance

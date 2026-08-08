@@ -89,11 +89,13 @@ type ImportRequest struct {
 }
 
 type SyncResult struct {
-	Job             models.SourceSyncJob      `json:"job"`
-	Extractions     []models.SourceExtraction `json:"extractions"`
-	PursuitOutcomes []PursuitRoutingOutcome   `json:"pursuitOutcomes,omitempty"`
-	Message         string                    `json:"message"`
-	Errors          []string                  `json:"errors,omitempty"`
+	Job                  models.SourceSyncJob         `json:"job"`
+	Extractions          []models.SourceExtraction    `json:"extractions"`
+	PursuitOutcomes      []PursuitRoutingOutcome      `json:"pursuitOutcomes,omitempty"`
+	LifeGraphProjections []LifeGraphProjectionOutcome `json:"lifeGraphProjections,omitempty"`
+	Message              string                       `json:"message"`
+	Errors               []string                     `json:"errors,omitempty"`
+	Warnings             []string                     `json:"warnings,omitempty"`
 }
 
 // PursuitRoutingOutcome makes source-created pursuit candidates and deferred
@@ -137,6 +139,23 @@ type ScheduledSyncRun struct {
 	Messages  []string `json:"messages"`
 }
 
+type ConnectionHealth struct {
+	SourceID          uuid.UUID  `json:"sourceId"`
+	ConnectorKey      string     `json:"connectorKey"`
+	Status            string     `json:"status"`
+	Reason            string     `json:"reason"`
+	Configured        bool       `json:"configured"`
+	Authorized        bool       `json:"authorized"`
+	RequiresReconnect bool       `json:"requiresReconnect"`
+	CursorPhase       string     `json:"cursorPhase,omitempty"`
+	TokenExpiry       *time.Time `json:"tokenExpiry,omitempty"`
+	LastSyncedAt      *time.Time `json:"lastSyncedAt,omitempty"`
+}
+
+type ConnectionHealthService interface {
+	ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error)
+}
+
 type Service interface {
 	Connectors() ([]models.SourceConnector, error)
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
@@ -164,13 +183,16 @@ type Service interface {
 }
 
 type service struct {
-	repo            Repository
-	memoryService   memory.Service
-	workflowService workflow.Service
-	pursuitLinker   pursuitAutoLinker
-	semanticService semantic.Service
-	syncMu          sync.Mutex
-	activeSyncs     map[uuid.UUID]bool
+	repo                  Repository
+	memoryService         memory.Service
+	workflowService       workflow.Service
+	pursuitLinker         pursuitAutoLinker
+	semanticService       semantic.Service
+	lifeOntologyProjector LifeOntologyProjector
+	finalEffectAuthorizer FinalEffectAuthorizer
+	emergencyStop         func() safety.EmergencyStopDecision
+	syncMu                sync.Mutex
+	activeSyncs           map[uuid.UUID]bool
 }
 
 type pursuitAutoLinker interface {
@@ -244,13 +266,13 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Be honest about Gmail: the adapter is real, but it cannot do anything until
-	// the Google OAuth app is configured, so report not_implemented until it is.
-	if !googleOAuthConfig().Configured() {
+	// Be honest about Google sources: the adapters are real, but cannot connect
+	// until OAuth plus the dedicated token/state keys are configured.
+	if !googleOAuthReady() {
 		for i := range connectors {
-			if connectors[i].ConnectorKey == gmailConnectorKey {
+			if isGoogleOAuthConnector(connectors[i].ConnectorKey) {
 				connectors[i].AdapterStatus = AdapterNotImplemented
-				connectors[i].StatusReason = "real Gmail OAuth adapter is implemented but GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REDIRECT_URL are not set, so it cannot connect yet"
+				connectors[i].StatusReason = "real read-only Google OAuth adapter is implemented but GOOGLE_OAUTH_* or the dedicated HAI OAuth encryption/signing keys are not set"
 			}
 		}
 	}
@@ -514,6 +536,71 @@ func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) 
 	return s.repo.FindSyncJobs(sourceID)
 }
 
+func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error) {
+	source, err := s.repo.FindSource(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	health := &ConnectionHealth{
+		SourceID: source.ID, ConnectorKey: source.ConnectorKey,
+		Status: source.Status, Configured: true, LastSyncedAt: source.LastSyncedAt,
+	}
+	if source.Status == "revoked" || source.RevokedAt != nil {
+		health.Status = "revoked"
+		health.Reason = "source access was revoked"
+		return health, nil
+	}
+	if !isGoogleOAuthConnector(source.ConnectorKey) {
+		health.Authorized = source.Enabled
+		health.Reason = "connector health is derived from its enabled and synchronization state"
+		return health, nil
+	}
+	health.Configured = googleOAuthReady()
+	if !health.Configured {
+		health.Status = "configuration_required"
+		health.Reason = "Google OAuth client, token encryption key, or state signing key is not configured"
+		return health, nil
+	}
+	token, err := s.repo.FindOAuthToken(sourceID)
+	if err != nil {
+		health.Status = "disconnected"
+		health.Reason = "no Google account grant is stored for this source"
+		return health, nil
+	}
+	if !token.Expiry.IsZero() {
+		health.TokenExpiry = &token.Expiry
+	}
+	requiredScope, err := requiredGoogleScope(source.ConnectorKey)
+	if err != nil {
+		return nil, err
+	}
+	if !hasOAuthScope(token.Scope, requiredScope) || len(token.RefreshToken) == 0 {
+		health.Status = "reconnect_required"
+		health.RequiresReconnect = true
+		health.Reason = "stored Google grant is missing the required read scope or refresh credential"
+		return health, nil
+	}
+	health.Authorized = true
+	health.Status = "ready"
+	health.Reason = "encrypted read-only Google grant is available"
+	if source.ConnectorKey == gmailConnectorKey {
+		if cursor, err := decodeGmailCursor(source.Cursor); err == nil {
+			health.CursorPhase = cursor.Phase
+		}
+	} else if source.ConnectorKey == driveConnectorKey {
+		if cursor, err := decodeDriveCursor(source.Cursor); err == nil {
+			health.CursorPhase = cursor.Phase
+		}
+	} else if source.ConnectorKey == contactsConnectorKey {
+		if cursor, err := decodeContactsCursor(source.Cursor); err == nil {
+			health.CursorPhase = cursor.Phase
+		}
+	} else if cursor, err := decodeCalendarCursor(source.Cursor); err == nil {
+		health.CursorPhase = cursor.Phase
+	}
+	return health, nil
+}
+
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
 	if !s.beginSync(sourceID) {
 		return nil, ErrSyncInProgress
@@ -596,10 +683,12 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 
 	extractions := []models.SourceExtraction{}
 	pursuitOutcomes := []PursuitRoutingOutcome{}
+	lifeGraphProjections := []LifeGraphProjectionOutcome{}
 	added := 0
 	updated := 0
 	failed := 0
 	itemErrors := []string{}
+	warnings := []string{}
 	recordFailure := func(item ImportItem, stage string, err error) {
 		failed++
 		if len(itemErrors) < maxSyncErrorDetails {
@@ -647,6 +736,42 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
 		items, adapterCursor, err = s.fetchGmailSource(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == driveConnectorKey {
+		items, adapterCursor, err = s.fetchDriveSource(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == contactsConnectorKey {
+		items, adapterCursor, err = s.fetchContactsSource(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+	}
+	if len(items) == 0 && source.ConnectorKey == calendarConnectorKey {
+		items, adapterCursor, err = s.fetchCalendarSource(context.Background(), source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -763,6 +888,24 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		items = odooHERPItems(source, request)
 		s.audit(sourceID, "source.odoo_herp_modeled", fmt.Sprintf("modeled %d Odoo/HERP app domain(s) into governed source records", len(items)))
 	}
+	if source.ConnectorKey == calendarConnectorKey {
+		existingItems, errExisting := s.repo.FindRawItems(source.ID)
+		if errExisting != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = "calendar conflict planning could not read cached event records: " + errExisting.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", job.Message)
+			return nil, errExisting
+		}
+		items = appendCalendarConflictItems(existingItems, items, time.Now().UTC())
+		for index := range items {
+			if strings.HasPrefix(items[index].ItemType, "google_calendar_conflict") && strings.TrimSpace(items[index].ProjectKey) == "" {
+				items[index].ProjectKey = firstNonEmpty(source.DefaultProjectKey, "Robert-life-os")
+			}
+		}
+	}
 	for index, item := range items {
 		if shouldExclude(source.ExcludePatterns, item.Title+" "+item.SourceURI) {
 			continue
@@ -786,7 +929,40 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			recordFailure(item, "index update failed", errIndex)
 			continue
 		}
-		pursuitOutcome, errWorkflow := s.createWorkflowFromExtraction(source, extraction)
+		projection, errProjection := s.projectExtractionToLifeGraph(context.Background(), source, extraction)
+		if errProjection != nil {
+			warning := itemFailure(item, "life graph projection failed", errProjection)
+			if len(warnings) < maxSyncErrorDetails {
+				warnings = append(warnings, warning)
+			}
+			s.audit(sourceID, "life_graph.projection_failed", compact(safety.RedactSecrets(warning), 300))
+		} else if projection != nil {
+			if len(lifeGraphProjections) < maxSyncPursuitOutcomes {
+				lifeGraphProjections = append(lifeGraphProjections, *projection)
+			}
+			s.audit(sourceID, "life_graph.projected", "projected extraction "+extraction.ID.String()+" as an advisory source-backed document")
+		}
+		if extraction.ContentType == "google_calendar_event_cancelled" || extraction.ContentType == "google_calendar_conflict_resolved" {
+			reason := "Google Calendar reports that this source event was cancelled; stop source-derived work pending owner review"
+			stage := "calendar cancellation could not stop prior source-derived work"
+			auditMessage := "cancelled calendar event stopped prior source-derived work before review"
+			if extraction.ContentType == "google_calendar_conflict_resolved" {
+				reason = "the source-backed Calendar overlap is no longer present; stop the stale conflict workflow while preserving audit history"
+				stage = "resolved calendar conflict could not stop stale source-derived work"
+				auditMessage = "resolved calendar conflict stopped its stale source-derived workflow"
+			}
+			if errRetract := s.retractWorkflowForExtraction(extraction, reason); errRetract != nil {
+				recordFailure(item, stage, errRetract)
+				continue
+			}
+			s.audit(sourceID, "workflow.calendar_event_retracted", auditMessage)
+		}
+		if extraction.ContentType == "google_calendar_conflict_resolved" {
+			extractions = append(extractions, *extraction)
+			continue
+		}
+		supplementalSignal := firstNonEmpty(calendarPreparationSignal(raw, time.Now().UTC()), calendarConflictWorkflowSignal(raw))
+		pursuitOutcome, errWorkflow := s.createWorkflowFromExtractionWithSignal(source, extraction, supplementalSignal)
 		if pursuitOutcome != nil && len(pursuitOutcomes) < maxSyncPursuitOutcomes {
 			pursuitOutcomes = append(pursuitOutcomes, *pursuitOutcome)
 		}
@@ -836,7 +1012,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 		s.audit(sourceID, action, job.Message)
 	}
-	return &SyncResult{Job: *job, Extractions: extractions, PursuitOutcomes: pursuitOutcomes, Message: job.Message, Errors: itemErrors}, err
+	return &SyncResult{Job: *job, Extractions: extractions, PursuitOutcomes: pursuitOutcomes, LifeGraphProjections: lifeGraphProjections, Message: job.Message, Errors: itemErrors, Warnings: warnings}, err
 }
 
 // DueSources returns the enabled sources whose schedule has come due at now.
@@ -1010,16 +1186,28 @@ func (s *service) Pause(sourceID uuid.UUID, paused bool) (*models.ConnectedSourc
 	return updated, err
 }
 
-func (s *service) Revoke(sourceID uuid.UUID) (*models.ConnectedSource, error) {
+func (s *service) Revoke(uuid.UUID) (*models.ConnectedSource, error) {
+	return nil, ErrDestructiveAuthorizationRequired
+}
+
+func (s *service) RevokeAuthorized(
+	ctx context.Context,
+	sourceID uuid.UUID,
+	auth DestructiveEffectAuthorization,
+) (*models.ConnectedSource, error) {
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(source.OwnerIdentity) == "" ||
+		strings.TrimSpace(source.OwnerIdentity) != strings.TrimSpace(auth.OwnerIdentity) {
+		return nil, ErrDestructiveOwnerMismatch
+	}
+	if err := s.authorizeDestructiveEffect(ctx, auth, *source, nil); err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
-	source.Enabled = false
-	source.Status = "revoked"
-	source.RevokedAt = &now
-	updated, err := s.repo.UpdateSource(source)
+	updated, err := s.repo.RevokeSource(source, auth.OwnerIdentity, now)
 	if err == nil {
 		s.audit(sourceID, "source.revoked", "source access revoked")
 	}
@@ -1043,13 +1231,21 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 		if semanticErr == nil && len(matches) > 0 {
 			ranked := make([]RankedExtraction, 0, len(matches))
 			for _, match := range matches {
+				// The semantic index is a cache, not an authority boundary. Re-check
+				// the parent source on every retrieval so a revocation takes effect
+				// immediately even if an old embedding still exists.
+				if !visibleSourceIDs[match.Extraction.SourceID] {
+					continue
+				}
 				ranked = append(ranked, RankedExtraction{
 					Extraction: match.Extraction, Score: match.Similarity,
 					Explanation: "local pgvector cosine similarity; source ownership and sensitivity filters applied",
 				})
 			}
-			return &SearchResult{Query: request.Query, ProjectKey: request.ProjectKey, UsedContext: ranked,
-				Explanation: fmt.Sprintf("Retrieved %d source-backed records through local pgvector semantic retrieval; owner, project, archive, and sensitivity filters were enforced in the database query.", len(ranked))}, nil
+			if len(ranked) > 0 {
+				return &SearchResult{Query: request.Query, ProjectKey: request.ProjectKey, UsedContext: ranked,
+					Explanation: fmt.Sprintf("Retrieved %d source-backed records through local pgvector semantic retrieval; owner, source-revocation, project, archive, and sensitivity filters were enforced.", len(ranked))}, nil
+			}
 		}
 		// A semantic failure falls back to the existing bounded keyword search.
 		// It is deliberately not attached to an arbitrary source audit record.
@@ -1109,6 +1305,9 @@ func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnec
 	visible := make(map[uuid.UUID]bool, len(sources))
 	for _, source := range sources {
 		if excluded[strings.TrimSpace(source.ConnectorKey)] {
+			continue
+		}
+		if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
 			continue
 		}
 		if ownerIdentity == "" || source.OwnerIdentity == "" || source.OwnerIdentity == ownerIdentity {
@@ -1174,6 +1373,13 @@ func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction
 		if errWorkflow := s.reconcileWorkflowFromExtraction(updated); errWorkflow != nil {
 			return updated, fmt.Errorf("extraction corrected but workflow reconciliation failed: %w", errWorkflow)
 		}
+		if source, errSource := s.repo.FindSource(updated.SourceID); errSource == nil {
+			if _, errProjection := s.projectExtractionToLifeGraph(context.Background(), source, updated); errProjection != nil {
+				s.audit(updated.SourceID, "life_graph.projection_failed", compact(safety.RedactSecrets(errProjection.Error()), 300))
+			} else if s.lifeOntologyProjector != nil && strings.TrimSpace(source.OwnerIdentity) != "" {
+				s.audit(updated.SourceID, "life_graph.projected", "projected corrected extraction "+updated.ID.String()+" as a new immutable graph observation")
+			}
+		}
 		s.rememberExtractionCorrection(&before, updated)
 	}
 	return updated, err
@@ -1193,19 +1399,56 @@ func (s *service) ArchiveExtraction(id uuid.UUID, archived bool) (*models.Source
 	updated, err := s.repo.SaveExtraction(extraction)
 	if err == nil {
 		s.audit(extraction.SourceID, "extraction.archived", fmt.Sprintf("archived=%v", archived))
+		if source, errSource := s.repo.FindSource(updated.SourceID); errSource == nil {
+			if _, errProjection := s.projectExtractionToLifeGraph(context.Background(), source, updated); errProjection != nil {
+				s.audit(updated.SourceID, "life_graph.projection_failed", compact(safety.RedactSecrets(errProjection.Error()), 300))
+			} else if s.lifeOntologyProjector != nil && strings.TrimSpace(source.OwnerIdentity) != "" {
+				s.audit(updated.SourceID, "life_graph.projected", "projected extraction archive state "+updated.ID.String()+" as a new immutable graph observation")
+			}
+		}
 	}
 	return updated, err
 }
 
-func (s *service) DeleteExtraction(id uuid.UUID) error {
+func (s *service) DeleteExtraction(uuid.UUID) error {
+	return ErrDestructiveAuthorizationRequired
+}
+
+func (s *service) DeleteExtractionAuthorized(
+	ctx context.Context,
+	id uuid.UUID,
+	auth DestructiveEffectAuthorization,
+) error {
 	extraction, err := s.repo.FindExtraction(id)
 	if err != nil {
+		return err
+	}
+	source, err := s.repo.FindSource(extraction.SourceID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(source.OwnerIdentity) == "" ||
+		strings.TrimSpace(source.OwnerIdentity) != strings.TrimSpace(auth.OwnerIdentity) {
+		return ErrDestructiveOwnerMismatch
+	}
+	if err := s.authorizeDestructiveEffect(ctx, auth, *source, extraction); err != nil {
 		return err
 	}
 	if err := s.retractWorkflowForExtraction(extraction, "source extraction was deleted by the operator"); err != nil {
 		return err
 	}
-	if err := s.repo.DeleteExtraction(id); err != nil {
+	if decision := s.evaluateSourceEmergencyStop(); decision.Active {
+		return fmt.Errorf(
+			"%w: %s",
+			ErrSourceEmergencyStopActive,
+			safety.RedactSecrets(strings.TrimSpace(decision.Reason)),
+		)
+	}
+	if err := s.repo.DeleteExtractionForOwner(
+		extraction,
+		source,
+		auth.OwnerIdentity,
+	); err != nil {
 		return err
 	}
 	s.audit(extraction.SourceID, "extraction.deleted", "operator deleted extraction")
@@ -1564,7 +1807,7 @@ func (s *service) extractAndStore(source *models.ConnectedSource, raw *models.So
 	existing.SourceLabel = raw.Title
 	existing.ContentHash = raw.ContentHash
 	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
-	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
+	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || sourceRawItemRequiresReview(raw) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
 	existing.LastIndexedAt = &now
 	return s.repo.SaveExtraction(existing)
 }
@@ -1743,13 +1986,17 @@ func extractionCorrectionValue(label, value string) string {
 }
 
 func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, extraction *models.SourceExtraction) (*PursuitRoutingOutcome, error) {
+	return s.createWorkflowFromExtractionWithSignal(source, extraction, "")
+}
+
+func (s *service) createWorkflowFromExtractionWithSignal(source *models.ConnectedSource, extraction *models.SourceExtraction, supplementalSignal string) (*PursuitRoutingOutcome, error) {
 	if s.workflowService == nil {
 		return nil, nil
 	}
 	if source == nil || isManualPlanningContextOnlyConnector(source.ConnectorKey) {
 		return nil, nil
 	}
-	taskSignal := firstNonEmpty(extraction.Tasks, extraction.FollowUps)
+	taskSignal := firstNonEmpty(extraction.Tasks, extraction.FollowUps, supplementalSignal)
 	if taskSignal == "" {
 		return nil, nil
 	}
@@ -1757,6 +2004,7 @@ func (s *service) createWorkflowFromExtraction(source *models.ConnectedSource, e
 		firstNonEmpty(extraction.Summary, extraction.SourceLabel),
 		"Tasks: " + extraction.Tasks,
 		"Follow-ups: " + extraction.FollowUps,
+		strings.TrimSpace(supplementalSignal),
 		"Dates: " + extraction.Dates,
 	}, "\n")
 	requiresReview := extraction.Uncertain || extraction.Sensitive
@@ -1900,6 +2148,12 @@ func (s *service) autoLinkPursuitMemory(source *models.ConnectedSource, extracti
 
 func extractionReviewReason(extraction *models.SourceExtraction) string {
 	reasons := []string{}
+	if extraction.ContentType == "google_calendar_event_cancelled" {
+		reasons = append(reasons, "calendar cancellation requires owner review before prior obligations change")
+	}
+	if extraction.ContentType == "google_calendar_conflict" {
+		reasons = append(reasons, "calendar conflict requires owner prioritization before any schedule change")
+	}
 	if extraction.Uncertain {
 		reasons = append(reasons, "extraction is uncertain")
 	}
@@ -1907,6 +2161,16 @@ func extractionReviewReason(extraction *models.SourceExtraction) string {
 		reasons = append(reasons, "extraction contains sensitive content")
 	}
 	return strings.Join(reasons, "; ")
+}
+
+func sourceRawItemRequiresReview(raw *models.SourceRawItem) bool {
+	if raw == nil || strings.TrimSpace(raw.Metadata) == "" {
+		return false
+	}
+	var metadata struct {
+		ReviewRequired bool `json:"reviewRequired"`
+	}
+	return json.Unmarshal([]byte(raw.Metadata), &metadata) == nil && metadata.ReviewRequired
 }
 
 func (s *service) reconcileWorkflowFromExtraction(extraction *models.SourceExtraction) error {
@@ -2038,9 +2302,12 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "calendar", Name: "Calendar exports (ICS)", Category: "calendar", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads ICS export files from an allowlisted local folder; does not connect to Google/Outlook Calendar"},
 		{ConnectorKey: "cloud-documents", Name: "Synced cloud document folders", Category: "cloud_document", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads a locally-synced folder (bounded by the folder allowlist); does not connect to a Drive/Dropbox API"},
 		{ConnectorKey: "project-board", Name: "Trello project-board exports", Category: "project_board", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads Trello JSON export files from an allowlisted local folder; does not connect to the Trello API"},
-		{ConnectorKey: trelloConnectorKey, Name: "Trello board (read-only API)", Category: "project_board", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Trello REST sync of board cards, lists, due dates, and labels; set a board id in syncTarget and least-privilege TRELLO_API_KEY/TRELLO_READ_TOKEN. Never writes to Trello."},
+		{ConnectorKey: trelloConnectorKey, Name: "Trello board (read-only API)", Category: "project_board", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Trello REST sync of card descriptions, comments, checklists, attachment metadata, lists, due dates, and labels; set a board id in syncTarget and least-privilege TRELLO_API_KEY/TRELLO_READ_TOKEN. Attachment bodies are not downloaded and HAI never writes to Trello."},
 		{ConnectorKey: "github", Name: "GitHub repositories and work", Category: "github", SupportedModes: modes, RequiredScopes: "metadata,read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only GitHub REST sync of repositories, issues, pull requests, commits, and workflow runs; optional token in GITHUB_SOURCE_TOKEN"},
-		{ConnectorKey: gmailConnectorKey, Name: "Gmail (Google OAuth)", Category: "email", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "gmail.readonly", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Gmail REST sync over Google OAuth (metadata only); connect a Google account per source. Requires GOOGLE_OAUTH_* configuration."},
+		{ConnectorKey: gmailConnectorKey, Name: "Gmail (Google OAuth)", Category: "email", SupportedModes: joinValues([]string{ModeHistoricalBackfill, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "gmail.readonly", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Gmail sync over Google OAuth with provider-native history cursors, bounded message text, attachment metadata, and source provenance"},
+		{ConnectorKey: driveConnectorKey, Name: "Google Drive (Google OAuth)", Category: "cloud_document", SupportedModes: joinValues([]string{ModeHistoricalBackfill, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "drive.readonly", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Drive inventory and changes sync over Google OAuth; text-native files are extracted within limits and binary documents remain provenance-linked for governed extraction"},
+		{ConnectorKey: contactsConnectorKey, Name: "Google Contacts (Google OAuth)", Category: "contact", SupportedModes: joinValues([]string{ModeHistoricalBackfill, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "contacts.readonly", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Google Contacts sync with provider-native sync tokens; imported people remain review candidates and HAI never writes back to the address book"},
+		{ConnectorKey: calendarConnectorKey, Name: "Google Calendar (Google OAuth)", Category: "calendar", SupportedModes: joinValues([]string{ModeHistoricalBackfill, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "calendar.readonly", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only primary Google Calendar sync with a bounded initial backfill and provider-native sync tokens; cancellations remain reviewable tombstones and HAI never writes back"},
 		{ConnectorKey: "local-folder", Name: "Selected local folders", Category: "local_folder", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeFolderWatcher, ModeIncrementalSync}), RequiredScopes: "selected-folder-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "manual and scheduled ingestion of an allowlisted local folder"},
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
@@ -2081,7 +2348,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || connectorKey == gmailConnectorKey || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || isGoogleOAuthConnector(connectorKey) || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {

@@ -150,6 +150,30 @@ const authenticatedRoutes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "plans",
+    loadChildren: () =>
+      import("./pages/plan-coordination/plan-coordination.module").then(
+        (m) => m.PlanCoordinationModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "knowledge-claims",
+    loadChildren: () =>
+      import("./pages/knowledge-claims/knowledge-claims.module").then(
+        (m) => m.KnowledgeClaimsModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
+    path: "governance-control",
+    loadChildren: () =>
+      import("./pages/governance-control/governance-control.module").then(
+        (m) => m.GovernanceControlModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "exceptions",
     loadChildren: () =>
       import("./pages/exceptions/exceptions.module").then(

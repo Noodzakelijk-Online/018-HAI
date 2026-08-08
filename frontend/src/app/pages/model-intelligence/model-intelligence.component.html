@@ -1,127 +1,144 @@
-<div class="mi">
-  <header class="mi__header">
+<section class="model-outcomes-page">
+  <header class="page-header">
     <div>
-      <button nz-button nzType="text" (click)="goBack()">
-        <span nz-icon nzType="arrow-left"></span>
-      </button>
-      <h1>Model Intelligence</h1>
-      <p class="mi__subtitle">
-        Architecture-aware model routing. HAI is provider-agnostic and truthful: local test providers run
-        deterministically, unconfigured providers are shown as not_configured, and no state is ever faked.
-      </p>
+      <h1>Model outcomes</h1>
+      <p>HAI promotes models only after their output passes a task-specific validator. Provider uptime and raw speed remain supporting signals.</p>
     </div>
-    <button nz-button nzType="text" (click)="refresh()">
-      <span nz-icon nzType="reload"></span> Refresh
+    <button nz-button type="button" (click)="refresh()" [nzLoading]="loading">
+      <i nz-icon nzType="reload" nzTheme="outline"></i>
+      Refresh
     </button>
   </header>
 
-  <section class="mi__stats" *ngIf="overview as o">
-    <nz-card class="stat" nzSize="small">
-      <div class="stat__value">{{ o.activeModels }}/{{ o.totalProfiles }}</div>
-      <div class="stat__label">Active models</div>
-    </nz-card>
-    <nz-card class="stat" nzSize="small">
-      <div class="stat__value">{{ o.lanes.length }}</div>
-      <div class="stat__label">Routing lanes</div>
-    </nz-card>
-    <nz-card class="stat" nzSize="small">
-      <div class="stat__value">{{ o.telemetryRuns }}</div>
-      <div class="stat__label">Telemetry runs</div>
-    </nz-card>
-    <nz-card class="stat" nzSize="small">
-      <div class="stat__value">{{ o.cacheHits }}/{{ o.cacheHits + o.cacheMisses }}</div>
-      <div class="stat__label">Cache hits</div>
-    </nz-card>
+  <div class="page-loading" *ngIf="loading" role="status" aria-live="polite">
+    <nz-spin nzSimple></nz-spin>
+    <span>Rebuilding the completion-first model view...</span>
+  </div>
+
+  <section class="page-error" *ngIf="!loading && errorMessage" role="alert">
+    <i nz-icon nzType="warning" nzTheme="outline"></i>
+    <div><strong>Model outcomes could not load</strong><span>{{ errorMessage }}</span></div>
+    <button nz-button type="button" (click)="refresh()">Try again</button>
   </section>
 
-  <section class="mi__grid">
-    <nz-card nzTitle="Providers" nzSize="small" *ngIf="overview">
-      <nz-table #provTable [nzData]="overview.providers" nzSize="small" [nzShowPagination]="false">
-        <thead>
-          <tr><th>Provider</th><th>Status</th><th>Claim</th><th>Models</th></tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let p of provTable.data">
-            <td>{{ p.name }}<span class="mi__local" *ngIf="p.local"> · local</span></td>
-            <td><nz-tag [nzColor]="statusColor(p.status)">{{ p.status }}</nz-tag></td>
-            <td>{{ p.claimLevel }}</td>
-            <td>{{ p.models }}</td>
-          </tr>
-        </tbody>
-      </nz-table>
-    </nz-card>
+  <ng-container *ngIf="!loading && !errorMessage && overview as currentOverview">
+    <section class="outcome-summary" [attr.data-state]="calibration?.evaluatedRuns ? (unresolvedOutcomes() ? 'review' : 'clear') : 'unproven'">
+      <i nz-icon [nzType]="calibration?.evaluatedRuns ? (unresolvedOutcomes() ? 'warning' : 'check-circle') : 'experiment'" nzTheme="outline"></i>
+      <div>
+        <strong *ngIf="calibration?.evaluatedRuns">{{ acceptancePercent() }}% of evaluated outputs accepted</strong>
+        <strong *ngIf="!calibration?.evaluatedRuns">No validated model outcomes yet</strong>
+        <span *ngIf="calibration?.evaluatedRuns && unresolvedOutcomes()">{{ unresolvedOutcomes() }} rejected or review-required outcome{{ unresolvedOutcomes() === 1 ? '' : 's' }} remain visible.</span>
+        <span *ngIf="calibration?.evaluatedRuns && !unresolvedOutcomes()">Every currently evaluated output passed its recorded validator.</span>
+        <span *ngIf="!calibration?.evaluatedRuns">Successful API responses and benchmark speed do not prove task completion. HAI will not name a lane leader without accepted output evidence.</span>
+      </div>
+    </section>
 
-    <nz-card nzTitle="Lane winners" nzSize="small" *ngIf="overview">
-      <nz-empty *ngIf="!overview.laneWinners.length" nzNotFoundContent="No observed runs yet"></nz-empty>
-      <ul class="mi__lanes" *ngIf="overview.laneWinners.length">
-        <li *ngFor="let w of overview.laneWinners">
-          <nz-tag nzColor="blue">{{ w.lane }}</nz-tag>
-          <span>{{ w.providerId }}/{{ w.modelId }}</span>
-          <span class="mi__tps">{{ w.tokensPerSecond | number: '1.0-0' }} tok/s</span>
-        </li>
-      </ul>
-    </nz-card>
-  </section>
+    <section class="metric-strip" aria-label="Model outcome summary">
+      <div><span>Accepted</span><strong>{{ calibration?.acceptedOutputs || 0 }}/{{ calibration?.evaluatedRuns || 0 }}</strong><small>evaluated outputs</small></div>
+      <div><span>Needs attention</span><strong>{{ unresolvedOutcomes() }}</strong><small>rejected or review</small></div>
+      <div><span>Unvalidated</span><strong>{{ calibration?.unvalidatedRuns || 0 }}</strong><small>not completion evidence</small></div>
+      <div><span>Active models</span><strong>{{ currentOverview.activeModels }}/{{ currentOverview.totalProfiles }}</strong><small>configured profiles</small></div>
+    </section>
 
-  <nz-card nzTitle="Model profiles" nzSize="small" class="mi__profiles">
-    <nz-table #profTable [nzData]="profiles" [nzLoading]="loading" nzSize="small" [nzNoResult]="emptyTpl">
-      <thead>
-        <tr>
-          <th>Model</th><th>Architecture</th><th>Lanes</th><th>Status</th>
-          <th>Claim</th><th>Observed tok/s</th><th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let p of profTable.data">
-          <td>{{ p.providerId }}/{{ p.modelId }}</td>
-          <td><code>{{ p.architectureFamily }}</code></td>
-          <td>
-            <nz-tag *ngFor="let l of p.lanes" nzColor="purple">{{ l }}</nz-tag>
-          </td>
-          <td><nz-tag [nzColor]="statusColor(p.status)">{{ p.status }}</nz-tag></td>
-          <td>{{ p.claimLevel }}</td>
-          <td>{{ p.observedTokensPerSecond | number: '1.0-0' }}</td>
-          <td>
-            <button
-              nz-button
-              nzSize="small"
-              [nzLoading]="benchmarking[p.providerId + '/' + p.modelId]"
-              (click)="benchmark(p)"
-            >
-              Benchmark
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </nz-table>
-    <ng-template #emptyTpl><nz-empty></nz-empty></ng-template>
-  </nz-card>
+    <section class="leader-panel">
+      <div class="section-heading">
+        <div><h2>Completion-first lane leaders</h2><p>Outcome evidence ranks first. Cost, tokens, latency, and speed break ties only after capability is demonstrated.</p></div>
+        <span>{{ calibration?.generatedAt | date:'short' }}</span>
+      </div>
 
-  <section class="mi__grid">
-    <nz-card nzTitle="Hardware profile" nzSize="small" *ngIf="hardware as hw">
-      <dl class="mi__meta">
-        <div><dt>OS</dt><dd>{{ hw.profile.operatingSystem }}</dd></div>
-        <div><dt>CPU cores</dt><dd>{{ hw.profile.cpuCores }}</dd></div>
-        <div><dt>GPU</dt><dd>{{ hw.profile.gpuVendor }}</dd></div>
-        <div><dt>NPU</dt><dd>{{ hw.profile.npuVendor }}</dd></div>
-        <div><dt>Serving stack</dt><dd><nz-tag nzColor="geekblue">{{ hw.selectedServingStack }}</nz-tag></dd></div>
-      </dl>
-      <button nz-button nzSize="small" (click)="detectHardware()">
-        <span nz-icon nzType="scan"></span> Re-detect
-      </button>
-    </nz-card>
+      <div class="leader-list" *ngIf="calibration?.laneLeaders?.length; else noLeaders">
+        <article class="leader-row" *ngFor="let leader of calibration?.laneLeaders; trackBy: trackLane">
+          <span class="lane-label">{{ leader.lane }}</span>
+          <div class="leader-identity"><strong>{{ leader.providerId }}/{{ leader.modelId }}</strong><span>{{ leader.reason }}</span></div>
+          <div class="leader-result"><strong>{{ leader.acceptedOutputs }}/{{ leader.evaluatedRuns }}</strong><span>{{ leader.acceptanceRate | percent:'1.0-0' }} accepted</span></div>
+          <div class="leader-confidence" [attr.data-confidence]="leader.confidence"><strong>{{ leader.confidence }}</strong><span>{{ leader.tokensPerSecond | number:'1.0-0' }} tok/s observed</span></div>
+        </article>
+      </div>
+      <ng-template #noLeaders>
+        <div class="truthful-empty">
+          <i nz-icon nzType="experiment" nzTheme="outline"></i>
+          <div><strong>No lane leader can be supported yet</strong><span>Run real tasks with deterministic validation. Benchmarks remain visible in Advanced view but cannot promote a model.</span></div>
+        </div>
+      </ng-template>
+      <p class="evidence-note" *ngIf="calibration">{{ calibration.explanation }}</p>
+    </section>
 
-    <nz-card nzTitle="Budgets & power" nzSize="small">
-      <dl class="mi__meta" *ngIf="budgets as b">
-        <div><dt>Context strategy</dt><dd>{{ b.contextStrategy }}</dd></div>
-        <div><dt>Max reasoning</dt><dd>{{ b.maximumReasoningEffort }}</dd></div>
-        <div><dt>Max input tokens</dt><dd>{{ b.maximumInputTokens }}</dd></div>
-        <div><dt>Max output tokens</dt><dd>{{ b.maximumOutputTokens }}</dd></div>
-      </dl>
-      <dl class="mi__meta" *ngIf="power as pw">
-        <div><dt>Power mode</dt><dd>{{ pw.mode }}</dd></div>
-        <div><dt>Defer on battery</dt><dd>{{ pw.deferHeavyWorkOnBattery ? 'yes' : 'no' }}</dd></div>
-      </dl>
-    </nz-card>
-  </section>
-</div>
+    <div class="advanced-sections">
+      <hai-progressive-section moduleId="model-intelligence" sectionId="providers" title="Provider readiness" summary="Inspect which local or configured providers are actually available.">
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Provider</th><th>Status</th><th>Evidence level</th><th>Profiles</th></tr></thead>
+            <tbody>
+              <tr *ngFor="let provider of currentOverview.providers">
+                <td><strong>{{ provider.name }}</strong><small>{{ provider.local ? 'Local provider' : 'Remote provider' }}</small></td>
+                <td><span class="status-pill" [attr.data-status]="provider.status">{{ provider.status }}</span></td>
+                <td>{{ provider.claimLevel }}</td>
+                <td>{{ provider.models }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </hai-progressive-section>
+
+      <hai-progressive-section moduleId="model-intelligence" sectionId="model-calibration" title="Outcome calibration register" summary="Compare provider-call success with accepted, rejected, review-required, and unvalidated outputs.">
+        <div class="table-scroll" *ngIf="calibration?.models?.length; else noCalibration">
+          <table class="data-table data-table--wide">
+            <thead><tr><th>Lane and model</th><th>Provider calls</th><th>Accepted</th><th>Rejected</th><th>Review</th><th>Unvalidated</th><th>Conservative bound</th><th>Cost</th></tr></thead>
+            <tbody>
+              <tr *ngFor="let model of calibration?.models; trackBy: trackModel">
+                <td><strong>{{ model.lane }}</strong><small>{{ model.providerId }}/{{ model.modelId }}</small></td>
+                <td>{{ model.providerCallSuccesses }}/{{ model.totalRuns }}</td>
+                <td>{{ model.acceptedOutputs }}/{{ model.evaluatedRuns }}</td>
+                <td>{{ model.rejectedOutputs }}</td>
+                <td>{{ model.needsReview }}</td>
+                <td>{{ model.unvalidatedRuns }}</td>
+                <td><strong>{{ model.wilsonLowerBound | percent:'1.0-1' }}</strong><small>{{ model.confidence }}</small></td>
+                <td>{{ model.averageCostEur | currency:'EUR':'symbol':'1.4-6' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ng-template #noCalibration><div class="inline-empty">No telemetry has been recorded.</div></ng-template>
+      </hai-progressive-section>
+
+      <hai-progressive-section moduleId="model-intelligence" sectionId="model-profiles" title="Profiles and speed benchmarks" summary="Load configured model metadata and run readiness benchmarks. A benchmark does not validate task completion." (openChange)="onProfilesOpen($event)">
+        <div class="section-loading" *ngIf="profilesLoading"><nz-spin nzSimple></nz-spin><span>Loading model profiles...</span></div>
+        <div class="table-scroll" *ngIf="!profilesLoading && profilesLoaded">
+          <table class="data-table data-table--wide">
+            <thead><tr><th>Model</th><th>Architecture</th><th>Lanes</th><th>Status</th><th>Evidence</th><th>Observed speed</th><th></th></tr></thead>
+            <tbody>
+              <tr *ngFor="let profile of profiles; trackBy: trackModel">
+                <td><strong>{{ profile.displayName || profile.modelId }}</strong><small>{{ profile.providerId }}/{{ profile.modelId }}</small></td>
+                <td><code>{{ profile.architectureFamily }}</code></td>
+                <td>{{ profile.lanes.join(', ') }}</td>
+                <td><span class="status-pill" [attr.data-status]="profile.status">{{ profile.status }}</span></td>
+                <td>{{ profile.claimLevel }}</td>
+                <td>{{ profile.observedTokensPerSecond | number:'1.0-0' }} tok/s</td>
+                <td><button nz-button nzSize="small" type="button" [nzLoading]="benchmarking[profile.providerId + '/' + profile.modelId]" (click)="benchmark(profile)">Benchmark</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="inline-empty" *ngIf="!profiles.length">No model profiles are configured.</div>
+        </div>
+      </hai-progressive-section>
+
+      <hai-progressive-section moduleId="model-intelligence" sectionId="runtime-budget" title="Runtime, token, and power controls" summary="Load hardware detection, context bounds, and power policy only when operational diagnostics are needed." (openChange)="onRuntimeOpen($event)">
+        <div class="section-loading" *ngIf="runtimeLoading"><nz-spin nzSimple></nz-spin><span>Loading runtime diagnostics...</span></div>
+        <div class="runtime-grid" *ngIf="!runtimeLoading && runtimeLoaded">
+          <section *ngIf="hardware as hw">
+            <div class="subsection-heading"><h3>Hardware</h3><button nz-button nzSize="small" type="button" (click)="detectHardware()"><i nz-icon nzType="scan" nzTheme="outline"></i> Detect again</button></div>
+            <dl><div><dt>Operating system</dt><dd>{{ hw.profile.operatingSystem }}</dd></div><div><dt>CPU cores</dt><dd>{{ hw.profile.cpuCores }}</dd></div><div><dt>GPU</dt><dd>{{ hw.profile.gpuVendor || 'Not detected' }}</dd></div><div><dt>NPU</dt><dd>{{ hw.profile.npuVendor || 'Not detected' }}</dd></div><div><dt>Serving stack</dt><dd>{{ hw.selectedServingStack }}</dd></div></dl>
+          </section>
+          <section *ngIf="budgets as budget">
+            <h3>Operation budget</h3>
+            <dl><div><dt>Context strategy</dt><dd>{{ budget.contextStrategy }}</dd></div><div><dt>Reasoning ceiling</dt><dd>{{ budget.maximumReasoningEffort }}</dd></div><div><dt>Input token ceiling</dt><dd>{{ budget.maximumInputTokens | number }}</dd></div><div><dt>Output token ceiling</dt><dd>{{ budget.maximumOutputTokens | number }}</dd></div></dl>
+          </section>
+          <section *ngIf="power as policy">
+            <h3>Power policy</h3>
+            <dl><div><dt>Mode</dt><dd>{{ policy.mode }}</dd></div><div><dt>Heavy work now</dt><dd>{{ policy.allowHeavyWorkNow ? 'Allowed' : 'Deferred' }}</dd></div><div><dt>Defer on battery</dt><dd>{{ policy.deferHeavyWorkOnBattery ? 'Yes' : 'No' }}</dd></div><div><dt>Night batch only</dt><dd>{{ policy.nightBatchOnly ? 'Yes' : 'No' }}</dd></div></dl>
+          </section>
+        </div>
+      </hai-progressive-section>
+    </div>
+  </ng-container>
+</section>

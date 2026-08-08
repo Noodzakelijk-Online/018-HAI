@@ -4,6 +4,8 @@ import { Observable } from 'rxjs';
 import { ITaskPlanService } from '../task-plan.service.interface';
 import {
   IApprovalDecision,
+	IApprovedReviewReconciliationRequest,
+	IApprovedReviewReconciliationResult,
   ICompletionPlan,
   IReviewQueueItem,
   IReviewResolutionResult,
@@ -19,12 +21,19 @@ export class TaskPlanService implements ITaskPlanService {
   constructor(private http: HttpClient) {}
 
   plan(request: ITaskPlanRequest): Observable<ICompletionPlan> {
-    return this.http.post<ICompletionPlan>(`${this.apiUrl}/plan`, request);
+	return this.http.post<ICompletionPlan>(`${this.apiUrl}/plan`, this.withOperationIdentity(request));
   }
 
   run(request: ITaskPlanRequest): Observable<ICompletionPlan> {
-    return this.http.post<ICompletionPlan>(`${this.apiUrl}/run`, request);
+	return this.http.post<ICompletionPlan>(`${this.apiUrl}/run`, this.withOperationIdentity(request));
   }
+
+	private withOperationIdentity(request: ITaskPlanRequest): ITaskPlanRequest {
+		if (request.idempotencyKey?.trim()) {
+			return { ...request, idempotencyKey: request.idempotencyKey.trim() };
+		}
+		return { ...request, idempotencyKey: crypto.randomUUID() };
+	}
 
   logs(): Observable<ICompletionPlan[]> {
     return this.http.get<ICompletionPlan[]>(`${this.apiUrl}/logs`);
@@ -37,4 +46,8 @@ export class TaskPlanService implements ITaskPlanService {
   resolveReviewItem(id: string, decision: IApprovalDecision): Observable<IReviewResolutionResult> {
     return this.http.post<IReviewResolutionResult>(`${this.apiUrl}/review-queue/${id}/resolve`, decision);
   }
+
+	reconcileApprovedReviews(request: IApprovedReviewReconciliationRequest): Observable<IApprovedReviewReconciliationResult> {
+		return this.http.post<IApprovedReviewReconciliationResult>(`${this.apiUrl}/review-queue/reconcile`, request);
+	}
 }

@@ -32,32 +32,38 @@ const (
 	googleClientID   string = "GOOGLE_OAUTH_CLIENT_ID"
 	googleClientKey  string = "GOOGLE_OAUTH_CLIENT_SECRET"
 	googleRedirect   string = "GOOGLE_OAUTH_REDIRECT_URL"
+	googleTokenKey   string = "HAI_OAUTH_TOKEN_ENCRYPTION_KEY"
+	googleStateKey   string = "HAI_OAUTH_STATE_SIGNING_KEY"
+	approvalProofKey string = "HAI_APPROVAL_PROOF_SIGNING_KEY"
 )
 
 type Configuration struct {
-	ConfigDir       string
-	BaseUrl         string
-	ServerPort      string
-	NginxContainer  string
-	DbHost          string
-	DbPort          int
-	DbName          string
-	DbUser          string
-	DbPassword      string
-	ImageMaxSize    int64
-	ImageExtensions []string
-	ImageSaveDir    string
-	Brokers         []string
-	Topic           string
-	RedisAddr       string
-	BackendAPIKey      string
-	MemoryEngineKey    string
-	RateLimitPerMinute int
-	RunMode            string
-	JWTSecret          string
+	ConfigDir               string
+	BaseUrl                 string
+	ServerPort              string
+	NginxContainer          string
+	DbHost                  string
+	DbPort                  int
+	DbName                  string
+	DbUser                  string
+	DbPassword              string
+	ImageMaxSize            int64
+	ImageExtensions         []string
+	ImageSaveDir            string
+	Brokers                 []string
+	Topic                   string
+	RedisAddr               string
+	BackendAPIKey           string
+	MemoryEngineKey         string
+	RateLimitPerMinute      int
+	RunMode                 string
+	JWTSecret               string
 	GoogleOAuthClientID     string
 	GoogleOAuthClientSecret string
 	GoogleOAuthRedirectURL  string
+	OAuthTokenEncryptionKey string
+	OAuthStateSigningKey    string
+	ApprovalProofSigningKey string
 }
 
 var AppConfig Configuration
@@ -75,29 +81,32 @@ func Init() {
 	imageExtensionsList := getStringListFromEnv(imageExtensions, ".jpg,.jpeg,.png")
 	kafkaBrokersList := getStringListFromEnv(kafkaBrokers, "kafka1:9092,kafka2:9093,kafka3:9094")
 	AppConfig = Configuration{
-		ConfigDir:       getEnvString(configDir, "/app/sites-enabled"),
-		BaseUrl:         getEnvString(baseUrl, "/api"),
-		ServerPort:      ":" + strconv.Itoa(servNumPort),
-		NginxContainer:  getEnvString(nginxContainer, "gateway"),
-		DbHost:          getEnvString(dbHost, "postgres-automation"),
-		DbPort:          dbNumPort,
-		DbName:          getEnvString(dbName, "automation"),
-		DbUser:          getEnvString(dbUser, "postgres"),
-		DbPassword:      getEnvString(dbPassword, "postgres"),
-		ImageMaxSize:    imageSizeInMb,
-		ImageExtensions: imageExtensionsList,
-		ImageSaveDir:    getEnvString(imageSaveDir, "images"),
-		Brokers:         kafkaBrokersList,
-		Topic:           getEnvString(kafkaTopic, "automation-events"),
-		RedisAddr:       getEnvString(redisAddr, ""),
+		ConfigDir:               getEnvString(configDir, "/app/sites-enabled"),
+		BaseUrl:                 getEnvString(baseUrl, "/api"),
+		ServerPort:              ":" + strconv.Itoa(servNumPort),
+		NginxContainer:          getEnvString(nginxContainer, "gateway"),
+		DbHost:                  getEnvString(dbHost, "postgres-automation"),
+		DbPort:                  dbNumPort,
+		DbName:                  getEnvString(dbName, "automation"),
+		DbUser:                  getEnvString(dbUser, "postgres"),
+		DbPassword:              getEnvString(dbPassword, "postgres"),
+		ImageMaxSize:            imageSizeInMb,
+		ImageExtensions:         imageExtensionsList,
+		ImageSaveDir:            getEnvString(imageSaveDir, "images"),
+		Brokers:                 kafkaBrokersList,
+		Topic:                   getEnvString(kafkaTopic, "automation-events"),
+		RedisAddr:               getEnvString(redisAddr, ""),
 		GoogleOAuthClientID:     getEnvString(googleClientID, ""),
 		GoogleOAuthClientSecret: getEnvString(googleClientKey, ""),
 		GoogleOAuthRedirectURL:  getEnvString(googleRedirect, ""),
-		BackendAPIKey:      getEnvString(backendAPIKey, ""),
-		MemoryEngineKey:    getEnvString(memoryEngineKey, ""),
-		RateLimitPerMinute: getEnvInt(rateLimitPerMin, 0),
-		RunMode:            getEnvString(runMode, "production"),
-		JWTSecret:          getEnvString(jwtSecret, ""),
+		OAuthTokenEncryptionKey: getEnvString(googleTokenKey, ""),
+		OAuthStateSigningKey:    getEnvString(googleStateKey, ""),
+		ApprovalProofSigningKey: getEnvString(approvalProofKey, ""),
+		BackendAPIKey:           getEnvString(backendAPIKey, ""),
+		MemoryEngineKey:         getEnvString(memoryEngineKey, ""),
+		RateLimitPerMinute:      getEnvInt(rateLimitPerMin, 0),
+		RunMode:                 getEnvString(runMode, "production"),
+		JWTSecret:               getEnvString(jwtSecret, ""),
 	}
 	ensureImageDirExists()
 }

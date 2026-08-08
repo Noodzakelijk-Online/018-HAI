@@ -43,6 +43,47 @@ func TestVerifiedActorDoesNotUseClientSuppliedActor(t *testing.T) {
 	}
 }
 
+func TestSettlePortfolioWorkflowHandlerUsesVerifiedOwnerAndReturnsCreated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service, _, item, execution := completedPortfolioWorkflowFixture(t, "verified")
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(context *gin.Context) {
+		context.Set(identity.ContextSubjectKey, "alice")
+		context.Set(identity.ContextRoleKey, "owner")
+		context.Next()
+	})
+	router.POST(
+		"/portfolio-execution-proposal-items/:itemId/settle-workflow",
+		handler.SettlePortfolioWorkflow,
+	)
+	payload, err := json.Marshal(PortfolioWorkflowSettlementRequest{
+		WorkflowID: execution.WorkflowID.String(), ExpectedItemDigest: item.RecordDigest,
+		ActualEffortMinutes: 8, Confirmation: PortfolioWorkflowSettlementConfirmation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/portfolio-execution-proposal-items/"+item.ID.String()+"/settle-workflow",
+		strings.NewReader(string(payload)),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("settlement handler status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result PortfolioWorkflowSettlementResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.WorkflowID != execution.WorkflowID || result.ProposalItemID != item.ID || result.Replayed {
+		t.Fatalf("settlement response=%#v", result)
+	}
+}
+
 func TestPursuitRoutesRequireAnAuthenticatedOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()
@@ -174,6 +215,187 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	router.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, "/pursuits/"+bob.ID.String()+"/activity", nil))
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf("cross-owner activity status = %d, want %d; body=%s", denied.Code, http.StatusNotFound, denied.Body.String())
+	}
+}
+
+func TestPursuitResourceEndpointsAreOwnerScopedStrictAndIdempotent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{
+		OwnerIdentity: "alice",
+		Title:         "Alice metered pursuit",
+		ResourceLimits: models.PursuitResourceLimits{
+			MaxEffortHours: 4,
+			MaxSpendEUR:    50,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	bob, err := service.Create(CreateRequest{OwnerIdentity: "bob", Title: "Bob metered pursuit"})
+	if err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	handler := NewHandler(service)
+	router.GET("/pursuits/:id/resources", handler.ResourceUsage)
+	router.GET("/pursuits/:id/resource-events", handler.ResourceEvents)
+	router.POST("/pursuits/:id/resource-events", handler.AppendResourceEvent)
+	router.POST("/pursuits/:id/resource-reservations/:reservationId/release", handler.ReleaseResourceReservation)
+
+	path := "/pursuits/" + alice.ID.String() + "/resource-events"
+	body := `{"kind":"effort_recorded","effortHours":1.5,"note":"Reviewed evidence","idempotencyKey":"effort-http-1"}`
+	first := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(first, request)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first resource event status = %d, body=%s", first.Code, first.Body.String())
+	}
+	var created models.PursuitResourceEvent
+	if err := json.Unmarshal(first.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode resource event: %v", err)
+	}
+	if created.Actor != "alice" {
+		t.Fatalf("resource event trusted client actor: %#v", created)
+	}
+	storedEvents, err := repo.FindResourceEventsForOwner("alice", alice.ID, 10)
+	if err != nil || len(storedEvents) != 1 || storedEvents[0].OwnerIdentity != "alice" {
+		t.Fatalf("stored resource owner = %#v, error=%v", storedEvents, err)
+	}
+
+	replay := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(replay, request)
+	if replay.Code != http.StatusCreated {
+		t.Fatalf("idempotent replay status = %d, body=%s", replay.Code, replay.Body.String())
+	}
+	var replayed models.PursuitResourceEvent
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayed); err != nil {
+		t.Fatalf("decode replayed resource event: %v", err)
+	}
+	if replayed.ID != created.ID {
+		t.Fatalf("idempotent replay ID = %s, want %s", replayed.ID, created.ID)
+	}
+
+	conflict := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"kind":"effort_recorded","effortHours":2,"note":"Different event","idempotencyKey":"effort-http-1"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(conflict, request)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("idempotency conflict status = %d, want %d; body=%s", conflict.Code, http.StatusConflict, conflict.Body.String())
+	}
+
+	spoof := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"kind":"effort_recorded","effortHours":1,"note":"Spoof","idempotencyKey":"effort-http-2","ownerIdentity":"bob","actor":"bob"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(spoof, request)
+	if spoof.Code != http.StatusBadRequest {
+		t.Fatalf("identity spoof status = %d, want %d; body=%s", spoof.Code, http.StatusBadRequest, spoof.Body.String())
+	}
+
+	invalidLimit := httptest.NewRecorder()
+	router.ServeHTTP(invalidLimit, httptest.NewRequest(http.MethodGet, path+"?limit=501", nil))
+	if invalidLimit.Code != http.StatusBadRequest {
+		t.Fatalf("invalid event limit status = %d, want %d", invalidLimit.Code, http.StatusBadRequest)
+	}
+
+	usage := httptest.NewRecorder()
+	router.ServeHTTP(usage, httptest.NewRequest(http.MethodGet, "/pursuits/"+alice.ID.String()+"/resources", nil))
+	if usage.Code != http.StatusOK || !strings.Contains(usage.Body.String(), `"effortRecordedHours":1.5`) {
+		t.Fatalf("resource usage status = %d, body=%s", usage.Code, usage.Body.String())
+	}
+
+	manager := service.(interface {
+		ReservePursuitTaskResources(uuid.UUID, string, string, int64, int64) error
+	})
+	if err := manager.ReservePursuitTaskResources(alice.ID, "alice", "http-orphan:attempt:1", 15, 0); err != nil {
+		t.Fatalf("reserve HTTP reconciliation hold: %v", err)
+	}
+	var reservationID uuid.UUID
+	for _, reservation := range repo.resourceReservations {
+		reservationID = reservation.ID
+	}
+	if reservationID == uuid.Nil {
+		t.Fatal("reserved resource hold was not persisted")
+	}
+	releasePath := "/pursuits/" + alice.ID.String() + "/resource-reservations/" + reservationID.String() + "/release"
+
+	invalidReservation := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/pursuits/"+alice.ID.String()+"/resource-reservations/not-a-uuid/release", strings.NewReader(`{"confirmedOrphan":true,"reason":"The worker process no longer exists."}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(invalidReservation, request)
+	if invalidReservation.Code != http.StatusBadRequest {
+		t.Fatalf("invalid reservation id status = %d, want %d; body=%s", invalidReservation.Code, http.StatusBadRequest, invalidReservation.Body.String())
+	}
+
+	unconfirmed := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, releasePath, strings.NewReader(`{"reason":"The worker process no longer exists."}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(unconfirmed, request)
+	if unconfirmed.Code != http.StatusBadRequest || !strings.Contains(unconfirmed.Body.String(), "confirmedOrphan") {
+		t.Fatalf("unconfirmed release status = %d, body=%s", unconfirmed.Code, unconfirmed.Body.String())
+	}
+
+	released := httptest.NewRecorder()
+	releaseBody := `{"confirmedOrphan":true,"reason":"The worker process no longer exists."}`
+	request = httptest.NewRequest(http.MethodPost, releasePath, strings.NewReader(releaseBody))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(released, request)
+	if released.Code != http.StatusOK || !strings.Contains(released.Body.String(), `"activeReservations":0`) {
+		t.Fatalf("confirmed release status = %d, body=%s", released.Code, released.Body.String())
+	}
+	if settlement := repo.resourceSettlements[reservationID]; settlement.Actor != "alice" || settlement.Reason != "The worker process no longer exists." {
+		t.Fatalf("HTTP release trusted the wrong actor or lost its reason: %#v", settlement)
+	}
+
+	releaseReplay := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, releasePath, strings.NewReader(releaseBody))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(releaseReplay, request)
+	if releaseReplay.Code != http.StatusOK {
+		t.Fatalf("idempotent release replay status = %d, body=%s", releaseReplay.Code, releaseReplay.Body.String())
+	}
+
+	for _, endpoint := range []string{
+		"/pursuits/" + bob.ID.String() + "/resources",
+		"/pursuits/" + bob.ID.String() + "/resource-events",
+	} {
+		denied := httptest.NewRecorder()
+		router.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, endpoint, nil))
+		if denied.Code != http.StatusNotFound {
+			t.Fatalf("cross-owner GET %s status = %d, want %d; body=%s", endpoint, denied.Code, http.StatusNotFound, denied.Body.String())
+		}
+	}
+}
+
+func TestPursuitResourceEndpointRejectsOwnerlessLegacyMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	legacy, err := service.Create(CreateRequest{Title: "Legacy resource pursuit"})
+	if err != nil {
+		t.Fatalf("Create legacy pursuit: %v", err)
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.POST("/pursuits/:id/resource-events", NewHandler(service).AppendResourceEvent)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/pursuits/"+legacy.ID.String()+"/resource-events", strings.NewReader(`{"kind":"effort_recorded","effortHours":1,"note":"Must not adopt legacy data","idempotencyKey":"legacy-1"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("ownerless legacy mutation status = %d, want %d; body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }
 

@@ -96,6 +96,39 @@ func TestRunHandlerUsesVerifiedOwner(t *testing.T) {
 	}
 }
 
+func TestTaskHandlersBindIdempotencyHeaderAndRejectMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &capturingTaskService{}
+	handler := NewHandler(service)
+
+	request := httptest.NewRequest(http.MethodPost, "/task/run", strings.NewReader(`{"request":"Handle work"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "source:event-42")
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
+	handler.Run(context)
+	if response.Code != http.StatusOK || service.runRequest.IdempotencyKey != "source:event-42" {
+		t.Fatalf("bound idempotency response=%d request=%#v", response.Code, service.runRequest)
+	}
+	if got := response.Header().Get("Idempotency-Key"); got != "source:event-42" {
+		t.Fatalf("response idempotency key = %q, want source:event-42", got)
+	}
+
+	mismatch := httptest.NewRequest(http.MethodPost, "/task/run", strings.NewReader(`{"request":"Handle work","idempotencyKey":"body-key"}`))
+	mismatch.Header.Set("Content-Type", "application/json")
+	mismatch.Header.Set("Idempotency-Key", "header-key")
+	mismatchResponse := httptest.NewRecorder()
+	mismatchContext, _ := gin.CreateTestContext(mismatchResponse)
+	mismatchContext.Request = mismatch
+	mismatchContext.Set(identity.ContextSubjectKey, "alice")
+	handler.Run(mismatchContext)
+	if mismatchResponse.Code != http.StatusBadRequest {
+		t.Fatalf("mismatch status = %d: %s", mismatchResponse.Code, mismatchResponse.Body.String())
+	}
+}
+
 func TestPlanAndRunHandlersDoNotExposeServiceErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	internalError := errors.New("dial postgres at db.internal with password=do-not-expose")
@@ -144,6 +177,9 @@ func TestPlanAndRunHandlersDoNotExposeServiceErrors(t *testing.T) {
 			}
 			if strings.Contains(response.Body.String(), "postgres") || strings.Contains(response.Body.String(), "do-not-expose") {
 				t.Fatalf("internal service error leaked in response: %s", response.Body.String())
+			}
+			if got := response.Header().Get("Idempotency-Key"); got == "" {
+				t.Fatal("generated idempotency key was not returned on failure")
 			}
 		})
 	}
@@ -278,6 +314,32 @@ func TestTaskReviewHandlersUseVerifiedOwnerScopedView(t *testing.T) {
 	}
 }
 
+func TestResolveReviewItemExplainsUncertainOperationConfirmationContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &capturingTaskService{resolveErr: ErrTaskOperationRetryConfirmation}
+	handler := NewHandler(service)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/task/review-queue/item/resolve",
+		strings.NewReader(`{"approved":true}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Params = gin.Params{{Key: "id", Value: "item"}}
+	context.Set(identity.ContextSubjectKey, "alice")
+
+	handler.ResolveReviewItem(context)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), TaskOperationRetryConfirmation) {
+		t.Fatalf("response does not explain confirmation contract: %s", response.Body.String())
+	}
+}
+
 type capturingTaskService struct {
 	planRequest  IntakeRequest
 	runRequest   IntakeRequest
@@ -286,6 +348,7 @@ type capturingTaskService struct {
 	logsOwner    string
 	queueOwner   string
 	resolveOwner string
+	resolveErr   error
 }
 
 func (s *capturingTaskService) Plan(request IntakeRequest) (*CompletionPlan, error) {
@@ -328,5 +391,5 @@ func (s *capturingTaskService) ReviewQueueForOwner(ownerIdentity string) []Revie
 
 func (s *capturingTaskService) ResolveReviewItemForOwner(ownerIdentity, id string, decision ApprovalDecision) (*ReviewResolutionResult, error) {
 	s.resolveOwner = ownerIdentity
-	return nil, nil
+	return nil, s.resolveErr
 }

@@ -26,6 +26,16 @@ const (
 	// GmailReadonlyScope grants read-only access to Gmail. Read-only is
 	// deliberate: a connector ingests, it does not send or delete mail.
 	GmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly"
+	// DriveReadonlyScope grants read-only access to files the user can access.
+	// HAI never uploads, edits, shares, trashes, or deletes Drive content.
+	DriveReadonlyScope = "https://www.googleapis.com/auth/drive.readonly"
+	// ContactsReadonlyScope grants read-only access to the signed-in user's
+	// contacts. HAI imports candidates for governed review and never edits the
+	// Google address book.
+	ContactsReadonlyScope = "https://www.googleapis.com/auth/contacts.readonly"
+	// CalendarReadonlyScope grants read-only access to Calendar events. HAI
+	// reads the primary calendar and never creates, edits, or deletes events.
+	CalendarReadonlyScope = "https://www.googleapis.com/auth/calendar.readonly"
 )
 
 // Config describes an OAuth client. AuthEndpoint/TokenEndpoint default to

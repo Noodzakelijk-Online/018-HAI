@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/workflow"
 
 	"github.com/google/uuid"
@@ -33,8 +34,10 @@ const (
 )
 
 var (
-	ErrNotConfigured = errors.New("Temporal durable workflow bridge is not configured")
-	ErrUnavailable   = errors.New("Temporal durable workflow service is unavailable")
+	ErrNotConfigured         = errors.New("Temporal durable workflow bridge is not configured")
+	ErrUnavailable           = errors.New("Temporal durable workflow service is unavailable")
+	ErrAuthorizationRequired = errors.New("Temporal scheduling authorization is required")
+	ErrEmergencyStopActive   = errors.New("emergency stop blocks Temporal scheduling")
 )
 
 type Status struct {
@@ -50,8 +53,12 @@ type Status struct {
 }
 
 type FollowUpRequest struct {
-	RunAt time.Time `json:"runAt"`
-	Limit int       `json:"limit,omitempty"`
+	RunAt                 time.Time `json:"runAt"`
+	Limit                 int       `json:"limit,omitempty"`
+	TaskID                string    `json:"taskId,omitempty"`
+	ProjectKey            string    `json:"projectKey,omitempty"`
+	ApprovalSourceID      string    `json:"approvalSourceId,omitempty"`
+	ApprovalBindingDigest string    `json:"approvalBindingDigest,omitempty"`
 }
 
 type FollowUpRun struct {
@@ -92,6 +99,30 @@ type config struct {
 	queue     string
 }
 
+type durableWorkflowScheduler interface {
+	Schedule(
+		context.Context,
+		client.StartWorkflowOptions,
+		FollowUpInput,
+	) error
+}
+
+type temporalClientScheduler struct{ client client.Client }
+
+func (s temporalClientScheduler) Schedule(
+	ctx context.Context,
+	options client.StartWorkflowOptions,
+	input FollowUpInput,
+) error {
+	_, err := s.client.ExecuteWorkflow(
+		ctx,
+		options,
+		GovernedFollowUpWorkflow,
+		input,
+	)
+	return err
+}
+
 type Service struct {
 	config    config
 	configErr string
@@ -102,10 +133,21 @@ type Service struct {
 	mu        sync.RWMutex
 	client    client.Client
 	worker    worker.Worker
+	scheduler durableWorkflowScheduler
+	authorize FinalEffectAuthorizer
+	stop      func() safety.EmergencyStopDecision
 	workerErr string
 }
 
-func NewService(repo Repository, workflows workflow.Service, enabled bool, address, namespace, queue string) *Service {
+func NewService(
+	repo Repository,
+	workflows workflow.Service,
+	enabled bool,
+	address,
+	namespace,
+	queue string,
+	authorizers ...FinalEffectAuthorizer,
+) *Service {
 	s := &Service{
 		config: config{
 			enabled:   enabled,
@@ -117,6 +159,10 @@ func NewService(repo Repository, workflows workflow.Service, enabled bool, addre
 		workflows: workflows,
 		now:       time.Now,
 		dial:      client.Dial,
+		stop:      safety.EvaluateEmergencyStop,
+	}
+	if len(authorizers) > 0 {
+		s.authorize = authorizers[0]
 	}
 	if s.config.enabled {
 		s.configErr = validateConfig(s.config)
@@ -124,7 +170,10 @@ func NewService(repo Repository, workflows workflow.Service, enabled bool, addre
 	return s
 }
 
-func NewServiceFromEnv(workflows workflow.Service) *Service {
+func NewServiceFromEnv(
+	workflows workflow.Service,
+	authorizers ...FinalEffectAuthorizer,
+) *Service {
 	return NewService(
 		DefaultRepository(),
 		workflows,
@@ -132,7 +181,26 @@ func NewServiceFromEnv(workflows workflow.Service) *Service {
 		strings.TrimSpace(os.Getenv(addressEnv)),
 		strings.TrimSpace(os.Getenv(namespaceEnv)),
 		strings.TrimSpace(os.Getenv(queueEnv)),
+		firstAuthorizer(authorizers),
 	)
+}
+
+func firstAuthorizer(values []FinalEffectAuthorizer) FinalEffectAuthorizer {
+	if len(values) == 0 {
+		return nil
+	}
+	return values[0]
+}
+
+// WithEmergencyStopEvaluator supports deterministic boundary tests. Production
+// uses the process-wide persisted emergency-stop provider.
+func (s *Service) WithEmergencyStopEvaluator(
+	evaluator func() safety.EmergencyStopDecision,
+) *Service {
+	if evaluator != nil {
+		s.stop = evaluator
+	}
+	return s
 }
 
 func (s *Service) Status() Status {
@@ -187,6 +255,7 @@ func (s *Service) StartWorker() {
 	}
 	s.client = clientValue
 	s.worker = workerValue
+	s.scheduler = temporalClientScheduler{client: clientValue}
 }
 
 // StartWorkerEventually handles Compose ordering without turning an unavailable
@@ -224,10 +293,9 @@ func (s *Service) ScheduleFollowUp(ctx context.Context, ownerIdentity string, re
 		return nil, ErrNotConfigured
 	}
 	s.mu.RLock()
-	clientValue := s.client
-	workerStarted := s.worker != nil
+	scheduler := s.scheduler
 	s.mu.RUnlock()
-	if clientValue == nil || !workerStarted {
+	if scheduler == nil {
 		return nil, ErrUnavailable
 	}
 
@@ -248,23 +316,77 @@ func (s *Service) ScheduleFollowUp(ctx context.Context, ownerIdentity string, re
 	if err != nil {
 		return nil, err
 	}
-	_, err = clientValue.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+	authorizationRequest, executionTarget, err :=
+		buildScheduleAuthorizationRequest(
+			ownerIdentity,
+			stored.ID.String(),
+			workflowID,
+			request,
+		)
+	if err != nil {
+		s.markScheduleFailed(
+			stored,
+			"Temporal scheduling authorization could not be constructed",
+		)
+		return nil, ErrAuthorizationRequired
+	}
+	if s.authorize == nil {
+		s.markScheduleFailed(
+			stored,
+			"Temporal scheduling authorization is not configured",
+		)
+		return nil, ErrAuthorizationRequired
+	}
+	if _, err = s.authorize.AuthorizeAndConsume(
+		ctx,
+		authorizationRequest,
+		temporalAuthorizationConsumer,
+		executionTarget,
+	); err != nil {
+		s.markScheduleFailed(
+			stored,
+			"Temporal scheduling authorization was denied",
+		)
+		return nil, ErrAuthorizationRequired
+	}
+
+	options := client.StartWorkflowOptions{
 		ID:        workflowID,
 		TaskQueue: s.config.queue,
-	}, GovernedFollowUpWorkflow, FollowUpInput{
+	}
+	input := FollowUpInput{
 		RunID: stored.ID.String(),
 		RunAt: request.RunAt.UTC(),
 		Limit: normalizeLimit(request.Limit),
-	})
+	}
+	stop := s.stop()
+	if stop.Active {
+		s.markScheduleFailed(
+			stored,
+			"Emergency stop blocked the governed follow-up schedule",
+		)
+		return nil, ErrEmergencyStopActive
+	}
+	err = scheduler.Schedule(ctx, options, input)
 	if err != nil {
-		stored.Status = "failed"
-		stored.Summary = "Temporal rejected the governed follow-up schedule"
-		stored.UpdatedAt = s.now().UTC()
-		_, _ = s.repo.Update(stored)
+		s.markScheduleFailed(
+			stored,
+			"Temporal rejected the governed follow-up schedule",
+		)
 		return nil, ErrUnavailable
 	}
 	run := runFromModel(*stored)
 	return &run, nil
+}
+
+func (s *Service) markScheduleFailed(
+	record *models.TemporalWorkflowRun,
+	summary string,
+) {
+	record.Status = "failed"
+	record.Summary = summary
+	record.UpdatedAt = s.now().UTC()
+	_, _ = s.repo.Update(record)
 }
 
 func (s *Service) Runs(ownerIdentity string, limit int) ([]FollowUpRun, error) {

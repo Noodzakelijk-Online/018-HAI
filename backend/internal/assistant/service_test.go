@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,31 @@ import (
 
 	"github.com/google/uuid"
 )
+
+func TestCommandRejectsMalformedStandingMandateBeforeAnyEngineCall(t *testing.T) {
+	tasks := &fakeTaskEngine{}
+	cycle := &fakeAgentCycleRunner{}
+	router := &fakePursuitCommandRouter{}
+	service := NewService(tasks, cycle, router)
+
+	result, err := service.Command(CommandRequest{
+		Message:        "Plan a harmless local checklist.",
+		MandateID:      "not-a-uuid",
+		ExecuteAllowed: false,
+		SkipSourceSync: true,
+		SkipAmbient:    true,
+	})
+	if !errors.Is(err, ErrInvalidStandingMandateID) {
+		t.Fatalf("Command error = %v, want %v", err, ErrInvalidStandingMandateID)
+	}
+	if result != nil {
+		t.Fatalf("malformed mandate returned a result: %#v", result)
+	}
+	if tasks.planCalls != 0 || tasks.runCalls != 0 || cycle.calls != 0 ||
+		router.matchCalls != 0 || router.routeCalls != 0 || router.intakeCalls != 0 {
+		t.Fatalf("malformed mandate reached an engine: tasks=%#v cycle=%d router=%#v", tasks, cycle.calls, router)
+	}
+}
 
 func TestCommandPlansAndRunsCycleForBlockerRequest(t *testing.T) {
 	tasks := &fakeTaskEngine{}
@@ -179,10 +205,12 @@ func TestCommandCandidateHandoffDoesNotCreateDirectTaskWork(t *testing.T) {
 		Detail:           &pursuit.PursuitDetail{Pursuit: models.Pursuit{ID: pursuitID, Title: "Local runtime recovery"}},
 	}}
 	service := NewService(tasks, cycle, router)
+	mandateID := uuid.NewString()
 
 	result, err := service.Command(CommandRequest{
 		Message:        "Run the local runtime recovery workflow safely.",
 		ProjectKey:     "018-HAI",
+		MandateID:      mandateID,
 		ExecuteAllowed: true,
 	})
 	if err != nil {
@@ -193,6 +221,9 @@ func TestCommandCandidateHandoffDoesNotCreateDirectTaskWork(t *testing.T) {
 	}
 	if router.routeCalls != 1 || router.lastRoute.SourceType != "assistant_command" || router.lastRoute.SourceID == "" {
 		t.Fatalf("expected deduplicated assistant intake: %#v", router.lastRoute)
+	}
+	if router.lastRoute.MandateID != mandateID {
+		t.Fatalf("assistant standing mandate was not forwarded to pursuit intake: %#v", router.lastRoute)
 	}
 	if cycle.calls != 0 {
 		t.Fatalf("cycle calls = %d, want 0 because only an explicit cycle may process unrelated ready workflows", cycle.calls)

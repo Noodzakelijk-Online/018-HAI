@@ -2,7 +2,15 @@ import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IMCPPreflightOverview, IMCPPreflightResult, IMCPPreflightServer } from '../../models/mcp-preflight.model.interface'
-import { IRuntimeSummary } from '../../models/runtime-lab.model.interface'
+import {
+  IRuntimeFeature,
+  IRuntimeCapabilityCard,
+  IRuntimeCapabilityOverview,
+  IRuntimeParityInventory,
+  IRuntimeParityOverview,
+  IRuntimeSummary,
+  RuntimeFeatureDisposition,
+} from '../../models/runtime-lab.model.interface'
 import { MCPPreflightService } from '../../services/mcp-preflight.service'
 import { RuntimeLabService } from '../../services/runtime-lab.service'
 
@@ -13,9 +21,13 @@ import { RuntimeLabService } from '../../services/runtime-lab.service'
 })
 export class RuntimeLabComponent implements OnInit {
   runtimes: IRuntimeSummary[] = []
+  parityOverview?: IRuntimeParityOverview
+  capabilityOverview?: IRuntimeCapabilityOverview
   mcpOverview?: IMCPPreflightOverview
   loading = false
   mcpLoading = false
+  parityLoading = false
+  capabilityLoading = false
   busy: Record<string, boolean> = {}
   mcpBusy: Record<string, boolean> = {}
 
@@ -33,6 +45,8 @@ export class RuntimeLabComponent implements OnInit {
   refresh(): void {
     this.loading = true
     this.refreshMCPPreflight()
+    this.refreshFeatureParity()
+    this.refreshCapabilities()
     this.service.overview().subscribe({
       next: (res) => {
         this.runtimes = res.runtimes ?? []
@@ -43,6 +57,76 @@ export class RuntimeLabComponent implements OnInit {
         this.notification.error('Error', 'Failed to load the runtime lab.')
       },
     })
+  }
+
+  refreshCapabilities(): void {
+    this.capabilityLoading = true
+    this.service.capabilities().subscribe({
+      next: (overview) => {
+        this.capabilityOverview = overview
+        this.capabilityLoading = false
+      },
+      error: () => {
+        this.capabilityOverview = undefined
+        this.capabilityLoading = false
+      },
+    })
+  }
+
+  cardsForRuntime(runtimeId: string): IRuntimeCapabilityCard[] {
+    return (this.capabilityOverview?.cards ?? []).filter((card) => card.runtimeId === runtimeId)
+  }
+
+  refreshFeatureParity(): void {
+    this.parityLoading = true
+    this.service.featureParity().subscribe({
+      next: (overview) => {
+        this.parityOverview = overview
+        this.parityLoading = false
+      },
+      error: () => {
+        this.parityOverview = undefined
+        this.parityLoading = false
+      },
+    })
+  }
+
+  dispositionColor(disposition: RuntimeFeatureDisposition): string {
+    switch (disposition) {
+      case 'already_present':
+      case 'consolidated_existing':
+      case 'hai_native_reimplementation':
+      case 'integrated_directly':
+        return 'green'
+      case 'adapted_for_hai':
+        return 'blue'
+      case 'deferred':
+      case 'blocked_external':
+        return 'gold'
+      case 'constrained_unsafe':
+      case 'excluded_incompatible_license':
+        return 'red'
+      default:
+        return 'default'
+    }
+  }
+
+  dispositionLabel(disposition: RuntimeFeatureDisposition): string {
+    return disposition.replace(/_/g, ' ')
+  }
+
+  implementationCount(inventory: IRuntimeParityInventory, state: string): number {
+    return inventory.features.filter((item) => item.implementationStatus === state).length
+  }
+
+  backlogCount(inventory: IRuntimeParityInventory): number {
+    return inventory.features.filter((item) =>
+      item.disposition === 'deferred' || item.disposition === 'blocked_external'
+    ).length
+  }
+
+  featureTrackBy(_index: number, feature: IRuntimeFeature): string {
+    return feature.id
   }
 
   refreshMCPPreflight(): void {
@@ -99,7 +183,11 @@ export class RuntimeLabComponent implements OnInit {
     this.service.probe(r.info.id).subscribe({
       next: (res) => {
         this.busy[r.info.id] = false
-        this.notification.info('Probe', `${r.info.displayName}: ${res.status}`)
+        const title = res.protocolValid ? 'Discovery validated' : 'Discovery did not validate'
+        this.notification.info(
+          title,
+          `${r.info.displayName}: ${res.discoveryState} · ${res.readinessLevel}. Execution remains governed and blocked.`
+        )
         this.refresh()
       },
       error: () => {

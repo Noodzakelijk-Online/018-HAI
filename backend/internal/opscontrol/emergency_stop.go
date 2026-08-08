@@ -8,12 +8,15 @@ package opscontrol
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 )
+
+var ErrEmergencyStopStateChanged = errors.New("emergency-stop state changed concurrently")
 
 // EmergencyStopState is the persisted emergency-stop state.
 type EmergencyStopState struct {
@@ -22,6 +25,7 @@ type EmergencyStopState struct {
 	Actor     string     `json:"actor,omitempty"`
 	EngagedAt *time.Time `json:"engagedAt,omitempty"`
 	UpdatedAt time.Time  `json:"updatedAt"`
+	Revision  uint64     `json:"revision"`
 }
 
 // EmergencyStopStore persists the emergency-stop state to a JSON file so the
@@ -44,7 +48,25 @@ func NewEmergencyStopStore(dir string) *EmergencyStopStore {
 func (s *EmergencyStopStore) load() {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if os.IsNotExist(err) {
+			// Windows may report "not found" for child paths whose existing
+			// parent is a regular file. That is persistence corruption, not a
+			// clean first run, so execution must remain fail-closed.
+			parent := filepath.Dir(s.path)
+			info, parentErr := os.Stat(parent)
+			switch {
+			case parentErr == nil && !info.IsDir():
+				s.err = fmt.Errorf(
+					"read persisted emergency-stop state: state root %q is not a directory",
+					parent,
+				)
+			case parentErr != nil && !os.IsNotExist(parentErr):
+				s.err = fmt.Errorf(
+					"inspect persisted emergency-stop state directory: %w",
+					parentErr,
+				)
+			}
+		} else {
 			s.err = fmt.Errorf("read persisted emergency-stop state: %w", err)
 		}
 		return
@@ -57,8 +79,8 @@ func (s *EmergencyStopStore) load() {
 	s.state = st
 }
 
-func (s *EmergencyStopStore) persist() error {
-	data, err := json.MarshalIndent(s.state, "", "  ")
+func (s *EmergencyStopStore) persist(state EmergencyStopState) error {
+	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode emergency-stop state: %w", err)
 	}
@@ -102,16 +124,78 @@ func (s *EmergencyStopStore) Engage(reason, actor string, now time.Time) (Emerge
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := now.UTC()
-	s.state = EmergencyStopState{Engaged: true, Reason: reason, Actor: actor, EngagedAt: &t, UpdatedAt: t}
-	s.err = s.persist()
-	return s.state, s.err
+	next := EmergencyStopState{
+		Engaged:   true,
+		Reason:    reason,
+		Actor:     actor,
+		EngagedAt: &t,
+		UpdatedAt: t,
+		Revision:  s.state.Revision + 1,
+	}
+	if err := s.persist(next); err != nil {
+		// Engagement fails closed even when persistence is unavailable.
+		s.state = next
+		s.err = err
+		return s.state, err
+	}
+	s.state = next
+	s.err = nil
+	return s.state, nil
 }
 
 // Disengage clears the emergency stop and persists it.
 func (s *EmergencyStopStore) Disengage(actor string, now time.Time) (EmergencyStopState, error) {
+	state, _ := s.Status()
+	return s.DisengageIfRevision(state.Revision, actor, now)
+}
+
+// DisengageIfRevision clears the stop only when the exact authorized revision
+// is still current. A concurrent stop decision therefore cannot be cleared.
+func (s *EmergencyStopStore) DisengageIfRevision(
+	expectedRevision uint64,
+	actor string,
+	now time.Time,
+) (EmergencyStopState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state = EmergencyStopState{Engaged: false, Actor: actor, UpdatedAt: now.UTC()}
-	s.err = s.persist()
-	return s.state, s.err
+	if s.state.Revision != expectedRevision {
+		return s.state, ErrEmergencyStopStateChanged
+	}
+	next := EmergencyStopState{
+		Engaged:   false,
+		Actor:     actor,
+		UpdatedAt: now.UTC(),
+		Revision:  s.state.Revision + 1,
+	}
+	if err := s.persist(next); err != nil {
+		s.err = err
+		return s.state, err
+	}
+	s.state = next
+	s.err = nil
+	return s.state, nil
+}
+
+// RestoreIfRevision restores a verification snapshot only if no operator has
+// changed the emergency stop since the verifier engaged it.
+func (s *EmergencyStopStore) RestoreIfRevision(
+	expectedRevision uint64,
+	previous EmergencyStopState,
+	now time.Time,
+) (EmergencyStopState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.Revision != expectedRevision {
+		return s.state, ErrEmergencyStopStateChanged
+	}
+	next := previous
+	next.Revision = s.state.Revision + 1
+	next.UpdatedAt = now.UTC()
+	if err := s.persist(next); err != nil {
+		s.err = err
+		return s.state, err
+	}
+	s.state = next
+	s.err = nil
+	return s.state, nil
 }

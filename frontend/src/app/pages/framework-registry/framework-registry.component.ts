@@ -866,6 +866,13 @@ export class FrameworkRegistryComponent implements OnInit, OnDestroy {
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
   }
 
+  selectionRiskCeilingLabel(selection: IFrameworkSelectionDecision): string {
+    const riskCeiling = selection.selected[0]?.riskCeiling;
+    return riskCeiling
+      ? `${this.humanize(riskCeiling)} risk`
+      : 'Not recorded (legacy)';
+  }
+
   trackFramework(_index: number, framework: IFrameworkView): string {
     return framework.id;
   }

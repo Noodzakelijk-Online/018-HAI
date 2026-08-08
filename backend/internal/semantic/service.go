@@ -254,7 +254,10 @@ func (s *service) Search(ctx context.Context, request SearchRequest) ([]Match, e
 		FROM semantic_embeddings emb
 		JOIN source_extractions se ON se.id = emb.extraction_id
 		JOIN connected_sources cs ON cs.id = se.source_id
-		WHERE emb.model_id = ? AND se.archived = FALSE`
+		WHERE emb.model_id = ?
+		  AND se.archived = FALSE
+		  AND cs.revoked_at IS NULL
+		  AND LOWER(COALESCE(cs.status, '')) <> 'revoked'`
 	args := []any{vectorLiteral(vector), s.config.Model}
 	if !request.IncludeSensitive {
 		query += ` AND se.sensitive = FALSE`

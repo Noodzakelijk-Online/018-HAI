@@ -52,6 +52,14 @@ func (h *Handler) ScheduleFollowUp(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "status": h.service.Status()})
 		return
 	}
+	if errors.Is(err, ErrAuthorizationRequired) {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, ErrEmergencyStopActive) {
+		c.JSON(http.StatusLocked, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

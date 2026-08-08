@@ -1,9 +1,10 @@
+import { HttpErrorResponse } from '@angular/common/http'
 import { Component, OnInit } from '@angular/core'
-import { Router } from '@angular/router'
 import { forkJoin } from 'rxjs'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import {
   IHardwareResponse,
+  ICalibrationSummary,
   IModelIntelligenceOverview,
   IModelProfile,
   IOperationBudget,
@@ -18,18 +19,23 @@ import { ModelIntelligenceService } from '../../services/model-intelligence.serv
 })
 export class ModelIntelligenceComponent implements OnInit {
   overview?: IModelIntelligenceOverview
+  calibration?: ICalibrationSummary
   profiles: IModelProfile[] = []
   budgets?: IOperationBudget
   hardware?: IHardwareResponse
   power?: IPowerPolicy
 
   loading = false
+  errorMessage = ''
+  profilesLoading = false
+  profilesLoaded = false
+  runtimeLoading = false
+  runtimeLoaded = false
   benchmarking: Record<string, boolean> = {}
 
   constructor(
     private service: ModelIntelligenceService,
-    private notification: NzNotificationService,
-    private router: Router
+    private notification: NzNotificationService
   ) {}
 
   ngOnInit(): void {
@@ -38,24 +44,65 @@ export class ModelIntelligenceComponent implements OnInit {
 
   refresh(): void {
     this.loading = true
+    this.errorMessage = ''
     forkJoin({
       overview: this.service.overview(),
-      profiles: this.service.profiles(),
+      calibration: this.service.calibration(),
+    }).subscribe({
+      next: ({ overview, calibration }) => {
+        this.overview = overview
+        this.calibration = calibration
+        this.loading = false
+        if (this.profilesLoaded) this.loadProfiles()
+        if (this.runtimeLoaded) this.loadRuntimeDetails()
+      },
+      error: (error: HttpErrorResponse) => {
+        this.loading = false
+        this.errorMessage = this.errorDetail(error, 'Model outcome telemetry is unavailable.')
+      },
+    })
+  }
+
+  onProfilesOpen(open: boolean): void {
+    if (open && !this.profilesLoaded) this.loadProfiles()
+  }
+
+  onRuntimeOpen(open: boolean): void {
+    if (open && !this.runtimeLoaded) this.loadRuntimeDetails()
+  }
+
+  private loadProfiles(): void {
+    this.profilesLoading = true
+    this.service.profiles().subscribe({
+      next: ({ profiles }) => {
+        this.profiles = profiles ?? []
+        this.profilesLoaded = true
+        this.profilesLoading = false
+      },
+      error: (error: HttpErrorResponse) => {
+        this.profilesLoading = false
+        this.notification.error('Profiles unavailable', this.errorDetail(error, 'Model profiles could not be loaded.'))
+      },
+    })
+  }
+
+  private loadRuntimeDetails(): void {
+    this.runtimeLoading = true
+    forkJoin({
       budgets: this.service.tokenBudgets(),
       hardware: this.service.hardware(),
       power: this.service.powerPolicy(),
     }).subscribe({
-      next: ({ overview, profiles, budgets, hardware, power }) => {
-        this.overview = overview
-        this.profiles = profiles.profiles ?? []
+      next: ({ budgets, hardware, power }) => {
         this.budgets = budgets
         this.hardware = hardware
         this.power = power
-        this.loading = false
+        this.runtimeLoaded = true
+        this.runtimeLoading = false
       },
-      error: () => {
-        this.loading = false
-        this.notification.error('Error', 'Failed to load model intelligence.')
+      error: (error: HttpErrorResponse) => {
+        this.runtimeLoading = false
+        this.notification.error('Runtime details unavailable', this.errorDetail(error, 'Runtime diagnostics could not be loaded.'))
       },
     })
   }
@@ -107,7 +154,32 @@ export class ModelIntelligenceComponent implements OnInit {
     }
   }
 
-  goBack(): void {
-    this.router.navigate(['/control-center'])
+  acceptancePercent(): number {
+    if (!this.calibration?.evaluatedRuns) return 0
+    return Math.round((this.calibration.acceptedOutputs / this.calibration.evaluatedRuns) * 100)
+  }
+
+  unresolvedOutcomes(): number {
+    return (this.calibration?.rejectedOutputs ?? 0) + (this.calibration?.needsReview ?? 0)
+  }
+
+  confidenceColor(confidence: string): string {
+    switch (confidence) {
+      case 'established': return 'green'
+      case 'emerging': return 'blue'
+      default: return 'gold'
+    }
+  }
+
+  trackLane(_: number, item: { lane: string; providerId: string; modelId: string }): string {
+    return `${item.lane}/${item.providerId}/${item.modelId}`
+  }
+
+  trackModel(_: number, item: { lane?: string; providerId: string; modelId: string }): string {
+    return `${item.lane ?? 'profile'}/${item.providerId}/${item.modelId}`
+  }
+
+  private errorDetail(error: HttpErrorResponse, fallback: string): string {
+    return error.error?.error || error.error?.message || error.message || fallback
   }
 }

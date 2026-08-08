@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -41,12 +42,15 @@ func (h *Handler) Connectors(c *gin.Context) {
 	c.JSON(http.StatusOK, connectors)
 }
 
-// StartGoogleOAuth returns the Google consent URL for a gmail source. The UI
+// StartGoogleOAuth returns the Google consent URL for a Google-backed source. The UI
 // opens the returned url so the user authorizes in their own browser.
 func (h *Handler) StartGoogleOAuth(c *gin.Context) {
 	sourceID, err := uuid.Parse(c.Query("sourceId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "valid sourceId query parameter is required"})
+		return
+	}
+	if !h.requireMutableSource(c, sourceID) {
 		return
 	}
 	url, err := h.service.StartGoogleOAuth(sourceID)
@@ -57,10 +61,10 @@ func (h *Handler) StartGoogleOAuth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"authorizeUrl": url})
 }
 
-// GoogleOAuthCallback is the redirect target Google calls after consent. It is
-// reached without a session (Google calls it directly), so it is protected by
-// the signed state rather than the gateway login. On success it redirects the
-// browser back to the connected-sources page.
+// GoogleOAuthCallback is the redirect target the user's browser returns to
+// after Google consent. The browser may not carry a HAI session, so the callback
+// is protected by signed, expiring state. On success it returns the browser to
+// the connected-sources page.
 func (h *Handler) GoogleOAuthCallback(c *gin.Context) {
 	if oauthErr := c.Query("error"); oauthErr != "" {
 		c.Redirect(http.StatusFound, "/connected-sources?oauth=denied")
@@ -126,6 +130,27 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 		jobs = filterVisibleSyncJobs(jobs, visibleSourceIDs)
 	}
 	c.JSON(http.StatusOK, jobs)
+}
+
+func (h *Handler) ConnectionHealth(c *gin.Context) {
+	id, ok := parseUUID(c)
+	if !ok {
+		return
+	}
+	if !h.requireSourceAccess(c, id) {
+		return
+	}
+	healthService, ok := h.service.(ConnectionHealthService)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "connection health is not available"})
+		return
+	}
+	health, err := healthService.ConnectionHealth(id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, health)
 }
 
 func (h *Handler) UpdateSource(c *gin.Context) {
@@ -315,9 +340,18 @@ func (h *Handler) Revoke(c *gin.Context) {
 	if !h.requireMutableSource(c, id) {
 		return
 	}
-	source, err := h.service.Revoke(id)
+	destructive, ok := h.service.(DestructiveEffectService)
+	if !ok {
+		writeDestructiveEffectError(c, ErrDestructiveAuthorizationRequired)
+		return
+	}
+	source, err := destructive.RevokeAuthorized(
+		c.Request.Context(),
+		id,
+		destructiveAuthorization(c),
+	)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeDestructiveEffectError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, source)
@@ -393,8 +427,17 @@ func (h *Handler) DeleteExtraction(c *gin.Context) {
 	if !h.requireMutableExtraction(c, id) {
 		return
 	}
-	if err := h.service.DeleteExtraction(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	destructive, ok := h.service.(DestructiveEffectService)
+	if !ok {
+		writeDestructiveEffectError(c, ErrDestructiveAuthorizationRequired)
+		return
+	}
+	if err := destructive.DeleteExtractionAuthorized(
+		c.Request.Context(),
+		id,
+		destructiveAuthorization(c),
+	); err != nil {
+		writeDestructiveEffectError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -436,6 +479,35 @@ func sourceOwner(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+func destructiveAuthorization(c *gin.Context) DestructiveEffectAuthorization {
+	owner := sourceOwner(c)
+	return DestructiveEffectAuthorization{
+		OwnerIdentity:         owner,
+		ActorIdentity:         owner,
+		IdempotencyKey:        c.GetHeader("X-HAI-Idempotency-Key"),
+		TaskID:                c.GetHeader("X-HAI-Task-ID"),
+		ApprovalSourceID:      c.GetHeader("X-HAI-Approval-Source-ID"),
+		ApprovalBindingDigest: c.GetHeader("X-HAI-Approval-Binding-Digest"),
+	}
+}
+
+func writeDestructiveEffectError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrDestructiveOwnerMismatch),
+		errors.Is(err, gorm.ErrRecordNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "connected-source resource not found"})
+	case errors.Is(err, ErrDestructiveAuthorizationRequired):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrDestructiveAuthorizationDenied),
+		errors.Is(err, ErrDestructiveAuthorizationMismatch):
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrSourceEmergencyStopActive):
+		c.JSON(http.StatusLocked, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
 }
 
 func sourceVisible(source models.ConnectedSource, owner string) bool {

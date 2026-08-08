@@ -1,6 +1,7 @@
 package frameworkregistry
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -15,14 +16,15 @@ import (
 )
 
 const (
-	frameworkCatalogVersion           = "v1"
-	frameworkSelectorAlgorithmVersion = "selector-v4"
+	frameworkCatalogVersion           = "v2"
+	frameworkSelectorAlgorithmVersion = "selector-v5"
 )
 
 type Repository interface {
 	ListPreferences(owner string) ([]Preference, error)
 	UpsertPreference(owner string, preference Preference) (*Preference, error)
 	CreateSelection(owner string, decision SelectionDecision, requestHash, requestSummary string) error
+	GetSelection(context.Context, string, string) (*SelectionDecision, error)
 	ListSelections(owner string, limit int) ([]SelectionDecision, error)
 	ListConstitutions(owner string) ([]Constitution, error)
 	ListConstitutionHistory(owner string, limit int) ([]Constitution, error)
@@ -31,20 +33,14 @@ type Repository interface {
 }
 
 type Service struct {
-	catalog []Framework
-	repo    Repository
-	now     func() time.Time
+	catalog   []Framework
+	lifecycle *frameworkCatalogLifecycle
+	repo      Repository
+	now       func() time.Time
 }
 
 func NewService(repo Repository) (*Service, error) {
-	catalog := BuiltinCatalog()
-	if err := ValidateCatalog(catalog); err != nil {
-		return nil, err
-	}
-	if repo == nil {
-		repo = NewMemoryRepository()
-	}
-	return &Service{catalog: catalog, repo: repo, now: time.Now}, nil
+	return newServiceWithCatalog(repo, BuiltinCatalog(), time.Now)
 }
 
 func DefaultService() (*Service, error) {
@@ -109,8 +105,9 @@ func (s *Service) List(owner string) ([]FrameworkView, error) {
 	for _, preference := range preferences {
 		byID[preference.FrameworkID] = preference
 	}
-	result := make([]FrameworkView, 0, len(s.catalog))
-	for _, framework := range s.catalog {
+	catalog := s.activeCatalogSnapshot()
+	result := make([]FrameworkView, 0, len(catalog))
+	for _, framework := range catalog {
 		result = append(result, applyPreference(framework, byID[framework.ID]))
 	}
 	return result, nil
@@ -132,6 +129,7 @@ func (s *Service) Get(owner, id string) (*FrameworkView, error) {
 }
 
 func applyPreference(framework Framework, preference Preference) FrameworkView {
+	framework = cloneFramework(framework)
 	enabled := framework.Status == StatusActive
 	switch preference.State {
 	case PreferenceEnabled:
@@ -313,6 +311,7 @@ func (s *Service) planSelection(request SelectionRequest, persist bool) (*Select
 	decision.SelectorAlgorithmVersion = metadata.selectorAlgorithmVersion
 	decision.EffectivePreferenceDigest = metadata.effectivePreferenceDigest
 	decision.ConstitutionDigest = metadata.constitutionDigest
+	decision.ID = deterministicSelectionID(decision, request)
 	if persist {
 		requestHash, summary := selectionRequestAudit(request)
 		if err := s.repo.CreateSelection(request.OwnerIdentity, decision, requestHash, summary); err != nil {
@@ -386,7 +385,7 @@ func (s *Service) selectionReproducibilityMetadata(
 	views []FrameworkView,
 	constitution Constitution,
 ) (selectionReproducibilityMetadata, error) {
-	catalog := append([]Framework(nil), s.catalog...)
+	catalog := s.activeCatalogSnapshot()
 	sort.SliceStable(catalog, func(i, j int) bool {
 		return catalog[i].ID < catalog[j].ID
 	})
@@ -415,11 +414,26 @@ func (s *Service) selectionReproducibilityMetadata(
 		return selectionReproducibilityMetadata{}, fmt.Errorf("digest effective preferences: %w", err)
 	}
 
+	constitutionDigest, err := constitutionReproducibilityDigest(constitution)
+	if err != nil {
+		return selectionReproducibilityMetadata{}, err
+	}
+
+	return selectionReproducibilityMetadata{
+		catalogVersion:            frameworkCatalogVersion,
+		catalogDigest:             catalogDigest,
+		selectorAlgorithmVersion:  frameworkSelectorAlgorithmVersion,
+		effectivePreferenceDigest: preferenceDigest,
+		constitutionDigest:        constitutionDigest,
+	}, nil
+}
+
+func constitutionReproducibilityDigest(constitution Constitution) (string, error) {
 	effectiveRules, err := compileEffectiveConstitutionRules(constitution)
 	if err != nil {
-		return selectionReproducibilityMetadata{}, fmt.Errorf("compile effective Constitution rules: %w", err)
+		return "", fmt.Errorf("compile effective Constitution rules: %w", err)
 	}
-	constitutionDigest, err := canonicalSHA256(constitutionFingerprint{
+	digest, err := canonicalSHA256(constitutionFingerprint{
 		ID:                  strings.TrimSpace(constitution.ID),
 		Version:             constitution.Version,
 		BaseVersion:         constitution.BaseVersion,
@@ -436,16 +450,9 @@ func (s *Service) selectionReproducibilityMetadata(
 		EffectiveRules:      append([]constitutionRule(nil), effectiveRules.Rules...),
 	})
 	if err != nil {
-		return selectionReproducibilityMetadata{}, fmt.Errorf("digest Constitution: %w", err)
+		return "", fmt.Errorf("digest Constitution: %w", err)
 	}
-
-	return selectionReproducibilityMetadata{
-		catalogVersion:            frameworkCatalogVersion,
-		catalogDigest:             catalogDigest,
-		selectorAlgorithmVersion:  frameworkSelectorAlgorithmVersion,
-		effectivePreferenceDigest: preferenceDigest,
-		constitutionDigest:        constitutionDigest,
-	}, nil
+	return digest, nil
 }
 
 func canonicalSHA256(value any) (string, error) {
@@ -576,6 +583,26 @@ func (s *Service) Selections(owner string, limit int) ([]SelectionDecision, erro
 		limit = 20
 	}
 	return s.repo.ListSelections(strings.TrimSpace(owner), limit)
+}
+
+// Selection returns one immutable, owner-scoped framework selection. This
+// exact lookup is used by execution authorization; bounded history scans are
+// not a safe substitute because older valid selections may fall outside the
+// visible history window.
+func (s *Service) Selection(
+	ctx context.Context,
+	owner,
+	id string,
+) (*SelectionDecision, error) {
+	owner = strings.TrimSpace(owner)
+	id = strings.TrimSpace(id)
+	if owner == "" {
+		return nil, fmt.Errorf("owner identity is required")
+	}
+	if id == "" {
+		return nil, fmt.Errorf("framework selection id is required")
+	}
+	return s.repo.GetSelection(ctx, owner, id)
 }
 
 func (s *Service) ConstitutionHistory(owner string, limit int) (*ConstitutionHistoryPage, error) {

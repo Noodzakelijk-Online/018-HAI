@@ -38,9 +38,9 @@ const (
 
 // RuntimeHealth is a runtime's reported health.
 type RuntimeHealth struct {
-	Status  RuntimeStatus `json:"status"`
-	Detail  string        `json:"detail,omitempty"`
-	Claim   ClaimLevel    `json:"claimLevel"`
+	Status RuntimeStatus `json:"status"`
+	Detail string        `json:"detail,omitempty"`
+	Claim  ClaimLevel    `json:"claimLevel"`
 }
 
 // DryRunResult is the plan validation from a runtime before execution.

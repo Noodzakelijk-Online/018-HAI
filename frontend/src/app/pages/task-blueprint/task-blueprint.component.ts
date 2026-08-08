@@ -2,9 +2,11 @@ import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { NzModalService } from 'ng-zorro-antd/modal';
 import { timeout } from 'rxjs/operators';
 import {
   ICompletionPlan,
+	IApprovedReviewReconciliationResult,
   IReviewQueueItem,
   IToolExecutionResult,
   IValidationCriterionResult,
@@ -49,6 +51,7 @@ interface SuggestedPrompt {
   styleUrls: ['./task-blueprint.component.scss'],
 })
 export class TaskBlueprintComponent implements OnInit {
+	private readonly taskOperationRetryConfirmation = 'RETRY UNCERTAIN OPERATION';
   plan?: ICompletionPlan;
   lastCommand?: IAssistantCommandResult;
   logs: ICompletionPlan[] = [];
@@ -57,6 +60,8 @@ export class TaskBlueprintComponent implements OnInit {
   running = false;
   cycling = false;
   resolvingReviewId = '';
+	reconcilingReviews = false;
+	reconciliation?: IApprovedReviewReconciliationResult;
   inspectorMode:
     | 'overview'
     | 'plan'
@@ -136,6 +141,7 @@ export class TaskBlueprintComponent implements OnInit {
     projectKey: ['018-HAI'],
     pursuitId: [''],
     automationId: [''],
+    mandateId: [''],
     successCriteria: [''],
     includeRagflowCandidates: [false],
   });
@@ -146,6 +152,7 @@ export class TaskBlueprintComponent implements OnInit {
     private taskPlanService: ITaskPlanService,
     private assistantCommandService: AssistantCommandService,
     private notification: NzNotificationService,
+    private modal: NzModalService,
     private router: Router,
     private route: ActivatedRoute,
     private themeService: ThemeService,
@@ -161,6 +168,7 @@ export class TaskBlueprintComponent implements OnInit {
         pursuitId,
         projectKey: params.get('projectKey') || this.planForm.value.projectKey,
         request: params.get('request') || this.planForm.value.request,
+        mandateId: params.get('mandateId') || this.planForm.value.mandateId,
       });
       if (pursuitId) {
         this.contextExpanded = true;
@@ -319,6 +327,7 @@ export class TaskBlueprintComponent implements OnInit {
       projectKey: this.planForm.value.projectKey,
       pursuitId: this.planForm.value.pursuitId,
       automationId: this.planForm.value.automationId,
+      mandateId: this.planForm.value.mandateId,
       successCriteria: this.criteria(),
       includeRagflowCandidates: Boolean(this.planForm.value.includeRagflowCandidates),
       executeAllowed: intent === 'run' || intent === 'cycle',
@@ -378,13 +387,44 @@ export class TaskBlueprintComponent implements OnInit {
   }
 
   resolveReviewItem(item: IReviewQueueItem, approved: boolean): void {
+		if (approved && this.isOperationReview(item)) {
+			this.modal.confirm({
+				nzTitle: 'Retry this uncertain operation?',
+				nzContent: 'Continue only after checking the audit trail and confirming the earlier attempt did not already produce the intended effect. HAI will create a separate durable operation; it will not resume or rewrite the old attempt.',
+				nzOkText: 'Create new attempt',
+				nzCancelText: 'Keep in review',
+				nzOnOk: () => this.performReviewResolution(
+					item,
+					true,
+					'Operator reviewed the uncertain outcome and explicitly authorized a separate durable attempt.',
+					this.taskOperationRetryConfirmation,
+				),
+			});
+			return;
+		}
+		this.performReviewResolution(
+			item,
+			approved,
+			approved
+				? 'Approved from HAI chat review queue.'
+				: this.isOperationReview(item)
+					? 'Uncertain operation closed without creating another attempt.'
+					: 'Rejected from HAI chat review queue.',
+		);
+	}
+
+	private performReviewResolution(
+		item: IReviewQueueItem,
+		approved: boolean,
+		note: string,
+		confirmation?: string,
+	): void {
     this.resolvingReviewId = item.id;
     this.taskPlanService
       .resolveReviewItem(item.id, {
         approved,
-        note: approved
-          ? 'Approved from HAI chat review queue.'
-          : 'Rejected from HAI chat review queue.',
+			note,
+			confirmation,
       })
       .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
@@ -417,6 +457,18 @@ export class TaskBlueprintComponent implements OnInit {
         },
       });
   }
+
+	isOperationReview(item: IReviewQueueItem): boolean {
+		return Boolean(item?.taskId?.startsWith('operation:'));
+	}
+
+	reviewApproveLabel(item: IReviewQueueItem): string {
+		return this.isOperationReview(item) ? 'Retry as new attempt' : 'Approve';
+	}
+
+	reviewRejectLabel(item: IReviewQueueItem): string {
+		return this.isOperationReview(item) ? 'Close without retry' : 'Reject';
+	}
 
   useSuggestion(suggestion: SuggestedPrompt): void {
     this.planForm.patchValue({
@@ -591,9 +643,61 @@ export class TaskBlueprintComponent implements OnInit {
     this.inspectorMode = 'evidence';
   }
 
-  reviewQueueOpenCount(): number {
-    return this.reviewQueue.filter((item) => item.status === 'open').length;
+	previewApprovedReviewRecovery(): void {
+		this.runApprovedReviewReconciliation(false);
+	}
+
+	applyApprovedReviewRecovery(): void {
+		this.runApprovedReviewReconciliation(true);
+	}
+
+	private runApprovedReviewReconciliation(apply: boolean): void {
+		this.reconcilingReviews = true;
+		this.taskPlanService.reconcileApprovedReviews({
+			apply,
+			confirmation: apply ? 'RECONCILE APPROVED TASKS' : undefined,
+			olderThanMinutes: 30,
+			limit: 50,
+		}).pipe(timeout(this.operationTimeoutMs)).subscribe({
+			next: (result) => {
+				this.reconcilingReviews = false;
+				this.reconciliation = result;
+				const summary = result.eligible
+					? `${result.completed} verified complete; ${result.returnedToReview} returned to review; ${result.conflicts} changed concurrently.`
+					: 'No approved tasks are old enough to reconcile.';
+				this.addAssistantMessage(
+					apply ? 'Approved-task recovery applied.' : 'Approved-task recovery preview ready.',
+					[summary, 'Recovery never repeats the external action.'],
+					result.conflicts ? 'warning' : 'neutral'
+				);
+				this.notification.success(apply ? 'Recovery applied' : 'Recovery preview ready', summary);
+				if (apply) {
+					this.loadLogs();
+					this.loadReviewQueue();
+				}
+			},
+			error: () => {
+				this.reconcilingReviews = false;
+				this.notification.error('Recovery unavailable', 'HAI did not change or repeat any task. Reload the review queue and inspect audit evidence.');
+			},
+		});
+	}
+
+  openResourceSchedule(): void {
+    this.inspectorMode = 'plan';
   }
+
+  reviewQueueOpenCount(): number {
+		return this.reviewQueue.filter((item) => item.status === 'open' || item.status === 'needs_review').length;
+  }
+
+	approvedReviewCount(): number {
+		return this.reviewQueue.filter((item) => item.status === 'approved').length;
+	}
+
+	canResolveReview(item: IReviewQueueItem): boolean {
+		return item.status === 'open' || item.status === 'needs_review';
+	}
 
   latestLog(): ICompletionPlan | undefined {
     return this.logs[0];
@@ -914,6 +1018,22 @@ export class TaskBlueprintComponent implements OnInit {
     safe.validationResult.criteria = safe.validationResult.criteria || [];
     safe.executionPlan.approvalRequiredFor = safe.executionPlan.approvalRequiredFor || [];
     safe.executionPlan.auditEvents = safe.executionPlan.auditEvents || [];
+		safe.executionPlan.capacityConstraints = safe.executionPlan.capacityConstraints || [];
+		safe.calendarCapacity = safe.calendarCapacity || {
+			status: 'unavailable',
+			windowStart: safe.createdAt,
+			windowEnd: safe.createdAt,
+			busyIntervals: [],
+			explanation: 'Calendar capacity was not recorded for this older plan.'
+		};
+		safe.calendarCapacity.busyIntervals = safe.calendarCapacity.busyIntervals || [];
+		if (safe.resourceDecision) {
+			safe.resourceDecision.scheduled = safe.resourceDecision.scheduled || [];
+			safe.resourceDecision.unscheduledTaskIds = safe.resourceDecision.unscheduledTaskIds || [];
+			safe.resourceDecision.criticalBlockers = safe.resourceDecision.criticalBlockers || [];
+			safe.resourceDecision.advisories = safe.resourceDecision.advisories || [];
+			safe.resourceDecision.approvalFlags = safe.resourceDecision.approvalFlags || [];
+		}
     safe.retryPolicy.escalationPath = safe.retryPolicy.escalationPath || [];
     safe.retryPolicy.escalateWhen = safe.retryPolicy.escalateWhen || [];
     safe.memoryUpdateProposals = safe.memoryUpdateProposals || [];

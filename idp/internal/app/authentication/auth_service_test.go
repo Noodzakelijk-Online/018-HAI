@@ -28,6 +28,35 @@ func TestRegisterRejectsInvalidInputBeforeHashing(t *testing.T) {
 	require.ErrorIs(t, err, ErrRegistrationPasswordWeak)
 }
 
+func TestSuccessfulLoginDoesNotThrottleNextValidSession(t *testing.T) {
+	setupAuthConfig(t)
+	hasher := utils.DefaultBcryptHasher()
+	password := "valid-local-password"
+	hashedPassword, err := hasher.Hash(password)
+	require.NoError(t, err)
+	userService := &fakeUserService{userByEmail: &models.User{
+		ID:       uuid.New(),
+		Email:    "operator@example.com",
+		Password: hashedPassword,
+		Role:     "owner",
+		IsActive: true,
+	}}
+	svc := &service{
+		userService:      userService,
+		hasher:           hasher,
+		blockListService: fakeBlockListService{},
+		logger:           noopLogger{},
+		jwtSecret:        testSigningSecret,
+	}
+
+	_, err = svc.Login("operator@example.com", password)
+	require.NoError(t, err)
+	require.Nil(t, userService.updatedUser.LastAttempt)
+
+	_, err = svc.Login("operator@example.com", password)
+	require.NoError(t, err)
+}
+
 func TestRefreshTokenUsesRefreshTokenExpiration(t *testing.T) {
 	setupAuthConfig(t)
 

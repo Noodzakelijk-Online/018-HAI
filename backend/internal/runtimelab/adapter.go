@@ -32,11 +32,20 @@ type Health struct {
 
 // ProbeResult is the truthful outcome of probing a runtime.
 type ProbeResult struct {
-	RuntimeID  string                        `json:"runtimeId"`
-	Status     executionbroker.RuntimeStatus `json:"status"`
-	DurationMs int64                         `json:"durationMs"`
-	Detail     string                        `json:"detail,omitempty"`
-	CheckedAt  time.Time                     `json:"checkedAt"`
+	RuntimeID        string                        `json:"runtimeId"`
+	Status           executionbroker.RuntimeStatus `json:"status"`
+	DiscoveryState   string                        `json:"discoveryState"`
+	ReadinessLevel   RuntimeReadinessLevel         `json:"readinessLevel"`
+	Protocol         string                        `json:"protocol,omitempty"`
+	RuntimeVersion   string                        `json:"runtimeVersion,omitempty"`
+	ProtocolValid    bool                          `json:"protocolValid"`
+	IdentityVerified bool                          `json:"identityVerified"`
+	Authenticated    bool                          `json:"authenticated"`
+	Capabilities     []string                      `json:"capabilities,omitempty"`
+	EvidenceSHA256   string                        `json:"evidenceSha256,omitempty"`
+	DurationMs       int64                         `json:"durationMs"`
+	Detail           string                        `json:"detail,omitempty"`
+	CheckedAt        time.Time                     `json:"checkedAt"`
 }
 
 // Adapter is the runtime adapter contract (§15). It mirrors Info / HealthCheck /

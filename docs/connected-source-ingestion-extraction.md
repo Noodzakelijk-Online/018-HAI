@@ -8,17 +8,36 @@ to its source, and only promotes useful low-risk facts into memory.
 ## Supported Connector Categories
 
 - email accounts
+- contact/address-book accounts
 - calendars
 - cloud drives and documents
 - Trello or project boards
 - GitHub repositories, issues, pull requests, commits, and actions
 - selected local folders
 
+The live Google paths are separate least-privilege grants: Gmail read-only,
+Drive read-only, Contacts read-only, and Calendar read-only. Google Contacts
+uses a bounded People API backfill followed by the provider's native sync token.
+Google Calendar uses a bounded primary-calendar backfill followed by its native
+sync token. Event start and end times remain structured source metadata. A
+meaningful upcoming event inside the 14-day planning horizon may create a
+source-backed preparation proposal and deterministic due/check reminder; past
+backfill events stay searchable context. Event intervals inside a bounded 30-day
+horizon are compared locally. An overlap involving a changed event creates one
+stable, review-gated conflict record; moving or cancelling the event retracts
+the stale conflict workflow. Imported people are review-required candidates.
+Contact removals and calendar cancellations become non-destructive source
+tombstones; a cancellation first stops any prior source-derived workflow and
+then opens owner review. It never deletes canonical people, tasks, obligations,
+or evidence. These adapters have no remote create, update, merge,
+invitation-response, or delete method.
+
 The connector registry is configuration-friendly, so future connector keys can
-be added without changing the task engine. The initial implementation exposes
+be added without changing the task engine. The implementation exposes
 manual import, historical backfill, incremental sync, scheduled sync, webhook
-sync, and folder watcher as modes. Real OAuth/webhook workers can attach to the
-same source registry and sync-job table.
+sync, and folder watcher as modes. Connector status is reported separately:
+some paths are live read-only adapters, some are local/export readers, and some
+remain modeled only. They share the same source registry and sync-job table.
 
 ## Data Flow
 

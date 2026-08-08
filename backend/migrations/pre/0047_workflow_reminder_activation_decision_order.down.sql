@@ -1,0 +1,3 @@
+DROP TRIGGER IF EXISTS workflow_reminder_activation_decisions_validate_order_insert
+    ON public.workflow_reminder_activation_decisions;
+DROP FUNCTION IF EXISTS public.validate_workflow_reminder_activation_decision_order_insert();

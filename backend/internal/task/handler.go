@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -41,11 +42,15 @@ func (h *Handler) Plan(c *gin.Context) {
 	}
 	request.ExecuteAllowed = false
 	request.OwnerIdentity = ownerIdentity
+	if !bindTaskIdempotencyKey(c, &request) {
+		return
+	}
+	c.Header("Idempotency-Key", request.IdempotencyKey)
 	request.HumanApproved = false
 	request.ApprovalNote = ""
 	plan, err := h.service.Plan(request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "task plan could not be created"})
+		writeTaskOperationError(c, err, "task plan could not be created")
 		return
 	}
 	c.JSON(http.StatusOK, plan)
@@ -67,14 +72,55 @@ func (h *Handler) Run(c *gin.Context) {
 	}
 	request.ExecuteAllowed = true
 	request.OwnerIdentity = ownerIdentity
+	if !bindTaskIdempotencyKey(c, &request) {
+		return
+	}
+	c.Header("Idempotency-Key", request.IdempotencyKey)
 	request.HumanApproved = false
 	request.ApprovalNote = ""
 	plan, err := h.service.Run(request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "task run could not be completed"})
+		writeTaskOperationError(c, err, "task run could not be completed")
 		return
 	}
 	c.JSON(http.StatusOK, plan)
+}
+
+func bindTaskIdempotencyKey(c *gin.Context, request *IntakeRequest) bool {
+	headerKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	bodyKey := strings.TrimSpace(request.IdempotencyKey)
+	if headerKey != "" && bodyKey != "" && headerKey != bodyKey {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header does not match request idempotencyKey"})
+		return false
+	}
+	request.IdempotencyKey = headerKey
+	if request.IdempotencyKey == "" {
+		request.IdempotencyKey = bodyKey
+	}
+	if request.IdempotencyKey == "" {
+		request.IdempotencyKey = uuid.NewString()
+	}
+	if !validTaskOperationIdentifier(request.IdempotencyKey, 120) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency key must contain 1 to 120 safe identifier characters"})
+		return false
+	}
+	return true
+}
+
+func writeTaskOperationError(c *gin.Context, err error, fallback string) {
+	switch {
+	case errors.Is(err, ErrInvalidStandingMandateID):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrTaskStateConflict):
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency key was already used for different task input"})
+	case errors.Is(err, ErrTaskOperationInProgress):
+		c.Header("Retry-After", "5")
+		c.JSON(http.StatusConflict, gin.H{"error": "task operation is already in progress"})
+	case errors.Is(err, ErrTaskOperationNeedsReview):
+		c.JSON(http.StatusConflict, gin.H{"error": "task operation outcome requires review before retry"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fallback})
+	}
 }
 
 func verifiedTaskOwner(c *gin.Context) string {
@@ -168,6 +214,11 @@ func (h *Handler) ResolveReviewItem(c *gin.Context) {
 		switch {
 		case errors.Is(err, ErrTaskStateNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "review item not found"})
+		case errors.Is(err, ErrTaskOperationRetryConfirmation):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        "uncertain operation retry requires explicit confirmation",
+				"confirmation": TaskOperationRetryConfirmation,
+			})
 		case errors.Is(err, ErrTaskReviewAlreadyResolved),
 			errors.Is(err, ErrTaskStateConflict),
 			errors.Is(err, ErrTaskReviewInvalidTransition):
@@ -175,6 +226,33 @@ func (h *Handler) ResolveReviewItem(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "review decision could not be completed"})
 		}
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) ReconcileApprovedReviews(c *gin.Context) {
+	ownerIdentity, ok := requireTaskOwner(c)
+	if !ok {
+		return
+	}
+	var request ApprovedReviewReconciliationRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	reconciler, ok := h.service.(ReviewReconciliationService)
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task review reconciliation is unavailable"})
+		return
+	}
+	result, err := reconciler.ReconcileApprovedReviewsForOwner(ownerIdentity, request)
+	if err != nil {
+		if strings.Contains(err.Error(), "confirmation") || strings.Contains(err.Error(), "olderThanMinutes") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "task review reconciliation could not be completed"})
 		return
 	}
 	c.JSON(http.StatusOK, result)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository interface {
@@ -25,6 +26,7 @@ type Repository interface {
 	FindLinkBySourceURIForOwner(ownerIdentity, sourceURI string) (*models.PursuitLink, error)
 	CreateActivity(activity *models.PursuitActivity) (*models.PursuitActivity, error)
 	FindActivities(pursuitID uuid.UUID, limit int) ([]models.PursuitActivity, error)
+	FindActivityByIdentity(pursuitID uuid.UUID, eventType, sourceType, sourceID, sourceURI string) (*models.PursuitActivity, bool, error)
 	UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error)
 	FindTaskAttempts(pursuitID uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error)
 	FindLinkedWorkflows(ids []uuid.UUID) ([]models.WorkflowItem, error)
@@ -230,8 +232,24 @@ func (r *GormRepository) CreateLink(link *models.PursuitLink) (*models.PursuitLi
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
-	if err := r.DB.Create(link).Error; err != nil {
-		return nil, err
+	result := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(link)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		if err := r.DB.Where(
+			"pursuit_id = ? AND link_type = ? AND link_id = ? AND relationship = ?",
+			link.PursuitID,
+			link.LinkType,
+			link.LinkID,
+			link.Relationship,
+		).First(&existing).Error; err != nil {
+			return nil, err
+		}
+		return &existing, nil
+	}
+	if link.ID == uuid.Nil {
+		return nil, fmt.Errorf("pursuit link repository created no durable identity")
 	}
 	return link, nil
 }
@@ -301,8 +319,29 @@ func (r *GormRepository) CreateActivity(activity *models.PursuitActivity) (*mode
 	if activity.CreatedAt.IsZero() {
 		activity.CreatedAt = time.Now().UTC()
 	}
-	if err := r.DB.Create(activity).Error; err != nil {
-		return nil, err
+	if strings.TrimSpace(activity.IdempotencyKey) == "" {
+		if err := r.DB.Create(activity).Error; err != nil {
+			return nil, err
+		}
+		return activity, nil
+	}
+	result := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(activity)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		var existing models.PursuitActivity
+		if err := r.DB.Where(
+			"pursuit_id = ? AND idempotency_key = ?",
+			activity.PursuitID,
+			activity.IdempotencyKey,
+		).First(&existing).Error; err != nil {
+			return nil, err
+		}
+		return &existing, nil
+	}
+	if activity.ID == uuid.Nil {
+		return nil, fmt.Errorf("pursuit activity repository created no durable identity")
 	}
 	return activity, nil
 }
@@ -316,6 +355,28 @@ func (r *GormRepository) FindActivities(pursuitID uuid.UUID, limit int) ([]model
 		return nil, err
 	}
 	return activity, nil
+}
+
+func (r *GormRepository) FindActivityByIdentity(
+	pursuitID uuid.UUID,
+	eventType, sourceType, sourceID, sourceURI string,
+) (*models.PursuitActivity, bool, error) {
+	var activity models.PursuitActivity
+	err := r.DB.Where(
+		"pursuit_id = ? AND event_type = ? AND source_type = ? AND source_id = ? AND source_uri = ?",
+		pursuitID,
+		strings.TrimSpace(eventType),
+		strings.TrimSpace(sourceType),
+		strings.TrimSpace(sourceID),
+		strings.TrimSpace(sourceURI),
+	).Order("created_at ASC").First(&activity).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &activity, true, nil
 }
 
 func (r *GormRepository) UpsertTaskAttempt(attempt *models.PursuitTaskAttempt) (*models.PursuitTaskAttempt, error) {

@@ -397,6 +397,8 @@ func normalizedActionRequest(request ActionRequest) ActionRequest {
 
 func normalizedMandate(mandate StandingMandate) StandingMandate {
 	cloned := cloneMandate(mandate)
+	cloned.LifeGraph = nil
+	cloned.LifeGraphWarning = ""
 	sort.Slice(cloned.Scopes, func(i, j int) bool {
 		return normalize(cloned.Scopes[i].ID) < normalize(cloned.Scopes[j].ID)
 	})

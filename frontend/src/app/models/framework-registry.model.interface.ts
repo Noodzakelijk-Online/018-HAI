@@ -95,6 +95,7 @@ export interface ISelectedFramework {
   version: string;
   name: string;
   family: string;
+  riskCeiling?: 'low' | 'medium' | 'high';
   score: number;
   reasons: string[];
   maximumAutonomyLevel: number;
@@ -258,6 +259,8 @@ export interface IFrameworkSelectionDecision {
   catalogVersion: string;
   catalogDigest: string;
   selectorAlgorithmVersion: string;
+  taskRiskLevel?: 'low' | 'medium' | 'high';
+  effectiveRiskCeiling?: 'low' | 'medium' | 'high';
   effectivePreferenceDigest: string;
   constitutionDigest: string;
   lifeDomain: string;

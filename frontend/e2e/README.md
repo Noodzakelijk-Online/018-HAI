@@ -1,50 +1,50 @@
 # Browser-level end-to-end tests
 
-Self-contained [Playwright](https://playwright.dev) suite that drives the **real
-UI against a running stack**. It lives in its own folder with its own
-`package.json` so it never affects the Angular app build.
+This self-contained Playwright suite drives the real HAI UI against a running
+stack. Its dependencies do not affect the Angular application build.
 
-## What it covers
+## Covered operator chain
 
-`tests/acceptance.spec.ts` walks the operator acceptance flow the external
-review asked to see proven at the browser level:
+`tests/acceptance.spec.ts` proves:
 
+```text
+password login
+-> owner-scoped read-only local source registration
+-> bounded source sync
+-> explicit pursuit creation
+-> project-matched high-risk workflow intake
+-> exact runtime selection
+-> durable human approval
+-> one exact selected read-only execution
+-> terminal completion with deterministic verification evidence
 ```
-login → source connection → sync → workflow creation → approval → one bounded execution
-```
 
-It uses the app's existing `data-testid` hooks (`login-submit`,
-`workflow-create`, `workflow-apply-transition`, `workflow-run-worker`,
-`panel-activity-audit`).
+The source path is the read-only `connected-sources/` mount. The suite does not
+authorize an external provider or request an irreversible operation. Its runtime
+target is the backend's real `GET /readyz` endpoint. Missing controls, failed
+proposal resolution, an unexpected execution route, non-terminal workflows, or
+absent verification evidence fail the test; no acceptance step is optional.
 
 ## Run it
 
-```bash
-# 1. Bring up the stack from the repo root
-docker compose -f docker-compose.local.yml up --build
+```powershell
+# Start HAI from the repository root.
+docker compose --env-file .env.local -f docker-compose.local.yml up -d --build
 
-# 2. Install and run (from this folder)
-cd frontend/e2e
+# Install and run from frontend/e2e.
 npm install
-npm run install-browsers
-E2E_BASE_URL=http://localhost:8080 \
-E2E_OPERATOR_EMAIL=you@example.com \
-E2E_OPERATOR_PASSWORD='...' \
+npx playwright install chromium
+$env:E2E_BASE_URL = 'http://localhost'
+$env:E2E_OPERATOR_EMAIL = 'your-seeded-operator@example.com'
+$env:E2E_OPERATOR_PASSWORD = 'your-local-password'
 npm test
 ```
 
-Credentials come from the environment; nothing is committed. If
-`E2E_OPERATOR_PASSWORD` is unset the acceptance test is skipped (it needs a
-seeded, login-capable account).
+Credentials come from the environment and are never committed. The test is
+skipped when `E2E_OPERATOR_PASSWORD` is absent.
 
-## Status (be honest about this)
+## Current evidence
 
-- **Authored** against real selectors: yes.
-- **Executed green in CI/locally:** not yet — it needs a running stack plus a
-  seeded operator account, and the source connect/sync steps carry
-  `TODO(selector)` markers to confirm two testids on the sources page in the
-  target build.
-- Tracked as a deferred external gate in `docs/completion-matrix.md`.
-
-Do not report this suite as passing until it has actually run against the target
-stack.
+The suite passed against the rebuilt local Windows Compose stack on 2026-08-04
+in 10.7 seconds. See `docs/completion-matrix.md` for the exact acceptance scope
+and remaining external gates.

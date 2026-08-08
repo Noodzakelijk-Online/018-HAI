@@ -9,7 +9,7 @@ Compose stack. It is not an unrestricted desktop agent: planning, execution,
 verification, and approval are separate; external effects remain blocked until a
 reviewed runtime, policy, and evidence path are configured.
 
-> **Current repository state, evidence reviewed through 2026-07-30:** this repository
+> **Current repository state, evidence reviewed through 2026-08-04:** this repository
 > implements a governed local operating layer, including the Angular dashboard,
 > Go engines, IDP, Compose topology, pursuit/workflow routing, persistence, and
 > safety gates. On the development workspace used for this review, the Compose
@@ -17,10 +17,13 @@ reviewed runtime, policy, and evidence path are configured.
 > `/control-center`, gateway health routes responded, and protected APIs rejected
 > unsigned sessions. Those observations are local-environment evidence, not a
 > claim that every Windows machine or account integration is ready. Backend/IDP
-> tests, frontend production build and unit tests, Compose validation, and a
-> Postgres-backed critical-path smoke have been exercised. A clean-clone,
-> signed-in Windows browser journey and any real third-party account, paid
-> model, browser-control, or broad-host-control journey remain release gates.
+> tests, frontend production build and 226 unit tests, Compose validation, and a
+> Postgres-backed critical-path smoke have been exercised. A signed-in browser
+> acceptance run on the local Windows Compose stack also completed source intake,
+> pursuit creation, exact runtime selection, durable approval, a real read-only
+> backend probe, and terminal verification. A clean-clone Windows run and any
+> newly configured third-party account, paid model, browser-control, mutable
+> runtime, or broad-host-control journey remain release gates.
 
 ### Current Change Boundary
 
@@ -37,10 +40,10 @@ approvals, proposal choices, candidate acceptance or archival, approved next
 actions, runtime recovery, and verified pursuit completion; each control calls
 the existing audited API rather than bypassing the relevant gate.
 
-This is an implementation and focused-test milestone. It does not replace the
-release gates in the verification snapshot below: a real two-account exercise,
-fresh-machine browser flow, configured source import, local-model task, and
-reviewed runtime dry run are still required before relying on those paths for
+This is an implementation and acceptance-tested local milestone. It does not
+replace the release gates in the verification snapshot below: a fresh-machine
+browser flow, newly configured provider acceptance, local-model task, and each
+mutable runtime dry run are still required before relying on those paths for
 personal work.
 
 ## Product Boundary
@@ -59,16 +62,32 @@ for the canonical-stack decision.
 The [Framework Registry](docs/framework-registry.md) defines HAI's versioned,
 owner-scoped contract for selecting the smallest suitable set of planning,
 reasoning, governance, domain, and evaluation frameworks for a task. Its
-implemented catalog contains 55 records at version `1.0.0` (50 active and five
-experimental, with no deprecated catalog records in v1), mandatory safety
-overlays, deterministic `selector-v4`
-selection, owner-scoped preferences, Constitution lifecycle, authority
-ceilings, reproducibility digests, API/UI/task integration, and a reversible
-pre-phase migration.
+implemented `framework-catalog-v2` contains 55 records (54 at `1.0.0` and the
+evaluation framework at `1.1.0`; 50 active and five experimental), mandatory
+safety overlays, deterministic `selector-v5` selection with enforced task-risk
+ceilings, owner-scoped preferences, Constitution lifecycle, authority ceilings,
+reproducibility digests, API/UI/task/workflow integration, and versioned
+pre-phase migrations.
 
 The [Framework Operating Contract Matrix](docs/framework-operating-contract-matrix.md)
 maps all 55 research families to enforced, structured, or catalog-only
 behavior and states the remaining live-system boundary for each.
+
+Durable task plans and runs are projected into an append-only, owner-scoped
+operational life graph. The graph links tasks to projects, pursuits,
+workflows, verified memories, and outcomes with typed relations and source
+digests. Preview requests never write graph state, local-only records remain
+hidden until explicitly requested on the local governance screen, and graph
+records cannot grant approval or execution authority.
+
+Connected-source sync uses the same graph boundary. After a raw item and its
+extraction are durably stored and indexed, HAI appends an immutable document
+record linked to the registered source and project. Owner identity, content
+digest, sensitivity, verification state, and local-only policy are retained.
+Graph outages appear as audited sync warnings without discarding a successful
+email, file, Trello, Drive, GitHub, or other source ingestion. Operator
+corrections and archive changes create new observations rather than rewriting
+history.
 
 Selector v4 also produces a durable Chief-of-Staff operating contract: all
 matched life domains, needs state, freshness-aware human capacity, verified
@@ -79,6 +98,17 @@ outcome monitoring, and an operating-contract digest. Workflow due dates flow
 into delegation deadlines; every delegation defaults to zero financial
 authority. The Advanced registry view exposes these details without turning
 the Basic view into a diagnostic wall.
+
+Task planning also applies a deterministic, advisory-only resource schedule.
+Conservative step durations, dependencies, deadlines, paid/token/tool budgets,
+and owner-confirmed Life Ops capacity are evaluated before execution. When an
+owner has an active read-only Google Calendar source, opaque busy intervals are
+subtracted from that capacity; cancelled and transparent/free events are
+ignored. Unknown or stale capacity requires review, confirmed zero remaining
+capacity blocks the plan, and Calendar read failures fail closed. The Task
+Blueprint shows the feasibility result, reserved source-linked intervals,
+scheduled steps, blockers, and approval flags. This path cannot move events,
+consume approval, or grant execution authority.
 
 Catalog lifecycle and owner-effective state are separate. `active` records are
 enabled by default; `experimental` records are disabled by default and need an
@@ -124,15 +154,16 @@ Constitution, run an approval-gated task, or resolve a task review item.
 | Area | Implemented capability | Important operating boundary |
 | --- | --- | --- |
 | Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, task planning, and the Framework Registry. | A dashboard card is operational visibility, not proof that an external action occurred. |
-| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, ambient opportunity routing, and navigable related-pursuit links. | In the canonical routed stack, new source, assistant, or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Links, evidence, and operational summaries stay owner-scoped; completion still needs workflow, verification, source, runtime, and approval evidence where applicable. |
+| Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, ambient opportunity routing, navigable related-pursuit links, owner-scoped internal reminder proposals, an append-only reminder preparation/decision ledger, and calendar-aware resource/dependency planning. | In the canonical routed stack, new source, assistant, or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Resource plans and reminder projections are advisory, owner-scoped, conservative, and non-executing. A reminder preparation request or approval is evidence only: it cannot create a Calendar event, schedule or send a notification or message, invoke a provider, execute a follow-up, or mutate the source checklist. No reminder worker consumes this ledger. |
 | Memory and knowledge | Compact memory, retrieval, deduplication, correction, export/deletion planning, provenance, encrypted user-authorized conversation capture, and source/extraction links. | Raw imported conversations are not automatically promoted to trusted facts. |
-| Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, read-only GitHub sync, read-only Gmail (Google OAuth), and read-only Trello REST sync. | Gmail and Trello have bounded live acceptance evidence but are unconfigured by default. Calendar, Drive, WhatsApp, and browser accounts remain export/local-folder paths, not live connectors. |
+| Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, read-only GitHub, Gmail, Google Drive, Google Contacts, Google Calendar, and Trello sync. | Gmail and Trello have bounded live acceptance evidence but are unconfigured by default. Drive, Contacts, and Calendar have unit/contract coverage but still need real sandbox acceptance runs. Imported contacts remain review candidates. Meaningful events within 14 days may create source-backed preparation work; past events stay context-only. Overlaps within 30 days create stable review-gated conflict records, while moved or cancelled events retract stale work. No Calendar write-back exists. WhatsApp and browser accounts remain export/local-folder paths. |
 | LLM routing | Local-first routing, seven-tier model policy, local/OpenAI-compatible endpoint probes, fallback logging, cached/repeated-prompt controls, and a EUR 0 paid default. | A configured endpoint is not live-proven until it passes a bounded probe and validated task. Paid generation remains disabled by default. |
 | Verification | Source-grounded answers, claim/evidence status, schema/deterministic validation, review routing, and verification-gated task completion. | Model confidence alone never authorizes a factual claim or consequential action. |
-| Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, emergency stop, and an internal action-bound approval proof before mutating side effects. | Direct mutating HTTP launches cannot create the proof and fail closed. The approved task-review path issues a short-lived, single-use proof; its signing key and consumption state are currently process-local. External runtimes remain disabled until explicitly configured and validated. |
+| Controlled execution | Reviewed API, script, Docker, Hermes, Odysseus, and OpenClaw adapter surfaces with bounded output, workspace/host allowlists, audit records, verification, emergency stop, and an internal action-bound approval proof before mutating side effects. | Direct mutating HTTP launches cannot create the proof and fail closed. The approved task-review path issues a short-lived proof signed by a stable deployment key; PostgreSQL atomically records its one allowed consumption across restarts and backend instances. External runtimes remain disabled until explicitly configured and validated, and external side effects still require postcondition/idempotency evidence. |
 | Optional local runners | Disabled-by-default Compose profiles for aggregate security scans, no-tool planning drafts, selected-folder document extraction, and disposable patch proposals. | They publish no host ports and have private networks, read-only mounts, and resource limits. Configuration or container health is not live proof; each real snapshot, model, or document path still needs retained approval, audit, and verification evidence. |
-| Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. |
-| Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. This is a single-node worker, not a distributed or HA platform. |
+| Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. Governance Control records owner `accept`, `dismiss`, bounded `snooze`, indefinite `suppress`, and `resume` feedback in an immutable owner-scoped ledger that changes later attention evaluation. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. Attention feedback has `canExecute:false`, grants no delivery or execution authority, and invokes no notification or external effect. |
+| Advisory ambient outcome monitor | Governance Control can bind an existing outcome indicator to one of three fixed read-only local collectors: `workflow_open_loop_count`, `workflow_verified_completion_count`, or `overdue_commitment_count`. A durable singleton sweep leases due targets, appends immutable source-digested observations and run receipts, composes them into the existing outcome-evaluation service, and may surface an owner-scoped proactivity inbox decision. | The monitor is `advisory_monitor_only`. It cannot execute or deliver work, notify anyone, write Calendar data, mutate a workflow, authorize a mandate, or mutate learning. It reads only canonical local ledgers and accepts no caller-supplied SQL, URL, script, expression, or arbitrary tool instruction. Live external-account correctness and target-machine acceptance remain separate gates. |
+| Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. The workflow schedule may process ordinary workflow/open-loop work; it does not deliver or execute reminder activation records. No reminder worker is active. This is a single-node worker, not a distributed or HA platform. |
 
 ### Readiness Terms
 
@@ -141,6 +172,41 @@ Constitution, run an approval-gated task, or resolve a task review item.
 - **Live-proven**: a configured account, provider, or runtime completed a bounded approved end-to-end task on the target machine with audit and verification evidence.
 
 No configured provider, runtime, dashboard state, or generated answer upgrades itself to live-proven.
+
+### Advisory Outcome Monitor
+
+The outcome monitor is a local evidence bridge, not an autonomous executor.
+An administrator configures a target against an existing owner/workspace outcome
+and indicator in Governance Control. Read-capable roles may inspect targets and
+their immutable observations/runs; write-capable roles may request a bounded
+due pass; administrator permission is required to create, enable/disable, or
+recover target state.
+
+The guarded API surface is under
+`/api/v1/outcome-evaluations/workspaces/:workspaceId`:
+
+- `GET|PUT /outcomes/:outcomeId/monitor` lists or creates a target;
+- `PATCH /outcomes/:outcomeId/monitor/:targetId/enabled` pauses or resumes it;
+- `GET /outcomes/:outcomeId/monitor/:targetId/observations` and `/runs` expose
+  bounded immutable history;
+- `POST /monitors/run-due` performs a bounded advisory pass; and
+- `POST /monitors/recover` releases only expired leases.
+
+The durable scheduler is configured with
+`OUTCOME_MONITOR_SCHEDULER_ENABLED`, `OUTCOME_MONITOR_SWEEP_SECONDS`,
+`OUTCOME_MONITOR_POLL_SECONDS`, `OUTCOME_MONITOR_LEASE_SECONDS`,
+`OUTCOME_MONITOR_SCOPE_LIMIT`, and `OUTCOME_MONITOR_BATCH_LIMIT`. Invalid or
+out-of-range values fall back to bounded defaults documented in
+`.env.example`. Disabling the scheduler does not remove the records or grant a
+different execution path.
+
+Required acceptance before relying on this path includes exact replay without
+duplicate observations or inbox items, two-owner isolation, active-lease
+fencing and expired-lease recovery, disable behavior, and proof that a monitor
+pass causes no task/runtime execution, notification, message delivery,
+Calendar write, workflow mutation, mandate authorization, or learning update.
+Repository implementation and focused tests do not by themselves prove
+real-world source correctness or production readiness.
 
 ### Optional Runtime Profiles
 
@@ -161,12 +227,12 @@ either observability server.
 | Status | Current position |
 | --- | --- |
 | Canonical product | This Go/Angular/Postgres/Docker Compose repository. The separate Manus React/tRPC/MySQL implementation is reference-only. |
-| Local platform | Compose configuration and the development-workspace stack have been exercised. A fresh Windows 11 clone-and-sign-in acceptance run is still required. |
+| Local platform | The current Windows Compose workspace has a retained browser acceptance run covering password login, read-only local source registration and sync, explicit pursuit creation, governed high-risk workflow intake, durable approval, and one bounded worker pass (2026-08-04). A separate fresh-clone Windows 11 acceptance run is still required. |
 | Core operating flow | Pursuits, workflows, task attempts, approvals, verification, audit, compact memory, source extraction, and ambient proposals are implemented and persisted. |
 | Intake safety | New source, assistant, and ambient input is matched to an active pursuit or becomes a non-executable candidate. An approval-capable user must accept a candidate before its first governed workflow is created. |
-| External accounts | Local/export ingestion and read-only GitHub sync are available. Gmail (Google OAuth) and Trello REST have bounded live acceptance evidence but remain unconfigured by default; configure only the needed account and retain its own audit evidence. Live Drive, Calendar, WhatsApp, and browser connectors are not implemented. |
+| External accounts | Local/export ingestion and read-only GitHub sync are available. Gmail and Trello have bounded live acceptance evidence. Google Drive, Google Contacts, and primary Google Calendar have separate read-only OAuth adapters with bounded backfills and native change/sync cursors, but no retained live sandbox acceptance evidence yet. Contact candidates require review. Calendar event times feed deterministic due dates, bounded preparation proposals, and overlap review; moving or cancelling source events retracts stale Calendar-derived work without deleting obligations. These paths cannot write back. WhatsApp and browser connectors are not live. |
 | Models and runtimes | Local/free-first routing and guarded adapter surfaces exist. No provider or runtime is live-proven until its scoped probe, approved task, audit, and verification evidence exist. |
-| Production readiness | Not claimed. Clean-machine deployment, signed-in browser coverage, two-real-account isolation, and bounded real-provider/runtime exercises remain release gates. |
+| Production readiness | Not claimed. Clean-machine deployment and bounded acceptance for each newly enabled provider or mutable runtime remain release gates. |
 
 ### Verification Snapshot
 
@@ -176,10 +242,10 @@ target-machine checks before relying on a path for real work.
 | Surface | Current evidence | Still required before operational trust |
 | --- | --- | --- |
 | Local Compose and gateway | The local services are running; `/`, `/control-center`, `/healthz`, and `/readyz` are served through nginx. Both health probes are intentionally public; protected `/api/v1/*` engine routes still require a signed session. Angular deep links return the application shell. | Fresh-clone Windows 11 run with a newly created `.env.local`. |
-| Browser session | The unauthenticated session check returns `401`; Angular routes a browser without a refreshable session to `/login`. | Sign in as the first-run owner, open each primary screen, create and review one bounded low-risk workflow, and confirm session refresh in a real browser. |
-| Go and Angular code | Backend and IDP unit tests, backend vet/build, frontend production build and headless unit tests, plus Compose config validation have been run. | End-to-end browser coverage and a two-real-account authorization exercise. |
+| Browser session | The unauthenticated session check returns `401`; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
+| Go and Angular code | The full Go suite, frontend production build, 324 headless Angular tests, migration-chain contract through `0047`, isolated PostgreSQL `0046`+`0047` ledger test, live workflow-repository PostgreSQL test, and signed-in browser reminder prepare/approve/persist/cleanup acceptance pass. Migration `0046` defines the append-only owner-scoped reminder request/decision ledger; `0047` adds a strict monotonic chain-tip timestamp guard. | Keep these gates green and close the existing CSS/initial-bundle budget warnings before a production release. The browser exercise proves the local non-executing evidence flow only: no reminder worker, Calendar write, message delivery, provider invocation, or follow-up execution was exercised or implied. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
-| Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task. |
+| Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 
 ## Current Safe Operator Flows
 
@@ -216,6 +282,21 @@ one matched only to a candidate pursuit, is recorded with its provenance and
 waits for an approval-capable operator to accept the candidate. It does not
 create an orphaned executable workflow.
 
+For an open checklist item with `ReminderAt`, an authenticated owner may first
+read the current reminder proposal and then append a narrowly scoped
+`internal_notification` preparation request. An approval-capable owner may
+append `approved`, `rejected`, `needs_clarification`, or `revoked` decision
+evidence. Requests and decisions are immutable, digest-bound, owner-scoped,
+idempotent, time-limited, and always return `canExecute:false`. Preparation and
+approval do not create a Calendar event, send a notification, email, or other
+message, call a provider, run a follow-up, or change the workflow/checklist.
+There is no active reminder worker; a future delivery path would require its
+own authorization, effect ledger, provider acceptance, and postcondition proof.
+The two reminder mutation routes bypass the legacy process-local
+`Idempotency-Key` rejection cache and defer replay/conflict handling to the
+durable owner-scoped ledger. Preparation uses the body `idempotencyKey`; a
+decision uses its canonical request digest and current decision-chain tip.
+
 If a pursuit linker is supplied without the native lifecycle router, derived
 workflow creation is deferred and the source or conversation import remains
 visible for repair. This fail-closed compatibility state creates no workflow;
@@ -233,11 +314,13 @@ When a direct task is explicitly scoped to a valid pursuit, HAI also persists
 a compact task-attempt projection. The pursuit/workflow ledger remains the
 canonical restart-safe record for workflow-owned runs; those runs retain the
 same pursuit context through planning and verification without writing a
-duplicate direct task-attempt projection. Durable review storage does not yet
-provide an automatic recovery worker for an item left `approved` by a process
-failure, so operators must follow the recovery procedure in the
-[operator runbook](docs/operator-runbook.md) rather than retrying a side effect
-blindly.
+duplicate direct task-attempt projection. Durable review storage also provides
+a manual, dry-run-first reconciliation action for an item left `approved` by a
+process failure. It never repeats the side effect: linked durable evidence can
+close a verified completion, while an unproven outcome returns to
+`needs_review`. There is deliberately no automatic recovery worker, so
+operators must inspect evidence and follow the
+[operator runbook](docs/operator-runbook.md).
 
 Refreshing a pursuit summary is documentation activity, not operational
 progress. It cannot reset the pursuit's last-activity signal or remove stale
@@ -306,14 +389,24 @@ work from the command dashboard.
   and proposed ambient opportunities remain visible for repair, but no workflow
   or executable work is created. The full router is the supported production
   integration path.
-- Connected-source searches and extraction lists apply source ownership in the
-  repository query. They use the implemented lexical index and do not claim a
-  vector or embedding capability before a real local adapter is configured.
+- Connected-source searches and extraction lists apply source ownership and a
+  fail-closed source-revocation barrier. Revoked source rows and audit history
+  remain administratively inspectable, but their cached extractions and stale
+  semantic embeddings are excluded immediately from task context. Lexical
+  retrieval is always available; vector retrieval is claimed only when the
+  configured local semantic adapter is healthy.
 - The runtime registry enforces emergency stop at its own boundary, including
   direct Hermes, Odysseus, and OpenClaw registry execution calls.
 - Runtime execution is constrained by enablement flags, allowlisted tools,
   hosts, paths, workspaces, timeouts, output limits, redacted audit records,
   and verification before completion.
+- Built-in system processes cannot assign themselves a lower risk, authority,
+  autonomy, reversibility, cost, tool, runtime, or operation classification.
+  The local safe worker, task-runtime launcher, and local model-maintenance
+  worker each have an exact server-owned workload policy; an unknown system
+  identity or any policy mismatch is denied before Constitution, mandate, or
+  approval evaluation. The matched policy ID is retained in authorization
+  evidence and rechecked immediately before one-time receipt consumption.
 - Mutating API, script, Docker-start, and agent-runtime actions additionally
   require an internal HMAC-signed approval proof bound to the owner, automation,
   exact action digest, scope, and recorded approval source. Proofs default to a
@@ -321,10 +414,11 @@ work from the command dashboard.
   approved task-review path. Read-only API `GET`/`HEAD` probes are exempt from
   the proof but not from ordinary authentication, enablement, allowlists, audit,
   or safety policy.
-- Approval-proof signing and consumption state are currently in memory. They
-  are not restart-durable or coordinated across multiple backend instances, so
-  this boundary is locally implemented rather than distributed-production
-  ready.
+- Production approval-proof signing uses the explicit
+  `HAI_APPROVAL_PROOF_SIGNING_KEY`; startup fails closed when the key is missing
+  or shorter than 32 bytes. Consumption is an owner-scoped, append-only
+  PostgreSQL claim, so replay protection survives restart and coordinates
+  multiple backend instances. Rotating the key invalidates unexpired proofs.
 - Stopping a runtime task requires an approval-capable role. Uploading,
   selecting, or refreshing the shared OpenClaw ecosystem requires an owner
   role because it changes the host-wide runtime configuration.
@@ -345,8 +439,8 @@ threat model, see [threat model](docs/threat-model.md).
 
 These capabilities are not bundled or live-proven by this repository:
 
-- Live Google Calendar, Google Drive, WhatsApp, browser, and other unlisted
-  account OAuth/API integrations. Gmail OAuth and Trello REST connectors exist
+- Live WhatsApp, browser, and other unlisted account OAuth/API integrations.
+  Gmail, Google Drive, Google Contacts, Google Calendar, and Trello read-only connectors exist
   but remain unconfigured by default; every configured account still needs its
   own bounded acceptance evidence before operational trust.
 - Provider webhooks, local file watchers, a dedicated vector database, generic
@@ -452,8 +546,13 @@ http://localhost/api/v1/auth/google/callback
 
 Then set `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and
 `GOOGLE_LOGIN_REDIRECT_URL` in `.env.local`, and recreate the IDP container.
-The Gmail connected-source callback is separate and, if configured, uses
-`GOOGLE_OAUTH_REDIRECT_URL`; it must also be explicitly registered with Google.
+The Gmail, Drive, Contacts, and Calendar connected-source callback is separate. Register
+`http://localhost/api/v1/sources/oauth/google/callback`, set it as
+`GOOGLE_OAUTH_REDIRECT_URL`, and enable both APIs you intend to use. Each source
+requests only its own read-only scope. Also set independent
+`HAI_OAUTH_TOKEN_ENCRYPTION_KEY` and `HAI_OAUTH_STATE_SIGNING_KEY` values; HAI
+does not fall back to JWT or backend secrets. Google redirects the browser, so a
+public tunnel is not required for this local callback.
 
 For reset emails, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM`, and `SMTP_REQUIRE_STARTTLS=true` in `.env.local`.
@@ -512,7 +611,7 @@ and `.ics` within the same allowlisted root.
 | `/control-center` | Primary operational overview and bounded maintenance actions. |
 | `/command-dashboard` | Robert-only decisions, open loops, source-backed context, memory-derived work, and unified approval actions for pursuits and linked workflows. |
 | `/pursuits` | Long-running objectives with workflow, source, memory, verification, blocker, approval, activity, and related-pursuit links. |
-| `/workflow-engine` | Work queue, approvals, quality gates, interruptions, retries, and follow-ups. |
+| `/workflow-engine` | Work queue, approvals, quality gates, interruptions, retries, follow-ups, and read-only internal reminder proposals. |
 | `/connected-sources` | Source configuration, sync history, extraction inspection, reindexing, pause/resume, and revocation. |
 | `/memory` | Compact memory search, correction, archive, retrieval, and export controls. |
 | `/llm-policy` | Provider/model configuration, budget/policy visibility, probes, routing, and fallback history. |
@@ -534,7 +633,7 @@ areas are:
 - `/memory` and `/memory-engine`: compact memory, encrypted conversation import, search, and insights.
 - `/sources`: source registry, connectors, sync, extraction management, search, and audit records.
 - `/pursuits`: high-level objectives, matching, intake, navigable related-pursuit links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
-- `/workflow`: intake, state transitions, approvals, due work, follow-ups, quality/review state, and dashboard data.
+- `/workflow`: intake, state transitions, approvals, due work, follow-ups, owner-scoped reminder proposals, non-executing reminder activation request/decision evidence, quality/review state, and dashboard data.
 - `/task`: bounded plans/runs, durable owner-scoped completion logs, review
   queue, and exact-action review resolution.
 - `/verification`: grounded answers and verification run history.

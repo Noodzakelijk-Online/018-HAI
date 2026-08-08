@@ -3,12 +3,20 @@ package workflow
 import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
+	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+type idempotentWorkflowItemRepository interface {
+	CreateItemIdempotent(item *models.WorkflowItem) (*models.WorkflowItem, bool, error)
+}
 
 type Repository interface {
 	CreateItem(item *models.WorkflowItem) (*models.WorkflowItem, error)
@@ -26,12 +34,14 @@ type Repository interface {
 	ClaimRunnableItemForOwner(ownerIdentity string, id uuid.UUID, claimID string, now time.Time, leaseUntil time.Time) (*models.WorkflowItem, bool, error)
 	RenewRunnableItemClaim(id uuid.UUID, claimID string, leaseUntil time.Time) (bool, error)
 	UpdateClaimedItem(item *models.WorkflowItem, claimID string) (*models.WorkflowItem, bool, error)
+	CompleteClaimedItem(item *models.WorkflowItem, claimID string, attestation *models.WorkflowCompletionAttestation) (*models.WorkflowItem, bool, error)
 	FindExpiredWorkflowClaims(now time.Time, limit int) ([]models.WorkflowItem, error)
 	FindExpiredWorkflowClaimsForOwner(ownerIdentity string, now time.Time, limit int) ([]models.WorkflowItem, error)
 	RecoverExpiredWorkflowClaim(item models.WorkflowItem, now time.Time) (*models.WorkflowItem, bool, error)
 	CreateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
 	UpdateChecklistItem(item *models.WorkflowChecklistItem) (*models.WorkflowChecklistItem, error)
 	FindChecklist(workflowID uuid.UUID) ([]models.WorkflowChecklistItem, error)
+	FindReminderCandidatesForOwner(ownerIdentity string, before time.Time, limit int) ([]WorkflowReminderCandidate, error)
 	SaveIntakeRecord(record *models.WorkflowIntakeRecord) (*models.WorkflowIntakeRecord, error)
 	FindIntakeRecords(workflowID uuid.UUID) ([]models.WorkflowIntakeRecord, error)
 	CreateProjectMatch(match *models.WorkflowProjectMatch) (*models.WorkflowProjectMatch, error)
@@ -65,6 +75,11 @@ type Repository interface {
 	FindSourceLinks(workflowID uuid.UUID) ([]models.WorkflowSourceLink, error)
 	CreateDecision(decision *models.WorkflowDecision) (*models.WorkflowDecision, error)
 	FindDecisions(workflowID uuid.UUID) ([]models.WorkflowDecision, error)
+	FindApprovalDecisionForOwner(
+		ctx context.Context,
+		ownerIdentity string,
+		decisionID string,
+	) (*ApprovalDecisionRecord, error)
 	CreateEvent(event *models.WorkflowEvent) (*models.WorkflowEvent, error)
 	FindEvents(workflowID uuid.UUID) ([]models.WorkflowEvent, error)
 }
@@ -90,6 +105,40 @@ func (r *GormRepository) CreateItem(item *models.WorkflowItem) (*models.Workflow
 		return nil, err
 	}
 	return item, nil
+}
+
+// CreateItemIdempotent relies on the active source-identity unique index to
+// make concurrent intake safe. Replays receive the exact existing item only
+// when its immutable source revision is unchanged.
+func (r *GormRepository) CreateItemIdempotent(item *models.WorkflowItem) (*models.WorkflowItem, bool, error) {
+	if item == nil {
+		return nil, false, fmt.Errorf("workflow item is required")
+	}
+	owner := strings.TrimSpace(item.OwnerIdentity)
+	sourceType := strings.TrimSpace(item.SourceType)
+	sourceID := strings.TrimSpace(item.SourceID)
+	if owner == "" || sourceType == "" || sourceID == "" {
+		created, err := r.CreateItem(item)
+		return created, err == nil, err
+	}
+	result := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(item)
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 1 {
+		return item, true, nil
+	}
+	existing, err := r.FindActiveItemBySourceIdentityForOwner(owner, sourceType, sourceID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing == nil {
+		return nil, false, fmt.Errorf("workflow source identity conflict could not be resolved")
+	}
+	if existing.SourceRevision != item.SourceRevision {
+		return nil, false, fmt.Errorf("workflow source identity is already active with a different revision")
+	}
+	return existing, false, nil
 }
 
 func (r *GormRepository) UpdateItem(item *models.WorkflowItem) (*models.WorkflowItem, error) {
@@ -317,6 +366,63 @@ func (r *GormRepository) UpdateClaimedItem(item *models.WorkflowItem, claimID st
 	}
 	r.finishAutonomyAttempt(updated, now)
 	return updated, true, nil
+}
+
+// CompleteClaimedItem changes the mutable workflow projection and appends its
+// immutable completion attestation in one transaction. Downstream accounting
+// must never infer completion from WorkflowItem alone.
+func (r *GormRepository) CompleteClaimedItem(
+	item *models.WorkflowItem,
+	claimID string,
+	attestation *models.WorkflowCompletionAttestation,
+) (*models.WorkflowItem, bool, error) {
+	if item == nil || attestation == nil || item.ID == uuid.Nil ||
+		attestation.WorkflowID != item.ID || strings.TrimSpace(claimID) == "" {
+		return nil, false, fmt.Errorf("valid claimed workflow completion evidence is required")
+	}
+	if item.CurrentState != StateCompleted || item.CompletedAt == nil ||
+		attestation.CompletedAt.UTC() != item.CompletedAt.UTC() {
+		return nil, false, fmt.Errorf("workflow completion projection does not match its attestation")
+	}
+	var updated models.WorkflowItem
+	owned := false
+	now := time.Now().UTC()
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.WorkflowItem{}).
+			Where("id = ? AND current_state = ? AND worker_claim_id = ?", item.ID, StateInProgress, claimID).
+			Updates(map[string]interface{}{
+				"current_state": StateCompleted, "approval_status": item.ApprovalStatus,
+				"blocked_reason": item.BlockedReason, "next_action": item.NextAction,
+				"retry_count": item.RetryCount, "max_retries": item.MaxRetries,
+				"next_run_at": nil, "last_run_at": item.LastRunAt,
+				"completed_at": item.CompletedAt, "verification_status": item.VerificationStatus,
+				"recovery_status": item.RecoveryStatus, "recovery_note": item.RecoveryNote,
+				"last_task_plan_id": item.LastTaskPlanID, "last_worker_error": "",
+				"worker_claim_id": "", "worker_lease_until": nil, "updated_at": now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Create(attestation).Error; err != nil {
+			return fmt.Errorf("append workflow completion attestation: %w", err)
+		}
+		if err := tx.Where("id = ?", item.ID).First(&updated).Error; err != nil {
+			return err
+		}
+		owned = true
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if !owned {
+		return nil, false, nil
+	}
+	r.finishAutonomyAttempt(&updated, now)
+	return &updated, true, nil
 }
 
 func (r *GormRepository) FindExpiredWorkflowClaims(now time.Time, limit int) ([]models.WorkflowItem, error) {
@@ -823,6 +929,69 @@ func (r *GormRepository) FindDecisions(workflowID uuid.UUID) ([]models.WorkflowD
 	var decisions []models.WorkflowDecision
 	err := r.DB.Where("workflow_id = ?", workflowID).Order("created_at desc").Find(&decisions).Error
 	return decisions, err
+}
+
+func (r *GormRepository) FindApprovalDecisionForOwner(
+	ctx context.Context,
+	ownerIdentity string,
+	decisionID string,
+) (*ApprovalDecisionRecord, error) {
+	if ctx == nil {
+		return nil, errors.New("workflow approval lookup context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parsedDecisionID, err := uuid.Parse(decisionID)
+	if err != nil || parsedDecisionID == uuid.Nil || decisionID != parsedDecisionID.String() {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var row struct {
+		DecisionID    uuid.UUID
+		WorkflowID    uuid.UUID
+		OwnerIdentity string
+		DecisionType  string
+		Decision      string
+		Reason        string
+		ActionBinding string
+		Approved      bool
+		Actor         string
+		CreatedAt     time.Time
+	}
+	err = r.DB.WithContext(ctx).
+		Table("workflow_decisions AS decisions").
+		Select(`decisions.id AS decision_id,
+			decisions.workflow_id,
+			items.owner_identity,
+			decisions.decision_type,
+			decisions.decision,
+			decisions.reason,
+			decisions.rule_applied AS action_binding,
+			decisions.approved,
+			decisions.actor,
+			decisions.created_at`).
+		Joins(
+			"JOIN workflow_items AS items ON items.id = decisions.workflow_id AND items.owner_identity = ?",
+			ownerIdentity,
+		).
+		Where("decisions.id = ?", parsedDecisionID).
+		Take(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &ApprovalDecisionRecord{
+		DecisionID:    row.DecisionID.String(),
+		WorkflowID:    row.WorkflowID.String(),
+		OwnerIdentity: row.OwnerIdentity,
+		DecisionType:  row.DecisionType,
+		Decision:      row.Decision,
+		Reason:        row.Reason,
+		ActionBinding: row.ActionBinding,
+		Approved:      row.Approved,
+		Actor:         row.Actor,
+		CreatedAt:     row.CreatedAt,
+	}, nil
 }
 
 func (r *GormRepository) CreateEvent(event *models.WorkflowEvent) (*models.WorkflowEvent, error) {

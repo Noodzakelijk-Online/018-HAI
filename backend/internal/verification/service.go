@@ -4,6 +4,8 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/sourceevidence"
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -67,6 +69,8 @@ type VerificationResult struct {
 	UnsupportedClaims []models.VerificationClaim    `json:"unsupportedClaims"`
 	ResearchQuestions []string                      `json:"researchQuestions"`
 	Logs              []string                      `json:"logs"`
+	KnowledgeClaimIDs []string                      `json:"knowledgeClaimIds,omitempty"`
+	KnowledgeError    string                        `json:"knowledgeProjectionError,omitempty"`
 }
 
 type Service interface {
@@ -83,21 +87,60 @@ type PursuitLinker interface {
 
 type service struct {
 	repo              Repository
-	sourceService     source.Service
+	sourceService     ConnectedSourceSearcher
+	sourceEvidence    sourceevidence.Repository
 	memoryService     memory.Service
 	pursuitLinker     PursuitLinker
 	authorityResolver EvidenceAuthorityResolver
+	claimProjector    ClaimProjector
 }
 
-func NewService(repo Repository, sourceService source.Service, memoryService memory.Service, pursuitLinkers ...PursuitLinker) Service {
-	return NewServiceWithAuthorityResolver(repo, sourceService, memoryService, nil, pursuitLinkers...)
+type ConnectedSourceSearcher interface {
+	Search(source.SearchRequest) (*source.SearchResult, error)
+}
+
+// ClaimProjector copies eligible source-backed claims into immutable semantic
+// storage. Projection is advisory and never grants execution authority.
+type ClaimProjector interface {
+	ProjectClaims(context.Context, AnswerRequest, models.VerificationRun, []models.VerificationClaim, []models.VerificationEvidence) ([]string, error)
+}
+
+// WithClaimProjector returns a service copy with semantic projection enabled.
+func WithClaimProjector(base Service, projector ClaimProjector) (Service, error) {
+	implementation, ok := base.(*service)
+	if !ok || implementation == nil {
+		return nil, fmt.Errorf("verification claim projection requires the built-in service")
+	}
+	if projector == nil {
+		return nil, fmt.Errorf("verification claim projector is required")
+	}
+	copy := *implementation
+	copy.claimProjector = projector
+	return &copy, nil
+}
+
+func NewService(repo Repository, sourceService ConnectedSourceSearcher, memoryService memory.Service, pursuitLinkers ...PursuitLinker) Service {
+	return NewServiceWithEvidenceResolvers(repo, sourceService, memoryService, nil, nil, pursuitLinkers...)
 }
 
 func NewServiceWithAuthorityResolver(
 	repo Repository,
-	sourceService source.Service,
+	sourceService ConnectedSourceSearcher,
 	memoryService memory.Service,
 	authorityResolver EvidenceAuthorityResolver,
+	pursuitLinkers ...PursuitLinker,
+) Service {
+	return NewServiceWithEvidenceResolvers(
+		repo, sourceService, memoryService, authorityResolver, nil, pursuitLinkers...,
+	)
+}
+
+func NewServiceWithEvidenceResolvers(
+	repo Repository,
+	sourceService ConnectedSourceSearcher,
+	memoryService memory.Service,
+	authorityResolver EvidenceAuthorityResolver,
+	sourceEvidence sourceevidence.Repository,
 	pursuitLinkers ...PursuitLinker,
 ) Service {
 	var pursuitLinker PursuitLinker
@@ -110,6 +153,7 @@ func NewServiceWithAuthorityResolver(
 	return &service{
 		repo:              repo,
 		sourceService:     sourceService,
+		sourceEvidence:    sourceEvidence,
 		memoryService:     memoryService,
 		pursuitLinker:     pursuitLinker,
 		authorityResolver: authorityResolver,
@@ -117,7 +161,10 @@ func NewServiceWithAuthorityResolver(
 }
 
 func DefaultService() Service {
-	return NewService(DefaultRepository(), source.DefaultService(), memory.DefaultService())
+	resolver, _ := sourceevidence.DefaultRepository()
+	return NewServiceWithEvidenceResolvers(
+		DefaultRepository(), source.DefaultService(), memory.DefaultService(), nil, resolver,
+	)
 }
 
 func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
@@ -166,6 +213,21 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 	for _, claim := range verifiedClaims {
 		_, _ = s.repo.CreateClaim(&claim)
 	}
+	knowledgeClaimIDs := []string(nil)
+	knowledgeError := ""
+	if s.claimProjector != nil {
+		knowledgeClaimIDs, err = s.claimProjector.ProjectClaims(
+			context.Background(), request, *run, verifiedClaims, evidence,
+		)
+		if err != nil {
+			knowledgeError = "semantic claim projection failed"
+			logs = append(logs, knowledgeError)
+			s.audit(run.ID, "verification.knowledge_projection_failed", err.Error())
+		} else if len(knowledgeClaimIDs) > 0 {
+			logs = append(logs, "source-backed claims projected into immutable semantic knowledge")
+			s.audit(run.ID, "verification.knowledge_projected", fmt.Sprintf("projected %d semantic claim(s)", len(knowledgeClaimIDs)))
+		}
+	}
 	s.audit(run.ID, "verification.completed", "important claims decomposed and verified before acceptance")
 	if request.AllowMemoryUpdate {
 		s.storeVerifiedMemory(request, run, verifiedClaims)
@@ -177,6 +239,8 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 		UnsupportedClaims: unsupported,
 		ResearchQuestions: questions,
 		Logs:              append(logs, "verification status logged for every important claim"),
+		KnowledgeClaimIDs: knowledgeClaimIDs,
+		KnowledgeError:    knowledgeError,
 	}
 	if pursuitID != uuid.Nil {
 		result.PursuitID = pursuitID.String()
@@ -267,18 +331,37 @@ func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questi
 			})
 			if err == nil {
 				for _, ranked := range result.UsedContext {
-					evidence = append(evidence, models.VerificationEvidence{
+					item := models.VerificationEvidence{
 						RunID:        runID,
 						SourceType:   "connected_source",
 						SourceID:     ranked.Extraction.ID.String(),
 						SourceURI:    ranked.Extraction.SourceURI,
 						SourceLabel:  ranked.Extraction.SourceLabel,
 						Snippet:      firstNonEmpty(ranked.Extraction.Summary, ranked.Extraction.Text),
-						Authority:    authorityConnectedAccount,
-						Freshness:    freshnessLabel(ranked.Extraction.UpdatedAt),
 						QualityScore: math.Min(1, 0.62+ranked.Score/2),
-						Used:         true,
-					})
+					}
+					if s.sourceEvidence == nil {
+						item.Authority = authorityConnectedUnverified
+						item.Rejected = true
+						item.RejectReason = "connected-source provenance resolver is unavailable"
+					} else {
+						snapshot, resolveErr := s.sourceEvidence.Resolve(
+							context.Background(), request.OwnerIdentity, ranked.Extraction.ID.String(),
+						)
+						payloadDigest := sourceevidence.ExtractionPayloadDigest(ranked.Extraction)
+						if resolveErr != nil || snapshot.SourceID != ranked.Extraction.SourceID.String() ||
+							snapshot.RawItemID != ranked.Extraction.RawItemID.String() ||
+							snapshot.ExtractionPayloadDigest != payloadDigest {
+							item.Authority = authorityConnectedUnverified
+							item.Rejected = true
+							item.RejectReason = "connected-source extraction could not be matched to exact durable raw provenance"
+						} else {
+							item.Authority = authorityConnectedProvenance
+							item.Freshness = freshnessLabel(snapshot.FetchedAt)
+							item.Used = true
+						}
+					}
+					evidence = append(evidence, item)
 				}
 				*logs = append(*logs, "searched connected-source index")
 			}
@@ -307,10 +390,36 @@ func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questi
 			RejectReason: rejectReason(score, input, authority),
 		})
 	}
+	evidence = deduplicateEvidence(evidence)
 	sort.SliceStable(evidence, func(i, j int) bool {
 		return evidence[i].QualityScore > evidence[j].QualityScore
 	})
 	return evidence
+}
+
+func deduplicateEvidence(values []models.VerificationEvidence) []models.VerificationEvidence {
+	byKey := make(map[string]models.VerificationEvidence, len(values))
+	order := make([]string, 0, len(values))
+	for _, value := range values {
+		key := strings.Join([]string{
+			strings.TrimSpace(value.SourceType), strings.TrimSpace(value.SourceID),
+			strings.TrimSpace(value.SourceURI), strings.TrimSpace(value.Snippet),
+		}, "\x00")
+		current, exists := byKey[key]
+		if !exists {
+			order = append(order, key)
+			byKey[key] = value
+			continue
+		}
+		if (!value.Rejected && current.Rejected) || value.QualityScore > current.QualityScore {
+			byKey[key] = value
+		}
+	}
+	result := make([]models.VerificationEvidence, 0, len(order))
+	for _, key := range order {
+		result = append(result, byKey[key])
+	}
+	return result
 }
 
 func buildAnswer(request AnswerRequest, mode string, evidence []models.VerificationEvidence) string {
@@ -398,17 +507,14 @@ func verifyClaims(claims []models.VerificationClaim, evidence []models.Verificat
 		}
 		claim.SourceRefs = firstNonEmpty(best.SourceURI, best.SourceID, best.SourceLabel)
 		claim.Confidence = math.Round((score+best.QualityScore)/2*100) / 100
-		if !isTrustedEvidence(best.Authority) {
+		if !isSourceSupportedEvidence(best.Authority) {
 			claim.Status = StatusNeedsReview
 			claim.NeedsReview = true
 			claim.SupportExplanation = "source content overlaps the claim, but its provenance authority is untrusted; review is required"
 			continue
 		}
-		claim.SupportExplanation = "claim overlaps supporting evidence and has source provenance"
+		claim.SupportExplanation = "claim overlaps source evidence with authenticated provenance; semantic truth is not inferred"
 		claim.Status = StatusSourceSupported
-		if claim.Confidence >= 0.72 {
-			claim.Status = StatusVerified
-		}
 		if best.SourceType == "test_result" && containsAny(strings.ToLower(best.Snippet), "pass", "passed", "ok") {
 			claim.Status = StatusTestPassed
 		}
@@ -448,9 +554,13 @@ func runStatus(claims []models.VerificationClaim, mode string, request AnswerReq
 	}
 	hasUnsupported := false
 	hasReview := false
+	hasSourceSupported := false
 	for _, claim := range claims {
 		if claim.Status == StatusUnsupported {
 			hasUnsupported = true
+		}
+		if claim.Status == StatusSourceSupported {
+			hasSourceSupported = true
 		}
 		if claim.NeedsReview || claim.Status == StatusNeedsReview || claim.Status == StatusConflicting || claim.Status == StatusUncertain {
 			hasReview = true
@@ -461,6 +571,9 @@ func runStatus(claims []models.VerificationClaim, mode string, request AnswerReq
 	}
 	if hasUnsupported {
 		return StatusUnsupported
+	}
+	if hasSourceSupported {
+		return StatusSourceSupported
 	}
 	if request.HumanApproved && mode == ModeAction {
 		return StatusHumanApproved
@@ -607,17 +720,49 @@ func sourceLabels(evidence []models.VerificationEvidence) string {
 }
 
 func containsContradiction(claim string, evidence []models.VerificationEvidence) bool {
-	lower := strings.ToLower(claim)
+	claimPolarity := statementPolarity(claim)
+	if claimPolarity == 0 {
+		return false
+	}
 	for _, item := range evidence {
-		snippet := strings.ToLower(item.Snippet)
-		if containsAny(lower, "approved", "yes", "enabled") && containsAny(snippet, "rejected", "no", "disabled") {
-			return true
+		if item.Rejected || !item.Used {
+			continue
 		}
-		if containsAny(lower, "rejected", "no", "disabled") && containsAny(snippet, "approved", "yes", "enabled") {
+		if evidencePolarity := statementPolarity(item.Snippet); evidencePolarity != 0 && evidencePolarity != claimPolarity {
 			return true
 		}
 	}
 	return false
+}
+
+func statementPolarity(value string) int {
+	replacer := strings.NewReplacer(
+		",", " ", ".", " ", ";", " ", ":", " ", "/", " ", "\\", " ",
+		"\n", " ", "\t", " ", "(", " ", ")", " ", "-", " ",
+	)
+	tokens := map[string]bool{}
+	for _, token := range strings.Fields(strings.ToLower(replacer.Replace(value))) {
+		tokens[token] = true
+	}
+	positive := 0
+	negative := 0
+	for _, token := range []string{"accept", "accepted", "approve", "approved", "confirm", "confirmed", "enable", "enabled", "yes"} {
+		if tokens[token] {
+			positive++
+		}
+	}
+	for _, token := range []string{"deny", "denied", "disable", "disabled", "no", "not", "reject", "rejected"} {
+		if tokens[token] {
+			negative++
+		}
+	}
+	if positive > 0 && negative == 0 {
+		return 1
+	}
+	if negative > 0 && positive == 0 {
+		return -1
+	}
+	return 0
 }
 
 func splitClaims(answer string) []string {

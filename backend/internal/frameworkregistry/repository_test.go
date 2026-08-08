@@ -1,6 +1,7 @@
 package frameworkregistry
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"strings"
@@ -128,6 +129,18 @@ func TestMemoryRepositorySelectionAuditIsTypedRedactedAndImmutableByCopy(t *test
 		selections[0].ConstitutionSource != decision.ConstitutionSource {
 		t.Fatalf("selection reproducibility metadata did not round-trip: %#v", selections[0])
 	}
+	exact, err := repo.GetSelection(context.Background(), "alice", decision.ID)
+	if err != nil || exact.ID != decision.ID || exact.TaskPlanID != decision.TaskPlanID {
+		t.Fatalf("GetSelection = %#v, %v", exact, err)
+	}
+	if _, err := repo.GetSelection(context.Background(), "bob", decision.ID); err == nil {
+		t.Fatal("exact selection lookup crossed the owner boundary")
+	}
+	exact.Selected[0].Reasons[0] = "caller mutation"
+	exactAgain, err := repo.GetSelection(context.Background(), "alice", decision.ID)
+	if err != nil || exactAgain.Selected[0].Reasons[0] != `Matches "source" review` {
+		t.Fatalf("exact selection lookup leaked a mutable record: %#v, %v", exactAgain, err)
+	}
 	selections[0].Selected[0].Reasons[0] = "caller mutation"
 	again, err := repo.ListSelections("alice", 20)
 	if err != nil {
@@ -174,6 +187,51 @@ func TestMemoryRepositorySelectionAuditIsTypedRedactedAndImmutableByCopy(t *test
 	mismatchedSource.ConstitutionSource = "builtin-robert-constitution-v1:v2"
 	if err := repo.CreateSelection("alice", mismatchedSource, fmt.Sprintf("%x", hash), "safe summary"); err == nil {
 		t.Fatal("selection with a mismatched Constitution source was accepted")
+	}
+
+	v5 := decision
+	v5.ID = uuid.NewString()
+	v5.CreatedAt = decision.CreatedAt.Add(time.Nanosecond)
+	v5.SelectorAlgorithmVersion = "selector-v5"
+	v5.TaskRiskLevel = "medium"
+	v5.EffectiveRiskCeiling = "high"
+	v5.Selected = append([]SelectedFramework(nil), decision.Selected...)
+	v5.Selected[0].RiskCeiling = "high"
+	if err := repo.CreateSelection("alice", v5, fmt.Sprintf("%x", hash), "v5 risk contract"); err != nil {
+		t.Fatalf("CreateSelection v5: %v", err)
+	}
+	v5Selections, err := repo.ListSelections("alice", 20)
+	if err != nil {
+		t.Fatalf("ListSelections v5: %v", err)
+	}
+	if got := v5Selections[0]; got.TaskRiskLevel != "medium" || got.EffectiveRiskCeiling != "high" || got.Selected[0].RiskCeiling != "high" {
+		t.Fatalf("v5 risk contract did not round-trip: %#v", got)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*SelectionDecision)
+	}{
+		{name: "missing task risk", mutate: func(item *SelectionDecision) { item.TaskRiskLevel = "" }},
+		{name: "task exceeds ceiling", mutate: func(item *SelectionDecision) {
+			item.TaskRiskLevel = "high"
+			item.EffectiveRiskCeiling = "medium"
+		}},
+		{name: "selected framework below task", mutate: func(item *SelectionDecision) {
+			item.TaskRiskLevel = "high"
+			item.EffectiveRiskCeiling = "high"
+			item.Selected[0].RiskCeiling = "medium"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := v5
+			candidate.ID = uuid.NewString()
+			candidate.Selected = append([]SelectedFramework(nil), v5.Selected...)
+			test.mutate(&candidate)
+			if err := repo.CreateSelection("alice", candidate, fmt.Sprintf("%x", hash), "invalid v5 risk contract"); err == nil {
+				t.Fatal("invalid selector-v5 risk contract was accepted")
+			}
+		})
 	}
 }
 

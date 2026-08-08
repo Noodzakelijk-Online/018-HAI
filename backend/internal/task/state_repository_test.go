@@ -459,12 +459,32 @@ func TestReviewRequestDigestExcludesTransientApprovalStateAndSecrets(t *testing.
 	if third == first {
 		t.Fatal("action-defining project change did not change request digest")
 	}
+	request.ProjectKey = "project"
+	request.MandateID = uuid.NewString()
+	fourth, err := ReviewRequestDigest("alice", request)
+	if err != nil {
+		t.Fatalf("fourth digest: %v", err)
+	}
+	if fourth == first {
+		t.Fatal("action-defining standing mandate change did not change request digest")
+	}
+	request.MandateID = ""
+	request.CoordinationPlan = taskPlanReference()
+	fifth, err := ReviewRequestDigest("alice", request)
+	if err != nil {
+		t.Fatalf("fifth digest: %v", err)
+	}
+	if fifth == first {
+		t.Fatal("accepted coordination revision did not change request digest")
+	}
 }
 
 func TestStoredReviewRequestPreservesPrivateWorkflowIdentity(t *testing.T) {
 	item := taskStateTestReviewItem("alice", "workflow-plan", time.Now().UTC())
 	item.Request.PursuitID = "pursuit-1"
 	item.Request.WorkflowID = "workflow-1"
+	item.Request.MandateID = uuid.NewString()
+	item.Request.CoordinationPlan = taskPlanReference()
 
 	row, err := reviewItemToModel("alice", item)
 	if err != nil {
@@ -473,13 +493,18 @@ func TestStoredReviewRequestPreservesPrivateWorkflowIdentity(t *testing.T) {
 	if !strings.Contains(row.RequestJSON, `"workflowId":"workflow-1"`) {
 		t.Fatalf("durable request omitted private workflow identity: %s", row.RequestJSON)
 	}
+	if !strings.Contains(row.RequestJSON, `"mandateId":"`+item.Request.MandateID+`"`) {
+		t.Fatalf("durable request omitted mandate identity: %s", row.RequestJSON)
+	}
 
 	roundTrip, err := reviewItemFromModel(row, nil)
 	if err != nil {
 		t.Fatalf("decode workflow review item: %v", err)
 	}
 	if roundTrip.Request.WorkflowID != "workflow-1" ||
-		roundTrip.Request.PursuitID != "pursuit-1" {
+		roundTrip.Request.PursuitID != "pursuit-1" ||
+		roundTrip.Request.MandateID != item.Request.MandateID ||
+		roundTrip.Request.CoordinationPlan != item.Request.CoordinationPlan {
 		t.Fatalf("workflow identity did not round trip: %#v", roundTrip.Request)
 	}
 	digest, err := ReviewRequestDigest("alice", roundTrip.Request)

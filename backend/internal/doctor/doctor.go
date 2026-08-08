@@ -139,6 +139,24 @@ func Diagnose(cfg config.Configuration) Report {
 		"HAI_MEMORY_ENCRYPTION_KEY is empty; memory-engine falls back to the backend API key")
 	secretCheck("security.jwtSecret", "JWT_SECRET", cfg.JWTSecret,
 		"JWT_SECRET is empty; issued tokens cannot be verified")
+	approvalProofKey := strings.TrimSpace(cfg.ApprovalProofSigningKey)
+	switch {
+	case approvalProofKey == "":
+		add("security.approvalProofSigningKey", SeverityFail,
+			"HAI_APPROVAL_PROOF_SIGNING_KEY is empty; controlled automation approval capabilities cannot be issued")
+	case len([]byte(approvalProofKey)) < 32:
+		add("security.approvalProofSigningKey", SeverityFail,
+			"HAI_APPROVAL_PROOF_SIGNING_KEY must contain at least 32 bytes")
+	case IsPlaceholderSecret(approvalProofKey):
+		severity := SeverityWarn
+		if production {
+			severity = SeverityFail
+		}
+		add("security.approvalProofSigningKey", severity,
+			"HAI_APPROVAL_PROOF_SIGNING_KEY still holds a shipped placeholder value; generate a real secret (openssl rand -hex 32)")
+	default:
+		add("security.approvalProofSigningKey", SeverityOK, "set")
+	}
 
 	// Event bus.
 	if countNonEmpty(cfg.Brokers) == 0 {

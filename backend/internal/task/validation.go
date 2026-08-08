@@ -6,6 +6,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"automation-hub-backend/internal/lifeontology"
+	"automation-hub-backend/internal/resourceplanner"
 )
 
 const (
@@ -103,11 +106,17 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 		"success criteria are missing",
 		fmt.Sprintf("criteria-count:%d", len(plan.Intake.SuccessCriteria)),
 	)
+	deterministicRuntime := attempt > 0 && plan.ExecutionResult != nil &&
+		deterministicReadOnlyRuntimeCompleted(plan.ExecutionResult.ToolExecution)
+	modelEvidence := "model:" + strings.TrimSpace(plan.ModelDecision.SelectedModelID)
+	if deterministicRuntime && strings.TrimSpace(plan.ModelDecision.SelectedModelID) == "" {
+		modelEvidence = "model:not-required:deterministic-read-only-runtime"
+	}
 	recordCheck(
 		"a capable model was selected",
-		strings.TrimSpace(plan.ModelDecision.SelectedModelID) != "",
+		strings.TrimSpace(plan.ModelDecision.SelectedModelID) != "" || deterministicRuntime,
 		"no capable model was selected",
-		"model:"+strings.TrimSpace(plan.ModelDecision.SelectedModelID),
+		modelEvidence,
 	)
 	selectedFrameworks := selectedFrameworkEvidence(plan)
 	recordCheck(
@@ -115,6 +124,24 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 		plan.FrameworkDecision != nil && len(plan.FrameworkDecision.Selected) > 0,
 		"no operating frameworks were selected",
 		selectedFrameworks...,
+	)
+	resourceEvidence := []string{}
+	resourceValid := plan.ResourceDecision != nil
+	if plan.ResourceDecision != nil {
+		resourceEvidence = append(resourceEvidence,
+			"resource-feasibility:"+string(plan.ResourceDecision.Feasibility),
+			"resource-decision-digest:"+strings.TrimSpace(plan.ResourceDecision.DecisionDigest),
+		)
+		resourceValid = plan.ResourceDecision.Authority == "advisory_only" &&
+			!plan.ResourceDecision.CanExecute && !plan.ResourceDecision.GrantsAuthority &&
+			plan.ResourceDecision.Feasibility != resourceplanner.Infeasible &&
+			strings.TrimSpace(plan.ResourceDecision.DecisionDigest) != ""
+	}
+	recordCheck(
+		"resource and time feasibility was evaluated",
+		resourceValid,
+		"resource or time planning is missing, invalid, or infeasible",
+		resourceEvidence...,
 	)
 	recordCheck(
 		"required tools were selected",
@@ -147,6 +174,16 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 		"approval is required before execution",
 		approvalEvidence,
 	)
+	if frameworkEvidencePreflightRequired(plan.ValidationPlan.FrameworkEvidenceContracts) {
+		preflightPassed := plan.FrameworkEvidencePreflight != nil && plan.FrameworkEvidencePreflight.Passed
+		preflightEvidence := frameworkEvidencePreflightSummary(plan.FrameworkEvidencePreflight)
+		recordCheck(
+			"framework evidence preconditions passed before execution",
+			preflightPassed,
+			"framework evidence preconditions were not verified before execution",
+			preflightEvidence...,
+		)
+	}
 
 	executionReady := false
 	toolReady := !plan.Intake.NeedsTools && !plan.Intake.NeedsLocalExecution
@@ -263,6 +300,18 @@ func validatePlan(plan *CompletionPlan, attempt int) ValidationResult {
 				criteria = append(criteria, planned)
 				continue
 			}
+			if contracts := frameworkEvidenceContractsForRequirement(
+				plan.ValidationPlan.FrameworkEvidenceContracts,
+				planned.Criterion,
+			); len(contracts) > 0 {
+				planned.Status, planned.Evidence, planned.Failure =
+					evaluateTypedFrameworkEvidence(plan, contracts)
+				if planned.Status == validationCriterionFailed {
+					failures = append(failures, planned.Failure+": "+planned.Criterion)
+				}
+				criteria = append(criteria, planned)
+				continue
+			}
 		}
 		planned.Status = validationCriterionPassed
 		planned.Evidence = criterionValidationEvidence(plan, planned)
@@ -365,6 +414,17 @@ func frameworkEvidenceRequirementApplies(plan *CompletionPlan, criterion string)
 			!strings.Contains(strings.ToLower(plan.Intake.TaskType), "decision") {
 			return false, "the task is a bounded deterministic operation rather than an uncertain diagnosis or forecast"
 		}
+	case "source authority and freshness", "fresh appointment information", "current route or timetable source",
+		"verified contact route", "source-linked entity references", "source-backed deadlines", "retrieved evidence",
+		"source reference", "original source link", "source uri and freshness", "claim-to-source links",
+		"support for factual claims", "asset or property record", "quote or maintenance source",
+		"customer or market evidence", "dated timeline", "claim-to-evidence map", "deadline provenance",
+		"current recovery plan", "backup status", "upstream license and maintenance review",
+		"license and maintenance status", "threat model", "privacy review", "coverage gap",
+		"benchmark against postgresql baseline":
+		if len(plan.ContextPlan.SourceContext) == 0 && !plan.Intake.NeedsDocuments && !plan.Intake.NeedsWebAccess {
+			return false, "the task does not depend on connected-source evidence"
+		}
 	case "artifact provenance":
 		if !plan.Intake.NeedsTools &&
 			!plan.Intake.NeedsLocalExecution &&
@@ -401,6 +461,11 @@ func taskDataClassification(plan *CompletionPlan) string {
 	for _, ranked := range plan.ContextPlan.SourceContext {
 		if ranked.Extraction.Sensitive {
 			return "sensitive-source-derived"
+		}
+	}
+	for _, suggestion := range plan.ContextPlan.LifeContext {
+		if suggestion.Entity.LocalOnly || suggestion.Entity.Sensitivity == lifeontology.SensitivitySensitive || suggestion.Entity.Sensitivity == lifeontology.SensitivityRestricted {
+			return "sensitive-whole-life-context"
 		}
 	}
 	if plan.Intake.NeedsDocuments || len(plan.ContextPlan.SourceContext) > 0 {
@@ -487,6 +552,12 @@ func taskConfidenceEvidence(plan *CompletionPlan) []string {
 	}
 	for _, ranked := range plan.ContextPlan.SourceContext {
 		evidence = append(evidence, fmt.Sprintf("source-relevance:%.2f", ranked.Score))
+	}
+	for _, suggestion := range plan.ContextPlan.LifeContext {
+		evidence = append(evidence,
+			fmt.Sprintf("life-context-confidence:%.2f", suggestion.Entity.Confidence),
+			fmt.Sprintf("life-context-score:%d", suggestion.Score),
+		)
 	}
 	if plan.ExecutionResult != nil {
 		for _, claim := range plan.ExecutionResult.Claims {
@@ -627,6 +698,7 @@ func criterionValidationEvidence(
 		"retrieved evidence",
 		fmt.Sprintf("memory-context-count:%d", len(plan.ContextPlan.UsedContext)),
 		fmt.Sprintf("source-context-count:%d", len(plan.ContextPlan.SourceContext)),
+		fmt.Sprintf("life-context-count:%d", len(plan.ContextPlan.LifeContext)),
 		fmt.Sprintf("verification-evidence-count:%d", result.EvidenceCount),
 	)
 	add(
@@ -702,6 +774,35 @@ func criterionValidationEvidence(
 		add(
 			"approval review gate satisfied complete authorized permission recorded",
 			approval,
+		)
+	}
+	if plan.RiskAssessment.ApprovalGranted && result.ToolExecution != nil &&
+		strings.TrimSpace(result.ToolExecution.LaunchEventID) != "" {
+		approvalSource := strings.TrimSpace(plan.RiskAssessment.ApprovalSourceID)
+		if approvalSource != "" {
+			add(
+				"applicable approval record standing mandate or case approval",
+				"approval-source:"+approvalSource,
+			)
+		}
+		if actor := strings.TrimSpace(plan.RiskAssessment.ApprovalActorIdentity); actor != "" {
+			add("approver identity", "approval-actor:"+actor)
+		}
+		add(
+			"exact proposed action",
+			"task-plan:"+strings.TrimSpace(plan.ID),
+			"automation:"+strings.TrimSpace(result.ToolExecution.AutomationID),
+			"launch-event:"+strings.TrimSpace(result.ToolExecution.LaunchEventID),
+		)
+		add(
+			"risk and consequences",
+			"risk-level:"+firstNonEmpty(plan.RiskAssessment.Level, "unknown"),
+			"risk-reasons:"+strings.Join(plan.RiskAssessment.Reasons, "; "),
+		)
+		add(
+			"scope and expiry",
+			"approval-scope:exact-reviewed-task",
+			"approval-freshness:verified-at-execution",
 		)
 	}
 	if strings.TrimSpace(plan.ContextPlan.Explanation) != "" &&
@@ -795,6 +896,20 @@ func criterionValidationEvidence(
 			)
 		}
 		add("source authority and freshness", sourceEvidence...)
+	}
+	for _, suggestion := range plan.ContextPlan.LifeContext {
+		entity := suggestion.Entity
+		lifeEvidence := []string{
+			"life-ontology-entity:" + entity.ID,
+			"source-authority:owner-scoped-life-ontology",
+			"source-freshness:" + entity.ObservedAt.UTC().Format(time.RFC3339Nano),
+		}
+		for _, provenance := range entity.Provenance {
+			if strings.TrimSpace(provenance.ReferenceID) != "" {
+				lifeEvidence = append(lifeEvidence, "source-reference:"+provenance.ReferenceID)
+			}
+		}
+		add("source authority and freshness", lifeEvidence...)
 	}
 	if plan.FrameworkDecision != nil && len(plan.FrameworkDecision.Selected) > 0 {
 		descriptions := []string{"selected operating frameworks"}

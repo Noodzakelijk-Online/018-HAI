@@ -1,6 +1,7 @@
 package frameworkregistry
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -125,6 +126,33 @@ func (r *GormRepository) CreateSelection(
 		return err
 	}
 	return r.DB.Create(&row).Error
+}
+
+func (r *GormRepository) GetSelection(
+	ctx context.Context,
+	owner,
+	id string,
+) (*SelectionDecision, error) {
+	owner, err := normalizeOwner(owner)
+	if err != nil {
+		return nil, err
+	}
+	selectionID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("framework selection id must be a UUID")
+	}
+
+	var row models.FrameworkSelectionRecord
+	if err := r.DB.WithContext(ctx).
+		Where("owner_identity = ? AND id = ?", owner, selectionID).
+		First(&row).Error; err != nil {
+		return nil, err
+	}
+	decision, err := selectionFromModel(row)
+	if err != nil {
+		return nil, err
+	}
+	return &decision, nil
 }
 
 func (r *GormRepository) ListSelections(owner string, limit int) ([]SelectionDecision, error) {
@@ -455,6 +483,36 @@ func (r *MemoryRepository) CreateSelection(
 	r.selectionIDs[row.ID] = struct{}{}
 	r.selections[row.OwnerIdentity] = append(r.selections[row.OwnerIdentity], row)
 	return nil
+}
+
+func (r *MemoryRepository) GetSelection(
+	_ context.Context,
+	owner,
+	id string,
+) (*SelectionDecision, error) {
+	owner, err := normalizeOwner(owner)
+	if err != nil {
+		return nil, err
+	}
+	selectionID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("framework selection id must be a UUID")
+	}
+
+	r.mu.RLock()
+	rows := append([]models.FrameworkSelectionRecord(nil), r.selections[owner]...)
+	r.mu.RUnlock()
+	for _, row := range rows {
+		if row.ID != selectionID {
+			continue
+		}
+		decision, err := selectionFromModel(row)
+		if err != nil {
+			return nil, err
+		}
+		return &decision, nil
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *MemoryRepository) ListSelections(owner string, limit int) ([]SelectionDecision, error) {
@@ -811,6 +869,15 @@ func selectionToModel(
 	if err != nil {
 		return models.FrameworkSelectionRecord{}, err
 	}
+	taskRiskLevel, effectiveRiskCeiling, err := persistedSelectionRiskContract(
+		selectorVersion,
+		decision.TaskRiskLevel,
+		decision.EffectiveRiskCeiling,
+		decision.Selected,
+	)
+	if err != nil {
+		return models.FrameworkSelectionRecord{}, err
+	}
 	preferenceDigest, err := normalizeSHA256Digest("effective preference digest", decision.EffectivePreferenceDigest)
 	if err != nil {
 		return models.FrameworkSelectionRecord{}, err
@@ -929,6 +996,8 @@ func selectionToModel(
 		CatalogVersion:            catalogVersion,
 		CatalogDigest:             catalogDigest,
 		SelectorAlgorithmVersion:  selectorVersion,
+		TaskRiskLevel:             taskRiskLevel,
+		EffectiveRiskCeiling:      effectiveRiskCeiling,
 		EffectivePreferenceDigest: preferenceDigest,
 		ConstitutionDigest:        constitutionDigest,
 		LifeDomain:                strings.TrimSpace(decision.LifeDomain),
@@ -1054,6 +1123,8 @@ func selectionFromModel(row models.FrameworkSelectionRecord) (SelectionDecision,
 		CatalogVersion:            row.CatalogVersion,
 		CatalogDigest:             row.CatalogDigest,
 		SelectorAlgorithmVersion:  row.SelectorAlgorithmVersion,
+		TaskRiskLevel:             dereferenceString(row.TaskRiskLevel),
+		EffectiveRiskCeiling:      dereferenceString(row.EffectiveRiskCeiling),
 		EffectivePreferenceDigest: row.EffectivePreferenceDigest,
 		ConstitutionDigest:        row.ConstitutionDigest,
 		LifeDomain:                row.LifeDomain,
@@ -1085,6 +1156,69 @@ func selectionFromModel(row models.FrameworkSelectionRecord) (SelectionDecision,
 		ConstitutionVersion:       row.ConstitutionVersion,
 		ConstitutionSource:        row.ConstitutionSource,
 	}, nil
+}
+
+func persistedSelectionRiskContract(
+	selectorVersion string,
+	taskRiskLevel string,
+	effectiveRiskCeiling string,
+	selected []SelectedFramework,
+) (*string, *string, error) {
+	taskRiskLevel = normalizedRiskLevel(taskRiskLevel)
+	effectiveRiskCeiling = normalizedRiskLevel(effectiveRiskCeiling)
+	if selectorVersion != "selector-v5" {
+		if taskRiskLevel == "" && effectiveRiskCeiling == "" {
+			return nil, nil, nil
+		}
+	}
+	taskRank, taskOK := selectionRiskRank(taskRiskLevel)
+	ceilingRank, ceilingOK := selectionRiskRank(effectiveRiskCeiling)
+	if !taskOK || !ceilingOK {
+		return nil, nil, fmt.Errorf(
+			"selector %q requires valid task risk and effective risk ceiling",
+			selectorVersion,
+		)
+	}
+	if taskRank > ceilingRank {
+		return nil, nil, fmt.Errorf("task risk %q exceeds effective risk ceiling %q", taskRiskLevel, effectiveRiskCeiling)
+	}
+	minimumSelectedRank := 4
+	for _, framework := range selected {
+		frameworkRank, ok := selectionRiskRank(framework.RiskCeiling)
+		if !ok {
+			return nil, nil, fmt.Errorf(
+				"selected framework %q has invalid risk ceiling %q",
+				framework.ID,
+				framework.RiskCeiling,
+			)
+		}
+		if frameworkRank < taskRank {
+			return nil, nil, fmt.Errorf(
+				"selected framework %q risk ceiling %q is below task risk %q",
+				framework.ID,
+				framework.RiskCeiling,
+				taskRiskLevel,
+			)
+		}
+		if frameworkRank < minimumSelectedRank {
+			minimumSelectedRank = frameworkRank
+		}
+	}
+	if len(selected) == 0 || minimumSelectedRank != ceilingRank {
+		return nil, nil, fmt.Errorf("effective risk ceiling does not match selected framework ceilings")
+	}
+	return stringPointer(taskRiskLevel), stringPointer(effectiveRiskCeiling), nil
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
+func dereferenceString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func normalizeNewConstitution(constitution Constitution) (Constitution, error) {

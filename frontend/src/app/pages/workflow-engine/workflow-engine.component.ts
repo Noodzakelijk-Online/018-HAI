@@ -2,7 +2,8 @@ import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { forkJoin } from 'rxjs';
+import { NzModalService } from 'ng-zorro-antd/modal';
+import { catchError, forkJoin, of } from 'rxjs';
 import {
   IPursuitDetail,
   IPursuitMatchCandidate,
@@ -17,6 +18,14 @@ import {
   IWorkflowOpenLoopRunSummary,
   IWorkflowOverview,
   IWorkflowRecord,
+  IWorkflowReminderProposal,
+  IWorkflowReminderProposalSnapshot,
+  IWorkflowReminderActivationDecisionRequest,
+  IWorkflowReminderActivationHistoryItem,
+  IWorkflowReminderActivationHistorySnapshot,
+  IWorkflowReminderDeliveryAuthorization,
+  IWorkflowReminderDeliveryHistory,
+  IWorkflowRunResult,
   IWorkflowRunSummary,
 } from '../../models/workflow.model.interface';
 import { WORKFLOW_SERVICE_TOKEN } from '../../services/workflow/workflow.service.token';
@@ -32,6 +41,13 @@ type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
 export class WorkflowEngineComponent implements OnInit {
   overview?: IWorkflowOverview;
   dashboard?: IWorkflowDashboard;
+  reminderProposals?: IWorkflowReminderProposalSnapshot;
+  reminderActivationHistory?: IWorkflowReminderActivationHistorySnapshot;
+  reminderDeliveryHistory?: IWorkflowReminderDeliveryHistory;
+  selectedReminder?: IWorkflowReminderProposal;
+  reminderProposalsUnavailable = false;
+  reminderActivationUnavailable = false;
+  reminderDeliveryUnavailable = false;
   items: IWorkflowItem[] = [];
   approvalItems: IWorkflowItem[] = [];
   selected?: IWorkflowRecord;
@@ -50,7 +66,7 @@ export class WorkflowEngineComponent implements OnInit {
   loading = false;
   saving = false;
   matchingPursuits = false;
-  runningAction?: 'refresh' | 'worker' | 'followups' | 'recovery';
+  runningAction?: 'refresh' | 'worker' | 'selected' | 'followups' | 'recovery' | 'reminders';
   lastOperation?: {
     name: string;
     status: 'completed' | 'failed';
@@ -63,20 +79,18 @@ export class WorkflowEngineComponent implements OnInit {
   riskFilter = 'all';
   activeQueue: 'all' | 'approval' | 'ready' | 'blocked' | 'review' = 'all';
   private frameworkSelectionLookup = 0;
+  activationBusyId?: string;
 
   intakeForm: FormGroup = this.fb.group({
-    input: [
-      'Email from lawyer about Vivare legal hearing tomorrow. Draft formal Dutch reply and attach evidence.',
-      [Validators.required],
-    ],
-    projectKey: ['Vivare dispute'],
+    input: ['', [Validators.required]],
+    projectKey: [''],
     automationId: [''],
-    sourceType: ['email'],
-    sourceId: ['sample-email-1'],
-    sourceUri: ['local://sample/email'],
-    sourceLabel: ['Sample legal email'],
-    contentType: ['email'],
-    sender: ['lawyer@example.test'],
+    sourceType: ['manual'],
+    sourceId: [''],
+    sourceUri: [''],
+    sourceLabel: [''],
+    contentType: ['note'],
+    sender: [''],
     trigger: ['manual_intake'],
   });
 
@@ -101,6 +115,7 @@ export class WorkflowEngineComponent implements OnInit {
     @Inject(WORKFLOW_SERVICE_TOKEN) private workflowService: IWorkflowService,
     private pursuitService: PursuitService,
     private notification: NzNotificationService,
+    private modal: NzModalService,
     private route: ActivatedRoute,
     private router: Router
   ) {}
@@ -127,18 +142,54 @@ export class WorkflowEngineComponent implements OnInit {
     }
     const blockingRefresh = !preserveLastOperation;
     this.loading = true;
+    this.reminderProposals = undefined;
+    this.reminderActivationHistory = undefined;
+    this.reminderDeliveryHistory = undefined;
+    this.reminderProposalsUnavailable = false;
+    this.reminderActivationUnavailable = false;
+    this.reminderDeliveryUnavailable = false;
     if (blockingRefresh) {
       this.runningAction = 'refresh';
     }
     forkJoin({
       overview: this.workflowService.overview(),
       dashboard: this.workflowService.dashboard(),
+      reminderProposals: this.workflowService.reminderProposals().pipe(catchError(() => {
+        this.reminderProposalsUnavailable = true;
+        return of(undefined);
+      })),
+      reminderActivations: this.workflowService.reminderActivationHistory().pipe(catchError(() => {
+        this.reminderActivationUnavailable = true;
+        return of(undefined);
+      })),
+      reminderDeliveries: this.workflowService.reminderDeliveryHistory().pipe(catchError(() => {
+        this.reminderDeliveryUnavailable = true;
+        return of(undefined);
+      })),
       items: this.workflowService.items(this.includeArchived),
       approvals: this.workflowService.approvals(),
     }).subscribe({
-      next: ({ overview, dashboard, items, approvals }) => {
+      next: ({ overview, dashboard, reminderProposals, reminderActivations, reminderDeliveries, items, approvals }) => {
         this.overview = overview;
         this.dashboard = dashboard;
+        const proposalsValid = this.validReminderProposalSnapshot(reminderProposals);
+        const activationsValid = this.validReminderActivationHistory(reminderActivations);
+        const deliveriesValid = this.validReminderDeliveryHistory(reminderDeliveries);
+        this.reminderProposalsUnavailable ||= !!reminderProposals && !proposalsValid;
+        this.reminderActivationUnavailable ||= !!reminderActivations && !activationsValid;
+        this.reminderDeliveryUnavailable ||= !!reminderDeliveries && !deliveriesValid;
+        this.reminderProposals = proposalsValid
+          ? reminderProposals
+          : undefined;
+        this.reminderActivationHistory = activationsValid
+          ? reminderActivations
+          : undefined;
+        this.reminderDeliveryHistory = deliveriesValid ? reminderDeliveries : undefined;
+        if (this.selectedReminder) {
+          this.selectedReminder = this.reminderProposals?.items.find(
+            (proposal) => proposal.id === this.selectedReminder?.id
+          );
+        }
         this.items = items;
         this.approvalItems = approvals;
         this.loading = false;
@@ -149,19 +200,22 @@ export class WorkflowEngineComponent implements OnInit {
           this.lastOperation = {
             name: 'Refresh',
             status: 'completed',
-            summary: `${items.length} workflows, ${approvals.length} approvals, ${dashboard.dueOpenLoops.length} due follow-ups.`,
+            summary: `${items.length} workflows, ${approvals.length} approvals, ${dashboard.dueOpenLoops.length} due follow-ups, ${this.reminderProposals?.due || 0} due reminders.`,
             at: new Date(),
           };
         }
         if (showNotification) {
           this.notification.success(
             'Workflow data refreshed',
-            `${items.length} workflows, ${approvals.length} approvals, ${dashboard.dueOpenLoops.length} due follow-ups.`
+            `${items.length} workflows, ${approvals.length} approvals, ${dashboard.dueOpenLoops.length} due follow-ups, ${this.reminderProposals?.due || 0} due reminders.`
           );
         }
       },
       error: () => {
         this.loading = false;
+        this.reminderProposals = undefined;
+        this.reminderActivationHistory = undefined;
+        this.reminderDeliveryHistory = undefined;
         if (blockingRefresh) {
           this.runningAction = undefined;
         }
@@ -285,18 +339,362 @@ export class WorkflowEngineComponent implements OnInit {
   }
 
   resolveApproval(item: IWorkflowItem, approved: boolean): void {
+    if (this.saving) {
+      return;
+    }
+    this.saving = true;
     this.workflowService.resolveApproval(item.id, {
       approved,
       note: this.approvalForm.value.note,
       actor: 'operator',
     }).subscribe({
       next: (record) => {
+        this.saving = false;
         this.applyWorkflowRecord(record);
         this.notification.success('Approval updated', approved ? 'Workflow approved for execution.' : 'Workflow rejected and blocked.');
         this.refresh(false, true);
       },
-      error: () => this.notification.error('Error', 'Failed to update workflow approval.'),
+      error: () => {
+        this.saving = false;
+        this.notification.error('Error', 'Failed to update workflow approval.');
+      },
     });
+  }
+
+  openReminder(proposal: IWorkflowReminderProposal): void {
+    this.selectedReminder = proposal;
+  }
+
+  closeReminder(): void {
+    this.selectedReminder = undefined;
+  }
+
+  openReminderWorkflow(proposal: IWorkflowReminderProposal): void {
+    const item = this.items.find((candidate) => candidate.id === proposal.workflowId);
+    if (item) {
+      this.closeReminder();
+      this.open(item);
+      return;
+    }
+    this.workflowService.get(proposal.workflowId).subscribe({
+      next: (record) => {
+        this.closeReminder();
+        this.applyWorkflowRecord(record);
+      },
+      error: () => this.notification.error('Workflow unavailable', 'Refresh the reminder before opening its workflow.'),
+    });
+  }
+
+  activationFor(proposal: IWorkflowReminderProposal): IWorkflowReminderActivationHistoryItem | undefined {
+    return this.reminderActivationHistory?.items.find(
+      (item) => item.request.checklistItemId === proposal.checklistItemId
+    );
+  }
+
+  deliveryAuthorizationFor(proposal: IWorkflowReminderProposal): IWorkflowReminderDeliveryAuthorization | undefined {
+    const activation = this.activationFor(proposal);
+    return activation ? this.reminderDeliveryHistory?.authorizations.find(
+      (authorization) => authorization.activationRequestId === activation.request.id
+    ) : undefined;
+  }
+
+  deliveryStatusFor(proposal: IWorkflowReminderProposal): string {
+    const authorization = this.deliveryAuthorizationFor(proposal);
+    if (!authorization) {
+      return 'not_authorized';
+    }
+    const attempts = this.reminderDeliveryHistory?.attempts
+      .filter((attempt) => attempt.authorizationId === authorization.id)
+      .sort((left, right) => right.attemptNumber - left.attemptNumber) || [];
+    return attempts[0]?.status || 'authorized_waiting';
+  }
+
+  canAuthorizeReminderDelivery(proposal: IWorkflowReminderProposal): boolean {
+    const activation = this.activationFor(proposal);
+    return !!activation?.current && activation.status === 'approved' && !!activation.latestDecision?.expiresAt &&
+      new Date(activation.latestDecision.expiresAt).getTime() > Date.now() && !this.deliveryAuthorizationFor(proposal);
+  }
+
+  authorizeReminderDelivery(proposal: IWorkflowReminderProposal, event: Event): void {
+    event.stopPropagation();
+    const activation = this.activationFor(proposal);
+    const decision = activation?.latestDecision;
+    if (!activation || !decision || !this.canAuthorizeReminderDelivery(proposal) || this.activationBusyId) {
+      return;
+    }
+    this.modal.confirm({
+      nzTitle: 'Authorize one internal HAI reminder?',
+      nzContent: 'This permits one local in-app reminder only. It cannot send email, write Calendar data, call a provider, or execute a follow-up.',
+      nzOkText: 'Authorize one reminder',
+      nzCancelText: 'Cancel',
+      nzOnOk: () => {
+        this.activationBusyId = activation.request.id;
+        this.workflowService.authorizeReminderDelivery(activation.request.id, {
+          expectedActivationRequestDigest: activation.request.recordDigest,
+          expectedActivationDecisionDigest: decision.recordDigest,
+          expectedReminderDigest: activation.request.reminderDigest,
+          idempotencyKey: `ui:delivery:${activation.request.id}:${decision.recordDigest.slice(0, 16)}`,
+          channel: 'in_app',
+          confirmation: 'AUTHORIZE ONE INTERNAL HAI REMINDER',
+        }).subscribe({
+          next: (result) => {
+            this.activationBusyId = undefined;
+            if (result?.authority !== 'internal_reminder_delivery_authorization' || result?.canExecute !== false ||
+                result?.deliveryAuthorized !== true || result.authorization?.activationRequestId !== activation.request.id ||
+                result.authorization?.activationDecisionId !== decision.id || result.authorization?.channel !== 'in_app' ||
+                !this.validDigest(result.authorization?.recordDigest)) {
+              this.notification.error('Authorization rejected', 'HAI returned invalid reminder-delivery evidence.');
+              return;
+            }
+            this.notification.success('Internal reminder authorized', 'The local worker may record one in-app reminder. No external effect was authorized.');
+            this.refresh(false, true);
+          },
+          error: () => {
+            this.activationBusyId = undefined;
+            this.notification.error('Authorization blocked', 'The approval expired, changed, or already authorized a delivery.');
+          },
+        });
+      },
+    });
+  }
+
+  runDueReminderDeliveries(): void {
+    if (this.runningAction) {
+      return;
+    }
+    this.runningAction = 'reminders';
+    this.workflowService.runDueReminderDeliveries({ limit: 25 }).subscribe({
+      next: (summary) => {
+        this.runningAction = undefined;
+        this.notification.success(
+          'Internal reminder pass complete',
+          `${summary.delivered} delivered, ${summary.retried} retrying, ${summary.suppressed} suppressed, ${summary.deadLettered} dead-lettered.`
+        );
+        this.refresh(false, true);
+      },
+      error: () => {
+        this.runningAction = undefined;
+        this.notification.error('Reminder pass blocked', 'The local reminder worker could not complete safely.');
+      },
+    });
+  }
+
+  canPrepareReminder(proposal: IWorkflowReminderProposal): boolean {
+    const activation = this.activationFor(proposal);
+    return !activation || ['rejected', 'revoked', 'expired', 'stale'].includes(activation.status);
+  }
+
+  prepareReminderActivation(proposal: IWorkflowReminderProposal, event: Event): void {
+    event.stopPropagation();
+    if (this.activationBusyId || !this.canPrepareReminder(proposal)) {
+      return;
+    }
+    this.activationBusyId = proposal.checklistItemId;
+    const idempotencyKey = [
+      'ui', 'internal-reminder', proposal.checklistItemId,
+      proposal.evidenceDigest.slice(0, 16), Date.now().toString(36),
+    ].join(':');
+    this.workflowService.prepareReminderActivation(proposal.checklistItemId, {
+      expectedReminderDigest: proposal.evidenceDigest,
+      idempotencyKey,
+      activationKind: 'internal_notification',
+      confirmation: 'PREPARE INTERNAL REMINDER ONLY',
+    }).subscribe({
+      next: (result) => {
+        this.activationBusyId = undefined;
+        if (result?.authority !== 'reminder_activation_request_only' || result?.canExecute !== false ||
+            result.request?.activationKind !== 'internal_notification' ||
+            result.request?.checklistItemId !== proposal.checklistItemId ||
+            result.request?.reminderDigest !== proposal.evidenceDigest ||
+            !this.validDigest(result.request?.recordDigest)) {
+          this.notification.error('Preparation rejected', 'HAI returned invalid reminder preparation evidence.');
+          return;
+        }
+        this.notification.success(
+          result.replayed ? 'Preparation already recorded' : 'Internal reminder prepared',
+          'Nothing was sent and no calendar event was created. Owner approval remains separate.'
+        );
+        this.refresh(false, true);
+      },
+      error: () => {
+        this.activationBusyId = undefined;
+        this.notification.error('Preparation blocked', 'The reminder changed or could not be prepared safely.');
+      },
+    });
+  }
+
+  reviewReminderActivation(proposal: IWorkflowReminderProposal, event: Event): void {
+    event.stopPropagation();
+    const activation = this.activationFor(proposal);
+    if (!activation || !activation.current || this.activationBusyId) {
+      return;
+    }
+    if (activation.status === 'approved') {
+      this.modal.confirm({
+        nzTitle: 'Revoke internal reminder preparation?',
+        nzContent: 'This only records a revocation. No message or calendar action has been executed.',
+        nzOkText: 'Revoke preparation',
+        nzOkDanger: true,
+        nzCancelText: 'Keep approval',
+        nzOnOk: () => this.decideReminderActivation(activation, 'revoked'),
+      });
+      return;
+    }
+    if (!['prepared', 'needs_clarification'].includes(activation.status)) {
+      return;
+    }
+    this.modal.confirm({
+      nzTitle: 'Approve this internal reminder preparation?',
+      nzContent: 'Approval remains non-executing. A future effect would still require separate authorization and verification.',
+      nzOkText: 'Approve preparation',
+      nzCancelText: 'Cancel',
+      nzOnOk: () => this.decideReminderActivation(activation, 'approved'),
+    });
+  }
+
+  rejectReminderActivation(proposal: IWorkflowReminderProposal, event: Event): void {
+    event.stopPropagation();
+    const activation = this.activationFor(proposal);
+    if (!activation || !activation.current ||
+        !['prepared', 'needs_clarification'].includes(activation.status) || this.activationBusyId) {
+      return;
+    }
+    this.modal.confirm({
+      nzTitle: 'Reject this internal reminder preparation?',
+      nzContent: 'This appends a rejection decision only. No message, calendar event, provider call, or follow-up will run.',
+      nzOkText: 'Reject preparation',
+      nzOkDanger: true,
+      nzCancelText: 'Cancel',
+      nzOnOk: () => this.decideReminderActivation(activation, 'rejected'),
+    });
+  }
+
+  private decideReminderActivation(
+    activation: IWorkflowReminderActivationHistoryItem,
+    decision: 'approved' | 'rejected' | 'revoked'
+  ): void {
+    const confirmation: Record<'approved' | 'rejected' | 'revoked', IWorkflowReminderActivationDecisionRequest['confirmation']> = {
+      approved: 'APPROVE INTERNAL REMINDER PREPARATION',
+      rejected: 'REJECT INTERNAL REMINDER PREPARATION',
+      revoked: 'REVOKE INTERNAL REMINDER PREPARATION',
+    };
+    const reason: Record<'approved' | 'rejected' | 'revoked', string> = {
+      approved: 'Owner approved keeping this internal reminder preparation available.',
+      rejected: 'Owner rejected this internal reminder preparation.',
+      revoked: 'Owner revoked the prior internal reminder preparation approval.',
+    };
+    this.activationBusyId = activation.request.id;
+    this.workflowService.decideReminderActivation(activation.request.id, {
+      decision,
+      reason: reason[decision],
+      confirmation: confirmation[decision],
+      expectedActivationRequestDigest: activation.request.recordDigest,
+      expectedPreviousDecisionId: activation.latestDecision?.id,
+    }).subscribe({
+      next: (result) => {
+        this.activationBusyId = undefined;
+        if (result?.authority !== 'reminder_activation_decision_only' || result?.canExecute !== false ||
+            result.decision?.activationRequestId !== activation.request.id ||
+            result.decision?.activationRequestDigest !== activation.request.recordDigest ||
+            result.decision?.decision !== decision || !this.validDigest(result.decision?.recordDigest)) {
+          this.notification.error('Decision rejected', 'HAI returned invalid reminder decision evidence.');
+          return;
+        }
+        this.notification.success('Reminder decision recorded', 'The immutable decision was saved. No external action was executed.');
+        this.refresh(false, true);
+      },
+      error: () => {
+        this.activationBusyId = undefined;
+        this.notification.error('Decision blocked', 'The reminder request expired or changed. Prepare a fresh request.');
+      },
+    });
+  }
+
+  private validReminderProposalSnapshot(snapshot?: IWorkflowReminderProposalSnapshot): snapshot is IWorkflowReminderProposalSnapshot {
+    if (snapshot?.authority !== 'reminder_proposal_only' || snapshot?.canExecute !== false ||
+      snapshot?.freshness?.status !== 'current_internal_reminder_snapshot' ||
+      snapshot.freshness.revalidationRequired !== true ||
+      Number.isNaN(new Date(snapshot.freshness.checkedAt || '').getTime()) ||
+      !String(snapshot.freshness.reason || '').trim() || !Array.isArray(snapshot.items) ||
+      !Number.isSafeInteger(snapshot.due) || snapshot.due < 0 ||
+      !Number.isSafeInteger(snapshot.upcoming) || snapshot.upcoming < 0 ||
+      snapshot.due + snapshot.upcoming !== snapshot.items.length) {
+      return false;
+    }
+    const ids = new Set(snapshot.items.map((item) => item?.id));
+    const due = snapshot.items.filter((item) => item?.status === 'due').length;
+    const upcoming = snapshot.items.filter((item) => item?.status === 'upcoming').length;
+    return due === snapshot.due && upcoming === snapshot.upcoming &&
+      ids.size === snapshot.items.length && snapshot.items.every((item) =>
+      !!item?.id && !!item.workflowId && item.checklistItemId === item.id &&
+      item.authority === 'reminder_proposal_only' && item.canExecute === false &&
+      this.validDigest(item.evidenceDigest) &&
+      ['due', 'upcoming'].includes(item.status) &&
+      !Number.isNaN(new Date(item.reminderAt || '').getTime()) &&
+      !!String(item.title || '').trim() && !!String(item.label || '').trim() &&
+      !!String(item.nextAction || '').trim()
+    );
+  }
+
+  private validReminderActivationHistory(snapshot?: IWorkflowReminderActivationHistorySnapshot): snapshot is IWorkflowReminderActivationHistorySnapshot {
+    if (snapshot?.authority !== 'reminder_activation_history_only' || snapshot?.canExecute !== false ||
+        !Array.isArray(snapshot?.items) || Number.isNaN(new Date(snapshot?.checkedAt || '').getTime())) {
+      return false;
+    }
+    const requestIds = new Set(snapshot.items.map((item) => item?.request?.id));
+    const allowedStatuses = ['prepared', 'approved', 'rejected', 'needs_clarification', 'revoked', 'expired', 'stale'];
+    return requestIds.size === snapshot.items.length && snapshot.items.every((item) => {
+      const request = item?.request;
+      const decision = item?.latestDecision;
+      if (!request?.id || !request.workflowId || !request.checklistItemId ||
+          request.activationKind !== 'internal_notification' || request.checklistStatus !== 'open' ||
+          request.authority !== 'reminder_activation_request_only' ||
+          request.confirmation !== 'PREPARE INTERNAL REMINDER ONLY' || item.canExecute !== false ||
+          !allowedStatuses.includes(item.status) || typeof item.current !== 'boolean' ||
+          !this.validDigest(request.reminderDigest) || !this.validDigest(request.requestDigest) ||
+          !this.validDigest(request.recordDigest) ||
+          Number.isNaN(new Date(request.reminderAt || '').getTime()) ||
+          Number.isNaN(new Date(request.requestedAt || '').getTime()) ||
+          Number.isNaN(new Date(request.expiresAt || '').getTime())) {
+        return false;
+      }
+      if (!decision) {
+        return ['prepared', 'expired', 'stale'].includes(item.status);
+      }
+      return decision.activationRequestId === request.id &&
+        decision.activationRequestDigest === request.recordDigest &&
+        decision.authority === 'reminder_activation_decision_only' &&
+        ['approved', 'rejected', 'needs_clarification', 'revoked'].includes(decision.decision) &&
+        this.validDigest(decision.requestDigest) && this.validDigest(decision.recordDigest) &&
+        !Number.isNaN(new Date(decision.decidedAt || '').getTime());
+    });
+  }
+
+  private validReminderDeliveryHistory(history?: IWorkflowReminderDeliveryHistory): history is IWorkflowReminderDeliveryHistory {
+    if (history?.authority !== 'internal_reminder_delivery_receipt' || history?.canExecute !== false ||
+        !Array.isArray(history.authorizations) || !Array.isArray(history.attempts)) {
+      return false;
+    }
+    const authorizationIds = new Set(history.authorizations.map((item) => item?.id));
+    if (authorizationIds.size !== history.authorizations.length || !history.authorizations.every((item) =>
+      !!item?.id && !!item.activationRequestId && !!item.activationDecisionId && !!item.workflowId && !!item.checklistItemId &&
+      item.channel === 'in_app' && item.authority === 'internal_reminder_delivery_authorization' &&
+      item.confirmation === 'AUTHORIZE ONE INTERNAL HAI REMINDER' && this.validDigest(item.reminderDigest) &&
+      this.validDigest(item.activationRequestDigest) && this.validDigest(item.activationDecisionDigest) &&
+      this.validDigest(item.requestDigest) && this.validDigest(item.recordDigest)
+    )) {
+      return false;
+    }
+    return history.attempts.every((item) => authorizationIds.has(item?.authorizationId) &&
+      Number.isSafeInteger(item.attemptNumber) && item.attemptNumber >= 1 && item.attemptNumber <= 3 &&
+      ['delivered', 'retryable_failure', 'suppressed', 'dead_lettered'].includes(item.status) &&
+      item.authority === 'internal_reminder_delivery_receipt' && this.validDigest(item.reminderDigest) &&
+      this.validDigest(item.authorizationDigest) && this.validDigest(item.recordDigest)
+    );
+  }
+
+  private validDigest(value?: string): boolean {
+    return /^[0-9a-f]{64}$/.test(String(value || ''));
   }
 
   resolveInterruptedExecution(): void {
@@ -460,6 +858,84 @@ export class WorkflowEngineComponent implements OnInit {
       },
       error: () => this.notification.error('Error', 'Failed to update proposal.'),
     });
+  }
+
+  runSelectedWorkflow(): void {
+    const item = this.selected?.item;
+    if (!item || item.currentState !== 'ready' || item.approvalStatus !== 'approved' || this.runningAction) {
+      return;
+    }
+    this.modal.confirm({
+      nzTitle: 'Run this approved workflow?',
+      nzContent: 'HAI will claim only this workflow. Any concrete task or runtime action still passes authorization, emergency-stop, audit, and verification gates.',
+      nzOkText: 'Run this workflow',
+      nzCancelText: 'Cancel',
+      nzOnOk: () => this.executeSelectedWorkflow(item.id),
+    });
+  }
+
+  private executeSelectedWorkflow(id: string): void {
+    this.runningAction = 'selected';
+    this.workflowService.runOne(id).subscribe({
+      next: (result) => {
+        this.runningAction = undefined;
+        const completed = result.status === 'completed';
+        this.lastOperation = {
+          name: 'Run selected workflow',
+          status: completed ? 'completed' : 'failed',
+          summary: this.workflowResultSummary(result),
+          details: result.message,
+          at: new Date(),
+        };
+        if (completed) {
+          this.notification.success('Workflow completed', 'The selected workflow completed and its result was verified.');
+        } else {
+          this.notification.warning('Workflow needs attention', this.workflowResultSummary(result));
+        }
+        this.reloadSelectedWorkflow();
+        this.refresh(false, true);
+      },
+      error: () => {
+        this.runningAction = undefined;
+        this.lastOperation = {
+          name: 'Run selected workflow',
+          status: 'failed',
+          summary: 'The selected workflow could not be started.',
+          at: new Date(),
+        };
+        this.notification.error('Execution failed', 'The selected workflow could not be started. No other workflow was run.');
+      },
+    });
+  }
+
+  isAutomationSelectionProposal(action?: string): boolean {
+    return (action || '').trim() === 'Select an automation for controlled execution';
+  }
+
+  hasOpenAutomationSelection(record?: IWorkflowRecord): boolean {
+    return !!record?.proposals?.some((proposal) =>
+      proposal.status === 'open' && this.isAutomationSelectionProposal(proposal.recommendedAction)
+    );
+  }
+
+  isAutomationOption(option?: string): boolean {
+    return /\[automation:[0-9a-f-]{36}\]/i.test(option || '');
+  }
+
+  automationOptionLabel(option?: string): string {
+    const value = (option || '').trim();
+    const marker = value.indexOf(' [automation:');
+    return marker > 4 ? value.slice(4, marker).trim() : 'Use automation';
+  }
+
+  openAutomationSetup(): void {
+    this.router.navigate(['/home']);
+  }
+
+  openCoordinationPlan(planId?: string): void {
+    const normalized = (planId || '').trim();
+    if (!normalized) return;
+    this.router.navigate(['/plans'], { queryParams: { planId: normalized } });
   }
 
   markChecklist(itemId: string, status: string): void {
@@ -731,7 +1207,7 @@ export class WorkflowEngineComponent implements OnInit {
     return 24;
   }
 
-  isActionRunning(action: 'refresh' | 'worker' | 'followups' | 'recovery'): boolean {
+  isActionRunning(action: 'refresh' | 'worker' | 'selected' | 'followups' | 'recovery'): boolean {
     return this.runningAction === action;
   }
 
@@ -876,6 +1352,11 @@ export class WorkflowEngineComponent implements OnInit {
       .slice(0, 5)
       .map((result) => `${result.status}: ${result.message || result.workflowId}`)
       .join(' | ');
+  }
+
+  private workflowResultSummary(result: IWorkflowRunResult): string {
+    const state = this.readable(result.state || result.status);
+    return result.message ? `${state}: ${result.message}` : `${state} (${result.status}).`;
   }
 
   private openLoopRunDetails(summary: IWorkflowOpenLoopRunSummary): string {

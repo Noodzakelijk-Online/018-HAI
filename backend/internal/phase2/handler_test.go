@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/operations"
@@ -21,6 +22,12 @@ const feedJSON = `[
 
 func newTestServer(t *testing.T) (*gin.Engine, *Module) {
 	t.Helper()
+	m := newTestModule(t)
+	return newTestRouter(m, "local-operator", true), m
+}
+
+func newTestModule(t *testing.T) *Module {
+	t.Helper()
 	feedsDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(feedsDir, "inbox.json"), []byte(feedJSON), 0o600); err != nil {
 		t.Fatal(err)
@@ -33,10 +40,23 @@ func newTestServer(t *testing.T) (*gin.Engine, *Module) {
 		FeedFiles:    []string{"inbox.json"},
 		Mode:         autonomypolicy.ModeAutonomousSafe,
 	}
-	m := NewModule(operations.NewService(operations.NewMemoryRepository()), cfg)
+	return NewModuleWithEvidencePackRepository(
+		operations.NewService(operations.NewMemoryRepository()),
+		cfg,
+		newTestExecutionAuthorizationService(t),
+		newTestEvidencePackRepository(),
+	)
+}
 
+func newTestRouter(m *Module, subject string, setSubject bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	if setSubject {
+		r.Use(func(c *gin.Context) {
+			c.Set("subject", subject)
+			c.Next()
+		})
+	}
 	h := m.Handler()
 	ops := r.Group("/operations")
 	ops.GET("", h.ListOperations)
@@ -53,7 +73,7 @@ func newTestServer(t *testing.T) (*gin.Engine, *Module) {
 	r.GET("/evidence-packs/:id", h.GetEvidencePack)
 	r.POST("/background/run", h.RunBackground)
 	r.GET("/account-feeds", h.ListFeeds)
-	return r, m
+	return r
 }
 
 func do(t *testing.T, r *gin.Engine, method, path string) *httptest.ResponseRecorder {
@@ -118,6 +138,138 @@ func TestBackgroundRunAndDashboardOverHTTP(t *testing.T) {
 	w = do(t, r, http.MethodGet, "/operations/"+listed.Operations[0].ID+"/events")
 	if w.Code != http.StatusOK {
 		t.Fatalf("events: status %d", w.Code)
+	}
+}
+
+func TestBackgroundRunScopesFeedsAndProcessingToAuthenticatedOwner(t *testing.T) {
+	m := newTestModule(t)
+	r := newTestRouter(m, "caller-owner", true)
+
+	_, err := m.RunConfiguredBackground(t.Context())
+	if err != nil {
+		t.Fatalf("configured owner background run: %v", err)
+	}
+	configuredBefore, err := m.Service().List(operations.Filter{
+		OwnerUserID: "local-operator",
+		WorkspaceID: "local",
+		Limit:       50,
+	})
+	if err != nil {
+		t.Fatalf("list configured owner operations: %v", err)
+	}
+	if len(configuredBefore) != 2 {
+		t.Fatalf("configured run created %d operations, want 2", len(configuredBefore))
+	}
+
+	w := do(t, r, http.MethodPost, "/background/run")
+	if w.Code != http.StatusOK {
+		t.Fatalf("background run: status %d body %s", w.Code, w.Body.String())
+	}
+
+	callerOps, err := m.Service().List(operations.Filter{
+		OwnerUserID: "caller-owner",
+		WorkspaceID: "local",
+		Limit:       50,
+	})
+	if err != nil {
+		t.Fatalf("list caller operations: %v", err)
+	}
+	if len(callerOps) != 2 {
+		t.Fatalf("caller-scoped run created %d caller operations, want 2", len(callerOps))
+	}
+	for _, op := range callerOps {
+		if op.OwnerUserID != "caller-owner" {
+			t.Fatalf("operation %s owner = %q, want caller-owner", op.ID, op.OwnerUserID)
+		}
+	}
+
+	configuredAfter, err := m.Service().List(operations.Filter{
+		OwnerUserID: "local-operator",
+		WorkspaceID: "local",
+		Limit:       50,
+	})
+	if err != nil {
+		t.Fatalf("list configured owner operations after caller run: %v", err)
+	}
+	if len(configuredAfter) != len(configuredBefore) {
+		t.Fatalf("caller run changed configured owner operation count from %d to %d", len(configuredBefore), len(configuredAfter))
+	}
+	configuredReceipts, err := m.execAuth.List(t.Context(), "local-operator", 10)
+	if err != nil {
+		t.Fatalf("list configured owner execution receipts: %v", err)
+	}
+	callerReceipts, err := m.execAuth.List(t.Context(), "caller-owner", 10)
+	if err != nil {
+		t.Fatalf("list caller execution receipts: %v", err)
+	}
+	if len(configuredReceipts) != 1 || len(callerReceipts) != 1 {
+		t.Fatalf(
+			"execution receipts configured=%d caller=%d, want one owner-scoped receipt each",
+			len(configuredReceipts),
+			len(callerReceipts),
+		)
+	}
+	if configuredReceipts[0].OwnerIdentity != "local-operator" ||
+		callerReceipts[0].OwnerIdentity != "caller-owner" {
+		t.Fatalf(
+			"execution receipt owners configured=%q caller=%q",
+			configuredReceipts[0].OwnerIdentity,
+			callerReceipts[0].OwnerIdentity,
+		)
+	}
+	before := make(map[string]operationsSnapshot, len(configuredBefore))
+	for _, op := range configuredBefore {
+		before[op.ID.String()] = operationsSnapshot{status: op.Status, version: op.Version, updatedAt: op.UpdatedAt}
+	}
+	for _, op := range configuredAfter {
+		want, ok := before[op.ID.String()]
+		if !ok {
+			t.Fatalf("caller run created configured-owner operation %s", op.ID)
+		}
+		if op.Status != want.status || op.Version != want.version || !op.UpdatedAt.Equal(want.updatedAt) {
+			t.Fatalf("caller run mutated configured-owner operation %s", op.ID)
+		}
+	}
+}
+
+type operationsSnapshot struct {
+	status    string
+	version   int64
+	updatedAt time.Time
+}
+
+func TestBackgroundRunRejectsMissingOrBlankAuthenticatedOwner(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		subject    string
+		setSubject bool
+	}{
+		{name: "missing", setSubject: false},
+		{name: "blank", subject: " \t ", setSubject: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModule(t)
+			r := newTestRouter(m, tc.subject, tc.setSubject)
+
+			w := do(t, r, http.MethodPost, "/background/run")
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d; body %s", w.Code, http.StatusUnauthorized, w.Body.String())
+			}
+
+			for _, owner := range []string{"local-operator", tc.subject} {
+				ops, err := m.Service().List(operations.Filter{
+					OwnerUserID: owner,
+					WorkspaceID: "local",
+					Limit:       50,
+				})
+				if err != nil {
+					t.Fatalf("list operations: %v", err)
+				}
+				if len(ops) != 0 {
+					t.Fatalf("rejected request created or processed %d operations for owner %q", len(ops), owner)
+				}
+			}
+		})
 	}
 }
 

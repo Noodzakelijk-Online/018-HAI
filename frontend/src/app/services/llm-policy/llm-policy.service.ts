@@ -9,6 +9,7 @@ import {
   ILLMProviderProbe,
   ILLMRouteDecision,
   ILLMRouteRequest,
+  ILLMGenerationResult,
 } from '../../models/llm-policy.model.interface';
 
 @Injectable({
@@ -49,5 +50,11 @@ export class LLMPolicyService implements ILLMPolicyService {
 
   getLogs(): Observable<ILLMRouteDecision[]> {
     return this.http.get<ILLMRouteDecision[]>(`${this.apiUrl}/logs`);
+  }
+
+  getGenerationHistory(limit: number = 30): Observable<ILLMGenerationResult[]> {
+    return this.http.get<ILLMGenerationResult[]>(`${this.apiUrl}/generations`, {
+      params: { limit: String(limit) },
+    });
   }
 }

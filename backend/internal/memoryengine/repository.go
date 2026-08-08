@@ -118,7 +118,7 @@ func (r *GormRepository) FindInsightsForOwner(ownerIdentity, kind, projectKey st
 	var insights []models.AIMemoryInsight
 	query := r.DB.Where("status <> ?", "superseded")
 	if ownerIdentity != "" {
-		query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+		query = query.Where("owner_identity = ?", ownerIdentity)
 	}
 	if kind != "" {
 		query = query.Where("kind = ?", kind)
@@ -137,7 +137,7 @@ func applyConversationOwnerScope(query *gorm.DB, ownerIdentity string) *gorm.DB 
 	if ownerIdentity == "" {
 		return query
 	}
-	return query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+	return query.Where("owner_identity = ?", ownerIdentity)
 }
 
 func (r *GormRepository) ArchiveInsights(conversationID uuid.UUID, revision int) error {

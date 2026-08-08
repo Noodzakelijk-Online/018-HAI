@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"automation-hub-backend/internal/agentregistry"
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/ambient"
+	"automation-hub-backend/internal/ambientmonitor"
 	"automation-hub-backend/internal/anythingllm"
 	"automation-hub-backend/internal/assistant"
 	"automation-hub-backend/internal/autogencompat"
@@ -24,6 +26,7 @@ import (
 	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/browserverify"
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/controlledlearning"
 	"automation-hub-backend/internal/crewai"
 	"automation-hub-backend/internal/deepeval"
 	"automation-hub-backend/internal/deepteam"
@@ -32,7 +35,10 @@ import (
 	"automation-hub-backend/internal/domainpack"
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/evidently"
+	"automation-hub-backend/internal/executionapproval"
+	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/featureflags"
+	"automation-hub-backend/internal/frameworkevidence"
 	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/garak"
 	"automation-hub-backend/internal/gitleaks"
@@ -43,7 +49,10 @@ import (
 	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
+	"automation-hub-backend/internal/knowledgegraph"
 	"automation-hub-backend/internal/langfuse"
+	"automation-hub-backend/internal/lifeledger"
+	"automation-hub-backend/internal/lifeontology"
 	"automation-hub-backend/internal/lifeops"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/lmeval"
@@ -56,21 +65,26 @@ import (
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/openlit"
 	"automation-hub-backend/internal/opscontrol"
+	"automation-hub-backend/internal/outcomeevaluation"
 	"automation-hub-backend/internal/phase2"
+	"automation-hub-backend/internal/plangraph"
 	"automation-hub-backend/internal/planningoptimizer"
 	"automation-hub-backend/internal/presidio"
 	"automation-hub-backend/internal/privacyfilter"
+	"automation-hub-backend/internal/proactivity"
 	"automation-hub-backend/internal/promptfoo"
 	"automation-hub-backend/internal/pursuit"
 	"automation-hub-backend/internal/pydanticai"
 	"automation-hub-backend/internal/ragflow"
 	"automation-hub-backend/internal/rbac"
 	"automation-hub-backend/internal/research"
+	"automation-hub-backend/internal/resilience"
 	"automation-hub-backend/internal/runtimelab"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/serena"
 	"automation-hub-backend/internal/source"
+	"automation-hub-backend/internal/sourceevidence"
 	"automation-hub-backend/internal/standingmandate"
 	"automation-hub-backend/internal/syft"
 	"automation-hub-backend/internal/task"
@@ -80,6 +94,7 @@ import (
 	"automation-hub-backend/internal/wasiexec"
 	"automation-hub-backend/internal/whispercpp"
 	"automation-hub-backend/internal/workflow"
+	"automation-hub-backend/internal/workflow/approvaladapter"
 	"automation-hub-backend/internal/workflowtask"
 
 	"github.com/gin-gonic/gin"
@@ -113,18 +128,14 @@ func initializeRoutes(router *gin.Engine) error {
 		backgroundAllowed := func() bool {
 			return opsControlService.Control().Mode().AllowsBackgroundProcessing()
 		}
-		runtimeRegistry := agentruntime.DefaultRegistry()
-		// The automation executor and runtime-control routes must share one
-		// registry so an approved task can be cancelled by its actual owner.
-		automationService := automation.NewServiceWithRuntimeRegistry(
-			automation.DefaultRepository(),
-			*events.DefaultPublisher(),
-			runtimeRegistry,
-		)
-		runtimeHandler := agentruntime.NewHandler(runtimeRegistry)
-		initializeAgentRuntimeRoutes(v1, runtimeHandler)
 		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
 		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
+		planGraphRepository, err := plangraph.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		planGraphService := plangraph.NewService(planGraphRepository, nil)
+		initializePlanGraphRoutes(v1, plangraph.NewHandler(planGraphService))
 		initializePydanticAIRoutes(v1, pydanticai.NewHandler(pydanticai.DefaultService()))
 		initializeBrowserVerificationRoutes(v1, browserverify.NewHandler(browserverify.DefaultService()))
 		initializeResearchRoutes(v1, research.NewHandler(research.DefaultService()))
@@ -142,12 +153,6 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeLangfuseRoutes(v1, langfuse.NewHandler(langfuse.DefaultService()))
 		whisperService := whispercpp.DefaultService()
 		initializeWhisperCPPRoutes(v1, whispercpp.NewHandler(whisperService))
-		initializeWASIRoutes(v1, wasiexec.NewHandler(wasiexec.DefaultService()))
-		autoHandler := automation.NewHandler(automationService)
-		err := initializeAutomationsRoutes(v1, autoHandler)
-		if err != nil {
-			return err
-		}
 		probeHistory, err := llm.DefaultProbeHistoryRepository()
 		if err != nil {
 			return err
@@ -164,10 +169,8 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
+		llmService.WithModelTelemetryRepository(modelintelligence.DefaultTelemetryRepository())
 		modelIntelService.WithModelMaintenance(llmService)
-		llmHandler := llm.NewHandler(llmService)
-		initializeLLMRoutes(v1, llmHandler)
-		llm.StartModelMaintenanceScheduler(context.Background(), llmService, backgroundAllowed)
 		catalogHistory, err := braincatalog.DefaultUpstreamReviewHistoryRepository()
 		if err != nil {
 			return err
@@ -194,7 +197,16 @@ func initializeRoutes(router *gin.Engine) error {
 		memoryService := memory.NewServiceWithSemantic(memory.DefaultRepository(), semanticService)
 		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
 		workflowRunner := workflowtask.NewDeferredRunner()
-		workflowService := workflow.NewServiceWithTaskRunner(workflow.DefaultRepository(), workflowRunner, memoryService)
+		workflowRepository := workflow.DefaultRepository()
+		workflowService := workflow.NewServiceWithTaskRunner(workflowRepository, workflowRunner, memoryService)
+		workflowService, err = workflow.WithAcceptedPlanResolver(workflowService, planGraphService)
+		if err != nil {
+			return err
+		}
+		workflowService, err = workflow.WithCoordinationPlanProjector(workflowService, planGraphService)
+		if err != nil {
+			return err
+		}
 		initializeAgentFrameworkRoutes(v1, agentframework.NewHandler(agentframework.WithModelMaintenance(agentframework.DefaultService(), llmService)))
 		initializeAutoGenCompatibilityRoutes(v1, autogencompat.NewHandler(autogencompat.DefaultService()))
 		initializeCrewAIRoutes(v1, crewai.NewHandler(crewai.WithModelMaintenance(crewai.DefaultService(), llmService)))
@@ -215,24 +227,187 @@ func initializeRoutes(router *gin.Engine) error {
 		}
 		initializeSyftRoutes(v1, syft.NewHandler(syftService))
 		initializeTrivyRoutes(v1, trivy.NewHandler(trivy.DefaultService()))
-		temporalService := temporalbridge.NewServiceFromEnv(workflowService)
-		temporalService.StartWorkerEventually(context.Background())
-		initializeTemporalRoutes(v1, temporalbridge.NewHandler(temporalService))
-		pursuitService := pursuit.NewService(pursuit.DefaultRepository(), workflowService)
+		pursuitRepository := pursuit.DefaultRepository()
+		pursuitService := pursuit.NewService(pursuitRepository, workflowService)
+		pursuitService, err = pursuit.WithAcceptedPlanResolver(pursuitService, planGraphService)
+		if err != nil {
+			return err
+		}
 		sourceService := source.NewServiceWithWorkflowPursuitAndSemantic(source.DefaultRepository(), memoryService, workflowService, pursuitService, semanticService)
-		verificationService := verification.NewService(verification.DefaultRepository(), sourceService, memoryService, pursuitService)
+		sourceEvidenceRepository, err := sourceevidence.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		knowledgeRepository, err := knowledgegraph.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		knowledgeService := knowledgegraph.NewService(knowledgeRepository, nil)
+		if err := initializeKnowledgeClaimRoutes(v1, knowledgegraph.NewClaimHandler(knowledgeService)); err != nil {
+			return err
+		}
+		verificationService := verification.NewServiceWithEvidenceResolvers(
+			verification.DefaultRepository(), sourceService, memoryService, nil,
+			sourceEvidenceRepository, pursuitService,
+		)
+		verificationService, err = verification.WithClaimProjector(
+			verificationService,
+			knowledgeClaimProjector{service: knowledgeService},
+		)
+		if err != nil {
+			return err
+		}
 		initializeVerificationRoutes(v1, verification.NewHandler(verificationService))
 		frameworkService, err := frameworkregistry.DefaultService()
 		if err != nil {
 			return err
 		}
 		initializeFrameworkRegistryRoutes(v1, frameworkregistry.NewHandler(frameworkService))
+		agentTeamRepository, err := frameworkregistry.DefaultAgentTeamRepository()
+		if err != nil {
+			return err
+		}
+		agentTeamService := frameworkregistry.NewAgentTeamService(agentTeamRepository)
+		if err := initializeAgentTeamRoutes(
+			v1,
+			frameworkregistry.NewAgentTeamHandler(agentTeamService),
+		); err != nil {
+			return err
+		}
+		controlledLearningRepository, err := controlledlearning.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		controlledLearningService, err := controlledlearning.NewService(
+			controlledLearningRepository,
+			nil,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		workflowService = workflow.WithControlledLearning(
+			workflowService,
+			controlledLearningService,
+		)
+		pursuitService = pursuit.WithControlledLearning(
+			pursuitService,
+			controlledLearningService,
+		)
+		initializeControlledLearningRoutes(
+			v1,
+			controlledlearning.NewHandler(controlledLearningService),
+		)
 		lifeOpsRepository, err := lifeops.DefaultRepository()
 		if err != nil {
 			return err
 		}
 		lifeOpsService := lifeops.NewService(lifeOpsRepository)
+		pursuitService = pursuit.WithPortfolioCapacity(pursuitService, lifeOpsService)
 		initializeLifeOpsRoutes(v1, lifeops.NewHandler(lifeOpsService))
+		lifeOntologyRepository, err := lifeontology.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		lifeOntologyService := lifeontology.NewService(lifeOntologyRepository, nil)
+		if err := initializeLifeOntologyRoutes(v1, lifeontology.NewHandler(lifeOntologyService)); err != nil {
+			return err
+		}
+		lifeLedgerRepository, err := lifeledger.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		lifeLedgerService, err := lifeledger.NewService(lifeLedgerRepository, nil)
+		if err != nil {
+			return err
+		}
+		lifeLedgerService, err = lifeLedgerService.WithProjection(lifeOntologyService)
+		if err != nil {
+			return err
+		}
+		if err := initializeLifeLedgerRoutes(v1, lifeledger.NewHandler(lifeLedgerService)); err != nil {
+			return err
+		}
+		sourceService, err = source.WithLifeOntologyProjection(sourceService, lifeOntologyService)
+		if err != nil {
+			return err
+		}
+		workflowService, err = workflow.WithLifeOntologyProjection(workflowService, lifeOntologyService)
+		if err != nil {
+			return err
+		}
+		proactivityRepository, err := proactivity.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		proactivityService := proactivity.NewService(proactivityRepository)
+		if err := initializeProactivityRoutes(v1, proactivity.NewHandler(proactivityService)); err != nil {
+			return err
+		}
+		workflowService, err = workflow.WithReminderDeliverySink(
+			workflowService,
+			workflow.NewProactivityReminderDeliverySink(proactivityService),
+		)
+		if err != nil {
+			return err
+		}
+		outcomeEvaluationRepository, err := outcomeevaluation.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		outcomeEvaluationService, err := outcomeevaluation.WithLifeOntologyProjection(
+			outcomeevaluation.NewService(outcomeEvaluationRepository),
+			lifeOntologyService,
+		)
+		if err != nil {
+			return err
+		}
+		if err := initializeOutcomeEvaluationRoutes(
+			v1,
+			outcomeevaluation.NewHandler(outcomeEvaluationService),
+		); err != nil {
+			return err
+		}
+		ambientMonitorRepository, err := ambientmonitor.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		ambientMonitorCollector, err := ambientmonitor.DefaultCollector()
+		if err != nil {
+			return err
+		}
+		ambientMonitorComposer := ambientmonitor.NewComposer(
+			ambientMonitorRepository,
+			outcomeEvaluationService,
+			proactivityService,
+		)
+		ambientMonitorService := ambientmonitor.NewService(
+			ambientMonitorRepository,
+			ambientMonitorCollector,
+			ambientMonitorComposer,
+		)
+		if err := initializeAmbientMonitorRoutes(
+			v1,
+			ambientmonitor.NewHandler(ambientMonitorService, outcomeEvaluationService),
+		); err != nil {
+			return err
+		}
+		if ambientmonitor.DurableSchedulerEnabled() {
+			if err := ambientmonitor.StartDurableScheduler(context.Background(), ambientMonitorService, backgroundAllowed); err != nil {
+				return err
+			}
+		}
+		resilienceRepository, err := resilience.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		resilienceHandler, err := resilience.NewAdvisoryAPI(resilienceRepository)
+		if err != nil {
+			return err
+		}
+		if err := initializeResilienceRoutes(v1, resilienceHandler); err != nil {
+			return err
+		}
 		agentRepository, err := agentregistry.DefaultRepository()
 		if err != nil {
 			return err
@@ -254,6 +429,10 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
+		mandateService, err = mandateService.WithLifeOntologyProjection(lifeOntologyService)
+		if err != nil {
+			return err
+		}
 		initializeStandingMandateRoutes(v1, standingmandate.NewHandler(mandateService))
 		domainPackRegistry, err := domainpack.NewBuiltinRegistry()
 		if err != nil {
@@ -272,18 +451,271 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
-		taskService := task.NewServiceWithDependenciesAndAgentContext(
-			memoryService,
-			llmService,
-			sourceService,
-			verificationService,
-			task.NewAutomationToolExecutor(automationService),
-			pursuitService,
+		frameworkEvidenceRepository, err := frameworkevidence.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		constitutionPolicy, err := executionauth.NewConstitutionPolicyAdapter(
 			frameworkService,
-			taskStateRepository,
-			task.NewLifeOpsContextProvider(lifeOpsService),
-			agentContext,
 		)
+		if err != nil {
+			return err
+		}
+		taskReviewApprovalResolver, err := executionapproval.NewTaskReviewResolver(
+			taskStateRepository,
+		)
+		if err != nil {
+			return err
+		}
+		workflowApprovalRepository, err := approvaladapter.New(workflowRepository)
+		if err != nil {
+			return err
+		}
+		workflowApprovalResolver, err := executionapproval.NewWorkflowApprovalResolver(
+			workflowApprovalRepository,
+		)
+		if err != nil {
+			return err
+		}
+		portfolioApprovalRepository, ok := pursuitRepository.(pursuit.PortfolioWorkflowEffectApprovalRepository)
+		if !ok {
+			return fmt.Errorf("pursuit portfolio workflow approval repository is unavailable")
+		}
+		portfolioApprovalResolver, err := pursuit.NewPortfolioWorkflowEffectApprovalResolver(
+			portfolioApprovalRepository,
+			planGraphService,
+		)
+		if err != nil {
+			return err
+		}
+		approvalResolver, err := executionapproval.NewCompositeResolver(
+			taskReviewApprovalResolver,
+			workflowApprovalResolver,
+			portfolioApprovalResolver,
+		)
+		if err != nil {
+			return err
+		}
+		executionAuthorizationRepository, err := executionauth.DefaultRepository()
+		if err != nil {
+			return err
+		}
+		executionAuthorizationService, err := executionauth.NewService(
+			executionAuthorizationRepository,
+			constitutionPolicy,
+			mandateService,
+			agentRegistryService,
+			approvalResolver,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		executionAuthorizationService, err = executionAuthorizationService.WithLifeOntologyProjection(lifeOntologyService)
+		if err != nil {
+			return err
+		}
+		frameworkSelectionResolver, err := executionauth.NewFrameworkSelectionResolver(
+			frameworkService,
+		)
+		if err != nil {
+			return err
+		}
+		executionAuthorizationService, err = executionAuthorizationService.WithFrameworkSelectionResolver(
+			frameworkSelectionResolver,
+		)
+		if err != nil {
+			return err
+		}
+		frameworkEvidenceResolver, err := executionauth.NewFrameworkEvidencePreflightResolver(
+			frameworkEvidenceRepository,
+		)
+		if err != nil {
+			return err
+		}
+		executionAuthorizationService, err = executionAuthorizationService.WithFrameworkEvidencePreflightResolver(
+			frameworkEvidenceResolver,
+		)
+		if err != nil {
+			return err
+		}
+		executionAuthorizationService, err = executionAuthorizationService.WithSourceEvidenceRepository(
+			sourceEvidenceRepository,
+		)
+		if err != nil {
+			return err
+		}
+		pursuitService, err = pursuit.WithPortfolioWorkflowEffectAuthorization(
+			pursuitService,
+			executionAuthorizationService,
+		)
+		if err != nil {
+			return err
+		}
+		pursuitService, err = pursuit.WithPortfolioWorkflowEffectExecution(
+			pursuitService,
+			executionAuthorizationService,
+		)
+		if err != nil {
+			return err
+		}
+		llmService.
+			WithFinalEffectAuthorization(
+				llmExecutionAuthorizer{service: executionAuthorizationService},
+				nil,
+			).
+			WithMaintenanceEffectContext(llm.EffectContext{
+				OwnerIdentity: phase2Module.OwnerUserID(),
+				ActorIdentity: "hai:model-maintenance",
+				ActorKind:     string(executionauth.ActorSystem),
+				TaskID:        "system:model-maintenance",
+				ProjectKey:    "system:model-maintenance",
+			})
+		initializeLLMRoutes(
+			v1,
+			llm.NewHandlerWithEffectContext(
+				llmService,
+				authenticatedLLMEffectContext,
+			),
+		)
+		llm.StartModelMaintenanceScheduler(
+			context.Background(),
+			llmService,
+			backgroundAllowed,
+		)
+		initializeWASIRoutes(
+			v1,
+			wasiexec.NewHandler(
+				wasiexec.DefaultServiceWithAuthorizer(
+					executionAuthorizationService,
+				),
+			),
+		)
+		temporalService := temporalbridge.NewServiceFromEnv(
+			workflowService,
+			executionAuthorizationService,
+		)
+		temporalService.StartWorkerEventually(context.Background())
+		initializeTemporalRoutes(
+			v1,
+			temporalbridge.NewHandler(temporalService),
+		)
+		destructiveSourceService, ok := sourceService.(source.DestructiveEffectService)
+		if !ok {
+			return fmt.Errorf(
+				"connected-source destructive authorization boundary is unavailable",
+			)
+		}
+		sourceService = destructiveSourceService.WithDestructiveEffectAuthorization(
+			executionAuthorizationService,
+			nil,
+		)
+		opsControlService.WithExecutionAuthorizer(
+			executionAuthorizationService,
+		)
+		initializeExecutionAuthorizationRoutes(
+			v1,
+			executionauth.NewInspectionHandler(executionAuthorizationService),
+		)
+		finalEffectBridge, err := executionauth.NewFinalEffectBridge(
+			executionAuthorizationRepository,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		runtimeRegistry := agentruntime.DefaultRegistryWithFinalEffectVerifier(
+			finalEffectBridge,
+		)
+		// Runtime control and automation execution share one registry so the
+		// exact task that exercised a receipt can also be cancelled by its owner.
+		initializeAgentRuntimeRoutes(
+			v1,
+			agentruntime.NewHandlerWithEcosystemMutationAuthorizer(
+				runtimeRegistry,
+				ecosystemExecutionAuthorizer{
+					service: executionAuthorizationService,
+				},
+			),
+		)
+		approvalProofService, err := automation.DefaultDurableApprovalProofService(
+			[]byte(config.AppConfig.ApprovalProofSigningKey),
+		)
+		if err != nil {
+			return fmt.Errorf("initialize durable automation approval proofs: %w", err)
+		}
+		automationService := automation.NewServiceWithRuntimeRegistryApprovalProofsExecutionAuthorizationAndFinalEffects(
+			automation.DefaultRepository(),
+			*events.DefaultPublisher(),
+			runtimeRegistry,
+			approvalProofService,
+			executionAuthorizationService,
+			finalEffectBridge,
+		)
+		autoHandler := automation.NewHandler(automationService)
+		if err := initializeAutomationsRoutes(v1, autoHandler); err != nil {
+			return err
+		}
+		taskService := task.WithControlledLearning(
+			task.NewServiceWithDependenciesAndAgentContext(
+				memoryService,
+				llmService,
+				sourceService,
+				verificationService,
+				task.NewAutomationToolExecutor(automationService),
+				pursuitService,
+				frameworkService,
+				taskStateRepository,
+				task.NewLifeOpsContextProvider(lifeOpsService),
+				agentContext,
+			),
+			controlledLearningService,
+		)
+		taskService, err = task.WithFrameworkEvidenceRepository(
+			taskService,
+			frameworkEvidenceRepository,
+		)
+		if err != nil {
+			return err
+		}
+		taskService, err = task.WithSourceEvidenceRepository(
+			taskService,
+			sourceEvidenceRepository,
+		)
+		if err != nil {
+			return err
+		}
+		taskService, err = task.WithDomainPackPlanning(
+			taskService,
+			domainPackRegistry,
+			domainPackPreferences,
+		)
+		if err != nil {
+			return err
+		}
+		taskService, err = task.WithLifeOntologyContext(taskService, lifeOntologyService)
+		if err != nil {
+			return err
+		}
+		taskService, err = task.WithLifeOntologyProjection(taskService, lifeOntologyService)
+		if err != nil {
+			return err
+		}
+		taskService, err = task.WithAgentTeamContext(
+			taskService,
+			task.NewAgentTeamContextProvider(agentTeamService),
+		)
+		if err != nil {
+			return err
+		}
+		taskService, err = task.WithAcceptedPlanResolver(taskService, planGraphService)
+		if err != nil {
+			return err
+		}
+		taskService, err = task.WithCoordinationPlanProjector(taskService, planGraphService)
+		if err != nil {
+			return err
+		}
 		planningPreview, _ := taskService.(task.PreviewService)
 		a2aBridgeHandler := a2abridge.NewHandler(a2abridge.NewServiceFromEnv(planningPreview))
 		initializeA2ABridgeStatusRoutes(v1, a2aBridgeHandler)
@@ -350,6 +782,15 @@ func initializeRoutes(router *gin.Engine) error {
 	return nil
 }
 
+func initializeExecutionAuthorizationRoutes(
+	apiVersion *gin.RouterGroup,
+	handler *executionauth.InspectionHandler,
+) {
+	routes := apiVersion.Group("/execution-authorizations")
+	routes.Use(requirePermission(rbac.PermRead))
+	handler.RegisterRoutes(routes)
+}
+
 func initializeStandingMandateRoutes(apiVersion *gin.RouterGroup, handler *standingmandate.Handler) {
 	routes := apiVersion.Group("/standing-mandates")
 	routes.Use(requireAuthenticatedOwner())
@@ -367,12 +808,15 @@ func initializeStandingMandateRoutes(apiVersion *gin.RouterGroup, handler *stand
 func initializeDomainPackRoutes(apiVersion *gin.RouterGroup, handler *domainpack.Handler) {
 	routes := apiVersion.Group("/domain-packs")
 	routes.Use(requireAuthenticatedOwner())
+	routes.Use(requireRecognizedRole())
 	{
 		routes.GET("", requirePermission(rbac.PermRead), handler.Catalog)
 		routes.GET("/preferences", requirePermission(rbac.PermRead), handler.Preferences)
 		routes.POST("/classify", requirePermission(rbac.PermRead), handler.Classify)
+		routes.POST("/methods/select", requirePermission(rbac.PermRead), handler.SelectMethods)
 		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Detail)
 		routes.GET("/:id/effective", requirePermission(rbac.PermRead), handler.Effective)
+		routes.GET("/:id/playbook", requirePermission(rbac.PermRead), handler.Playbook)
 		routes.PUT("/:id/preference", requirePermission(rbac.PermAdmin), handler.UpsertPreference)
 	}
 }
@@ -397,6 +841,79 @@ func initializeLifeOpsRoutes(apiVersion *gin.RouterGroup, handler *lifeops.Handl
 		routes.POST("/priority/assess", requirePermission(rbac.PermWrite), handler.AssessPriority)
 		routes.GET("/priority/assessments", requirePermission(rbac.PermRead), handler.PriorityHistory)
 	}
+}
+
+func initializeLifeOntologyRoutes(apiVersion *gin.RouterGroup, handler *lifeontology.Handler) error {
+	return lifeontology.RegisterRoutes(
+		apiVersion,
+		handler,
+		lifeontology.RouteGuards{
+			AuthenticatedOwner: requireAuthenticatedOwner(),
+			RecognizedRole:     requireRecognizedRole(),
+			Read:               requirePermission(rbac.PermRead),
+			Write:              requirePermission(rbac.PermWrite),
+			Govern:             requirePermission(rbac.PermAdmin),
+		},
+	)
+}
+
+func initializeKnowledgeClaimRoutes(apiVersion *gin.RouterGroup, handler *knowledgegraph.ClaimHandler) error {
+	return knowledgegraph.RegisterClaimRoutes(apiVersion, handler, knowledgegraph.ClaimRouteGuards{
+		AuthenticatedOwner: requireAuthenticatedOwner(),
+		RecognizedRole:     requireRecognizedRole(),
+		Read:               requirePermission(rbac.PermRead),
+		Write:              requirePermission(rbac.PermWrite),
+		Approve:            requirePermission(rbac.PermApprove),
+	})
+}
+
+func initializeLifeLedgerRoutes(apiVersion *gin.RouterGroup, handler *lifeledger.Handler) error {
+	return lifeledger.RegisterRoutes(apiVersion, handler, lifeledger.RouteGuards{
+		AuthenticatedOwner: requireAuthenticatedOwner(),
+		RecognizedRole:     requireRecognizedRole(),
+		Read:               requirePermission(rbac.PermRead),
+		Write:              requirePermission(rbac.PermWrite),
+	})
+}
+
+func initializeProactivityRoutes(apiVersion *gin.RouterGroup, handler *proactivity.Handler) error {
+	return proactivity.RegisterRoutes(apiVersion, handler, proactivity.RouteGuards{
+		AuthenticatedOwner: requireAuthenticatedOwner(),
+		RecognizedRole:     requireRecognizedRole(),
+		Read:               requirePermission(rbac.PermRead),
+		Write:              requirePermission(rbac.PermWrite),
+		Govern:             requirePermission(rbac.PermAdmin),
+	})
+}
+
+func initializeOutcomeEvaluationRoutes(apiVersion *gin.RouterGroup, handler *outcomeevaluation.Handler) error {
+	return outcomeevaluation.RegisterRoutes(apiVersion, handler, outcomeevaluation.RouteGuards{
+		AuthenticatedOwner: requireAuthenticatedOwner(),
+		RecognizedRole:     requireRecognizedRole(),
+		Read:               requirePermission(rbac.PermRead),
+		Write:              requirePermission(rbac.PermWrite),
+		Govern:             requirePermission(rbac.PermAdmin),
+	})
+}
+
+func initializeAmbientMonitorRoutes(apiVersion *gin.RouterGroup, handler *ambientmonitor.Handler) error {
+	return ambientmonitor.RegisterRoutes(apiVersion, handler, ambientmonitor.RouteGuards{
+		AuthenticatedOwner: requireAuthenticatedOwner(),
+		RecognizedRole:     requireRecognizedRole(),
+		Read:               requirePermission(rbac.PermRead),
+		Write:              requirePermission(rbac.PermWrite),
+		Govern:             requirePermission(rbac.PermAdmin),
+	})
+}
+
+func initializeResilienceRoutes(apiVersion *gin.RouterGroup, handler *resilience.Handler) error {
+	return resilience.RegisterRoutes(apiVersion, handler, resilience.RouteGuards{
+		AuthenticatedOwner: requireAuthenticatedOwner(),
+		RecognizedRole:     requireRecognizedRole(),
+		Read:               requirePermission(rbac.PermRead),
+		Write:              requirePermission(rbac.PermWrite),
+		Govern:             requirePermission(rbac.PermAdmin),
+	})
 }
 
 func initializeAgentRegistryRoutes(apiVersion *gin.RouterGroup, handler *agentregistry.Handler) {
@@ -429,6 +946,7 @@ func initializeFrameworkRegistryRoutes(apiVersion *gin.RouterGroup, handler *fra
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		routes.GET("/family-taxonomy", requirePermission(rbac.PermRead), handler.FamilyTaxonomy)
 		routes.GET("/frameworks", requirePermission(rbac.PermRead), handler.List)
 		routes.GET("/frameworks/:id", requirePermission(rbac.PermRead), handler.Get)
 		routes.POST("/select", requirePermission(rbac.PermWrite), handler.Select)
@@ -438,6 +956,73 @@ func initializeFrameworkRegistryRoutes(apiVersion *gin.RouterGroup, handler *fra
 		routes.GET("/constitution/history", requirePermission(rbac.PermRead), handler.ConstitutionHistory)
 		routes.POST("/constitution/drafts", requirePermission(rbac.PermAdmin), handler.CreateConstitutionDraft)
 		routes.POST("/constitution/:id/activate", requirePermission(rbac.PermAdmin), handler.ActivateConstitution)
+	}
+}
+
+func initializeAgentTeamRoutes(apiVersion *gin.RouterGroup, handler *frameworkregistry.AgentTeamHandler) error {
+	frameworkRoutes := apiVersion.Group("/framework-registry")
+	return frameworkregistry.RegisterAgentTeamRoutes(
+		frameworkRoutes,
+		handler,
+		frameworkregistry.AgentTeamRouteGuards{
+			AuthenticatedOwner: requireAuthenticatedOwner(),
+			RecognizedRole:     requireRecognizedRole(),
+			Read:               requirePermission(rbac.PermRead),
+			Write:              requirePermission(rbac.PermWrite),
+			Govern:             requirePermission(rbac.PermAdmin),
+		},
+	)
+}
+
+func initializeControlledLearningRoutes(
+	apiVersion *gin.RouterGroup,
+	handler *controlledlearning.Handler,
+) {
+	routes := apiVersion.Group("/controlled-learning")
+	routes.Use(requireAuthenticatedOwner())
+	routes.Use(requireRecognizedRole())
+	{
+		routes.GET("/outcomes", requirePermission(rbac.PermRead), handler.ListOutcomes)
+		routes.POST("/outcomes", requirePermission(rbac.PermApprove), handler.RecordOutcome)
+		routes.GET("/outcomes/:id", requirePermission(rbac.PermRead), handler.GetOutcome)
+		routes.GET("/proposals", requirePermission(rbac.PermRead), handler.ListProposals)
+		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
+		routes.GET("/proposals/:id", requirePermission(rbac.PermRead), handler.GetProposal)
+		routes.GET(
+			"/proposals/:id/decisions",
+			requirePermission(rbac.PermRead),
+			handler.ListDecisions,
+		)
+		routes.POST(
+			"/proposals/:id/decisions",
+			requirePermission(rbac.PermApprove),
+			handler.Decide,
+		)
+		routes.GET(
+			"/proposals/:id/decisions/:decisionId",
+			requirePermission(rbac.PermRead),
+			handler.GetDecision,
+		)
+		routes.GET(
+			"/applications",
+			requirePermission(rbac.PermRead),
+			handler.ListApplications,
+		)
+		routes.GET(
+			"/applications/:id",
+			requirePermission(rbac.PermRead),
+			handler.GetApplication,
+		)
+		routes.GET(
+			"/applications/:id/events",
+			requirePermission(rbac.PermRead),
+			handler.ListApplicationEvents,
+		)
+		routes.POST(
+			"/applications/:id/rollback",
+			requirePermission(rbac.PermAdmin),
+			handler.RollbackApplication,
+		)
 	}
 }
 
@@ -652,6 +1237,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.GET("/sync-jobs", requirePermission(rbac.PermRead), sourceHandler.SyncJobs)
 		sourceRoutes.GET("/extractions", requirePermission(rbac.PermRead), sourceHandler.Extractions)
 		sourceRoutes.GET("/audit-logs", requirePermission(rbac.PermRead), sourceHandler.AuditLogs)
+		sourceRoutes.GET("/:id/health", requirePermission(rbac.PermRead), sourceHandler.ConnectionHealth)
 		sourceRoutes.PATCH("/extractions/:id", requirePermission(rbac.PermWrite), sourceHandler.UpdateExtraction)
 		sourceRoutes.POST("/extractions/:id/archive", requirePermission(rbac.PermWrite), sourceHandler.ArchiveExtraction)
 		sourceRoutes.DELETE("/extractions/:id", requirePermission(rbac.PermWrite), sourceHandler.DeleteExtraction)
@@ -664,10 +1250,10 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.POST("/:id/revoke", requirePermission(rbac.PermWrite), sourceHandler.Revoke)
 	}
 
-	// Google OAuth for the Gmail connector. Not under requireAuthenticatedOwner:
-	// the callback is invoked directly by Google with no HAI session, and is
-	// protected by the HMAC-signed OAuth state instead. start needs write; the
-	// public callback resolves to viewer, so it is gated read.
+	// Google OAuth for Google-backed connectors. This group is not under
+	// requireAuthenticatedOwner because the browser returning from consent may
+	// not carry a HAI session. The callback is protected by HMAC-signed, expiring
+	// state. Start still verifies source ownership inside the handler.
 	sourceOAuth := apiVersion.Group("/sources")
 	{
 		sourceOAuth.GET("/oauth/google/start", requirePermission(rbac.PermWrite), sourceHandler.StartGoogleOAuth)
@@ -703,6 +1289,7 @@ func initializeTaskRoutes(apiVersion *gin.RouterGroup, taskHandler *task.Handler
 		taskRoutes.GET("/logs", requirePermission(rbac.PermRead), taskHandler.Logs)
 		taskRoutes.GET("/review-queue", requirePermission(rbac.PermRead), taskHandler.ReviewQueue)
 		taskRoutes.POST("/review-queue/:id/resolve", requirePermission(rbac.PermApprove), taskHandler.ResolveReviewItem)
+		taskRoutes.POST("/review-queue/reconcile", requirePermission(rbac.PermAdmin), taskHandler.ReconcileApprovedReviews)
 	}
 }
 
@@ -1014,6 +1601,7 @@ func initializeModelIntelligenceRoutes(apiVersion *gin.RouterGroup, handler *mod
 		mi.POST("/profiles/:providerId/:modelId/benchmark", requirePermission(rbac.PermExecute), handler.Benchmark)
 		mi.GET("/benchmarks", requirePermission(rbac.PermRead), handler.Benchmarks)
 		mi.GET("/telemetry", requirePermission(rbac.PermRead), handler.Telemetry)
+		mi.GET("/calibration", requirePermission(rbac.PermRead), handler.Calibration)
 		mi.GET("/lane-winners", requirePermission(rbac.PermRead), handler.LaneWinners)
 		mi.GET("/cache", requirePermission(rbac.PermRead), handler.Cache)
 		mi.DELETE("/cache/:id", requirePermission(rbac.PermWrite), handler.DeleteCache)
@@ -1073,6 +1661,9 @@ func initializeRuntimeLabRoutes(apiVersion *gin.RouterGroup, handler *runtimelab
 	rl.Use(requireAuthenticatedOwner())
 	{
 		rl.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
+		rl.GET("/feature-parity", requirePermission(rbac.PermRead), handler.FeatureParity)
+		rl.GET("/capabilities", requirePermission(rbac.PermRead), handler.Capabilities)
+		rl.GET("/:runtimeId/feature-parity", requirePermission(rbac.PermRead), handler.RuntimeFeatureParity)
 		rl.POST("/:runtimeId/probe", requirePermission(rbac.PermWrite), handler.Probe)
 		rl.POST("/:runtimeId/self-test", requirePermission(rbac.PermExecute), handler.SelfTest)
 		rl.GET("/:runtimeId/attempts", requirePermission(rbac.PermRead), handler.Attempts)
@@ -1148,6 +1739,18 @@ func initializePlanningOptimizerRoutes(apiVersion *gin.RouterGroup, handler *pla
 		routes.POST("/probe", requirePermission(rbac.PermAdmin), handler.Probe)
 		routes.GET("/runs", requirePermission(rbac.PermRead), handler.Runs)
 		routes.POST("/proposals", requirePermission(rbac.PermWrite), handler.Propose)
+	}
+}
+
+func initializePlanGraphRoutes(apiVersion *gin.RouterGroup, handler *plangraph.Handler) {
+	routes := apiVersion.Group("/plans")
+	routes.Use(requireAuthenticatedOwner())
+	{
+		routes.GET("", requirePermission(rbac.PermRead), handler.List)
+		routes.POST("/preview", requirePermission(rbac.PermWrite), handler.Preview)
+		routes.GET("/:id", requirePermission(rbac.PermRead), handler.Get)
+		routes.POST("/:id/replan", requirePermission(rbac.PermWrite), handler.Replan)
+		routes.POST("/:id/accept", requirePermission(rbac.PermApprove), handler.Accept)
 	}
 }
 
@@ -1251,6 +1854,14 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.GET("/overview", requirePermission(rbac.PermRead), workflowHandler.Overview)
 		workflowRoutes.GET("/approvals", requirePermission(rbac.PermRead), workflowHandler.ApprovalItems)
 		workflowRoutes.GET("/dashboard", requirePermission(rbac.PermRead), workflowHandler.Dashboard)
+		workflowRoutes.GET("/reminder-proposals", requirePermission(rbac.PermRead), workflowHandler.ReminderProposals)
+		workflowRoutes.POST("/reminder-proposals/:itemId/activation-requests", requirePermission(rbac.PermWrite), workflowHandler.PrepareReminderActivation)
+		workflowRoutes.GET("/reminder-activation-requests", requirePermission(rbac.PermRead), workflowHandler.ReminderActivationHistory)
+		workflowRoutes.GET("/reminder-activation-requests/:requestId/decisions", requirePermission(rbac.PermRead), workflowHandler.ReminderActivationDecisionHistory)
+		workflowRoutes.POST("/reminder-activation-requests/:requestId/decisions", requirePermission(rbac.PermApprove), workflowHandler.DecideReminderActivation)
+		workflowRoutes.POST("/reminder-activation-requests/:requestId/delivery-authorizations", requirePermission(rbac.PermApprove), workflowHandler.AuthorizeReminderDelivery)
+		workflowRoutes.GET("/reminder-deliveries", requirePermission(rbac.PermRead), workflowHandler.ReminderDeliveryHistory)
+		workflowRoutes.POST("/reminder-deliveries/run-due", requirePermission(rbac.PermExecute), workflowHandler.RunDueReminderDeliveries)
 		workflowRoutes.GET("/", requirePermission(rbac.PermRead), workflowHandler.Items)
 		workflowRoutes.POST("/intake", requirePermission(rbac.PermWrite), workflowHandler.Intake)
 		// These HTTP worker controls run already-governed, owner-scoped work.
@@ -1259,6 +1870,7 @@ func initializeWorkflowRoutes(apiVersion *gin.RouterGroup, workflowHandler *work
 		workflowRoutes.POST("/run-due", requirePermission(rbac.PermExecute), workflowHandler.RunDue)
 		workflowRoutes.POST("/open-loops/run-due", requirePermission(rbac.PermExecute), workflowHandler.RunDueOpenLoops)
 		workflowRoutes.GET("/:id", requirePermission(rbac.PermRead), workflowHandler.Get)
+		workflowRoutes.POST("/:id/run", requirePermission(rbac.PermExecute), workflowHandler.RunOne)
 		workflowRoutes.POST("/:id/transition", requirePermission(rbac.PermWrite), workflowHandler.Transition)
 		workflowRoutes.POST("/:id/approval", requirePermission(rbac.PermApprove), workflowHandler.ResolveApproval)
 		workflowRoutes.POST("/:id/interruption/resolve", requirePermission(rbac.PermApprove), workflowHandler.ResolveInterruptedExecution)
@@ -1276,9 +1888,26 @@ func initializePursuitRoutes(apiVersion *gin.RouterGroup, pursuitHandler *pursui
 		pursuitRoutes.GET("/dashboard", requirePermission(rbac.PermRead), pursuitHandler.Dashboard)
 		pursuitRoutes.GET("/brief", requirePermission(rbac.PermRead), pursuitHandler.Brief)
 		pursuitRoutes.GET("/decisions", requirePermission(rbac.PermRead), pursuitHandler.Decisions)
+		pursuitRoutes.POST("/portfolio-plan", requirePermission(rbac.PermRead), pursuitHandler.PlanPortfolio)
+		pursuitRoutes.POST("/portfolio-plan/accept", requirePermission(rbac.PermApprove), pursuitHandler.AcceptPortfolioAllocation)
+		pursuitRoutes.GET("/portfolio-allocations", requirePermission(rbac.PermRead), pursuitHandler.PortfolioAllocationHistory)
+		pursuitRoutes.POST("/portfolio-allocations/:allocationId/execution-proposals", requirePermission(rbac.PermApprove), pursuitHandler.PreparePortfolioExecutionProposals)
+		pursuitRoutes.GET("/portfolio-execution-proposals", requirePermission(rbac.PermRead), pursuitHandler.PortfolioExecutionProposalHistory)
+		pursuitRoutes.GET("/portfolio-execution-proposals/coordination", requirePermission(rbac.PermRead), pursuitHandler.PortfolioDispatchCoordinationBatch)
+		pursuitRoutes.GET("/portfolio-execution-proposals/:proposalId/coordination", requirePermission(rbac.PermRead), pursuitHandler.PortfolioDispatchCoordination)
+		pursuitRoutes.POST("/portfolio-execution-proposals/:proposalId/dispatch", requirePermission(rbac.PermExecute), pursuitHandler.DispatchPortfolioWorkflows)
+		pursuitRoutes.GET("/portfolio-execution-proposal-items/:itemId/decisions", requirePermission(rbac.PermRead), pursuitHandler.PortfolioExecutionProposalDecisionHistory)
+		pursuitRoutes.POST("/portfolio-execution-proposal-items/:itemId/decisions", requirePermission(rbac.PermApprove), pursuitHandler.DecidePortfolioExecutionProposalItem)
+		pursuitRoutes.POST("/portfolio-execution-proposal-items/:itemId/authorize-workflow", requirePermission(rbac.PermExecute), pursuitHandler.AuthorizePortfolioWorkflowEffect)
+		pursuitRoutes.POST("/portfolio-execution-proposal-items/:itemId/execute-workflow", requirePermission(rbac.PermExecute), pursuitHandler.ExecutePortfolioWorkflowEffect)
+		pursuitRoutes.POST("/portfolio-execution-proposal-items/:itemId/settle-workflow", requirePermission(rbac.PermExecute), pursuitHandler.SettlePortfolioWorkflow)
 		pursuitRoutes.POST("/match", requirePermission(rbac.PermRead), pursuitHandler.Match)
 		pursuitRoutes.POST("/intake", requirePermission(rbac.PermWrite), pursuitHandler.RouteIntake)
 		pursuitRoutes.GET("/:id/evidence", requirePermission(rbac.PermRead), pursuitHandler.ResolveEvidence)
+		pursuitRoutes.GET("/:id/resources", requirePermission(rbac.PermRead), pursuitHandler.ResourceUsage)
+		pursuitRoutes.GET("/:id/resource-events", requirePermission(rbac.PermRead), pursuitHandler.ResourceEvents)
+		pursuitRoutes.POST("/:id/resource-events", requirePermission(rbac.PermWrite), pursuitHandler.AppendResourceEvent)
+		pursuitRoutes.POST("/:id/resource-reservations/:reservationId/release", requirePermission(rbac.PermApprove), pursuitHandler.ReleaseResourceReservation)
 		pursuitRoutes.GET("/:id", requirePermission(rbac.PermRead), pursuitHandler.Get)
 		pursuitRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), pursuitHandler.Update)
 		pursuitRoutes.POST("/:id/archive", requirePermission(rbac.PermWrite), pursuitHandler.Archive)

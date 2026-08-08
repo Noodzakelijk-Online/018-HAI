@@ -296,10 +296,10 @@ func TestKnowledgeGraphPostgresConflictsAndCorruptJSONFailClosed(t *testing.T) {
 		UPDATE knowledge_graph_nodes
 		SET properties_json = '{"priority": 7}'::jsonb,
 		    revision = revision + 1,
-		    transaction_from = ?,
-		    updated_at = ?
+		    transaction_from = GREATEST(transaction_from, updated_at) + INTERVAL '1 second',
+		    updated_at = GREATEST(transaction_from, updated_at) + INTERVAL '1 second'
 		WHERE owner_identity = ? AND id = ?
-	`, now.Add(time.Minute), now.Add(time.Minute), "robert", first.ID).Error; err != nil {
+	`, "robert", first.ID).Error; err != nil {
 		t.Fatalf("inject structurally valid corrupt JSON: %v", err)
 	}
 	if _, err := service.GetNode(ctx, "robert", first.ID); !errors.Is(err, ErrCorruptStorage) {

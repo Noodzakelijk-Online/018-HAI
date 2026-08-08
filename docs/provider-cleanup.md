@@ -7,8 +7,11 @@ artifacts so nothing real is touched by accident.
 
 - **Paid providers disabled:** `daily_paid_budget_eur: 0`; paid routing is
   impossible until an explicit server-side approval exists (policy-tested).
-- **Real account connectors disabled:** Gmail/Drive/Calendar/Trello/GitHub stay
-  off until OAuth scopes are minimal and reviewed; sandbox adapters go first.
+- **Real account connectors unconfigured by default:** Gmail, Drive, Contacts,
+  Calendar, and Trello expose read-only adapters but remain unavailable until
+  least-privilege credentials are deliberately supplied and accepted in a
+  bounded sandbox run. GitHub supports bounded anonymous/public reads or an
+  optional least-privilege token.
 - **Provider selection:** `internal/providerfallback` prefers free/local and
   never selects a paid provider unless paid usage is explicitly allowed.
 

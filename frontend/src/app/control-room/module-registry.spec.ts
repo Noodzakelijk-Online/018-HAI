@@ -64,4 +64,83 @@ describe('HAI module registry', () => {
     expect(moduleForUrl('/life-ops?mode=advanced#priority-assessment').id)
       .toBe('life-ops');
   });
+
+  it('registers Governance Control with its progressive governance surfaces', () => {
+    const governance = HAI_MODULES.find(
+      (module) => module.route === '/governance-control'
+    );
+
+    expect(governance).toEqual(jasmine.objectContaining({
+      id: 'governance-control',
+      group: 'system',
+      title: 'Governance control',
+      primaryAction: {
+        label: 'Review governance',
+        capability: 'governance:review',
+      },
+      advancedSectionIds: [
+        'execution-receipts',
+        'standing-mandates',
+        'controlled-learning',
+        'agent-registry',
+        'domain-pack-catalog',
+      ],
+    }));
+    expect(moduleForUrl('/governance-control?mode=advanced#agent-registry').id)
+      .toBe('governance-control');
+  });
+
+  it('registers Truth review as a progressive intelligence module', () => {
+    const truthReview = HAI_MODULES.find((module) => module.route === '/knowledge-claims');
+
+    expect(truthReview).toEqual(jasmine.objectContaining({
+      id: 'knowledge-claims',
+      group: 'intelligence',
+      title: 'Truth review',
+      primaryAction: {
+        label: 'Review claim exceptions',
+        capability: 'knowledge-claims:review',
+      },
+      advancedSectionIds: ['workspace-boundary', 'claim-register'],
+    }));
+  });
+
+  it('registers Model intelligence with outcome-first progressive sections', () => {
+    const modelIntelligence = HAI_MODULES.find((module) => module.route === '/model-intelligence');
+
+    expect(modelIntelligence).toEqual(jasmine.objectContaining({
+      id: 'model-intelligence',
+      group: 'system',
+      title: 'Model intelligence',
+      description: 'Validated outcomes, provider health, and model efficiency.',
+      primaryAction: {
+        label: 'Review model outcomes',
+        capability: 'model-intelligence:review',
+      },
+      advancedSectionIds: ['providers', 'model-calibration', 'model-profiles', 'runtime-budget'],
+    }));
+  });
+
+  it('registers Plan and coordination as a progressive work module', () => {
+    const plans = HAI_MODULES.find((module) => module.route === '/plans');
+
+    expect(plans).toEqual(jasmine.objectContaining({
+      id: 'plan-coordination',
+      group: 'work',
+      title: 'Plan and coordination',
+      primaryAction: {
+        label: 'Create plan preview',
+        capability: 'plans:write',
+      },
+      advancedSectionIds: [
+        'dependency-plan',
+        'schedule-resources',
+        'governance-bindings',
+        'revision-history',
+        'create-preview',
+      ],
+    }));
+    expect(moduleForUrl('/plans?mode=advanced#dependency-plan').id)
+      .toBe('plan-coordination');
+  });
 });

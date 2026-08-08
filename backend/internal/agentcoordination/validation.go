@@ -327,6 +327,45 @@ func ValidateAcknowledgment(message Message, acknowledgment Acknowledgment, now 
 	return nil
 }
 
+// ComputeAcknowledgmentDigest returns the stable content identity used by
+// durable acknowledgment stores. The digest deliberately excludes storage
+// metadata and cannot be interpreted as execution or approval authority.
+func ComputeAcknowledgmentDigest(acknowledgment Acknowledgment) (string, error) {
+	payload := struct {
+		MessageID      string               `json:"messageId"`
+		CorrelationID  string               `json:"correlationId"`
+		RecipientID    string               `json:"recipientId"`
+		Status         AcknowledgmentStatus `json:"status"`
+		Reason         string               `json:"reason,omitempty"`
+		CreatedAt      time.Time            `json:"createdAt"`
+		RetryAfter     *time.Time           `json:"retryAfter,omitempty"`
+		IdempotencyKey string               `json:"idempotencyKey"`
+	}{
+		MessageID:      strings.TrimSpace(acknowledgment.MessageID),
+		CorrelationID:  strings.TrimSpace(acknowledgment.CorrelationID),
+		RecipientID:    normalizeID(acknowledgment.RecipientID),
+		Status:         acknowledgment.Status,
+		Reason:         normalizeText(acknowledgment.Reason),
+		CreatedAt:      acknowledgment.CreatedAt.UTC(),
+		RetryAfter:     acknowledgmentTimePointer(acknowledgment.RetryAfter),
+		IdempotencyKey: strings.TrimSpace(acknowledgment.IdempotencyKey),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func acknowledgmentTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	normalized := value.UTC()
+	return &normalized
+}
+
 func validatePolicy(policy ValidationPolicy) error {
 	if strings.TrimSpace(policy.SchemaVersion) == "" ||
 		policy.MaximumAuthority < 0 ||

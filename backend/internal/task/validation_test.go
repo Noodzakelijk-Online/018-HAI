@@ -1,16 +1,106 @@
 package task
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/resourceplanner"
 	"automation-hub-backend/internal/verification"
 
 	"github.com/google/uuid"
 )
+
+func TestValidatePlanAllowsModelFreeDeterministicReadOnlyRuntime(t *testing.T) {
+	plan := validStructuredValidationPlan()
+	plan.ModelDecision.SelectedModelID = ""
+	plan.ModelDecision.Reason = "no local or free model is configured"
+	plan.Intake.NeedsTools = true
+	plan.ExecutionResult.ToolExecution = deterministicReadOnlyToolExecution()
+
+	result := validatePlan(plan, 1)
+	if !result.Passed {
+		t.Fatalf("deterministic read-only runtime was rejected without a model: %#v", result)
+	}
+	criterion := validationCriterionByText(result.Criteria, "a capable model was selected")
+	if criterion == nil || criterion.Status != validationCriterionPassed ||
+		!containsString(criterion.Evidence, "model:not-required:deterministic-read-only-runtime") {
+		t.Fatalf("model-free deterministic evidence missing: %#v", criterion)
+	}
+}
+
+func TestValidatePlanMapsVerifiedRuntimeApprovalProvenance(t *testing.T) {
+	plan := validStructuredValidationPlan()
+	plan.OwnerIdentity = "alice"
+	plan.RiskAssessment = RiskAssessment{
+		Level:                 "low",
+		ApprovalRequired:      true,
+		ApprovalGranted:       true,
+		ApprovalSourceID:      "workflow-decision:" + uuid.NewString(),
+		ApprovalActorIdentity: "alice",
+	}
+	plan.Intake.NeedsTools = true
+	plan.ExecutionResult.ToolExecution = deterministicReadOnlyToolExecution()
+	plan.ValidationPlan.FrameworkEvidenceRequirements = []string{
+		"applicable approval record",
+		"approver identity",
+		"exact proposed action",
+		"risk and consequences",
+		"scope and expiry",
+		"standing mandate or case approval",
+	}
+
+	result := validatePlan(plan, 1)
+	if !result.Passed {
+		t.Fatalf("verified runtime approval provenance was not accepted: %#v", result)
+	}
+	for _, expected := range plan.ValidationPlan.FrameworkEvidenceRequirements {
+		criterion := validationCriterionByText(result.Criteria, expected)
+		if criterion == nil || criterion.Status != validationCriterionPassed || len(criterion.Evidence) == 0 {
+			t.Fatalf("approval criterion %q lacks exact evidence: %#v", expected, criterion)
+		}
+	}
+}
+
+func TestDeterministicReadOnlyRuntimeRejectsMutableOrUnevidencedExecution(t *testing.T) {
+	valid := deterministicReadOnlyToolExecution()
+	if !deterministicReadOnlyRuntimeCompleted(valid) {
+		t.Fatal("valid read-only runtime evidence was rejected")
+	}
+
+	mutable := *valid
+	mutable.Message = "POST http://backend/api/items returned HTTP 200"
+	if deterministicReadOnlyRuntimeCompleted(&mutable) {
+		t.Fatal("mutable API execution entered the deterministic read-only path")
+	}
+
+	missingReceipt := *valid
+	missingReceipt.AuditEvents = []string{"api request executed", "response captured with bounded output"}
+	if deterministicReadOnlyRuntimeCompleted(&missingReceipt) {
+		t.Fatal("runtime execution without an authorization receipt was accepted")
+	}
+}
+
+func deterministicReadOnlyToolExecution() *ToolExecutionResult {
+	return &ToolExecutionResult{
+		AutomationID:  uuid.NewString(),
+		LaunchEventID: uuid.NewString(),
+		LaunchType:    "api",
+		Status:        "completed",
+		Message:       "GET http://backend/readyz returned HTTP 200",
+		ExitCode:      http.StatusOK,
+		ExecutedAt:    time.Now().UTC(),
+		AuditEvents: []string{
+			"unified execution authorization receipt receipt-1 consumed",
+			"api request executed",
+			"response captured with bounded output",
+		},
+	}
+}
 
 func TestInitialValidationResultDoesNotClaimChecksRan(t *testing.T) {
 	result := initialValidationResult(ValidationPlan{
@@ -351,6 +441,10 @@ func validStructuredValidationPlan() *CompletionPlan {
 				Version: "1.0.0",
 				Name:    "Test framework",
 			}},
+		},
+		ResourceDecision: &resourceplanner.Decision{
+			PlanID: "test-plan", DecisionDigest: strings.Repeat("a", 64),
+			Feasibility: resourceplanner.Feasible, Authority: "advisory_only",
 		},
 		ModelDecision: llm.RouteDecision{
 			SelectedModelID: "local-test-model",

@@ -140,6 +140,15 @@ export interface ILLMSkippedModel {
   reason: string;
 }
 
+export interface ILLMRouteCalibration {
+  lane: string;
+  evaluatedRuns: number;
+  acceptedOutputs: number;
+  acceptanceRate: number;
+  wilsonLowerBound: number;
+  confidence: string;
+}
+
 export interface ILLMRouteDecision {
   selectedProviderId: string;
   selectedModelId: string;
@@ -154,10 +163,13 @@ export interface ILLMRouteDecision {
   classification: ILLMTaskClassification;
   fallbackPath: ILLMFallbackOption[];
   skipped: ILLMSkippedModel[];
+  calibration?: ILLMRouteCalibration;
   loggedAt: string;
 }
 
 export interface ILLMGenerationResult {
+  generationId?: string;
+  telemetryId?: string;
   providerId: string;
   modelId: string;
   modelName: string;
@@ -172,5 +184,9 @@ export interface ILLMGenerationResult {
   auditStatus?: string;
   durationMs: number;
   fallbackPath: string[];
+  fallbackDepth?: number;
+  validationStatus?: string;
+  validationMethod?: string;
+  calibrationAudit?: string;
   loggedAt: string;
 }

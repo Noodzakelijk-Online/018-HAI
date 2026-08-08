@@ -15,7 +15,19 @@ import {
   IWorkflowOverview,
   IWorkflowProposalResolutionRequest,
   IWorkflowRecord,
+  IWorkflowReminderProposalSnapshot,
+  IWorkflowReminderActivationPrepareRequest,
+  IWorkflowReminderActivationRequestResult,
+  IWorkflowReminderActivationDecisionRequest,
+  IWorkflowReminderActivationDecisionResult,
+  IWorkflowReminderActivationHistorySnapshot,
+  IWorkflowReminderActivationDecisionHistory,
+  IWorkflowReminderDeliveryAuthorizeRequest,
+  IWorkflowReminderDeliveryAuthorizationResult,
+  IWorkflowReminderDeliveryHistory,
+  IWorkflowReminderDeliveryRunSummary,
   IWorkflowRunDueRequest,
+  IWorkflowRunResult,
   IWorkflowRunSummary,
   IWorkflowTransitionRequest,
 } from '../../models/workflow.model.interface';
@@ -68,9 +80,101 @@ export class WorkflowService implements IWorkflowService {
     ).pipe(
       map((response) => {
         const selections = Array.isArray(response) ? response : response.selections ?? [];
-        return selections.find((selection) => selection.id === expectedId);
+        const selection = selections.find((item) => item.id === expectedId);
+        return selection && this.hasValidFrameworkRiskContract(selection)
+          ? selection
+          : undefined;
       })
     );
+  }
+
+  reminderProposals(horizonHours = 168, limit = 100): Observable<IWorkflowReminderProposalSnapshot> {
+    return this.http.get<IWorkflowReminderProposalSnapshot>(`${this.apiUrl}/reminder-proposals`, {
+      params: new HttpParams()
+        .set('horizonHours', horizonHours)
+        .set('limit', limit),
+    });
+  }
+
+  prepareReminderActivation(
+    itemId: string,
+    request: IWorkflowReminderActivationPrepareRequest
+  ): Observable<IWorkflowReminderActivationRequestResult> {
+    return this.http.post<IWorkflowReminderActivationRequestResult>(
+      `${this.apiUrl}/reminder-proposals/${itemId}/activation-requests`,
+      request
+    );
+  }
+
+  reminderActivationHistory(limit = 50): Observable<IWorkflowReminderActivationHistorySnapshot> {
+    return this.http.get<IWorkflowReminderActivationHistorySnapshot>(
+      `${this.apiUrl}/reminder-activation-requests`,
+      { params: new HttpParams().set('limit', limit) }
+    );
+  }
+
+  decideReminderActivation(
+    requestId: string,
+    request: IWorkflowReminderActivationDecisionRequest
+  ): Observable<IWorkflowReminderActivationDecisionResult> {
+    return this.http.post<IWorkflowReminderActivationDecisionResult>(
+      `${this.apiUrl}/reminder-activation-requests/${requestId}/decisions`,
+      request
+    );
+  }
+
+  reminderActivationDecisionHistory(
+    requestId: string,
+    limit = 50
+  ): Observable<IWorkflowReminderActivationDecisionHistory> {
+    return this.http.get<IWorkflowReminderActivationDecisionHistory>(
+      `${this.apiUrl}/reminder-activation-requests/${requestId}/decisions`,
+      { params: new HttpParams().set('limit', limit) }
+    );
+  }
+
+  authorizeReminderDelivery(
+    requestId: string,
+    request: IWorkflowReminderDeliveryAuthorizeRequest
+  ): Observable<IWorkflowReminderDeliveryAuthorizationResult> {
+    return this.http.post<IWorkflowReminderDeliveryAuthorizationResult>(
+      `${this.apiUrl}/reminder-activation-requests/${requestId}/delivery-authorizations`,
+      request
+    );
+  }
+
+  reminderDeliveryHistory(limit = 50): Observable<IWorkflowReminderDeliveryHistory> {
+    return this.http.get<IWorkflowReminderDeliveryHistory>(`${this.apiUrl}/reminder-deliveries`, {
+      params: new HttpParams().set('limit', limit),
+    });
+  }
+
+  runDueReminderDeliveries(request: IWorkflowRunDueRequest): Observable<IWorkflowReminderDeliveryRunSummary> {
+    return this.http.post<IWorkflowReminderDeliveryRunSummary>(`${this.apiUrl}/reminder-deliveries/run-due`, request);
+  }
+
+  private hasValidFrameworkRiskContract(
+    selection: IWorkflowFrameworkSelectionDecision
+  ): boolean {
+    if (selection.selectorAlgorithmVersion !== 'selector-v5') {
+      return true;
+    }
+    const rank: Record<string, number> = { low: 1, medium: 2, high: 3 };
+    const taskRank = rank[selection.taskRiskLevel ?? ''];
+    const ceilingRank = rank[selection.effectiveRiskCeiling ?? ''];
+    if (!taskRank || !ceilingRank || taskRank > ceilingRank) {
+      return false;
+    }
+    if (!Number.isInteger(selection.maximumAutonomyLevel) ||
+        selection.maximumAutonomyLevel < 0 || selection.maximumAutonomyLevel > 10 ||
+        typeof selection.requiresApproval !== 'boolean') {
+      return false;
+    }
+    return selection.selected.length > 0 && selection.selected.every((framework) => {
+      const frameworkRank = rank[framework.riskCeiling ?? ''];
+      return Boolean(frameworkRank) && frameworkRank >= taskRank &&
+        framework.maximumAutonomyLevel >= selection.maximumAutonomyLevel;
+    });
   }
 
   transition(id: string, request: IWorkflowTransitionRequest): Observable<IWorkflowRecord> {
@@ -110,6 +214,10 @@ export class WorkflowService implements IWorkflowService {
 
   runDue(request: IWorkflowRunDueRequest): Observable<IWorkflowRunSummary> {
     return this.http.post<IWorkflowRunSummary>(`${this.apiUrl}/run-due`, request);
+  }
+
+  runOne(id: string): Observable<IWorkflowRunResult> {
+    return this.http.post<IWorkflowRunResult>(`${this.apiUrl}/${id}/run`, {});
   }
 
   runDueOpenLoops(request: IWorkflowRunDueRequest): Observable<IWorkflowOpenLoopRunSummary> {

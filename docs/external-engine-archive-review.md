@@ -46,6 +46,11 @@ scope controls.
 
 ## Future Import Rule
 
+Current upstream feature accounting and license/security decisions are tracked
+in [`external-runtime-feature-parity.md`](external-runtime-feature-parity.md)
+and the authenticated Runtime Lab feature-parity API. That inventory does not
+weaken the archive rule or authorize code import or execution.
+
 A future external component may be considered only when it has an identifiable
 upstream revision and license, a bounded dependency and credential review,
 tests against HAI's real interfaces, no simulated-success fallback, and a

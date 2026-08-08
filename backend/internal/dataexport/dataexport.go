@@ -1,6 +1,6 @@
 // Package dataexport builds portable user-data exports and safe deletion plans
-// for context memories. It is pure: callers load records, build the export or
-// deletion manifest, then persist/serialize the result.
+// for context memories. Callers must use Service for owner-bound exports;
+// deletion planning remains a pure, non-effect helper.
 package dataexport
 
 import "automation-hub-backend/internal/models"
@@ -18,8 +18,9 @@ type Export struct {
 	Memories []models.ContextMemory `json:"memories"`
 }
 
-// BuildMemoryExport wraps memories in a versioned, self-describing envelope.
-func BuildMemoryExport(memories []models.ContextMemory) Export {
+// buildMemoryExport wraps memories in a versioned, self-describing envelope.
+// It is intentionally private so sensitive snapshots cannot bypass Service.
+func buildMemoryExport(memories []models.ContextMemory) Export {
 	items := make([]models.ContextMemory, 0, len(memories))
 	items = append(items, memories...)
 	return Export{Format: exportFormat, Version: exportVersion, Count: len(items), Memories: items}

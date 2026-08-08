@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -31,6 +32,7 @@ const (
 type ApprovalScope string
 
 const (
+	ApprovalScopeAPIRead      ApprovalScope = "automation.api.read"
 	ApprovalScopeAPIMutate    ApprovalScope = "automation.api.mutate"
 	ApprovalScopeScript       ApprovalScope = "automation.script.execute"
 	ApprovalScopeDocker       ApprovalScope = "automation.docker.start"
@@ -38,11 +40,12 @@ const (
 )
 
 var (
-	ErrApprovalProofRequired   = errors.New("action-bound approval proof is required")
-	ErrApprovalProofInvalid    = errors.New("action-bound approval proof is invalid")
-	ErrApprovalProofExpired    = errors.New("action-bound approval proof has expired")
-	ErrApprovalProofConsumed   = errors.New("action-bound approval proof was already consumed")
-	ErrApprovalDecisionMissing = errors.New("recorded approval decision was not found")
+	ErrApprovalProofRequired     = errors.New("action-bound approval proof is required")
+	ErrApprovalProofInvalid      = errors.New("action-bound approval proof is invalid")
+	ErrApprovalProofExpired      = errors.New("action-bound approval proof has expired")
+	ErrApprovalProofConsumed     = errors.New("action-bound approval proof was already consumed")
+	ErrApprovalDecisionMissing   = errors.New("recorded approval decision was not found")
+	ErrActionApprovalNotRequired = errors.New("automation action does not require an execution approval proof")
 )
 
 // ApprovalProof is a short-lived, signed, single-use capability. It is
@@ -89,11 +92,44 @@ type ApprovalDecisionRecord struct {
 // has verified an owner-scoped queued review decision. The automation service
 // derives the digest from the current stored automation configuration.
 type TaskApprovalDecisionRequest struct {
-	OwnerIdentity    string
-	Task             string
-	ProjectKey       string
-	ApprovalSourceID string
-	ApprovedAt       time.Time
+	OwnerIdentity         string
+	Task                  string
+	ProjectKey            string
+	MandateID             string
+	ApprovalSourceID      string
+	ApprovalBindingDigest string
+	ApprovedAt            time.Time
+}
+
+// ValidateTaskApprovalDecisionRequest applies the same freshness and digest
+// contract used when the automation service records a trusted task approval.
+// It validates evidence only; it does not record approval or grant authority.
+func ValidateTaskApprovalDecisionRequest(request TaskApprovalDecisionRequest, now time.Time) error {
+	if strings.TrimSpace(request.OwnerIdentity) == "" {
+		return fmt.Errorf("approval decision owner identity is required")
+	}
+	if _, _, err := approvalSourceKind(request.ApprovalSourceID); err != nil {
+		return err
+	}
+	digest := strings.ToLower(strings.TrimSpace(request.ApprovalBindingDigest))
+	if digest != "" {
+		decoded, err := hex.DecodeString(digest)
+		if err != nil || len(decoded) != sha256.Size {
+			return fmt.Errorf("approval decision action digest is invalid")
+		}
+	}
+	approvedAt := request.ApprovedAt.UTC()
+	now = now.UTC()
+	if approvedAt.IsZero() {
+		return fmt.Errorf("approval decision time is required")
+	}
+	if approvedAt.After(now.Add(maximumApprovalDecisionFutureSkew)) {
+		return fmt.Errorf("approval decision time is in the future")
+	}
+	if now.Sub(approvedAt) > maximumApprovalDecisionAge {
+		return fmt.Errorf("approval decision is stale")
+	}
+	return nil
 }
 
 // ApprovalDecisionRecorder is an internal process boundary used by the task
@@ -110,6 +146,7 @@ type TaskApprovalProofRequest struct {
 	Task             string
 	OriginalRequest  string
 	ProjectKey       string
+	MandateID        string
 	WorkflowID       string
 	ApprovalSourceID string
 	TTL              time.Duration
@@ -126,6 +163,10 @@ type WorkflowApprovalBindingPreparer interface {
 	PrepareWorkflowApprovalBinding(id uuid.UUID, request TaskLaunchRequest) (string, error)
 }
 
+type ActionApprovalRequirementInspector interface {
+	ActionApprovalRequired(id uuid.UUID) (bool, error)
+}
+
 type ApprovalProofExpectation struct {
 	OwnerIdentity    string
 	AutomationID     uuid.UUID
@@ -136,13 +177,39 @@ type ApprovalProofExpectation struct {
 
 type ApprovalProofService interface {
 	Issue(request ApprovalProofIssueRequest) (*ApprovalProof, error)
-	VerifyAndConsume(proof *ApprovalProof, expected ApprovalProofExpectation) error
+	VerifyAndConsume(ctx context.Context, proof *ApprovalProof, expected ApprovalProofExpectation) error
 }
 
-type inMemoryApprovalProofService struct {
+const approvalProofConsumptionContractVersion = "automation-approval-proof-consumption.v1"
+
+type ApprovalProofConsumption struct {
+	ContractVersion  string
+	ProofID          uuid.UUID
+	OwnerIdentity    string
+	AutomationID     uuid.UUID
+	ActionDigest     string
+	Scope            ApprovalScope
+	ApprovalSourceID string
+	NonceDigest      string
+	SignatureDigest  string
+	RecordDigest     string
+	IssuedAt         time.Time
+	ExpiresAt        time.Time
+	ConsumedAt       time.Time
+}
+
+type ApprovalProofConsumptionStore interface {
+	Consume(ctx context.Context, consumption ApprovalProofConsumption) error
+}
+
+type approvalProofService struct {
+	key   []byte
+	now   func() time.Time
+	store ApprovalProofConsumptionStore
+}
+
+type memoryApprovalProofConsumptionStore struct {
 	mu       sync.Mutex
-	key      []byte
-	now      func() time.Time
 	consumed map[string]time.Time
 }
 
@@ -151,40 +218,47 @@ type unavailableApprovalProofService struct {
 }
 
 func NewInMemoryApprovalProofService(secret []byte, now func() time.Time) (ApprovalProofService, error) {
+	return NewApprovalProofService(secret, &memoryApprovalProofConsumptionStore{
+		consumed: make(map[string]time.Time),
+	}, now)
+}
+
+func NewApprovalProofService(
+	secret []byte,
+	store ApprovalProofConsumptionStore,
+	now func() time.Time,
+) (ApprovalProofService, error) {
 	if len(secret) < 32 {
 		return nil, fmt.Errorf("approval proof signing secret must contain at least 32 bytes")
+	}
+	if store == nil {
+		return nil, fmt.Errorf("approval proof consumption store is required")
 	}
 	if now == nil {
 		now = time.Now
 	}
-	return &inMemoryApprovalProofService{
-		key:      append([]byte(nil), secret...),
-		now:      now,
-		consumed: make(map[string]time.Time),
+	return &approvalProofService{
+		key:   append([]byte(nil), secret...),
+		now:   now,
+		store: store,
 	}, nil
 }
 
 func newDefaultApprovalProofService() ApprovalProofService {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return unavailableApprovalProofService{err: err}
-	}
-	service, err := NewInMemoryApprovalProofService(key, time.Now)
-	if err != nil {
-		return unavailableApprovalProofService{err: err}
-	}
-	return service
+	return unavailableApprovalProofService{err: errors.New(
+		"durable approval proof service must be injected explicitly",
+	)}
 }
 
 func (s unavailableApprovalProofService) Issue(ApprovalProofIssueRequest) (*ApprovalProof, error) {
 	return nil, fmt.Errorf("approval proof service is unavailable: %w", s.err)
 }
 
-func (s unavailableApprovalProofService) VerifyAndConsume(*ApprovalProof, ApprovalProofExpectation) error {
+func (s unavailableApprovalProofService) VerifyAndConsume(context.Context, *ApprovalProof, ApprovalProofExpectation) error {
 	return fmt.Errorf("approval proof service is unavailable: %w", s.err)
 }
 
-func (s *inMemoryApprovalProofService) Issue(request ApprovalProofIssueRequest) (*ApprovalProof, error) {
+func (s *approvalProofService) Issue(request ApprovalProofIssueRequest) (*ApprovalProof, error) {
 	request.OwnerIdentity = strings.TrimSpace(request.OwnerIdentity)
 	request.ActionDigest = strings.ToLower(strings.TrimSpace(request.ActionDigest))
 	request.ApprovalSourceID = strings.TrimSpace(request.ApprovalSourceID)
@@ -224,7 +298,14 @@ func (s *inMemoryApprovalProofService) Issue(request ApprovalProofIssueRequest) 
 	return proof, nil
 }
 
-func (s *inMemoryApprovalProofService) VerifyAndConsume(proof *ApprovalProof, expected ApprovalProofExpectation) error {
+func (s *approvalProofService) VerifyAndConsume(
+	ctx context.Context,
+	proof *ApprovalProof,
+	expected ApprovalProofExpectation,
+) error {
+	if ctx == nil {
+		return fmt.Errorf("%w: verification context is required", ErrApprovalProofInvalid)
+	}
 	if proof == nil {
 		return ErrApprovalProofRequired
 	}
@@ -280,17 +361,50 @@ func (s *inMemoryApprovalProofService) VerifyAndConsume(proof *ApprovalProof, ex
 		return ErrApprovalProofExpired
 	}
 
+	proofID, err := uuid.Parse(strings.TrimSpace(proof.ID))
+	if err != nil || proofID == uuid.Nil {
+		return fmt.Errorf("%w: proof identity must be a UUID", ErrApprovalProofInvalid)
+	}
+	consumption := ApprovalProofConsumption{
+		ContractVersion:  approvalProofConsumptionContractVersion,
+		ProofID:          proofID,
+		OwnerIdentity:    proof.OwnerIdentity,
+		AutomationID:     proof.AutomationID,
+		ActionDigest:     proof.ActionDigest,
+		Scope:            proof.Scope,
+		ApprovalSourceID: proof.ApprovalSourceID,
+		NonceDigest:      sha256Hex(proof.Nonce),
+		SignatureDigest:  sha256Hex(proof.Signature),
+		IssuedAt:         proof.IssuedAt.UTC(),
+		ExpiresAt:        proof.ExpiresAt.UTC(),
+		ConsumedAt:       now,
+	}
+	consumption.RecordDigest = approvalProofConsumptionDigest(consumption)
+	if err := s.store.Consume(ctx, consumption); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *memoryApprovalProofConsumptionStore) Consume(
+	_ context.Context,
+	consumption ApprovalProofConsumption,
+) error {
+	if err := validateApprovalProofConsumption(consumption); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, expiresAt := range s.consumed {
-		if !now.Before(expiresAt) {
+		if !consumption.ConsumedAt.Before(expiresAt) {
 			delete(s.consumed, id)
 		}
 	}
-	if _, exists := s.consumed[proof.ID]; exists {
+	key := consumption.OwnerIdentity + "\x00" + consumption.ProofID.String()
+	if _, exists := s.consumed[key]; exists {
 		return ErrApprovalProofConsumed
 	}
-	s.consumed[proof.ID] = proof.ExpiresAt
+	s.consumed[key] = consumption.ExpiresAt
 	return nil
 }
 
@@ -348,7 +462,7 @@ func ValidateIssuedApprovalProofEnvelope(
 	return nil
 }
 
-func (s *inMemoryApprovalProofService) sign(proof *ApprovalProof) string {
+func (s *approvalProofService) sign(proof *ApprovalProof) string {
 	payload := struct {
 		ID               string        `json:"id"`
 		OwnerIdentity    string        `json:"ownerIdentity"`
@@ -376,6 +490,83 @@ func (s *inMemoryApprovalProofService) sign(proof *ApprovalProof) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func sha256Hex(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
+
+func approvalProofConsumptionDigest(value ApprovalProofConsumption) string {
+	payload := struct {
+		ContractVersion  string        `json:"contractVersion"`
+		ProofID          string        `json:"proofId"`
+		OwnerIdentity    string        `json:"ownerIdentity"`
+		AutomationID     string        `json:"automationId"`
+		ActionDigest     string        `json:"actionDigest"`
+		Scope            ApprovalScope `json:"scope"`
+		ApprovalSourceID string        `json:"approvalSourceId"`
+		NonceDigest      string        `json:"nonceDigest"`
+		SignatureDigest  string        `json:"signatureDigest"`
+		IssuedAt         string        `json:"issuedAt"`
+		ExpiresAt        string        `json:"expiresAt"`
+		ConsumedAt       string        `json:"consumedAt"`
+	}{
+		ContractVersion:  value.ContractVersion,
+		ProofID:          value.ProofID.String(),
+		OwnerIdentity:    value.OwnerIdentity,
+		AutomationID:     value.AutomationID.String(),
+		ActionDigest:     value.ActionDigest,
+		Scope:            value.Scope,
+		ApprovalSourceID: value.ApprovalSourceID,
+		NonceDigest:      value.NonceDigest,
+		SignatureDigest:  value.SignatureDigest,
+		IssuedAt:         value.IssuedAt.UTC().Format(time.RFC3339Nano),
+		ExpiresAt:        value.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		ConsumedAt:       value.ConsumedAt.UTC().Format(time.RFC3339Nano),
+	}
+	encoded, _ := json.Marshal(payload)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func validateApprovalProofConsumption(value ApprovalProofConsumption) error {
+	if value.ContractVersion != approvalProofConsumptionContractVersion {
+		return fmt.Errorf("approval proof consumption contract version is invalid")
+	}
+	if value.ProofID == uuid.Nil {
+		return fmt.Errorf("approval proof consumption proof ID is required")
+	}
+	if err := validateApprovalBinding(
+		strings.TrimSpace(value.OwnerIdentity),
+		value.AutomationID,
+		strings.ToLower(strings.TrimSpace(value.ActionDigest)),
+		value.Scope,
+		strings.TrimSpace(value.ApprovalSourceID),
+	); err != nil {
+		return err
+	}
+	for label, digest := range map[string]string{
+		"nonce":     value.NonceDigest,
+		"signature": value.SignatureDigest,
+		"record":    value.RecordDigest,
+	} {
+		decoded, err := hex.DecodeString(strings.ToLower(strings.TrimSpace(digest)))
+		if err != nil || len(decoded) != sha256.Size {
+			return fmt.Errorf("approval proof consumption %s digest must be SHA-256", label)
+		}
+	}
+	if value.IssuedAt.IsZero() || value.ExpiresAt.IsZero() || value.ConsumedAt.IsZero() ||
+		!value.ExpiresAt.After(value.IssuedAt) ||
+		value.ExpiresAt.After(value.IssuedAt.Add(maximumApprovalProofTTL)) ||
+		value.ConsumedAt.Before(value.IssuedAt.Add(-maximumApprovalDecisionFutureSkew)) ||
+		!value.ConsumedAt.Before(value.ExpiresAt) {
+		return fmt.Errorf("approval proof consumption timestamps are invalid")
+	}
+	if approvalProofConsumptionDigest(value) != value.RecordDigest {
+		return fmt.Errorf("approval proof consumption record digest is invalid")
+	}
+	return nil
+}
+
 func validateApprovalBinding(
 	ownerIdentity string,
 	automationID uuid.UUID,
@@ -400,12 +591,15 @@ func validateApprovalBinding(
 		strings.ContainsAny(approvalSourceID, "\r\n\x00") {
 		return fmt.Errorf("approval source ID is required and must be a single bounded value")
 	}
+	if _, _, err := approvalSourceKind(approvalSourceID); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (s ApprovalScope) valid() bool {
 	switch s {
-	case ApprovalScopeAPIMutate, ApprovalScopeScript, ApprovalScopeDocker, ApprovalScopeAgentRuntime:
+	case ApprovalScopeAPIRead, ApprovalScopeAPIMutate, ApprovalScopeScript, ApprovalScopeDocker, ApprovalScopeAgentRuntime:
 		return true
 	default:
 		return false
@@ -421,7 +615,7 @@ func approvalScopeForAutomation(automation *models.Automation) (ApprovalScope, b
 		method, _ := parseLaunchMethodTarget(automation.LaunchTarget, http.MethodPost)
 		switch method {
 		case http.MethodGet, http.MethodHead:
-			return "", false
+			return ApprovalScopeAPIRead, false
 		case http.MethodPost:
 			return ApprovalScopeAPIMutate, true
 		default:
@@ -549,6 +743,7 @@ func automationActionDigest(automation *models.Automation, request TaskLaunchReq
 		ExpectedHTTPStatus int      `json:"expectedHttpStatus"`
 		Task               string   `json:"task"`
 		ProjectKey         string   `json:"projectKey"`
+		MandateID          string   `json:"mandateId,omitempty"`
 		PolicySnapshot     []string `json:"policySnapshot"`
 	}
 	identity := actionIdentity{
@@ -566,6 +761,7 @@ func automationActionDigest(automation *models.Automation, request TaskLaunchReq
 		ExpectedHTTPStatus: automation.ExpectedHTTPStatus,
 		Task:               strings.TrimSpace(request.Task),
 		ProjectKey:         strings.TrimSpace(request.ProjectKey),
+		MandateID:          strings.TrimSpace(request.MandateID),
 		PolicySnapshot:     approvalPolicySnapshot(),
 	}
 	encoded, _ := json.Marshal(identity)
@@ -580,6 +776,9 @@ func approvalPolicySnapshot() []string {
 		"AUTOMATION_SCRIPT_EXECUTION_ENABLED",
 		"AUTOMATION_SCRIPT_DIR",
 		"AUTOMATION_SCRIPT_ENV_ALLOWLIST",
+		"AUTOMATION_SCRIPT_OUTPUT_LIMIT_BYTES",
+		"AUTOMATION_SCRIPT_SHA256_ALLOWLIST",
+		"AUTOMATION_SCRIPT_TIMEOUT_SECONDS",
 		"AUTOMATION_DOCKER_CONTROL_ENABLED",
 		"AUTOMATION_DOCKER_ALLOWED_CONTAINERS",
 		"AUTOMATION_DOCKER_SOCKET",

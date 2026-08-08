@@ -19,7 +19,7 @@ const idempotencyKeyHeader = "Idempotency-Key"
 func idempotencyMiddleware(store *idempotency.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := strings.TrimSpace(c.GetHeader(idempotencyKeyHeader))
-		if key == "" || isSafeMethod(c.Request.Method) {
+		if key == "" || isSafeMethod(c.Request.Method) || usesDurableIdempotency(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -31,6 +31,23 @@ func idempotencyMiddleware(store *idempotency.Store) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// Task plan/run endpoints own a PostgreSQL-backed, owner-scoped idempotency
+// contract that can replay the exact durable result and detect changed input.
+// The legacy process-local middleware must not reject those safe replays before
+// they reach the authoritative operation ledger.
+func usesDurableIdempotency(path string) bool {
+	cleanPath := strings.TrimSuffix(strings.TrimSpace(path), "/")
+	switch cleanPath {
+	case "/api/v1/task/plan", "/api/v1/task/run", "/api/v1/task/success", "/api/v1/proactivity/feedback":
+		return true
+	}
+	parts := strings.Split(strings.Trim(cleanPath, "/"), "/")
+	return len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" &&
+		parts[2] == "workflow" && parts[4] != "" &&
+		((parts[3] == "reminder-proposals" && parts[5] == "activation-requests") ||
+			(parts[3] == "reminder-activation-requests" && parts[5] == "decisions"))
 }
 
 func isSafeMethod(method string) bool {

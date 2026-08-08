@@ -3,6 +3,9 @@ package agentruntime
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -90,7 +93,7 @@ func TestRegistryBlocksWhenEmergencyStopActive(t *testing.T) {
 		ExecutionEnabled: true,
 		RequiresApproval: true,
 	}}
-	registry := NewRegistry(adapter)
+	registry := newVerifiedTestRegistry(adapter)
 	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "run approved work"))
 	if result.Status != "blocked" || adapter.called {
 		t.Fatalf("emergency stop did not prevent runtime execution: %#v", result)
@@ -113,7 +116,7 @@ func TestRegistryBlocksWhenPersistedEmergencyStopActive(t *testing.T) {
 		ExecutionEnabled: true,
 		RequiresApproval: true,
 	}}
-	registry := NewRegistry(adapter)
+	registry := newVerifiedTestRegistry(adapter)
 	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "run approved work"))
 	if result.Status != "blocked" || adapter.called {
 		t.Fatalf("persisted emergency stop did not prevent runtime execution: %#v", result)
@@ -131,10 +134,273 @@ func TestRegistryExecutesApprovedTask(t *testing.T) {
 		ExecutionEnabled: true,
 		RequiresApproval: true,
 	}}
-	registry := NewRegistry(adapter)
-	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
+	task := approvedRuntimeTask("task-1", "do work")
+	task.ProjectKey = "project-1"
+	task = withValidFinalEffectProof("test", task, adapter.info)
+	var captured FinalEffectAuthorizationRequest
+	var capturedProof FinalEffectAuthorizationProof
+	registry := NewRegistryWithFinalEffectVerifier(
+		FinalEffectProofVerifierFunc(func(_ context.Context, request FinalEffectAuthorizationRequest, proof FinalEffectAuthorizationProof) error {
+			captured = request
+			capturedProof = proof
+			return verifyTestFinalEffectProof(request, proof)
+		}),
+		adapter,
+	)
+	result := registry.Execute(context.Background(), "test", task)
 	if result.Status != "completed" || !adapter.called {
 		t.Fatalf("approved task was not executed: %#v", result)
+	}
+	sum := sha256.Sum256([]byte(task.Prompt))
+	if captured.Operation != runtimeExecuteTaskOperation ||
+		captured.RuntimeID != "test" ||
+		captured.TaskID != task.ID ||
+		captured.OwnerIdentity != task.OwnerIdentity ||
+		captured.ProjectKey != task.ProjectKey ||
+		captured.ApprovalSourceID != task.ApprovalSourceID ||
+		captured.PromptDigest != hex.EncodeToString(sum[:]) ||
+		!captured.RequiresApproval {
+		t.Fatalf("final-effect request was not exactly bound to the task: %#v", captured)
+	}
+	if capturedProof != task.FinalEffectProof {
+		t.Fatalf("verifier did not receive the task proof: got=%#v want=%#v", capturedProof, task.FinalEffectProof)
+	}
+	if !containsString(result.AuditEvents, "runtime adapter invoked with verified consumed authorization proof") {
+		t.Fatalf("result lacks final-effect authorization evidence: %#v", result.AuditEvents)
+	}
+}
+
+func TestRegistryFailsClosedWithoutFinalEffectVerifier(t *testing.T) {
+	adapter := executableFakeAdapter()
+	registry := NewRegistry(adapter)
+
+	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
+
+	if result.Status != "blocked" || adapter.called {
+		t.Fatalf("registry without verifier reached adapter: result=%#v called=%t", result, adapter.called)
+	}
+	if !strings.Contains(result.Message, "could not be verified") ||
+		!containsString(result.AuditEvents, "final-effect proof verifier failed closed before runtime adapter access") {
+		t.Fatalf("fail-closed result lacks controlled evidence: %#v", result)
+	}
+}
+
+func TestRegistryFinalEffectProofFailuresNeverReachAdapter(t *testing.T) {
+	tests := []struct {
+		name              string
+		mutate            func(*FinalEffectAuthorizationProof)
+		verifierErr       error
+		wantVerifierCalls int
+	}{
+		{
+			name: "missing receipt",
+			mutate: func(proof *FinalEffectAuthorizationProof) {
+				proof.ReceiptID = ""
+			},
+		},
+		{
+			name: "invalid authorization request digest",
+			mutate: func(proof *FinalEffectAuthorizationProof) {
+				proof.AuthorizationRequestDigest = "not-a-sha256-digest"
+			},
+		},
+		{
+			name: "invalid decision digest",
+			mutate: func(proof *FinalEffectAuthorizationProof) {
+				proof.DecisionDigest = "not-a-sha256-digest"
+			},
+		},
+		{
+			name: "runtime binding belongs to another request",
+			mutate: func(proof *FinalEffectAuthorizationProof) {
+				proof.RuntimeRequestDigest = strings.Repeat("b", 64)
+			},
+		},
+		{
+			name: "arbitrary syntactically valid receipt rejected by durable verifier",
+			mutate: func(proof *FinalEffectAuthorizationProof) {
+				proof.ReceiptID = "22222222-2222-4222-8222-222222222222"
+			},
+			verifierErr:       errors.New("receipt not found"),
+			wantVerifierCalls: 1,
+		},
+		{
+			name:              "verifier unavailable",
+			verifierErr:       errors.New("policy database unavailable"),
+			wantVerifierCalls: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := executableFakeAdapter()
+			task := approvedRuntimeTask("task-1", "do work")
+			if test.mutate != nil {
+				test.mutate(&task.FinalEffectProof)
+			}
+			verifierCalls := 0
+			registry := NewRegistryWithFinalEffectVerifier(
+				FinalEffectProofVerifierFunc(func(_ context.Context, request FinalEffectAuthorizationRequest, proof FinalEffectAuthorizationProof) error {
+					verifierCalls++
+					if test.verifierErr != nil {
+						return test.verifierErr
+					}
+					return verifyTestFinalEffectProof(request, proof)
+				}),
+				adapter,
+			)
+
+			result := registry.Execute(context.Background(), "test", task)
+
+			if result.Status != "blocked" || adapter.called {
+				t.Fatalf("invalid proof reached adapter: result=%#v called=%t", result, adapter.called)
+			}
+			if verifierCalls != test.wantVerifierCalls {
+				t.Fatalf("verifier calls=%d want=%d", verifierCalls, test.wantVerifierCalls)
+			}
+			if strings.Contains(result.Message, "policy database unavailable") ||
+				strings.Contains(result.Message, "receipt not found") {
+				t.Fatalf("internal verifier error leaked to caller: %#v", result)
+			}
+		})
+	}
+}
+
+func TestRegistryRechecksEmergencyStopAfterFinalEffectProofVerification(t *testing.T) {
+	engaged := false
+	restore := safety.SetEmergencyStopProvider(safety.EmergencyStopProviderFunc(func() (bool, string, error) {
+		return engaged, "operator engaged stop during proof verification", nil
+	}))
+	defer restore()
+
+	adapter := executableFakeAdapter()
+	registry := NewRegistryWithFinalEffectVerifier(
+		FinalEffectProofVerifierFunc(func(_ context.Context, request FinalEffectAuthorizationRequest, proof FinalEffectAuthorizationProof) error {
+			if err := verifyTestFinalEffectProof(request, proof); err != nil {
+				return err
+			}
+			engaged = true
+			return nil
+		}),
+		adapter,
+	)
+
+	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
+
+	if result.Status != "blocked" || adapter.called {
+		t.Fatalf("stop engaged after authorization reached adapter: result=%#v called=%t", result, adapter.called)
+	}
+	if result.Message != "operator engaged stop during proof verification" ||
+		!containsString(result.AuditEvents, "verified final-effect proof was not exercised") {
+		t.Fatalf("post-authorization emergency-stop evidence missing: %#v", result)
+	}
+}
+
+func TestRegistryCancellationDuringProofVerificationNeverReachesAdapter(t *testing.T) {
+	adapter := executableFakeAdapter()
+	verificationStarted := make(chan struct{})
+	releaseVerification := make(chan struct{})
+	registry := NewRegistryWithFinalEffectVerifier(
+		FinalEffectProofVerifierFunc(func(_ context.Context, request FinalEffectAuthorizationRequest, proof FinalEffectAuthorizationProof) error {
+			close(verificationStarted)
+			<-releaseVerification
+			return verifyTestFinalEffectProof(request, proof)
+		}),
+		adapter,
+	)
+	resultCh := make(chan Result, 1)
+	go func() {
+		resultCh <- registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
+	}()
+
+	select {
+	case <-verificationStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("final-effect proof verification did not start")
+	}
+	stop := registry.StopTask(context.Background(), "test", "task-1", "alice")
+	if stop.Status != "stopping" {
+		t.Fatalf("stop while verifying proof = %#v", stop)
+	}
+	close(releaseVerification)
+
+	select {
+	case result := <-resultCh:
+		if result.Status != "blocked" || adapter.called {
+			t.Fatalf("cancelled proof verification reached adapter: result=%#v called=%t", result, adapter.called)
+		}
+		if !containsString(result.AuditEvents, "runtime cancellation observed after final-effect proof verification") {
+			t.Fatalf("cancellation evidence missing: %#v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled execution did not return")
+	}
+}
+
+func TestRegistryReadAPIsRemainAvailableWithoutFinalEffectVerifier(t *testing.T) {
+	adapter := executableFakeAdapter()
+	adapter.info.ID = "hermes"
+	registry := NewRegistry(adapter)
+
+	if got := registry.List(); len(got) != 1 || got[0].ID != "hermes" {
+		t.Fatalf("runtime discovery should not require execution authorization: %#v", got)
+	}
+	health := registry.Health(context.Background())
+	if len(health) != 1 || health[0].RuntimeID != "hermes" || health[0].Status != "ready" {
+		t.Fatalf("health should not require execution authorization: %#v", health)
+	}
+	skills, err := registry.Skills(context.Background(), "hermes")
+	if err != nil || len(skills) != 1 {
+		t.Fatalf("skills should not require execution authorization: skills=%#v err=%v", skills, err)
+	}
+}
+
+func TestBindConsumedAuthorizationProofBindsExactTaskAndRejectsMutation(t *testing.T) {
+	adapter := executableFakeAdapter()
+	binder := NewRegistry(adapter)
+	task := approvedRuntimeTask("task-1", "do work")
+	task.FinalEffectProof = FinalEffectAuthorizationProof{}
+
+	bound, err := binder.BindConsumedAuthorizationProof(
+		"test",
+		task,
+		"11111111-1111-4111-8111-111111111111",
+		strings.Repeat("c", 64),
+		strings.Repeat("a", 64),
+		"signed-runtime-handoff",
+	)
+	if err != nil {
+		t.Fatalf("bind consumed authorization proof: %v", err)
+	}
+	expectedRequest := runtimeFinalEffectRequest("test", bound, adapter.info)
+	if bound.FinalEffectProof.RuntimeRequestDigest != finalEffectRequestDigest(expectedRequest) ||
+		bound.FinalEffectProof.RuntimeProof != "signed-runtime-handoff" {
+		t.Fatalf("runtime proof was not bound exactly: %#v", bound.FinalEffectProof)
+	}
+
+	verifierCalls := 0
+	registry := NewRegistryWithFinalEffectVerifier(
+		FinalEffectProofVerifierFunc(func(context.Context, FinalEffectAuthorizationRequest, FinalEffectAuthorizationProof) error {
+			verifierCalls++
+			return nil
+		}),
+		adapter,
+	)
+	bound.Prompt = "mutated after authorization handoff"
+	result := registry.Execute(context.Background(), "test", bound)
+	if result.Status != "blocked" || adapter.called || verifierCalls != 0 {
+		t.Fatalf("mutated task crossed proof boundary: result=%#v called=%t verifierCalls=%d", result, adapter.called, verifierCalls)
+	}
+
+	if _, err := binder.BindConsumedAuthorizationProof(
+		"test",
+		task,
+		"arbitrary-id",
+		strings.Repeat("c", 64),
+		strings.Repeat("a", 64),
+		"",
+	); err == nil {
+		t.Fatal("binder accepted malformed receipt id")
 	}
 }
 
@@ -147,7 +413,7 @@ func TestRegistryBlockMessageIncludesConfigurationReasons(t *testing.T) {
 		RequiresApproval:     true,
 		MissingConfiguration: []string{"TEST_WORKSPACE", "runtime endpoint missing"},
 	}}
-	registry := NewRegistry(adapter)
+	registry := newVerifiedTestRegistry(adapter)
 	result := registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
 	if result.Status != "blocked" || adapter.called {
 		t.Fatalf("misconfigured runtime should not execute: %#v", result)
@@ -173,7 +439,7 @@ func TestRegistryStopTaskCancelsActiveRuntimeExecution(t *testing.T) {
 		},
 		started: make(chan struct{}),
 	}
-	registry := NewRegistry(adapter)
+	registry := newVerifiedTestRegistry(adapter)
 	resultCh := make(chan Result, 1)
 	go func() {
 		resultCh <- registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
@@ -219,7 +485,7 @@ func TestRegistryRejectsDuplicateActiveRuntimeTaskID(t *testing.T) {
 		},
 		started: make(chan struct{}),
 	}
-	registry := NewRegistry(adapter)
+	registry := newVerifiedTestRegistry(adapter)
 	resultCh := make(chan Result, 1)
 	go func() {
 		resultCh <- registry.Execute(context.Background(), "test", approvedRuntimeTask("task-1", "do work"))
@@ -1174,13 +1440,63 @@ func TestOdysseusAdapterEmergencyStopPreventsNetworkIO(t *testing.T) {
 }
 
 func approvedRuntimeTask(id, prompt string) Task {
-	return Task{
+	task := Task{
 		ID:               id,
 		Prompt:           prompt,
 		OwnerIdentity:    "alice",
 		HumanApproved:    true,
 		ApprovalSourceID: "task-review:11111111-1111-4111-8111-111111111111",
 	}
+	return withValidFinalEffectProof("test", task, Info{RequiresApproval: true})
+}
+
+func withValidFinalEffectProof(runtimeID string, task Task, info Info) Task {
+	request := runtimeFinalEffectRequest(runtimeID, task, info)
+	task.FinalEffectProof = FinalEffectAuthorizationProof{
+		ReceiptID:                  "11111111-1111-4111-8111-111111111111",
+		AuthorizationRequestDigest: strings.Repeat("c", 64),
+		DecisionDigest:             strings.Repeat("a", 64),
+		RuntimeRequestDigest:       finalEffectRequestDigest(request),
+	}
+	return task
+}
+
+func verifyTestFinalEffectProof(
+	request FinalEffectAuthorizationRequest,
+	proof FinalEffectAuthorizationProof,
+) error {
+	if proof.ReceiptID != "11111111-1111-4111-8111-111111111111" {
+		return errors.New("receipt not found")
+	}
+	if proof.AuthorizationRequestDigest != strings.Repeat("c", 64) {
+		return errors.New("authorization request digest mismatch")
+	}
+	if proof.DecisionDigest != strings.Repeat("a", 64) {
+		return errors.New("decision digest mismatch")
+	}
+	if proof.RuntimeRequestDigest != finalEffectRequestDigest(request) {
+		return errors.New("runtime request digest mismatch")
+	}
+	return nil
+}
+
+func newVerifiedTestRegistry(adapters ...Adapter) *Registry {
+	return NewRegistryWithFinalEffectVerifier(
+		FinalEffectProofVerifierFunc(func(_ context.Context, request FinalEffectAuthorizationRequest, proof FinalEffectAuthorizationProof) error {
+			return verifyTestFinalEffectProof(request, proof)
+		}),
+		adapters...,
+	)
+}
+
+func executableFakeAdapter() *fakeAdapter {
+	return &fakeAdapter{info: Info{
+		ID:               "test",
+		Enabled:          true,
+		Configured:       true,
+		ExecutionEnabled: true,
+		RequiresApproval: true,
+	}}
 }
 
 type fakeAdapter struct {

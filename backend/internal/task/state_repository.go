@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/plangraph"
 	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
@@ -31,17 +32,37 @@ const (
 )
 
 var (
-	ErrTaskStateNotFound           = errors.New("task state record not found")
-	ErrTaskStateConflict           = errors.New("task state conflicts with existing immutable state")
-	ErrTaskReviewAlreadyResolved   = errors.New("task review item is already resolved")
-	ErrTaskReviewBindingMismatch   = errors.New("task review request provenance does not match")
-	ErrTaskReviewInvalidTransition = errors.New("invalid task review state transition")
+	ErrTaskStateNotFound              = errors.New("task state record not found")
+	ErrTaskStateConflict              = errors.New("task state conflicts with existing immutable state")
+	ErrTaskReviewAlreadyResolved      = errors.New("task review item is already resolved")
+	ErrTaskReviewBindingMismatch      = errors.New("task review request provenance does not match")
+	ErrTaskReviewInvalidTransition    = errors.New("invalid task review state transition")
+	ErrTaskOperationInProgress        = errors.New("task operation is already in progress")
+	ErrTaskOperationNeedsReview       = errors.New("task operation outcome requires review")
+	ErrTaskOperationRetryConfirmation = errors.New("uncertain task operation retry requires explicit confirmation")
 )
+
+const (
+	TaskOperationAcquired    = "acquired"
+	TaskOperationReplay      = "replay"
+	TaskOperationInProgress  = "in_progress"
+	TaskOperationNeedsReview = "needs_review"
+)
+
+type TaskOperationClaim struct {
+	Operation   models.TaskOperationRecord
+	Disposition string
+}
 
 // TaskStateRepository is the durable boundary for task completion history and
 // human review decisions. Implementations must owner-scope every read/write and
 // preserve append-only completion and decision records.
 type TaskStateRepository interface {
+	ClaimTaskOperation(ownerIdentity, idempotencyKey, requestDigest, mode, leaseOwner string, now time.Time, leaseDuration time.Duration) (TaskOperationClaim, error)
+	HeartbeatTaskOperation(ownerIdentity string, operationID uuid.UUID, leaseOwner string, leaseGeneration int64, now time.Time) (bool, error)
+	CompleteTaskOperation(ownerIdentity string, operationID uuid.UUID, leaseOwner string, leaseGeneration int64, taskPlanID string, now time.Time) (bool, error)
+	MarkTaskOperationNeedsReview(ownerIdentity string, operationID uuid.UUID, leaseOwner string, leaseGeneration int64, reason string, now time.Time) (bool, error)
+
 	AppendCompletionPlan(ownerIdentity string, plan CompletionPlan) error
 	ListCompletionPlans(ownerIdentity string, limit int) ([]CompletionPlan, error)
 	FindCompletionPlan(ownerIdentity, taskPlanID string) (*CompletionPlan, error)
@@ -99,16 +120,18 @@ type PersistedReviewResolution struct {
 // contract, but remains part of the reviewed action identity so workflow-owned
 // attempts cannot be reclassified as direct pursuit attempts after a restart.
 type storedReviewRequest struct {
-	PursuitID       string   `json:"pursuitId,omitempty"`
-	WorkflowID      string   `json:"workflowId,omitempty"`
-	Request         string   `json:"request"`
-	ProjectKey      string   `json:"projectKey,omitempty"`
-	AutomationID    string   `json:"automationId,omitempty"`
-	SuccessCriteria []string `json:"successCriteria,omitempty"`
-	ExecuteAllowed  bool     `json:"executeAllowed,omitempty"`
-	HumanApproved   bool     `json:"humanApproved,omitempty"`
-	ApprovalNote    string   `json:"approvalNote,omitempty"`
-	ApprovalSource  string   `json:"approvalSourceId,omitempty"`
+	PursuitID        string                              `json:"pursuitId,omitempty"`
+	WorkflowID       string                              `json:"workflowId,omitempty"`
+	Request          string                              `json:"request"`
+	ProjectKey       string                              `json:"projectKey,omitempty"`
+	AutomationID     string                              `json:"automationId,omitempty"`
+	MandateID        string                              `json:"mandateId,omitempty"`
+	SuccessCriteria  []string                            `json:"successCriteria,omitempty"`
+	ExecuteAllowed   bool                                `json:"executeAllowed,omitempty"`
+	HumanApproved    bool                                `json:"humanApproved,omitempty"`
+	ApprovalNote     string                              `json:"approvalNote,omitempty"`
+	ApprovalSource   string                              `json:"approvalSourceId,omitempty"`
+	CoordinationPlan plangraph.AcceptedRevisionReference `json:"coordinationPlan,omitempty"`
 }
 
 // ReviewRequestDigest hashes the redacted, action-defining request projection.
@@ -128,21 +151,25 @@ func ReviewRequestDigest(ownerIdentity string, request IntakeRequest) (string, e
 		return "", fmt.Errorf("review request is required")
 	}
 	projection := struct {
-		OwnerIdentity   string   `json:"ownerIdentity"`
-		PursuitID       string   `json:"pursuitId,omitempty"`
-		WorkflowID      string   `json:"workflowId,omitempty"`
-		Request         string   `json:"request"`
-		ProjectKey      string   `json:"projectKey,omitempty"`
-		AutomationID    string   `json:"automationId,omitempty"`
-		SuccessCriteria []string `json:"successCriteria,omitempty"`
+		OwnerIdentity    string                              `json:"ownerIdentity"`
+		PursuitID        string                              `json:"pursuitId,omitempty"`
+		WorkflowID       string                              `json:"workflowId,omitempty"`
+		Request          string                              `json:"request"`
+		ProjectKey       string                              `json:"projectKey,omitempty"`
+		AutomationID     string                              `json:"automationId,omitempty"`
+		MandateID        string                              `json:"mandateId,omitempty"`
+		SuccessCriteria  []string                            `json:"successCriteria,omitempty"`
+		CoordinationPlan plangraph.AcceptedRevisionReference `json:"coordinationPlan,omitempty"`
 	}{
-		OwnerIdentity:   ownerIdentity,
-		PursuitID:       strings.TrimSpace(request.PursuitID),
-		WorkflowID:      strings.TrimSpace(request.WorkflowID),
-		Request:         requestText,
-		ProjectKey:      strings.TrimSpace(request.ProjectKey),
-		AutomationID:    strings.TrimSpace(request.AutomationID),
-		SuccessCriteria: append([]string(nil), request.SuccessCriteria...),
+		OwnerIdentity:    ownerIdentity,
+		PursuitID:        strings.TrimSpace(request.PursuitID),
+		WorkflowID:       strings.TrimSpace(request.WorkflowID),
+		Request:          requestText,
+		ProjectKey:       strings.TrimSpace(request.ProjectKey),
+		AutomationID:     strings.TrimSpace(request.AutomationID),
+		MandateID:        strings.TrimSpace(request.MandateID),
+		SuccessCriteria:  append([]string(nil), request.SuccessCriteria...),
+		CoordinationPlan: request.CoordinationPlan,
 	}
 	payload, _, err := marshalSanitizedJSONObject(projection)
 	if err != nil {
@@ -164,6 +191,12 @@ func completionPlanToModel(ownerIdentity string, plan CompletionPlan) (models.Ta
 	if plan.ID == "" || len([]rune(plan.ID)) > 160 {
 		return models.TaskCompletionPlanLog{}, fmt.Errorf("task plan id must contain 1 to 160 characters")
 	}
+	plan.ReviewItemID = strings.TrimSpace(plan.ReviewItemID)
+	if plan.ReviewItemID != "" {
+		if reviewID, parseErr := uuid.Parse(plan.ReviewItemID); parseErr != nil || reviewID == uuid.Nil {
+			return models.TaskCompletionPlanLog{}, fmt.Errorf("completion plan review item id must be a UUID")
+		}
+	}
 	plan.CompletionStatus = strings.TrimSpace(plan.CompletionStatus)
 	if plan.CompletionStatus == "" || len([]rune(plan.CompletionStatus)) > 80 {
 		return models.TaskCompletionPlanLog{}, fmt.Errorf("completion status must contain 1 to 80 characters")
@@ -182,6 +215,7 @@ func completionPlanToModel(ownerIdentity string, plan CompletionPlan) (models.Ta
 		return models.TaskCompletionPlanLog{}, fmt.Errorf("validate completion plan payload: %w", err)
 	}
 	if roundTrip.ID != plan.ID ||
+		roundTrip.ReviewItemID != plan.ReviewItemID ||
 		roundTrip.CompletionStatus != plan.CompletionStatus ||
 		!roundTrip.CreatedAt.Equal(plan.CreatedAt) {
 		return models.TaskCompletionPlanLog{}, fmt.Errorf("completion plan identity metadata was altered during safe serialization")
@@ -807,16 +841,18 @@ func validateStoredReviewRequest(request IntakeRequest) error {
 
 func encodeStoredReviewRequest(request IntakeRequest) (string, error) {
 	payload, _, err := marshalSanitizedJSONObject(storedReviewRequest{
-		PursuitID:       request.PursuitID,
-		WorkflowID:      request.WorkflowID,
-		Request:         request.Request,
-		ProjectKey:      request.ProjectKey,
-		AutomationID:    request.AutomationID,
-		SuccessCriteria: append([]string(nil), request.SuccessCriteria...),
-		ExecuteAllowed:  request.ExecuteAllowed,
-		HumanApproved:   request.HumanApproved,
-		ApprovalNote:    request.ApprovalNote,
-		ApprovalSource:  request.ApprovalSourceID,
+		PursuitID:        request.PursuitID,
+		WorkflowID:       request.WorkflowID,
+		Request:          request.Request,
+		ProjectKey:       request.ProjectKey,
+		AutomationID:     request.AutomationID,
+		MandateID:        request.MandateID,
+		SuccessCriteria:  append([]string(nil), request.SuccessCriteria...),
+		ExecuteAllowed:   request.ExecuteAllowed,
+		HumanApproved:    request.HumanApproved,
+		ApprovalNote:     request.ApprovalNote,
+		ApprovalSource:   request.ApprovalSourceID,
+		CoordinationPlan: request.CoordinationPlan,
 	})
 	if err != nil {
 		return "", err
@@ -835,11 +871,13 @@ func decodeStoredReviewRequest(payload string) (IntakeRequest, error) {
 		Request:          stored.Request,
 		ProjectKey:       stored.ProjectKey,
 		AutomationID:     stored.AutomationID,
+		MandateID:        stored.MandateID,
 		SuccessCriteria:  append([]string(nil), stored.SuccessCriteria...),
 		ExecuteAllowed:   stored.ExecuteAllowed,
 		HumanApproved:    stored.HumanApproved,
 		ApprovalNote:     stored.ApprovalNote,
 		ApprovalSourceID: stored.ApprovalSource,
+		CoordinationPlan: stored.CoordinationPlan,
 	}, nil
 }
 

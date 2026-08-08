@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"automation-hub-backend/internal/identity"
 
@@ -14,12 +15,15 @@ import (
 )
 
 const (
-	workflowItemsUnavailableMessage     = "workflow items are unavailable"
-	workflowApprovalsUnavailableMessage = "workflow approval items are unavailable"
-	workflowDashboardUnavailableMessage = "workflow dashboard is unavailable"
-	workflowRunFailedMessage            = "workflow run failed"
-	workflowRecoveryFailedMessage       = "workflow recovery failed"
-	workflowOpenLoopRunFailedMessage    = "workflow follow-up run failed"
+	workflowItemsUnavailableMessage               = "workflow items are unavailable"
+	workflowApprovalsUnavailableMessage           = "workflow approval items are unavailable"
+	workflowDashboardUnavailableMessage           = "workflow dashboard is unavailable"
+	workflowRunFailedMessage                      = "workflow run failed"
+	workflowRecoveryFailedMessage                 = "workflow recovery failed"
+	workflowOpenLoopRunFailedMessage              = "workflow follow-up run failed"
+	workflowRemindersUnavailableMessage           = "workflow reminder proposals are unavailable"
+	workflowReminderActivationsUnavailableMessage = "workflow reminder activation history is unavailable"
+	workflowReminderDeliveriesUnavailableMessage  = "workflow reminder deliveries are unavailable"
 )
 
 type Handler struct {
@@ -118,6 +122,10 @@ func workflowAPIIntakeSourceID(request IntakeRequest) string {
 		strings.ToLower(strings.Join(strings.Fields(request.Input), " ")),
 		strings.ToLower(strings.TrimSpace(request.ProjectKey)),
 		strings.ToLower(strings.TrimSpace(request.AutomationID)),
+		request.CoordinationPlan.PlanID.String(),
+		fmt.Sprintf("%d", request.CoordinationPlan.Revision),
+		strings.ToLower(strings.TrimSpace(request.CoordinationPlan.Digest)),
+		strings.TrimSpace(request.CoordinationPlan.NodeID),
 	}, "\n")
 	sum := sha256.Sum256([]byte(value))
 	return fmt.Sprintf("workflow-api-%x", sum[:12])
@@ -149,6 +157,202 @@ func (h *Handler) Dashboard(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, dashboard)
+}
+
+func (h *Handler) ReminderProposals(c *gin.Context) {
+	reminderService, ok := h.service.(ReminderProposalService)
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowRemindersUnavailableMessage})
+		return
+	}
+	horizonHours, err := strconv.Atoi(firstNonEmpty(c.Query("horizonHours"), "168"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "horizonHours must be an integer between 1 and 720"})
+		return
+	}
+	limit, err := strconv.Atoi(firstNonEmpty(c.Query("limit"), "100"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be an integer between 1 and 200"})
+		return
+	}
+	result, err := reminderService.ReminderProposalsForOwner(
+		verifiedWorkflowOwner(c), time.Now().UTC(), horizonHours, limit,
+	)
+	if err != nil {
+		if horizonHours < 1 || horizonHours > 720 || limit < 1 || limit > 200 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowRemindersUnavailableMessage})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) PrepareReminderActivation(c *gin.Context) {
+	itemID, err := uuid.Parse(c.Param("itemId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid reminder checklist item id"})
+		return
+	}
+	var request ReminderActivationPrepareRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	service, ok := h.service.(ReminderActivationService)
+	if !ok || service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowReminderActivationsUnavailableMessage})
+		return
+	}
+	owner := verifiedWorkflowOwner(c)
+	result, err := service.PrepareReminderActivationForOwner(owner, verifiedWorkflowActor(c, "operator"), itemID, request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) ReminderActivationHistory(c *gin.Context) {
+	limit, err := boundedWorkflowQueryInt(c, "limit", 50, 1, 100)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	service, ok := h.service.(ReminderActivationService)
+	if !ok || service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowReminderActivationsUnavailableMessage})
+		return
+	}
+	result, err := service.ReminderActivationHistoryForOwner(verifiedWorkflowOwner(c), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowReminderActivationsUnavailableMessage})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) DecideReminderActivation(c *gin.Context) {
+	requestID, err := uuid.Parse(c.Param("requestId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid reminder activation request id"})
+		return
+	}
+	var request ReminderActivationDecisionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	service, ok := h.service.(ReminderActivationService)
+	if !ok || service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowReminderActivationsUnavailableMessage})
+		return
+	}
+	owner := verifiedWorkflowOwner(c)
+	result, err := service.DecideReminderActivationForOwner(owner, verifiedWorkflowActor(c, "operator"), requestID, request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) ReminderActivationDecisionHistory(c *gin.Context) {
+	requestID, err := uuid.Parse(c.Param("requestId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid reminder activation request id"})
+		return
+	}
+	limit, err := boundedWorkflowQueryInt(c, "limit", 50, 1, 100)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	service, ok := h.service.(ReminderActivationService)
+	if !ok || service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowReminderActivationsUnavailableMessage})
+		return
+	}
+	result, err := service.ReminderActivationDecisionHistoryForOwner(verifiedWorkflowOwner(c), requestID, limit)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) AuthorizeReminderDelivery(c *gin.Context) {
+	requestID, err := uuid.Parse(c.Param("requestId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid reminder activation request id"})
+		return
+	}
+	var request ReminderDeliveryAuthorizeRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	service, ok := h.service.(ReminderDeliveryService)
+	if !ok || service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowReminderDeliveriesUnavailableMessage})
+		return
+	}
+	owner := verifiedWorkflowOwner(c)
+	result, err := service.AuthorizeReminderDeliveryForOwner(owner, verifiedWorkflowActor(c, "operator"), requestID, request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) ReminderDeliveryHistory(c *gin.Context) {
+	limit, err := boundedWorkflowQueryInt(c, "limit", 50, 1, 100)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	service, ok := h.service.(ReminderDeliveryService)
+	if !ok || service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowReminderDeliveriesUnavailableMessage})
+		return
+	}
+	result, err := service.ReminderDeliveryHistoryForOwner(verifiedWorkflowOwner(c), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowReminderDeliveriesUnavailableMessage})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) RunDueReminderDeliveries(c *gin.Context) {
+	var request RunDueRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	service, ok := h.service.(ReminderDeliveryService)
+	if !ok || service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": workflowReminderDeliveriesUnavailableMessage})
+		return
+	}
+	result, err := service.RunDueReminderDeliveriesForOwner(verifiedWorkflowOwner(c), request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func boundedWorkflowQueryInt(c *gin.Context, name string, fallback, minimum, maximum int) (int, error) {
+	value, err := strconv.Atoi(firstNonEmpty(c.Query(name), strconv.Itoa(fallback)))
+	if err != nil || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be an integer between %d and %d", name, minimum, maximum)
+	}
+	return value, nil
 }
 
 func (h *Handler) Get(c *gin.Context) {
@@ -334,6 +538,22 @@ func (h *Handler) RunDue(c *gin.Context) {
 	var request RunDueRequest
 	_ = c.ShouldBindJSON(&request)
 	result, err := h.service.RunDueForOwner(verifiedWorkflowOwner(c), request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRunFailedMessage})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) RunOne(c *gin.Context) {
+	id, ok := parseWorkflowID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureWorkflowMutable(c, id) {
+		return
+	}
+	result, err := h.service.RunOneForOwner(verifiedWorkflowOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRunFailedMessage})
 		return

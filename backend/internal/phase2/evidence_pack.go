@@ -1,68 +1,170 @@
 package phase2
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/operations"
 	"automation-hub-backend/internal/privacyfilter"
+
+	"github.com/google/uuid"
 )
 
-// EvidencePack is a generated, auditable evidence pack for an Operation (§10.18).
-// It redacts secrets, includes source-revision hashes + timestamps, and never
+var (
+	// ErrEvidencePackNotFound deliberately does not distinguish between a
+	// missing pack and one belonging to a different owner or workspace.
+	ErrEvidencePackNotFound = errors.New("phase2: evidence pack not found")
+	// ErrEvidencePackRepositoryUnavailable is returned when durable storage was
+	// not configured or could not be opened. Evidence packs never fall back to
+	// process-local storage.
+	ErrEvidencePackRepositoryUnavailable = errors.New("phase2: durable evidence pack repository unavailable")
+	// ErrEvidencePackIntegrityViolation prevents a malformed or tampered
+	// durable row from being returned as evidence.
+	ErrEvidencePackIntegrityViolation = errors.New("phase2: evidence pack integrity violation")
+)
+
+// EvidenceProvenance preserves the operation source coordinates used to build
+// a pack. It is persisted separately from the rendered Markdown so callers can
+// inspect provenance without parsing presentation text.
+type EvidenceProvenance struct {
+	SourceType         string     `json:"sourceType"`
+	SourceID           *uuid.UUID `json:"sourceId,omitempty"`
+	SourceURI          string     `json:"sourceUri,omitempty"`
+	SourceReceivedAt   *time.Time `json:"sourceReceivedAt,omitempty"`
+	SourceRevisionHash string     `json:"sourceRevisionHash,omitempty"`
+	DedupeKey          string     `json:"dedupeKey"`
+}
+
+// EvidencePack is a generated, auditable evidence pack for an Operation. It
+// redacts secrets, includes source-revision hashes and timestamps, and never
 // embeds raw sensitive content.
 type EvidencePack struct {
-	ID          string    `json:"id"`
-	OperationID string    `json:"operationId"`
-	Title       string    `json:"title"`
-	Markdown    string    `json:"markdown"`
-	GeneratedAt time.Time `json:"generatedAt"`
+	ID            uuid.UUID          `json:"id"`
+	OwnerIdentity string             `json:"ownerIdentity"`
+	WorkspaceID   string             `json:"workspaceId"`
+	OperationID   uuid.UUID          `json:"operationId"`
+	Title         string             `json:"title"`
+	Markdown      string             `json:"markdown"`
+	Provenance    EvidenceProvenance `json:"provenance"`
+	ContentDigest string             `json:"contentDigest"`
+	GeneratedAt   time.Time          `json:"generatedAt"`
 }
 
-// EvidencePackStore holds generated packs for retrieval.
-type EvidencePackStore struct {
-	mu    sync.Mutex
-	packs map[string]EvidencePack
-	seq   int
+// EvidencePackRepository is the durable, owner-scoped persistence boundary.
+// Implementations must scope reads by all three coordinates so UUID knowledge
+// alone never grants cross-owner access.
+type EvidencePackRepository interface {
+	Create(context.Context, EvidencePack) (EvidencePack, error)
+	Get(context.Context, string, string, uuid.UUID) (EvidencePack, error)
 }
 
-// NewEvidencePackStore builds an empty store.
-func NewEvidencePackStore() *EvidencePackStore {
-	return &EvidencePackStore{packs: map[string]EvidencePack{}}
+func normalizeEvidencePack(pack EvidencePack) (EvidencePack, error) {
+	pack.OwnerIdentity = strings.TrimSpace(pack.OwnerIdentity)
+	pack.WorkspaceID = strings.TrimSpace(pack.WorkspaceID)
+	pack.Title = strings.TrimSpace(pack.Title)
+	if pack.ID == uuid.Nil {
+		pack.ID = uuid.New()
+	}
+	if pack.OwnerIdentity == "" {
+		return EvidencePack{}, fmt.Errorf("evidence pack owner identity is required")
+	}
+	if pack.WorkspaceID == "" {
+		return EvidencePack{}, fmt.Errorf("evidence pack workspace id is required")
+	}
+	if pack.OperationID == uuid.Nil {
+		return EvidencePack{}, fmt.Errorf("evidence pack operation id is required")
+	}
+	if pack.Title == "" {
+		return EvidencePack{}, fmt.Errorf("evidence pack title is required")
+	}
+	if strings.TrimSpace(pack.Markdown) == "" {
+		return EvidencePack{}, fmt.Errorf("evidence pack markdown is required")
+	}
+	if strings.TrimSpace(pack.Provenance.SourceType) == "" {
+		return EvidencePack{}, fmt.Errorf("evidence pack source type is required")
+	}
+	if strings.TrimSpace(pack.Provenance.DedupeKey) == "" {
+		return EvidencePack{}, fmt.Errorf("evidence pack dedupe key is required")
+	}
+	if pack.GeneratedAt.IsZero() {
+		return EvidencePack{}, fmt.Errorf("evidence pack generation time is required")
+	}
+	pack.GeneratedAt = pack.GeneratedAt.UTC()
+	if pack.Provenance.SourceReceivedAt != nil {
+		value := pack.Provenance.SourceReceivedAt.UTC()
+		pack.Provenance.SourceReceivedAt = &value
+	}
+	digest, err := evidencePackDigest(pack)
+	if err != nil {
+		return EvidencePack{}, err
+	}
+	pack.ContentDigest = digest
+	return pack, nil
 }
 
-func (s *EvidencePackStore) put(p EvidencePack) EvidencePack {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.seq++
-	p.ID = fmt.Sprintf("evp-%d", s.seq)
-	s.packs[p.ID] = p
-	return p
+func evidencePackDigest(pack EvidencePack) (string, error) {
+	sourceID := ""
+	if pack.Provenance.SourceID != nil {
+		sourceID = pack.Provenance.SourceID.String()
+	}
+	sourceReceivedAt := ""
+	if pack.Provenance.SourceReceivedAt != nil {
+		sourceReceivedAt = pack.Provenance.SourceReceivedAt.UTC().Format(time.RFC3339Nano)
+	}
+	payload, err := json.Marshal(struct {
+		ID                 string `json:"id"`
+		OwnerIdentity      string `json:"ownerIdentity"`
+		WorkspaceID        string `json:"workspaceId"`
+		OperationID        string `json:"operationId"`
+		Title              string `json:"title"`
+		Markdown           string `json:"markdown"`
+		SourceType         string `json:"sourceType"`
+		SourceID           string `json:"sourceId"`
+		SourceURI          string `json:"sourceUri"`
+		SourceReceivedAt   string `json:"sourceReceivedAt"`
+		SourceRevisionHash string `json:"sourceRevisionHash"`
+		DedupeKey          string `json:"dedupeKey"`
+		GeneratedAt        string `json:"generatedAt"`
+	}{
+		ID:                 pack.ID.String(),
+		OwnerIdentity:      pack.OwnerIdentity,
+		WorkspaceID:        pack.WorkspaceID,
+		OperationID:        pack.OperationID.String(),
+		Title:              pack.Title,
+		Markdown:           pack.Markdown,
+		SourceType:         pack.Provenance.SourceType,
+		SourceID:           sourceID,
+		SourceURI:          pack.Provenance.SourceURI,
+		SourceReceivedAt:   sourceReceivedAt,
+		SourceRevisionHash: pack.Provenance.SourceRevisionHash,
+		DedupeKey:          pack.Provenance.DedupeKey,
+		GeneratedAt:        pack.GeneratedAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode evidence pack digest: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("sha256:%x", sum[:]), nil
 }
 
-// Get returns a stored pack by id.
-func (s *EvidencePackStore) Get(id string) (EvidencePack, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p, ok := s.packs[id]
-	return p, ok
-}
-
-// buildEvidencePack assembles the markdown evidence pack (§10.18). Absent record
-// types are honestly labelled "none recorded" rather than fabricated.
+// buildEvidencePack assembles the Markdown evidence pack. Absent record types
+// are honestly labelled "none recorded" rather than fabricated.
 func buildEvidencePack(op models.Operation, events []models.OperationEvent, scan privacyfilter.ScanResult, telemetry []modelintelligence.ModelRunTelemetry, now time.Time) EvidencePack {
 	var b strings.Builder
-	w := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
+	w := func(format string, a ...any) { _, _ = fmt.Fprintf(&b, format, a...) }
 
 	w("# Evidence Pack: %s\n\n", op.Title)
 
 	w("## Operation\n")
-	w("- id: %s\n- type: %s\n- status: %s\n- risk: %s\n- autonomy: %s\n- owner: %s\n- decision: %s\n- created: %s\n- updated: %s\n\n",
-		op.ID, op.OperationType, op.Status, op.RiskLevel, op.AutonomyLevel, op.OwnerType, op.CurrentDecision,
+	w("- id: %s\n- ownerIdentity: %s\n- workspaceId: %s\n- type: %s\n- status: %s\n- risk: %s\n- autonomy: %s\n- owner: %s\n- decision: %s\n- created: %s\n- updated: %s\n\n",
+		op.ID, op.OwnerUserID, op.WorkspaceID, op.OperationType, op.Status, op.RiskLevel, op.AutonomyLevel, op.OwnerType, op.CurrentDecision,
 		op.CreatedAt.UTC().Format(time.RFC3339), op.UpdatedAt.UTC().Format(time.RFC3339))
 
 	w("## Source Evidence\n")
@@ -70,8 +172,6 @@ func buildEvidencePack(op models.Operation, events []models.OperationEvent, scan
 		orNone(op.SourceType), orNone(op.SourceURI), orNone(op.SourceRevisionHash), orNone(op.DedupeKey))
 
 	w("## Extracted Claims\n")
-	// Redact sensitive content: when the scan flags secrets/redaction, show the
-	// bounded redacted preview instead of the raw description (§10.18).
 	claims := op.Description
 	if scan.RedactionApplied || !scan.SafeForCloudModel {
 		claims = scan.RedactedPreview
@@ -141,10 +241,33 @@ func buildEvidencePack(op models.Operation, events []models.OperationEvent, scan
 
 	w("## Known Limits\n")
 	w("- Secrets are redacted; raw sensitive content is never embedded.\n")
-	w("- Outbox: OperationEvents are the durable event log (Postgres); the Kafka publisher is disabled in this deployment, so no events are lost.\n")
-	w("- Some sub-records (ActionPlan/FailureMode as separate entities) are derived from operation fields + events in this phase.\n")
+	w("- OperationEvents are the durable event log; disabled publishers do not change this pack's recorded provenance.\n")
+	w("- Some sub-records are derived from operation fields and immutable operation events in this phase.\n")
 
-	return EvidencePack{OperationID: op.ID.String(), Title: op.Title, Markdown: b.String(), GeneratedAt: now}
+	pack, err := normalizeEvidencePack(EvidencePack{
+		ID:            uuid.New(),
+		OwnerIdentity: op.OwnerUserID,
+		WorkspaceID:   op.WorkspaceID,
+		OperationID:   op.ID,
+		Title:         op.Title,
+		Markdown:      b.String(),
+		Provenance: EvidenceProvenance{
+			SourceType:         op.SourceType,
+			SourceID:           op.SourceID,
+			SourceURI:          op.SourceURI,
+			SourceReceivedAt:   op.SourceReceivedAt,
+			SourceRevisionHash: op.SourceRevisionHash,
+			DedupeKey:          op.DedupeKey,
+		},
+		GeneratedAt: now,
+	})
+	if err != nil {
+		// Persisted operations normally satisfy all required invariants. A
+		// corrupt operation yields an invalid pack that repository validation
+		// rejects rather than partially storing.
+		return EvidencePack{}
+	}
+	return pack
 }
 
 func filterEvents(events []models.OperationEvent, keep func(models.OperationEvent) bool) []models.OperationEvent {

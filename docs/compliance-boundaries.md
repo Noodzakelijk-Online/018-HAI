@@ -14,7 +14,8 @@ verified credential.
 | Area | Boundary |
 | --- | --- |
 | Paid providers | No paid LLM/API usage until server-side approval; default budget €0 (`daily_paid_budget_eur: 0`). |
-| Real account connectors (Gmail/Drive/Calendar/Trello/GitHub) | Disabled until OAuth scopes are minimal and reviewed; sandbox adapters first. |
+| Real account connectors (Gmail/Drive/Contacts/Calendar/Trello/GitHub) | Read-only adapters are unconfigured by default. Each supplied credential and account needs a bounded consent/scope, sync, provenance, and revoke acceptance run before operational trust. |
+| Source-evidence preauthorization | Source-backed claims are re-resolved to the exact owner-scoped extraction and raw item before authorization and again before receipt consumption. Freshness uses raw-item `fetched_at`, not source-wide `LastSyncedAt`. This proves provenance and freshness, not semantic authority or truth. Inspection exposes claim counts and digest fingerprints only, never raw sensitive content. |
 | Automation execution | Bounded, allowlisted, approval-gated, and verified; emergency stop can halt it. |
 | Scraping / third-party sites | Only within the target platform's terms; no evasion of access controls. |
 | Personal data | Handled per `docs/privacy-impact-assessment.md`; retention per policy. |

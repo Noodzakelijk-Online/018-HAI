@@ -403,6 +403,21 @@ func (s *Service) GoalForest(ownerIdentity string) ([]GoalTreeNode, error) {
 }
 
 func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAssessment, error) {
+	assessment, err := EvaluatePriority(request, s.now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	assessment.ID = uuid.New()
+	if err := s.repo.SavePriorityAssessment(*assessment); err != nil {
+		return nil, err
+	}
+	return assessment, nil
+}
+
+// EvaluatePriority applies the same deterministic multi-criteria model used by
+// persisted LifeOps assessments without writing state. Advisory planners use
+// it to compare current options before an operator accepts any change.
+func EvaluatePriority(request PriorityAssessmentRequest, assessedAt time.Time) (*PriorityAssessment, error) {
 	request.OwnerIdentity = normalize(request.OwnerIdentity)
 	request.EntityType = normalizeIdentifier(request.EntityType)
 	request.EntityID = normalize(request.EntityID)
@@ -412,7 +427,11 @@ func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAs
 	if request.SourceLabel == "" {
 		request.SourceLabel = "lifeops:priority_input"
 	}
-	if err := validatePriorityRequest(request, s.now().UTC()); err != nil {
+	assessedAt = assessedAt.UTC()
+	if assessedAt.IsZero() {
+		return nil, fmt.Errorf("assessment time is required")
+	}
+	if err := validatePriorityRequest(request, assessedAt); err != nil {
 		return nil, err
 	}
 
@@ -420,7 +439,7 @@ func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAs
 	reasons := make([]string, 0)
 	capacityApplied := false
 	if request.Deadline != nil {
-		derived := deadlinePressure(s.now().UTC(), request.Deadline.UTC())
+		derived := deadlinePressure(assessedAt, request.Deadline.UTC())
 		if derived > factors.DeadlinePressure {
 			factors.DeadlinePressure = derived
 			reasons = append(reasons, fmt.Sprintf("deadline raises pressure to %d/100", derived))
@@ -447,7 +466,6 @@ func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAs
 		reasons = append(reasons, contribution.Reason)
 	}
 	assessment := PriorityAssessment{
-		ID:               uuid.New(),
 		OwnerIdentity:    request.OwnerIdentity,
 		EntityType:       request.EntityType,
 		EntityID:         request.EntityID,
@@ -461,10 +479,7 @@ func (s *Service) AssessPriority(request PriorityAssessmentRequest) (*PriorityAs
 		AlgorithmVersion: priorityAlgorithmVersion,
 		SourceLabel:      request.SourceLabel,
 		SourceURI:        request.SourceURI,
-		AssessedAt:       s.now().UTC(),
-	}
-	if err := s.repo.SavePriorityAssessment(assessment); err != nil {
-		return nil, err
+		AssessedAt:       assessedAt,
 	}
 	return &assessment, nil
 }

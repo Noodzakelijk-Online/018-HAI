@@ -10,43 +10,52 @@ type WorkflowItem struct {
 	ID uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
 	// OwnerIdentity is the verified user whose intake created this workflow.
 	// It is not client-controlled or exposed in workflow API payloads.
-	OwnerIdentity      string     `gorm:"type:varchar(255);index" json:"-"`
-	Title              string     `gorm:"type:varchar(512);index;not null" json:"title"`
-	Description        string     `gorm:"type:text" json:"description,omitempty"`
-	ProjectKey         string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`
-	AutomationID       string     `gorm:"type:varchar(64);index" json:"automationId,omitempty"`
-	CurrentState       string     `gorm:"type:varchar(80);index;not null" json:"currentState"`
-	TaskType           string     `gorm:"type:varchar(80);index" json:"taskType"`
-	RiskLevel          string     `gorm:"type:varchar(80);index" json:"riskLevel"`
-	PriorityScore      int        `gorm:"index" json:"priorityScore"`
-	Confidence         float64    `json:"confidence"`
-	AutonomyLevel      string     `gorm:"type:varchar(80);index" json:"autonomyLevel"`
-	RequiresApproval   bool       `gorm:"index" json:"requiresApproval"`
-	ApprovalStatus     string     `gorm:"type:varchar(50);index" json:"approvalStatus"`
-	ApprovalReason     string     `gorm:"type:text" json:"approvalReason,omitempty"`
-	BlockedReason      string     `gorm:"type:text" json:"blockedReason,omitempty"`
-	NextAction         string     `gorm:"type:text" json:"nextAction,omitempty"`
-	SourceType         string     `gorm:"type:varchar(80);index" json:"sourceType,omitempty"`
-	SourceID           string     `gorm:"type:varchar(120);index" json:"sourceId,omitempty"`
-	SourceURI          string     `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
-	SourceLabel        string     `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
-	SourceRevision     string     `gorm:"type:varchar(64);index" json:"sourceRevision,omitempty"`
-	DueAt              *time.Time `gorm:"index" json:"dueAt,omitempty"`
-	RetryCount         int        `gorm:"default:0;index" json:"retryCount"`
-	MaxRetries         int        `gorm:"default:2" json:"maxRetries"`
-	NextRunAt          *time.Time `gorm:"index" json:"nextRunAt,omitempty"`
-	LastRunAt          *time.Time `json:"lastRunAt,omitempty"`
-	WorkerClaimID      string     `gorm:"type:varchar(64);index" json:"-"`
-	WorkerLeaseUntil   *time.Time `gorm:"index" json:"workerLeaseUntil,omitempty"`
-	CompletedAt        *time.Time `gorm:"index" json:"completedAt,omitempty"`
-	VerificationStatus string     `gorm:"type:varchar(80);index" json:"verificationStatus,omitempty"`
-	RecoveryStatus     string     `gorm:"type:varchar(80);index" json:"recoveryStatus,omitempty"`
-	RecoveryNote       string     `gorm:"type:text" json:"recoveryNote,omitempty"`
-	LastTaskPlanID     string     `gorm:"type:varchar(120)" json:"lastTaskPlanId,omitempty"`
-	LastWorkerError    string     `gorm:"type:text" json:"lastWorkerError,omitempty"`
-	Archived           bool       `gorm:"default:false;index" json:"archived"`
-	CreatedAt          time.Time  `json:"createdAt"`
-	UpdatedAt          time.Time  `json:"updatedAt"`
+	OwnerIdentity             string     `gorm:"type:varchar(255);index" json:"-"`
+	Title                     string     `gorm:"type:varchar(512);index;not null" json:"title"`
+	Description               string     `gorm:"type:text" json:"description,omitempty"`
+	ProjectKey                string     `gorm:"type:varchar(255);index" json:"projectKey,omitempty"`
+	AutomationID              string     `gorm:"type:varchar(64);index" json:"automationId,omitempty"`
+	MandateID                 *uuid.UUID `gorm:"type:uuid;index" json:"mandateId,omitempty"`
+	CoordinationPlanID        *uuid.UUID `gorm:"type:uuid;index" json:"coordinationPlanId,omitempty"`
+	CoordinationPlanRevision  uint64     `gorm:"not null;default:0" json:"coordinationPlanRevision,omitempty"`
+	CoordinationPlanDigest    string     `gorm:"type:char(64);not null;default:''" json:"coordinationPlanDigest,omitempty"`
+	CoordinationPlanNodeID    string     `gorm:"type:varchar(160);not null;default:''" json:"coordinationPlanNodeId,omitempty"`
+	CoordinationDraftPlanID   *uuid.UUID `gorm:"type:uuid;index" json:"coordinationDraftPlanId,omitempty"`
+	CoordinationDraftRevision uint64     `gorm:"not null;default:0" json:"coordinationDraftRevision,omitempty"`
+	CoordinationDraftDigest   string     `gorm:"type:char(64);not null;default:''" json:"coordinationDraftDigest,omitempty"`
+	CoordinationDraftNodeID   string     `gorm:"type:varchar(160);not null;default:''" json:"coordinationDraftNodeId,omitempty"`
+	CurrentState              string     `gorm:"type:varchar(80);index;not null" json:"currentState"`
+	TaskType                  string     `gorm:"type:varchar(80);index" json:"taskType"`
+	RiskLevel                 string     `gorm:"type:varchar(80);index" json:"riskLevel"`
+	PriorityScore             int        `gorm:"index" json:"priorityScore"`
+	Confidence                float64    `json:"confidence"`
+	AutonomyLevel             string     `gorm:"type:varchar(80);index" json:"autonomyLevel"`
+	RequiresApproval          bool       `gorm:"index" json:"requiresApproval"`
+	ApprovalStatus            string     `gorm:"type:varchar(50);index" json:"approvalStatus"`
+	ApprovalReason            string     `gorm:"type:text" json:"approvalReason,omitempty"`
+	BlockedReason             string     `gorm:"type:text" json:"blockedReason,omitempty"`
+	NextAction                string     `gorm:"type:text" json:"nextAction,omitempty"`
+	SourceType                string     `gorm:"type:varchar(80);index" json:"sourceType,omitempty"`
+	SourceID                  string     `gorm:"type:varchar(120);index" json:"sourceId,omitempty"`
+	SourceURI                 string     `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
+	SourceLabel               string     `gorm:"type:varchar(512)" json:"sourceLabel,omitempty"`
+	SourceRevision            string     `gorm:"type:varchar(64);index" json:"sourceRevision,omitempty"`
+	DueAt                     *time.Time `gorm:"index" json:"dueAt,omitempty"`
+	RetryCount                int        `gorm:"default:0;index" json:"retryCount"`
+	MaxRetries                int        `gorm:"default:2" json:"maxRetries"`
+	NextRunAt                 *time.Time `gorm:"index" json:"nextRunAt,omitempty"`
+	LastRunAt                 *time.Time `json:"lastRunAt,omitempty"`
+	WorkerClaimID             string     `gorm:"type:varchar(64);index" json:"-"`
+	WorkerLeaseUntil          *time.Time `gorm:"index" json:"workerLeaseUntil,omitempty"`
+	CompletedAt               *time.Time `gorm:"index" json:"completedAt,omitempty"`
+	VerificationStatus        string     `gorm:"type:varchar(80);index" json:"verificationStatus,omitempty"`
+	RecoveryStatus            string     `gorm:"type:varchar(80);index" json:"recoveryStatus,omitempty"`
+	RecoveryNote              string     `gorm:"type:text" json:"recoveryNote,omitempty"`
+	LastTaskPlanID            string     `gorm:"type:varchar(120)" json:"lastTaskPlanId,omitempty"`
+	LastWorkerError           string     `gorm:"type:text" json:"lastWorkerError,omitempty"`
+	Archived                  bool       `gorm:"default:false;index" json:"archived"`
+	CreatedAt                 time.Time  `json:"createdAt"`
+	UpdatedAt                 time.Time  `json:"updatedAt"`
 }
 
 type WorkflowChecklistItem struct {
@@ -199,4 +208,27 @@ type WorkflowEvent struct {
 	SourceURI   string    `gorm:"type:varchar(1024)" json:"sourceUri,omitempty"`
 	Actor       string    `gorm:"type:varchar(120)" json:"actor,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// WorkflowCompletionAttestation is the immutable evidence produced when a
+// claimed workflow is accepted as complete. WorkflowItem remains a mutable
+// projection; accounting and downstream effects must rely on this record.
+type WorkflowCompletionAttestation struct {
+	ID                    uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id,omitempty"`
+	WorkflowID            uuid.UUID `gorm:"type:uuid;uniqueIndex;not null" json:"workflowId"`
+	OwnerIdentity         string    `gorm:"type:varchar(255);index;not null" json:"-"`
+	TaskPlanID            string    `gorm:"type:varchar(120);not null" json:"taskPlanId"`
+	CompletionStatus      string    `gorm:"type:varchar(40);not null" json:"completionStatus"`
+	VerificationStatus    string    `gorm:"type:varchar(80);index;not null" json:"verificationStatus"`
+	RuntimeID             string    `gorm:"type:varchar(256);not null;default:''" json:"runtimeId,omitempty"`
+	RuntimeEvidenceURI    string    `gorm:"type:varchar(2048);not null;default:''" json:"runtimeEvidenceUri,omitempty"`
+	RuntimeEvidenceDigest string    `gorm:"type:char(64);not null" json:"runtimeEvidenceDigest"`
+	ResultDigest          string    `gorm:"type:char(64);not null" json:"resultDigest"`
+	RecordDigest          string    `gorm:"type:char(64);not null" json:"recordDigest"`
+	CompletedAt           time.Time `gorm:"not null;index" json:"completedAt"`
+	CreatedAt             time.Time `gorm:"column:attested_at;not null;index;autoCreateTime" json:"createdAt"`
+}
+
+func (WorkflowCompletionAttestation) TableName() string {
+	return "workflow_completion_attestations"
 }

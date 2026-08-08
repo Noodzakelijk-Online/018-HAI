@@ -1014,6 +1014,66 @@ func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
 	}
 }
 
+func TestSearchExcludesRevokedSourceExtractions(t *testing.T) {
+	activeID := uuid.New()
+	revokedID := uuid.New()
+	revokedAt := time.Now().UTC().Add(-time.Minute)
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: activeID, OwnerIdentity: "alice", Name: "Active mailbox", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: revokedID, OwnerIdentity: "alice", Name: "Revoked mailbox", Enabled: false, Status: "revoked", RevokedAt: &revokedAt},
+	)
+	for _, extraction := range []models.SourceExtraction{
+		{ID: uuid.New(), SourceID: activeID, Text: "Active legal evidence deadline", Summary: "Active legal evidence deadline"},
+		{ID: uuid.New(), SourceID: revokedID, Text: "Revoked legal evidence deadline", Summary: "Revoked legal evidence deadline"},
+	} {
+		copyExtraction := extraction
+		if _, err := repo.SaveExtraction(&copyExtraction); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+
+	result, err := NewService(repo, nil).Search(SearchRequest{OwnerIdentity: "alice", Query: "legal evidence deadline", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.UsedContext) != 1 || result.UsedContext[0].Extraction.SourceID != activeID {
+		t.Fatalf("visible search results = %#v, want active source only", result.UsedContext)
+	}
+	if len(repo.lastExtractionSourceIDs) != 1 || repo.lastExtractionSourceIDs[0] != activeID {
+		t.Fatalf("repository source filter = %#v, want active source only", repo.lastExtractionSourceIDs)
+	}
+
+	extractions, err := NewService(repo, nil).ExtractionsForOwner("alice", "", true)
+	if err != nil {
+		t.Fatalf("ExtractionsForOwner: %v", err)
+	}
+	if len(extractions) != 1 || extractions[0].SourceID != activeID {
+		t.Fatalf("visible extractions = %#v, want active source only", extractions)
+	}
+}
+
+func TestSemanticSearchCannotReturnRevokedSourceExtraction(t *testing.T) {
+	revokedID := uuid.New()
+	revokedAt := time.Now().UTC().Add(-time.Minute)
+	extraction := models.SourceExtraction{ID: uuid.New(), SourceID: revokedID, Text: "Revoked private source content"}
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: revokedID, OwnerIdentity: "alice", Name: "Revoked source", Enabled: false, Status: "revoked", RevokedAt: &revokedAt,
+	})
+	if _, err := repo.SaveExtraction(&extraction); err != nil {
+		t.Fatalf("SaveExtraction: %v", err)
+	}
+	semanticService := &fakeSemanticService{matches: []semantic.Match{{Extraction: extraction, Similarity: 0.99}}}
+	service := NewServiceWithWorkflowPursuitAndSemantic(repo, nil, nil, nil, semanticService)
+
+	result, err := service.Search(SearchRequest{OwnerIdentity: "alice", Query: "private source", Limit: 5})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.UsedContext) != 0 {
+		t.Fatalf("semantic search returned revoked source context: %#v", result.UsedContext)
+	}
+}
+
 func TestSearchUsesSemanticResultsWithoutLoadingEveryExtraction(t *testing.T) {
 	sourceID := uuid.New()
 	extraction := models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Text: "Semantic evidence from a local source"}
@@ -1393,6 +1453,122 @@ func TestSyncRoutesUncertainActionableExtractionToReview(t *testing.T) {
 	}
 }
 
+func TestSyncCalendarCancellationStopsPriorWorkAndRequiresReview(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: calendarConnectorKey, Name: "Robert Calendar",
+		Category: "calendar", Enabled: true, Status: "active", DefaultProjectKey: "Robert-life-os",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+
+	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "google-calendar:event-cancelled",
+		Title:      "Hearing (cancelled in Google Calendar)",
+		Content:    "Google Calendar reports that this event was cancelled. Preserve prior HAI context and obligations for owner review; do not delete tasks, commitments, or evidence automatically.",
+		SourceURI:  "https://calendar.google.com/calendar/event?eid=cancelled",
+		ItemType:   "google_calendar_event_cancelled",
+		ProjectKey: "Robert-life-os",
+		Metadata:   `{"source":"google-calendar","cancelled":true,"reviewRequired":true,"writebackAllowed":false}`,
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(result.Extractions) != 1 || !result.Extractions[0].Uncertain {
+		t.Fatalf("cancellation extraction was not review marked: %#v", result.Extractions)
+	}
+	if len(workflowSpy.retractions) != 1 || workflowSpy.retractions[0].sourceType != "calendar" {
+		t.Fatalf("retractions = %#v, want one calendar retraction", workflowSpy.retractions)
+	}
+	if len(workflowSpy.requests) != 1 || !workflowSpy.requests[0].RequiresReview {
+		t.Fatalf("workflow requests = %#v, want one review-gated cancellation", workflowSpy.requests)
+	}
+	if !strings.Contains(workflowSpy.requests[0].ReviewReason, "calendar cancellation") {
+		t.Fatalf("review reason = %q", workflowSpy.requests[0].ReviewReason)
+	}
+	if !repo.hasAudit("workflow.calendar_event_retracted") {
+		t.Fatal("missing calendar retraction audit record")
+	}
+}
+
+func TestSyncCalendarUpcomingMeetingCreatesPreparationWorkflow(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: calendarConnectorKey, Name: "Robert Calendar",
+		Category: "calendar", Enabled: true, Status: "active", DefaultProjectKey: "Robert-life-os",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	start := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	end := start.Add(time.Hour)
+	metadata := fmt.Sprintf(`{"start":%q,"end":%q,"attendeeCount":1,"readonly":true,"reviewRequired":false}`, start.Format(time.RFC3339), end.Format(time.RFC3339))
+
+	_, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "google-calendar:event-upcoming",
+		Title:      "Project review",
+		Content:    "Google Calendar event: Project review\nStart: " + start.Format(time.RFC3339) + "\nEnd: " + end.Format(time.RFC3339) + "\nAttendees: owner@example.test",
+		SourceURI:  "https://calendar.google.com/calendar/event?eid=upcoming",
+		ItemType:   "google_calendar_event",
+		ProjectKey: "Robert-life-os",
+		Metadata:   metadata,
+	}}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(workflowSpy.requests) != 1 || !strings.Contains(workflowSpy.requests[0].Input, "HAI proposal: review preparation") {
+		t.Fatalf("workflow requests = %#v, want one preparation proposal", workflowSpy.requests)
+	}
+	if workflowSpy.requests[0].RequiresReview {
+		t.Fatalf("low-risk local preparation was unexpectedly approval gated: %#v", workflowSpy.requests[0])
+	}
+}
+
+func TestSyncCalendarConflictWorkflowIsStableAndRetractedWhenResolved(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: calendarConnectorKey, Name: "Robert Calendar",
+		Category: "calendar", Enabled: true, Status: "active", DefaultProjectKey: "Robert-life-os",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	start := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+
+	event := func(id, title string, eventStart time.Time) ImportItem {
+		end := eventStart.Add(time.Hour)
+		return ImportItem{
+			ExternalID: "google-calendar:" + id, Title: title,
+			Content:   "Google Calendar event: " + title + "\nStart: " + eventStart.Format(time.RFC3339) + "\nEnd: " + end.Format(time.RFC3339),
+			SourceURI: "https://calendar.google.com/calendar/event?eid=" + id,
+			ItemType:  "google_calendar_event",
+			Metadata:  fmt.Sprintf(`{"start":%q,"end":%q,"attendeeCount":0,"readonly":true}`, eventStart.Format(time.RFC3339), end.Format(time.RFC3339)),
+		}
+	}
+	left := event("left", "Reserved A", start)
+	right := event("right", "Reserved B", start.Add(30*time.Minute))
+	first, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{left, right}})
+	if err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	if len(first.Extractions) != 3 || len(workflowSpy.requests) != 1 {
+		t.Fatalf("extractions=%d requests=%#v, want one conflict workflow", len(first.Extractions), workflowSpy.requests)
+	}
+	if !workflowSpy.requests[0].RequiresReview || workflowSpy.requests[0].ProjectKey != "Robert-life-os" || !strings.Contains(workflowSpy.requests[0].Input, "detected schedule conflict") {
+		t.Fatalf("conflict workflow = %#v", workflowSpy.requests[0])
+	}
+
+	moved := event("right", "Reserved B", start.Add(3*time.Hour))
+	second, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{moved}})
+	if err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	if len(second.Extractions) != 2 || len(workflowSpy.requests) != 1 {
+		t.Fatalf("resolved extractions=%d requests=%d, want moved event plus resolution and no replacement workflow", len(second.Extractions), len(workflowSpy.requests))
+	}
+	if len(workflowSpy.retractions) != 1 || !strings.Contains(workflowSpy.retractions[0].reason, "overlap is no longer present") {
+		t.Fatalf("retractions = %#v", workflowSpy.retractions)
+	}
+}
+
 func TestReindexUsesCachedRawContentAndPreservesMetadata(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
@@ -1485,16 +1661,19 @@ func TestArchiveExtractionRetractsPendingWorkflowCandidate(t *testing.T) {
 func TestDeleteExtractionRetractsWorkflowAndRemovesDerivedIndexMetadata(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
-		ID:           sourceID,
-		ConnectorKey: "email",
-		Name:         "Project mailbox",
-		Category:     "email",
-		Enabled:      true,
-		LocalOnly:    true,
-		Status:       "active",
+		ID:            sourceID,
+		OwnerIdentity: "robert",
+		ConnectorKey:  "email",
+		Name:          "Project mailbox",
+		Category:      "email",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
 	})
 	workflowSpy := &fakeSourceWorkflowService{}
-	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	service := authorizedSourceEffectService(
+		NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy),
+	)
 	result, err := service.Sync(sourceID, ImportRequest{Items: []ImportItem{{
 		ExternalID: "message-delete",
 		Title:      "Delete",
@@ -1512,7 +1691,11 @@ func TestDeleteExtractionRetractsWorkflowAndRemovesDerivedIndexMetadata(t *testi
 		IndexType:    "vector_ref",
 		VectorRef:    "configured-local-vector:" + extractionID.String(),
 	})
-	if err := service.DeleteExtraction(extractionID); err != nil {
+	if err := service.DeleteExtractionAuthorized(
+		context.Background(),
+		extractionID,
+		testSourceAuthorization("robert"),
+	); err != nil {
 		t.Fatalf("DeleteExtraction: %v", err)
 	}
 	if _, err := repo.FindExtraction(extractionID); !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1532,13 +1715,17 @@ func TestDeleteExtractionRetractsWorkflowAndRemovesDerivedIndexMetadata(t *testi
 func TestDeleteExtractionDoesNotAuditWhenRepositoryDeleteFails(t *testing.T) {
 	sourceID := uuid.New()
 	extractionID := uuid.New()
-	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, ConnectorKey: "email", Name: "Project mailbox", Category: "email", Enabled: true, Status: "active"})
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "robert", ConnectorKey: "email", Name: "Project mailbox", Category: "email", Enabled: true, Status: "active"})
 	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: extractionID, SourceID: sourceID, Summary: "Private source context"}); err != nil {
 		t.Fatalf("SaveExtraction: %v", err)
 	}
 	repo.index = append(repo.index, models.SourceIndexEntry{ID: uuid.New(), SourceID: sourceID, ExtractionID: extractionID, IndexType: "keyword", Keywords: "private,source,context"})
 	repo.deleteExtractionErr = errors.New("storage unavailable")
-	if err := NewService(repo, nil).DeleteExtraction(extractionID); err == nil {
+	if err := authorizedSourceEffectService(NewService(repo, nil)).DeleteExtractionAuthorized(
+		context.Background(),
+		extractionID,
+		testSourceAuthorization("robert"),
+	); err == nil {
 		t.Fatal("expected repository delete failure")
 	}
 	if repo.hasAudit("extraction.deleted") {
@@ -1892,6 +2079,31 @@ func (r *fakeSourceRepo) UpdateSource(source *models.ConnectedSource) (*models.C
 	return source, nil
 }
 
+func (r *fakeSourceRepo) RevokeSource(
+	expected *models.ConnectedSource,
+	ownerIdentity string,
+	revokedAt time.Time,
+) (*models.ConnectedSource, error) {
+	if expected == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	source, ok := r.sources[expected.ID]
+	if !ok ||
+		source.OwnerIdentity != ownerIdentity ||
+		source.ConnectorKey != expected.ConnectorKey ||
+		source.DefaultProjectKey != expected.DefaultProjectKey ||
+		!source.UpdatedAt.Equal(expected.UpdatedAt) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	source.Enabled = false
+	source.Status = "revoked"
+	source.RevokedAt = &revokedAt
+	source.UpdatedAt = time.Now().UTC()
+	delete(r.oauthTokens, expected.ID)
+	copied := *source
+	return &copied, nil
+}
+
 func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	result := []models.ConnectedSource{}
 	for _, source := range r.sources {
@@ -2042,14 +2254,39 @@ func (r *fakeSourceRepo) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 	return &copied, nil
 }
 
-func (r *fakeSourceRepo) DeleteExtraction(id uuid.UUID) error {
+func (r *fakeSourceRepo) DeleteExtractionForOwner(
+	expected *models.SourceExtraction,
+	expectedSource *models.ConnectedSource,
+	ownerIdentity string,
+) error {
 	if r.deleteExtractionErr != nil {
 		return r.deleteExtractionErr
 	}
-	delete(r.extractions, id)
+	if expected == nil || expectedSource == nil ||
+		expected.SourceID != expectedSource.ID {
+		return gorm.ErrRecordNotFound
+	}
+	source, ok := r.sources[expectedSource.ID]
+	if !ok ||
+		source.OwnerIdentity != ownerIdentity ||
+		source.ConnectorKey != expectedSource.ConnectorKey ||
+		!source.UpdatedAt.Equal(expectedSource.UpdatedAt) {
+		return gorm.ErrRecordNotFound
+	}
+	extraction, ok := r.extractions[expected.ID]
+	if !ok ||
+		extraction.SourceID != expected.SourceID ||
+		extraction.ProjectKey != expected.ProjectKey ||
+		extraction.RawItemID != expected.RawItemID ||
+		extraction.ContentHash != expected.ContentHash ||
+		extraction.SourceURI != expected.SourceURI ||
+		!extraction.UpdatedAt.Equal(expected.UpdatedAt) {
+		return gorm.ErrRecordNotFound
+	}
+	delete(r.extractions, expected.ID)
 	filtered := r.index[:0]
 	for _, entry := range r.index {
-		if entry.ExtractionID != id {
+		if entry.ExtractionID != expected.ID {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -2374,6 +2611,10 @@ func (s *fakeSourceWorkflowService) RunDue(request workflow.RunDueRequest) (*wor
 
 func (s *fakeSourceWorkflowService) RunDueForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
 	return nil, nil
+}
+
+func (s *fakeSourceWorkflowService) RunOneForOwner(ownerIdentity string, id uuid.UUID) (*workflow.WorkflowRunResult, error) {
+	return &workflow.WorkflowRunResult{WorkflowID: id, Status: "skipped"}, nil
 }
 
 func (s *fakeSourceWorkflowService) RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {

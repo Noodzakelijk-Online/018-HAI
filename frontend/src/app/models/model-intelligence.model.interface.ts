@@ -13,6 +13,14 @@ export interface ILaneWinner {
   modelId: string
   tokensPerSecond: number
   runs: number
+  evaluatedRuns: number
+  acceptedOutputs: number
+  acceptanceRate: number
+  confidence: string
+  averageTokens: number
+  averageDurationMs: number
+  averageCostEur: number
+  reason: string
 }
 
 export interface IModelIntelligenceOverview {
@@ -21,6 +29,9 @@ export interface IModelIntelligenceOverview {
   totalProfiles: number
   activeModels: number
   telemetryRuns: number
+  evaluatedRuns: number
+  acceptedOutputs: number
+  unvalidatedRuns: number
   cacheHits: number
   cacheMisses: number
   laneWinners: ILaneWinner[]
@@ -66,7 +77,48 @@ export interface IModelTelemetry {
   tokensPerSecond: number
   ok: boolean
   cacheHit: boolean
+  validationStatus: string
+  validationMethod?: string
+  estimatedCostEur: number
+  fallbackDepth: number
   createdAt: string
+}
+
+export interface IModelCalibration {
+  lane: string
+  providerId: string
+  modelId: string
+  totalRuns: number
+  providerCallSuccesses: number
+  providerCallFailures: number
+  evaluatedRuns: number
+  acceptedOutputs: number
+  rejectedOutputs: number
+  needsReview: number
+  unvalidatedRuns: number
+  acceptanceRate: number
+  wilsonLowerBound: number
+  averageInputTokens: number
+  averageOutputTokens: number
+  averageDurationMs: number
+  averageTokensPerSecond: number
+  averageCostEur: number
+  averageFallbackDepth: number
+  confidence: string
+  lastObservedAt: string
+}
+
+export interface ICalibrationSummary {
+  totalRuns: number
+  evaluatedRuns: number
+  acceptedOutputs: number
+  rejectedOutputs: number
+  needsReview: number
+  unvalidatedRuns: number
+  models: IModelCalibration[]
+  laneLeaders: ILaneWinner[]
+  generatedAt: string
+  explanation: string
 }
 
 export interface IOperationBudget {

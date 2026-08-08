@@ -4,9 +4,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/frameworkregistry"
+	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/task"
 	"automation-hub-backend/internal/workflow"
 
@@ -18,10 +20,14 @@ type fakeWorkflowTaskRunner struct {
 }
 
 type capturingTaskService struct {
-	request task.IntakeRequest
-	plan    *task.CompletionPlan
-	err     error
-	runs    int
+	request        task.IntakeRequest
+	previewRequest task.IntakeRequest
+	plan           *task.CompletionPlan
+	previewPlan    *task.CompletionPlan
+	err            error
+	previewErr     error
+	runs           int
+	previews       int
 }
 
 type capturingApprovalBindingPreparer struct {
@@ -29,6 +35,16 @@ type capturingApprovalBindingPreparer struct {
 	request      automation.TaskLaunchRequest
 	binding      string
 	err          error
+}
+
+type catalogApprovalBindingPreparer struct {
+	capturingApprovalBindingPreparer
+	automations []*models.Automation
+	catalogErr  error
+}
+
+func (p *catalogApprovalBindingPreparer) FindAll() ([]*models.Automation, error) {
+	return p.automations, p.catalogErr
 }
 
 func (p *capturingApprovalBindingPreparer) PrepareWorkflowApprovalBinding(id uuid.UUID, request automation.TaskLaunchRequest) (string, error) {
@@ -39,6 +55,21 @@ func (p *capturingApprovalBindingPreparer) PrepareWorkflowApprovalBinding(id uui
 
 func (s *capturingTaskService) Plan(task.IntakeRequest) (*task.CompletionPlan, error) {
 	return nil, nil
+}
+
+func (s *capturingTaskService) Preview(request task.IntakeRequest) (*task.CompletionPlan, error) {
+	s.previews++
+	s.previewRequest = request
+	if s.previewErr != nil {
+		return nil, s.previewErr
+	}
+	if s.previewPlan != nil {
+		return s.previewPlan, nil
+	}
+	if s.plan != nil {
+		return s.plan, nil
+	}
+	return validWorkflowCompletionPlan("task-plan-1"), nil
 }
 
 func (s *capturingTaskService) Run(request task.IntakeRequest) (*task.CompletionPlan, error) {
@@ -108,10 +139,12 @@ func TestRunnerPreparesBindingForExactTaskEngineExecutionIdentity(t *testing.T) 
 	runner := NewRunner(tasks, preparer)
 	workflowID := uuid.NewString()
 	automationID := uuid.New()
+	mandateID := uuid.NewString()
 	request := workflow.WorkflowApprovalBindingRequest{
 		OwnerIdentity: " alice ",
 		WorkflowID:    workflowID,
 		AutomationID:  automationID.String(),
+		MandateID:     mandateID,
 		Request:       " Email the lawyer with the approved evidence summary. ",
 		ProjectKey:    " 018-hai ",
 	}
@@ -129,11 +162,13 @@ func TestRunnerPreparesBindingForExactTaskEngineExecutionIdentity(t *testing.T) 
 		Request:        "Email the lawyer with the approved evidence summary.",
 		ProjectKey:     "018-hai",
 		AutomationID:   automationID.String(),
+		MandateID:      mandateID,
 		ExecuteAllowed: true,
 		HumanApproved:  true,
 	})
 	if preparer.request.OwnerIdentity != "alice" ||
 		preparer.request.ProjectKey != "018-hai" ||
+		preparer.request.MandateID != mandateID ||
 		preparer.request.Task != expectedTask {
 		t.Fatalf("prepared exact action request = %#v, expected task %q", preparer.request, expectedTask)
 	}
@@ -161,19 +196,163 @@ func TestDeferredRunnerDelegatesApprovalBindingPreparation(t *testing.T) {
 	}
 }
 
+func TestRunnerSelectsUniqueConfiguredAutomation(t *testing.T) {
+	selectedID := uuid.New()
+	catalog := &catalogApprovalBindingPreparer{automations: []*models.Automation{
+		{
+			ID:           uuid.New(),
+			Name:         "Broken email drafter",
+			LaunchType:   "agent_runtime",
+			LaunchTarget: "runtime://broken-email",
+			RuntimeType:  "hermes",
+			Status:       "broken",
+		},
+		{
+			ID:           selectedID,
+			Name:         "Email reply drafter",
+			LaunchType:   "agent_runtime",
+			LaunchTarget: "runtime://email-drafter",
+			RuntimeType:  "hermes",
+			Status:       "healthy",
+			DependencyNotes: "Draft email replies from source evidence; never send " +
+				"without separate approval.",
+		},
+		{
+			ID:          uuid.New(),
+			Name:        "Unconfigured email helper",
+			LaunchType:  "agent_runtime",
+			RuntimeType: "hermes",
+		},
+	}}
+	runner := NewRunner(&capturingTaskService{}, catalog)
+
+	candidates, err := runner.SelectWorkflowAutomations(workflow.AutomationSelectionRequest{
+		OwnerIdentity: "alice",
+		TaskType:      "email_reply",
+		Request:       "Draft an email reply using the attached evidence. Do not send it.",
+		ProjectKey:    "vivare-case",
+	})
+	if err != nil {
+		t.Fatalf("SelectWorkflowAutomations: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one conservative match", candidates)
+	}
+	selected := candidates[0]
+	if selected.ID != selectedID.String() || selected.Name != "Email reply drafter" {
+		t.Fatalf("selected candidate = %#v", selected)
+	}
+	if selected.Score <= 0 || !strings.Contains(selected.Reason, "task capability match") ||
+		!strings.Contains(selected.Reason, "health status healthy") {
+		t.Fatalf("selection explanation = %#v", selected)
+	}
+}
+
+func TestRunnerReturnsRankedAmbiguousAutomationsWithoutChoosing(t *testing.T) {
+	firstID := uuid.New()
+	secondID := uuid.New()
+	catalog := &catalogApprovalBindingPreparer{automations: []*models.Automation{
+		{
+			ID:              secondID,
+			Name:            "General email runtime",
+			LaunchType:      "api",
+			LaunchTarget:    "POST http://localhost:7777/draft-email",
+			Status:          "warning",
+			DependencyNotes: "Draft email replies",
+		},
+		{
+			ID:              firstID,
+			Name:            "Vivare email drafter",
+			LaunchType:      "agent_runtime",
+			LaunchTarget:    "runtime://vivare-email",
+			RuntimeType:     "hermes",
+			Status:          "healthy",
+			DependencyNotes: "Draft evidence-grounded email replies for the Vivare case",
+		},
+	}}
+	runner := NewRunner(&capturingTaskService{}, catalog)
+
+	candidates, err := runner.SelectWorkflowAutomations(workflow.AutomationSelectionRequest{
+		OwnerIdentity: "alice",
+		TaskType:      "email_reply",
+		Request:       "Draft an email reply for the Vivare case.",
+		ProjectKey:    "vivare-case",
+	})
+	if err != nil {
+		t.Fatalf("SelectWorkflowAutomations: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %#v, want both plausible matches for operator selection", candidates)
+	}
+	if candidates[0].ID != firstID.String() || candidates[0].Score <= candidates[1].Score {
+		t.Fatalf("ranked candidates = %#v", candidates)
+	}
+}
+
+func TestRunnerAutomationSelectionRequiresCatalog(t *testing.T) {
+	runner := NewRunner(&capturingTaskService{}, &capturingApprovalBindingPreparer{})
+
+	candidates, err := runner.SelectWorkflowAutomations(workflow.AutomationSelectionRequest{
+		OwnerIdentity: "alice",
+		TaskType:      "email_reply",
+		Request:       "Draft an email reply.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "automation catalog is not configured") {
+		t.Fatalf("error = %v, candidates = %#v", err, candidates)
+	}
+	if candidates != nil {
+		t.Fatalf("unconfigured selector returned candidates: %#v", candidates)
+	}
+}
+
+func TestDeferredRunnerDelegatesAutomationSelection(t *testing.T) {
+	automationID := uuid.New()
+	delegate := NewRunner(&capturingTaskService{}, &catalogApprovalBindingPreparer{
+		automations: []*models.Automation{{
+			ID:           automationID,
+			Name:         "Email drafter",
+			LaunchType:   "agent_runtime",
+			LaunchTarget: "runtime://email",
+			RuntimeType:  "hermes",
+			Status:       "healthy",
+		}},
+	})
+	runner := NewDeferredRunner()
+	runner.Set(delegate)
+
+	candidates, err := runner.SelectWorkflowAutomations(workflow.AutomationSelectionRequest{
+		TaskType: "email",
+		Request:  "Draft email",
+	})
+	if err != nil {
+		t.Fatalf("SelectWorkflowAutomations: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].ID != automationID.String() {
+		t.Fatalf("delegated candidates = %#v", candidates)
+	}
+}
+
 func TestRunnerPassesPursuitAndWorkflowContextToTaskEngine(t *testing.T) {
 	tasks := &capturingTaskService{}
 	runner := NewRunner(tasks)
 	approvalSourceID := "workflow-decision:" + uuid.NewString()
+	mandateID := uuid.NewString()
+	approvedAt := time.Now().UTC()
+	approvalDigest := strings.Repeat("d", 64)
 
 	result, err := runner.RunWorkflowTask(workflow.TaskRunRequest{
-		OwnerIdentity:    "alice",
-		PursuitID:        "pursuit-1",
-		WorkflowID:       "workflow-1",
-		Request:          "Advance the governed workflow.",
-		ProjectKey:       "018-hai",
-		HumanApproved:    true,
-		ApprovalSourceID: approvalSourceID,
+		OwnerIdentity:         "alice",
+		PursuitID:             "pursuit-1",
+		WorkflowID:            "workflow-1",
+		Request:               "Advance the governed workflow.",
+		ProjectKey:            "018-hai",
+		RiskLevel:             "medium",
+		MandateID:             mandateID,
+		HumanApproved:         true,
+		ApprovalSourceID:      approvalSourceID,
+		ApprovalBindingDigest: approvalDigest,
+		ApprovalActorIdentity: "alice",
+		ApprovalApprovedAt:    &approvedAt,
 	})
 	if err != nil {
 		t.Fatalf("RunWorkflowTask returned error: %v", err)
@@ -181,11 +360,30 @@ func TestRunnerPassesPursuitAndWorkflowContextToTaskEngine(t *testing.T) {
 	if result == nil || !result.Passed {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if tasks.request.PursuitID != "pursuit-1" || tasks.request.WorkflowID != "workflow-1" || tasks.request.OwnerIdentity != "alice" {
+	if tasks.request.PursuitID != "pursuit-1" || tasks.request.WorkflowID != "workflow-1" || tasks.request.OwnerIdentity != "alice" ||
+		tasks.request.IdempotencyKey != "workflow:workflow-1:approval:"+approvalSourceID {
 		t.Fatalf("task context = %#v", tasks.request)
 	}
 	if !tasks.request.HumanApproved || tasks.request.ApprovalSourceID != approvalSourceID {
 		t.Fatalf("workflow approval provenance was not delegated intact: %#v", tasks.request)
+	}
+	if tasks.request.ApprovalBindingDigest != approvalDigest ||
+		tasks.request.ApprovalActorIdentity != "alice" ||
+		tasks.request.ApprovalApprovedAt == nil || !tasks.request.ApprovalApprovedAt.Equal(approvedAt) {
+		t.Fatalf("workflow approval proof was not delegated intact: %#v", tasks.request)
+	}
+	if tasks.request.MandateID != mandateID || tasks.previewRequest.MandateID != mandateID {
+		t.Fatalf("standing mandate was not delegated through preview and execution: preview=%#v run=%#v", tasks.previewRequest, tasks.request)
+	}
+	if tasks.previews != 1 || tasks.previewRequest.ExecuteAllowed || tasks.previewRequest.HumanApproved {
+		t.Fatalf("framework preflight was not side-effect-free: previews=%d request=%#v", tasks.previews, tasks.previewRequest)
+	}
+	if !tasks.previewRequest.ExecutionRequested {
+		t.Fatalf("framework preflight lost execution intent: %#v", tasks.previewRequest)
+	}
+	if tasks.previewRequest.ApprovalBindingDigest != "" || tasks.previewRequest.ApprovalActorIdentity != "" ||
+		tasks.previewRequest.ApprovalApprovedAt != nil {
+		t.Fatalf("framework preview retained trusted approval evidence: %#v", tasks.previewRequest)
 	}
 	if result.FrameworkSelection == nil ||
 		result.FrameworkSelection.SelectionDecisionID == "" ||
@@ -193,6 +391,117 @@ func TestRunnerPassesPursuitAndWorkflowContextToTaskEngine(t *testing.T) {
 		result.FrameworkSelection.CatalogDigest != strings.Repeat("a", 64) ||
 		result.FrameworkSelection.ConstitutionDigest != strings.Repeat("c", 64) {
 		t.Fatalf("framework selection provenance = %#v", result.FrameworkSelection)
+	}
+}
+
+func TestRunnerRejectsSelectorV5WithoutExplicitRiskContractBeforeExecution(t *testing.T) {
+	plan := validWorkflowCompletionPlan("selector-v5-missing-risk")
+	plan.FrameworkDecision.SelectorAlgorithmVersion = "selector-v5"
+	tasks := &capturingTaskService{plan: plan}
+
+	result, err := NewRunner(tasks).RunWorkflowTask(workflow.TaskRunRequest{
+		OwnerIdentity: "alice",
+		WorkflowID:    "workflow-1",
+		Request:       "Run controlled work",
+		RiskLevel:     "medium",
+	})
+	if err == nil || !strings.Contains(err.Error(), "selector-v5 task risk level") {
+		t.Fatalf("error = %v, want missing selector-v5 risk contract", err)
+	}
+	if result != nil || tasks.runs != 0 || tasks.previews != 1 {
+		t.Fatalf("invalid selector-v5 contract reached execution: result=%#v runs=%d previews=%d", result, tasks.runs, tasks.previews)
+	}
+}
+
+func TestFrameworkRiskContractRejectsDowngradeAndAcceptsExactCeiling(t *testing.T) {
+	maximumAutonomy := 6
+	requiresApproval := true
+	valid := &workflow.FrameworkSelectionProvenance{
+		SelectionDecisionID:       uuid.NewString(),
+		TaskPlanID:                "plan-risk",
+		CatalogVersion:            "v2",
+		CatalogDigest:             strings.Repeat("a", 64),
+		SelectorAlgorithmVersion:  "selector-v5",
+		TaskRiskLevel:             "high",
+		EffectiveRiskCeiling:      "high",
+		MaximumAutonomyLevel:      &maximumAutonomy,
+		RequiresApproval:          &requiresApproval,
+		EffectivePreferenceDigest: strings.Repeat("b", 64),
+		ConstitutionVersion:       1,
+		ConstitutionDigest:        strings.Repeat("c", 64),
+		ConstitutionSource:        "builtin-robert-constitution-v1:v1",
+		OperatingContractDigest:   strings.Repeat("d", 64),
+	}
+	if err := enforceFrameworkRiskFloor(valid, "high"); err != nil {
+		t.Fatalf("exact risk ceiling rejected: %v", err)
+	}
+	downgraded := *valid
+	downgraded.TaskRiskLevel = "medium"
+	if err := enforceFrameworkRiskFloor(&downgraded, "high"); err == nil || !strings.Contains(err.Error(), "below workflow risk floor") {
+		t.Fatalf("workflow risk downgrade error = %v", err)
+	}
+	insufficient := *valid
+	insufficient.EffectiveRiskCeiling = "medium"
+	if err := enforceFrameworkRiskFloor(&insufficient, "high"); err == nil || !strings.Contains(err.Error(), "below task risk") {
+		t.Fatalf("framework ceiling downgrade error = %v", err)
+	}
+	plan := &task.CompletionPlan{RiskAssessment: task.RiskAssessment{Level: "high"}}
+	if err := enforceFrameworkPlanRisk(&downgraded, plan); err == nil || !strings.Contains(err.Error(), "does not cover task plan risk") {
+		t.Fatalf("task plan risk downgrade error = %v", err)
+	}
+}
+
+func TestFrameworkRiskContractExtractionRequiresExplicitFields(t *testing.T) {
+	contract, err := frameworkRiskContractFromDecision(struct {
+		TaskRiskLevel        string `json:"taskRiskLevel"`
+		EffectiveRiskCeiling string `json:"effectiveRiskCeiling"`
+	}{TaskRiskLevel: " HIGH ", EffectiveRiskCeiling: "high"})
+	if err != nil {
+		t.Fatalf("frameworkRiskContractFromDecision: %v", err)
+	}
+	if contract.TaskRiskLevel != "high" || contract.EffectiveRiskCeiling != "high" {
+		t.Fatalf("normalized risk contract = %#v", contract)
+	}
+	legacy, err := frameworkRiskContractFromDecision(struct {
+		SelectorAlgorithmVersion string `json:"selectorAlgorithmVersion"`
+	}{SelectorAlgorithmVersion: "selector-v4"})
+	if err != nil {
+		t.Fatalf("legacy frameworkRiskContractFromDecision: %v", err)
+	}
+	if legacy.TaskRiskLevel != "" || legacy.EffectiveRiskCeiling != "" {
+		t.Fatalf("legacy risk contract was inferred: %#v", legacy)
+	}
+}
+
+func TestCompareFrameworkExecutionContractsRejectsAutonomyOrApprovalDrift(t *testing.T) {
+	maximumAutonomy := 6
+	requiresApproval := true
+	preflight := &workflow.FrameworkSelectionProvenance{
+		SelectionDecisionID: uuid.NewString(), TaskPlanID: "plan-contract",
+		CatalogVersion: "v2", CatalogDigest: strings.Repeat("a", 64),
+		SelectorAlgorithmVersion: "selector-v5", TaskRiskLevel: "high",
+		EffectiveRiskCeiling: "high", MaximumAutonomyLevel: &maximumAutonomy,
+		RequiresApproval: &requiresApproval, EffectivePreferenceDigest: strings.Repeat("b", 64),
+		ConstitutionVersion: 1, ConstitutionDigest: strings.Repeat("c", 64),
+		ConstitutionSource:      "builtin-robert-constitution-v1:v1",
+		OperatingContractDigest: strings.Repeat("d", 64),
+	}
+	executed := *preflight
+	if err := compareFrameworkRiskContracts(preflight, &executed); err != nil {
+		t.Fatalf("identical execution contract rejected: %v", err)
+	}
+
+	lowerAutonomy := maximumAutonomy - 1
+	executed.MaximumAutonomyLevel = &lowerAutonomy
+	if err := compareFrameworkRiskContracts(preflight, &executed); err == nil {
+		t.Fatal("autonomy drift from side-effect-free preview was accepted")
+	}
+
+	executed = *preflight
+	approvalRemoved := false
+	executed.RequiresApproval = &approvalRemoved
+	if err := compareFrameworkRiskContracts(preflight, &executed); err == nil {
+		t.Fatal("approval drift from side-effect-free preview was accepted")
 	}
 }
 
@@ -275,7 +584,8 @@ func TestRunnerStripsStaleApprovalMetadataFromUnapprovedTask(t *testing.T) {
 	if tasks.request.HumanApproved || tasks.request.ApprovalNote != "" || tasks.request.ApprovalSourceID != "" {
 		t.Fatalf("stale approval metadata reached task engine: %#v", tasks.request)
 	}
-	if tasks.request.OwnerIdentity != "alice" || tasks.request.WorkflowID != "workflow-1" {
+	if tasks.request.OwnerIdentity != "alice" || tasks.request.WorkflowID != "workflow-1" ||
+		tasks.request.IdempotencyKey != "workflow:workflow-1:unapproved" {
 		t.Fatalf("workflow identity was not normalized: %#v", tasks.request)
 	}
 }

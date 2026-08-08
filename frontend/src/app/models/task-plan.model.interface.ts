@@ -4,12 +4,15 @@ import { IRankedExtraction, IScheduledSyncRun } from './connected-source.model.i
 import { IVerificationClaim } from './verification.model.interface';
 import { IAutomationRuntimeRouteTrace } from './automation.model.interface';
 import { IFrameworkSelectionDecision } from './framework-registry.model.interface';
+import { IPlanTransportEdge, IPlanTransportNode } from './plan-graph.model.interface';
 
 export interface ITaskPlanRequest {
   request: string;
+  idempotencyKey?: string;
   projectKey?: string;
   pursuitId?: string;
   automationId?: string;
+  mandateId?: string;
   successCriteria?: string[];
   includeRagflowCandidates?: boolean;
   executeAllowed?: boolean;
@@ -70,6 +73,62 @@ export interface IExecutionPlan {
   controlledExecutionMode: string;
   approvalRequiredFor: string[];
   auditEvents: string[];
+	capacityConstraints?: string[];
+}
+
+export interface ICalendarBusyInterval {
+  start: string;
+  end: string;
+  title: string;
+  sourceUri?: string;
+  sourceId: string;
+}
+
+export interface ICalendarCapacityContext {
+  status: 'source_backed' | 'unavailable' | 'not_applicable' | string;
+  windowStart: string;
+  windowEnd: string;
+  busyIntervals: ICalendarBusyInterval[];
+  explanation: string;
+}
+
+export interface IResourceScheduledTask {
+  taskId: string;
+  start: string;
+  end: string;
+  plannedDurationMinutes: number;
+  critical: boolean;
+  dependencies: string[];
+}
+
+export interface IResourceBlocker {
+  code: string;
+  taskId?: string;
+  resourceId?: string;
+  detail: string;
+  blocksFeasibility: boolean;
+}
+
+export interface IResourceApprovalFlag {
+  code: string;
+  taskId?: string;
+  reason: string;
+  mandatory: boolean;
+}
+
+export interface IResourceDecision {
+  planId: string;
+  algorithmVersion: string;
+  decisionDigest: string;
+  feasibility: 'feasible' | 'feasible_with_approvals' | 'infeasible' | string;
+  scheduled: IResourceScheduledTask[];
+  unscheduledTaskIds: string[];
+  criticalBlockers: IResourceBlocker[];
+  advisories: IResourceBlocker[];
+  approvalFlags: IResourceApprovalFlag[];
+  authority: string;
+  canExecute: boolean;
+  grantsAuthority: boolean;
 }
 
 export interface IMinimalityGate {
@@ -231,11 +290,39 @@ export interface IReviewQueueItem {
 export interface IApprovalDecision {
   approved: boolean;
   note?: string;
+  confirmation?: string;
 }
 
 export interface IReviewResolutionResult {
   item: IReviewQueueItem;
   plan?: ICompletionPlan;
+}
+
+export interface IApprovedReviewReconciliationRequest {
+  apply: boolean;
+  confirmation?: string;
+  olderThanMinutes?: number;
+  limit?: number;
+}
+
+export interface IApprovedReviewReconciliationItem {
+  reviewItemId: string;
+  taskPlanId: string;
+  disposition: 'complete' | 'review' | 'conflict' | string;
+  reason: string;
+  applied: boolean;
+}
+
+export interface IApprovedReviewReconciliationResult {
+  dryRun: boolean;
+  cutoff: string;
+  inspected: number;
+  approvedFound: number;
+  eligible: number;
+  completed: number;
+  returnedToReview: number;
+  conflicts: number;
+  items: IApprovedReviewReconciliationItem[];
 }
 
 export interface ITaskEvent {
@@ -252,8 +339,65 @@ export interface IMemoryUpdateProposal {
   confidence: number;
 }
 
+export interface ILifeGraphEntity {
+  id: string;
+  type: string;
+  domain: string;
+  name: string;
+  summary?: string;
+  status: string;
+  verificationStatus: string;
+  localOnly: boolean;
+}
+
+export interface ILifeGraphRelation {
+  id: string;
+  type: string;
+  fromEntityId: string;
+  toEntityId: string;
+  verificationStatus: string;
+}
+
+export interface ILifeGraphProjection {
+  primary: ILifeGraphEntity;
+  linkedEntities: ILifeGraphEntity[];
+  relations: ILifeGraphRelation[];
+  alreadyExisted: boolean;
+  advisoryOnly: boolean;
+  canExecute: boolean;
+  grantsAuthority: boolean;
+}
+
+export interface ITaskCoordinationDraft {
+  id: string;
+  title: string;
+  status: 'draft';
+  revision: number;
+  digest: string;
+  nodes: IPlanTransportNode[];
+  edges: IPlanTransportEdge[];
+  createdBy: string;
+  createdAt: string;
+  canExecute: false;
+}
+
+export interface ITaskAcceptedCoordinationBinding {
+  planId: string;
+  revision: number;
+  digest: string;
+  nodeId: string;
+  planTitle: string;
+  acceptedAt: string;
+  canExecute: false;
+}
+
 export interface ICompletionPlan {
   id: string;
+	operationId: string;
+	idempotencyKey: string;
+	reviewItemId?: string;
+  coordinationPlan?: ITaskAcceptedCoordinationBinding;
+  coordinationDraft?: ITaskCoordinationDraft;
   createdAt: string;
   request: string;
   projectKey?: string;
@@ -261,6 +405,8 @@ export interface ICompletionPlan {
   realGoal: string;
   intake: IIntakeAnalysis;
   frameworkDecision?: IFrameworkSelectionDecision;
+	calendarCapacity?: ICalendarCapacityContext;
+	resourceDecision?: IResourceDecision;
   contextPlan: IContextPlan;
   minimalityDecision: IMinimalityDecision;
   modelDecision: ILLMRouteDecision;
@@ -276,6 +422,8 @@ export interface ICompletionPlan {
   memoryUpdateProposals: IMemoryUpdateProposal[];
   lessonsLearned: IMemoryUpdateProposal[];
   storedMemoryIds: string[];
+  lifeGraphProjection?: ILifeGraphProjection;
+  lifeGraphProjectionError?: string;
   events: ITaskEvent[];
   completionStatus: string;
 }

@@ -2,15 +2,36 @@ import { FormBuilder } from '@angular/forms';
 import { ActivatedRoute, Router, convertToParamMap } from '@angular/router';
 import { of } from 'rxjs';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { NzModalService } from 'ng-zorro-antd/modal';
 import { TaskBlueprintComponent } from './task-blueprint.component';
 import { IFrameworkSelectionDecision } from '../../models/framework-registry.model.interface';
 
 describe('TaskBlueprintComponent pursuit context', () => {
-  function createComponent(pursuitId: string = ''): { component: TaskBlueprintComponent; router: jasmine.SpyObj<Router> } {
+	function createComponent(pursuitId: string = ''): {
+		component: TaskBlueprintComponent;
+		router: jasmine.SpyObj<Router>;
+		taskPlans: jasmine.SpyObj<any>;
+		assistant: jasmine.SpyObj<any>;
+		modal: jasmine.SpyObj<NzModalService>;
+	} {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
-    const taskPlans = jasmine.createSpyObj('TaskPlanService', ['logs', 'reviewQueue', 'resolveReviewItem']);
+		const taskPlans = jasmine.createSpyObj('TaskPlanService', ['logs', 'reviewQueue', 'resolveReviewItem', 'reconcileApprovedReviews']);
     taskPlans.logs.and.returnValue(of([]));
     taskPlans.reviewQueue.and.returnValue(of([]));
+		taskPlans.resolveReviewItem.and.returnValue(of({ item: {} }));
+		const assistant = jasmine.createSpyObj('AssistantCommandService', ['command']);
+		assistant.command.and.returnValue(of({
+			id: 'command-1',
+			createdAt: '2026-08-04T00:00:00Z',
+			intent: 'plan',
+			summary: 'Plan prepared.',
+			nextAction: 'Review the plan.',
+			safetySummary: 'No execution occurred.',
+			actions: [],
+			reviewRequired: false,
+		}));
+		const notifications = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error']);
+		const modal = jasmine.createSpyObj<NzModalService>('NzModalService', ['confirm']);
     const route = {
       queryParamMap: of(convertToParamMap(pursuitId ? { pursuitId } : {})),
     } as ActivatedRoute;
@@ -19,17 +40,38 @@ describe('TaskBlueprintComponent pursuit context', () => {
       component: new TaskBlueprintComponent(
         new FormBuilder(),
         taskPlans,
-        {} as any,
-        {} as NzNotificationService,
+				assistant,
+				notifications,
+				modal,
         router,
         route,
         { mode: () => 'light' } as any,
         {} as any,
         { propose: jasmine.createSpy('propose') } as any,
       ),
-      router,
+			router,
+			taskPlans,
+			assistant,
+			modal,
     };
   }
+
+	it('forwards an explicitly selected standing mandate without treating it as approval', () => {
+		const mandateId = 'f4d7cf86-8902-4e24-b704-edca66e31f22';
+		const { component, assistant } = createComponent();
+		component.planForm.patchValue({
+			request: 'Prepare the project status summary.',
+			mandateId,
+		});
+
+		component.submitChat('plan');
+
+		expect(assistant.command).toHaveBeenCalledWith(jasmine.objectContaining({
+			message: 'Prepare the project status summary.',
+			mandateId,
+			executeAllowed: false,
+		}));
+	});
 
   it('shows query-scoped pursuit context and opens its detail view', () => {
     const pursuitId = '3ca4a3b5-84b2-4fcd-ae8d-e9f337e7250b';
@@ -211,5 +253,92 @@ describe('TaskBlueprintComponent pursuit context', () => {
     expect(component.validationKindLabel('framework_evidence')).toBe('Framework evidence');
     expect(component.validationKindLabel('framework_completion')).toBe('Framework completion');
     expect(component.validationKindLabel('system_check')).toBe('System check');
+  });
+
+	it('keeps retry review cycles actionable and counts only unresolved decisions', () => {
+		const { component } = createComponent();
+		component.reviewQueue = [
+			{ id: 'open', taskId: 'a', request: { request: 'a' }, reason: 'a', priority: 'normal', status: 'open', createdAt: '' },
+			{ id: 'retry', taskId: 'b', request: { request: 'b' }, reason: 'b', priority: 'normal', status: 'needs_review', createdAt: '' },
+			{ id: 'approved', taskId: 'c', request: { request: 'c' }, reason: 'c', priority: 'normal', status: 'approved', createdAt: '' },
+		];
+
+		expect(component.reviewQueueOpenCount()).toBe(2);
+		expect(component.canResolveReview(component.reviewQueue[1])).toBeTrue();
+		expect(component.canResolveReview(component.reviewQueue[2])).toBeFalse();
+		expect(component.approvedReviewCount()).toBe(1);
+	});
+
+	it('requires deliberate confirmation before retrying an uncertain operation', () => {
+		const { component, taskPlans, modal } = createComponent();
+		const item: any = {
+			id: 'operation-review',
+			taskId: 'operation:11111111-1111-1111-1111-111111111111',
+			request: { request: 'Prepare a safe summary' },
+			reason: 'Prior attempt has an uncertain outcome.',
+			priority: 'high',
+			status: 'needs_review',
+			createdAt: '2026-08-04T00:00:00Z',
+		};
+
+		component.resolveReviewItem(item, true);
+
+		expect(modal.confirm).toHaveBeenCalled();
+		expect(taskPlans.resolveReviewItem).not.toHaveBeenCalled();
+		expect(component.reviewApproveLabel(item)).toBe('Retry as new attempt');
+		expect(component.reviewRejectLabel(item)).toBe('Close without retry');
+		const confirmation = modal.confirm.calls.mostRecent().args[0];
+		expect(confirmation).toBeDefined();
+		expect(confirmation!.nzContent).toContain('did not already produce the intended effect');
+		expect(typeof confirmation!.nzOnOk).toBe('function');
+		(confirmation!.nzOnOk as () => void)();
+		expect(taskPlans.resolveReviewItem).toHaveBeenCalledWith(item.id, jasmine.objectContaining({
+			approved: true,
+			confirmation: 'RETRY UNCERTAIN OPERATION',
+		}));
+	});
+
+	it('previews recovery before applying the exact fail-closed reconciliation', () => {
+		const { component, taskPlans } = createComponent();
+		const preview = {
+			dryRun: true,
+			cutoff: '2026-08-04T00:00:00Z',
+			inspected: 1,
+			approvedFound: 1,
+			eligible: 1,
+			completed: 0,
+			returnedToReview: 1,
+			conflicts: 0,
+			items: [],
+		};
+		taskPlans.reconcileApprovedReviews.and.returnValue(of(preview));
+
+		component.previewApprovedReviewRecovery();
+
+		expect(taskPlans.reconcileApprovedReviews).toHaveBeenCalledWith({
+			apply: false,
+			confirmation: undefined,
+			olderThanMinutes: 30,
+			limit: 50,
+		});
+		expect(component.reconciliation).toEqual(preview);
+
+		taskPlans.reconcileApprovedReviews.calls.reset();
+		component.applyApprovedReviewRecovery();
+		expect(taskPlans.reconcileApprovedReviews).toHaveBeenCalledWith({
+			apply: true,
+			confirmation: 'RECONCILE APPROVED TASKS',
+			olderThanMinutes: 30,
+			limit: 50,
+		});
+	});
+
+  it('opens the calendar-aware resource schedule from the basic summary', () => {
+    const { component } = createComponent();
+
+    component.inspectorMode = 'overview';
+    component.openResourceSchedule();
+
+    expect(component.inspectorMode).toBe('plan');
   });
 });

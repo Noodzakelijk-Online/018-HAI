@@ -12,7 +12,7 @@ import (
 
 var semanticVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
-const expectedBuiltinCatalogV1Digest = "6bc1c0e0f77e761e132e16e52224715579c910684f150506727043130d303dd0"
+const expectedBuiltinCatalogV2Digest = "aaaab649a81eb8a3c55a3b43b63a954dc0e4f6ccd4c3ffed9508bf4de5575473"
 
 var expectedFrameworkIDsBySection = []string{
 	"human-sovereignty",
@@ -102,7 +102,7 @@ func TestBuiltinCatalogHasExactly55UniqueVersionedRecordsInSpecificationOrder(t 
 	}
 }
 
-func TestBuiltinCatalogV1DigestCannotDriftWithoutAnExplicitVersionDecision(t *testing.T) {
+func TestBuiltinCatalogV2DigestCannotDriftWithoutAnExplicitVersionDecision(t *testing.T) {
 	t.Parallel()
 
 	catalog := BuiltinCatalog()
@@ -113,14 +113,14 @@ func TestBuiltinCatalogV1DigestCannotDriftWithoutAnExplicitVersionDecision(t *te
 	if err != nil {
 		t.Fatalf("digest built-in catalog: %v", err)
 	}
-	if frameworkCatalogVersion != "v1" {
+	if frameworkCatalogVersion != "v2" {
 		t.Fatalf("catalog version %q has no reviewed golden digest contract", frameworkCatalogVersion)
 	}
-	if digest != expectedBuiltinCatalogV1Digest {
+	if digest != expectedBuiltinCatalogV2Digest {
 		t.Fatalf(
-			"catalog v1 digest changed: got %q, want %q; review the metadata and bump the catalog version before accepting intentional drift",
+			"catalog v2 digest changed: got %q, want %q; review the metadata and bump the catalog version before accepting intentional drift",
 			digest,
-			expectedBuiltinCatalogV1Digest,
+			expectedBuiltinCatalogV2Digest,
 		)
 	}
 }
@@ -326,7 +326,7 @@ func TestValidateCatalogRejectsInvalidMutations(t *testing.T) {
 		{"duplicate id ignoring case", func(items []Framework) {
 			items[1].ID = strings.ToUpper(items[0].ID)
 			items[1].Version = "2.0.0"
-		}, "duplicate framework id"},
+		}, "changes stable name or family"},
 		{"blank scalar", func(items []Framework) {
 			items[0].Purpose = " "
 		}, "missing required scalar metadata"},
@@ -397,6 +397,18 @@ func TestValidateCatalogRejectsInvalidMutations(t *testing.T) {
 				t.Fatalf("ValidateCatalog() error = %q, want substring %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestValidateCatalogAcceptsMultipleVersionsOfOneStableFrameworkID(t *testing.T) {
+	catalog := BuiltinCatalog()
+	versionTwo := cloneFramework(catalog[0])
+	versionTwo.Version = "2.0.0"
+	versionTwo.Purpose += " Version two keeps an immutable lifecycle record."
+	catalog = append(catalog, versionTwo)
+
+	if err := ValidateCatalog(catalog); err != nil {
+		t.Fatalf("ValidateCatalog rejected a distinct version of one stable ID: %v", err)
 	}
 }
 

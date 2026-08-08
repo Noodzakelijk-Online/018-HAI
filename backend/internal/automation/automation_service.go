@@ -19,11 +19,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/events"
+	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/util"
@@ -104,11 +106,29 @@ type launchExecution struct {
 }
 
 type TaskLaunchRequest struct {
-	OwnerIdentity    string         `json:"-"`
-	Task             string         `json:"task,omitempty"`
-	ProjectKey       string         `json:"projectKey,omitempty"`
-	ApprovalSourceID string         `json:"-"`
-	ApprovalProof    *ApprovalProof `json:"-"`
+	OwnerIdentity string                  `json:"-"`
+	ActorIdentity string                  `json:"-"`
+	ActorKind     executionauth.ActorKind `json:"-"`
+	TaskID        string                  `json:"-"`
+	Task          string                  `json:"task,omitempty"`
+	ProjectKey    string                  `json:"projectKey,omitempty"`
+	// MandateID is a reference only. The execution-authorization service
+	// resolves it by verified owner and evaluates its exact bounded scope.
+	MandateID             string                           `json:"mandateId,omitempty"`
+	ApprovalSourceID      string                           `json:"-"`
+	ApprovalBindingDigest string                           `json:"-"`
+	Governance            executionauth.GovernanceEvidence `json:"-"`
+	ExecutionContext      context.Context                  `json:"-"`
+	ApprovalProof         *ApprovalProof                   `json:"-"`
+}
+
+type ExecutionAuthorizer interface {
+	AuthorizeAndConsume(
+		context.Context,
+		executionauth.Request,
+		string,
+		string,
+	) (executionauth.Receipt, error)
 }
 
 type Service interface {
@@ -133,6 +153,8 @@ type service struct {
 	publisher       events.Publisher
 	runtimeRegistry *agentruntime.Registry
 	approvalProofs  ApprovalProofService
+	executionAuth   ExecutionAuthorizer
+	finalEffects    *executionauth.FinalEffectBridge
 }
 
 func NewService(repo Repository, publisher events.Publisher) Service {
@@ -148,11 +170,77 @@ func NewServiceWithRuntimeRegistry(repo Repository, publisher events.Publisher, 
 	)
 }
 
+func NewServiceWithRuntimeRegistryAndExecutionAuthorization(
+	repo Repository,
+	publisher events.Publisher,
+	runtimeRegistry *agentruntime.Registry,
+	executionAuthorizer ExecutionAuthorizer,
+) Service {
+	return NewServiceWithRuntimeRegistryApprovalProofsAndExecutionAuthorization(
+		repo,
+		publisher,
+		runtimeRegistry,
+		newDefaultApprovalProofService(),
+		executionAuthorizer,
+	)
+}
+
+func NewServiceWithRuntimeRegistryExecutionAuthorizationAndFinalEffects(
+	repo Repository,
+	publisher events.Publisher,
+	runtimeRegistry *agentruntime.Registry,
+	executionAuthorizer ExecutionAuthorizer,
+	finalEffects *executionauth.FinalEffectBridge,
+) Service {
+	return NewServiceWithRuntimeRegistryApprovalProofsExecutionAuthorizationAndFinalEffects(
+		repo,
+		publisher,
+		runtimeRegistry,
+		newDefaultApprovalProofService(),
+		executionAuthorizer,
+		finalEffects,
+	)
+}
+
 func NewServiceWithRuntimeRegistryAndApprovalProofs(
 	repo Repository,
 	publisher events.Publisher,
 	runtimeRegistry *agentruntime.Registry,
 	approvalProofs ApprovalProofService,
+) Service {
+	return NewServiceWithRuntimeRegistryApprovalProofsAndExecutionAuthorization(
+		repo,
+		publisher,
+		runtimeRegistry,
+		approvalProofs,
+		nil,
+	)
+}
+
+func NewServiceWithRuntimeRegistryApprovalProofsAndExecutionAuthorization(
+	repo Repository,
+	publisher events.Publisher,
+	runtimeRegistry *agentruntime.Registry,
+	approvalProofs ApprovalProofService,
+	executionAuthorizer ExecutionAuthorizer,
+) Service {
+	return NewServiceWithRuntimeRegistryApprovalProofsExecutionAuthorizationAndFinalEffects(
+		repo,
+		publisher,
+		runtimeRegistry,
+		approvalProofs,
+		executionAuthorizer,
+		nil,
+	)
+}
+
+func NewServiceWithRuntimeRegistryApprovalProofsExecutionAuthorizationAndFinalEffects(
+	repo Repository,
+	publisher events.Publisher,
+	runtimeRegistry *agentruntime.Registry,
+	approvalProofs ApprovalProofService,
+	executionAuthorizer ExecutionAuthorizer,
+	finalEffects *executionauth.FinalEffectBridge,
 ) Service {
 	if approvalProofs == nil {
 		approvalProofs = unavailableApprovalProofService{err: errors.New("approval proof service was not configured")}
@@ -162,13 +250,26 @@ func NewServiceWithRuntimeRegistryAndApprovalProofs(
 		publisher:       publisher,
 		runtimeRegistry: runtimeRegistry,
 		approvalProofs:  approvalProofs,
+		executionAuth:   executionAuthorizer,
+		finalEffects:    finalEffects,
 	}
 }
 
 func DefaultService() Service {
 	repo := DefaultRepository()
 	pub := events.DefaultPublisher()
-	return NewService(repo, *pub)
+	proofs, err := DefaultDurableApprovalProofService(
+		[]byte(config.AppConfig.ApprovalProofSigningKey),
+	)
+	if err != nil {
+		panic(fmt.Errorf("initialize automation approval proofs: %w", err))
+	}
+	return NewServiceWithRuntimeRegistryAndApprovalProofs(
+		repo,
+		*pub,
+		agentruntime.DefaultRegistry(),
+		proofs,
+	)
 }
 
 func (s *service) FindByID(id uuid.UUID) (*models.Automation, error) {
@@ -506,20 +607,37 @@ func (s *service) PrepareWorkflowApprovalBinding(id uuid.UUID, request TaskLaunc
 		return "", err
 	}
 	s.applyAutomationDefaults(automation)
-	scope, required := approvalScopeForAutomation(automation)
-	if !required {
+	scope, _ := approvalScopeForAutomation(automation)
+	if scope == "" {
 		return "", fmt.Errorf("automation action does not have a supported approval scope")
 	}
 	request = TaskLaunchRequest{
 		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
 		Task:          strings.TrimSpace(request.Task),
 		ProjectKey:    strings.TrimSpace(request.ProjectKey),
+		MandateID:     strings.TrimSpace(request.MandateID),
 	}
 	if request.OwnerIdentity == "" {
 		return "", fmt.Errorf("workflow approval binding requires an owner identity")
 	}
 	digest := automationActionDigest(automation, request)
 	return "automation-action:" + string(scope) + ":" + digest, nil
+}
+
+func (s *service) ActionApprovalRequired(id uuid.UUID) (bool, error) {
+	if s.repo == nil {
+		return false, fmt.Errorf("automation repository is unavailable")
+	}
+	automation, err := s.repo.FindByID(id)
+	if err != nil {
+		return false, err
+	}
+	s.applyAutomationDefaults(automation)
+	scope, required := approvalScopeForAutomation(automation)
+	if scope == "" {
+		return false, fmt.Errorf("automation action does not have a supported approval scope")
+	}
+	return required, nil
 }
 
 func (s *service) RecordApprovalDecision(id uuid.UUID, request TaskApprovalDecisionRequest) error {
@@ -550,6 +668,7 @@ func (s *service) RecordApprovalDecision(id uuid.UUID, request TaskApprovalDecis
 		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
 		Task:             strings.TrimSpace(request.Task),
 		ProjectKey:       strings.TrimSpace(request.ProjectKey),
+		MandateID:        strings.TrimSpace(request.MandateID),
 		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
 	}
 	record := &ApprovalDecisionRecord{
@@ -584,6 +703,7 @@ func (s *service) IssueApprovalProof(id uuid.UUID, request TaskApprovalProofRequ
 		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
 		Task:             strings.TrimSpace(request.Task),
 		ProjectKey:       strings.TrimSpace(request.ProjectKey),
+		MandateID:        strings.TrimSpace(request.MandateID),
 		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
 	}
 	kind, _, err := approvalSourceKind(launchRequest.ApprovalSourceID)
@@ -781,7 +901,7 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 	if errIntent := s.repo.SaveLaunchIntent(intent); errIntent != nil {
 		return nil, fmt.Errorf("persist pre-execution launch intent: %w", errIntent)
 	}
-	execution := s.executeLaunch(automation, request, launchedAt)
+	execution := s.executeLaunch(automation, request, launchedAt, intent.ID)
 	execution.AuditEvents = append(
 		[]string{"immutable pre-execution intent " + intent.ID.String() + " persisted"},
 		execution.AuditEvents...,
@@ -1001,7 +1121,12 @@ func redactStringSlice(values []string) []string {
 	return result
 }
 
-func (s *service) executeLaunch(automation *models.Automation, request TaskLaunchRequest, started time.Time) launchExecution {
+func (s *service) executeLaunch(
+	automation *models.Automation,
+	request TaskLaunchRequest,
+	started time.Time,
+	intentID uuid.UUID,
+) launchExecution {
 	launchType := strings.ToLower(strings.TrimSpace(automation.LaunchType))
 	if launchType == "" {
 		launchType = "browser_url"
@@ -1024,9 +1149,7 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 		}
 	case "api":
 		method, _ := parseLaunchMethodTarget(automation.LaunchTarget, http.MethodPost)
-		if method == http.MethodGet || method == http.MethodHead {
-			audit = append(audit, "read-only api probe allowed without launcher approval")
-		} else {
+		if method != http.MethodGet && method != http.MethodHead {
 			verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
 			if err != nil {
 				return blockedLaunch(
@@ -1037,7 +1160,7 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 			}
 			audit = append(audit, verifiedAudit...)
 		}
-		return s.executeAPILaunch(automation, started, audit)
+		return s.executeAPILaunch(automation, request, intentID, started, audit)
 	case "script":
 		verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
 		if err != nil {
@@ -1048,7 +1171,7 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 			)
 		}
 		audit = append(audit, verifiedAudit...)
-		return s.executeScriptLaunch(automation, started, audit)
+		return s.executeScriptLaunch(automation, request, intentID, started, audit)
 	case "docker_service":
 		verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
 		if err != nil {
@@ -1059,7 +1182,7 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 			)
 		}
 		audit = append(audit, verifiedAudit...)
-		return s.executeDockerLaunch(automation, started, audit)
+		return s.executeDockerLaunch(automation, request, intentID, started, audit)
 	case "agent_runtime":
 		verifiedAudit, err := s.verifyAndConsumeApproval(automation, request)
 		if err != nil {
@@ -1070,7 +1193,20 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 			)
 		}
 		audit = append(audit, verifiedAudit...)
-		return s.executeAgentRuntime(automation, request, started, audit)
+		runtimeTask, authorizationAudit, err := s.authorizeAgentRuntimeLaunch(
+			automation,
+			request,
+			intentID,
+		)
+		if err != nil {
+			return blockedLaunch(
+				"unified execution authorization blocked agent runtime execution: "+err.Error(),
+				started,
+				append(audit, "execution authorization rejected before agent runtime access"),
+			)
+		}
+		audit = append(audit, authorizationAudit...)
+		return s.executeAgentRuntime(automation, request, runtimeTask, started, audit)
 	default:
 		return launchExecution{
 			Status:           "blocked",
@@ -1083,7 +1219,337 @@ func (s *service) executeLaunch(automation *models.Automation, request TaskLaunc
 	}
 }
 
-func (s *service) executeAgentRuntime(automation *models.Automation, request TaskLaunchRequest, started time.Time, audit []string) launchExecution {
+func (s *service) authorizeExternalLaunch(
+	automation *models.Automation,
+	request TaskLaunchRequest,
+	intentID uuid.UUID,
+	apiMethod string,
+) (executionauth.Receipt, []string, error) {
+	if s.executionAuth == nil {
+		return executionauth.Receipt{}, nil, fmt.Errorf("unified execution authorization service is unavailable")
+	}
+	if automation == nil || automation.ID == uuid.Nil || intentID == uuid.Nil {
+		return executionauth.Receipt{}, nil, fmt.Errorf("automation and immutable launch intent are required")
+	}
+	owner := strings.TrimSpace(request.OwnerIdentity)
+	if owner == "" {
+		return executionauth.Receipt{}, nil, fmt.Errorf("verified owner identity is required")
+	}
+	taskID := strings.TrimSpace(request.TaskID)
+	if taskID == "" {
+		taskID = "automation-intent:" + intentID.String()
+	}
+	ctx := request.ExecutionContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	actorIdentity := strings.TrimSpace(request.ActorIdentity)
+	actorKind := request.ActorKind
+	if actorIdentity == "" {
+		actorIdentity = owner
+	}
+	if actorKind == "" {
+		actorKind = executionauth.ActorHuman
+	}
+	action, stage, risk, reversible, authority, autonomy, toolID, target :=
+		executionAuthorizationProfile(automation, apiMethod)
+	if strings.TrimSpace(request.ApprovalSourceID) != "" &&
+		strings.TrimSpace(request.ApprovalBindingDigest) != "" &&
+		risk == executionauth.RiskLow && reversible {
+		// A reviewed, exact low-risk action runs at case-approved level 6.
+		// Without the decision it remains autonomous-safe level 8.
+		authority = 6
+		autonomy = 6
+	}
+	sourceReferences := append(
+		[]string{"automation-intent://" + intentID.String()},
+		request.Governance.EvidenceReferences...,
+	)
+	receipt, err := s.executionAuth.AuthorizeAndConsume(
+		ctx,
+		executionauth.Request{
+			OwnerIdentity:         owner,
+			IdempotencyKey:        "automation-launch:" + intentID.String(),
+			ActorIdentity:         actorIdentity,
+			ActorKind:             actorKind,
+			TaskID:                taskID,
+			Action:                action,
+			Stage:                 stage,
+			ResourceType:          "automation",
+			ResourceID:            automation.ID.String(),
+			ProjectKey:            strings.TrimSpace(request.ProjectKey),
+			MandateID:             strings.TrimSpace(request.MandateID),
+			ToolID:                toolID,
+			RuntimeID:             strings.ToLower(strings.TrimSpace(automation.RuntimeType)),
+			RequiredAuthority:     authority,
+			RequestedAutonomy:     autonomy,
+			Risk:                  risk,
+			Reversible:            reversible,
+			ApprovalSourceID:      strings.TrimSpace(request.ApprovalSourceID),
+			ApprovalBindingDigest: strings.ToLower(strings.TrimSpace(request.ApprovalBindingDigest)),
+			EffectDigest:          automationActionDigest(automation, request),
+			Governance:            &request.Governance,
+			SourceReferences:      sourceReferences,
+		},
+		"automation-launcher",
+		target,
+	)
+	if err != nil {
+		return receipt, nil, err
+	}
+	if receipt.Outcome != executionauth.OutcomeAuthorized {
+		return receipt, nil, executionauth.ErrNotAuthorized
+	}
+	return receipt, []string{
+		"unified execution authorization receipt " + receipt.ID.String() + " consumed",
+		"Constitution " + receipt.Evidence.Constitution.Source + " evaluated",
+	}, nil
+}
+
+func (s *service) authorizeAgentRuntimeLaunch(
+	automation *models.Automation,
+	request TaskLaunchRequest,
+	intentID uuid.UUID,
+) (agentruntime.Task, []string, error) {
+	if s.executionAuth == nil || s.finalEffects == nil {
+		return agentruntime.Task{}, nil, fmt.Errorf(
+			"agent runtime execution authorization bridge is unavailable",
+		)
+	}
+	if s.runtimeRegistry == nil || automation == nil ||
+		automation.ID == uuid.Nil || intentID == uuid.Nil {
+		return agentruntime.Task{}, nil, fmt.Errorf(
+			"agent runtime registry, automation, and immutable launch intent are required",
+		)
+	}
+	runtimeID := strings.ToLower(strings.TrimSpace(automation.RuntimeType))
+	requiresApproval, registered := runtimeApprovalRequirement(
+		s.runtimeRegistry,
+		runtimeID,
+	)
+	if !registered {
+		return agentruntime.Task{}, nil, fmt.Errorf(
+			"agent runtime %q is not registered",
+			runtimeID,
+		)
+	}
+	owner := strings.TrimSpace(request.OwnerIdentity)
+	if owner == "" {
+		return agentruntime.Task{}, nil, fmt.Errorf("verified owner identity is required")
+	}
+	runtimeTask := agentruntime.Task{
+		ID:               automationRuntimeTaskID(automation),
+		Prompt:           strings.TrimSpace(request.Task),
+		ProjectKey:       strings.TrimSpace(request.ProjectKey),
+		OwnerIdentity:    owner,
+		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
+		// The action-bound proof remains an independent defense-in-depth gate.
+		HumanApproved: true,
+	}
+	finalRequest, err := executionauth.BuildAgentRuntimeFinalEffectRequest(
+		runtimeID,
+		runtimeTask.ID,
+		runtimeTask.OwnerIdentity,
+		runtimeTask.ProjectKey,
+		runtimeTask.Prompt,
+		runtimeTask.ApprovalSourceID,
+		requiresApproval,
+	)
+	if err != nil {
+		return agentruntime.Task{}, nil, err
+	}
+	effectDigest, err := executionauth.FinalEffectDigest(finalRequest)
+	if err != nil {
+		return agentruntime.Task{}, nil, err
+	}
+	executionTarget, err := executionauth.FinalEffectExecutionTarget(effectDigest)
+	if err != nil {
+		return agentruntime.Task{}, nil, err
+	}
+	ctx := request.ExecutionContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	actorIdentity := strings.TrimSpace(request.ActorIdentity)
+	if actorIdentity == "" {
+		actorIdentity = owner
+	}
+	actorKind := request.ActorKind
+	if actorKind == "" {
+		actorKind = executionauth.ActorHuman
+	}
+	sourceReferences := []string{
+		"automation-intent://" + intentID.String(),
+	}
+	sourceReferences = append(
+		sourceReferences,
+		request.Governance.EvidenceReferences...,
+	)
+	if parentTaskID := strings.TrimSpace(request.TaskID); parentTaskID != "" &&
+		parentTaskID != runtimeTask.ID {
+		sourceReferences = append(sourceReferences, "task://"+parentTaskID)
+	}
+	receipt, err := s.executionAuth.AuthorizeAndConsume(
+		ctx,
+		executionauth.Request{
+			OwnerIdentity:         owner,
+			IdempotencyKey:        "automation-launch:" + intentID.String(),
+			ActorIdentity:         actorIdentity,
+			ActorKind:             actorKind,
+			TaskID:                runtimeTask.ID,
+			Action:                executionauth.AgentRuntimeExecuteAction,
+			Stage:                 executionauth.StageExecution,
+			ResourceType:          executionauth.AgentRuntimeResourceType,
+			ResourceID:            runtimeTask.ID,
+			ProjectKey:            runtimeTask.ProjectKey,
+			MandateID:             strings.TrimSpace(request.MandateID),
+			ToolID:                "automation-agent-runtime",
+			RuntimeID:             runtimeID,
+			RequiredAuthority:     6,
+			RequestedAutonomy:     6,
+			Risk:                  executionauth.RiskHigh,
+			Reversible:            false,
+			ApprovalSourceID:      runtimeTask.ApprovalSourceID,
+			ApprovalBindingDigest: strings.ToLower(strings.TrimSpace(request.ApprovalBindingDigest)),
+			EffectDigest:          effectDigest,
+			Governance:            &request.Governance,
+			SourceReferences:      sourceReferences,
+		},
+		"automation-launcher",
+		executionTarget,
+	)
+	if err != nil {
+		return agentruntime.Task{}, nil, err
+	}
+	if receipt.Outcome != executionauth.OutcomeAuthorized {
+		return agentruntime.Task{}, nil, executionauth.ErrNotAuthorized
+	}
+	binding, err := s.finalEffects.BindConsumedFinalEffect(
+		ctx,
+		finalRequest,
+		receipt.ID,
+	)
+	if err != nil {
+		return agentruntime.Task{}, nil, err
+	}
+	runtimeTask, err = s.runtimeRegistry.BindConsumedAuthorizationProof(
+		runtimeID,
+		runtimeTask,
+		binding.ReceiptID,
+		binding.AuthorizationRequestDigest,
+		binding.DecisionDigest,
+		binding.RuntimeProof,
+	)
+	if err != nil {
+		return agentruntime.Task{}, nil, err
+	}
+	return runtimeTask, []string{
+		"unified execution authorization receipt " + receipt.ID.String() + " consumed",
+		"Constitution " + receipt.Evidence.Constitution.Source + " evaluated",
+		"runtime final-effect proof bound to " + effectDigest,
+	}, nil
+}
+
+func runtimeApprovalRequirement(
+	registry *agentruntime.Registry,
+	runtimeID string,
+) (bool, bool) {
+	if registry == nil {
+		return false, false
+	}
+	for _, info := range registry.List() {
+		if info.ID == runtimeID {
+			return info.RequiresApproval, true
+		}
+	}
+	return false, false
+}
+
+func executionAuthorizationProfile(
+	automation *models.Automation,
+	apiMethod string,
+) (
+	string,
+	executionauth.Stage,
+	executionauth.RiskLevel,
+	bool,
+	int,
+	int,
+	string,
+	string,
+) {
+	launchType := strings.ToLower(strings.TrimSpace(automation.LaunchType))
+	// Consumption targets are bounded audit identifiers, not raw URLs, paths,
+	// or command strings. The separately validated effect digest binds the full
+	// stored automation configuration to this authorization decision.
+	target := "automation:" + automation.ID.String()
+	switch launchType {
+	case "api":
+		method := strings.ToUpper(strings.TrimSpace(apiMethod))
+		if method == http.MethodGet || method == http.MethodHead {
+			return "automation.api.read",
+				executionauth.StageDataAccess,
+				executionauth.RiskLow,
+				true,
+				8,
+				8,
+				"automation-api-client",
+				target
+		}
+		return "automation.api.mutate",
+			executionauth.StageCommitment,
+			executionauth.RiskHigh,
+			false,
+			6,
+			6,
+			"automation-api-client",
+			target
+	case "script":
+		return "automation.script.execute",
+			executionauth.StageExecution,
+			executionauth.RiskHigh,
+			false,
+			6,
+			6,
+			"automation-script-runner",
+			target
+	case "docker_service":
+		return "automation.docker.start",
+			executionauth.StageExecution,
+			executionauth.RiskHigh,
+			true,
+			6,
+			6,
+			"automation-docker-client",
+			target
+	case "agent_runtime":
+		return "automation.agent-runtime.execute",
+			executionauth.StageExecution,
+			executionauth.RiskHigh,
+			false,
+			6,
+			6,
+			"automation-agent-runtime",
+			target
+	default:
+		return "automation.unsupported",
+			executionauth.StageExecution,
+			executionauth.RiskCritical,
+			false,
+			10,
+			10,
+			"automation-unsupported",
+			target
+	}
+}
+
+func (s *service) executeAgentRuntime(
+	automation *models.Automation,
+	request TaskLaunchRequest,
+	runtimeTask agentruntime.Task,
+	started time.Time,
+	audit []string,
+) launchExecution {
 	runtimeID := strings.ToLower(strings.TrimSpace(automation.RuntimeType))
 	if runtimeID != "hermes" && runtimeID != "odysseus" && runtimeID != "openclaw" {
 		return blockedLaunch("agent_runtime launch type requires runtimeType hermes, odysseus, or openclaw", started, append(audit, "agent runtime type rejected"))
@@ -1091,17 +1557,11 @@ func (s *service) executeAgentRuntime(automation *models.Automation, request Tas
 	if s.runtimeRegistry == nil {
 		return blockedLaunch("agent runtime registry is not configured", started, append(audit, "agent runtime registry unavailable"))
 	}
-	runtimeTaskID := automation.ID.String()
-	result := s.runtimeRegistry.Execute(context.Background(), runtimeID, agentruntime.Task{
-		ID:               runtimeTaskID,
-		Prompt:           request.Task,
-		ProjectKey:       request.ProjectKey,
-		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
-		ApprovalSourceID: strings.TrimSpace(request.ApprovalSourceID),
-		// The outer launcher has verified and consumed the action-bound proof.
-		// Keep the runtime's own independent approval gate enabled as defense in depth.
-		HumanApproved: true,
-	})
+	executionContext := request.ExecutionContext
+	if executionContext == nil {
+		executionContext = context.Background()
+	}
+	result := s.runtimeRegistry.Execute(executionContext, runtimeID, runtimeTask)
 	return launchExecution{
 		Status:            result.Status,
 		Message:           result.Message,
@@ -1110,7 +1570,7 @@ func (s *service) executeAgentRuntime(automation *models.Automation, request Tas
 		ExitCode:          result.ExitCode,
 		DurationMs:        result.DurationMs,
 		RequiresApproval:  result.Status == "blocked",
-		RuntimeTaskID:     runtimeTaskID,
+		RuntimeTaskID:     runtimeTask.ID,
 		AuditEvents:       append(audit, result.AuditEvents...),
 	}
 }
@@ -1123,7 +1583,11 @@ func (s *service) verifyAndConsumeApproval(automation *models.Automation, reques
 	if !required {
 		return nil, fmt.Errorf("automation action has no supported approval scope")
 	}
-	err := s.approvalProofs.VerifyAndConsume(request.ApprovalProof, ApprovalProofExpectation{
+	executionContext := request.ExecutionContext
+	if executionContext == nil {
+		executionContext = context.Background()
+	}
+	err := s.approvalProofs.VerifyAndConsume(executionContext, request.ApprovalProof, ApprovalProofExpectation{
 		OwnerIdentity:    strings.TrimSpace(request.OwnerIdentity),
 		AutomationID:     automation.ID,
 		ActionDigest:     automationActionDigest(automation, request),
@@ -1140,7 +1604,13 @@ func (s *service) verifyAndConsumeApproval(automation *models.Automation, reques
 	}, nil
 }
 
-func (s *service) executeAPILaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
+func (s *service) executeAPILaunch(
+	automation *models.Automation,
+	request TaskLaunchRequest,
+	intentID uuid.UUID,
+	started time.Time,
+	audit []string,
+) launchExecution {
 	method, target := parseLaunchMethodTarget(automation.LaunchTarget, http.MethodPost)
 	parsed, err := url.Parse(target)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -1163,6 +1633,20 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 		return failedLaunch(err.Error(), started, append(audit, "api request creation failed"))
 	}
 	req.Header.Set("User-Agent", "018-HAI-Controlled-Launcher/1.0")
+	_, authorizationAudit, err := s.authorizeExternalLaunch(
+		automation,
+		request,
+		intentID,
+		method,
+	)
+	if err != nil {
+		return blockedLaunch(
+			"unified execution authorization blocked API access: "+err.Error(),
+			started,
+			append(audit, "execution authorization rejected at the final network boundary"),
+		)
+	}
+	audit = append(audit, authorizationAudit...)
 	if safety.EmergencyStopActive() {
 		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop rechecked before API network access"))
 	}
@@ -1193,7 +1677,13 @@ func (s *service) executeAPILaunch(automation *models.Automation, started time.T
 	}
 }
 
-func (s *service) executeScriptLaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
+func (s *service) executeScriptLaunch(
+	automation *models.Automation,
+	request TaskLaunchRequest,
+	intentID uuid.UUID,
+	started time.Time,
+	audit []string,
+) launchExecution {
 	if !envEnabled("AUTOMATION_SCRIPT_EXECUTION_ENABLED") {
 		return blockedLaunch("Script execution is disabled; set AUTOMATION_SCRIPT_EXECUTION_ENABLED=true only after reviewing the allowlisted script folder", started, append(audit, "script execution blocked by policy"))
 	}
@@ -1221,11 +1711,38 @@ func (s *service) executeScriptLaunch(automation *models.Automation, started tim
 	cmd := exec.CommandContext(ctx, scriptPath)
 	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Env = safeScriptEnvironment(automation)
+	_, authorizationAudit, err := s.authorizeExternalLaunch(
+		automation,
+		request,
+		intentID,
+		"",
+	)
+	if err != nil {
+		return blockedLaunch(
+			"unified execution authorization blocked local script execution: "+err.Error(),
+			started,
+			append(audit, "execution authorization rejected at the final process boundary"),
+		)
+	}
+	audit = append(audit, authorizationAudit...)
 	if safety.EmergencyStopActive() {
 		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop rechecked before script process start"))
 	}
-	output, err := cmd.CombinedOutput()
-	outputText := trimOutput(output, 4096)
+	outputLimit := intEnv("AUTOMATION_SCRIPT_OUTPUT_LIMIT_BYTES", 4096)
+	if outputLimit < 1024 {
+		outputLimit = 1024
+	}
+	if outputLimit > 65536 {
+		outputLimit = 65536
+	}
+	output := newBoundedOutput(outputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err = cmd.Run()
+	outputText := trimOutput(output.Bytes(), int64(outputLimit))
+	if output.Truncated() {
+		audit = append(audit, fmt.Sprintf("script output truncated at %d bytes", outputLimit))
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return launchExecution{
 			Status:      "failed",
@@ -1306,7 +1823,13 @@ func configuredScriptHash(name string) (string, error) {
 	return "", fmt.Errorf("script %s is not present in %s", name, envName)
 }
 
-func (s *service) executeDockerLaunch(automation *models.Automation, started time.Time, audit []string) launchExecution {
+func (s *service) executeDockerLaunch(
+	automation *models.Automation,
+	request TaskLaunchRequest,
+	intentID uuid.UUID,
+	started time.Time,
+	audit []string,
+) launchExecution {
 	if strings.ToLower(os.Getenv("AUTOMATION_DOCKER_CONTROL_ENABLED")) != "true" {
 		return launchExecution{
 			Status:           "blocked",
@@ -1337,6 +1860,20 @@ func (s *service) executeDockerLaunch(automation *models.Automation, started tim
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "docker request creation failed"))
 	}
+	_, authorizationAudit, err := s.authorizeExternalLaunch(
+		automation,
+		request,
+		intentID,
+		"",
+	)
+	if err != nil {
+		return blockedLaunch(
+			"unified execution authorization blocked Docker control: "+err.Error(),
+			started,
+			append(audit, "execution authorization rejected at the final Docker boundary"),
+		)
+	}
+	audit = append(audit, authorizationAudit...)
 	if safety.EmergencyStopActive() {
 		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop rechecked before Docker socket access"))
 	}
@@ -1686,6 +2223,46 @@ func trimOutput(output []byte, limit int64) string {
 		output = output[:limit]
 	}
 	return strings.TrimSpace(safety.RedactSecrets(string(output)))
+}
+
+type boundedOutput struct {
+	mu        sync.Mutex
+	data      []byte
+	limit     int
+	truncated bool
+}
+
+func newBoundedOutput(limit int) *boundedOutput {
+	return &boundedOutput{data: make([]byte, 0, limit), limit: limit}
+}
+
+func (w *boundedOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	written := len(p)
+	remaining := w.limit - len(w.data)
+	if remaining > 0 {
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		w.data = append(w.data, p[:remaining]...)
+	}
+	if remaining < len(p) {
+		w.truncated = true
+	}
+	return written, nil
+}
+
+func (w *boundedOutput) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.data...)
+}
+
+func (w *boundedOutput) Truncated() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.truncated
 }
 
 func intEnv(name string, fallback int) int {

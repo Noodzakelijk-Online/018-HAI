@@ -8,6 +8,7 @@ import {
   IImportRequest,
   ISourceAuditLog,
   ISourceConnector,
+  ISourceConnectionHealth,
   ISourceExtraction,
   ISourceSearchRequest,
   ISourceSearchResult,
@@ -35,6 +36,10 @@ export class ConnectedSourceService implements IConnectedSourceService {
     });
   }
 
+  connectionHealth(sourceId: string): Observable<ISourceConnectionHealth> {
+    return this.http.get<ISourceConnectionHealth>(`${this.apiUrl}/${sourceId}/health`);
+  }
+
   syncJobs(sourceId?: string): Observable<ISourceSyncJob[]> {
     let params = new HttpParams();
     if (sourceId) {
@@ -47,7 +52,7 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.post<IConnectedSource>(this.apiUrl + '/', request);
   }
 
-  // Returns the Google consent URL to open so the user authorizes a gmail source
+  // Returns the Google consent URL to open so the user authorizes a Google source
   // in their own browser. The backend issues a signed state tying it to sourceId.
   startGoogleOAuth(sourceId: string): Observable<{ authorizeUrl: string }> {
     return this.http.get<{ authorizeUrl: string }>(

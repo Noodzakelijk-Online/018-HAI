@@ -21,7 +21,28 @@ import {
   IPursuitMatchCandidate,
   IPursuitMatchRequest,
   IPursuitPlanRequest,
+  IPursuitPortfolioPlanningRequest,
+  IPursuitPortfolioPlanningResult,
+  IPursuitPortfolioAllocationAcceptanceRequest,
+  IPursuitPortfolioAllocationAcceptanceResult,
+  IPursuitPortfolioExecutionProposalRequest,
+  IPursuitPortfolioExecutionProposalResult,
+  IPursuitPortfolioExecutionProposalDecisionRequest,
+  IPursuitPortfolioExecutionProposalDecisionResult,
+  IPursuitPortfolioExecutionProposalDecisionHistoryResult,
+  IPursuitPortfolioCoordinationResult,
+  IPursuitPortfolioDispatchRequest,
+  IPursuitPortfolioDispatchResult,
+  IPursuitPortfolioWorkflowEffectAuthorizationRequest,
+  IPursuitPortfolioWorkflowEffectAuthorizationResult,
+  IPursuitPortfolioWorkflowEffectExecutionRequest,
+  IPursuitPortfolioWorkflowEffectExecutionResult,
+  IPursuitPortfolioWorkflowSettlementRequest,
+  IPursuitPortfolioWorkflowSettlementResult,
   IPursuitReviewRequest,
+  IPursuitResourceEvent,
+  IPursuitResourceEventRequest,
+  IPursuitResourceUsage,
   IPursuitRoutedIntakeResult,
   IPursuitUpdateRequest,
 } from '../models/pursuit.model.interface';
@@ -37,12 +58,122 @@ export class PursuitService {
   list(includeArchived: boolean = false): Observable<IPursuit[]> {
     return this.http.get<IPursuit[]>(`${this.apiUrl}/`, {
       params: new HttpParams().set('includeArchived', includeArchived),
-    });
+    }).pipe(map((records) => (records || []).map((record) => this.normalizePursuit(record))));
   }
 
   dashboard(): Observable<IPursuitDashboard> {
     return this.http.get<IPursuitDashboard>(`${this.apiUrl}/dashboard`).pipe(
       map((dashboard) => this.normalizeDashboard(dashboard)),
+    );
+  }
+
+  planPortfolio(request: IPursuitPortfolioPlanningRequest): Observable<IPursuitPortfolioPlanningResult> {
+    return this.http.post<IPursuitPortfolioPlanningResult>(`${this.apiUrl}/portfolio-plan`, request);
+  }
+
+  acceptPortfolioAllocation(
+    request: IPursuitPortfolioAllocationAcceptanceRequest,
+  ): Observable<IPursuitPortfolioAllocationAcceptanceResult> {
+    return this.http.post<IPursuitPortfolioAllocationAcceptanceResult>(`${this.apiUrl}/portfolio-plan/accept`, request);
+  }
+
+  portfolioAllocations(limit: number = 20): Observable<IPursuitPortfolioAllocationAcceptanceResult[]> {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit || 20)));
+    return this.http.get<IPursuitPortfolioAllocationAcceptanceResult[]>(`${this.apiUrl}/portfolio-allocations`, {
+      params: new HttpParams().set('limit', boundedLimit),
+    });
+  }
+
+  portfolioExecutionProposals(
+    allocationIds: string[],
+  ): Observable<IPursuitPortfolioExecutionProposalResult[]> {
+    return this.http.get<IPursuitPortfolioExecutionProposalResult[]>(
+      `${this.apiUrl}/portfolio-execution-proposals`,
+      { params: new HttpParams().set('allocationIds', allocationIds.join(',')) },
+    );
+  }
+
+  preparePortfolioExecutionProposals(
+    allocationId: string,
+    request: IPursuitPortfolioExecutionProposalRequest,
+  ): Observable<IPursuitPortfolioExecutionProposalResult> {
+    return this.http.post<IPursuitPortfolioExecutionProposalResult>(
+      `${this.apiUrl}/portfolio-allocations/${encodeURIComponent(allocationId)}/execution-proposals`,
+      request,
+    );
+  }
+
+  portfolioDispatchCoordination(proposalId: string): Observable<IPursuitPortfolioCoordinationResult> {
+    return this.http.get<IPursuitPortfolioCoordinationResult>(
+      `${this.apiUrl}/portfolio-execution-proposals/${encodeURIComponent(proposalId)}/coordination`,
+    );
+  }
+
+  portfolioDispatchCoordinations(proposalIds: string[]): Observable<IPursuitPortfolioCoordinationResult[]> {
+    return this.http.get<IPursuitPortfolioCoordinationResult[]>(
+      `${this.apiUrl}/portfolio-execution-proposals/coordination`,
+      { params: new HttpParams().set('proposalIds', proposalIds.join(',')) },
+    );
+  }
+
+  dispatchPortfolioWorkflows(
+    proposalId: string,
+    request: IPursuitPortfolioDispatchRequest,
+  ): Observable<IPursuitPortfolioDispatchResult> {
+    return this.http.post<IPursuitPortfolioDispatchResult>(
+      `${this.apiUrl}/portfolio-execution-proposals/${encodeURIComponent(proposalId)}/dispatch`,
+      request,
+    );
+  }
+
+  decidePortfolioExecutionProposalItem(
+    itemId: string,
+    request: IPursuitPortfolioExecutionProposalDecisionRequest,
+  ): Observable<IPursuitPortfolioExecutionProposalDecisionResult> {
+    return this.http.post<IPursuitPortfolioExecutionProposalDecisionResult>(
+      `${this.apiUrl}/portfolio-execution-proposal-items/${encodeURIComponent(itemId)}/decisions`,
+      request,
+    );
+  }
+
+  portfolioExecutionProposalDecisionHistory(
+    itemId: string,
+    limit: number = 50,
+  ): Observable<IPursuitPortfolioExecutionProposalDecisionHistoryResult> {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit || 50)));
+    return this.http.get<IPursuitPortfolioExecutionProposalDecisionHistoryResult>(
+      `${this.apiUrl}/portfolio-execution-proposal-items/${encodeURIComponent(itemId)}/decisions`,
+      { params: new HttpParams().set('limit', boundedLimit) },
+    );
+  }
+
+  authorizePortfolioWorkflowEffect(
+    itemId: string,
+    request: IPursuitPortfolioWorkflowEffectAuthorizationRequest,
+  ): Observable<IPursuitPortfolioWorkflowEffectAuthorizationResult> {
+    return this.http.post<IPursuitPortfolioWorkflowEffectAuthorizationResult>(
+      `${this.apiUrl}/portfolio-execution-proposal-items/${encodeURIComponent(itemId)}/authorize-workflow`,
+      request,
+    );
+  }
+
+  executePortfolioWorkflowEffect(
+    itemId: string,
+    request: IPursuitPortfolioWorkflowEffectExecutionRequest,
+  ): Observable<IPursuitPortfolioWorkflowEffectExecutionResult> {
+    return this.http.post<IPursuitPortfolioWorkflowEffectExecutionResult>(
+      `${this.apiUrl}/portfolio-execution-proposal-items/${encodeURIComponent(itemId)}/execute-workflow`,
+      request,
+    );
+  }
+
+  settlePortfolioWorkflow(
+    itemId: string,
+    request: IPursuitPortfolioWorkflowSettlementRequest,
+  ): Observable<IPursuitPortfolioWorkflowSettlementResult> {
+    return this.http.post<IPursuitPortfolioWorkflowSettlementResult>(
+      `${this.apiUrl}/portfolio-execution-proposal-items/${encodeURIComponent(itemId)}/settle-workflow`,
+      request,
     );
   }
 
@@ -60,6 +191,28 @@ export class PursuitService {
 
   get(id: string): Observable<IPursuitDetail> {
     return this.http.get<IPursuitDetail>(`${this.apiUrl}/${id}`).pipe(map((detail) => this.normalizeDetail(detail)));
+  }
+
+  resourceUsage(id: string): Observable<IPursuitResourceUsage> {
+    return this.http.get<IPursuitResourceUsage>(`${this.apiUrl}/${id}/resources`);
+  }
+
+  resourceEvents(id: string, limit: number = 100): Observable<IPursuitResourceEvent[]> {
+    const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit || 100)));
+    return this.http.get<{ events?: IPursuitResourceEvent[] }>(`${this.apiUrl}/${id}/resource-events`, {
+      params: new HttpParams().set('limit', boundedLimit),
+    }).pipe(map((response) => response?.events || []));
+  }
+
+  appendResourceEvent(id: string, request: IPursuitResourceEventRequest): Observable<IPursuitResourceEvent> {
+    return this.http.post<IPursuitResourceEvent>(`${this.apiUrl}/${id}/resource-events`, request);
+  }
+
+  releaseResourceReservation(id: string, reservationId: string, reason: string): Observable<IPursuitResourceUsage> {
+    return this.http.post<IPursuitResourceUsage>(
+      `${this.apiUrl}/${id}/resource-reservations/${reservationId}/release`,
+      { confirmedOrphan: true, reason },
+    );
   }
 
   resolveEvidence(id: string, uri: string): Observable<IPursuitEvidenceResolution> {
@@ -170,8 +323,42 @@ export class PursuitService {
 
   private normalizeDetail(detail: IPursuitDetail | null | undefined): IPursuitDetail {
     const source = detail || ({} as IPursuitDetail);
+    const unavailableUsage: IPursuitResourceUsage = {
+      state: 'unavailable',
+      available: false,
+      limitsConfigured: false,
+      effortRecordedHours: 0,
+      effortReservedHours: 0,
+      effortCommittedHours: 0,
+      effortLimitHours: 0,
+      effortRemainingHours: 0,
+      effortExhausted: false,
+      effortExceeded: false,
+      spendIncurredEur: 0,
+      spendRefundedEur: 0,
+      spendNetEur: 0,
+      spendReservedEur: 0,
+      spendCommittedEur: 0,
+      spendLimitEur: 0,
+      spendRemainingEur: 0,
+      spendExhausted: false,
+      spendExceeded: false,
+      eventCount: 0,
+      activeReservations: 0,
+      reservations: [],
+      blockingReason: 'Resource usage is not available from this backend response.',
+    };
+    const resourceUsage = source.resourceUsage
+      ? {
+          ...unavailableUsage,
+          ...(source.resourceUsage as Partial<IPursuitResourceUsage>),
+          blockingReason: source.resourceUsage.blockingReason || '',
+          reservations: source.resourceUsage.reservations || [],
+        }
+      : unavailableUsage;
     return {
       ...source,
+      pursuit: this.normalizePursuit(source.pursuit),
       links: source.links || [],
       activity: source.activity || [],
       workflows: source.workflows || [],
@@ -201,7 +388,25 @@ export class PursuitService {
       nextActions: source.nextActions || [],
       blockers: source.blockers || [],
       approvalItems: source.approvalItems || [],
-      actionQueues: source.actionQueues || { needsRobert: [], vaReady: [], systemReady: [], waiting: [] },
+      actionQueues: {
+        needsRobert: source.actionQueues?.needsRobert || [],
+        vaReady: source.actionQueues?.vaReady || [],
+        systemReady: source.actionQueues?.systemReady || [],
+        waiting: source.actionQueues?.waiting || [],
+      },
+      resourceUsage,
+    };
+  }
+
+  private normalizePursuit(pursuit: IPursuit): IPursuit {
+    const source = pursuit || ({} as IPursuit);
+    return {
+      ...source,
+      successCriteria: source.successCriteria || [],
+      stopConditions: source.stopConditions || [],
+      dependencies: source.dependencies || [],
+      resourceLimits: source.resourceLimits || {},
+      reviewCadenceDays: source.reviewCadenceDays || 0,
     };
   }
 }

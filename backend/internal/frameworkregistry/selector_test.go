@@ -35,6 +35,9 @@ func TestBuildSelectionLegalGovernmentTask(t *testing.T) {
 	if decision.LifeDomain != "legal_government" {
 		t.Fatalf("LifeDomain = %q, want legal_government", decision.LifeDomain)
 	}
+	if decision.TaskRiskLevel != "high" || decision.EffectiveRiskCeiling != "high" {
+		t.Fatalf("high-risk contract = %q/%q", decision.TaskRiskLevel, decision.EffectiveRiskCeiling)
+	}
 	for _, id := range []string{
 		"human-sovereignty",
 		"intake-triage",
@@ -97,6 +100,9 @@ func TestBuildSelectionLowRiskPlanning(t *testing.T) {
 
 	if decision.LifeDomain != "home_assets" {
 		t.Fatalf("LifeDomain = %q, want home_assets", decision.LifeDomain)
+	}
+	if decision.TaskRiskLevel != "low" {
+		t.Fatalf("TaskRiskLevel = %q, want low", decision.TaskRiskLevel)
 	}
 	for _, id := range []string{"human-sovereignty", "intake-triage", "evaluation", "formal-planning", "home-garden-assets"} {
 		if !selectedID(decision, id) {
@@ -165,26 +171,132 @@ func TestBuildSelectionRequiresExecutionAndUntrustedContentOverlays(t *testing.T
 	}
 }
 
+func TestBuildSelectionOmitsOptionalFrameworkBelowTaskRisk(t *testing.T) {
+	catalog := testCatalog(t)
+	for index := range catalog {
+		if catalog[index].ID == "formal-planning" {
+			catalog[index].RiskCeiling = "low"
+		}
+	}
+
+	decision, err := BuildSelection(
+		catalog,
+		testConstitution(),
+		SelectionRequest{
+			Request:   "Create a dependency plan and schedule for a multi-step project.",
+			TaskType:  "planning",
+			RiskLevel: "medium",
+		},
+		time.Date(2026, time.July, 30, 9, 35, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("BuildSelection returned error: %v", err)
+	}
+	if selectedID(decision, "formal-planning") {
+		t.Fatalf("optional framework below task risk was selected: %v", selectedIDs(decision))
+	}
+}
+
+func TestBuildSelectionAcceptsFrameworkAtExactRiskCeiling(t *testing.T) {
+	catalog := testCatalog(t)
+	for index := range catalog {
+		if catalog[index].ID == "formal-planning" {
+			catalog[index].RiskCeiling = "medium"
+		}
+	}
+
+	decision, err := BuildSelection(
+		catalog,
+		testConstitution(),
+		SelectionRequest{
+			Request:   "Create a dependency plan and schedule for a multi-step project.",
+			TaskType:  "planning",
+			RiskLevel: "medium",
+		},
+		time.Date(2026, time.July, 30, 9, 36, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("BuildSelection returned error: %v", err)
+	}
+	if !selectedID(decision, "formal-planning") {
+		t.Fatalf("framework at exact task risk ceiling was omitted: %v", selectedIDs(decision))
+	}
+}
+
+func TestBuildSelectionFailsClosedWhenMandatoryFrameworkIsBelowTaskRisk(t *testing.T) {
+	catalog := testCatalog(t)
+	for index := range catalog {
+		if catalog[index].ID == "human-sovereignty" {
+			catalog[index].RiskCeiling = "low"
+		}
+	}
+
+	_, err := BuildSelection(
+		catalog,
+		testConstitution(),
+		SelectionRequest{
+			Request:   "Assess a high-risk operational request.",
+			RiskLevel: "high",
+		},
+		time.Date(2026, time.July, 30, 9, 37, 0, 0, time.UTC),
+	)
+	if err == nil {
+		t.Fatal("BuildSelection accepted a mandatory framework below the task risk")
+	}
+}
+
+func TestBuildSelectionFailsClosedForInvalidOrMissingRiskCeiling(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		riskCeiling string
+	}{
+		{name: "missing", riskCeiling: ""},
+		{name: "invalid", riskCeiling: "critical"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := testCatalog(t)
+			for index := range catalog {
+				if catalog[index].ID == "human-sovereignty" {
+					catalog[index].RiskCeiling = test.riskCeiling
+				}
+			}
+
+			_, err := BuildSelection(
+				catalog,
+				testConstitution(),
+				SelectionRequest{
+					Request:   "Assess an ordinary low-risk request.",
+					RiskLevel: "low",
+				},
+				time.Date(2026, time.July, 30, 9, 38, 0, 0, time.UTC),
+			)
+			if err == nil {
+				t.Fatalf("BuildSelection accepted %s risk ceiling %q", test.name, test.riskCeiling)
+			}
+		})
+	}
+}
+
 func TestSelectSmallestCapableCombinationFindsExactMinimum(t *testing.T) {
 	required := selectionCandidate{
 		view: FrameworkView{
-			Framework: Framework{ID: "required-policy"},
+			Framework: Framework{ID: "required-policy", RiskCeiling: "high"},
 			Enabled:   true,
 		},
 		required: true,
 	}
 	wideGreedyChoice := selectionCandidate{
-		view:     FrameworkView{Framework: Framework{ID: "a-wide-greedy-choice"}, Enabled: true},
+		view:     FrameworkView{Framework: Framework{ID: "a-wide-greedy-choice", RiskCeiling: "high"}, Enabled: true},
 		score:    100,
 		coverage: testCoverage("one", "two", "three", "four"),
 	}
 	firstExactChoice := selectionCandidate{
-		view:     FrameworkView{Framework: Framework{ID: "b-first-exact-choice"}, Enabled: true},
+		view:     FrameworkView{Framework: Framework{ID: "b-first-exact-choice", RiskCeiling: "high"}, Enabled: true},
 		score:    10,
 		coverage: testCoverage("one", "two", "five"),
 	}
 	secondExactChoice := selectionCandidate{
-		view:     FrameworkView{Framework: Framework{ID: "c-second-exact-choice"}, Enabled: true},
+		view:     FrameworkView{Framework: Framework{ID: "c-second-exact-choice", RiskCeiling: "high"}, Enabled: true},
 		score:    10,
 		coverage: testCoverage("three", "four", "six"),
 	}
@@ -213,12 +325,12 @@ func TestSelectSmallestCapableCombinationFindsExactMinimum(t *testing.T) {
 func TestSelectSmallestCapableCombinationUsesDeterministicTieBreak(t *testing.T) {
 	candidates := []selectionCandidate{
 		{
-			view:     FrameworkView{Framework: Framework{ID: "alpha"}, Enabled: true},
+			view:     FrameworkView{Framework: Framework{ID: "alpha", RiskCeiling: "high"}, Enabled: true},
 			score:    5,
 			coverage: testCoverage("capability"),
 		},
 		{
-			view:     FrameworkView{Framework: Framework{ID: "beta"}, Enabled: true},
+			view:     FrameworkView{Framework: Framework{ID: "beta", RiskCeiling: "high"}, Enabled: true},
 			score:    5,
 			coverage: testCoverage("capability"),
 		},
@@ -243,7 +355,7 @@ func TestSelectSmallestCapableCombinationUsesDeterministicTieBreak(t *testing.T)
 func TestSelectSmallestCapableCombinationRejectsConflictingShortcut(t *testing.T) {
 	required := selectionCandidate{
 		view: FrameworkView{
-			Framework: Framework{ID: "required-policy"},
+			Framework: Framework{ID: "required-policy", RiskCeiling: "high"},
 			Enabled:   true,
 		},
 		required: true,
@@ -252,6 +364,7 @@ func TestSelectSmallestCapableCombinationRejectsConflictingShortcut(t *testing.T
 		view: FrameworkView{
 			Framework: Framework{
 				ID:            "conflicting-shortcut",
+				RiskCeiling:   "high",
 				ConflictsWith: []string{"required-policy"},
 			},
 			Enabled: true,
@@ -260,12 +373,12 @@ func TestSelectSmallestCapableCombinationRejectsConflictingShortcut(t *testing.T
 		coverage: testCoverage("one", "two"),
 	}
 	firstSafeChoice := selectionCandidate{
-		view:     FrameworkView{Framework: Framework{ID: "first-safe-choice"}, Enabled: true},
+		view:     FrameworkView{Framework: Framework{ID: "first-safe-choice", RiskCeiling: "high"}, Enabled: true},
 		score:    10,
 		coverage: testCoverage("one"),
 	}
 	secondSafeChoice := selectionCandidate{
-		view:     FrameworkView{Framework: Framework{ID: "second-safe-choice"}, Enabled: true},
+		view:     FrameworkView{Framework: Framework{ID: "second-safe-choice", RiskCeiling: "high"}, Enabled: true},
 		score:    10,
 		coverage: testCoverage("two"),
 	}
@@ -481,6 +594,7 @@ func TestBuildSelectionResolvesConflictsByScoreThenID(t *testing.T) {
 				RequiredInputs:       []string{"request"},
 				RequiredAgents:       []string{"alpha_agent"},
 				AuthorityRequirement: "recommend",
+				RiskCeiling:          "low",
 				EvidenceRequirements: []string{"alpha evidence"},
 				EvaluationMethod:     []string{"alpha evaluation"},
 				ConflictsWith:        []string{"beta-option"},
@@ -501,6 +615,7 @@ func TestBuildSelectionResolvesConflictsByScoreThenID(t *testing.T) {
 				RequiredInputs:       []string{"request"},
 				RequiredAgents:       []string{"beta_agent"},
 				AuthorityRequirement: "recommend",
+				RiskCeiling:          "low",
 				EvidenceRequirements: []string{"beta evidence"},
 				EvaluationMethod:     []string{"beta evaluation"},
 				Status:               StatusActive,

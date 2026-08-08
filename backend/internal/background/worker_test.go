@@ -4,11 +4,15 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/accountfeed"
 	"automation-hub-backend/internal/autonomypolicy"
+	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/executionbroker"
+	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/operations"
 
@@ -16,6 +20,15 @@ import (
 )
 
 func buildWorker(t *testing.T, mode autonomypolicy.Mode, feedJSON string) (*Worker, *operations.Service, string) {
+	return buildWorkerWithAuthorization(t, mode, feedJSON, true)
+}
+
+func buildWorkerWithAuthorization(
+	t *testing.T,
+	mode autonomypolicy.Mode,
+	feedJSON string,
+	authorized bool,
+) (*Worker, *operations.Service, string) {
 	t.Helper()
 	feedDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(feedDir, "feed.json"), []byte(feedJSON), 0o600); err != nil {
@@ -39,10 +52,90 @@ func buildWorker(t *testing.T, mode autonomypolicy.Mode, feedJSON string) (*Work
 	svc := operations.NewService(operations.NewMemoryRepository())
 	workspace := t.TempDir()
 	broker := executionbroker.NewBroker(workspace)
+	if authorized {
+		broker = newAuthorizedBackgroundTestBroker(
+			t,
+			workspace,
+			"user-1",
+			"local",
+		)
+	}
 	w := New(svc, broker, []accountfeed.Reader{reader}, Options{
 		OwnerUserID: "user-1", WorkspaceID: "local", Mode: mode,
 	})
 	return w, svc, workspace
+}
+
+func newAuthorizedBackgroundTestBroker(
+	t *testing.T,
+	workspace string,
+	owner string,
+	workspaceID string,
+) *executionbroker.Broker {
+	t.Helper()
+	frameworks, err := frameworkregistry.NewService(
+		frameworkregistry.NewMemoryRepository(),
+	)
+	if err != nil {
+		t.Fatalf("new framework registry: %v", err)
+	}
+	draft, err := frameworks.CreateConstitutionDraft(
+		owner,
+		frameworkregistry.ConstitutionDraftRequest{
+			BaseVersion:   1,
+			ChangeSummary: "Activate production-like local execution test policy.",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create Constitution draft: %v", err)
+	}
+	active, err := frameworks.ActivateConstitution(
+		owner,
+		draft.ID,
+		owner,
+		frameworkregistry.ActivateConstitutionRequest{
+			Confirmation: "ACTIVATE CONSTITUTION",
+			ApprovalNote: "Owner reviewed and approved this test policy.",
+		},
+	)
+	if err != nil {
+		t.Fatalf("activate Constitution: %v", err)
+	}
+	if active.Status != frameworkregistry.ConstitutionActive {
+		t.Fatalf("Constitution status = %q, want active", active.Status)
+	}
+	constitution, err := executionauth.NewConstitutionPolicyAdapter(frameworks)
+	if err != nil {
+		t.Fatalf("adapt Constitution policy: %v", err)
+	}
+	authorization, err := executionauth.NewService(
+		executionauth.NewMemoryRepository(),
+		constitution,
+		nil,
+		nil,
+		nil,
+		func() time.Time {
+			return time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+		},
+	)
+	if err != nil {
+		t.Fatalf("new execution authorization service: %v", err)
+	}
+	authorization.WithEmergencyStopEvaluator(func() executionauth.EmergencyStopEvidence {
+		return executionauth.EmergencyStopEvidence{
+			Source: "background-test",
+		}
+	})
+	broker, err := executionbroker.NewAuthorizedBroker(
+		workspace,
+		owner,
+		workspaceID,
+		authorization,
+	)
+	if err != nil {
+		t.Fatalf("new authorized broker: %v", err)
+	}
+	return broker
 }
 
 const twoItemFeed = `[
@@ -91,6 +184,48 @@ func TestRunOnceVerticalSlice(t *testing.T) {
 	events, _ := svc.Events(completed[0].ID)
 	if len(events) < 2 {
 		t.Fatalf("completed operation must have an audit trail, got %d events", len(events))
+	}
+}
+
+func TestRunOnceWithoutExecutionAuthorizationFailsClosed(t *testing.T) {
+	w, svc, workspace := buildWorkerWithAuthorization(
+		t,
+		autonomypolicy.ModeAutonomousSafe,
+		`[{"externalId":"a1","title":"Organize workspace notes","body":"Consolidate personal notes into a local file"}]`,
+		false,
+	)
+	rep, err := w.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run once: %v", err)
+	}
+	if rep.Verified != 0 || rep.Failed != 1 {
+		t.Fatalf(
+			"unauthorized execution must fail without verification, got verified=%d failed=%d",
+			rep.Verified,
+			rep.Failed,
+		)
+	}
+	if len(rep.Errors) != 0 {
+		t.Fatalf("failed operation should be recorded, not hidden as a pass error: %v", rep.Errors)
+	}
+	entries, readErr := os.ReadDir(workspace)
+	if readErr != nil {
+		t.Fatalf("read workspace: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unauthorized worker created %d workspace artifacts", len(entries))
+	}
+	failed, err := svc.List(operations.Filter{
+		OwnerUserID: "user-1",
+		WorkspaceID: "local",
+		Status:      operations.StatusFailed,
+	})
+	if err != nil {
+		t.Fatalf("list failed operations: %v", err)
+	}
+	if len(failed) != 1 ||
+		!strings.Contains(failed[0].LastError, executionbroker.ErrAuthorizationRequired.Error()) {
+		t.Fatalf("failed operation did not retain authorization cause: %#v", failed)
 	}
 }
 

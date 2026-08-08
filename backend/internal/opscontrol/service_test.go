@@ -6,18 +6,98 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/autonomypolicy"
+	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/executionbroker"
+	"automation-hub-backend/internal/frameworkregistry"
 	"automation-hub-backend/internal/operations"
 	"automation-hub-backend/internal/safety"
 )
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	broker := executionbroker.NewBroker(t.TempDir())
+	broker := newAuthorizedOpsControlTestBroker(
+		t,
+		t.TempDir(),
+		"local-operator",
+		"local",
+	)
 	ops := operations.NewService(operations.NewMemoryRepository())
 	return NewService(t.TempDir(), broker, ops, "local-operator", "local")
+}
+
+func newAuthorizedOpsControlTestBroker(
+	t *testing.T,
+	workspace string,
+	owner string,
+	workspaceID string,
+) *executionbroker.Broker {
+	t.Helper()
+	frameworks, err := frameworkregistry.NewService(
+		frameworkregistry.NewMemoryRepository(),
+	)
+	if err != nil {
+		t.Fatalf("new framework registry: %v", err)
+	}
+	draft, err := frameworks.CreateConstitutionDraft(
+		owner,
+		frameworkregistry.ConstitutionDraftRequest{
+			BaseVersion:   1,
+			ChangeSummary: "Activate production-like local execution test policy.",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create Constitution draft: %v", err)
+	}
+	active, err := frameworks.ActivateConstitution(
+		owner,
+		draft.ID,
+		owner,
+		frameworkregistry.ActivateConstitutionRequest{
+			Confirmation: "ACTIVATE CONSTITUTION",
+			ApprovalNote: "Owner reviewed and approved this test policy.",
+		},
+	)
+	if err != nil {
+		t.Fatalf("activate Constitution: %v", err)
+	}
+	if active.Status != frameworkregistry.ConstitutionActive {
+		t.Fatalf("Constitution status = %q, want active", active.Status)
+	}
+	constitution, err := executionauth.NewConstitutionPolicyAdapter(frameworks)
+	if err != nil {
+		t.Fatalf("adapt Constitution policy: %v", err)
+	}
+	authorization, err := executionauth.NewService(
+		executionauth.NewMemoryRepository(),
+		constitution,
+		nil,
+		nil,
+		nil,
+		func() time.Time {
+			return time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+		},
+	)
+	if err != nil {
+		t.Fatalf("new execution authorization service: %v", err)
+	}
+	authorization.WithEmergencyStopEvaluator(func() executionauth.EmergencyStopEvidence {
+		return executionauth.EmergencyStopEvidence{
+			Source: "opscontrol-test",
+		}
+	})
+	broker, err := executionbroker.NewAuthorizedBroker(
+		workspace,
+		owner,
+		workspaceID,
+		authorization,
+	)
+	if err != nil {
+		t.Fatalf("new authorized broker: %v", err)
+	}
+	return broker
 }
 
 func TestEmergencyStopEngageDisengageAndControl(t *testing.T) {
@@ -35,7 +115,18 @@ func TestEmergencyStopEngageDisengageAndControl(t *testing.T) {
 	if s.Control().Mode() != autonomypolicy.ModeEmergencyStopped {
 		t.Fatalf("engaged control mode must be emergency_stopped, got %s", s.Control().Mode())
 	}
-	if _, err := s.DisengageEmergencyStop("op"); err != nil {
+	state := s.Control().EmergencyState()
+	s.WithExecutionAuthorizer(allowExactControlAuthorization(s.now))
+	auth := controlAuthorizationFor(
+		t,
+		s,
+		"op",
+		clearEmergencyStopAction,
+		emergencyStopResourceType,
+		emergencyStopResourceID(state.Revision),
+		"disengaged",
+	)
+	if _, err := s.DisengageEmergencyStop(context.Background(), auth); err != nil {
 		t.Fatalf("disengage: %v", err)
 	}
 	if s.Control().EmergencyStop() {
@@ -214,12 +305,37 @@ func TestReadinessIsTruthfulOffWindows(t *testing.T) {
 	}
 }
 
+func TestReadinessFailsClosedWithoutExecutionAuthorization(t *testing.T) {
+	broker := executionbroker.NewBroker(t.TempDir())
+	ops := operations.NewService(operations.NewMemoryRepository())
+	s := NewService(t.TempDir(), broker, ops, "u", "local")
+
+	readiness := s.Readiness(context.Background())
+	for _, gate := range readiness.Gates {
+		if gate.Name != "local_safe_worker_run" {
+			continue
+		}
+		if gate.Status != GateFail {
+			t.Fatalf("unauthorized safe-worker gate = %s, want fail", gate.Status)
+		}
+		if !strings.Contains(gate.Evidence, "authorization verifier not configured") {
+			t.Fatalf("safe-worker evidence hid authorization failure: %q", gate.Evidence)
+		}
+		return
+	}
+	t.Fatal("readiness omitted local_safe_worker_run gate")
+}
+
 func TestSetModeValidates(t *testing.T) {
 	s := newTestService(t)
-	if _, err := s.SetMode("not_a_mode"); err == nil {
+	if _, err := s.SetMode(context.Background(), "not_a_mode", ControlAuthorization{}); err == nil {
 		t.Fatalf("invalid mode must be rejected")
 	}
-	if m, err := s.SetMode(string(autonomypolicy.ModeReadOnly)); err != nil || m != string(autonomypolicy.ModeReadOnly) {
+	if m, err := s.SetMode(
+		context.Background(),
+		string(autonomypolicy.ModeReadOnly),
+		ControlAuthorization{},
+	); err != nil || m != string(autonomypolicy.ModeReadOnly) {
 		t.Fatalf("valid mode must be accepted, got %s err=%v", m, err)
 	}
 }

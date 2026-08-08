@@ -30,6 +30,19 @@ export interface IConnectedSource {
   revokedAt?: string;
 }
 
+export interface ISourceConnectionHealth {
+  sourceId: string;
+  connectorKey: string;
+  status: string;
+  reason: string;
+  configured: boolean;
+  authorized: boolean;
+  requiresReconnect: boolean;
+  cursorPhase?: string;
+  tokenExpiry?: string;
+  lastSyncedAt?: string;
+}
+
 export interface ICreateSourceRequest {
   connectorKey: string;
   name: string;
@@ -102,8 +115,21 @@ export interface ISourceSyncResult {
   job: ISourceSyncJob;
   extractions: ISourceExtraction[];
   pursuitOutcomes?: ISourcePursuitRoutingOutcome[];
+  lifeGraphProjections?: ISourceLifeGraphProjectionOutcome[];
   message: string;
   errors?: string[];
+  warnings?: string[];
+}
+
+export interface ISourceLifeGraphProjectionOutcome {
+  extractionId: string;
+  documentId: string;
+  linkedEntityIds?: string[];
+  relationIds?: string[];
+  alreadyExisted: boolean;
+  advisoryOnly: boolean;
+  canExecute: boolean;
+  grantsAuthority: boolean;
 }
 
 export interface ISourcePursuitRoutingOutcome {

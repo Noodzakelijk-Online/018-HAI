@@ -1,7 +1,7 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
+import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
 
 describe('ConnectedSourcesComponent pursuit handoff', () => {
@@ -46,5 +46,58 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     component.openPursuitOutcome({ status: 'routing_deferred', message: 'Router repair is required.' });
 
     expect(router.navigate).toHaveBeenCalledWith(['/pursuits'], { queryParams: undefined });
+  });
+
+  it('opens the private graph inspector for projected source records', () => {
+    const { component, router } = createComponent();
+    component.lastSyncResult = {
+      job: {} as any,
+      extractions: [],
+      message: 'sync complete',
+      lifeGraphProjections: [{
+        extractionId: 'extraction-1', documentId: 'life-document-1', linkedEntityIds: ['source-1'],
+        relationIds: ['relation-1'], alreadyExisted: false, advisoryOnly: true,
+        canExecute: false, grantsAuthority: false,
+      }],
+    };
+
+    component.openLifeGraph();
+
+    expect(component.lifeGraphProjections().length).toBe(1);
+    expect(router.navigate).toHaveBeenCalledWith(['/governance-control']);
+  });
+
+  it('recognizes all read-only Google source types', () => {
+    const { component } = createComponent();
+    expect(component.isGoogleSource({ connectorKey: 'gmail' } as IConnectedSource)).toBeTrue();
+    expect(component.isGoogleSource({ connectorKey: 'google-drive' } as IConnectedSource)).toBeTrue();
+    expect(component.isGoogleSource({ connectorKey: 'google-contacts' } as IConnectedSource)).toBeTrue();
+    expect(component.isGoogleSource({ connectorKey: 'google-calendar' } as IConnectedSource)).toBeTrue();
+    expect(component.isGoogleSource({ connectorKey: 'github' } as IConnectedSource)).toBeFalse();
+  });
+
+  it('reports Google readiness independently from other live connectors', () => {
+    const { component } = createComponent();
+    component.connectors = [
+      { connectorKey: 'github', enabled: true, adapterStatus: 'operational' } as any,
+      { connectorKey: 'gmail', enabled: true, adapterStatus: 'not_implemented' } as any,
+      { connectorKey: 'google-drive', enabled: true, adapterStatus: 'not_implemented' } as any,
+      { connectorKey: 'google-contacts', enabled: true, adapterStatus: 'not_implemented' } as any,
+      { connectorKey: 'google-calendar', enabled: true, adapterStatus: 'not_implemented' } as any,
+    ];
+
+    expect(component.googleConnectorMetric()).toBe('setup needed');
+
+    component.connectors[1].adapterStatus = 'operational';
+    expect(component.googleConnectorMetric()).toBe('1/4 ready');
+
+    component.connectors[2].adapterStatus = 'operational';
+    expect(component.googleConnectorMetric()).toBe('2/4 ready');
+
+    component.connectors[3].adapterStatus = 'operational';
+    expect(component.googleConnectorMetric()).toBe('3/4 ready');
+
+    component.connectors[4].adapterStatus = 'operational';
+    expect(component.googleConnectorMetric()).toBe('4 ready');
   });
 });

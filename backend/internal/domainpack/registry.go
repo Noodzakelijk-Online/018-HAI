@@ -41,6 +41,7 @@ func NewRegistry(version string, packs []DomainPack) (*Registry, error) {
 
 	byID := make(map[PackID]DomainPack, len(packs))
 	ids := make([]PackID, 0, len(packs))
+	methodIDs := make(map[string]PackID)
 	for index := range packs {
 		pack := clonePack(packs[index])
 		if err := ValidatePack(pack); err != nil {
@@ -51,6 +52,12 @@ func NewRegistry(version string, packs []DomainPack) (*Registry, error) {
 		}
 		if _, exists := byID[pack.ID]; exists {
 			return nil, fmt.Errorf("duplicate domain pack id %q", pack.ID)
+		}
+		for _, method := range pack.Playbook.Methods {
+			if priorPackID, exists := methodIDs[method.ID]; exists {
+				return nil, fmt.Errorf("duplicate playbook method id %q in %q and %q", method.ID, priorPackID, pack.ID)
+			}
+			methodIDs[method.ID] = pack.ID
 		}
 		byID[pack.ID] = pack
 		ids = append(ids, pack.ID)
@@ -130,6 +137,9 @@ func ValidatePack(pack DomainPack) error {
 	if pack.Retention.DefaultDays <= 0 {
 		return fmt.Errorf("positive retention period is required")
 	}
+	if err := validatePlaybook(pack); err != nil {
+		return err
+	}
 	if pack.Sensitive && !pack.Retention.LocalOnly {
 		return fmt.Errorf("sensitive packs must default to local-only retention")
 	}
@@ -152,6 +162,95 @@ func ValidatePack(pack DomainPack) error {
 		return err
 	}
 	return nil
+}
+
+func validatePlaybook(pack DomainPack) error {
+	if !semanticVersionPattern.MatchString(pack.Playbook.Version) {
+		return fmt.Errorf("playbook version must be semantic")
+	}
+	expectedDigest, err := playbookDigest(pack.Playbook)
+	if err != nil {
+		return err
+	}
+	if pack.Playbook.Digest != expectedDigest {
+		return fmt.Errorf("playbook digest does not match immutable method content")
+	}
+	methodIDs := make(map[string]struct{}, len(pack.Playbook.Methods))
+	for _, method := range pack.Playbook.Methods {
+		id := normalizeIdentifier(method.ID)
+		if id == "" || id != method.ID {
+			return fmt.Errorf("playbook method id %q must be a normalized stable id", method.ID)
+		}
+		if _, exists := methodIDs[id]; exists {
+			return fmt.Errorf("duplicate playbook method id %q", id)
+		}
+		methodIDs[id] = struct{}{}
+		if !semanticVersionPattern.MatchString(method.Version) {
+			return fmt.Errorf("playbook method %q version must be semantic", id)
+		}
+		if strings.TrimSpace(method.Name) == "" ||
+			strings.TrimSpace(method.Group) == "" ||
+			strings.TrimSpace(method.Domain) == "" ||
+			strings.TrimSpace(method.Purpose) == "" {
+			return fmt.Errorf("playbook method %q identity and purpose are required", id)
+		}
+		if method.RiskCeiling != RiskLow &&
+			method.RiskCeiling != RiskMedium &&
+			method.RiskCeiling != RiskHigh &&
+			method.RiskCeiling != RiskCritical {
+			return fmt.Errorf("playbook method %q has invalid risk ceiling", id)
+		}
+		if method.LifecycleStatus != MethodLifecycleActive &&
+			method.LifecycleStatus != MethodLifecycleExperimental &&
+			method.LifecycleStatus != MethodLifecycleDeprecated &&
+			method.LifecycleStatus != MethodLifecycleRetired {
+			return fmt.Errorf("playbook method %q has invalid lifecycle status", id)
+		}
+		requiredCollections := map[string][]string{
+			"trigger conditions":     method.TriggerConditions,
+			"required inputs":        method.RequiredInputs,
+			"produced outputs":       method.ProducedOutputs,
+			"authority requirements": method.AuthorityRequirements,
+			"safety invariants":      method.SafetyInvariants,
+			"evidence requirements":  method.EvidenceRequirements,
+			"evaluation criteria":    method.Evaluation.Criteria,
+		}
+		for name, values := range requiredCollections {
+			if len(values) == 0 {
+				return fmt.Errorf("playbook method %q %s are required", id, name)
+			}
+			if err := validateUniqueStrings("playbook method "+name, values); err != nil {
+				return fmt.Errorf("playbook method %q: %w", id, err)
+			}
+		}
+		if strings.TrimSpace(method.Evaluation.Method) == "" ||
+			strings.TrimSpace(method.Evaluation.FailureDisposition) == "" {
+			return fmt.Errorf("playbook method %q evaluation is required", id)
+		}
+		if strings.TrimSpace(method.Provenance.SourceType) == "" ||
+			strings.TrimSpace(method.Provenance.Title) == "" ||
+			strings.TrimSpace(method.Provenance.Section) == "" ||
+			strings.TrimSpace(method.Provenance.Reference) == "" {
+			return fmt.Errorf("playbook method %q provenance is required", id)
+		}
+		if !containsNormalizedValue(method.AuthorityRequirements, "method selection is advisory and grants no execution authority") {
+			return fmt.Errorf("playbook method %q must deny execution authority", id)
+		}
+		if !containsNormalizedValue(method.SafetyInvariants, "all execution still passes HAI constitution, mandate, risk, approval, and final-effect authorization") {
+			return fmt.Errorf("playbook method %q must preserve execution safety gates", id)
+		}
+	}
+	return nil
+}
+
+func containsNormalizedValue(values []string, expected string) bool {
+	expected = normalizeText(expected)
+	for _, value := range values {
+		if normalizeText(value) == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func validateSignals(signals []ClassificationSignal) error {
@@ -330,6 +429,23 @@ func clonePack(pack DomainPack) DomainPack {
 	copy.StopEscalationConditions = append([]StopCondition(nil), pack.StopEscalationConditions...)
 	copy.SuitableAgentCapabilities = cloneStrings(pack.SuitableAgentCapabilities)
 	copy.AuditEvents = cloneStrings(pack.AuditEvents)
+	copy.Playbook = clonePlaybook(pack.Playbook)
+	return copy
+}
+
+func clonePlaybook(playbook DomainPlaybook) DomainPlaybook {
+	copy := playbook
+	copy.Methods = make([]PlaybookMethod, len(playbook.Methods))
+	for index, method := range playbook.Methods {
+		copy.Methods[index] = method
+		copy.Methods[index].TriggerConditions = cloneStrings(method.TriggerConditions)
+		copy.Methods[index].RequiredInputs = cloneStrings(method.RequiredInputs)
+		copy.Methods[index].ProducedOutputs = cloneStrings(method.ProducedOutputs)
+		copy.Methods[index].AuthorityRequirements = cloneStrings(method.AuthorityRequirements)
+		copy.Methods[index].SafetyInvariants = cloneStrings(method.SafetyInvariants)
+		copy.Methods[index].EvidenceRequirements = cloneStrings(method.EvidenceRequirements)
+		copy.Methods[index].Evaluation.Criteria = cloneStrings(method.Evaluation.Criteria)
+	}
 	return copy
 }
 

@@ -34,6 +34,8 @@ type operatingContract struct {
 
 func buildOperatingContract(
 	request SelectionRequest,
+	taskRiskLevel string,
+	effectiveRiskCeiling string,
 	lifeDomains []LifeDomainAssignment,
 	requiredAgents []string,
 	maximumAutonomy int,
@@ -101,29 +103,33 @@ func buildOperatingContract(
 		ChiefOfStaff:      chiefOfStaff,
 	}
 	digest, err := canonicalSHA256(struct {
-		LifeDomains       []LifeDomainAssignment   `json:"lifeDomains"`
-		NeedsState        []NeedStateAssessment    `json:"needsState"`
-		Capacity          CapacitySnapshot         `json:"capacity"`
-		AgentCards        []AgentCard              `json:"agentCards"`
-		Delegations       []DelegationContract     `json:"delegations"`
-		Communication     CommunicationContract    `json:"communication"`
-		Coordination      CoordinationPlan         `json:"coordination"`
-		ActionAutonomy    []ActionAutonomyDecision `json:"actionAutonomy"`
-		StopConditions    []string                 `json:"stopConditions"`
-		OutcomeMonitoring []string                 `json:"outcomeMonitoring"`
-		ChiefOfStaff      ChiefOfStaffDecision     `json:"chiefOfStaff"`
+		TaskRiskLevel        string                   `json:"taskRiskLevel"`
+		EffectiveRiskCeiling string                   `json:"effectiveRiskCeiling"`
+		LifeDomains          []LifeDomainAssignment   `json:"lifeDomains"`
+		NeedsState           []NeedStateAssessment    `json:"needsState"`
+		Capacity             CapacitySnapshot         `json:"capacity"`
+		AgentCards           []AgentCard              `json:"agentCards"`
+		Delegations          []DelegationContract     `json:"delegations"`
+		Communication        CommunicationContract    `json:"communication"`
+		Coordination         CoordinationPlan         `json:"coordination"`
+		ActionAutonomy       []ActionAutonomyDecision `json:"actionAutonomy"`
+		StopConditions       []string                 `json:"stopConditions"`
+		OutcomeMonitoring    []string                 `json:"outcomeMonitoring"`
+		ChiefOfStaff         ChiefOfStaffDecision     `json:"chiefOfStaff"`
 	}{
-		LifeDomains:       contract.LifeDomains,
-		NeedsState:        contract.NeedsState,
-		Capacity:          contract.Capacity,
-		AgentCards:        contract.AgentCards,
-		Delegations:       contract.Delegations,
-		Communication:     contract.Communication,
-		Coordination:      contract.Coordination,
-		ActionAutonomy:    contract.ActionAutonomy,
-		StopConditions:    contract.StopConditions,
-		OutcomeMonitoring: contract.OutcomeMonitoring,
-		ChiefOfStaff:      contract.ChiefOfStaff,
+		TaskRiskLevel:        taskRiskLevel,
+		EffectiveRiskCeiling: effectiveRiskCeiling,
+		LifeDomains:          contract.LifeDomains,
+		NeedsState:           contract.NeedsState,
+		Capacity:             contract.Capacity,
+		AgentCards:           contract.AgentCards,
+		Delegations:          contract.Delegations,
+		Communication:        contract.Communication,
+		Coordination:         contract.Coordination,
+		ActionAutonomy:       contract.ActionAutonomy,
+		StopConditions:       contract.StopConditions,
+		OutcomeMonitoring:    contract.OutcomeMonitoring,
+		ChiefOfStaff:         contract.ChiefOfStaff,
 	})
 	if err != nil {
 		return operatingContract{}, fmt.Errorf("digest operating contract: %w", err)
@@ -398,12 +404,12 @@ func buildAgentCards(required []string, available []AgentCard, ceiling int, now 
 		ReliabilityHistory:    []string{"repository contract tests pass; production effectiveness is not inferred"},
 		AllowedActions:        allowedActionsForAuthority(ceiling),
 		ProhibitedActions:     protectedAgentProhibitions(),
-		InputSchema:           "framework-selection-request-v4",
-		OutputSchema:          "framework-selection-decision-v4",
+		InputSchema:           "framework-selection-request-v5",
+		OutputSchema:          "framework-selection-decision-v5",
 		ExpectedEvidence:      []string{"framework selection and validation audit records"},
 		EscalationRoute:       "owner-scoped review queue",
 		Availability:          "local process",
-		Version:               "selector-v4",
+		Version:               "selector-v5",
 		Dependencies:          []string{"framework registry", "task state", "approval policy"},
 		HealthStatus:          "available",
 		EvaluationScore:       0,

@@ -72,6 +72,139 @@
     </button>
   </section>
 
+  <section
+    class="reminder-focus"
+    *ngIf="reminderProposals?.items?.length"
+    aria-label="Internal reminder proposals"
+  >
+    <div class="reminder-focus__heading">
+      <div>
+        <span>Internal reminders</span>
+        <strong>{{ reminderProposals?.due || 0 }} due · {{ reminderProposals?.upcoming || 0 }} upcoming</strong>
+      </div>
+      <button
+        *ngIf="reminderDeliveryHistory?.authorizations?.length"
+        type="button"
+        nz-button
+        nzSize="small"
+        [nzLoading]="runningAction === 'reminders'"
+        [disabled]="!!runningAction"
+        (click)="runDueReminderDeliveries()"
+        title="Run one bounded owner-scoped pass for already-authorized internal reminders."
+        data-testid="reminder-run-due"
+      >Run internal pass</button>
+      <span class="help-dot" [title]="reminderProposals?.freshness?.reason || 'Reminder proposals are read-only.'">?</span>
+    </div>
+    <article
+      class="reminder-focus__item"
+      *ngFor="let proposal of reminderProposals?.items | slice:0:3"
+      [title]="proposal.nextAction"
+      [attr.data-testid]="'reminder-card-' + proposal.checklistItemId"
+    >
+      <button
+        type="button"
+        class="reminder-focus__open"
+        (click)="openReminder(proposal)"
+        [attr.aria-label]="'Inspect workflow for ' + proposal.title"
+        [attr.data-testid]="'reminder-open-' + proposal.checklistItemId"
+      >
+        <span class="reminder-focus__status" [class.reminder-focus__status--due]="proposal.status === 'due'"></span>
+        <span>
+          <strong>{{ proposal.title }}</strong>
+          <small>{{ proposal.label }} · {{ proposal.reminderAt | date:'short' }}</small>
+        </span>
+        <em>{{ proposal.status === 'due' ? 'Due' : 'Upcoming' }}</em>
+        <i nz-icon nzType="right" nzTheme="outline"></i>
+      </button>
+      <div class="reminder-focus__controls">
+        <span *ngIf="activationFor(proposal) as activation" [class]="'reminder-focus__activation reminder-focus__activation--' + activation.status">
+          {{ readable(activation.status) }} · internal only
+        </span>
+        <span *ngIf="!activationFor(proposal)" class="reminder-focus__activation">Not prepared</span>
+        <span *ngIf="deliveryAuthorizationFor(proposal)" class="reminder-focus__activation">
+          Delivery: {{ readable(deliveryStatusFor(proposal)) }}
+        </span>
+        <button
+          *ngIf="canPrepareReminder(proposal)"
+          type="button"
+          nz-button
+          nzSize="small"
+          [nzLoading]="activationBusyId === proposal.checklistItemId"
+          [disabled]="!!activationBusyId"
+          (click)="prepareReminderActivation(proposal, $event)"
+          [attr.data-testid]="'reminder-prepare-' + proposal.checklistItemId"
+          title="Create immutable internal preparation evidence. This cannot send a message or create a calendar event."
+        >
+          Prepare
+        </button>
+        <ng-container *ngIf="activationFor(proposal) as activation">
+          <button
+            *ngIf="activation.current && (activation.status === 'prepared' || activation.status === 'needs_clarification')"
+            type="button"
+            nz-button
+            nzType="primary"
+            nzSize="small"
+            [nzLoading]="activationBusyId === activation.request.id"
+            [disabled]="!!activationBusyId"
+            (click)="reviewReminderActivation(proposal, $event)"
+            [attr.data-testid]="'reminder-approve-' + proposal.checklistItemId"
+            title="Record owner approval of the internal preparation. Approval remains non-executing."
+          >
+            Approve
+          </button>
+          <button
+            *ngIf="activation.current && (activation.status === 'prepared' || activation.status === 'needs_clarification')"
+            type="button"
+            nz-button
+            nzSize="small"
+            nzDanger
+            [disabled]="!!activationBusyId"
+            (click)="rejectReminderActivation(proposal, $event)"
+            [attr.data-testid]="'reminder-reject-' + proposal.checklistItemId"
+            title="Record an explicit rejection. Closing a dialog never rejects automatically."
+          >
+            Reject
+          </button>
+          <button
+            *ngIf="canAuthorizeReminderDelivery(proposal)"
+            type="button"
+            nz-button
+            nzType="primary"
+            nzSize="small"
+            [nzLoading]="activationBusyId === activation.request.id"
+            [disabled]="!!activationBusyId"
+            (click)="authorizeReminderDelivery(proposal, $event)"
+            [attr.data-testid]="'reminder-authorize-delivery-' + proposal.checklistItemId"
+            title="Authorize one local in-app reminder. External effects remain unavailable."
+          >Authorize one</button>
+          <button
+            *ngIf="activation.current && activation.status === 'approved'"
+            type="button"
+            nz-button
+            nzSize="small"
+            nzDanger
+            [nzLoading]="activationBusyId === activation.request.id"
+            [disabled]="!!activationBusyId"
+            (click)="reviewReminderActivation(proposal, $event)"
+            [attr.data-testid]="'reminder-revoke-' + proposal.checklistItemId"
+            title="Append a revocation decision. No external effect is reversed because none was authorized."
+          >
+            Revoke
+          </button>
+        </ng-container>
+      </div>
+    </article>
+    <p>Preparation, approval, and delivery are separate. An authorized delivery creates one local HAI inbox signal only; it cannot create a calendar event, send a message, run a provider, or execute a follow-up.</p>
+  </section>
+
+  <section class="reminder-unavailable" *ngIf="reminderProposalsUnavailable || reminderActivationUnavailable || reminderDeliveryUnavailable" role="status">
+    <i nz-icon nzType="warning" nzTheme="outline"></i>
+    <span>
+      Internal reminder {{ reminderProposalsUnavailable ? 'proposals' : (reminderActivationUnavailable ? 'decision history' : 'delivery receipts') }} are unavailable.
+      Workflow operations remain usable; refresh before making a reminder decision.
+    </span>
+  </section>
+
   <section class="workflow-quiet" *ngIf="!hasWorkflowAttention()">
     <span class="workflow-quiet__icon"><i nz-icon nzType="inbox" nzTheme="outline"></i></span>
     <div>
@@ -205,7 +338,7 @@
           </div>
 
           <div class="intake-options">
-            <input nz-input formControlName="projectKey" placeholder="Project or case" />
+            <input nz-input formControlName="projectKey" placeholder="Project or case" data-testid="workflow-project-key" />
             <input nz-input formControlName="automationId" placeholder="Automation optional" />
             <input nz-input formControlName="sourceType" placeholder="Source type" />
             <button type="button" nz-button nzType="primary" data-testid="workflow-create" (click)="intake()" [nzLoading]="saving">
@@ -220,9 +353,9 @@
               <small>source ids, trigger, content type, sender</small>
             </summary>
             <div class="advanced-grid">
-              <input nz-input formControlName="sourceId" placeholder="Source record ID" />
-              <input nz-input formControlName="sourceUri" placeholder="Source URI" />
-              <input nz-input formControlName="sourceLabel" placeholder="Source label" />
+              <input nz-input formControlName="sourceId" placeholder="Source record ID" data-testid="workflow-source-id" />
+              <input nz-input formControlName="sourceUri" placeholder="Source URI" data-testid="workflow-source-uri" />
+              <input nz-input formControlName="sourceLabel" placeholder="Source label" data-testid="workflow-source-label" />
               <input nz-input formControlName="contentType" placeholder="Content type" />
               <input nz-input formControlName="sender" placeholder="Sender or account" />
               <input nz-input formControlName="trigger" placeholder="Trigger" />
@@ -308,7 +441,7 @@
         <article class="detail-box" *ngIf="selected as record; else noSelection">
           <div class="box-title">
             <strong>Selected workflow</strong>
-            <span>{{ readable(record.item.currentState) }}</span>
+            <span data-testid="workflow-selected-state">{{ readable(record.item.currentState) }}</span>
           </div>
           <h3>{{ record.item.title }}</h3>
           <p>{{ record.item.nextAction || record.item.description || 'No next action recorded yet.' }}</p>
@@ -316,8 +449,108 @@
             <div><dt>Project</dt><dd>{{ record.item.projectKey || '-' }}</dd></div>
             <div><dt>Approval</dt><dd>{{ record.item.approvalStatus || (record.item.requiresApproval ? 'pending' : 'not required') }}</dd></div>
             <div><dt>Autonomy</dt><dd>{{ readable(record.item.autonomyLevel) }}</dd></div>
-            <div><dt>Verification</dt><dd>{{ readable(record.item.verificationStatus || '-') }}</dd></div>
+            <div><dt>Verification</dt><dd data-testid="workflow-selected-verification">{{ readable(record.item.verificationStatus || '-') }}</dd></div>
           </dl>
+          <section
+            class="governance-summary"
+            *ngIf="record.item.coordinationDraftPlanId || record.item.coordinationPlanId"
+            data-testid="workflow-coordination-plan"
+          >
+            <div class="governance-summary__heading">
+              <span class="governance-summary__icon" aria-hidden="true">
+                <i nz-icon nzType="branches" nzTheme="outline"></i>
+              </span>
+              <span class="governance-summary__copy">
+                <strong>{{ record.item.coordinationPlanId ? 'Accepted coordination plan' : 'Advisory coordination draft' }}</strong>
+                <small>
+                  Revision {{ record.item.coordinationPlanRevision || record.item.coordinationDraftRevision || 1 }}.
+                  Planning only; authority remains separate.
+                </small>
+              </span>
+              <button
+                type="button"
+                nz-button
+                nzSize="small"
+                nzType="default"
+                (click)="openCoordinationPlan(record.item.coordinationPlanId || record.item.coordinationDraftPlanId)"
+              >
+                Inspect plan
+              </button>
+            </div>
+          </section>
+          <ng-container *ngFor="let proposal of record.proposals">
+            <div
+              class="runtime-selection"
+              *ngIf="proposal.status === 'open' && isAutomationSelectionProposal(proposal.recommendedAction)"
+              data-testid="workflow-runtime-selection"
+            >
+              <strong>Select the exact automation</strong>
+              <small>Review the capability and target before HAI binds approval to it.</small>
+              <div class="proposal-options">
+                <ng-container *ngFor="let option of optionLines(proposal.options)">
+                  <button
+                    *ngIf="isAutomationOption(option); else configureAutomationPrimary"
+                    type="button"
+                    nz-button
+                    nzSize="small"
+                    nzType="primary"
+                    [attr.data-testid]="'workflow-select-automation-' + proposal.id"
+                    (click)="resolveProposal(proposal.id, 'approved', option)"
+                  >
+                    {{ automationOptionLabel(option) }}
+                  </button>
+                  <ng-template #configureAutomationPrimary>
+                    <button type="button" nz-button nzSize="small" nzType="default" (click)="openAutomationSetup()">Configure automation</button>
+                  </ng-template>
+                </ng-container>
+              </div>
+            </div>
+          </ng-container>
+          <div
+            class="mini-actions"
+            *ngIf="record.item.requiresApproval && record.item.approvalStatus !== 'approved' && record.item.approvalStatus !== 'rejected' && !hasOpenAutomationSelection(record)"
+            data-testid="workflow-approval-controls"
+          >
+            <button
+              type="button"
+              nz-button
+              nzType="primary"
+              data-testid="workflow-approve"
+              (click)="resolveApproval(record.item, true)"
+              [nzLoading]="saving"
+              [disabled]="saving"
+            >
+              Approve controlled execution
+            </button>
+            <button
+              type="button"
+              nz-button
+              nzDanger
+              data-testid="workflow-reject"
+              (click)="resolveApproval(record.item, false)"
+              [disabled]="saving"
+            >
+              Reject and block
+            </button>
+          </div>
+          <div
+            class="mini-actions mini-actions--execution"
+            *ngIf="record.item.currentState === 'ready' && record.item.approvalStatus === 'approved'"
+            data-testid="workflow-run-selected-controls"
+          >
+            <button
+              type="button"
+              nz-button
+              nzType="primary"
+              data-testid="workflow-run-selected"
+              (click)="runSelectedWorkflow()"
+              [nzLoading]="isActionRunning('selected')"
+              [disabled]="anyActionRunning()"
+            >
+              Run this approved workflow
+            </button>
+            <small>Claims only this workflow. Runtime authorization, emergency stop, audit, and verification still apply.</small>
+          </div>
           <section
             class="governance-summary"
             [ngClass]="frameworkGovernanceClass"
@@ -526,7 +759,10 @@
                     <code>{{ framework.id }}&#64;{{ framework.version }}</code>
                     <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
                   </button>
-                  <small>{{ framework.name }} / {{ framework.family }}</small>
+                  <small>
+                    {{ framework.name }} / {{ framework.family }} /
+                    {{ framework.riskCeiling ? (framework.riskCeiling + ' risk ceiling') : 'risk not recorded (pre-v5)' }}
+                  </small>
                 </li>
               </ul>
             </section>
@@ -539,6 +775,13 @@
               <div>
                 <strong>Why this combination</strong>
                 <p>{{ decision.selectionReason }}</p>
+              </div>
+              <div>
+                <strong>Risk contract</strong>
+                <p *ngIf="decision.taskRiskLevel && decision.effectiveRiskCeiling; else noFrameworkRiskContract">
+                  {{ decision.taskRiskLevel }} task risk / {{ decision.effectiveRiskCeiling }} effective ceiling
+                </p>
+                <ng-template #noFrameworkRiskContract><p>Not recorded (pre-v5).</p></ng-template>
               </div>
               <div>
                 <strong>Context required</strong>
@@ -632,6 +875,14 @@
                     <code>{{ provenance.selectorAlgorithmVersion }}</code>
                     <i nz-icon nzType="copy" nzTheme="outline" aria-hidden="true"></i>
                   </button>
+                </dd>
+              </div>
+              <div *ngIf="provenance.maximumAutonomyLevel !== undefined">
+                <dt>Execution ceiling</dt>
+                <dd>
+                  Level {{ provenance.maximumAutonomyLevel }} / 10
+                  &middot;
+                  {{ provenance.requiresApproval ? 'case approval required' : 'framework approval not required' }}
                 </dd>
               </div>
               <div>
@@ -756,7 +1007,7 @@
               <strong>{{ proposal.recommendedAction }}</strong>
               <small>{{ readable(proposal.status) }}</small>
               <div class="mini-actions">
-                <button type="button" nz-button nzSize="small" nzType="primary" [disabled]="proposal.status !== 'open'" (click)="resolveProposal(proposal.id, 'approved', optionLines(proposal.options)[0])">Approve</button>
+                <button *ngIf="!isAutomationSelectionProposal(proposal.recommendedAction)" type="button" nz-button nzSize="small" nzType="primary" [disabled]="proposal.status !== 'open'" (click)="resolveProposal(proposal.id, 'approved', optionLines(proposal.options)[0])">Approve</button>
                 <button type="button" nz-button nzSize="small" nzType="default" [disabled]="proposal.status !== 'open'" (click)="resolveProposal(proposal.id, 'changes_requested', 'Request changes')">Changes</button>
                 <button type="button" nz-button nzSize="small" nzDanger [disabled]="proposal.status !== 'open'" (click)="resolveProposal(proposal.id, 'rejected', 'Reject proposal')">Reject</button>
               </div>
@@ -798,3 +1049,116 @@
     </aside>
   </main>
 </section>
+
+<nz-drawer
+  [nzVisible]="!!selectedReminder"
+  [nzTitle]="selectedReminder?.title || 'Internal reminder'"
+  nzWidth="520"
+  (nzOnClose)="closeReminder()"
+>
+  <ng-container *nzDrawerContent>
+    <section
+      *ngIf="selectedReminder as proposal"
+      class="reminder-drawer"
+      [attr.data-testid]="'reminder-drawer-' + proposal.checklistItemId"
+    >
+      <div class="reminder-drawer__state">
+        <span [class.reminder-drawer__due]="proposal.status === 'due'">{{ readable(proposal.status) }}</span>
+        <strong>{{ proposal.reminderAt | date:'medium' }}</strong>
+      </div>
+      <p>{{ proposal.label }}</p>
+      <div class="reminder-drawer__boundary" role="note">
+        <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+        <span>Only a separately authorized local HAI inbox reminder can be delivered. Email, Calendar, provider, webhook, and follow-up effects remain unavailable.</span>
+      </div>
+      <dl class="reminder-drawer__facts">
+        <div><dt>Workflow state</dt><dd>{{ readable(proposal.workflowState) }}</dd></div>
+        <div><dt>Risk</dt><dd>{{ readable(proposal.riskLevel) }}</dd></div>
+        <div><dt>Approval</dt><dd>{{ proposal.requiresApproval ? 'Required' : 'Not required by workflow' }}</dd></div>
+        <div><dt>Preparation</dt><dd>{{ readable(activationFor(proposal)?.status || 'not_prepared') }}</dd></div>
+        <div><dt>Internal delivery</dt><dd>{{ readable(deliveryStatusFor(proposal)) }}</dd></div>
+        <div><dt>Source</dt><dd>{{ proposal.sourceLabel || proposal.sourceUri || 'No source label' }}</dd></div>
+      </dl>
+      <div class="reminder-drawer__actions">
+        <button
+          type="button"
+          nz-button
+          (click)="openReminderWorkflow(proposal)"
+          [attr.data-testid]="'reminder-drawer-workflow-' + proposal.checklistItemId"
+        >Open workflow</button>
+        <button
+          *ngIf="canPrepareReminder(proposal)"
+          type="button"
+          nz-button
+          nzType="primary"
+          [nzLoading]="activationBusyId === proposal.checklistItemId"
+          [disabled]="!!activationBusyId"
+          (click)="prepareReminderActivation(proposal, $event)"
+          [attr.data-testid]="'reminder-drawer-prepare-' + proposal.checklistItemId"
+        >
+          Prepare internal reminder
+        </button>
+        <ng-container *ngIf="activationFor(proposal) as activation">
+          <button
+            *ngIf="activation.current && (activation.status === 'prepared' || activation.status === 'needs_clarification')"
+            type="button"
+            nz-button
+            nzType="primary"
+            [disabled]="!!activationBusyId"
+            (click)="reviewReminderActivation(proposal, $event)"
+            [attr.data-testid]="'reminder-drawer-approve-' + proposal.checklistItemId"
+          >
+            Approve preparation
+          </button>
+          <button
+            *ngIf="activation.current && (activation.status === 'prepared' || activation.status === 'needs_clarification')"
+            type="button"
+            nz-button
+            nzDanger
+            [disabled]="!!activationBusyId"
+            (click)="rejectReminderActivation(proposal, $event)"
+            [attr.data-testid]="'reminder-drawer-reject-' + proposal.checklistItemId"
+          >
+            Reject
+          </button>
+          <button
+            *ngIf="canAuthorizeReminderDelivery(proposal)"
+            type="button"
+            nz-button
+            nzType="primary"
+            [disabled]="!!activationBusyId"
+            (click)="authorizeReminderDelivery(proposal, $event)"
+            [attr.data-testid]="'reminder-drawer-authorize-delivery-' + proposal.checklistItemId"
+          >Authorize one internal reminder</button>
+          <button
+            *ngIf="activation.current && activation.status === 'approved'"
+            type="button"
+            nz-button
+            nzDanger
+            [disabled]="!!activationBusyId"
+            (click)="reviewReminderActivation(proposal, $event)"
+            [attr.data-testid]="'reminder-drawer-revoke-' + proposal.checklistItemId"
+          >
+            Revoke approval
+          </button>
+        </ng-container>
+      </div>
+      <details class="reminder-drawer__advanced">
+        <summary>Advanced evidence</summary>
+        <dl>
+          <div><dt>Workflow ID</dt><dd><code>{{ proposal.workflowId }}</code></dd></div>
+          <div><dt>Checklist ID</dt><dd><code>{{ proposal.checklistItemId }}</code></dd></div>
+          <div><dt>Evidence digest</dt><dd><code>{{ proposal.evidenceDigest }}</code></dd></div>
+          <div><dt>Authority</dt><dd><code>{{ proposal.authority }}</code></dd></div>
+          <div><dt>Can execute</dt><dd>No</dd></div>
+          <ng-container *ngIf="deliveryAuthorizationFor(proposal) as authorization">
+            <div><dt>Delivery authorization</dt><dd><code>{{ authorization.id }}</code></dd></div>
+            <div><dt>Delivery status</dt><dd>{{ readable(deliveryStatusFor(proposal)) }}</dd></div>
+            <div><dt>Channel</dt><dd>Local HAI inbox</dd></div>
+            <div><dt>Delivery authority</dt><dd><code>{{ authorization.authority }}</code></dd></div>
+          </ng-container>
+        </dl>
+      </details>
+    </section>
+  </ng-container>
+</nz-drawer>

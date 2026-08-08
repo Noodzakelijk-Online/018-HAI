@@ -1,0 +1,2 @@
+ALTER TABLE public.workflow_reminder_delivery_authorizations
+    DROP CONSTRAINT uq_workflow_reminder_delivery_single_authorization;

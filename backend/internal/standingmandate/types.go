@@ -3,6 +3,8 @@ package standingmandate
 import (
 	"time"
 
+	"automation-hub-backend/internal/lifeontology"
+
 	"github.com/google/uuid"
 )
 
@@ -102,26 +104,40 @@ type StopCondition struct {
 // StandingMandate is a durable, versioned grant of bounded authority. The
 // Revision field supports optimistic concurrency in persistent repositories.
 type StandingMandate struct {
-	ID               uuid.UUID       `json:"id"`
-	OwnerIdentity    string          `json:"ownerIdentity"`
-	Name             string          `json:"name"`
-	Purpose          string          `json:"purpose"`
-	Status           Status          `json:"status"`
-	Version          string          `json:"version"`
-	Revision         uint64          `json:"revision"`
-	Scopes           []Scope         `json:"scopes"`
-	AutonomyCeiling  int             `json:"autonomyCeiling"`
-	ApprovalPolicy   ApprovalPolicy  `json:"approvalPolicy"`
-	StopConditions   []StopCondition `json:"stopConditions,omitempty"`
-	SourceReferences []string        `json:"sourceReferences,omitempty"`
-	CreatedBy        string          `json:"createdBy"`
-	CreatedAt        time.Time       `json:"createdAt"`
-	UpdatedAt        time.Time       `json:"updatedAt"`
-	ActivatedAt      *time.Time      `json:"activatedAt,omitempty"`
-	ExpiresAt        *time.Time      `json:"expiresAt,omitempty"`
-	RevokedAt        *time.Time      `json:"revokedAt,omitempty"`
-	RevokedBy        string          `json:"revokedBy,omitempty"`
-	RevocationReason string          `json:"revocationReason,omitempty"`
+	ID               uuid.UUID                                 `json:"id"`
+	OwnerIdentity    string                                    `json:"ownerIdentity"`
+	Name             string                                    `json:"name"`
+	Purpose          string                                    `json:"purpose"`
+	Status           Status                                    `json:"status"`
+	Version          string                                    `json:"version"`
+	Revision         uint64                                    `json:"revision"`
+	Scopes           []Scope                                   `json:"scopes"`
+	AutonomyCeiling  int                                       `json:"autonomyCeiling"`
+	ApprovalPolicy   ApprovalPolicy                            `json:"approvalPolicy"`
+	StopConditions   []StopCondition                           `json:"stopConditions,omitempty"`
+	SourceReferences []string                                  `json:"sourceReferences,omitempty"`
+	CreatedBy        string                                    `json:"createdBy"`
+	CreatedAt        time.Time                                 `json:"createdAt"`
+	UpdatedAt        time.Time                                 `json:"updatedAt"`
+	ActivatedAt      *time.Time                                `json:"activatedAt,omitempty"`
+	ExpiresAt        *time.Time                                `json:"expiresAt,omitempty"`
+	RevokedAt        *time.Time                                `json:"revokedAt,omitempty"`
+	RevokedBy        string                                    `json:"revokedBy,omitempty"`
+	RevocationReason string                                    `json:"revocationReason,omitempty"`
+	LifeGraph        *lifeontology.OperationalProjectionResult `json:"lifeGraph,omitempty"`
+	LifeGraphWarning string                                    `json:"lifeGraphWarning,omitempty"`
+}
+
+// AuthorizationSnapshot is the immutable policy identity execution boundaries
+// use when rechecking a previously authorized mandate decision. It deliberately
+// excludes policy content while retaining the digest needed to detect drift.
+type AuthorizationSnapshot struct {
+	ID            uuid.UUID  `json:"id"`
+	OwnerIdentity string     `json:"ownerIdentity"`
+	Status        Status     `json:"status"`
+	Revision      uint64     `json:"revision"`
+	ExpiresAt     *time.Time `json:"expiresAt,omitempty"`
+	Digest        string     `json:"digest"`
 }
 
 type CreateRequest struct {

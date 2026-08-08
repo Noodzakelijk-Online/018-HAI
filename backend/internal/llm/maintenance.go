@@ -80,7 +80,10 @@ const (
 	miniSWEOllamaEndpoint                      = "http://ollama-miniswe:11434"
 )
 
-var errConfiguredOllamaModelNotInstalled = errors.New("configured Ollama model is not installed")
+var (
+	errConfiguredOllamaModelNotInstalled      = errors.New("configured Ollama model is not installed")
+	errConfiguredOllamaModelDigestUnavailable = errors.New("configured Ollama model has no verifiable digest")
+)
 
 // LocalModelMaintenanceGate is the narrow contract used by optional planning
 // runners. A runner must name one exact local provider/model pair from the
@@ -125,7 +128,7 @@ func (s *Service) EnsureConfiguredLocalModel(endpointURL, modelID string) error 
 			if !model.Enabled || strings.TrimSpace(model.ID) != modelID {
 				continue
 			}
-			result := s.ensureModelFresh(provider, model)
+			result := s.ensureModelFresh(provider, model, s.maintenanceEffectContext)
 			if result.BlocksExecution || strings.EqualFold(result.Status, "failed") {
 				return fmt.Errorf("configured planning model is blocked by daily maintenance: %s", result.Reason)
 			}
@@ -149,7 +152,7 @@ func (s *Service) EnsureMiniSWEOllamaModel(endpointURL, modelID string) error {
 	}
 	result := s.ensureModelFresh(Provider{
 		ID: miniSWEOllamaProviderID, Name: "mini-SWE isolated Ollama", EndpointURL: miniSWEOllamaEndpoint, Enabled: true, Local: true,
-	}, Model{ID: modelID, Name: modelID, Enabled: true})
+	}, Model{ID: modelID, Name: modelID, Enabled: true}, s.maintenanceEffectContext)
 	if result.BlocksExecution || strings.EqualFold(result.Status, "failed") {
 		return fmt.Errorf("mini-SWE model is blocked by daily maintenance: %s", result.Reason)
 	}
@@ -233,7 +236,7 @@ func (s *Service) RunDueModelMaintenance() ModelMaintenanceRun {
 				continue
 			}
 			run.Eligible++
-			result := s.ensureModelFresh(provider, model)
+			result := s.ensureModelFresh(provider, model, s.maintenanceEffectContext)
 			run.Results = append(run.Results, result)
 			if result.Reused {
 				run.Reused++
@@ -268,7 +271,11 @@ func (s *Service) maintenanceEligibleProvider(provider Provider) bool {
 // model every LLM_MODEL_MAINTENANCE_INTERVAL_HOURS (24 by default).
 // It runs immediately before routing/generation, so a stale successful result
 // cannot silently bypass the maintenance policy after a service restart.
-func (s *Service) ensureModelFresh(provider Provider, model Model) ModelMaintenanceResult {
+func (s *Service) ensureModelFresh(
+	provider Provider,
+	model Model,
+	effectContexts ...*EffectContext,
+) ModelMaintenanceResult {
 	fingerprint := modelMaintenanceFingerprint(provider, model)
 	if !modelMaintenanceEnabled() || s.maintenanceHistory == nil {
 		return ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "not_enforced", Reason: "daily model maintenance is not configured for this runtime", CheckedAt: time.Now().UTC()}
@@ -317,10 +324,38 @@ func (s *Service) ensureModelFresh(provider Provider, model Model) ModelMaintena
 		return s.recordMaintenance(ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "failed", Reason: "could not re-read daily model maintenance history after waiting for the model refresh lock", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: now})
 	}
 
+	var effectContext *EffectContext
+	if len(effectContexts) > 0 {
+		effectContext = effectContexts[0]
+	}
 	if provider.ID == "ollama" || provider.ID == miniSWEOllamaProviderID {
-		return s.refreshOllamaModel(provider, model, fingerprint, configurationChanged)
+		return s.refreshOllamaModel(provider, model, fingerprint, configurationChanged, effectContext)
 	}
 	return s.verifyManagedModel(provider, model, fingerprint, configurationChanged)
+}
+
+// modelMaintenanceRoutingBlockReason is intentionally read-only. Routing and
+// classification may inspect durable maintenance evidence, but they may never
+// install or update a model merely to decide which model would be suitable.
+// A due or absent record is enforced later at Generate with trusted context.
+func (s *Service) modelMaintenanceRoutingBlockReason(provider Provider, model Model) string {
+	if !modelMaintenanceEnabled() || s.maintenanceHistory == nil {
+		return ""
+	}
+	latest, err := s.maintenanceHistory.FindLatestModelMaintenance(provider.ID, model.ID)
+	if err != nil {
+		return "could not read daily model maintenance history"
+	}
+	if latest == nil || latest.ConfigurationFingerprint != modelMaintenanceFingerprint(provider, model) {
+		return ""
+	}
+	if !maintenanceRecordReusable(*latest, time.Now().UTC(), modelMaintenanceInterval()) {
+		return ""
+	}
+	if latest.BlocksExecution || strings.EqualFold(latest.Status, "failed") {
+		return latest.Reason
+	}
+	return ""
 }
 
 func maintenanceStillFresh(checkedAt, now time.Time, interval time.Duration) bool {
@@ -438,12 +473,22 @@ func boundedMaintenanceEnv(name string, fallback, minimum, maximum int) int {
 	return value
 }
 
-func (s *Service) refreshOllamaModel(provider Provider, model Model, fingerprint string, configurationChanged bool) ModelMaintenanceResult {
+func (s *Service) refreshOllamaModel(
+	provider Provider,
+	model Model,
+	fingerprint string,
+	configurationChanged bool,
+	effectContext *EffectContext,
+) ModelMaintenanceResult {
 	result := ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, ConfigurationFingerprint: fingerprint, ConfigurationChanged: configurationChanged, CheckedAt: time.Now().UTC()}
 	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
 	previousDigest, err := ollamaModelDigest(endpoint, model.ID)
 	missingBeforePull := errors.Is(err, errConfiguredOllamaModelNotInstalled)
-	if err != nil && !missingBeforePull {
+	digestUnavailableBeforePull := errors.Is(
+		err,
+		errConfiguredOllamaModelDigestUnavailable,
+	)
+	if err != nil && !missingBeforePull && !digestUnavailableBeforePull {
 		result.Status = "failed"
 		result.Reason = "could not inspect installed Ollama model before refresh: " + safety.RedactSecrets(err.Error())
 		result.BlocksExecution = true
@@ -457,8 +502,27 @@ func (s *Service) refreshOllamaModel(provider Provider, model Model, fingerprint
 		return s.recordMaintenance(result)
 	}
 
+	payload, _ := json.Marshal(map[string]any{"name": model.ID, "stream": false})
+	authorization, err := buildFinalEffectAuthorizationRequest(
+		EffectOperationModelPull,
+		effectContext,
+		provider,
+		model,
+		endpoint,
+		0,
+		nil,
+		payload,
+		fingerprint,
+	)
+	if err != nil {
+		result.Status = "failed"
+		result.Reason = "Ollama refresh authorization context is invalid: " + safety.RedactSecrets(err.Error())
+		result.BlocksExecution = true
+		return s.recordMaintenance(result)
+	}
+
 	result.UpdateAttempted = true
-	if err := pullOllamaModel(endpoint, model.ID); err != nil {
+	if err := s.pullOllamaModel(endpoint, model.ID, payload, authorization); err != nil {
 		result.Status = "failed"
 		result.Reason = "Ollama daily refresh failed; this model will not be used until the next successful check: " + safety.RedactSecrets(err.Error())
 		result.BlocksExecution = true
@@ -574,7 +638,11 @@ func ollamaModelDigest(endpoint, modelID string) (string, error) {
 				// the runtime will execute. The tags endpoint documents a digest for
 				// every installed model, so reject incomplete responses instead of
 				// recording an unverifiable model as current.
-				return "", fmt.Errorf("configured Ollama model has no verifiable digest: %s", modelID)
+				return "", fmt.Errorf(
+					"%w: %s",
+					errConfiguredOllamaModelDigestUnavailable,
+					modelID,
+				)
 			}
 			return digest, nil
 		}
@@ -582,16 +650,23 @@ func ollamaModelDigest(endpoint, modelID string) (string, error) {
 	return "", fmt.Errorf("%w: %s", errConfiguredOllamaModelNotInstalled, modelID)
 }
 
-func pullOllamaModel(endpoint, modelID string) error {
+func (s *Service) pullOllamaModel(
+	endpoint,
+	modelID string,
+	payload []byte,
+	authorization FinalEffectAuthorizationRequest,
+) error {
 	ctx, cancel := context.WithTimeout(context.Background(), modelMaintenanceTimeout())
 	defer cancel()
-	payload, _ := json.Marshal(map[string]any{"name": modelID, "stream": false})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/api/pull", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "018-HAI-Model-Maintenance/1.0")
+	if err := s.authorizeFinalEffect(ctx, authorization); err != nil {
+		return err
+	}
 	response, err := noRedirectHTTPClient().Do(req)
 	if err != nil {
 		return err

@@ -70,6 +70,109 @@
     </nz-card>
   </div>
 
+  <details class="rl__parity">
+    <summary>
+      <span>External runtime feature parity</span>
+      <small *ngIf="parityOverview as parity">
+        {{ parity.inventories.length }} projects · {{ parity.requiredCoverageAreas.length }} required areas · readiness capped at declared
+      </small>
+    </summary>
+    <p>
+      This is HAI's source-reviewed disposition ledger. It records what can be retained, adapted, constrained,
+      excluded, or implemented later. A listed feature is not installed, configured, or authorized.
+    </p>
+    <p *ngIf="parityLoading" class="rl__muted">Loading the reviewed feature inventory...</p>
+    <p *ngIf="!parityLoading && !parityOverview" class="rl__warning">
+      Feature parity is unavailable. Runtime readiness has not been widened.
+    </p>
+
+    <div class="rl__parity-list" *ngIf="parityOverview as parity">
+      <details class="rl__inventory" *ngFor="let inventory of parity.inventories">
+        <summary>
+          <span>
+            <strong>{{ inventory.project }}</strong>
+            <small>{{ inventory.license }} · {{ inventory.features.length }} reviewed feature groups</small>
+          </span>
+          <span class="rl__inventory-counts">
+            <nz-tag nzColor="green">{{ implementationCount(inventory, 'implemented') }} HAI present</nz-tag>
+            <nz-tag nzColor="gold">{{ backlogCount(inventory) }} backlog</nz-tag>
+            <nz-tag>{{ inventory.readinessCeiling }}</nz-tag>
+          </span>
+        </summary>
+
+        <div class="rl__inventory-meta">
+          <div><span>Reviewed revision</span><code>{{ inventory.reviewedRevision | slice:0:12 }}</code></div>
+          <div><span>Release</span><strong>{{ inventory.reviewedRelease || 'No formal release recorded' }}</strong></div>
+          <div><span>Authority</span><strong>{{ inventory.canonicalAuthority }}</strong></div>
+          <div><span>License policy</span><strong>{{ inventory.licensePolicy }}</strong></div>
+        </div>
+
+        <section class="rl__capabilities" *ngIf="cardsForRuntime(inventory.runtimeId) as cards">
+          <header>
+            <div>
+              <strong>HAI capability contracts</strong>
+              <span>{{ capabilityOverview?.safetyNote || 'Capability contracts are unavailable.' }}</span>
+            </div>
+            <nz-tag>{{ capabilityOverview?.authority || 'unavailable' }}</nz-tag>
+          </header>
+          <p *ngIf="capabilityLoading" class="rl__muted">Loading HAI capability contracts...</p>
+          <p *ngIf="!capabilityLoading && !cards.length" class="rl__muted">No reviewed HAI capability card is registered.</p>
+          <article class="rl__capability" *ngFor="let card of cards">
+            <div>
+              <strong>{{ card.name }}</strong>
+              <span>{{ card.purpose }}</span>
+            </div>
+            <dl>
+              <div><dt>Readiness</dt><dd>{{ card.readinessLevel }} · {{ card.readinessReason }}</dd></div>
+              <div><dt>Authority</dt><dd>{{ card.requiredAuthority.join(' + ') }}</dd></div>
+              <div><dt>Safety</dt><dd>{{ card.riskLevel }} risk · {{ card.reversibility }} · max EUR {{ card.expectedCostEurMax }}</dd></div>
+              <div><dt>Verification</dt><dd>{{ card.verificationMethod }}</dd></div>
+              <ng-container *ngIf="card.latestDiscovery as discovery">
+                <div><dt>Protocol</dt><dd>{{ discovery.protocol || 'unverified' }} · {{ discovery.discoveryState }}</dd></div>
+                <div><dt>Identity</dt><dd>{{ discovery.identityVerified ? 'verified response identity' : 'not carried by this protocol' }}</dd></div>
+                <div><dt>Version</dt><dd>{{ discovery.runtimeVersion || 'not reported' }}</dd></div>
+                <div><dt>Evidence</dt><dd><code>{{ discovery.evidenceSha256 | slice:0:16 }}</code> · {{ discovery.checkedAt | date:'medium' }}</dd></div>
+              </ng-container>
+            </dl>
+            <nz-tag [nzColor]="card.canInvoke ? 'green' : 'gold'">
+              {{ card.canInvoke ? 'read-only discovery available' : 'contract only' }}
+            </nz-tag>
+          </article>
+        </section>
+
+        <div class="rl__feature-list">
+          <article class="rl__feature" *ngFor="let feature of inventory.features; trackBy: featureTrackBy">
+            <header>
+              <div>
+                <strong>{{ feature.name }}</strong>
+                <span>{{ feature.purpose }}</span>
+              </div>
+              <nz-tag [nzColor]="dispositionColor(feature.disposition)">
+                {{ dispositionLabel(feature.disposition) }}
+              </nz-tag>
+            </header>
+            <p>{{ feature.integrationApproach }}</p>
+            <dl>
+              <div><dt>HAI equivalent</dt><dd>{{ feature.haiEquivalent || 'None yet' }}</dd></div>
+              <div><dt>Security</dt><dd>{{ feature.securityImplications }}</dd></div>
+              <div><dt>Evidence</dt><dd>{{ feature.testStatus }} · {{ feature.documentationStatus }}</dd></div>
+              <div *ngIf="feature.exclusionReason"><dt>Reason</dt><dd>{{ feature.exclusionReason }}</dd></div>
+              <div *ngIf="feature.recommendedPath"><dt>Next path</dt><dd>{{ feature.backlogPriority }} · {{ feature.recommendedPath }}</dd></div>
+            </dl>
+            <div class="rl__coverage">
+              <span *ngFor="let area of feature.coverageAreas">{{ area.replace('_', ' ') }}</span>
+            </div>
+            <div class="rl__sources">
+              <a *ngFor="let source of feature.sourceUrls; index as i" [href]="source" target="_blank" rel="noopener noreferrer">
+                Source {{ i + 1 }}
+              </a>
+            </div>
+          </article>
+        </div>
+      </details>
+    </div>
+  </details>
+
   <details class="rl__mcp" [open]="!!mcpOverview?.servers?.length">
     <summary>Approved MCP server readiness (advanced)</summary>
     <p>

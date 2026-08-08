@@ -411,9 +411,9 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[0].EndpointURL = server.URL
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Summarize this short note",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "ollama",
@@ -421,7 +421,7 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 			SelectedModelName:  "Phi small local",
 			Tier:               TierFree,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -538,10 +538,11 @@ func TestProbeProvidersChecksOllamaTags(t *testing.T) {
 	}
 }
 
-func TestRouteRefreshesDueOllamaModelBeforeSelectingIt(t *testing.T) {
+func TestRouteIsReadOnlyAndGenerateAuthorizesDueOllamaRefresh(t *testing.T) {
 	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
 	digest := "sha256:old"
 	pulls := 0
+	generations := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
@@ -557,6 +558,9 @@ func TestRouteRefreshesDueOllamaModelBeforeSelectingIt(t *testing.T) {
 			pulls++
 			digest = "sha256:new"
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		case "/api/generate":
+			generations++
+			_ = json.NewEncoder(w).Encode(map[string]string{"response": "authorized draft"})
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -566,7 +570,7 @@ func TestRouteRefreshesDueOllamaModelBeforeSelectingIt(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[0].EndpointURL = server.URL
 	policy.Providers[0].Models = []Model{{ID: "phi3:mini", Name: "Phi", Tier: TierLocal, Capabilities: []string{"general", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true}}
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	decision, err := service.Route(RouteRequest{Task: "classify this"})
 	if err != nil {
@@ -575,10 +579,25 @@ func TestRouteRefreshesDueOllamaModelBeforeSelectingIt(t *testing.T) {
 	if decision.SelectedModelID != "phi3:mini" {
 		t.Fatalf("selected model = %q", decision.SelectedModelID)
 	}
-	if pulls != 1 {
-		t.Fatalf("pulls = %d, want 1", pulls)
+	if pulls != 0 {
+		t.Fatalf("routing performed a model pull before final-effect authorization: %d", pulls)
 	}
 	history, err := service.ModelMaintenanceHistory(10)
+	if err != nil || len(history) != 0 {
+		t.Fatalf("routing performed maintenance checks: history=%#v err=%v", history, err)
+	}
+
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
+		Task:          "classify this",
+		RouteDecision: &decision,
+	}))
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "completed" || pulls != 1 || generations != 1 {
+		t.Fatalf("authorized generation=%#v pulls=%d generations=%d", result, pulls, generations)
+	}
+	history, err = service.ModelMaintenanceHistory(10)
 	if err != nil || len(history) != 1 {
 		t.Fatalf("history = %#v, err = %v", history, err)
 	}
@@ -591,11 +610,11 @@ func TestRouteRefreshesDueOllamaModelBeforeSelectingIt(t *testing.T) {
 		t.Fatalf("second Route: %v", err)
 	}
 	if pulls != 1 {
-		t.Fatalf("daily record was not reused; pulls = %d", pulls)
+		t.Fatalf("read-only route changed maintenance state; pulls = %d", pulls)
 	}
 }
 
-func TestRouteDoesNotReuseMaintenanceEvidenceAfterProviderEndpointChanges(t *testing.T) {
+func TestMaintenanceAuthorizationDoesNotReuseEvidenceAfterProviderEndpointChanges(t *testing.T) {
 	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
 	firstPulls := 0
 	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -629,10 +648,17 @@ func TestRouteDoesNotReuseMaintenanceEvidenceAfterProviderEndpointChanges(t *tes
 	policy.Providers[0].EndpointURL = first.URL
 	policy.Providers[0].Models = []Model{{ID: "phi3:mini", Name: "Phi", Tier: TierLocal, Capabilities: []string{"general", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true}}
 	history := &fakeModelMaintenanceRepository{}
-	service := &Service{policy: policy, maintenanceHistory: history, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: history, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	if _, err := service.Route(RouteRequest{Task: "classify this"}); err != nil {
 		t.Fatalf("first Route: %v", err)
+	}
+	if firstPulls != 0 || secondPulls != 0 {
+		t.Fatalf("routing performed maintenance effects: first:%d second:%d", firstPulls, secondPulls)
+	}
+	firstRun := service.RunDueModelMaintenance()
+	if firstRun.Failed != 0 {
+		t.Fatalf("first authorized maintenance run = %#v", firstRun)
 	}
 	if firstPulls != 1 || secondPulls != 0 {
 		t.Fatalf("first daily check pulls = first:%d second:%d", firstPulls, secondPulls)
@@ -641,6 +667,13 @@ func TestRouteDoesNotReuseMaintenanceEvidenceAfterProviderEndpointChanges(t *tes
 	service.policy.Providers[0].EndpointURL = second.URL
 	if _, err := service.Route(RouteRequest{Task: "classify this after operator endpoint change"}); err != nil {
 		t.Fatalf("second Route: %v", err)
+	}
+	if secondPulls != 0 {
+		t.Fatalf("changed endpoint triggered a pull during routing: %d", secondPulls)
+	}
+	secondRun := service.RunDueModelMaintenance()
+	if secondRun.Failed != 0 {
+		t.Fatalf("second authorized maintenance run = %#v", secondRun)
 	}
 	if secondPulls != 1 {
 		t.Fatalf("changed endpoint reused old maintenance evidence; second pulls = %d", secondPulls)
@@ -654,7 +687,7 @@ func TestRouteDoesNotReuseMaintenanceEvidenceAfterProviderEndpointChanges(t *tes
 	}
 }
 
-func TestRouteInstallsMissingConfiguredOllamaModelBeforeSelectingIt(t *testing.T) {
+func TestGenerateAuthorizesMissingConfiguredOllamaModelInstallation(t *testing.T) {
 	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
 	installed := false
 	pulls := 0
@@ -677,6 +710,8 @@ func TestRouteInstallsMissingConfiguredOllamaModelBeforeSelectingIt(t *testing.T
 			pulls++
 			installed = true
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		case "/api/generate":
+			_ = json.NewEncoder(w).Encode(map[string]string{"response": "installed model draft"})
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -686,14 +721,21 @@ func TestRouteInstallsMissingConfiguredOllamaModelBeforeSelectingIt(t *testing.T
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[0].EndpointURL = server.URL
 	policy.Providers[0].Models = []Model{{ID: "phi3:mini", Name: "Phi", Tier: TierLocal, Capabilities: []string{"general", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true}}
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	decision, err := service.Route(RouteRequest{Task: "classify this"})
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
-	if decision.SelectedModelID != "phi3:mini" || pulls != 1 {
+	if decision.SelectedModelID != "phi3:mini" || pulls != 0 {
 		t.Fatalf("decision=%#v pulls=%d", decision, pulls)
+	}
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
+		Task:          "classify this",
+		RouteDecision: &decision,
+	}))
+	if err != nil || result.Status != "completed" || pulls != 1 {
+		t.Fatalf("authorized generation=%#v pulls=%d err=%v", result, pulls, err)
 	}
 	history, err := service.ModelMaintenanceHistory(10)
 	if err != nil || len(history) != 1 {
@@ -704,7 +746,7 @@ func TestRouteInstallsMissingConfiguredOllamaModelBeforeSelectingIt(t *testing.T
 	}
 }
 
-func TestRouteBlocksOllamaModelWhenTheRuntimeTagsLackADigest(t *testing.T) {
+func TestGenerateBlocksOllamaModelWhenAuthorizedRefreshCannotVerifyDigest(t *testing.T) {
 	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
 	pulls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -725,14 +767,24 @@ func TestRouteBlocksOllamaModelWhenTheRuntimeTagsLackADigest(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[0].EndpointURL = server.URL
 	policy.Providers[0].Models = []Model{{ID: "phi3:mini", Name: "Phi", Tier: TierLocal, Capabilities: []string{"general", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true}}
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	decision, err := service.Route(RouteRequest{Task: "classify this"})
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
-	if decision.SelectedModelID != "" || pulls != 0 {
+	if decision.SelectedModelID != "phi3:mini" || pulls != 0 {
 		t.Fatalf("decision=%#v pulls=%d", decision, pulls)
+	}
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
+		Task:          "classify this",
+		RouteDecision: &decision,
+	}))
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Status != "skipped" || pulls != 1 || !strings.Contains(result.Reason, "no verifiable digest") {
+		t.Fatalf("result=%#v pulls=%d", result, pulls)
 	}
 	history, err := service.ModelMaintenanceHistory(10)
 	if err != nil || len(history) != 1 {
@@ -743,9 +795,11 @@ func TestRouteBlocksOllamaModelWhenTheRuntimeTagsLackADigest(t *testing.T) {
 	}
 }
 
-func TestRouteFallsBackWhenDailyOllamaRefreshFails(t *testing.T) {
+func TestRouteDoesNotRunFailingMaintenanceOrPrematurelyFallback(t *testing.T) {
 	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
+	maintenanceRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		maintenanceRequests++
 		if r.URL.Path == "/api/tags" {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"models": []map[string]string{{"name": "phi3:mini", "digest": "sha256:old"}}})
 			return
@@ -758,6 +812,7 @@ func TestRouteFallsBackWhenDailyOllamaRefreshFails(t *testing.T) {
 	}))
 	defer server.Close()
 	freeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		maintenanceRequests++
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("free cloud maintenance path = %s", r.URL.Path)
 		}
@@ -783,11 +838,11 @@ func TestRouteFallsBackWhenDailyOllamaRefreshFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
-	if decision.SelectedProviderID != "free-cloud" {
-		t.Fatalf("provider = %q, want fallback free-cloud; skipped=%#v", decision.SelectedProviderID, decision.Skipped)
+	if decision.SelectedProviderID != "ollama" {
+		t.Fatalf("provider = %q, want read-only local selection; skipped=%#v", decision.SelectedProviderID, decision.Skipped)
 	}
-	if len(decision.Skipped) == 0 || !strings.Contains(decision.Skipped[len(decision.Skipped)-1].Reason, "daily model maintenance") {
-		t.Fatalf("skipped = %#v", decision.Skipped)
+	if maintenanceRequests != 0 {
+		t.Fatalf("Route performed %d maintenance network requests", maintenanceRequests)
 	}
 }
 
@@ -828,12 +883,12 @@ func TestGenerateReroutesWhenSuppliedDecisionBecomesBlockedByMaintenance(t *test
 	policy.Providers[freeIndex].EndpointURL = free.URL
 	policy.Providers[freeIndex].QuotaRemaining = 10
 	policy.Providers[freeIndex].Models = []Model{{ID: "free-best-available", Name: "Free fallback", Tier: TierFree, Capabilities: []string{"general"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true}}
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task:          "draft a short update",
 		RouteDecision: &RouteDecision{SelectedProviderID: "ollama", SelectedModelID: "phi3:mini", SelectedModelName: "Phi", Tier: TierLocal},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -845,7 +900,7 @@ func TestGenerateReroutesWhenSuppliedDecisionBecomesBlockedByMaintenance(t *test
 	}
 }
 
-func TestRouteVerifiesExactFreeCloudModelBeforeSelectingIt(t *testing.T) {
+func TestRouteIsReadOnlyAndMaintenanceVerifiesExactFreeCloudModel(t *testing.T) {
 	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
 	probes := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -865,7 +920,7 @@ func TestRouteVerifiesExactFreeCloudModelBeforeSelectingIt(t *testing.T) {
 			Models: []Model{{ID: "free-verified", Name: "Verified free model", Tier: TierFree, Capabilities: []string{"general"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true}},
 		}},
 	}
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	decision, err := service.Route(RouteRequest{Task: "plan this"})
 	if err != nil {
@@ -875,6 +930,14 @@ func TestRouteVerifiesExactFreeCloudModelBeforeSelectingIt(t *testing.T) {
 		t.Fatalf("selected model = %q, skipped=%#v", decision.SelectedModelID, decision.Skipped)
 	}
 	history, err := service.ModelMaintenanceHistory(10)
+	if err != nil || len(history) != 0 || probes != 0 {
+		t.Fatalf("Route performed provider verification: history=%#v probes=%d err=%v", history, probes, err)
+	}
+	run := service.RunDueModelMaintenance()
+	if run.Failed != 0 || run.Checked != 1 {
+		t.Fatalf("maintenance run=%#v", run)
+	}
+	history, err = service.ModelMaintenanceHistory(10)
 	if err != nil || len(history) != 1 || history[0].Status != "provider_managed" || history[0].BlocksExecution {
 		t.Fatalf("maintenance history = %#v, err=%v", history, err)
 	}
@@ -889,11 +952,17 @@ func TestRouteVerifiesExactFreeCloudModelBeforeSelectingIt(t *testing.T) {
 	if probes != 1 {
 		t.Fatalf("daily cloud record was not reused; probes=%d", probes)
 	}
+	secondRun := service.RunDueModelMaintenance()
+	if secondRun.Reused != 1 || probes != 1 {
+		t.Fatalf("second maintenance run=%#v probes=%d", secondRun, probes)
+	}
 }
 
-func TestRouteSkipsModelWhenDailyCheckCannotVerifyConfiguredIdentifier(t *testing.T) {
+func TestMaintenanceFailureMakesLaterRoutesSkipUnverifiedIdentifier(t *testing.T) {
 	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
+	probes := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probes++
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"id": "other-model"}}})
 	}))
 	defer server.Close()
@@ -906,14 +975,25 @@ func TestRouteSkipsModelWhenDailyCheckCannotVerifyConfiguredIdentifier(t *testin
 			Models: []Model{{ID: "configured-model", Name: "Configured free model", Tier: TierFree, Capabilities: []string{"general"}, MaxDifficulty: 5, MaxReasoning: "very_high", Enabled: true}},
 		}},
 	}
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	decision, err := service.Route(RouteRequest{Task: "plan this"})
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
-	if decision.SelectedModelID != "" || len(decision.Skipped) == 0 {
+	if decision.SelectedModelID != "configured-model" || probes != 0 {
 		t.Fatalf("decision = %#v", decision)
+	}
+	run := service.RunDueModelMaintenance()
+	if run.Failed != 1 || probes != 1 {
+		t.Fatalf("maintenance run=%#v probes=%d", run, probes)
+	}
+	decision, err = service.Route(RouteRequest{Task: "plan this after failed verification"})
+	if err != nil {
+		t.Fatalf("second Route: %v", err)
+	}
+	if decision.SelectedModelID != "" || len(decision.Skipped) == 0 {
+		t.Fatalf("decision after failed verification = %#v", decision)
 	}
 	history, err := service.ModelMaintenanceHistory(10)
 	if err != nil || len(history) != 1 || history[0].Status != "failed" || !history[0].BlocksExecution {
@@ -950,7 +1030,7 @@ func TestRunDueModelMaintenanceRefreshesEveryEnabledConfiguredLocalModel(t *test
 		{ID: "qwen2.5:7b", Name: "Qwen", Tier: TierLocal, Enabled: true},
 		{ID: "disabled:local", Name: "Disabled", Tier: TierLocal, Enabled: false},
 	}
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	run := service.RunDueModelMaintenance()
 	if run.Eligible != 2 || run.Checked != 2 || run.Reused != 0 || run.Failed != 0 || len(run.Results) != 2 {
@@ -1203,9 +1283,9 @@ func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[1].EndpointURL = server.URL
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Plan the work",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "lm-studio",
@@ -1213,7 +1293,7 @@ func TestGenerateCallsOpenAICompatibleEndpoint(t *testing.T) {
 			SelectedModelName:  "Configured LM Studio local model",
 			Tier:               TierFree,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1249,7 +1329,7 @@ func TestLlamaCPPProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing
 	llamaIndex := providerIndex(t, policy, "llama-cpp")
 	policy.Providers[llamaIndex].EndpointURL = server.URL
 	policy.Providers[llamaIndex].Models[0].ID = "qwen3-gguf"
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
 	var probe ProviderProbeResult
 	for _, result := range service.ProbeProviders() {
@@ -1262,7 +1342,7 @@ func TestLlamaCPPProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing
 		t.Fatalf("probe = %#v, want live llama.cpp provider with one model", probe)
 	}
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Draft a local answer",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "llama-cpp",
@@ -1270,7 +1350,7 @@ func TestLlamaCPPProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing
 			SelectedModelName:  "Configured llama.cpp GGUF model",
 			Tier:               TierLocal,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1303,7 +1383,7 @@ func TestLocalAIProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.
 	localAIIndex := providerIndex(t, policy, "localai")
 	policy.Providers[localAIIndex].EndpointURL = server.URL
 	policy.Providers[localAIIndex].Models[0].ID = "qwen-localai"
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
 	var probe ProviderProbeResult
 	for _, result := range service.ProbeProviders() {
@@ -1316,7 +1396,7 @@ func TestLocalAIProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.
 		t.Fatalf("probe = %#v, want live LocalAI provider with one model", probe)
 	}
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Draft a local answer",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "localai",
@@ -1324,7 +1404,7 @@ func TestLocalAIProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.
 			SelectedModelName:  "Configured LocalAI local model",
 			Tier:               TierLocal,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1357,7 +1437,7 @@ func TestVLLMProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) 
 	vllmIndex := providerIndex(t, policy, "vllm")
 	policy.Providers[vllmIndex].EndpointURL = server.URL
 	policy.Providers[vllmIndex].Models[0].ID = "qwen-vllm"
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
 	var probe ProviderProbeResult
 	for _, result := range service.ProbeProviders() {
@@ -1370,7 +1450,7 @@ func TestVLLMProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) 
 		t.Fatalf("probe = %#v, want live vLLM provider with one model", probe)
 	}
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Draft a local answer",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "vllm",
@@ -1378,7 +1458,7 @@ func TestVLLMProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T) 
 			SelectedModelName:  "Configured vLLM local model",
 			Tier:               TierLocal,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1411,7 +1491,7 @@ func TestSGLangProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T
 	provider := providerIndex(t, policy, "sglang")
 	policy.Providers[provider].EndpointURL = server.URL
 	policy.Providers[provider].Models[0].ID = "qwen-sglang"
-	service := &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}})
 
 	var probe ProviderProbeResult
 	for _, result := range service.ProbeProviders() {
@@ -1424,7 +1504,7 @@ func TestSGLangProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T
 		t.Fatalf("probe = %#v, want live SGLang provider with one model", probe)
 	}
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Draft a local answer",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "sglang",
@@ -1432,7 +1512,7 @@ func TestSGLangProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testing.T
 			SelectedModelName:  "Configured SGLang local model",
 			Tier:               TierLocal,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1469,7 +1549,7 @@ func TestMistralRSProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testin
 	provider := providerIndex(t, policy, "mistral-rs")
 	policy.Providers[provider].EndpointURL = server.URL
 	policy.Providers[provider].Models[0].ID = "qwen-mistralrs"
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
 	var probe ProviderProbeResult
 	for _, result := range service.ProbeProviders() {
@@ -1482,7 +1562,7 @@ func TestMistralRSProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testin
 		t.Fatalf("probe = %#v, want live mistral.rs provider with one model", probe)
 	}
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Draft a local answer",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "mistral-rs",
@@ -1490,7 +1570,7 @@ func TestMistralRSProviderProbesAndGeneratesThroughOpenAICompatibleAPI(t *testin
 			SelectedModelName:  "Configured mistral.rs local model",
 			Tier:               TierLocal,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1521,7 +1601,7 @@ func TestLiteLLMGatewayUsesVirtualKeyAndRequiresGenerationApproval(t *testing.T)
 	policy.Providers[liteLLMIndex].Enabled = true
 	policy.Providers[liteLLMIndex].EndpointURL = server.URL
 	policy.Providers[liteLLMIndex].Models[0].ID = "local-qwen"
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
 	var probe ProviderProbeResult
 	for _, result := range service.ProbeProviders() {
@@ -1543,7 +1623,7 @@ func TestLiteLLMGatewayUsesVirtualKeyAndRequiresGenerationApproval(t *testing.T)
 		t.Fatalf("status = %q, want blocked before manual approval", blocked.Status)
 	}
 
-	completed, err := service.Generate(GenerateRequest{Task: "Draft a local answer", RouteDecision: decision, AllowPaidApproved: true})
+	completed, err := service.Generate(withTrustedTestEffect(GenerateRequest{Task: "Draft a local answer", RouteDecision: decision, AllowPaidApproved: true}))
 	if err != nil {
 		t.Fatalf("Generate approved: %v", err)
 	}
@@ -1569,13 +1649,13 @@ func TestLiteLLMGatewayGenerationRequiresLiveProbe(t *testing.T) {
 	liteLLMIndex := providerIndex(t, policy, "litellm")
 	policy.Providers[liteLLMIndex].Enabled = true
 	policy.Providers[liteLLMIndex].EndpointURL = server.URL
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task:              "Draft a local answer",
 		AllowPaidApproved: true,
 		RouteDecision:     &RouteDecision{SelectedProviderID: "litellm", SelectedModelID: "local-model", SelectedModelName: "Configured LiteLLM local model alias", Tier: TierLocal},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1680,7 +1760,7 @@ func TestGenerateBlocksOdysseusExecutionEvenWhenInternallyApproved(t *testing.T)
 	policy.Providers[odysseusIndex].EndpointURL = server.URL
 	service := &Service{policy: policy}
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task:              "Let Odysseus run this autonomous agent task",
 		AllowPaidApproved: true,
 		RouteDecision: &RouteDecision{
@@ -1689,7 +1769,7 @@ func TestGenerateBlocksOdysseusExecutionEvenWhenInternallyApproved(t *testing.T)
 			SelectedModelName:  "Odysseus workspace agent",
 			Tier:               TierFree,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1854,9 +1934,9 @@ func TestGenerateTracksModelLevelUsageAndTokenPrice(t *testing.T) {
 	policy.Providers[1].EndpointURL = server.URL
 	policy.Providers[1].Models[0].InputCostPerMillionTokensEUR = 10
 	policy.Providers[1].Models[0].OutputCostPerMillionTokensEUR = 20
-	service := &Service{policy: policy}
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
-	result, err := service.Generate(GenerateRequest{
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Plan this work item",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "lm-studio",
@@ -1864,7 +1944,7 @@ func TestGenerateTracksModelLevelUsageAndTokenPrice(t *testing.T) {
 			SelectedModelName:  "Configured LM Studio local model",
 			Tier:               TierLocal,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1906,8 +1986,8 @@ func TestGenerateUsesOllamaReportedTokenCounts(t *testing.T) {
 
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[0].EndpointURL = server.URL
-	service := &Service{policy: policy}
-	result, err := service.Generate(GenerateRequest{
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task: "Draft a local answer",
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "ollama",
@@ -1915,7 +1995,7 @@ func TestGenerateUsesOllamaReportedTokenCounts(t *testing.T) {
 			SelectedModelName:  "Phi small local",
 			Tier:               TierLocal,
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -1936,11 +2016,11 @@ func TestGeneratePersistsRedactedOperationalEvidence(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[1].EndpointURL = server.URL
 	history := &fakeGenerationHistoryRepository{}
-	service := &Service{policy: policy, generationHistory: history}
-	result, err := service.Generate(GenerateRequest{
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, generationHistory: history})
+	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
 		Task:          "Draft a safe local answer",
 		RouteDecision: &RouteDecision{SelectedProviderID: "lm-studio", SelectedModelID: "local-model", SelectedModelName: "Configured LM Studio local model", Tier: TierLocal},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

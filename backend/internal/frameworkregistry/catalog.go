@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var catalogSemanticVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+var catalogSemanticVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 var catalogPlaceholderPattern = regexp.MustCompile(`(?i)\b(tbd|placeholder|framework[- ]specific|input goes here|output goes here)\b`)
 
 var forbiddenGenericCatalogEntries = map[string]struct{}{
@@ -28,6 +28,7 @@ var forbiddenGenericCatalogEntries = map[string]struct{}{
 
 type catalogSpec struct {
 	id              string
+	version         string
 	name            string
 	family          string
 	purpose         string
@@ -44,7 +45,7 @@ type catalogSpec struct {
 	conflicts       []string
 }
 
-// BuiltinCatalog returns a fresh copy of the complete v1 framework taxonomy.
+// BuiltinCatalog returns a fresh copy of the complete v2 framework taxonomy.
 // The records are configuration and decision metadata; implementation products
 // named by the catalog are candidates, not installed or trusted dependencies.
 func BuiltinCatalog() []Framework {
@@ -384,12 +385,12 @@ func BuiltinCatalog() []Framework {
 			evaluation: []string{"verified completion rate by route", "paid calls remain disabled unless approved"},
 		},
 		{
-			id: "evaluation", name: "Evaluation", family: "evaluation",
+			id: "evaluation", version: "1.1.0", name: "Evaluation", family: "evaluation",
 			purpose:  "Measure task success, groundedness, policy compliance, tool correctness, cost, latency, and user outcome with suitable evaluators.",
 			problems: []string{"quality evaluation", "benchmark", "acceptance test", "regression"},
 			triggers: []string{"evaluate", "test", "benchmark", "quality", "acceptance", "score"},
 			agents:   []string{"evaluation_agent", "critic"}, authority: "test and report",
-			maxAutonomy: 4, riskCeiling: "medium",
+			maxAutonomy: 4, riskCeiling: "high",
 			evidence:   []string{"evaluation dataset or criteria", "reproducible result", "known limitations"},
 			evaluation: []string{"evaluators correlate with real success", "synthetic tests are not represented as real-world proof"},
 		},
@@ -632,9 +633,13 @@ func materializeFramework(section int, spec catalogSpec) Framework {
 	if isProtectedMandatoryFramework(spec.id) {
 		frameworkControl = "operator may pin this protected safety overlay but cannot disable it"
 	}
+	version := spec.version
+	if version == "" {
+		version = "1.0.0"
+	}
 	return Framework{
 		ID:                   spec.id,
-		Version:              "1.0.0",
+		Version:              version,
 		Name:                 spec.name,
 		Family:               spec.family,
 		Purpose:              spec.purpose,
@@ -670,12 +675,16 @@ func materializeFramework(section int, spec catalogSpec) Framework {
 }
 
 func ValidateCatalog(items []Framework) error {
-	if len(items) != 55 {
-		return fmt.Errorf("framework catalog must contain 55 entries, got %d", len(items))
+	if len(items) < 55 {
+		return fmt.Errorf(
+			"framework catalog must contain 55 stable framework IDs, got at most %d",
+			len(items),
+		)
 	}
 	seenIDs := make(map[string]struct{}, len(items))
 	seenVersionedIDs := make(map[string]struct{}, len(items))
-	frameworksByNormalizedID := make(map[string]Framework, len(items))
+	frameworksByNormalizedID := make(map[string][]Framework, len(items))
+	frameworkIdentityByNormalizedID := make(map[string]Framework, len(items))
 	for _, item := range items {
 		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Version) == "" ||
 			strings.TrimSpace(item.Name) == "" || strings.TrimSpace(item.Family) == "" ||
@@ -696,11 +705,21 @@ func ValidateCatalog(items []Framework) error {
 			return fmt.Errorf("duplicate versioned framework record %q", versionedID)
 		}
 		seenVersionedIDs[versionedID] = struct{}{}
-		if _, ok := seenIDs[normalizedID]; ok {
-			return fmt.Errorf("duplicate framework id %q", item.ID)
+		if identity, ok := frameworkIdentityByNormalizedID[normalizedID]; ok {
+			if !sameFrameworkIdentity(identity, item) {
+				return fmt.Errorf(
+					"framework %q changes stable name or family across versions",
+					item.ID,
+				)
+			}
+		} else {
+			frameworkIdentityByNormalizedID[normalizedID] = item
 		}
 		seenIDs[normalizedID] = struct{}{}
-		frameworksByNormalizedID[normalizedID] = item
+		frameworksByNormalizedID[normalizedID] = append(
+			frameworksByNormalizedID[normalizedID],
+			item,
+		)
 		if item.MaximumAutonomyLevel < 0 || item.MaximumAutonomyLevel > 10 {
 			return fmt.Errorf("framework %q has invalid autonomy level %d", item.ID, item.MaximumAutonomyLevel)
 		}
@@ -732,7 +751,20 @@ func ValidateCatalog(items []Framework) error {
 			return err
 		}
 	}
-	for _, item := range items {
+	if len(seenIDs) != 55 {
+		return fmt.Errorf(
+			"framework catalog must contain 55 stable framework IDs, got %d",
+			len(seenIDs),
+		)
+	}
+	activeByNormalizedID := make(map[string]Framework, len(frameworksByNormalizedID))
+	for id, versions := range frameworksByNormalizedID {
+		sort.SliceStable(versions, func(i, j int) bool {
+			return compareSemanticVersions(versions[i].Version, versions[j].Version) > 0
+		})
+		activeByNormalizedID[id] = versions[0]
+	}
+	for _, item := range activeByNormalizedID {
 		for _, conflict := range item.ConflictsWith {
 			normalizedConflict := strings.ToLower(strings.TrimSpace(conflict))
 			if normalizedConflict == strings.ToLower(strings.TrimSpace(item.ID)) {
@@ -741,7 +773,7 @@ func ValidateCatalog(items []Framework) error {
 			if _, ok := seenIDs[normalizedConflict]; !ok {
 				return fmt.Errorf("framework %q references unknown conflict %q", item.ID, conflict)
 			}
-			other := frameworksByNormalizedID[normalizedConflict]
+			other := activeByNormalizedID[normalizedConflict]
 			if !containsCatalogString(other.ConflictsWith, item.ID) {
 				return fmt.Errorf(
 					"framework conflict %q -> %q is not symmetric",

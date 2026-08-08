@@ -2,6 +2,7 @@ package googleoauth
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,6 +37,61 @@ func mockGmail(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func TestGmailHistoryUsesNativeCursorAndDeduplicatesMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/users/me/history" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("startHistoryId") != "100" || r.URL.Query().Get("historyTypes") != "messageAdded" {
+			t.Errorf("history query = %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"historyId":"105","history":[{"messagesAdded":[{"message":{"id":"m1"}},{"message":{"id":"m1"}},{"message":{"id":"m2"}}]}]}`))
+	}))
+	defer server.Close()
+
+	page, err := (GmailClient{AccessToken: "token", BaseURL: server.URL}).ListHistoryPage(context.Background(), "100", "", 50)
+	if err != nil || page.HistoryID != "105" || len(page.MessageIDs) != 2 || page.MessageIDs[0] != "m1" || page.MessageIDs[1] != "m2" {
+		t.Fatalf("ListHistoryPage = %#v, %v", page, err)
+	}
+}
+
+func TestGmailExpiredHistoryRequiresFullSync(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":404}}`))
+	}))
+	defer server.Close()
+
+	_, err := (GmailClient{AccessToken: "token", BaseURL: server.URL}).ListHistoryPage(context.Background(), "stale", "", 50)
+	if err != ErrHistoryCursorExpired {
+		t.Fatalf("error = %v, want ErrHistoryCursorExpired", err)
+	}
+}
+
+func TestGmailExtractsBodyAndBoundedTextAttachment(t *testing.T) {
+	body := base64.RawURLEncoding.EncodeToString([]byte("Please prepare the evidence bundle."))
+	attachment := base64.RawURLEncoding.EncodeToString([]byte("Decision: use the signed version."))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/users/me/messages/m1":
+			_, _ = w.Write([]byte(`{"id":"m1","threadId":"t1","historyId":"101","payload":{"headers":[{"name":"From","value":"lawyer@example.com"},{"name":"To","value":"robert@example.com"},{"name":"Subject","value":"Evidence"}],"parts":[{"mimeType":"text/plain","body":{"data":"` + body + `"}},{"mimeType":"text/plain","filename":"decision.txt","body":{"attachmentId":"a1","size":33}}]}}`))
+		case "/users/me/messages/m1/attachments/a1":
+			_, _ = w.Write([]byte(`{"size":33,"data":"` + attachment + `"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	message, err := (GmailClient{AccessToken: "token", BaseURL: server.URL}).GetMessageMetadata(context.Background(), "m1")
+	if err != nil || !strings.Contains(message.Body, "evidence bundle") || len(message.Attachments) != 1 || !message.Attachments[0].Fetched || !strings.Contains(message.Attachments[0].Content, "signed version") {
+		t.Fatalf("message = %#v, err=%v", message, err)
+	}
 }
 
 func TestGmailFetchRecentParsesHeadersAndSnippet(t *testing.T) {

@@ -10,20 +10,21 @@ import (
 
 func healthyConfig() config.Configuration {
 	return config.Configuration{
-		BaseUrl:         "/api",
-		ServerPort:      ":80",
-		DbHost:          "postgres-automation",
-		DbPort:          5432,
-		DbName:          "automation",
-		DbUser:          "postgres",
-		DbPassword:      "postgres",
-		ImageMaxSize:    5 * 1024 * 1024,
-		ImageSaveDir:    "images",
-		Brokers:         []string{"kafka1:9092", "kafka2:9093"},
-		Topic:           "automation-events",
-		BackendAPIKey:   "shared-key",
-		MemoryEngineKey: "encryption-key",
-		JWTSecret:       "jwt-signing-secret",
+		BaseUrl:                 "/api",
+		ServerPort:              ":80",
+		DbHost:                  "postgres-automation",
+		DbPort:                  5432,
+		DbName:                  "automation",
+		DbUser:                  "postgres",
+		DbPassword:              "postgres",
+		ImageMaxSize:            5 * 1024 * 1024,
+		ImageSaveDir:            "images",
+		Brokers:                 []string{"kafka1:9092", "kafka2:9093"},
+		Topic:                   "automation-events",
+		BackendAPIKey:           "shared-key",
+		MemoryEngineKey:         "encryption-key",
+		JWTSecret:               "jwt-signing-secret",
+		ApprovalProofSigningKey: "0123456789abcdef0123456789abcdef",
 	}
 }
 
@@ -87,6 +88,18 @@ func TestDiagnoseEmptySecretsWarnButDoNotFail(t *testing.T) {
 	for _, name := range []string{"security.backendApiKey", "security.memoryEncryptionKey", "database.password"} {
 		if c, ok := find(r, name); !ok || c.Severity != SeverityWarn {
 			t.Fatalf("%s severity = %s (found=%v), want warn", name, c.Severity, ok)
+		}
+	}
+}
+
+func TestDiagnoseMissingOrWeakApprovalProofKeyFails(t *testing.T) {
+	for _, value := range []string{"", "too-short"} {
+		cfg := healthyConfig()
+		cfg.ApprovalProofSigningKey = value
+		r := Diagnose(cfg)
+		check, ok := find(r, "security.approvalProofSigningKey")
+		if !ok || check.Severity != SeverityFail {
+			t.Fatalf("approval proof key %q severity = %s (found=%v), want fail", value, check.Severity, ok)
 		}
 	}
 }

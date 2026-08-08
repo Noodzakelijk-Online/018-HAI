@@ -26,6 +26,13 @@ import (
 
 const maxConversationBytes = 2 * 1024 * 1024
 
+const (
+	insightStatusCandidate       = "candidate"
+	insightStatusVerified        = "verified"
+	insightStatusSourceSupported = "source_supported"
+	insightStatusOwnerApproved   = "owner_approved"
+)
+
 type ChatMessage struct {
 	ExternalID string `json:"externalId,omitempty"`
 	Role       string `json:"role"`
@@ -520,7 +527,9 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*CommandDashboard, er
 		case "contradiction":
 			result.Contradictions = append(result.Contradictions, insight)
 		case "decision":
-			result.RecentDecisions = append(result.RecentDecisions, insight)
+			if reusableInsightEligible(insight) {
+				result.RecentDecisions = append(result.RecentDecisions, insight)
+			}
 		}
 		if insight.ProjectKey != "" {
 			project := projects[insight.ProjectKey]
@@ -592,6 +601,9 @@ func (s *service) SearchForOwner(ownerIdentity, query, projectKey string, limit 
 		if err != nil {
 			return nil, err
 		}
+		if ownerIdentity != "" {
+			retrieved.UsedContext = ownerScopedRankedMemories(retrieved.UsedContext, ownerIdentity)
+		}
 	}
 	all, err := s.repo.FindInsightsForOwner(ownerIdentity, "", projectKey, nil, 500)
 	if err != nil {
@@ -604,6 +616,9 @@ func (s *service) SearchForOwner(ownerIdentity, query, projectKey string, limit 
 	}
 	ranked := []scored{}
 	for _, insight := range all {
+		if !reusableInsightEligible(insight) {
+			continue
+		}
 		score := tokenOverlap(queryTokens, tokenSet(insight.Text+" "+insight.Kind+" "+insight.ProjectKey))
 		if score > 0 {
 			ranked = append(ranked, scored{item: insight, score: score})
@@ -712,10 +727,8 @@ func extractInsights(conversation models.AIConversationArchive, request ImportRe
 			owner := insightOwner(sentence)
 			robertNeeded := owner == "Robert" || risk != "low" || kind == "decision"
 			confidence := 0.78
-			needsReview := kind == "contradiction" || risk == "high" || len(sentence) < 24
-			if needsReview {
-				confidence = 0.55
-			}
+			needsReview := true
+			confidence = 0.55
 			result = append(result, models.AIMemoryInsight{
 				OwnerIdentity: conversation.OwnerIdentity,
 				Kind:          kind,
@@ -728,7 +741,7 @@ func extractInsights(conversation models.AIConversationArchive, request ImportRe
 				SourceURI:     conversation.SourceURI,
 				SourceLabel:   conversation.Platform + ": " + conversation.Title,
 				NeedsReview:   needsReview,
-				Status:        "open",
+				Status:        insightStatusCandidate,
 			})
 		}
 	}
@@ -814,7 +827,33 @@ func workflowInsightRequiresReview(insight models.AIMemoryInsight) bool {
 }
 
 func memoryEligible(insight models.AIMemoryInsight) bool {
-	return !insight.NeedsReview && insight.Confidence >= 0.65 && insight.Kind != "action"
+	return reusableInsightEligible(insight) && insight.Confidence >= 0.65 && insight.Kind != "action"
+}
+
+func reusableInsightEligible(insight models.AIMemoryInsight) bool {
+	if insight.NeedsReview {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(insight.Status)) {
+	case insightStatusVerified, insightStatusSourceSupported, insightStatusOwnerApproved:
+		return true
+	default:
+		return false
+	}
+}
+
+func ownerScopedRankedMemories(values []memory.RankedMemory, ownerIdentity string) []memory.RankedMemory {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return values
+	}
+	result := make([]memory.RankedMemory, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value.Memory.OwnerIdentity) == ownerIdentity {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func supportedPlatform(platform string) bool {

@@ -86,6 +86,14 @@
       <dt>Recorded</dt>
       <dd>{{ decision.createdAt | date: 'yyyy-MM-dd HH:mm': 'UTC' }} UTC</dd>
     </div>
+    <div>
+      <dt>Risk contract</dt>
+      <dd *ngIf="decision.taskRiskLevel && decision.effectiveRiskCeiling; else legacyRiskContract">
+        {{ humanize(decision.taskRiskLevel) }} task risk &middot;
+        {{ humanize(decision.effectiveRiskCeiling) }} effective ceiling
+      </dd>
+      <ng-template #legacyRiskContract><dd>Not recorded (pre-v5)</dd></ng-template>
+    </div>
     <div *ngIf="decision.capacity as capacity">
       <dt>Capacity</dt>
       <dd>
@@ -109,7 +117,11 @@
     >
       <span>
         <strong>{{ framework.name }}</strong>
-        <small>{{ humanize(framework.family) }} &middot; score {{ framework.score | number: '1.1-2' }}</small>
+        <small>
+          {{ humanize(framework.family) }} &middot;
+          {{ framework.riskCeiling ? (framework.riskCeiling + ' risk') : 'legacy risk contract' }} &middot;
+          score {{ framework.score | number: '1.1-2' }}
+        </small>
       </span>
       <span nz-icon nzType="right" aria-hidden="true"></span>
     </button>
@@ -323,6 +335,7 @@
           </div>
           <p>
             Level {{ framework.maximumAutonomyLevel }} &middot;
+            {{ framework.riskCeiling ? (framework.riskCeiling + ' risk ceiling') : 'legacy risk contract' }} &middot;
             {{ framework.authorityRequirement }}
           </p>
           <dl>

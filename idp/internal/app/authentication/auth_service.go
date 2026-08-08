@@ -203,9 +203,11 @@ func (a *service) Login(email, password string) (*dto.TokenDetails, error) {
 		return nil, errors.New("invalid credentials")
 	}
 
-	// Reset FailedAttempts since login is successful
+	// Successful authentication must not trigger the failed-attempt cooldown.
+	// Otherwise a valid second browser/session is rejected for the configured
+	// interval even though no brute-force signal exists.
 	user.FailedAttempts = 0
-	user.LastAttempt = &now
+	user.LastAttempt = nil
 	_, updateErr := a.userService.UpdateUser(*user)
 	if updateErr != nil {
 		a.logger.Error("Failed to reset failed attempts for user %s: %v", email, updateErr)

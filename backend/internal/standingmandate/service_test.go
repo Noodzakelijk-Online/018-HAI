@@ -58,6 +58,57 @@ func TestAuthorizeExactBoundedAction(t *testing.T) {
 	}
 }
 
+func TestAuthorizationSnapshotTracksExactPolicyLifecycle(t *testing.T) {
+	service, now := newTestService(t)
+	mandate := activateTestMandate(t, service, *now)
+
+	snapshot, err := service.GetAuthorizationSnapshot(
+		context.Background(),
+		"robert",
+		mandate.ID,
+	)
+	if err != nil {
+		t.Fatalf("GetAuthorizationSnapshot: %v", err)
+	}
+	if snapshot.ID != mandate.ID || snapshot.OwnerIdentity != "robert" ||
+		snapshot.Status != StatusActive || snapshot.Revision != mandate.Revision ||
+		len(snapshot.Digest) != 64 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	if _, err := service.GetAuthorizationSnapshot(
+		context.Background(),
+		"other-owner",
+		mandate.ID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other owner snapshot error = %v, want ErrNotFound", err)
+	}
+
+	revoked, err := service.Revoke(
+		context.Background(),
+		"robert",
+		mandate.ID,
+		mandate.Revision,
+		"robert",
+		"scope retired",
+	)
+	if err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	revokedSnapshot, err := service.GetAuthorizationSnapshot(
+		context.Background(),
+		"robert",
+		mandate.ID,
+	)
+	if err != nil {
+		t.Fatalf("GetAuthorizationSnapshot revoked: %v", err)
+	}
+	if revokedSnapshot.Status != StatusRevoked ||
+		revokedSnapshot.Revision != revoked.Revision ||
+		revokedSnapshot.Digest == snapshot.Digest {
+		t.Fatalf("revoked snapshot = %#v, active = %#v", revokedSnapshot, snapshot)
+	}
+}
+
 func TestAuthorizeDeniesOutOfScopeAndAutonomyAboveCeiling(t *testing.T) {
 	service, now := newTestService(t)
 	mandate := activateTestMandate(t, service, *now)

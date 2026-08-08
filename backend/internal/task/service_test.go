@@ -12,6 +12,7 @@ import (
 	"automation-hub-backend/internal/llm"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/resourceplanner"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/source"
 	"automation-hub-backend/internal/verification"
@@ -65,6 +66,30 @@ func TestPlanReturnsConfigurationErrorWhenLLMRouterIsMissing(t *testing.T) {
 	_, err := service.Plan(IntakeRequest{Request: "Prepare a bounded task plan"})
 	if !errors.Is(err, ErrTaskLLMRouterNotConfigured) {
 		t.Fatalf("Plan error = %v, want %v", err, ErrTaskLLMRouterNotConfigured)
+	}
+}
+
+func TestTaskEntryPointsRejectMalformedStandingMandateBeforePlanning(t *testing.T) {
+	engine := NewService(&fakeMemoryService{}, newTaskTestLLMService(t)).(*service)
+	request := IntakeRequest{
+		Request:   "Plan a harmless local checklist.",
+		MandateID: "not-a-uuid",
+	}
+
+	for name, call := range map[string]func(IntakeRequest) (*CompletionPlan, error){
+		"plan":    engine.Plan,
+		"preview": engine.Preview,
+		"run":     engine.Run,
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan, err := call(request)
+			if !errors.Is(err, ErrInvalidStandingMandateID) {
+				t.Fatalf("error = %v, want %v", err, ErrInvalidStandingMandateID)
+			}
+			if plan != nil {
+				t.Fatalf("malformed mandate returned a plan: %#v", plan)
+			}
+		})
 	}
 }
 
@@ -207,6 +232,37 @@ func TestRequiredFrameworkAutonomyDistinguishesApprovedAndAutomaticExecution(t *
 	}
 }
 
+func TestAssessRiskPreservesApprovalForRequirementsDiscoveredAfterIntake(t *testing.T) {
+	risk := assessRisk(IntakeAnalysis{
+		RiskLevel:  "low",
+		NeedsTools: true,
+	}, IntakeRequest{
+		Request:        "Run the selected read-only readiness probe",
+		AutomationID:   "controlled-runtime",
+		ExecuteAllowed: true,
+		HumanApproved:  true,
+	})
+
+	if !risk.ApprovalGranted {
+		t.Fatalf("recorded approval was lost before later planning gates: %#v", risk)
+	}
+	if !risk.AllowedNow {
+		t.Fatalf("approved low-risk execution should remain eligible: %#v", risk)
+	}
+
+	decision := &resourceplanner.Decision{
+		Authority:       "advisory_only",
+		Feasibility:     resourceplanner.FeasibleWithApprovals,
+		ApprovalFlags:   []resourceplanner.ApprovalFlag{{Code: "operator_review"}},
+		CanExecute:      false,
+		GrantsAuthority: false,
+	}
+	risk = applyResourcePlanningRisk(risk, decision)
+	if !risk.ApprovalRequired || !risk.ApprovalGranted || !risk.AllowedNow {
+		t.Fatalf("resource planning overrode the recorded approval: %#v", risk)
+	}
+}
+
 func TestAnalyzeIntakeDoesNotRequireRuntimeForAPIExplanation(t *testing.T) {
 	analysis := analyzeIntake(IntakeRequest{Request: "Explain the API architecture and compare routing options"})
 	if analysis.NeedsTools || analysis.NeedsLocalExecution {
@@ -281,6 +337,49 @@ func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.
 	}
 	if len(src.searchRequests) != 1 || src.searchRequests[0].OwnerIdentity != "alice" {
 		t.Fatalf("source search requests = %#v, want owner alice", src.searchRequests)
+	}
+}
+
+func TestPlanUsesOwnerScopedCalendarCapacityEvidence(t *testing.T) {
+	now := time.Now().UTC()
+	src := &fakeTaskSourceService{calendarBusy: []source.CalendarBusyInterval{{
+		Start: now.Add(10 * time.Minute), End: now.Add(50 * time.Minute),
+		Title: "Existing appointment", SourceURI: "https://calendar.example/event", SourceID: uuid.NewString(),
+	}}}
+	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t), src)
+	plan, err := service.Plan(IntakeRequest{
+		OwnerIdentity: "alice", Request: "Prepare a bounded project brief", ProjectKey: "018-HAI",
+		Capacity: &frameworkregistry.CapacitySnapshot{Status: "available", TimeAvailableMinutes: 120, Fresh: true},
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if src.calendarOwner != "alice" || !src.calendarEnd.After(src.calendarStart) {
+		t.Fatalf("calendar capacity request was not owner scoped and bounded: owner=%q start=%v end=%v", src.calendarOwner, src.calendarStart, src.calendarEnd)
+	}
+	if plan.CalendarCapacity.Status != "source_backed" || len(plan.CalendarCapacity.BusyIntervals) != 1 {
+		t.Fatalf("calendar capacity evidence missing from plan: %#v", plan.CalendarCapacity)
+	}
+	if plan.ResourceDecision == nil {
+		t.Fatal("calendar-aware resource decision missing")
+	}
+	foundEvent := false
+	for _, taskEvent := range plan.Events {
+		if taskEvent.Stage == "calendar-capacity" && strings.Contains(taskEvent.Message, "read-only Google Calendar") {
+			foundEvent = true
+		}
+	}
+	if !foundEvent {
+		t.Fatalf("calendar capacity audit event missing: %#v", plan.Events)
+	}
+}
+
+func TestPlanFailsClosedWhenCalendarCapacityCannotBeRead(t *testing.T) {
+	src := &fakeTaskSourceService{calendarBusyErr: errors.New("calendar repository unavailable")}
+	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t), src)
+	_, err := service.Plan(IntakeRequest{OwnerIdentity: "alice", Request: "Prepare a bounded project brief"})
+	if err == nil || !strings.Contains(err.Error(), "load calendar-backed capacity") {
+		t.Fatalf("calendar capacity error did not fail closed: %v", err)
 	}
 }
 
@@ -479,6 +578,73 @@ func TestPursuitScopedTaskRunRequiresReviewWhenVerificationCannotLinkEvidence(t 
 	}
 }
 
+func TestPursuitResourceReservationRunsOnlyForExecutionAndSettlesEveryAttempt(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{}
+	verifier := &sequencedVerificationService{
+		statuses: []string{verification.StatusNeedsReview, verification.StatusSourceSupported},
+	}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{}, newTaskTestLLMService(t), nil, verifier, nil, recorder,
+	)
+	pursuitID := uuid.NewString()
+	if _, err := service.Plan(IntakeRequest{
+		OwnerIdentity: "alice", PursuitID: pursuitID,
+		Request: "Prepare a bounded project summary.", ProjectKey: "018-HAI",
+	}); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(recorder.reservations) != 0 || len(recorder.settlements) != 0 {
+		t.Fatalf("planning held execution resources: reservations=%#v settlements=%#v", recorder.reservations, recorder.settlements)
+	}
+
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity: "alice", PursuitID: pursuitID,
+		Request: "Prepare a bounded project summary.", ProjectKey: "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.RetryPolicy.CurrentAttempt != 2 {
+		t.Fatalf("retry attempt = %d, want 2 (status %q)", plan.RetryPolicy.CurrentAttempt, plan.CompletionStatus)
+	}
+	if len(recorder.reservations) != 2 || len(recorder.settlements) != 2 {
+		t.Fatalf("reservation lifecycle = %#v %#v, want two complete attempts", recorder.reservations, recorder.settlements)
+	}
+	for index := range recorder.reservations {
+		if !strings.HasSuffix(recorder.reservations[index], fmt.Sprintf(":attempt:%d", index+1)) {
+			t.Fatalf("reservation operation %q does not identify attempt %d", recorder.reservations[index], index+1)
+		}
+		if recorder.settlements[index] != recorder.reservations[index]+":consumed" {
+			t.Fatalf("settlement %q does not close %q", recorder.settlements[index], recorder.reservations[index])
+		}
+	}
+}
+
+func TestPursuitResourceReservationFailureBlocksBeforeExecution(t *testing.T) {
+	recorder := &fakePursuitAttemptRecorder{reserveErr: fmt.Errorf("effort reservation exceeds remaining ceiling")}
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEnginesAndPursuitAttempts(
+		&fakeMemoryService{}, newTaskTestLLMService(t), nil, nil, executor, recorder,
+	)
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity: "alice", PursuitID: uuid.NewString(),
+		Request: "Run local script tests for the project", ProjectKey: "018-HAI",
+		AutomationID: executor.result.AutomationID, ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("runtime executed %d times after failed resource hold", executor.calls)
+	}
+	if plan.ExecutionResult == nil || !strings.Contains(plan.ExecutionResult.BlockedReason, "reservation blocked execution") {
+		t.Fatalf("reservation failure was not surfaced: %#v", plan.ExecutionResult)
+	}
+	if len(recorder.settlements) != 0 {
+		t.Fatalf("failed reservation was settled: %#v", recorder.settlements)
+	}
+}
+
 func TestRunQueuesReviewForHighRiskTask(t *testing.T) {
 	mem := &fakeMemoryService{}
 	llmService := newTaskTestLLMService(t)
@@ -619,6 +785,7 @@ func TestRunQueuesMissingAutomationBeforeRuntimeExecution(t *testing.T) {
 	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
 
 	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
 		Request:        "Run local script tests for the project",
 		ProjectKey:     "018-HAI",
 		ExecuteAllowed: true,
@@ -719,6 +886,7 @@ func TestRunToolTaskRequiresConfiguredControlledRuntime(t *testing.T) {
 	service := NewService(mem, llmService)
 
 	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
 		Request:        "Run local script tests for the project",
 		ProjectKey:     "018-HAI",
 		AutomationID:   uuid.NewString(),
@@ -745,6 +913,7 @@ func TestRunToolTaskExecutesConfiguredAutomation(t *testing.T) {
 	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
 
 	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
 		Request:        "Run local script tests for the project",
 		ProjectKey:     "018-HAI",
 		AutomationID:   executor.result.AutomationID,
@@ -762,8 +931,49 @@ func TestRunToolTaskExecutesConfiguredAutomation(t *testing.T) {
 	if len(executor.requests) != 1 || executor.requests[0].ApprovalSourceID != "" {
 		t.Fatalf("low-risk classification synthesized approval provenance: %#v", executor.requests)
 	}
+	governance := executor.requests[0].Governance
+	if governance.TaskPlanID != plan.ID || len(governance.TaskPlanDigest) != 64 {
+		t.Fatalf("runtime request did not bind the exact task plan: %#v", governance)
+	}
+	if governance.FrameworkSelectionID == "" ||
+		governance.FrameworkSelectionID != plan.FrameworkDecision.ID ||
+		len(governance.FrameworkConstitutionDigest) != 64 {
+		t.Fatalf("runtime request did not bind framework governance: %#v", governance)
+	}
+	if plan.DomainPackDecision != nil &&
+		governance.DomainPackDecisionID != plan.DomainPackDecision.ID {
+		t.Fatalf("runtime request did not bind domain-pack guidance: %#v", governance)
+	}
 	if plan.ExecutionResult == nil || plan.ExecutionResult.ToolExecution == nil {
 		t.Fatalf("expected persisted runtime evidence")
+	}
+}
+
+func TestRunToolTaskBlocksBeforeEffectWithoutVerifiedOwnerIdentity(t *testing.T) {
+	executor := &fakeToolExecutor{result: completedToolResult()}
+	service := NewServiceWithEngines(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		executor,
+	)
+
+	plan, err := service.Run(IntakeRequest{
+		Request:        "Run local script tests for the project",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("runtime calls = %d, want zero without verified owner identity", executor.calls)
+	}
+	if plan.ExecutionResult == nil ||
+		!strings.Contains(plan.ExecutionResult.BlockedReason, "verified owner identity") {
+		t.Fatalf("execution result = %#v, want identity block", plan.ExecutionResult)
 	}
 }
 
@@ -775,6 +985,7 @@ func TestRunToolTaskUsesLaunchEventURIAsRuntimeEvidence(t *testing.T) {
 	service := NewServiceWithEngines(mem, llmService, nil, verifier, executor)
 
 	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
 		Request:        "Run local script tests and verify exact runtime evidence",
 		ProjectKey:     "018-HAI",
 		AutomationID:   executor.result.AutomationID,
@@ -813,6 +1024,7 @@ func TestRunToolTaskBlocksNilRuntimeResult(t *testing.T) {
 	service := NewServiceWithEngines(mem, llmService, nil, nil, executor)
 
 	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
 		Request:        "Run local script tests for the project",
 		ProjectKey:     "018-HAI",
 		AutomationID:   uuid.NewString(),
@@ -839,6 +1051,7 @@ func TestValidationRetryReusesSuccessfulRuntimeExecution(t *testing.T) {
 	service := NewServiceWithEngines(mem, llmService, nil, verifier, executor)
 
 	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
 		Request:        "Run local script tests and verify the result",
 		ProjectKey:     "018-HAI",
 		AutomationID:   executor.result.AutomationID,
@@ -873,6 +1086,7 @@ func TestValidationRetrySkipsFallbackRoutingWhenRouterBecomesUnavailable(t *test
 	}
 
 	plan, err := taskService.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
 		Request:        "Run local script tests and verify the result",
 		ProjectKey:     "018-HAI",
 		AutomationID:   executor.result.AutomationID,
@@ -996,6 +1210,7 @@ func (f *fakeFrameworkSelector) PlanSelection(request frameworkregistry.Selectio
 type fakeMemoryService struct {
 	ownerCreateOwners   []string
 	ownerRetrieveOwners []string
+	memories            map[uuid.UUID]models.ContextMemory
 }
 
 type fakeToolExecutor struct {
@@ -1109,8 +1324,8 @@ func hasTaskEvent(events []TaskEvent, stage, message string) bool {
 	return false
 }
 
-func (fakeMemoryService) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
-	return &models.ContextMemory{
+func (f *fakeMemoryService) Create(request memory.CreateRequest) (*models.ContextMemory, error) {
+	created := &models.ContextMemory{
 		ID:         uuid.New(),
 		ProjectKey: request.ProjectKey,
 		Kind:       request.Kind,
@@ -1119,7 +1334,12 @@ func (fakeMemoryService) Create(request memory.CreateRequest) (*models.ContextMe
 		Confidence: request.Confidence,
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
-	}, nil
+	}
+	if f.memories == nil {
+		f.memories = map[uuid.UUID]models.ContextMemory{}
+	}
+	f.memories[created.ID] = *created
+	return created, nil
 }
 
 func (f *fakeMemoryService) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
@@ -1127,17 +1347,32 @@ func (f *fakeMemoryService) CreateForOwner(ownerIdentity string, request memory.
 	created, err := f.Create(request)
 	if created != nil {
 		created.OwnerIdentity = ownerIdentity
+		f.memories[created.ID] = *created
 	}
 	return created, err
 }
 
 type fakePursuitAttemptRecorder struct {
-	attempts []models.PursuitTaskAttempt
+	attempts     []models.PursuitTaskAttempt
+	reservations []string
+	settlements  []string
+	reserveErr   error
+	settleErr    error
 }
 
 func (f *fakePursuitAttemptRecorder) UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error {
 	f.attempts = append(f.attempts, attempt)
 	return nil
+}
+
+func (f *fakePursuitAttemptRecorder) ReservePursuitTaskResources(_ uuid.UUID, _ string, operationID string, _, _ int64) error {
+	f.reservations = append(f.reservations, operationID)
+	return f.reserveErr
+}
+
+func (f *fakePursuitAttemptRecorder) SettlePursuitTaskResources(_ uuid.UUID, _ string, operationID, disposition string, _, _ int64) error {
+	f.settlements = append(f.settlements, operationID+":"+disposition)
+	return f.settleErr
 }
 
 type fakePursuitTaskGuard struct {
@@ -1157,6 +1392,16 @@ type fakeTaskSourceService struct {
 	searchCalls        int
 	order              []string
 	searchRequests     []source.SearchRequest
+	calendarBusy       []source.CalendarBusyInterval
+	calendarBusyErr    error
+	calendarOwner      string
+	calendarStart      time.Time
+	calendarEnd        time.Time
+}
+
+func (s *fakeTaskSourceService) CalendarBusyIntervalsForOwner(ownerIdentity string, start, end time.Time) ([]source.CalendarBusyInterval, error) {
+	s.calendarOwner, s.calendarStart, s.calendarEnd = ownerIdentity, start, end
+	return append([]source.CalendarBusyInterval(nil), s.calendarBusy...), s.calendarBusyErr
 }
 
 func (s *fakeTaskSourceService) Connectors() ([]models.SourceConnector, error) {
@@ -1274,8 +1519,13 @@ func (fakeMemoryService) FindAll(projectKey string, includeArchived bool) ([]mod
 	return nil, nil
 }
 
-func (fakeMemoryService) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
-	return nil, gorm.ErrRecordNotFound
+func (f *fakeMemoryService) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
+	item, ok := f.memories[id]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	copy := item
+	return &copy, nil
 }
 
 func (fakeMemoryService) Archive(id uuid.UUID, archived bool) (*models.ContextMemory, error) {
@@ -1286,20 +1536,22 @@ func (fakeMemoryService) Delete(id uuid.UUID) error {
 	return nil
 }
 
-func (fakeMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+func (f *fakeMemoryService) Retrieve(request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	now := time.Now().UTC()
+	item := models.ContextMemory{
+		ID: uuid.New(), ProjectKey: request.ProjectKey, Kind: "project",
+		Summary:    "Completion-first routing prefers validated completion before cost minimization.",
+		Confidence: 0.9, CreatedAt: now, UpdatedAt: now,
+	}
+	if f.memories == nil {
+		f.memories = map[uuid.UUID]models.ContextMemory{}
+	}
+	f.memories[item.ID] = item
 	return &memory.RetrieveResult{
 		Query: request.Query,
 		UsedContext: []memory.RankedMemory{
 			{
-				Memory: models.ContextMemory{
-					ID:         uuid.New(),
-					ProjectKey: request.ProjectKey,
-					Kind:       "project",
-					Summary:    "Completion-first routing prefers validated completion before cost minimization.",
-					Confidence: 0.9,
-					UpdatedAt:  now,
-				},
+				Memory:      item,
 				Score:       0.9,
 				Explanation: "same project, high relevance",
 			},
@@ -1316,8 +1568,12 @@ func (f *fakeMemoryService) FindAllForOwner(_ string, projectKey string, include
 	return f.FindAll(projectKey, includeArchived)
 }
 
-func (f *fakeMemoryService) FindByIDForOwner(_ string, id uuid.UUID) (*models.ContextMemory, error) {
-	return f.FindByID(id)
+func (f *fakeMemoryService) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
+	item, err := f.FindByID(id)
+	if err != nil || item.OwnerIdentity != ownerIdentity {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return item, nil
 }
 
 func (f *fakeMemoryService) ArchiveForOwner(_ string, id uuid.UUID, archived bool) (*models.ContextMemory, error) {
@@ -1330,5 +1586,13 @@ func (f *fakeMemoryService) DeleteForOwner(_ string, id uuid.UUID) error {
 
 func (f *fakeMemoryService) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	f.ownerRetrieveOwners = append(f.ownerRetrieveOwners, ownerIdentity)
-	return f.Retrieve(request)
+	result, err := f.Retrieve(request)
+	if err != nil {
+		return nil, err
+	}
+	for index := range result.UsedContext {
+		result.UsedContext[index].Memory.OwnerIdentity = ownerIdentity
+		f.memories[result.UsedContext[index].Memory.ID] = result.UsedContext[index].Memory
+	}
+	return result, nil
 }

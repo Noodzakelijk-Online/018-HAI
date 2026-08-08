@@ -1,0 +1,1663 @@
+<section class="governance-page">
+  <header class="governance-heading">
+    <div>
+      <h1>Authority and learning control</h1>
+      <p>Review what HAI may do, which agents may act, and which changes may become part of the system.</p>
+    </div>
+    <button nz-button type="button" (click)="refresh()" [disabled]="refreshing" [attr.aria-busy]="refreshing" title="Reload all governance records from the backend">
+      <i nz-icon nzType="reload" nzTheme="outline"></i>
+      {{ refreshing ? 'Refreshing' : 'Refresh' }}
+    </button>
+  </header>
+
+  <div class="source-warning" *ngIf="state.execution.error || state.mandates.error || state.learning.error || state.agents.error || state.domains.error || advisoryHasProblems" role="alert">
+    <i nz-icon nzType="warning" nzTheme="outline"></i>
+    <div>
+      <strong>Some governance records are unavailable</strong>
+      <span>Available sources remain usable, but an empty queue cannot be treated as complete.</span>
+    </div>
+    <button nz-button type="button" (click)="retryFailedSources()">Retry unavailable</button>
+  </div>
+
+  <section class="governance-lanes" aria-label="Governance areas">
+    <button type="button" class="governance-lane" (click)="openSurface('execution')" [attr.title]="surfaceHint('execution')">
+      <span class="lane-icon lane-icon--blue"><i nz-icon nzType="safety-certificate" nzTheme="outline"></i></span>
+      <span class="lane-copy">
+        <strong>Execution authority</strong>
+        <small>{{ surfaceMetric('execution') }}</small>
+      </span>
+      <span class="lane-count" *ngIf="surfaceCount('execution') !== undefined">{{ surfaceCount('execution') }}</span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="governance-lane" (click)="openSurface('mandates')" [attr.title]="surfaceHint('mandates')">
+      <span class="lane-icon lane-icon--gold"><i nz-icon nzType="audit" nzTheme="outline"></i></span>
+      <span class="lane-copy">
+        <strong>Standing mandates</strong>
+        <small>{{ surfaceMetric('mandates') }}</small>
+      </span>
+      <span class="lane-count" *ngIf="surfaceCount('mandates') !== undefined">{{ surfaceCount('mandates') }}</span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="governance-lane" (click)="openSurface('learning')" [attr.title]="surfaceHint('learning')">
+      <span class="lane-icon lane-icon--green"><i nz-icon nzType="experiment" nzTheme="outline"></i></span>
+      <span class="lane-copy">
+        <strong>Controlled learning</strong>
+        <small>{{ surfaceMetric('learning') }}</small>
+      </span>
+      <span class="lane-count" *ngIf="surfaceCount('learning') !== undefined">{{ surfaceCount('learning') }}</span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="governance-lane" (click)="openSurface('agents')" [attr.title]="surfaceHint('agents')">
+      <span class="lane-icon lane-icon--blue"><i nz-icon nzType="team" nzTheme="outline"></i></span>
+      <span class="lane-copy">
+        <strong>Agent registry</strong>
+        <small>{{ surfaceMetric('agents') }}</small>
+      </span>
+      <span class="lane-count" *ngIf="surfaceCount('agents') !== undefined">{{ surfaceCount('agents') }}</span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+
+    <button type="button" class="governance-lane" (click)="openSurface('domains')" [attr.title]="surfaceHint('domains')">
+      <span class="lane-icon lane-icon--violet"><i nz-icon nzType="apartment" nzTheme="outline"></i></span>
+      <span class="lane-copy">
+        <strong>Domain packs</strong>
+        <small>{{ surfaceMetric('domains') }}</small>
+      </span>
+      <span class="lane-count" *ngIf="surfaceCount('domains') !== undefined">{{ surfaceCount('domains') }}</span>
+      <i nz-icon nzType="right" nzTheme="outline"></i>
+    </button>
+  </section>
+
+  <section class="governance-primary-grid">
+    <article class="governance-panel attention-panel">
+      <header class="panel-heading">
+        <div>
+          <h2>Needs your decision</h2>
+          <p>Only unresolved authority, learning, or safety records appear here.</p>
+        </div>
+        <span class="status-pill status-pill--gold" *ngIf="attention.length">{{ attention.length }} confirmed</span>
+        <span class="status-pill" *ngIf="!attention.length && attentionLoading">Checking</span>
+        <span class="status-pill status-pill--gold" *ngIf="!attention.length && !attentionLoading && attentionIncomplete">Incomplete</span>
+        <span class="status-pill status-pill--green" *ngIf="!attention.length && !attentionLoading && !attentionIncomplete">Clear</span>
+      </header>
+
+      <div class="attention-list" *ngIf="attention.length; else noAttention">
+        <button
+          type="button"
+          class="attention-row"
+          *ngFor="let item of attention; trackBy: trackById"
+          [attr.data-tone]="item.tone"
+          (click)="openAttention(item)"
+        >
+          <span class="attention-marker"></span>
+          <span>
+            <strong>{{ item.title }}</strong>
+            <small>{{ item.summary }}</small>
+          </span>
+          <span class="attention-owner">{{ item.owner }}</span>
+          <i nz-icon nzType="right" nzTheme="outline"></i>
+        </button>
+      </div>
+
+      <ng-template #noAttention>
+        <div class="calm-empty" *ngIf="attentionLoading" role="status" aria-live="polite">
+          <i nz-icon nzType="loading" nzTheme="outline"></i>
+          <div><strong>Checking governance sources</strong><span>The decision queue will appear after the relevant backend sources respond.</span></div>
+        </div>
+        <div class="calm-empty calm-empty--warning" *ngIf="!attentionLoading && attentionIncomplete" role="status">
+          <i nz-icon nzType="warning" nzTheme="outline"></i>
+          <div><strong>The decision queue is incomplete</strong><span>One or more governance sources are unavailable, so HAI cannot claim that nothing needs review.</span></div>
+        </div>
+        <div class="calm-empty" *ngIf="!attentionLoading && !attentionIncomplete">
+          <i nz-icon nzType="check-circle" nzTheme="outline"></i>
+          <div>
+            <strong>No sourced decision is waiting right now</strong>
+            <span>HAI will keep denied actions, mandate drafts, protected learning, and quarantined agents visible here.</span>
+          </div>
+        </div>
+      </ng-template>
+    </article>
+
+    <article class="governance-panel classifier-panel">
+      <header class="panel-heading">
+        <div>
+          <h2>Classify work before planning</h2>
+          <p>The backend selects effective owner packs; classification never grants execution authority.</p>
+        </div>
+        <span class="status-pill" *ngIf="catalogVersion">Catalog {{ catalogVersion }}</span>
+      </header>
+
+      <div class="classifier-body">
+        <label for="governance-classifier">Task or situation</label>
+        <textarea
+          id="governance-classifier"
+          nz-input
+          rows="4"
+          [(ngModel)]="classifierText"
+          placeholder="Example: Review a contract deadline and prepare an evidence-backed reply."
+        ></textarea>
+        <button nz-button nzType="primary" type="button" [nzLoading]="classifying" [disabled]="classifying" (click)="classify()">
+          <i nz-icon nzType="branches" nzTheme="outline"></i>
+          Classify
+        </button>
+      </div>
+
+      <div class="classification-result" *ngIf="classification">
+        <button
+          type="button"
+          *ngFor="let match of classification.matches.slice(0, 3)"
+          (click)="openMatchedDomain(match.packId)"
+          [disabled]="!domainById(match.packId)"
+        >
+          <span>
+            <strong>{{ label(match.packId) }}</strong>
+            <small>{{ match.reasons[0] || 'Matched by configured domain signals.' }}</small>
+          </span>
+          <span>{{ match.score }}</span>
+        </button>
+        <p *ngIf="!(classification.matches || []).length">No enabled pack matched this text. Suppressed matches remain available in Advanced view.</p>
+      </div>
+    </article>
+  </section>
+
+  <section class="advisory-stack" aria-labelledby="advisory-engines-title">
+    <header class="advisory-heading">
+      <div>
+        <h2 id="advisory-engines-title">Advisory engines</h2>
+        <p>Source-backed guidance only. These surfaces cannot execute, send, apply, approve, or grant authority.</p>
+      </div>
+    </header>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="agent-teams"
+      title="Agent teams"
+      [summary]="advisorySummary('teams')"
+      [advancedOnly]="false"
+      (openChange)="loadAgentTeams($event)"
+    >
+      <div class="advisory-toolbar">
+        <div>
+          <span class="engine-status" [attr.data-status]="advisoryState.teams.availability">{{ advisoryStatusLabel('teams') }}</span>
+          <small>{{ advisoryFreshness('teams') }}</small>
+        </div>
+        <button nz-button type="button" (click)="refreshAdvisory('teams')" [disabled]="advisoryState.teams.loading" title="Reload agent-team contracts from the framework registry API">
+          <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh teams
+        </button>
+      </div>
+      <div class="section-loading" *ngIf="advisoryState.teams.loading && !advisoryState.teams.loaded" role="status"><i nz-icon nzType="loading"></i> Loading agent-team contracts</div>
+      <div class="section-error" *ngIf="advisoryState.teams.error" role="alert">{{ advisoryState.teams.error }}</div>
+      <div class="advisory-metrics" *ngIf="advisoryState.teams.loaded">
+        <span><strong>{{ agentTeams.length }}</strong><small>Contracts</small></span>
+        <span><strong>{{ activeAgentTeams.length }}</strong><small>Active</small></span>
+        <span><strong>{{ agentTeamReviewCount }}</strong><small>Messages need review</small></span>
+      </div>
+      <div class="advisory-records" *ngIf="advisoryState.teams.loaded && agentTeams.length">
+        <article class="advisory-record" *ngFor="let team of agentTeams; trackBy: trackById">
+          <span class="record-status" [attr.data-status]="team.status">{{ label(team.status) }}</span>
+          <div><strong>{{ team.name }}</strong><small>{{ team.purpose }}</small></div>
+          <div class="record-meta">
+            v{{ team.version }} / {{ (team.members || []).length }} members / {{ label(team.riskCeiling) }} risk ceiling /
+            {{ agentTeamAttentionItems(team).length }} tracked messages
+          </div>
+          <div class="record-meta" *ngIf="agentTeamReviewItems(team).length">
+            {{ agentTeamReviewItems(team).length }} overdue, rejected, or expired acknowledgments require human review.
+          </div>
+          <time>{{ team.updatedAt | date:'medium' }}</time>
+        </article>
+      </div>
+      <div class="calm-empty calm-empty--compact" *ngIf="advisoryState.teams.availability === 'empty'">
+        <i nz-icon nzType="team" nzTheme="outline"></i>
+        <div><strong>No agent teams configured</strong><span>The registry responded successfully, but it contains no team contract.</span></div>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="whole-life-context"
+      title="Whole-life context"
+      [summary]="advisorySummary('life')"
+      [advancedOnly]="false"
+      (openChange)="loadLifeContext($event)"
+    >
+      <div class="advisory-toolbar">
+        <div>
+          <span class="engine-status" [attr.data-status]="advisoryState.life.availability">{{ advisoryStatusLabel('life') }}</span>
+          <small>{{ advisoryFreshness('life') }} / local-only records are {{ includeLocalOnlyLifeContext ? 'visible on this device' : 'excluded' }}</small>
+        </div>
+        <div class="advisory-actions">
+          <button nz-button type="button" (click)="toggleLocalOnlyLifeContext()" [disabled]="advisoryState.life.loading" [title]="includeLocalOnlyLifeContext ? 'Hide records that must remain on this device' : 'Explicitly include owner-scoped local-only records on this device'">
+            <i nz-icon [nzType]="includeLocalOnlyLifeContext ? 'eye-invisible' : 'eye'" nzTheme="outline"></i>
+            {{ includeLocalOnlyLifeContext ? 'Hide private records' : 'Show private records' }}
+          </button>
+          <button nz-button type="button" (click)="refreshAdvisory('life')" [disabled]="advisoryState.life.loading" title="Reload owner-scoped ontology records from the life ontology API">
+            <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh context
+          </button>
+        </div>
+      </div>
+      <div class="section-loading" *ngIf="advisoryState.life.loading && !advisoryState.life.loaded" role="status"><i nz-icon nzType="loading"></i> Loading whole-life context</div>
+      <div class="section-error" *ngIf="advisoryState.life.error" role="alert">{{ advisoryState.life.error }}</div>
+      <div class="advisory-metrics" *ngIf="advisoryState.life.loaded">
+        <span><strong>{{ lifeEntities.length }}</strong><small>Entities</small></span>
+        <span><strong>{{ lifeRelations.length }}</strong><small>Relations</small></span>
+        <span><strong>{{ pendingContactCandidates.length }}</strong><small>Contact reviews</small></span>
+        <span><strong>{{ pendingLifeMergeProposals.length }}</strong><small>Merge reviews</small></span>
+        <span><strong>{{ contactReviewDecisions.length }}</strong><small>Recorded decisions</small></span>
+      </div>
+      <div class="advisory-boundary" *ngIf="advisoryState.life.loaded">
+        <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+        <span><strong>Owner review, not authority</strong><small>Source-derived people remain private and local-only. Reviewing a candidate records an immutable owner decision; it cannot contact anyone, execute a task, or grant HAI authority.</small></span>
+      </div>
+      <div class="advisory-columns contact-review-columns" *ngIf="advisoryState.life.loaded">
+        <section>
+          <h3>Pending contact candidates</h3>
+          <div class="advisory-records">
+            <button class="advisory-record advisory-record--compact advisory-record-button" type="button" *ngFor="let entity of pendingContactCandidates.slice(0, 8); trackBy: trackById" (click)="openContactCandidate(entity)">
+              <span class="record-status" data-status="needs_review">Review</span>
+              <div><strong>{{ entity.name }}</strong><small>{{ entity.summary || 'Source-derived person awaiting owner confirmation' }}</small></div>
+              <div class="record-meta">{{ label(entity.domain) }} / confidence {{ entity.confidence | percent:'1.0-0' }}</div>
+            </button>
+            <div class="calm-empty calm-empty--compact" *ngIf="!pendingContactCandidates.length">
+              <i nz-icon nzType="user"></i><div><strong>No contact candidates waiting</strong><span>Resolved candidates stay in immutable review history.</span></div>
+            </div>
+          </div>
+        </section>
+        <section>
+          <h3>Possible duplicate contacts</h3>
+          <div class="advisory-records">
+            <button class="advisory-record advisory-record--compact advisory-record-button" type="button" *ngFor="let proposal of pendingLifeMergeProposals.slice(0, 8); trackBy: trackById" (click)="openContactMergeProposal(proposal)">
+              <span class="record-status" data-status="review_required">Review</span>
+              <div><strong>{{ (proposal.candidateEntityIds || []).length }} possible duplicates</strong><small>{{ (proposal.reasons || []).join(' / ') || label(proposal.match) }}</small></div>
+              <div class="record-meta">Local review only</div>
+            </button>
+            <div class="calm-empty calm-empty--compact" *ngIf="!pendingLifeMergeProposals.length">
+              <i nz-icon nzType="branches"></i><div><strong>No duplicate review waiting</strong><span>No unresolved merge proposal was returned.</span></div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <section class="decision-history" *ngIf="advisoryState.life.loaded && contactReviewDecisions.length">
+        <h3>Recent owner decisions</h3>
+        <div class="advisory-records">
+          <article class="advisory-record advisory-record--compact" *ngFor="let decision of contactReviewDecisions.slice(0, 5); trackBy: trackById">
+            <span class="record-status" [attr.data-status]="decision.action">{{ label(decision.action) }}</span>
+            <div><strong>{{ decision.canonicalName || label(decision.subject) }}</strong><small>{{ decision.reason }}</small></div>
+            <time>{{ decision.decidedAt | date:'medium' }}</time>
+          </article>
+        </div>
+      </section>
+      <div class="calm-empty calm-empty--compact" *ngIf="advisoryState.life.availability === 'empty'">
+        <i nz-icon nzType="database" nzTheme="outline"></i>
+        <div><strong>No visible life context</strong><span>The API returned no non-local-only entity, relation, or merge-review record.</span></div>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="life-ledger-overview"
+      title="Commitments and costs"
+      [summary]="advisorySummary('ledger')"
+      [advancedOnly]="false"
+      (openChange)="loadLifeLedger($event)"
+    >
+      <div class="advisory-toolbar">
+        <div>
+          <span class="engine-status" [attr.data-status]="advisoryState.ledger.availability">{{ advisoryStatusLabel('ledger') }}</span>
+          <small>{{ advisoryFreshness('ledger') }} / owner-scoped and local-only</small>
+        </div>
+        <button nz-button type="button" (click)="refreshAdvisory('ledger')" [disabled]="advisoryState.ledger.loading" title="Reload immutable commitment and cost records from the owner-scoped life ledger API">
+          <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh ledger
+        </button>
+      </div>
+      <div class="section-loading" *ngIf="advisoryState.ledger.loading && !advisoryState.ledger.loaded" role="status"><i nz-icon nzType="loading"></i> Loading commitments and costs</div>
+      <div class="section-error" *ngIf="advisoryState.ledger.error" role="alert">{{ advisoryState.ledger.error }}</div>
+      <div class="advisory-metrics" *ngIf="advisoryState.ledger.loaded">
+        <span><strong>{{ lifeCommitments.length }}</strong><small>Commitments</small></span>
+        <span><strong>{{ openLifeCommitments.length }}</strong><small>Open commitments</small></span>
+        <span><strong>{{ lifeCostsByKind('estimate').length }}</strong><small class="record-status" data-status="estimate">Estimates</small></span>
+        <span><strong>{{ lifeCostsByKind('incurred').length }}</strong><small class="record-status" data-status="incurred">Incurred</small></span>
+        <span><strong>{{ lifeCostsByKind('paid').length }}</strong><small class="record-status" data-status="paid">Paid</small></span>
+      </div>
+      <div class="advisory-boundary" *ngIf="advisoryState.ledger.loaded">
+        <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+        <span><strong>Evidence ledger only</strong><small>Estimates are planning records. They are never counted as incurred or paid, and this view cannot move money or grant authority.</small></span>
+      </div>
+      <div class="advisory-metrics" *ngIf="advisoryState.ledger.loaded && lifeCosts.length">
+        <span>
+          <small class="record-status" data-status="estimate">Estimated</small>
+          <strong *ngFor="let total of lifeCostTotals('estimate')">{{ formatLifeCost(total.amountMinor, total.currency) }}</strong>
+          <small *ngIf="!lifeCostsByKind('estimate').length">No estimate records</small>
+          <small>Planning only</small>
+        </span>
+        <span>
+          <small class="record-status" data-status="incurred">Incurred</small>
+          <strong *ngFor="let total of lifeCostTotals('incurred')">{{ formatLifeCost(total.amountMinor, total.currency) }}</strong>
+          <small *ngIf="!lifeCostsByKind('incurred').length">No incurred records</small>
+          <small>Actual obligation recorded</small>
+        </span>
+        <span>
+          <small class="record-status" data-status="paid">Paid</small>
+          <strong *ngFor="let total of lifeCostTotals('paid')">{{ formatLifeCost(total.amountMinor, total.currency) }}</strong>
+          <small *ngIf="!lifeCostsByKind('paid').length">No payment records</small>
+          <small>Payment evidence recorded</small>
+        </span>
+        <span>
+          <small class="record-status" data-status="refund">Refunded</small>
+          <strong *ngFor="let total of lifeCostTotals('refund')">{{ formatLifeCost(total.amountMinor, total.currency) }}</strong>
+          <small *ngIf="!lifeCostsByKind('refund').length">No refund records</small>
+          <small>Refund evidence recorded</small>
+        </span>
+        <span><strong>{{ lifeCosts.length }}</strong><small>All cost events</small></span>
+      </div>
+      <div class="calm-empty calm-empty--compact" *ngIf="advisoryState.ledger.availability === 'empty'">
+        <i nz-icon nzType="account-book" nzTheme="outline"></i>
+        <div><strong>No commitment or cost records</strong><span>The owner-scoped ledger API responded successfully and returned no records.</span></div>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="proactivity-policy"
+      title="Proactivity and interruption policy"
+      [summary]="advisorySummary('proactivity')"
+      [advancedOnly]="false"
+      (openChange)="loadProactivity($event)"
+    >
+      <div class="advisory-toolbar">
+        <div>
+          <span class="engine-status" [attr.data-status]="advisoryState.proactivity.availability">{{ advisoryStatusLabel('proactivity') }}</span>
+          <small>{{ advisoryFreshness('proactivity') }}</small>
+        </div>
+        <button nz-button type="button" (click)="refreshAdvisory('proactivity')" [disabled]="advisoryState.proactivity.loading" title="Reload advisory policy, open-loop signals, and interruption decisions">
+          <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh policy
+        </button>
+      </div>
+      <div class="section-loading" *ngIf="advisoryState.proactivity.loading && !advisoryState.proactivity.loaded" role="status"><i nz-icon nzType="loading"></i> Loading interruption policy</div>
+      <div class="section-error" *ngIf="advisoryState.proactivity.error" role="alert">{{ advisoryState.proactivity.error }}</div>
+      <div class="advisory-metrics" *ngIf="advisoryState.proactivity.loaded">
+        <span><strong>{{ proactivitySignals.length }}</strong><small>Signals</small></span>
+        <span><strong>{{ proactivityDecisions.length }}</strong><small>Decisions</small></span>
+        <span><strong>{{ proactivityReviewDecisions.length }}</strong><small>Need review</small></span>
+        <span><strong>{{ proactivityFeedback.length }}</strong><small>Owner controls</small></span>
+        <span><strong>{{ proactivityPolicy?.policy?.attentionBudget?.maxInterruptionsPerDay ?? 'Not set' }}</strong><small>Daily interruption cap</small></span>
+      </div>
+      <div class="policy-summary" *ngIf="proactivityPolicy as policy">
+        <div><strong>Quiet hours</strong><span>{{ policy.policy.quietHours.enabled ? 'Enabled' : 'Disabled' }} / {{ policy.policy.timeZone }}</span></div>
+        <div><strong>External channels</strong><span>{{ policy.policy.allowExternalChannels ? 'Explicitly enabled' : 'Disabled' }}</span></div>
+        <div><strong>Review threshold</strong><span>{{ policy.policy.reviewThreshold | percent:'1.0-0' }}</span></div>
+        <div><strong>Policy recorded</strong><span>{{ policy.recordedAt | date:'medium' }}</span></div>
+      </div>
+      <div class="calm-empty calm-empty--compact calm-empty--warning" *ngIf="advisoryState.proactivity.loaded && !proactivityPolicy">
+        <i nz-icon nzType="warning" nzTheme="outline"></i>
+        <div><strong>No interruption policy recorded</strong><span>Signals may exist, but HAI cannot present an owner policy that the API did not return.</span></div>
+      </div>
+      <div class="advisory-columns" *ngIf="advisoryState.proactivity.loaded && (proactivitySignals.length || proactivityDecisions.length)">
+        <section>
+          <h3>Open-loop signals</h3>
+          <div class="advisory-records">
+            <article class="advisory-record advisory-record--compact" *ngFor="let record of proactivitySignals.slice(0, 8)">
+              <span class="record-status" [attr.data-status]="record.signal.risk">{{ label(record.signal.risk) }}</span>
+              <div><strong>{{ record.signal.title }}</strong><small>{{ record.signal.summary }}</small></div>
+              <time>{{ record.recordedAt | date:'short' }}</time>
+            </article>
+          </div>
+        </section>
+        <section>
+          <h3>Advisory decisions</h3>
+          <div class="advisory-records">
+            <article class="advisory-record advisory-record--compact" *ngFor="let record of proactivityDecisions.slice(0, 8)">
+              <span class="record-status" [attr.data-status]="record.decision.outcome">{{ label(record.decision.outcome) }}</span>
+              <div><strong>{{ record.decision.title }}</strong><small>{{ record.decision.reasons[0] || record.decision.summary }}</small></div>
+              <div class="attention-control" [attr.data-testid]="'proactivity-control-' + record.decision.signalId">
+                <span class="attention-control__state" *ngIf="latestProactivityFeedback(record.decision.openLoopKey) as feedback" [attr.data-status]="feedback.action">
+                  {{ label(feedback.action) }}
+                  <small *ngIf="feedback.snoozedUntil">until {{ feedback.snoozedUntil | date:'short' }}</small>
+                </span>
+                <div class="attention-control__actions">
+                  <button nz-button type="button" nzSize="small" [disabled]="mutating" title="Accept this attention recommendation; this does not execute its task" aria-label="Accept attention recommendation" (click)="recordProactivityFeedback(record, 'accept')" [attr.data-testid]="'proactivity-accept-' + record.decision.signalId"><i nz-icon nzType="check" nzTheme="outline"></i></button>
+                  <button nz-button type="button" nzSize="small" [disabled]="mutating" title="Dismiss only this exact signal revision" aria-label="Dismiss signal revision" (click)="recordProactivityFeedback(record, 'dismiss')" [attr.data-testid]="'proactivity-dismiss-' + record.decision.signalId"><i nz-icon nzType="close" nzTheme="outline"></i></button>
+                  <button nz-button type="button" nzSize="small" [disabled]="mutating" title="Snooze this open loop for 24 hours" aria-label="Snooze open loop for 24 hours" (click)="recordProactivityFeedback(record, 'snooze')" [attr.data-testid]="'proactivity-snooze-' + record.decision.signalId"><i nz-icon nzType="clock-circle" nzTheme="outline"></i></button>
+                  <button *ngIf="latestProactivityFeedback(record.decision.openLoopKey)?.action !== 'suppress'" nz-button nzDanger type="button" nzSize="small" [disabled]="mutating" title="Suppress this open loop until explicitly resumed" aria-label="Suppress open loop" (click)="recordProactivityFeedback(record, 'suppress')" [attr.data-testid]="'proactivity-suppress-' + record.decision.signalId"><i nz-icon nzType="stop" nzTheme="outline"></i></button>
+                  <button *ngIf="latestProactivityFeedback(record.decision.openLoopKey)?.action === 'suppress'" nz-button type="button" nzSize="small" [disabled]="mutating" title="Resume proactive attention for this open loop" aria-label="Resume proactive attention" (click)="recordProactivityFeedback(record, 'resume')" [attr.data-testid]="'proactivity-resume-' + record.decision.signalId"><i nz-icon nzType="play-circle" nzTheme="outline"></i></button>
+                </div>
+                <small class="record-meta">Attention evidence only · no delivery authority</small>
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+      <div class="calm-empty calm-empty--compact" *ngIf="advisoryState.proactivity.availability === 'empty'">
+        <i nz-icon nzType="bell" nzTheme="outline"></i>
+        <div><strong>No proactivity records</strong><span>The API is connected, but no policy, signal, or advisory decision has been recorded.</span></div>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="outcome-evaluations"
+      title="Outcome evaluations"
+      [summary]="advisorySummary('outcomes')"
+      [advancedOnly]="false"
+      (openChange)="loadOutcomeEvidence($event)"
+    >
+      <form class="scope-form" (ngSubmit)="loadOutcomeEvidence(true, true)">
+        <div>
+          <label for="governance-workspace-outcome">Workspace ID</label>
+          <input id="governance-workspace-outcome" nz-input name="outcomeWorkspace" [(ngModel)]="advisoryScope.workspaceId" autocomplete="off">
+        </div>
+        <div>
+          <label for="governance-outcome-id">Outcome ID</label>
+          <input id="governance-outcome-id" nz-input name="outcomeId" [(ngModel)]="advisoryScope.outcomeId" autocomplete="off">
+        </div>
+        <button nz-button type="submit" [disabled]="advisoryState.outcomes.loading" title="Load the selected outcome definition, evaluations, and corrections from the real API">Load outcome evidence</button>
+      </form>
+      <form
+        class="governance-form"
+        *ngIf="advisoryScope.workspaceId.trim() && advisoryScope.outcomeId.trim()"
+        (ngSubmit)="defineOutcome()"
+      >
+        <div class="form-heading">
+          <div>
+            <h3>{{ outcomeDefinition ? 'Revise intended outcome' : 'Define intended outcome' }}</h3>
+            <p>Describe the measurable result. Saving creates an immutable revision and never authorizes an action.</p>
+          </div>
+          <span>{{ outcomeDefinition ? ('Current revision ' + outcomeDefinition.revision) : 'New definition' }}</span>
+        </div>
+        <label>
+          Outcome statement
+          <textarea nz-input name="outcomeStatement" [(ngModel)]="outcomeForm.statement" rows="2" placeholder="What should measurably improve or remain stable?"></textarea>
+        </label>
+        <div class="form-grid form-grid--wide">
+          <label>
+            Life domain
+            <select name="outcomeLifeDomain" [(ngModel)]="outcomeForm.lifeDomain" required>
+              <option value="" disabled>Select the affected life domain</option>
+              <option *ngFor="let domain of outcomeLifeDomains" [value]="domain.value">{{ domain.label }}</option>
+            </select>
+          </label>
+          <label>Window start<input nz-input type="date" name="outcomeWindowStart" [(ngModel)]="outcomeForm.windowStart"></label>
+          <label>Window end<input nz-input type="date" name="outcomeWindowEnd" [(ngModel)]="outcomeForm.windowEnd"></label>
+          <label>Baseline date<input nz-input type="date" name="outcomeBaselineAt" [(ngModel)]="outcomeForm.baselineObservedAt"></label>
+          <label>Indicator ID<input nz-input name="outcomeIndicatorId" [(ngModel)]="outcomeForm.indicatorId" placeholder="verified-completions"></label>
+          <label>Indicator name<input nz-input name="outcomeIndicatorName" [(ngModel)]="outcomeForm.indicatorName" placeholder="Verified completions"></label>
+          <label>Unit<input nz-input name="outcomeIndicatorUnit" [(ngModel)]="outcomeForm.unit" placeholder="tasks, EUR, hours, percent"></label>
+          <label>
+            Desired direction
+            <select name="outcomeDirection" [(ngModel)]="outcomeForm.direction">
+              <option value="higher">Higher is better</option>
+              <option value="lower">Lower is better</option>
+              <option value="maintain">Maintain within tolerance</option>
+            </select>
+          </label>
+          <label>Target value<input nz-input type="number" name="outcomeTarget" [(ngModel)]="outcomeForm.targetValue"></label>
+          <label>Baseline value<input nz-input type="number" name="outcomeBaseline" [(ngModel)]="outcomeForm.baselineValue"></label>
+        </div>
+        <details>
+          <summary>Advanced evaluation thresholds</summary>
+          <div class="form-grid form-grid--wide">
+            <label>Target tolerance<input nz-input type="number" min="0" name="outcomeTolerance" [(ngModel)]="outcomeForm.targetTolerance"></label>
+            <label>Trend threshold / day<input nz-input type="number" min="0" name="outcomeTrendThreshold" [(ngModel)]="outcomeForm.trendThresholdPerDay"></label>
+            <label>Regression threshold<input nz-input type="number" min="0.000001" name="outcomeRegressionThreshold" [(ngModel)]="outcomeForm.regressionThreshold"></label>
+            <label>Minimum observations<input nz-input type="number" min="2" name="outcomeMinimumObservations" [(ngModel)]="outcomeForm.minimumObservations"></label>
+          </div>
+        </details>
+        <button nz-button nzType="primary" type="submit" [disabled]="mutating">
+          {{ outcomeDefinition ? 'Save new revision' : 'Create outcome' }}
+        </button>
+      </form>
+      <div class="advisory-toolbar" *ngIf="advisoryState.outcomes.availability !== 'not_configured'">
+        <div><span class="engine-status" [attr.data-status]="advisoryState.outcomes.availability">{{ advisoryStatusLabel('outcomes') }}</span><small>{{ advisoryFreshness('outcomes') }}</small></div>
+      </div>
+      <div class="section-loading" *ngIf="advisoryState.outcomes.loading && !advisoryState.outcomes.loaded" role="status"><i nz-icon nzType="loading"></i> Loading outcome evidence</div>
+      <div class="section-error" *ngIf="advisoryState.outcomes.error" role="alert">{{ advisoryState.outcomes.error }}</div>
+      <div class="outcome-summary" *ngIf="outcomeDefinition as definition">
+        <span class="record-status" [attr.data-status]="latestOutcomeEvaluation?.evaluation?.state || 'unverified'">{{ latestOutcomeEvaluation ? label(latestOutcomeEvaluation.evaluation.state) : 'Not evaluated' }}</span>
+        <div><strong>{{ definition.outcome.statement }}</strong><small>Revision {{ definition.revision }} / {{ (definition.outcome.indicators || []).length }} indicators / {{ definition.outcome.lifeDomain ? label(definition.outcome.lifeDomain) : 'domain review required' }}</small></div>
+      </div>
+      <section class="ambient-monitor governance-form" *ngIf="outcomeDefinition as definition" aria-labelledby="ambient-monitor-heading">
+        <header class="ambient-monitor__heading form-heading">
+          <div>
+            <h3 id="ambient-monitor-heading">Ambient outcome monitor</h3>
+            <p>Collect source-backed measurements on a fixed cadence and route only advisory attention.</p>
+          </div>
+          <span
+            class="engine-status"
+            [attr.data-status]="selectedMonitorTarget?.enabled ? 'ready' : (monitorTargets.length ? 'stale' : 'not_configured')"
+          >
+            {{ selectedMonitorTarget?.enabled ? 'Enabled' : (monitorTargets.length ? 'Paused' : 'Not configured') }}
+          </span>
+        </header>
+
+        <div class="section-loading" *ngIf="monitorState.loading && !monitorState.loaded" role="status">
+          <i nz-icon nzType="loading"></i> Loading monitor state
+        </div>
+        <div class="section-error" *ngIf="monitorState.error" role="alert">
+          {{ monitorState.error }}
+          <button nz-button nzSize="small" type="button" [disabled]="monitorState.loading" (click)="loadAmbientMonitor(true)">Retry</button>
+        </div>
+
+        <ng-container *ngIf="selectedMonitorTarget as target; else monitorNotConfigured">
+          <label class="ambient-monitor__selector" *ngIf="monitorTargets.length > 1">
+            Monitor target
+            <select [ngModel]="selectedMonitorTargetId" (ngModelChange)="selectMonitorTarget($event)" [ngModelOptions]="{ standalone: true }">
+              <option *ngFor="let option of monitorTargets; trackBy: trackById" [value]="option.id">{{ option.id }}</option>
+            </select>
+          </label>
+          <div class="ambient-monitor__summary advisory-metrics policy-summary">
+            <div>
+              <small>Source</small>
+              <strong>{{ monitorSourceLabel(target.sourceKind) }}</strong>
+            </div>
+            <div>
+              <small>Cadence</small>
+              <strong>{{ monitorCadenceLabel(target.cadenceSeconds) }}</strong>
+            </div>
+            <div>
+              <small>Last observation</small>
+              <strong *ngIf="monitorState.historyLoading; else monitorObservationValue">Loading history</strong>
+              <ng-template #monitorObservationValue>
+                <strong *ngIf="latestMonitorObservation as observation; else noMonitorObservation">
+                  {{ observation.value }} {{ currentOutcomeIndicator?.unit }}
+                  <span>{{ observation.observedAt | date:'short' }}</span>
+                </strong>
+                <ng-template #noMonitorObservation><strong>None recorded</strong></ng-template>
+              </ng-template>
+            </div>
+            <div>
+              <small>Last run</small>
+              <strong *ngIf="monitorState.historyLoading; else monitorRunValue">Loading history</strong>
+              <ng-template #monitorRunValue>
+                <strong *ngIf="latestMonitorRun as run; else noMonitorRun">
+                  {{ label(run.status) }}
+                  <span>{{ run.finishedAt | date:'short' }}</span>
+                </strong>
+                <ng-template #noMonitorRun><strong>No completed run</strong></ng-template>
+              </ng-template>
+            </div>
+          </div>
+          <div
+            class="ambient-monitor__handoff"
+            [attr.data-status]="monitorCompositionTone"
+            [attr.role]="latestMonitorComposition?.status === 'dead_lettered' ? 'alert' : 'status'"
+          >
+            <i
+              nz-icon
+              [nzType]="latestMonitorComposition?.status === 'succeeded' ? 'check-circle' : (latestMonitorComposition?.status === 'dead_lettered' ? 'warning' : 'sync')"
+              nzTheme="outline"
+            ></i>
+            <div>
+              <small>Advisory handoff</small>
+              <strong>{{ monitorCompositionLabel }}</strong>
+              <span>{{ monitorCompositionDetail }}</span>
+              <span *ngIf="latestMonitorComposition" data-testid="composition-provenance-summary">
+                {{ monitorCompositionProvenanceLabel }}
+              </span>
+            </div>
+            <button
+              *ngIf="monitorCompositionState.error"
+              nz-button
+              nzSize="small"
+              type="button"
+              [disabled]="monitorCompositionState.loading"
+              (click)="loadMonitorCompositions(true)"
+            >
+              Refresh status
+            </button>
+          </div>
+          <div class="ambient-monitor__actions advisory-actions">
+            <button nz-button type="button" [disabled]="monitorMutating" (click)="toggleAmbientMonitor()">
+              <i nz-icon [nzType]="target.enabled ? 'pause' : 'play-circle'" nzTheme="outline"></i>
+              {{ target.enabled ? 'Pause monitor' : 'Enable monitor' }}
+            </button>
+            <button nz-button nzType="primary" type="button" [disabled]="monitorMutating || !target.enabled" (click)="runDueAmbientMonitors()">
+              <i nz-icon nzType="scan" nzTheme="outline"></i>
+              Run due now
+            </button>
+            <small>Next due {{ target.nextRunAt | date:'short' }}. This pass can observe and evaluate; it cannot execute work.</small>
+          </div>
+          <div class="section-error" *ngIf="monitorState.historyError" role="alert">
+            {{ monitorState.historyError }}
+            <button nz-button nzSize="small" type="button" [disabled]="monitorState.historyLoading" (click)="loadMonitorHistory(true)">Retry history</button>
+          </div>
+        </ng-container>
+        <ng-template #monitorNotConfigured>
+          <div class="calm-empty calm-empty--compact" *ngIf="monitorState.loaded && !monitorState.loading">
+            <i nz-icon nzType="radar-chart" nzTheme="outline"></i>
+            <div>
+              <strong>No ambient monitor target</strong>
+              <span>Advanced view can add one immutable target for this stored outcome and its current indicator.</span>
+            </div>
+          </div>
+        </ng-template>
+
+        <hai-progressive-section
+          [moduleId]="moduleId"
+          sectionId="outcome-monitor-advanced"
+          title="Monitor configuration and history"
+          [summary]="monitorTargets.length + ' immutable target' + (monitorTargets.length === 1 ? '' : 's')"
+          [advancedOnly]="true"
+          (openChange)="$event && selectedMonitorTargetId ? loadMonitorHistory(true) : null"
+        >
+          <div class="advisory-boundary ambient-monitor__boundary">
+            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+            <span>
+              <strong>Advisory monitor only</strong>
+              <small>Cannot execute, deliver, notify, write calendars, mutate workflows or learning, or authorize mandates.</small>
+            </span>
+          </div>
+
+          <form class="governance-form ambient-monitor__form" (ngSubmit)="configureAmbientMonitor()">
+            <div class="form-heading">
+              <div>
+                <h3>Create immutable monitor target</h3>
+                <p>Scope and indicator come from the currently loaded outcome. Target identity and collection contract cannot be rewritten later.</p>
+              </div>
+              <span>{{ advisoryScope.workspaceId }} / {{ advisoryScope.outcomeId }}</span>
+            </div>
+            <div class="ambient-monitor__contract policy-summary">
+              <div><small>Outcome revision</small><strong>{{ definition.revision }}</strong></div>
+              <div><small>Indicator</small><strong>{{ currentOutcomeIndicator?.name || 'Missing indicator' }}</strong></div>
+              <div><small>Indicator ID</small><strong>{{ currentOutcomeIndicator?.id || 'Not configured' }}</strong></div>
+            </div>
+            <div class="form-grid form-grid--wide">
+              <label>
+                Target ID
+                <input nz-input name="monitorTargetId" [(ngModel)]="monitorForm.targetId" maxlength="36" autocomplete="off" readonly>
+              </label>
+              <label>
+                Source kind
+                <select name="monitorSourceKind" [(ngModel)]="monitorForm.sourceKind">
+                  <option *ngFor="let source of monitorSourceKinds" [value]="source.value">{{ source.label }}</option>
+                </select>
+              </label>
+              <label>
+                Cadence in seconds
+                <input nz-input type="number" min="60" max="2592000" step="60" name="monitorCadence" [(ngModel)]="monitorForm.cadenceSeconds">
+              </label>
+              <label>
+                First run
+                <input nz-input type="datetime-local" name="monitorFirstRun" [(ngModel)]="monitorForm.firstRunAt">
+              </label>
+            </div>
+            <label class="ambient-monitor__check checkbox-label">
+              <input type="checkbox" name="monitorEnabled" [(ngModel)]="monitorForm.enabled">
+              Enable advisory collection after registration
+            </label>
+            <p class="ambient-monitor__source-help">
+              {{ monitorSourceDescription(monitorForm.sourceKind) }}
+            </p>
+            <button nz-button nzType="primary" type="submit" [disabled]="monitorMutating || !currentOutcomeIndicator">
+              Create immutable target
+            </button>
+          </form>
+
+          <div class="ambient-monitor__advanced-grid advisory-columns" *ngIf="selectedMonitorTarget as target">
+            <section>
+              <div class="form-heading">
+                <div><h3>Observations</h3><p>Immutable source-backed values for {{ target.id }}.</p></div>
+                <span>{{ monitorObservations.length }} loaded</span>
+              </div>
+              <div class="section-loading" *ngIf="monitorState.historyLoading" role="status"><i nz-icon nzType="loading"></i> Loading history</div>
+              <div class="advisory-records" *ngIf="monitorObservations.length">
+                <article class="advisory-record advisory-record--compact" *ngFor="let observation of monitorObservations; trackBy: trackById">
+                  <span class="record-status" data-status="verified">Observed</span>
+                  <div><strong>{{ observation.value }} {{ currentOutcomeIndicator?.unit }}</strong><small>{{ observation.observedAt | date:'medium' }} / digest {{ shortDigest(observation.sourceDigest) }}</small></div>
+                </article>
+              </div>
+              <div class="calm-empty calm-empty--compact" *ngIf="!monitorState.historyLoading && !monitorObservations.length">
+                <i nz-icon nzType="database" nzTheme="outline"></i>
+                <div><strong>No observations recorded</strong><span>The collector has not stored a source-backed value for this target.</span></div>
+              </div>
+            </section>
+            <section>
+              <div class="form-heading">
+                <div><h3>Runs</h3><p>Durable collection attempts and bounded failure summaries.</p></div>
+                <span>{{ monitorRuns.length }} loaded</span>
+              </div>
+              <div class="advisory-records" *ngIf="monitorRuns.length">
+                <article class="advisory-record advisory-record--compact" *ngFor="let run of monitorRuns; trackBy: trackById">
+                  <span class="record-status" [attr.data-status]="run.status">{{ label(run.status) }}</span>
+                  <div><strong>{{ run.finishedAt | date:'medium' }}</strong><small>{{ run.failureSummary || ('Observation ' + (run.observationId || 'not created')) }}</small></div>
+                </article>
+              </div>
+              <div class="calm-empty calm-empty--compact" *ngIf="!monitorState.historyLoading && !monitorRuns.length">
+                <i nz-icon nzType="history" nzTheme="outline"></i>
+                <div><strong>No monitor runs recorded</strong><span>A run appears here only after the durable worker finishes or records a bounded failure.</span></div>
+              </div>
+            </section>
+          </div>
+        </hai-progressive-section>
+
+        <hai-progressive-section
+          *ngIf="selectedMonitorTarget"
+          [moduleId]="moduleId"
+          sectionId="outcome-monitor-composition"
+          title="Advisory handoff evidence"
+          [summary]="monitorCompositionLabel"
+          [advancedOnly]="true"
+          (openChange)="$event ? loadMonitorCompositionAttempts() : null"
+        >
+          <ng-container *ngIf="latestMonitorCompositionSnapshot as snapshot; else compositionSnapshotMissing">
+            <div class="form-heading">
+              <div>
+                <h3>Composition snapshot provenance</h3>
+                <p>Exact outcome and context inputs bound to this advisory composition.</p>
+              </div>
+              <span>{{ monitorCompositionProvenanceLabel }}</span>
+            </div>
+            <dl class="detail-grid" aria-label="Composition snapshot provenance">
+              <div
+                *ngFor="let detail of monitorCompositionProvenanceDetails"
+                [attr.data-provenance-field]="detail.field"
+              >
+                <dt>{{ detail.label }}</dt>
+                <dd>
+                  <code *ngIf="detail.digest; else provenanceValue">{{ detail.value }}</code>
+                  <ng-template #provenanceValue>{{ detail.value }}</ng-template>
+                </dd>
+              </div>
+            </dl>
+          </ng-container>
+          <ng-template #compositionSnapshotMissing>
+            <div class="calm-empty calm-empty--compact" *ngIf="latestMonitorComposition">
+              <i nz-icon nzType="audit" nzTheme="outline"></i>
+              <div>
+                <strong>Snapshot provenance not recorded</strong>
+                <span>This delivery predates the snapshot contract or the source did not provide it. No revision is inferred.</span>
+              </div>
+            </div>
+          </ng-template>
+          <div class="section-loading" *ngIf="monitorCompositionState.historyLoading" role="status">
+            <i nz-icon nzType="loading"></i> Loading immutable handoff receipts
+          </div>
+          <div class="section-error" *ngIf="monitorCompositionState.historyError" role="alert">
+            {{ monitorCompositionState.historyError }}
+            <button nz-button nzSize="small" type="button" (click)="loadMonitorCompositionAttempts(true)">Retry history</button>
+          </div>
+          <div class="advisory-records" *ngIf="monitorCompositionAttempts.length">
+            <article class="advisory-record advisory-record--compact" *ngFor="let attempt of monitorCompositionAttempts; trackBy: trackById">
+              <span class="record-status" [attr.data-status]="attempt.status === 'succeeded' ? 'verified' : 'needs_review'">
+                {{ attempt.status === 'succeeded' ? 'Verified' : 'Failed' }}
+              </span>
+              <div>
+                <strong>Attempt {{ attempt.attemptNumber }} / {{ latestMonitorComposition?.maxAttempts }}</strong>
+                <small>
+                  {{ attempt.finishedAt | date:'medium' }}
+                  <ng-container *ngIf="attempt.failureCode"> / {{ attempt.failureCode }}</ng-container>
+                  / receipt {{ shortDigest(attempt.recordDigest) }}
+                </small>
+              </div>
+            </article>
+          </div>
+          <div class="calm-empty calm-empty--compact" *ngIf="!monitorCompositionState.historyLoading && !monitorCompositionAttempts.length">
+            <i nz-icon nzType="file-protect" nzTheme="outline"></i>
+            <div>
+              <strong>No handoff attempts recorded</strong>
+              <span>The delivery is either still pending its first bounded attempt or no monitor run has created one yet.</span>
+            </div>
+          </div>
+          <div class="advisory-boundary ambient-monitor__boundary" *ngIf="latestMonitorComposition as composition">
+            <i nz-icon nzType="safety-certificate" nzTheme="outline"></i>
+            <span>
+              <strong>Advisory-only receipt chain</strong>
+              <small>Run {{ shortDigest(composition.runDigest) }} / binding {{ shortDigest(composition.bindingDigest) }} / cannot execute, deliver, notify, or mutate state.</small>
+            </span>
+          </div>
+        </hai-progressive-section>
+      </section>
+      <div class="advisory-boundary" *ngIf="latestOutcomeLifeGraphProjection as projection">
+        <i nz-icon nzType="apartment" nzTheme="outline"></i>
+        <span>
+          <strong>Linked to whole-life context</strong>
+          <small>{{ (projection.linkedEntities || []).length }} linked record(s) / {{ (projection.relations || []).length }} source-backed relation(s) / advisory only</small>
+        </span>
+      </div>
+      <div class="section-error" *ngIf="outcomeLifeGraphProjectionWarning" role="alert">
+        The outcome was stored, but whole-life context needs repair: {{ outcomeLifeGraphProjectionWarning }}
+      </div>
+      <form class="governance-form" *ngIf="outcomeDefinition as definition" (ngSubmit)="addOutcomeObservation()">
+        <div class="form-heading">
+          <div>
+            <h3>Add longitudinal evidence</h3>
+            <p>Build the current evidence snapshot, then evaluate it against revision {{ definition.revision }}.</p>
+          </div>
+          <span>{{ outcomeObservationDrafts.length }} staged</span>
+        </div>
+        <div class="form-grid form-grid--wide">
+          <label>
+            Indicator
+            <select name="outcomeObservationIndicator" [(ngModel)]="outcomeObservationForm.indicatorId">
+              <option *ngFor="let indicator of definition.outcome.indicators" [value]="indicator.id">{{ indicator.name }}</option>
+            </select>
+          </label>
+          <label>Observed value<input nz-input type="number" name="outcomeObservationValue" [(ngModel)]="outcomeObservationForm.value"></label>
+          <label>Observed at<input nz-input type="datetime-local" name="outcomeObservationAt" [(ngModel)]="outcomeObservationForm.observedAt"></label>
+        </div>
+        <label>
+          User-confirmed rationale
+          <textarea nz-input name="outcomeObservationRationale" [(ngModel)]="outcomeObservationForm.rationale" rows="2" placeholder="What was observed and how do you know?"></textarea>
+        </label>
+        <button nz-button type="submit" [disabled]="mutating">Add observation</button>
+      </form>
+      <div class="advisory-records" *ngIf="outcomeObservationDrafts.length">
+        <article class="advisory-record advisory-record--compact" *ngFor="let observation of outcomeObservationDrafts; trackBy: trackById">
+          <span class="record-status" data-status="user_confirmed">User confirmed</span>
+          <div><strong>{{ observation.value }} {{ outcomeDefinition?.outcome?.indicators?.[0]?.unit }}</strong><small>{{ observation.attribution.rationale }}</small></div>
+          <button nz-button nzType="text" type="button" (click)="removeOutcomeObservation(observation.id)" title="Remove this staged observation"><i nz-icon nzType="delete"></i></button>
+        </article>
+        <button nz-button nzType="primary" type="button" [disabled]="mutating" (click)="evaluateOutcome()">Evaluate staged evidence</button>
+      </div>
+      <div class="advisory-metrics" *ngIf="advisoryState.outcomes.loaded">
+        <span><strong>{{ outcomeEvaluations.length }}</strong><small>Evaluations</small></span>
+        <span><strong>{{ outcomeCorrections.length }}</strong><small>Corrections</small></span>
+        <span><strong>{{ latestOutcomeEvaluation?.evaluation?.recommendations?.length || 0 }}</strong><small>Recommendations</small></span>
+      </div>
+      <div class="advisory-records" *ngIf="outcomeEvaluations.length">
+        <article class="advisory-record" *ngFor="let record of outcomeEvaluations.slice(0, 8)">
+          <span class="record-status" [attr.data-status]="record.evaluation.state">{{ label(record.evaluation.state) }}</span>
+          <div><strong>{{ record.evaluation.asOf | date:'mediumDate' }}</strong><small>{{ (record.evaluation.reviewReasons || []).join(' / ') || 'No review reason recorded.' }}</small></div>
+          <div class="record-meta">{{ (record.evaluation.recommendations || []).length }} advisory recommendations</div>
+          <time>{{ record.recordedAt | date:'medium' }}</time>
+        </article>
+      </div>
+      <div class="calm-empty calm-empty--compact" *ngIf="advisoryState.outcomes.availability === 'not_configured'">
+        <i nz-icon nzType="line-chart" nzTheme="outline"></i>
+        <div><strong>Outcome scope not configured</strong><span>Enter the real workspace and outcome IDs. HAI will not guess a scope or display placeholder results.</span></div>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="resilience-status"
+      title="Resilience status"
+      [summary]="advisorySummary('resilience')"
+      [advancedOnly]="false"
+      (openChange)="loadResilienceStatus($event)"
+    >
+      <form class="scope-form scope-form--single" (ngSubmit)="loadResilienceStatus(true, true)">
+        <div>
+          <label for="governance-workspace-resilience">Workspace ID</label>
+          <input id="governance-workspace-resilience" nz-input name="resilienceWorkspace" [(ngModel)]="advisoryScope.workspaceId" autocomplete="off">
+        </div>
+        <button nz-button type="submit" [disabled]="advisoryState.resilience.loading" title="Load the selected workspace's advisory resilience status from the real API">Load resilience status</button>
+      </form>
+      <div class="advisory-toolbar" *ngIf="advisoryState.resilience.availability !== 'not_configured'">
+        <div><span class="engine-status" [attr.data-status]="advisoryState.resilience.availability">{{ advisoryStatusLabel('resilience') }}</span><small>{{ advisoryFreshness('resilience') }}</small></div>
+      </div>
+      <div class="section-loading" *ngIf="advisoryState.resilience.loading && !advisoryState.resilience.loaded" role="status"><i nz-icon nzType="loading"></i> Loading resilience status</div>
+      <div class="section-error" *ngIf="advisoryState.resilience.error" role="alert">{{ advisoryState.resilience.error }}</div>
+      <ng-container *ngIf="resilience as status">
+        <div class="advisory-boundary"><i nz-icon nzType="safety-certificate" nzTheme="outline"></i><span><strong>Advisory boundary</strong><small>{{ label(status.authority.mode) }} / no execution, dispatch, approval consumption, or authority grant</small></span></div>
+        <div class="advisory-metrics">
+          <span><strong>{{ status.workerCount }}</strong><small>Workers</small></span>
+          <span><strong>{{ status.leaseCount }}</strong><small>Leases</small></span>
+          <span><strong>{{ status.retryCount }}</strong><small>Retry records</small></span>
+          <span><strong>{{ status.circuitCount }}</strong><small>Circuits</small></span>
+          <span><strong>{{ status.recoveryCount }}</strong><small>Recoveries</small></span>
+        </div>
+        <div class="latest-event" *ngIf="status.latestEvent as event"><strong>Latest event</strong><span>{{ label(event.type) }} / {{ event.subjectId }}</span></div>
+      </ng-container>
+      <div class="calm-empty calm-empty--compact" *ngIf="advisoryState.resilience.availability === 'not_configured'">
+        <i nz-icon nzType="heart" nzTheme="outline"></i>
+        <div><strong>Resilience scope not configured</strong><span>Enter a real workspace ID to inspect its worker, lease, retry, circuit, and recovery counts.</span></div>
+      </div>
+    </hai-progressive-section>
+  </section>
+
+  <div class="advanced-stack">
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="execution-receipts"
+      title="Execution authorization receipts"
+      summary="Immutable decisions, policy evidence, and single-use consumption."
+    >
+      <div class="section-error" *ngIf="state.execution.error">{{ state.execution.error }}</div>
+      <div class="section-loading" *ngIf="state.execution.loading" role="status"><i nz-icon nzType="loading"></i> Loading authorization receipts</div>
+      <div class="record-list" *ngIf="state.execution.loaded">
+        <button type="button" class="record-row" *ngFor="let receipt of receipts; trackBy: trackById" (click)="openReceipt(receipt)">
+          <span class="record-status" [attr.data-status]="receipt.outcome">{{ label(receipt.outcome) }}</span>
+          <span>
+            <strong>{{ receipt.action }}</strong>
+            <small>{{ receipt.resourceType }}<ng-container *ngIf="receipt.resourceId"> / {{ receipt.resourceId }}</ng-container></small>
+          </span>
+          <span class="record-meta">{{ label(receipt.risk) }} risk</span>
+          <time>{{ receipt.evaluatedAt | date:'medium' }}</time>
+          <i nz-icon nzType="right" nzTheme="outline"></i>
+        </button>
+        <div class="calm-empty calm-empty--compact" *ngIf="state.execution.loaded && !receipts.length">
+          <i nz-icon nzType="file-protect" nzTheme="outline"></i>
+          <div><strong>No authorization receipts yet</strong><span>A receipt appears only after the execution boundary evaluates a real request.</span></div>
+        </div>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="life-ledger-records"
+      title="Immutable commitment and cost records"
+      summary="Revision, evidence, verification, linkage, and timestamps from the owner-scoped ledger."
+      (openChange)="loadLifeLedger($event)"
+    >
+      <div class="advisory-toolbar">
+        <div>
+          <span class="engine-status" [attr.data-status]="advisoryState.ledger.availability">{{ advisoryStatusLabel('ledger') }}</span>
+          <small>{{ advisoryFreshness('ledger') }} / records are append-only</small>
+        </div>
+        <div class="advisory-actions">
+          <button nz-button type="button" (click)="newLifeCommitment()" title="Append a source-backed commitment record without executing anything">
+            <i nz-icon nzType="plus" nzTheme="outline"></i> Commitment
+          </button>
+          <button nz-button type="button" (click)="newLifeCost()" title="Record estimate or verified financial evidence without moving money">
+            <i nz-icon nzType="account-book" nzTheme="outline"></i> Cost evidence
+          </button>
+          <button nz-button type="button" (click)="refreshAdvisory('ledger')" [disabled]="advisoryState.ledger.loading">
+            <i nz-icon nzType="reload" nzTheme="outline"></i> Refresh records
+          </button>
+        </div>
+      </div>
+      <div class="section-loading" *ngIf="advisoryState.ledger.loading && !advisoryState.ledger.loaded" role="status"><i nz-icon nzType="loading"></i> Loading immutable ledger records</div>
+      <div class="section-error" *ngIf="advisoryState.ledger.error" role="alert">{{ advisoryState.ledger.error }}</div>
+      <div class="advisory-columns" *ngIf="advisoryState.ledger.loaded">
+        <section>
+          <h3>Latest commitment revisions</h3>
+          <div class="advisory-records" *ngIf="lifeCommitments.length">
+            <button type="button" class="advisory-record advisory-record-button" *ngFor="let commitment of lifeCommitments; trackBy: trackById" (click)="openLifeCommitment(commitment)" title="Inspect immutable revision history and source evidence">
+              <span class="record-status" [attr.data-status]="commitment.status">{{ label(commitment.status) }}</span>
+              <div>
+                <strong>{{ commitment.title }}</strong>
+                <small>{{ commitment.summary || (commitment.counterparty ? 'Counterparty: ' + commitment.counterparty : label(commitment.domain)) }}</small>
+              </div>
+              <div class="record-meta">
+                Revision {{ commitment.revision }} / {{ (commitment.evidence || []).length }} evidence reference{{ (commitment.evidence || []).length === 1 ? '' : 's' }}<br>
+                {{ label(commitment.verification) }}<ng-container *ngIf="commitment.projectKey"> / project {{ commitment.projectKey }}</ng-container>
+              </div>
+              <time>{{ commitment.observedAt | date:'medium' }}</time>
+            </button>
+          </div>
+          <div class="calm-empty calm-empty--compact" *ngIf="!lifeCommitments.length"><i nz-icon nzType="audit"></i><div><strong>No commitment revisions</strong><span>No current commitment snapshot was returned.</span></div></div>
+        </section>
+        <section>
+          <h3>Cost events</h3>
+          <div class="advisory-records" *ngIf="lifeCosts.length">
+            <button type="button" class="advisory-record advisory-record-button" *ngFor="let cost of lifeCosts; trackBy: trackById" [attr.data-cost-kind]="cost.kind" (click)="openLifeCost(cost)" title="Inspect immutable cost evidence">
+              <span class="record-status" [attr.data-status]="cost.kind">{{ label(cost.kind) }}</span>
+              <div>
+                <strong>{{ cost.title }}</strong>
+                <small>{{ formatLifeCost(cost.amountMinor, cost.currency) }}<ng-container *ngIf="cost.commitmentKey"> / {{ cost.commitmentKey }}</ng-container></small>
+              </div>
+              <div class="record-meta">
+                {{ label(cost.verification) }} / {{ (cost.evidence || []).length }} evidence reference{{ (cost.evidence || []).length === 1 ? '' : 's' }}<br>
+                {{ label(cost.domain) }}<ng-container *ngIf="cost.projectKey"> / project {{ cost.projectKey }}</ng-container>
+              </div>
+              <time>{{ cost.observedAt | date:'medium' }}</time>
+            </button>
+          </div>
+          <div class="calm-empty calm-empty--compact" *ngIf="!lifeCosts.length"><i nz-icon nzType="account-book"></i><div><strong>No cost events</strong><span>No estimate, incurred, paid, or refund record was returned.</span></div></div>
+        </section>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="standing-mandates"
+      title="Standing mandate lifecycle"
+      summary="Create, activate, revoke, and test bounded authority."
+      (openChange)="loadMandateDecisions($event)"
+    >
+      <div class="section-error" *ngIf="state.mandates.error">{{ state.mandates.error }}</div>
+      <div class="section-loading" *ngIf="state.mandates.loading" role="status"><i nz-icon nzType="loading"></i> Loading standing mandates</div>
+      <div class="advanced-grid" *ngIf="state.mandates.loaded">
+        <section>
+          <h3>Current mandates</h3>
+          <div class="record-list record-list--framed">
+            <button type="button" class="record-row" *ngFor="let mandate of mandates; trackBy: trackById" (click)="openMandate(mandate)">
+              <span class="record-status" [attr.data-status]="mandate.status">{{ label(mandate.status) }}</span>
+              <span><strong>{{ mandate.name }}</strong><small>Revision {{ mandate.revision }} / autonomy {{ mandate.autonomyCeiling }}</small></span>
+              <time>{{ mandate.updatedAt | date:'mediumDate' }}</time>
+              <i nz-icon nzType="right" nzTheme="outline"></i>
+            </button>
+            <div class="calm-empty calm-empty--compact" *ngIf="!mandates.length"><i nz-icon nzType="audit"></i><div><strong>No standing mandates</strong><span>Create a draft only when bounded authority is actually needed.</span></div></div>
+          </div>
+        </section>
+
+        <form class="governance-form" (ngSubmit)="createMandate()">
+          <div class="form-heading"><h3>Create a draft</h3><span>Inactive until reviewed</span></div>
+          <label>Name<input nz-input name="mandateName" [(ngModel)]="mandateForm.name"></label>
+          <label>Purpose<textarea nz-input rows="2" name="mandatePurpose" [(ngModel)]="mandateForm.purpose"></textarea></label>
+          <div class="form-grid">
+            <label>Allowed actions<input nz-input name="mandateActions" [(ngModel)]="mandateForm.action" placeholder="draft, classify"></label>
+            <label>Resource type<input nz-input name="mandateResource" [(ngModel)]="mandateForm.resourceType" placeholder="document"></label>
+            <label>Maximum risk
+              <select name="mandateRisk" [(ngModel)]="mandateForm.maximumRisk">
+                <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+              </select>
+            </label>
+            <label>Autonomy ceiling<input nz-input type="number" min="0" max="10" name="mandateAutonomy" [(ngModel)]="mandateForm.autonomyCeiling"></label>
+          </div>
+          <label>Source references<input nz-input name="mandateSources" [(ngModel)]="mandateForm.sourceReference" placeholder="Comma-separated source IDs or URLs"></label>
+          <button nz-button nzType="primary" type="submit" [nzLoading]="mutating">Create draft mandate</button>
+        </form>
+      </div>
+
+      <form class="governance-form authorization-form" (ngSubmit)="authorizeMandateAction()" *ngIf="mandates.length">
+        <div class="form-heading"><h3>Evaluate a mandate decision</h3><span>Policy check only; this does not execute the action</span></div>
+        <div class="form-grid form-grid--wide">
+          <label>Active mandate
+            <select name="authorizationMandate" [(ngModel)]="mandateAuthorizationForm.mandateId">
+              <option value="">Select mandate</option>
+              <option *ngFor="let mandate of mandates" [value]="mandate.id" [disabled]="mandate.status !== 'active'">{{ mandate.name }} ({{ mandate.status }})</option>
+            </select>
+          </label>
+          <label>Action<input nz-input name="authorizationAction" [(ngModel)]="mandateAuthorizationForm.action"></label>
+          <label>Resource type<input nz-input name="authorizationResource" [(ngModel)]="mandateAuthorizationForm.resourceType"></label>
+          <label>Risk
+            <select name="authorizationRisk" [(ngModel)]="mandateAuthorizationForm.risk">
+              <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option>
+            </select>
+          </label>
+          <label>Requested autonomy<input nz-input type="number" min="0" max="10" name="authorizationAutonomy" [(ngModel)]="mandateAuthorizationForm.requestedAutonomy"></label>
+          <label>Project key<input nz-input name="authorizationProject" [(ngModel)]="mandateAuthorizationForm.projectKey"></label>
+          <label class="checkbox-label"><input type="checkbox" name="authorizationUpstreamApproval" [(ngModel)]="mandateAuthorizationForm.upstreamApprovalRequired"> Upstream policy already requires approval</label>
+        </div>
+        <button nz-button type="submit" [nzLoading]="mutating">Evaluate decision</button>
+        <div class="inline-result" *ngIf="lastMandateDecision">
+          <strong>{{ label(lastMandateDecision.outcome) }}</strong>
+          <span>{{ lastMandateDecision.reason }}</span>
+        </div>
+      </form>
+
+      <div class="section-loading" *ngIf="mandateDecisionState.loading" role="status"><i nz-icon nzType="loading"></i> Loading mandate decision history</div>
+      <div class="section-error" *ngIf="mandateDecisionState.error">{{ mandateDecisionState.error }} <button nz-button type="button" (click)="loadMandateDecisions(true, true)">Retry history</button></div>
+      <div class="record-list decision-history" *ngIf="mandateDecisionState.loaded && mandateDecisions.length">
+        <h3>Recent decisions</h3>
+        <article *ngFor="let decision of mandateDecisions; trackBy: trackById">
+          <span class="record-status" [attr.data-status]="decision.outcome">{{ label(decision.outcome) }}</span>
+          <div><strong>{{ decision.action }}</strong><small>{{ decision.reason }}</small></div>
+          <time>{{ decision.evaluatedAt | date:'medium' }}</time>
+        </article>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="controlled-learning"
+      title="Controlled-learning review"
+      summary="Evidence-backed proposals, human decisions, and honest application status."
+    >
+      <div class="section-error" *ngIf="state.learning.error">{{ state.learning.error }}</div>
+      <div class="section-loading" *ngIf="state.learning.loading" role="status"><i nz-icon nzType="loading"></i> Loading learning evidence and proposals</div>
+      <div class="record-list" *ngIf="state.learning.loaded">
+        <h3>Verified outcome evidence</h3>
+        <article class="record-row" *ngFor="let outcome of learningOutcomes; trackBy: trackById">
+          <span class="record-status" [attr.data-status]="outcome.reconciliation.status">{{ label(outcome.reconciliation.status) }}</span>
+          <span>
+            <strong>{{ outcome.summary }}</strong>
+            <small>{{ label(outcome.verification) }} / {{ (outcome.sources || []).length }} immutable source(s)</small>
+          </span>
+          <span class="record-meta">{{ outcome.recordedAt | date:'medium' }}</span>
+          <details>
+            <summary>Evidence</summary>
+            <span *ngFor="let source of outcome.sources">{{ source.kind }}: {{ source.uri }}</span>
+          </details>
+        </article>
+        <div class="calm-empty calm-empty--compact" *ngIf="!learningOutcomes.length">
+          <i nz-icon nzType="file-search" nzTheme="outline"></i>
+          <div><strong>No verified outcome evidence</strong><span>Completed work has not yet produced evidence for controlled review.</span></div>
+        </div>
+
+        <h3>Proposed behavior changes</h3>
+        <button type="button" class="record-row" *ngFor="let proposal of proposals; trackBy: trackById" (click)="openProposal(proposal)">
+          <span class="record-status" [attr.data-status]="proposal.status">{{ label(proposal.status) }}</span>
+          <span>
+            <strong>{{ proposal.title }}</strong>
+            <small>{{ label(proposal.method) }} / {{ label(proposal.target) }}</small>
+          </span>
+          <span class="record-meta">{{ learningApplicationStatus(proposal) }}</span>
+          <i nz-icon nzType="right" nzTheme="outline"></i>
+        </button>
+        <div class="calm-empty calm-empty--compact" *ngIf="!proposals.length">
+          <i nz-icon nzType="experiment" nzTheme="outline"></i>
+          <div><strong>No learning proposals</strong><span>HAI has not submitted an evidence-backed change for review.</span></div>
+        </div>
+      </div>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="agent-registry"
+      title="Durable agent registry and assignments"
+      summary="Identity, capability, health, authority ceilings, lifecycle, and evidence-based routing."
+    >
+      <div class="section-error" *ngIf="state.agents.error">{{ state.agents.error }}</div>
+      <div class="section-loading" *ngIf="state.agents.loading" role="status"><i nz-icon nzType="loading"></i> Loading durable agents</div>
+      <div class="advanced-grid" *ngIf="state.agents.loaded">
+        <section>
+          <h3>Registered agents</h3>
+          <div class="record-list record-list--framed">
+            <button type="button" class="record-row" *ngFor="let agent of agents; trackBy: trackById" (click)="openAgent(agent)">
+              <span class="record-status" [attr.data-status]="agent.state">{{ label(agent.state) }}</span>
+              <span><strong>{{ agent.name }}</strong><small>{{ label(agent.type) }} / {{ agent.runtime.id }}</small></span>
+              <span class="record-meta">{{ label(agent.health.status) }}</span>
+              <i nz-icon nzType="right" nzTheme="outline"></i>
+            </button>
+            <div class="calm-empty calm-empty--compact" *ngIf="!agents.length"><i nz-icon nzType="team"></i><div><strong>No durable agents</strong><span>Registering an agent does not enable it; fresh health evidence is still required.</span></div></div>
+          </div>
+        </section>
+
+        <form class="governance-form" (ngSubmit)="registerAgent()">
+          <div class="form-heading"><h3>Register an agent</h3><span>Starts unready until runtime health is proven</span></div>
+          <div class="form-grid">
+            <label>Agent ID<input nz-input name="agentId" [(ngModel)]="agentForm.id"></label>
+            <label>Name<input nz-input name="agentName" [(ngModel)]="agentForm.name"></label>
+            <label>Type
+              <select name="agentType" [(ngModel)]="agentForm.type">
+                <option value="planner">Planner</option><option value="researcher">Researcher</option><option value="executor">Executor</option>
+                <option value="reviewer">Reviewer</option><option value="specialist">Specialist</option><option value="orchestrator">Orchestrator</option>
+              </select>
+            </label>
+            <label>Runtime ID<input nz-input name="agentRuntime" [(ngModel)]="agentForm.runtimeId"></label>
+            <label>Capability ID<input nz-input name="agentCapability" [(ngModel)]="agentForm.capabilityId"></label>
+            <label>Capability version<input nz-input name="agentCapabilityVersion" [(ngModel)]="agentForm.capabilityVersion"></label>
+            <label>Authority ceiling<input nz-input type="number" min="0" max="10" name="agentAuthority" [(ngModel)]="agentForm.authorityCeiling"></label>
+            <label>Autonomy ceiling<input nz-input type="number" min="0" max="10" name="agentAutonomy" [(ngModel)]="agentForm.autonomyCeiling"></label>
+          </div>
+          <button nz-button nzType="primary" type="submit" [nzLoading]="mutating">Register agent</button>
+        </form>
+      </div>
+
+      <form class="governance-form assignment-form" (ngSubmit)="assignAgent()">
+        <div class="form-heading"><h3>Create an assignment</h3><span>The backend selects an eligible agent; the UI cannot force one</span></div>
+        <div class="form-grid form-grid--wide">
+          <label>Task ID<input nz-input name="assignmentTask" [(ngModel)]="assignmentForm.taskId"></label>
+          <label>Required capability<input nz-input name="assignmentCapability" [(ngModel)]="assignmentForm.capabilityId"></label>
+          <label>Minimum version<input nz-input name="assignmentVersion" [(ngModel)]="assignmentForm.minVersion"></label>
+          <label>Required authority<input nz-input type="number" min="0" max="10" name="assignmentAuthority" [(ngModel)]="assignmentForm.requiredAuthority"></label>
+          <label>Required autonomy<input nz-input type="number" min="0" max="10" name="assignmentAutonomy" [(ngModel)]="assignmentForm.requiredAutonomy"></label>
+          <label class="checkbox-label"><input type="checkbox" name="assignmentLocal" [(ngModel)]="assignmentForm.requireLocal"> Require local runtime</label>
+        </div>
+        <button nz-button type="submit" [nzLoading]="mutating">Select and assign</button>
+        <div class="inline-result" *ngIf="lastAssignment">
+          <strong>{{ lastAssignment.agentId }}</strong>
+          <span>Assignment {{ lastAssignment.id }} / score {{ lastAssignment.score }}</span>
+        </div>
+      </form>
+    </hai-progressive-section>
+
+    <hai-progressive-section
+      [moduleId]="moduleId"
+      sectionId="domain-pack-catalog"
+      title="Domain-pack methods and preferences"
+      summary="Effective safeguards, playbooks, provenance, and owner-specific additive settings."
+    >
+      <div class="section-error" *ngIf="state.domains.error">{{ state.domains.error }}</div>
+      <div class="section-loading" *ngIf="state.domains.loading" role="status"><i nz-icon nzType="loading"></i> Loading domain-pack catalog</div>
+      <div class="catalog-meta" *ngIf="catalogVersion">
+        <span>Catalog {{ catalogVersion }}</span>
+        <span>Digest {{ shortDigest(catalogDigest) }}</span>
+        <span>{{ domainPacks.length }} source-backed packs</span>
+      </div>
+      <div class="domain-grid" *ngIf="state.domains.loaded">
+        <button type="button" *ngFor="let view of domainPacks; trackBy: trackByPackId" (click)="openDomain(view)">
+          <span class="domain-title"><strong>{{ view.pack.name }}</strong><span class="status-pill" [class.status-pill--green]="view.enabled">{{ view.enabled ? 'Enabled' : 'Disabled' }}</span></span>
+          <small>{{ view.pack.description }}</small>
+          <span class="domain-meta">
+            <span>{{ (view.pack.playbook.methods || []).length }} methods</span>
+            <span *ngIf="view.localOnly">Local only</span>
+            <span *ngIf="view.pack.sensitive">Sensitive</span>
+          </span>
+        </button>
+      </div>
+    </hai-progressive-section>
+  </div>
+
+  <nz-drawer
+    [nzVisible]="inspectorVisible"
+    nzWidth="min(720px, 100vw)"
+    [nzTitle]="inspectorTitle()"
+    [nzClosable]="true"
+    (nzOnClose)="closeInspector()"
+  >
+    <ng-container *nzDrawerContent>
+      <nz-spin [nzSpinning]="inspectorLoading">
+        <div class="inspector-error" *ngIf="inspectorError">{{ inspectorError }}</div>
+        <div class="section-loading" *ngIf="inspectorLoading" role="status"><i nz-icon nzType="loading"></i> Loading current governance detail</div>
+
+        <div class="inspector-list" *ngIf="inspectorKind === 'execution'">
+          <button type="button" *ngFor="let receipt of receipts; trackBy: trackById" (click)="openReceipt(receipt)">
+            <span class="record-status" [attr.data-status]="receipt.outcome">{{ label(receipt.outcome) }}</span>
+            <span><strong>{{ receipt.action }}</strong><small>{{ receipt.reason }}</small></span>
+          </button>
+          <div class="section-error" *ngIf="state.execution.error">{{ state.execution.error }}</div>
+          <div class="calm-empty calm-empty--compact" *ngIf="state.execution.loaded && !receipts.length"><i nz-icon nzType="file-protect"></i><div><strong>No authorization receipts</strong><span>No execution request has produced a receipt yet.</span></div></div>
+        </div>
+
+        <div class="inspector-list" *ngIf="inspectorKind === 'mandates'">
+          <button type="button" *ngFor="let mandate of mandates; trackBy: trackById" (click)="openMandate(mandate)">
+            <span class="record-status" [attr.data-status]="mandate.status">{{ label(mandate.status) }}</span>
+            <span><strong>{{ mandate.name }}</strong><small>{{ mandate.purpose }}</small></span>
+          </button>
+          <div class="section-error" *ngIf="state.mandates.error">{{ state.mandates.error }}</div>
+          <div class="calm-empty calm-empty--compact" *ngIf="state.mandates.loaded && !mandates.length"><i nz-icon nzType="audit"></i><div><strong>No standing mandates</strong><span>No bounded authority has been created.</span></div></div>
+        </div>
+
+        <div class="inspector-list" *ngIf="inspectorKind === 'learning'">
+          <button type="button" *ngFor="let proposal of proposals; trackBy: trackById" (click)="openProposal(proposal)">
+            <span class="record-status" [attr.data-status]="proposal.status">{{ label(proposal.status) }}</span>
+            <span><strong>{{ proposal.title }}</strong><small>{{ learningApplicationStatus(proposal) }}</small></span>
+          </button>
+          <div class="section-error" *ngIf="state.learning.error">{{ state.learning.error }}</div>
+          <div class="calm-empty calm-empty--compact" *ngIf="state.learning.loaded && !proposals.length"><i nz-icon nzType="experiment"></i><div><strong>No learning proposals</strong><span>No evidence-backed change is waiting or recorded.</span></div></div>
+        </div>
+
+        <div class="inspector-list" *ngIf="inspectorKind === 'agents'">
+          <button type="button" *ngFor="let agent of agents; trackBy: trackById" (click)="openAgent(agent)">
+            <span class="record-status" [attr.data-status]="agent.state">{{ label(agent.state) }}</span>
+            <span><strong>{{ agent.name }}</strong><small>{{ agent.runtime.id }} / {{ label(agent.health.status) }}</small></span>
+          </button>
+          <div class="section-error" *ngIf="state.agents.error">{{ state.agents.error }}</div>
+          <div class="calm-empty calm-empty--compact" *ngIf="state.agents.loaded && !agents.length"><i nz-icon nzType="team"></i><div><strong>No durable agents</strong><span>The registry does not contain an agent record.</span></div></div>
+        </div>
+
+        <div class="inspector-list" *ngIf="inspectorKind === 'domains'">
+          <button type="button" *ngFor="let view of domainPacks; trackBy: trackByPackId" (click)="openDomain(view)">
+            <span class="record-status" [attr.data-status]="view.enabled ? 'enabled' : 'disabled'">{{ view.enabled ? 'Enabled' : 'Disabled' }}</span>
+            <span><strong>{{ view.pack.name }}</strong><small>{{ (view.pack.playbook.methods || []).length }} advisory methods</small></span>
+          </button>
+          <div class="section-error" *ngIf="state.domains.error">{{ state.domains.error }}</div>
+          <div class="calm-empty calm-empty--compact" *ngIf="state.domains.loaded && !domainPacks.length"><i nz-icon nzType="apartment"></i><div><strong>No domain packs</strong><span>The backend returned an empty catalog.</span></div></div>
+        </div>
+
+        <article class="inspector-detail" *ngIf="inspectorKind === 'receipt' && selectedReceipt as receipt">
+          <div class="detail-hero">
+            <span class="record-status" [attr.data-status]="receipt.outcome">{{ label(receipt.outcome) }}</span>
+            <h2>{{ receipt.action }}</h2>
+            <p>{{ receipt.reason }}</p>
+          </div>
+          <dl class="detail-grid">
+            <div><dt>Task</dt><dd>{{ receipt.taskId }}</dd></div>
+            <div><dt>Resource</dt><dd>{{ receipt.resourceType }} {{ receipt.resourceId || '' }}</dd></div>
+            <div><dt>Risk</dt><dd>{{ label(receipt.risk) }}</dd></div>
+            <div><dt>Authority</dt><dd>{{ receipt.requiredAuthority }}</dd></div>
+            <div><dt>Effective autonomy</dt><dd>{{ receipt.effectiveAutonomy }}</dd></div>
+            <div><dt>Reversible</dt><dd>{{ receipt.reversible ? 'Yes' : 'No' }}</dd></div>
+            <div><dt>Request fingerprint</dt><dd>{{ receipt.requestFingerprint }}</dd></div>
+            <div><dt>Decision fingerprint</dt><dd>{{ receipt.decisionFingerprint }}</dd></div>
+          </dl>
+          <section class="evidence-block">
+            <h3>Decision evidence</h3>
+            <div class="evidence-row"><strong>Constitution</strong><span>{{ receipt.evidence.constitution.id || 'Active Constitution' }} v{{ receipt.evidence.constitution.version }}</span></div>
+            <div class="evidence-row"><strong>Mandate</strong><span>{{ receipt.evidence.mandate.id || 'No mandate matched' }}</span></div>
+            <div class="evidence-row"><strong>Agent</strong><span>{{ receipt.evidence.agent.agentId || 'Human or system actor' }}</span></div>
+            <div class="evidence-row"><strong>Approval</strong><span>{{ receipt.evidence.approval.sourceId || 'No approval evidence used' }}</span></div>
+            <ul><li *ngFor="let trace of receipt.evidence.trace">{{ trace }}</li></ul>
+          </section>
+          <section class="evidence-block" *ngIf="receipt.lifeGraphProjection as projection">
+            <h3>Whole-life context</h3>
+            <div class="evidence-row"><strong>Life domain</strong><span>{{ label(projection.domain) }}</span></div>
+            <div class="evidence-row"><strong>Linked records</strong><span>{{ projection.linkedRecords }}</span></div>
+            <div class="evidence-row"><strong>Relations</strong><span>{{ projection.relations }}</span></div>
+            <div class="evidence-row"><strong>Authority</strong><span>{{ projection.advisoryOnly && !projection.canExecute && !projection.grantsAuthority ? 'Advisory only' : 'Boundary violation' }}</span></div>
+          </section>
+          <div class="section-error" *ngIf="receipt.lifeGraphProjectionWarning" role="alert">
+            Authorization is recorded, but whole-life context needs repair: {{ receipt.lifeGraphProjectionWarning }}
+          </div>
+          <section class="consumption-block">
+            <h3>Consumption</h3>
+            <ng-container *ngIf="selectedConsumption; else notConsumed">
+              <p><strong>{{ selectedConsumption.consumer }}</strong> consumed this receipt for {{ selectedConsumption.executionTarget }}.</p>
+              <small>{{ selectedConsumption.consumedAt | date:'medium' }} / {{ selectedConsumption.receiptFingerprint }}</small>
+            </ng-container>
+            <ng-template #notConsumed><p>This receipt has no recorded single-use consumption.</p></ng-template>
+          </section>
+        </article>
+
+        <article class="inspector-detail" *ngIf="inspectorKind === 'mandate' && selectedMandate as mandate">
+          <div class="detail-hero">
+            <span class="record-status" [attr.data-status]="mandate.status">{{ label(mandate.status) }}</span>
+            <h2>{{ mandate.name }}</h2>
+            <p>{{ mandate.purpose }}</p>
+          </div>
+          <dl class="detail-grid">
+            <div><dt>Revision</dt><dd>{{ mandate.revision }}</dd></div>
+            <div><dt>Autonomy ceiling</dt><dd>{{ mandate.autonomyCeiling }}</dd></div>
+            <div><dt>Approval mode</dt><dd>{{ label(mandate.approvalPolicy.mode) }}</dd></div>
+            <div><dt>Expires</dt><dd>{{ mandate.expiresAt ? (mandate.expiresAt | date:'medium') : 'No expiry' }}</dd></div>
+          </dl>
+          <section class="evidence-block">
+            <h3>Authority scopes</h3>
+            <article *ngFor="let scope of mandate.scopes">
+              <strong>{{ scope.id }}</strong>
+              <span>{{ (scope.actions || []).join(', ') || 'No actions declared' }} / maximum {{ label(scope.maximumRisk || 'low') }} risk</span>
+            </article>
+          </section>
+          <section class="evidence-block" *ngIf="selectedMandateDecisions.length">
+            <h3>Decision history</h3>
+            <article *ngFor="let decision of selectedMandateDecisions; trackBy: trackById">
+              <strong>{{ label(decision.outcome) }}: {{ decision.action }}</strong>
+              <span>{{ decision.reason }}</span>
+            </article>
+          </section>
+          <div class="inspector-actions" *ngIf="mandate.status === 'draft'">
+            <button nz-button nzType="primary" type="button" [nzLoading]="mutating" (click)="activateMandate(mandate)">Activate mandate</button>
+          </div>
+          <form class="danger-zone" (ngSubmit)="revokeMandate()" *ngIf="mandate.status !== 'revoked'">
+            <label>Revocation reason<input nz-input name="revokeReason" [(ngModel)]="revokeReason"></label>
+            <button nz-button nzDanger type="submit" [nzLoading]="mutating">Revoke authority</button>
+          </form>
+        </article>
+
+        <article class="inspector-detail" *ngIf="inspectorKind === 'proposal' && selectedProposal as proposal">
+          <div class="detail-hero">
+            <span class="record-status" [attr.data-status]="proposal.status">{{ label(proposal.status) }}</span>
+            <h2>{{ proposal.title }}</h2>
+            <p>{{ proposal.hypothesis }}</p>
+          </div>
+          <div class="application-status" [attr.data-status]="selectedLearningApplication?.status || proposal.status">
+            <strong>Application status</strong>
+            <span>{{ learningApplicationStatus(proposal, selectedLearningApplication) }}</span>
+          </div>
+          <dl class="detail-grid" *ngIf="selectedLearningApplication as application">
+            <div><dt>Application state</dt><dd>{{ label(application.status) }}</dd></div>
+            <div><dt>Mode</dt><dd>{{ label(application.mode) }}</dd></div>
+            <div><dt>Attempt</dt><dd>{{ application.attempt }}</dd></div>
+            <div><dt>Evidence</dt><dd>{{ (application.evidence || []).length }} record(s)</dd></div>
+            <div *ngIf="application.appliedVersion"><dt>Applied version</dt><dd>{{ application.appliedVersion }}</dd></div>
+            <div *ngIf="application.handoffReference"><dt>Handoff reference</dt><dd>{{ application.handoffReference }}</dd></div>
+            <div *ngIf="application.lastErrorCode"><dt>Failure code</dt><dd>{{ application.lastErrorCode }}</dd></div>
+          </dl>
+          <dl class="detail-grid">
+            <div><dt>Method</dt><dd>{{ label(proposal.method) }}</dd></div>
+            <div><dt>Target</dt><dd>{{ label(proposal.target) }}</dd></div>
+            <div><dt>Current version</dt><dd>{{ proposal.currentVersion }}</dd></div>
+            <div><dt>Proposed version</dt><dd>{{ proposal.proposedVersion }}</dd></div>
+          </dl>
+          <section class="evidence-block"><h3>Proposed change</h3><p>{{ proposal.proposedChange }}</p></section>
+          <section class="evidence-block"><h3>Rollback</h3><p>{{ proposal.rollbackPlan }}</p></section>
+          <section class="evidence-block"><h3>Evaluation</h3><p>{{ proposal.evaluationPlan }}</p><small>Evidence: {{ (proposal.evidenceIds || []).join(', ') || 'No evidence references recorded' }}</small></section>
+          <section class="evidence-block" *ngIf="selectedLearningDecisions.length">
+            <h3>Review history</h3>
+            <article *ngFor="let decision of selectedLearningDecisions; trackBy: trackById">
+              <strong>{{ label(decision.kind) }}</strong><span>{{ decision.rationale }}</span>
+            </article>
+          </section>
+          <form class="review-form" *ngIf="isProposalPending(proposal)">
+            <label>Decision rationale<textarea nz-input rows="3" name="learningRationale" [(ngModel)]="learningRationale"></textarea></label>
+            <label *ngIf="proposal.protectedTarget">Governance reference<input nz-input name="learningGovernance" [(ngModel)]="learningGovernanceReference"></label>
+            <div class="review-actions">
+              <button nz-button nzType="primary" type="button" [nzLoading]="mutating" (click)="decideProposal('approve')">Approve</button>
+              <button nz-button type="button" [nzLoading]="mutating" (click)="decideProposal('request_changes')">Request changes</button>
+              <button nz-button type="button" [nzLoading]="mutating" (click)="decideProposal('escalate_governance')">Escalate</button>
+              <button nz-button nzDanger type="button" [nzLoading]="mutating" (click)="decideProposal('reject')">Reject</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="inspector-detail" *ngIf="inspectorKind === 'agent' && selectedAgent as agent">
+          <div class="detail-hero">
+            <span class="record-status" [attr.data-status]="agent.state">{{ label(agent.state) }}</span>
+            <h2>{{ agent.name }}</h2>
+            <p>{{ label(agent.type) }} through {{ agent.runtime.id }} ({{ agent.runtime.type }})</p>
+          </div>
+          <dl class="detail-grid">
+            <div><dt>Health</dt><dd>{{ label(agent.health.status) }} / {{ agent.health.ready ? 'Ready' : 'Not ready' }}</dd></div>
+            <div><dt>Locality</dt><dd>{{ label(agent.performance.locality) }}</dd></div>
+            <div><dt>Authority ceiling</dt><dd>{{ agent.authorityCeiling }}</dd></div>
+            <div><dt>Autonomy ceiling</dt><dd>{{ agent.autonomyCeiling }}</dd></div>
+            <div><dt>Assignments</dt><dd>{{ agent.availability.activeAssignments }} / {{ agent.availability.maxConcurrent }}</dd></div>
+            <div><dt>Reliability evidence</dt><dd>{{ agent.reliability.successes }} success / {{ agent.reliability.failures }} failure</dd></div>
+          </dl>
+          <section class="evidence-block">
+            <h3>Capabilities</h3>
+            <article *ngFor="let capability of agent.capabilities"><strong>{{ capability.id }} v{{ capability.version }}</strong><span>{{ capability.operations?.join(', ') || 'No operation list declared' }}</span></article>
+          </section>
+          <section class="evidence-block" *ngIf="selectedAgentTransitions.length">
+            <h3>Lifecycle history</h3>
+            <article *ngFor="let transition of selectedAgentTransitions"><strong>{{ label(transition.from) }} to {{ label(transition.to) }}</strong><span>{{ transition.reason }}</span></article>
+          </section>
+          <form class="review-form">
+            <label>Transition reason<input nz-input name="transitionReason" [(ngModel)]="transitionReason"></label>
+            <div class="review-actions">
+              <button nz-button type="button" *ngFor="let state of allowedAgentTransitions(agent)" [disabled]="agentTransitionDisabled(agent, state)" [nzLoading]="mutating" [attr.title]="state === 'enabled' && !canEnableAgent(agent) ? 'Enablement requires healthy, ready, fresh, and available runtime evidence.' : null" (click)="transitionAgent(state)">{{ label(state) }}</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="inspector-detail" *ngIf="inspectorKind === 'domain' && selectedDomain as domain">
+          <div class="detail-hero">
+            <span class="record-status" [attr.data-status]="domain.enabled ? 'enabled' : 'disabled'">{{ domain.enabled ? 'Enabled' : 'Disabled' }}</span>
+            <h2>{{ domain.pack.name }}</h2>
+            <p>{{ domain.pack.description }}</p>
+          </div>
+          <dl class="detail-grid">
+            <div><dt>Pack version</dt><dd>{{ domain.pack.version }}</dd></div>
+            <div><dt>Playbook version</dt><dd>{{ domain.pack.playbook.version || 'Not reported by API' }}</dd></div>
+            <div><dt>Local only</dt><dd>{{ domain.localOnly ? 'Yes' : 'No' }}</dd></div>
+            <div><dt>Sensitive</dt><dd>{{ domain.pack.sensitive ? 'Yes' : 'No' }}</dd></div>
+          </dl>
+          <section class="evidence-block">
+            <h3>Advisory methods</h3>
+            <div class="calm-empty calm-empty--compact" *ngIf="!(domain.pack.playbook.methods || []).length">
+              <i nz-icon nzType="book"></i>
+              <div><strong>No advisory methods reported</strong><span>The pack remains available, but its API response did not include playbook methods.</span></div>
+            </div>
+            <article *ngFor="let method of domain.pack.playbook.methods">
+              <strong>{{ method.name }} <span class="method-state">{{ label(method.lifecycleStatus) }}</span></strong>
+              <span>{{ method.purpose }}</span>
+              <small>{{ method.provenance.title }} / {{ method.provenance.reference }}</small>
+            </article>
+          </section>
+          <section class="evidence-block">
+            <h3>Safety boundaries</h3>
+            <div class="calm-empty calm-empty--compact calm-empty--warning" *ngIf="!(domain.pack.prohibitedAutonomousActions || []).length">
+              <i nz-icon nzType="warning"></i>
+              <div><strong>No explicit prohibitions reported</strong><span>Do not infer autonomous permission from a missing safeguards list.</span></div>
+            </div>
+            <article *ngFor="let action of domain.pack.prohibitedAutonomousActions"><strong>{{ action.action }}</strong><span>{{ action.reason }}</span></article>
+          </section>
+          <form class="review-form" (ngSubmit)="saveDomainPreference()">
+            <div class="form-heading"><h3>Owner preference</h3><span>Additive only; catalog safeguards cannot be weakened</span></div>
+            <label class="checkbox-label"><input type="checkbox" name="domainEnabled" [(ngModel)]="domainPreferenceForm.enabled"> Enable this pack</label>
+            <label class="checkbox-label"><input type="checkbox" name="domainLocal" [(ngModel)]="domainPreferenceForm.forceLocalOnly"> Force local-only handling</label>
+            <label>Preference lifecycle
+              <select name="domainStatus" [(ngModel)]="domainPreferenceForm.status">
+                <option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option>
+              </select>
+            </label>
+            <label>Classification boost<input nz-input type="number" name="domainBoost" [(ngModel)]="domainPreferenceForm.classificationBoost"></label>
+            <label>Notes<textarea nz-input rows="3" name="domainNotes" [(ngModel)]="domainPreferenceForm.notes"></textarea></label>
+            <button nz-button nzType="primary" type="submit" [nzLoading]="mutating">Save owner preference</button>
+          </form>
+        </article>
+
+        <article class="inspector-detail" *ngIf="inspectorKind === 'commitment' && selectedLifeCommitment as commitment">
+          <div class="detail-hero">
+            <span class="record-status" [attr.data-status]="commitment.status">{{ label(commitment.status) }}</span>
+            <h2>{{ commitment.title }}</h2>
+            <p>{{ commitment.summary || 'No summary was recorded.' }}</p>
+          </div>
+          <dl class="detail-grid">
+            <div><dt>Key</dt><dd>{{ commitment.commitmentKey }}</dd></div>
+            <div><dt>Revision</dt><dd>{{ commitment.revision }}</dd></div>
+            <div><dt>Domain</dt><dd>{{ label(commitment.domain) }}</dd></div>
+            <div><dt>Verification</dt><dd>{{ label(commitment.verification) }}</dd></div>
+            <div><dt>Counterparty</dt><dd>{{ commitment.counterparty || 'Not recorded' }}</dd></div>
+            <div><dt>Due</dt><dd>{{ commitment.dueAt ? (commitment.dueAt | date:'medium') : 'No due date' }}</dd></div>
+            <div><dt>Observed</dt><dd>{{ commitment.observedAt | date:'medium' }}</dd></div>
+            <div><dt>Record digest</dt><dd>{{ commitment.recordDigest }}</dd></div>
+          </dl>
+          <section class="evidence-block">
+            <h3>Source evidence</h3>
+            <article *ngFor="let evidence of commitment.evidence">
+              <strong>{{ evidence.id }} / {{ label(evidence.verification) }}</strong>
+              <span>{{ evidence.uri }}</span>
+              <small>SHA-256 {{ evidence.contentDigest }} / observed {{ evidence.observedAt | date:'medium' }}</small>
+            </article>
+          </section>
+          <section class="evidence-block">
+            <h3>Immutable revision history</h3>
+            <article *ngFor="let revision of selectedLifeCommitmentHistory">
+              <strong>Revision {{ revision.revision }} / {{ label(revision.status) }}</strong>
+              <span>{{ revision.summary || revision.title }}</span>
+              <small>{{ label(revision.verification) }} / {{ revision.recordedAt | date:'medium' }}</small>
+            </article>
+          </section>
+          <div class="inspector-actions">
+            <button nz-button nzType="primary" type="button" (click)="reviseLifeCommitment(commitment)">Append revision</button>
+          </div>
+        </article>
+
+        <article class="inspector-detail" *ngIf="inspectorKind === 'cost' && selectedLifeCost as cost">
+          <div class="detail-hero">
+            <span class="record-status" [attr.data-status]="cost.kind">{{ label(cost.kind) }}</span>
+            <h2>{{ cost.title }}</h2>
+            <p>{{ cost.summary || 'No summary was recorded.' }}</p>
+          </div>
+          <div class="advisory-boundary">
+            <i nz-icon nzType="safety-certificate"></i>
+            <span><strong>Evidence only</strong><small>This record documents a financial fact or estimate. It did not initiate a payment, refund, or commitment.</small></span>
+          </div>
+          <dl class="detail-grid">
+            <div><dt>Amount</dt><dd>{{ formatLifeCost(cost.amountMinor, cost.currency) }}</dd></div>
+            <div><dt>Verification</dt><dd>{{ label(cost.verification) }}</dd></div>
+            <div><dt>Commitment</dt><dd>{{ cost.commitmentKey || 'Not linked' }}</dd></div>
+            <div><dt>Project</dt><dd>{{ cost.projectKey || 'Not linked' }}</dd></div>
+            <div><dt>Observed</dt><dd>{{ cost.observedAt | date:'medium' }}</dd></div>
+            <div><dt>Record digest</dt><dd>{{ cost.recordDigest }}</dd></div>
+          </dl>
+          <section class="evidence-block">
+            <h3>Source evidence</h3>
+            <article *ngFor="let evidence of cost.evidence">
+              <strong>{{ evidence.id }} / {{ label(evidence.verification) }}</strong>
+              <span>{{ evidence.uri }}</span>
+              <small>SHA-256 {{ evidence.contentDigest }} / observed {{ evidence.observedAt | date:'medium' }}</small>
+            </article>
+          </section>
+        </article>
+
+        <article class="inspector-detail contact-review-detail" *ngIf="inspectorKind === 'contact-review'">
+          <div class="detail-hero" *ngIf="selectedContactCandidate as candidate">
+            <span class="record-status" data-status="needs_review">Source candidate</span>
+            <h2>{{ candidate.name }}</h2>
+            <p>{{ candidate.summary || 'This source-derived person record needs an owner decision.' }}</p>
+          </div>
+          <div class="detail-hero" *ngIf="selectedContactMergeProposal as proposal">
+            <span class="record-status" data-status="review_required">Possible duplicate</span>
+            <h2>Compare {{ (proposal.candidateEntityIds || []).length }} source records</h2>
+            <p>{{ (proposal.reasons || []).join(' / ') || 'The ontology found matching identity evidence.' }}</p>
+          </div>
+          <div class="advisory-boundary">
+            <i nz-icon nzType="safety-certificate"></i>
+            <span><strong>Local-only identity review</strong><small>This records your decision and can create a human-approved local contact record. It never messages the person, triggers a workflow, or grants execution authority.</small></span>
+          </div>
+          <dl class="detail-grid" *ngIf="selectedContactCandidate as candidate">
+            <div><dt>Domain</dt><dd>{{ label(candidate.domain) }}</dd></div>
+            <div><dt>Confidence</dt><dd>{{ candidate.confidence | percent:'1.0-0' }}</dd></div>
+            <div><dt>Verification</dt><dd>{{ label(candidate.verificationStatus) }}</dd></div>
+            <div><dt>Observed</dt><dd>{{ candidate.observedAt | date:'medium' }}</dd></div>
+          </dl>
+          <section class="evidence-block" *ngIf="selectedContactMergeProposal as proposal">
+            <h3>Candidate records</h3>
+            <article *ngFor="let candidate of contactCandidatesForProposal(proposal); trackBy: trackById">
+              <strong>{{ candidate.name }}</strong>
+              <span>{{ candidate.summary || 'No source summary recorded.' }}</span>
+              <small>{{ label(candidate.verificationStatus) }} / confidence {{ candidate.confidence | percent:'1.0-0' }}</small>
+            </article>
+          </section>
+          <section class="evidence-block" *ngIf="selectedContactCandidate as candidate">
+            <h3>Source evidence</h3>
+            <article *ngFor="let source of candidate.provenance">
+              <strong>{{ source.authority || source.referenceId || 'Source record' }}</strong>
+              <span>{{ source.uri || 'Local source reference' }}</span>
+              <small>Captured {{ source.capturedAt | date:'medium' }} / {{ source.localOnly ? 'local only' : 'connected source' }}</small>
+            </article>
+          </section>
+          <form class="review-form" *ngIf="!selectedContactReviewDecision">
+            <div class="form-heading"><h3>Owner decision</h3><span>Immutable and idempotent</span></div>
+            <label>Canonical name
+              <input nz-input name="contactCanonicalName" [(ngModel)]="contactReviewForm.canonicalName" placeholder="Required for correction or merge">
+            </label>
+            <label>Canonical summary
+              <textarea nz-input rows="3" name="contactCanonicalSummary" [(ngModel)]="contactReviewForm.canonicalSummary" placeholder="Optional confirmed context"></textarea>
+            </label>
+            <label>Reason
+              <textarea nz-input rows="3" minlength="12" name="contactReviewReason" [(ngModel)]="contactReviewForm.reason" placeholder="Explain what the source evidence supports" required></textarea>
+            </label>
+            <div class="review-actions" *ngIf="selectedContactCandidate">
+              <button nz-button nzType="primary" type="button" [disabled]="mutating" [nzLoading]="mutating" (click)="decideContactCandidate('promote')">Promote as contact</button>
+              <button nz-button type="button" [disabled]="mutating" (click)="decideContactCandidate('correct')">Correct and promote</button>
+              <button nz-button nzDanger type="button" [disabled]="mutating" (click)="decideContactCandidate('reject')">Reject candidate</button>
+            </div>
+            <div class="review-actions" *ngIf="selectedContactMergeProposal">
+              <button nz-button nzType="primary" type="button" [disabled]="mutating" [nzLoading]="mutating" (click)="decideContactMerge('merge')">Merge records</button>
+              <button nz-button type="button" [disabled]="mutating" (click)="decideContactMerge('keep_distinct')">Keep distinct</button>
+              <button nz-button nzDanger type="button" [disabled]="mutating" (click)="decideContactMerge('reject')">Reject proposal</button>
+            </div>
+          </form>
+          <section class="inline-result" *ngIf="selectedContactReviewDecision as decision" role="status">
+            <span class="record-status" [attr.data-status]="decision.action">{{ label(decision.action) }}</span>
+            <div><strong>Decision recorded</strong><p>{{ decision.reason }}</p><small>{{ decision.localOnly ? 'Local only' : 'Storage scope not reported' }} / no execution authority / {{ decision.recordedAt | date:'medium' }}</small></div>
+            <div *ngIf="selectedCanonicalContact as canonical"><strong>{{ canonical.name }}</strong><p>{{ canonical.summary || 'Human-approved canonical contact.' }}</p></div>
+          </section>
+        </article>
+
+        <form class="review-form" *ngIf="inspectorKind === 'commitment-author'" (ngSubmit)="recordLifeCommitment()">
+          <div class="form-heading"><h3>Append-only commitment record</h3><span>No external action or authority</span></div>
+          <div class="advisory-boundary"><i nz-icon nzType="safety-certificate"></i><span><strong>Source-backed only</strong><small>A new revision is appended. Existing records are never edited or deleted.</small></span></div>
+          <div class="form-grid">
+            <label>Commitment key<input nz-input name="ledgerCommitmentKey" [(ngModel)]="commitmentForm.key" [readonly]="commitmentForm.expectedRevision > 0" required></label>
+            <label>Expected revision<input nz-input type="number" name="ledgerExpectedRevision" [(ngModel)]="commitmentForm.expectedRevision" readonly></label>
+            <label>Domain<select name="ledgerCommitmentDomain" [(ngModel)]="commitmentForm.domain" required><option value="">Select domain</option><option *ngFor="let domain of outcomeLifeDomains" [value]="domain.value">{{ domain.label }}</option></select></label>
+            <label>Status<select name="ledgerCommitmentStatus" [(ngModel)]="commitmentForm.status"><option *ngFor="let status of commitmentStatuses" [value]="status">{{ label(status) }}</option></select></label>
+          </div>
+          <label>Title<input nz-input name="ledgerCommitmentTitle" [(ngModel)]="commitmentForm.title" required></label>
+          <label>Summary<textarea nz-input rows="3" name="ledgerCommitmentSummary" [(ngModel)]="commitmentForm.summary"></textarea></label>
+          <div class="form-grid">
+            <label>Counterparty<input nz-input name="ledgerCounterparty" [(ngModel)]="commitmentForm.counterparty"></label>
+            <label>Project key<input nz-input name="ledgerCommitmentProject" [(ngModel)]="commitmentForm.projectKey"></label>
+            <label>Due date<input nz-input type="datetime-local" name="ledgerCommitmentDue" [(ngModel)]="commitmentForm.dueAt"></label>
+            <label>Verification<select name="ledgerCommitmentVerification" [(ngModel)]="commitmentForm.verification"><option *ngFor="let status of ledgerVerificationStatuses" [value]="status">{{ label(status) }}</option></select></label>
+          </div>
+          <div class="form-heading"><h3>Evidence reference</h3><span>Complete SHA-256 digest required</span></div>
+          <div class="form-grid">
+            <label>Source ID<input nz-input name="ledgerCommitmentSourceId" [(ngModel)]="commitmentForm.sourceId" required></label>
+            <label>Source URI or local path<input nz-input name="ledgerCommitmentSourceUri" [(ngModel)]="commitmentForm.sourceUri" required></label>
+            <label>Authority<input nz-input name="ledgerCommitmentAuthority" [(ngModel)]="commitmentForm.authority"></label>
+            <label>Observed at<input nz-input type="datetime-local" name="ledgerCommitmentObserved" [(ngModel)]="commitmentForm.observedAt" required></label>
+          </div>
+          <label>Source SHA-256 digest<input nz-input name="ledgerCommitmentDigest" minlength="64" maxlength="64" pattern="[a-fA-F0-9]{64}" [(ngModel)]="commitmentForm.contentDigest" required></label>
+          <button nz-button nzType="primary" type="submit" [nzLoading]="mutating">Append commitment revision</button>
+        </form>
+
+        <form class="review-form" *ngIf="inspectorKind === 'cost-author'" (ngSubmit)="recordLifeCost()">
+          <div class="form-heading"><h3>Immutable cost evidence</h3><span>Records evidence; never moves money</span></div>
+          <div class="advisory-boundary"><i nz-icon nzType="safety-certificate"></i><span><strong>Financial assertion boundary</strong><small>Paid and refund records require human confirmation or verified evidence. Estimates remain planning-only.</small></span></div>
+          <div class="form-grid">
+            <label>Domain<select name="ledgerCostDomain" [(ngModel)]="costForm.domain" required><option value="">Select domain</option><option *ngFor="let domain of outcomeLifeDomains" [value]="domain.value">{{ domain.label }}</option></select></label>
+            <label>Event kind<select name="ledgerCostKind" [(ngModel)]="costForm.kind" (ngModelChange)="normalizeCostVerification()"><option *ngFor="let kind of costKinds" [value]="kind">{{ label(kind) }}</option></select></label>
+            <label>Amount<input nz-input type="number" min="0.01" step="0.01" name="ledgerCostAmount" [(ngModel)]="costForm.amount" required></label>
+            <label>Currency<input nz-input minlength="3" maxlength="3" name="ledgerCostCurrency" [(ngModel)]="costForm.currency" required></label>
+          </div>
+          <label>Title<input nz-input name="ledgerCostTitle" [(ngModel)]="costForm.title" required></label>
+          <label>Summary<textarea nz-input rows="3" name="ledgerCostSummary" [(ngModel)]="costForm.summary"></textarea></label>
+          <div class="form-grid">
+            <label>Commitment key<input nz-input name="ledgerCostCommitment" [(ngModel)]="costForm.commitmentKey"></label>
+            <label>Project key<input nz-input name="ledgerCostProject" [(ngModel)]="costForm.projectKey"></label>
+            <label>Verification<select name="ledgerCostVerification" [(ngModel)]="costForm.verification"><option *ngFor="let status of costVerificationOptions(costForm.kind)" [value]="status">{{ label(status) }}</option></select></label>
+            <label>Observed at<input nz-input type="datetime-local" name="ledgerCostObserved" [(ngModel)]="costForm.observedAt" required></label>
+          </div>
+          <div class="form-heading"><h3>Evidence reference</h3><span>Complete SHA-256 digest required</span></div>
+          <div class="form-grid">
+            <label>Source ID<input nz-input name="ledgerCostSourceId" [(ngModel)]="costForm.sourceId" required></label>
+            <label>Source URI or local path<input nz-input name="ledgerCostSourceUri" [(ngModel)]="costForm.sourceUri" required></label>
+            <label>Authority<input nz-input name="ledgerCostAuthority" [(ngModel)]="costForm.authority"></label>
+          </div>
+          <label>Source SHA-256 digest<input nz-input name="ledgerCostDigest" minlength="64" maxlength="64" pattern="[a-fA-F0-9]{64}" [(ngModel)]="costForm.contentDigest" required></label>
+          <button nz-button nzType="primary" type="submit" [nzLoading]="mutating">Record cost evidence</button>
+        </form>
+      </nz-spin>
+    </ng-container>
+  </nz-drawer>
+</section>

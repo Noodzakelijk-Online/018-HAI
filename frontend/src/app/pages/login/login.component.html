@@ -35,6 +35,8 @@
             nz-input
             formControlName="userName"
             placeholder="Email"
+            aria-label="Email"
+            data-testid="login-email"
           />
         </nz-input-group>
       </nz-form-control>
@@ -71,6 +73,8 @@
             formControlName="password"
             placeholder="{{ recoveryMode ? 'New password' : 'Password' }}"
             [type]="hidePassword ? 'password' : 'text'"
+            [attr.aria-label]="recoveryMode ? 'New password' : 'Password'"
+            data-testid="login-password"
           />
         </nz-input-group>
 

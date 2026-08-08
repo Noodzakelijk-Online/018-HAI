@@ -343,6 +343,8 @@ func TestSelectPersistsDeterministicReproducibilityMetadata(t *testing.T) {
 		"catalog version":            first.CatalogVersion,
 		"catalog digest":             first.CatalogDigest,
 		"selector algorithm version": first.SelectorAlgorithmVersion,
+		"task risk level":            first.TaskRiskLevel,
+		"effective risk ceiling":     first.EffectiveRiskCeiling,
 		"preference digest":          first.EffectivePreferenceDigest,
 		"Constitution digest":        first.ConstitutionDigest,
 	} {
@@ -370,7 +372,9 @@ func TestSelectPersistsDeterministicReproducibilityMetadata(t *testing.T) {
 	if len(stored) != 2 ||
 		stored[0].CatalogDigest != first.CatalogDigest ||
 		stored[0].EffectivePreferenceDigest != first.EffectivePreferenceDigest ||
-		stored[0].ConstitutionDigest != first.ConstitutionDigest {
+		stored[0].ConstitutionDigest != first.ConstitutionDigest ||
+		stored[0].TaskRiskLevel != first.TaskRiskLevel ||
+		stored[0].EffectiveRiskCeiling != first.EffectiveRiskCeiling {
 		t.Fatalf("persisted reproducibility metadata = %#v", stored)
 	}
 }
