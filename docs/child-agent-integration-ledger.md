@@ -92,3 +92,28 @@ of the following are true:
 
 No transcript deletion, movement, truncation, compression, or archival was
 performed while producing this ledger.
+
+## Verified checkpoint
+
+The integrated source was checkpointed on `main` as commit
+`4dc725628a717ece36ca22e246ba5a42c2fd2fcf` on 2026-08-08. The commit contains
+785 source and documentation files and was pushed to the canonical
+`Robert-Velhorst/018-HAI` repository.
+
+Validation completed before the checkpoint:
+
+- Backend: `go test ./...` passed with Go 1.25.12 in the documented container.
+- IDP: `go test ./...` passed with Go 1.25.12 in the documented container.
+- Backend and IDP production builds passed.
+- Frontend: 372 ChromeHeadless unit tests passed.
+- Frontend production build passed. Existing bundle-budget warnings remain and
+  are not represented as failures.
+- `docker compose --env-file .env.example -f docker-compose.local.yml config
+  --quiet` passed.
+- `git diff --cached --check` passed after three migration EOF whitespace fixes.
+- A staged credential-pattern scan found only intentional fake values in
+  redaction and security tests.
+
+After the push, local `main` and `origin/main` both resolved to the checkpoint
+commit and the worktree was clean. This satisfies cleanup gates 1 and 2. Gates
+3 through 5 remain mandatory for every transcript cleanup batch.
