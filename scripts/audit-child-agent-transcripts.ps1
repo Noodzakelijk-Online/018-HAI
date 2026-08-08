@@ -19,6 +19,21 @@ if (-not (Test-Path -LiteralPath $SessionsRoot -PathType Container)) {
     throw "Sessions root does not exist: $SessionsRoot"
 }
 
+$existingManifestPath = Join-Path $OutputDirectory 'child-agent-transcript-manifest.csv'
+if (Test-Path -LiteralPath $existingManifestPath -PathType Leaf) {
+    $existingRows = @(Import-Csv -LiteralPath $existingManifestPath)
+    $existingBase = (Split-Path -Parent $SessionsRoot).TrimEnd('\')
+    $missingAuditedFiles = @(
+        $existingRows | Where-Object {
+            $existingPath = Join-Path $existingBase ($_.session_path -replace '/', '\')
+            -not (Test-Path -LiteralPath $existingPath -PathType Leaf)
+        }
+    )
+    if ($missingAuditedFiles.Count -gt 0) {
+        throw "Existing audit artifacts refer to $($missingAuditedFiles.Count) removed transcript(s). Preserve the committed manifest and final reports; do not regenerate them from the reduced session tree."
+    }
+}
+
 if (-not ('HaiTranscriptAllocation' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;

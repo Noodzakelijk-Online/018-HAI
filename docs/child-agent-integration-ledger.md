@@ -142,6 +142,20 @@ ledger were committed and pushed on `main` as
 `7f76cd6671d498edfa8014996e4cab3682a9972c`. The 104 completed rows therefore
 satisfy the `candidate_after_ledger_commit` condition.
 
+## Cleanup execution
+
+On 2026-08-09, the 104 exact manifest paths marked
+`candidate_after_ledger_commit` were deleted in a separate, explicitly
+authorized operation. Preflight required every file to remain under the audited
+session root, match its recorded size, have terminal status `completed`, have a
+preserved final report, and have no writer-lock reference.
+
+Post-delete verification found zero candidate files, all ten retained files at
+their recorded sizes, the pinned parent task still present, and exactly ten HAI
+child transcripts remaining in the audited August tree. The operation reclaimed
+263,111,102,464 bytes according to the filesystem. Full evidence is recorded in
+`docs/child-agent-transcript-cleanup-receipt.md`.
+
 ## Verified checkpoint
 
 The integrated source was checkpointed on `main` as commit
