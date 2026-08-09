@@ -4,7 +4,12 @@ FROM golang:1.25.12 AS builder
 # Set the Current Working Directory inside the container
 WORKDIR /app
 
-# Copy everything from the current directory to the PWD(Present Working Directory) inside the container
+# Cache dependencies independently from application source. A normal code
+# change should rebuild the binary, not redownload the complete module graph.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the application after the stable dependency layer.
 COPY . .
 
 # Navigate to the cmd directory where the main.go file resides
