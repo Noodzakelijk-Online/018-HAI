@@ -254,8 +254,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client
           for database in \
-            hai_migration_runner_test \
-            hai_framework_registry_test \
+             hai_migration_runner_test \
+             hai_migration_lifecycle_test \
+             hai_executionauth_test \
+             hai_framework_registry_test \
             hai_task_state_test \
             hai_agent_registry_test
           do
@@ -271,12 +273,16 @@ jobs:
           HAI_REQUIRE_POSTGRES_INTEGRATION: "true"
         run: |
           set -euo pipefail
-          infra_log="$RUNNER_TEMP/migration-infra.log"
-          registry_log="$RUNNER_TEMP/framework-registry-postgres.log"
+           infra_log="$RUNNER_TEMP/migration-infra.log"
+           lifecycle_log="$RUNNER_TEMP/migration-lifecycle.log"
+           executionauth_log="$RUNNER_TEMP/execution-authorization-postgres.log"
+           registry_log="$RUNNER_TEMP/framework-registry-postgres.log"
           task_log="$RUNNER_TEMP/task-state-postgres.log"
           agent_registry_log="$RUNNER_TEMP/agent-registry-postgres.log"
-          migration_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_runner_test port=5432 sslmode=disable TimeZone=UTC"
-          registry_dsn="host=localhost user=postgres password=postgres dbname=hai_framework_registry_test port=5432 sslmode=disable TimeZone=UTC"
+           migration_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_runner_test port=5432 sslmode=disable TimeZone=UTC"
+           lifecycle_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_lifecycle_test port=5432 sslmode=disable TimeZone=UTC"
+           executionauth_dsn="host=localhost user=postgres password=postgres dbname=hai_executionauth_test port=5432 sslmode=disable TimeZone=UTC"
+           registry_dsn="host=localhost user=postgres password=postgres dbname=hai_framework_registry_test port=5432 sslmode=disable TimeZone=UTC"
           task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
           agent_registry_dsn="host=localhost user=postgres password=postgres dbname=hai_agent_registry_test port=5432 sslmode=disable TimeZone=UTC"
           HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 -tags integration \
@@ -285,9 +291,15 @@ jobs:
           grep -q -- '^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck' "$infra_log"
           grep -q -- '^--- PASS: TestLegacyBaselineRejectsDifferentExistingPrimaryKey' "$infra_log"
           grep -q -- '^--- PASS: TestRunMigrationsAppliesAndIsIdempotent' "$infra_log"
-          grep -q -- '^--- PASS: TestRollbackMigrationReversesPostMigration' "$infra_log"
-          grep -q -- '^--- PASS: TestRuntimeRoleCanUseApplicationDataButCannotOwnSchema' "$infra_log"
-          HAI_TEST_DATABASE_DSN="$registry_dsn" go test -count=1 -tags integration \
+           grep -q -- '^--- PASS: TestRollbackMigrationReversesPostMigration' "$infra_log"
+           grep -q -- '^--- PASS: TestRuntimeRoleCanUseApplicationDataButCannotOwnSchema' "$infra_log"
+           HAI_TEST_DATABASE_DSN="$lifecycle_dsn" go test -p 1 -count=1 -tags integration \
+             ./migrations/ -v | tee "$lifecycle_log"
+           grep -q -- '^--- PASS: TestWorkflowReminderActivationLedgerIsImmutableOwnerScopedAndLinearInPostgres' "$lifecycle_log"
+           HAI_TEST_DATABASE_DSN="$executionauth_dsn" go test -p 1 -count=1 \
+             -run '^TestPostgres' ./internal/executionauth/ -v | tee "$executionauth_log"
+           grep -q -- '^--- PASS: TestPostgresReceiptPersistsOwnerSafePolymorphicApprovals' "$executionauth_log"
+           HAI_TEST_DATABASE_DSN="$registry_dsn" go test -count=1 -tags integration \
             ./internal/frameworkregistry/ -v | tee "$registry_log"
           grep -q -- '^--- PASS: TestFrameworkRegistryPostgresIntegrationRequiredEnvironment' "$registry_log"
           grep -q -- '^--- PASS: TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun' "$registry_log"
@@ -353,6 +365,7 @@ jobs:
           # Empty CI database: let the schema materialise on boot.
           DB_AUTOMIGRATE: "true"
           JWT_SECRET: devsecret
+          HAI_APPROVAL_PROOF_SIGNING_KEY: ci-isolation-approval-proof-signing-key-v1
           SERVER_PORT: "8080"
           REDIS_ADDR: localhost:6379
           # Keep the acceptance run deterministic: no background schedulers.

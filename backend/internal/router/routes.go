@@ -497,6 +497,17 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
+		controlApprovalRepository, err := opscontrol.DefaultControlApprovalRepository()
+		if err != nil {
+			return err
+		}
+		opsControlService.WithControlApprovalRepository(controlApprovalRepository)
+		controlApprovalResolver, err := opscontrol.NewControlApprovalResolver(
+			controlApprovalRepository,
+		)
+		if err != nil {
+			return err
+		}
 		portfolioApprovalRepository, ok := pursuitRepository.(pursuit.PortfolioWorkflowEffectApprovalRepository)
 		if !ok {
 			return fmt.Errorf("pursuit portfolio workflow approval repository is unavailable")
@@ -512,6 +523,10 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 			taskReviewApprovalResolver,
 			workflowApprovalResolver,
 			portfolioApprovalResolver,
+			executionapproval.RegisterApprovalResolver(
+				opscontrol.ControlDecisionPrefix,
+				controlApprovalResolver,
+			),
 		)
 		if err != nil {
 			return err
@@ -630,9 +645,18 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 			executionAuthorizationService,
 			nil,
 		)
-		opsControlService.WithExecutionAuthorizer(
-			executionAuthorizationService,
-		)
+		controlExecutionAuthorizationService :=
+			executionAuthorizationService.CloneWithEmergencyStopEvaluator(
+				func() executionauth.EmergencyStopEvidence {
+					decision := safety.EvaluateImmutableEmergencyStop()
+					return executionauth.EmergencyStopEvidence{
+						Active: decision.Active,
+						Source: decision.Source,
+						Reason: decision.Reason,
+					}
+				},
+			)
+		opsControlService.WithExecutionAuthorizer(controlExecutionAuthorizationService)
 		initializeExecutionAuthorizationRoutes(
 			v1,
 			executionauth.NewInspectionHandler(executionAuthorizationService),
@@ -1672,6 +1696,8 @@ func initializeOpsControlRoutes(apiVersion *gin.RouterGroup, handler *opscontrol
 		// Operators may always halt work. Only an owner may resume it or change
 		// the autonomy mode.
 		bg.POST("/pause", requirePermission(rbac.PermExecute), handler.Pause)
+		bg.POST("/control-approvals", requirePermission(rbac.PermAdmin), handler.PrepareControlApproval)
+		bg.POST("/control-approvals/:id/decision", requirePermission(rbac.PermAdmin), handler.DecideControlApproval)
 		bg.POST("/resume", requirePermission(rbac.PermAdmin), handler.Resume)
 		bg.PATCH("/mode", requirePermission(rbac.PermAdmin), handler.SetMode)
 	}

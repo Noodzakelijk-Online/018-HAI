@@ -208,6 +208,8 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	bgctl := r.Group("/api/v1").Group("/background")
 	bgctl.GET("/status", mark("bgStatus"))
 	bgctl.POST("/pause", mark("bgPause"))
+	bgctl.POST("/control-approvals", mark("bgControlApprovalPrepare"))
+	bgctl.POST("/control-approvals/:id/decision", mark("bgControlApprovalDecision"))
 	bgctl.POST("/resume", mark("bgResume"))
 	bgctl.PATCH("/mode", mark("bgMode"))
 
@@ -340,6 +342,15 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/agent-runtimes/openclaw/ecosystem/upload", "openclawEcosystemUpload"},
 		{"GET", "/api/v1/pursuits/decisions", "pursuitDecisions"},
 		{"POST", "/api/v1/agent-cycle/run", "agentCycleRun"},
+		{"GET", "/api/v1/background/status", "bgStatus"},
+		{"POST", "/api/v1/background/pause", "bgPause"},
+		{"POST", "/api/v1/background/control-approvals", "bgControlApprovalPrepare"},
+		{"POST", "/api/v1/background/control-approvals/11111111-1111-1111-1111-111111111111/decision", "bgControlApprovalDecision"},
+		{"POST", "/api/v1/background/resume", "bgResume"},
+		{"PATCH", "/api/v1/background/mode", "bgMode"},
+		{"GET", "/api/v1/windows-runtime/readiness", "wrReadiness"},
+		{"POST", "/api/v1/windows-runtime/recovery", "wrRecovery"},
+		{"POST", "/api/v1/windows-runtime/emergency-stop/verify", "wrEmergencyVerify"},
 		{"POST", "/api/v1/assistant/command", "assistantCommand"},
 		{"GET", "/api/v1/assistant/logs", "assistantLogs"},
 		{"POST", "/api/v1/memory/retrieve", "memoryRetrieve"},

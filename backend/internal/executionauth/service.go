@@ -111,6 +111,22 @@ func (s *Service) WithEmergencyStopEvaluator(
 	return s
 }
 
+// CloneWithEmergencyStopEvaluator returns an isolated composition for a
+// server-owned recovery boundary. It avoids mutating the shared authorizer and
+// therefore cannot weaken concurrent ordinary execution decisions.
+func (s *Service) CloneWithEmergencyStopEvaluator(
+	evaluator func() EmergencyStopEvidence,
+) *Service {
+	if s == nil {
+		return nil
+	}
+	clone := *s
+	if evaluator != nil {
+		clone.stop = evaluator
+	}
+	return &clone
+}
+
 func (s *Service) Authorize(ctx context.Context, input Request) (Receipt, error) {
 	request, err := normalizeRequest(input)
 	if err != nil {

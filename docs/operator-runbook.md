@@ -35,6 +35,14 @@ this guarantee and should be reserved for an unresponsive process.
 Do not add `-v` unless the reviewed operation is intentionally deleting local
 database and queue volumes.
 
+The backend remains read-only except for explicitly mounted operational data.
+Emergency-stop and autonomy-mode state live in the dedicated
+`018-hai-phase2-control-state` volume at `/var/lib/hai/phase2-state`; approval,
+authorization, consumption, and audit evidence remain in PostgreSQL. Preserve
+both stores during backup and recovery. Deleting only the control-state volume
+does not erase approval evidence, but it removes the current stop/mode state and
+therefore requires a fail-closed recovery review before execution is resumed.
+
 ### Database Ownership Boundary
 
 The automation database uses two identities. `DB_USER` is the schema owner and

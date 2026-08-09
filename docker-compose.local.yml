@@ -177,6 +177,10 @@ services:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
       HAI_MEMORY_ENCRYPTION_KEY: ${HAI_MEMORY_ENCRYPTION_KEY}
       HAI_APPROVAL_PROOF_SIGNING_KEY: ${HAI_APPROVAL_PROOF_SIGNING_KEY}
+      # Mutable control state is deliberately isolated from the read-only
+      # application filesystem. This volume stores only emergency-stop and
+      # autonomy-mode state; PostgreSQL remains the approval/audit ledger.
+      HAI_PHASE2_STATE_DIR: /var/lib/hai/phase2-state
       DB_USER: ${DB_RUNTIME_USER:-hai_runtime}
       DB_PASSWORD: ${DB_RUNTIME_PASSWORD:-change-this-runtime-database-password}
       DB_NAME: ${AUTOMATION_DB_NAME}
@@ -564,6 +568,7 @@ services:
       - ./automation-scripts:/root/automation-scripts:ro
       - ./connected-sources:/root/connected-sources:ro
       - ./agent-workspaces:/root/agent-workspaces
+      - phase2-control-state:/var/lib/hai/phase2-state
       - ${CLOUDQUERY_SUMMARY_HOST_DIR:-./cloudquery-summary}:/cloudquery-summary:ro
     # /readyz, not a TCP probe: an open socket only proves the process is
     # listening. curl -f fails on the 503 that /readyz returns when a critical
@@ -1868,6 +1873,8 @@ volumes:
     name: 018-hai-redis-data
   kafka-kraft-data:
     name: 018-hai-kafka-kraft-data
+  phase2-control-state:
+    name: 018-hai-phase2-control-state
   temporal-postgres-data:
     name: 018-hai-temporal-postgres-data
   runner-ollama-data:

@@ -71,6 +71,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "CGO_ENABLED=0",
             "-trimpath",
             '-ldflags "-s -w"',
+            "/var/lib/hai/phase2-state",
+            "chown -R 10001:10001",
             "USER 10001:10001",
             'ENTRYPOINT ["/app/hai-backend"]',
         ):
@@ -92,6 +94,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "no-new-privileges:true",
             "cap_drop:",
             "- ALL",
+            "HAI_PHASE2_STATE_DIR: /var/lib/hai/phase2-state",
+            "phase2-control-state:/var/lib/hai/phase2-state",
             "wget -q -O /dev/null",
         ):
             with self.subTest(required=required):

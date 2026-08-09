@@ -135,6 +135,7 @@ func TestGovernanceMigrationTailPreservesSemanticUpgradeOrder(t *testing.T) {
 		"0057_workflow_reminder_single_delivery_authorization",
 		"0058_workflow_coordination_draft_binding",
 		"0059_agent_team_message_acknowledgments",
+		"0060_opscontrol_approval_provenance",
 	}
 	entries, err := fs.ReadDir(Files, "pre")
 	if err != nil {

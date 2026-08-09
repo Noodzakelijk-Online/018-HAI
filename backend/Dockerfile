@@ -25,9 +25,12 @@ RUN addgroup -S -g 10001 hai \
     && adduser -S -D -H -u 10001 -G hai hai \
     && mkdir -p /app/docs /root/images /root/automation-scripts \
         /root/connected-sources /root/agent-workspaces \
+        /var/lib/hai/phase2-state \
     && chown -R 10001:10001 /root/images /root/agent-workspaces \
+        /var/lib/hai/phase2-state \
     && chmod 0711 /root \
     && chmod 0750 /root/images /root/agent-workspaces \
+        /var/lib/hai/phase2-state \
     && chmod 0550 /root/automation-scripts /root/connected-sources
 
 WORKDIR /app
