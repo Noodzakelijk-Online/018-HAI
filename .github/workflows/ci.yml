@@ -155,7 +155,7 @@ jobs:
           docker run --rm \
             -v "$RUNNER_TEMP/hai-nginx.conf:/etc/nginx/nginx.conf:ro" \
             -v "$PWD/nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro" \
-            nginx:alpine nginx -t
+            nginx:stable-alpine-slim@sha256:ddde39c6e51f02fde7410c2e9c234cf2d0a4c7bdbbe176aeb37d8ad7ab4eb58c nginx -t
 
   authenticated-smoke:
     name: Authenticated control-plane smoke

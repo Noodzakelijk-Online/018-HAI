@@ -101,9 +101,45 @@ class GatewayAuthContractTest(unittest.TestCase):
             COMPOSE,
         )
         self.assertIn(
-            '"${GATEWAY_HOST_BIND:-127.0.0.1}:${GATEWAY_HOST_PORT:-8088}:80"',
+            '"${GATEWAY_HOST_BIND:-127.0.0.1}:${GATEWAY_HOST_PORT:-8088}:8080"',
             COMPOSE,
         )
+
+    def test_gateway_runtime_is_non_root_read_only_and_resource_bounded(self) -> None:
+        gateway_start = COMPOSE.index("  nginx:\n")
+        gateway_end = COMPOSE.index("\n  ngrok:\n", gateway_start)
+        gateway = COMPOSE[gateway_start:gateway_end]
+
+        for required in (
+            "nginx:stable-alpine-slim@sha256:",
+            'user: "101:101"',
+            "init: true",
+            "read_only: true",
+            "/tmp:rw,noexec,nosuid,nodev,size=${GATEWAY_TMPFS_SIZE:-32m}",
+            "mem_limit: ${GATEWAY_MEMORY_LIMIT:-64m}",
+            "mem_reservation: ${GATEWAY_MEMORY_RESERVATION:-16m}",
+            "cpus: ${GATEWAY_CPU_LIMIT:-0.25}",
+            "pids_limit: ${GATEWAY_PIDS_LIMIT:-32}",
+            "no-new-privileges:true",
+            "cap_drop:",
+            "- ALL",
+            'entrypoint: ["/bin/sh", "-c"]',
+            "> /tmp/nginx.conf",
+            "nginx -c /tmp/nginx.conf",
+            "http://127.0.0.1:8080/healthz",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, gateway)
+
+        for required in (
+            "worker_processes 1;",
+            "pid /tmp/nginx.pid;",
+            "access_log /dev/stdout;",
+            "proxy_temp_path /tmp/proxy_temp;",
+            "listen 8080;",
+        ):
+            with self.subTest(config_required=required):
+                self.assertIn(required, NGINX_TEMPLATE)
 
 
 if __name__ == "__main__":

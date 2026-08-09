@@ -1,12 +1,22 @@
+worker_processes 1;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
+
 events {
-    worker_connections 1024;
+    worker_connections 256;
 }
 http {
+    access_log /dev/stdout;
+    client_body_temp_path /tmp/client_temp;
+    proxy_temp_path /tmp/proxy_temp;
+    fastcgi_temp_path /tmp/fastcgi_temp;
+    uwsgi_temp_path /tmp/uwsgi_temp;
+    scgi_temp_path /tmp/scgi_temp;
     resolver 127.0.0.11 valid=10s;
     resolver_timeout 5s;
     limit_req_zone $binary_remote_addr zone=hai_a2a_bridge:10m rate=10r/m;
     server {
-        listen 80;
+        listen 8080;
 
         # Resolve Docker service names per request so replacing a container
         # cannot leave the gateway pinned to its former IP address.

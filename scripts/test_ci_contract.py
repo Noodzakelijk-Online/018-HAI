@@ -444,7 +444,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("remote_management: false", config)
         self.assertIn("update_check: false", config)
         self.assertIn("inspect_db_size: -1", config)
-        self.assertIn("http://nginx:80", entrypoint)
+        self.assertIn("http://nginx:8080", entrypoint)
         self.assertIn("Test-NgrokHostname", preflight)
         self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED", preflight)
         self.assertIn("HAI_A2A_BRIDGE_TOKEN", preflight)
@@ -472,7 +472,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             'public A2A requires a dedicated 32+ character bridge token',
             'public A2A requires one named owner',
             'public A2A URL must exactly match the fixed ngrok origin',
-            '/bin/ngrok http http://nginx:80',
+            '/bin/ngrok http http://nginx:8080',
         ):
             with self.subTest(entrypoint_required=required):
                 self.assertIn(required, entrypoint)

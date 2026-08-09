@@ -865,16 +865,30 @@ services:
     networks: [coding-runners-internal]
 
   nginx:
-    image: nginx:alpine
+    image: nginx:stable-alpine-slim@sha256:ddde39c6e51f02fde7410c2e9c234cf2d0a4c7bdbbe176aeb37d8ad7ab4eb58c
     container_name: gateway
     hostname: gateway
     restart: unless-stopped
+    user: "101:101"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${GATEWAY_TMPFS_SIZE:-32m}
+    mem_limit: ${GATEWAY_MEMORY_LIMIT:-64m}
+    mem_reservation: ${GATEWAY_MEMORY_RESERVATION:-16m}
+    cpus: ${GATEWAY_CPU_LIMIT:-0.25}
+    pids_limit: ${GATEWAY_PIDS_LIMIT:-32}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - /bin/sh
-      - -c
-      - envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
+      - |
+        envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/nginx.conf.template > /tmp/nginx.conf
+        exec nginx -c /tmp/nginx.conf -g 'daemon off;'
     depends_on:
       frontend:
         condition: service_healthy
@@ -883,12 +897,12 @@ services:
       idp:
         condition: service_healthy
     ports:
-      - "${GATEWAY_HOST_BIND:-127.0.0.1}:${GATEWAY_HOST_PORT:-8088}:80"
+      - "${GATEWAY_HOST_BIND:-127.0.0.1}:${GATEWAY_HOST_PORT:-8088}:8080"
     volumes:
       - ./nginx-config/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ./nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 5s
       retries: 12

@@ -563,6 +563,14 @@ idle Windows run fell from 17 to 3 processes and from 15.02 MiB to 2.44 MiB of
 memory (83.8%). The production Angular build remains lazy-loaded at 836.16 kB
 initial raw output and approximately 104.05 kB estimated transfer size.
 
+The public gateway uses the same digest-pinned slim Nginx base as UID/GID
+`101`, with one worker, a read-only root filesystem, and no Linux capabilities.
+Only its internal port 8080 is exposed to the Compose network; the configurable
+host port remains loopback-bound by default. Compose limits the gateway to
+64 MiB, 0.25 CPU, 32 processes, and a 32 MiB temporary filesystem. The ngrok
+profile reaches that private port and still passes through the gateway's
+authentication, rate limiting, and owner-scoped backend controls.
+
 Open [http://localhost](http://localhost).
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep

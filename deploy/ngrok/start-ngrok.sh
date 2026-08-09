@@ -41,7 +41,7 @@ if [ "${HAI_NGROK_VALIDATE_ONLY:-false}" = "true" ]; then
   exit 0
 fi
 
-exec /bin/ngrok http http://nginx:80 \
+exec /bin/ngrok http http://nginx:8080 \
   --config=/etc/ngrok.yml \
   --url="$HAI_NGROK_URL" \
   --log=stdout \
