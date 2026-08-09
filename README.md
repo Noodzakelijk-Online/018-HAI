@@ -596,6 +596,19 @@ For the target-machine acceptance sequence, use
 [fresh-clone dry run](docs/fresh-clone-dryrun.md). For diagnosis, use
 [troubleshooting](docs/troubleshooting.md) and the in-product support bundle.
 
+### Optional governed ngrok access
+
+HAI stays loopback-only by default. For a reviewed public HTTPS endpoint, use
+the disabled-by-default `cloud-tunnel` profile and
+[`scripts/start-ngrok.ps1`](scripts/start-ngrok.ps1). Its preflight blocks
+startup when local login bypass is enabled, cookies are not secure, secrets are
+placeholders, the gateway is not loopback-bound, or Google OAuth callbacks do
+not match the fixed ngrok origin. The tunnel reaches only nginx on the private
+Docker network and publishes no database, backend, IDP, or inspector port.
+
+See [governed ngrok cloud access](docs/ngrok-cloud-access.md) for token ACL,
+configuration, validation, start, stop, and recovery instructions.
+
 ### Import local or exported material
 
 1. Place authorized files under `connected-sources/`.

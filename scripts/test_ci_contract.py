@@ -158,6 +158,64 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertFalse((ROOT / "frontend" / "pnpm-lock.yaml").exists())
         self.assertFalse((ROOT / "frontend" / "pnpm-workspace.yaml").exists())
 
+    def test_ngrok_profile_is_opt_in_pinned_and_preflight_gated(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        preflight = (ROOT / "scripts" / "start-ngrok.ps1").read_text(
+            encoding="utf-8"
+        )
+        config = (ROOT / "deploy" / "ngrok" / "ngrok.yml").read_text(
+            encoding="utf-8"
+        )
+        entrypoint = (ROOT / "deploy" / "ngrok" / "start-ngrok.sh").read_text(
+            encoding="utf-8"
+        )
+        ngrok_start = compose.index("  ngrok:\n")
+        ngrok_end = compose.index("\n  nginxconfigmanager:\n", ngrok_start)
+        ngrok_service = compose[ngrok_start:ngrok_end]
+
+        self.assertIn('profiles: ["cloud-tunnel"]', ngrok_service)
+        self.assertRegex(
+            ngrok_service,
+            r"image: ngrok/ngrok:alpine@sha256:[0-9a-f]{64}",
+        )
+        self.assertNotIn("\n    ports:", ngrok_service)
+        self.assertIn("read_only: true", ngrok_service)
+        self.assertIn("no-new-privileges:true", ngrok_service)
+        self.assertIn("cap_drop:", ngrok_service)
+        self.assertIn('entrypoint: ["/bin/sh", "/etc/hai/start-ngrok.sh"]', ngrok_service)
+        for required in (
+            "LOCAL_LOGIN_BYPASS_ENABLED",
+            "IDP_COOKIE_SECURE",
+            "GATEWAY_HOST_BIND",
+            "NGROK_AUTHTOKEN",
+            "HAI_NGROK_URL",
+            "GOOGLE_LOGIN_REDIRECT_URL",
+            "GOOGLE_OAUTH_REDIRECT_URL",
+            "docker compose",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, preflight)
+        secured_up = "up -d --no-build idp backend frontend nginx"
+        tunnel_up = "up -d --no-build ngrok"
+        self.assertIn(secured_up, preflight)
+        self.assertIn(tunnel_up, preflight)
+        self.assertLess(preflight.index(secured_up), preflight.index(tunnel_up))
+        self.assertIn("remote_management: false", config)
+        self.assertIn("update_check: false", config)
+        self.assertIn("inspect_db_size: -1", config)
+        self.assertIn("http://nginx:80", entrypoint)
+        for required in (
+            'RUN_MODE must be production',
+            'local login bypass must be false',
+            'secure IDP cookies are required',
+            'gateway host bind must remain loopback-only',
+            'a dedicated ngrok authtoken is required',
+            'HAI_NGROK_VALIDATE_ONLY',
+            '/bin/ngrok http http://nginx:80',
+        ):
+            with self.subTest(entrypoint_required=required):
+                self.assertIn(required, entrypoint)
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")
@@ -326,6 +384,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "hai_smoke_mint_jwt owner ci-secret windows-owner",
             "python scripts/test_ci_contract.py",
             "python scripts/test_smoke_auth_contract.py",
+            r".\scripts\start-ngrok.ps1 -ValidateOnly",
+            "Insecure example environment unexpectedly passed ngrok preflight",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, windows)

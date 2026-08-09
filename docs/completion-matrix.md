@@ -122,6 +122,19 @@ execution, or establish live external multi-agent delivery.
 | Governance Control and guarded routes | Yes | Required acceptance | Required acceptance | No | Governance Control can configure a fixed collector, select a target, pause/resume it, run a bounded due pass, and inspect observations/runs. API routes require authenticated owner scope, a recognized role, and read/write/admin permissions as appropriate. Signed-in browser acceptance remains required. |
 | No-authority boundary | Yes | Required acceptance | Required acceptance | No | Targets, observations, runs, composition deliveries, and attempt receipts remain `advisory_monitor_only`; all execution, delivery, notification, external-effect, and learning-mutation capability flags are false. Required acceptance must prove no task/runtime execution, notification, message delivery, Calendar write, workflow mutation, mandate authorization, external provider call, or learning mutation occurs during configuration, scheduled/manual runs, composition retries, dead-lettering, or recovery. |
 
+### Governed ngrok HTTPS profile
+
+The disabled-by-default `cloud-tunnel` profile is implemented and
+contract-tested. It uses a digest-pinned ngrok agent and exposes only nginx on
+the private Docker network. Container and Windows preflight gates reject local
+login bypass, insecure cookies, non-production mode, non-loopback gateway
+binding, missing tokens, and invalid public origins; the Windows gate also
+rejects placeholder HAI secrets and mismatched Google callbacks. Compose and
+ngrok v3 configuration validation, shell syntax, positive and negative gate
+cases, and Windows CI contracts pass. A real ACL-restricted token/domain and a
+retained external login acceptance run remain required before this path is
+live-proven.
+
 ## 3. Production engineering
 
 | Item | Implemented | Unit-tested | Sandbox-tested | Live-tested | Notes / Deferred |

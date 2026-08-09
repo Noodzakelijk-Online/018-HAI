@@ -363,6 +363,19 @@ jobs:
           python scripts/test_ci_contract.py
           python scripts/test_smoke_auth_contract.py
           python nginx-config/test_gateway_contract.py
+      - name: Cloud tunnel PowerShell fail-closed contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $null = [ScriptBlock]::Create((Get-Content scripts/start-ngrok.ps1 -Raw))
+          try {
+            & .\scripts\start-ngrok.ps1 -ValidateOnly -EnvFile .env.example
+            throw "Insecure example environment unexpectedly passed ngrok preflight"
+          } catch {
+            if ($_.Exception.Message -notmatch "IDP_COOKIE_SECURE") {
+              throw
+            }
+          }
       - name: Git Bash syntax and space-containing path
         shell: pwsh
         run: |

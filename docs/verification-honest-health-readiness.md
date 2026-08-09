@@ -481,6 +481,13 @@ accepted only when they exactly match the legacy v1 algorithm and carry none of
 the newer mandate or coordination provenance, preserving the fail-closed trust
 boundary.
 
+The repository now also contains a disabled-by-default, digest-pinned ngrok
+profile and a Windows public-exposure preflight. Static CI contracts, Compose
+validation, ngrok v3 configuration validation, shell syntax, and positive and
+negative fail-closed gate cases pass. No live ngrok token or public endpoint was
+used in this verification, so external tunnel and callback behavior remains a
+target-environment acceptance gate rather than a readiness claim.
+
 ### Known recovery and deployment gaps
 
 - Automation approval-proof replay state is owner-scoped and durable in the
