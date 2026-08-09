@@ -24,9 +24,9 @@ against a real local Postgres instance.
 ```powershell
 cd 018-HAI
 powershell -ExecutionPolicy Bypass -File .\scripts\initialize-windows.ps1
-docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
-docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
-docker compose --env-file .env.local -f docker-compose.local.yml ps
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
 curl.exe -i http://localhost/
 curl.exe -i http://localhost/healthz
 curl.exe -i http://localhost/readyz
@@ -39,6 +39,11 @@ approval-proof secrets, keeps the gateway on loopback, disables local-login
 bypass, and does not print credentials. Copying `.env.example` without running
 the initializer is expected to fail closed in production because its shipped
 values are placeholders.
+
+The root `docker-compose.yml` contains no second service topology. It includes
+`docker-compose.local.yml` with `.env.local`, so the standard Compose command
+and the explicit local-file command resolve to the same services and local
+source builds.
 
 Expected result:
 

@@ -495,6 +495,67 @@ class CIWorkflowContractTest(unittest.TestCase):
                 content = (ROOT / compose_file).read_text(encoding="utf-8")
                 self.assertNotIn("/var/run/docker.sock", content)
 
+    def test_compose_entrypoints_delegate_to_one_source_built_topology(self) -> None:
+        canonical = (ROOT / "docker-compose.local.yml").read_text(
+            encoding="utf-8"
+        )
+
+        for entrypoint_path, compose_path, env_path in (
+            (ROOT / "docker-compose.yml", "./docker-compose.local.yml", ".env.local"),
+            (
+                ROOT / "backend" / "docker-compose.yml",
+                "../docker-compose.local.yml",
+                "../.env.local",
+            ),
+            (
+                ROOT / "idp" / "docker-compose.yml",
+                "../docker-compose.local.yml",
+                "../.env.local",
+            ),
+            (
+                ROOT / "gate" / "docker-compose.yml",
+                "../docker-compose.local.yml",
+                "../.env.local",
+            ),
+            (
+                ROOT / "kafka" / "docker-compose.yaml",
+                "../docker-compose.local.yml",
+                "../.env.local",
+            ),
+        ):
+            entrypoint = entrypoint_path.read_text(encoding="utf-8")
+            with self.subTest(entrypoint=entrypoint_path):
+                self.assertIn("include:", entrypoint)
+                self.assertIn("name: 018-hai", entrypoint)
+                self.assertIn(f"path: {compose_path}", entrypoint)
+                self.assertIn("HAI_ENV_FILE", entrypoint)
+                self.assertIn(env_path, entrypoint)
+                self.assertNotIn("jacksonbarreto/", entrypoint)
+                self.assertNotIn(":latest", entrypoint)
+                self.assertNotIn("kafka2", entrypoint)
+                self.assertNotIn("zookeeper", entrypoint)
+
+        development = (ROOT / "docker-compose.dev.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("ports:", development)
+        self.assertNotIn("volumes:", development)
+        self.assertNotIn("adminer", development)
+        self.assertNotIn(":latest", development)
+        self.assertNotIn("automation_hub_network", development)
+        self.assertNotIn("idp_network", development)
+
+        for service_path in ("./backend", "./frontend", "./idp"):
+            with self.subTest(source_build=service_path):
+                self.assertIn(f"context: {service_path}", canonical)
+        self.assertIn("container_name: 018-hai-backend", canonical)
+        self.assertIn("container_name: 018-hai-frontend", canonical)
+        self.assertIn("container_name: 018-hai-idp", canonical)
+        self.assertNotIn("jacksonbarreto/", canonical)
+        self.assertNotIn("kafka2:", canonical)
+        self.assertNotIn("kafka3:", canonical)
+        self.assertNotIn("zookeeper:", canonical)
+
     def test_nginx_manager_is_observable_non_root_and_resource_bounded(
         self,
     ) -> None:

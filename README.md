@@ -18,7 +18,7 @@ reviewed runtime, policy, and evidence path are configured.
 > changed Basic to Advanced view state, and passed a narrow mobile check without
 > console errors, HTTP failures, redirects, framework overlays, or horizontal
 > overflow. The full backend and IDP suites, Angular production build, 382
-> frontend tests, 30 CI contract tests, Compose validation, and Postgres-backed
+> frontend tests, 31 CI contract tests, Compose validation, and Postgres-backed
 > critical-path checks have been exercised. The task review queue also passed
 > against the retained live PostgreSQL data. These observations are
 > local-environment evidence, not a claim that every Windows machine or account
@@ -244,7 +244,7 @@ target-machine checks before relying on a path for real work.
 | --- | --- | --- |
 | Local Compose and gateway | The local services are running; `/`, `/control-center`, `/healthz`, and `/readyz` are served through nginx. Both health probes are intentionally public; protected `/api/v1/*` engine routes still require a signed session. Angular deep links return the application shell. | Fresh-clone Windows 11 run with a newly created `.env.local`. |
 | Browser session | The unauthenticated session check returns HTTP 200 with `authenticated:false` and no-store caching; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. The 2026-08-09 regression run reported no console or HTTP failures. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
-| Go and Angular code | The full backend and IDP Go suites, frontend production build, 382 headless Angular tests, 30 executable CI contract tests, migration-chain checks, live workflow-repository PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 836 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
+| Go and Angular code | The full backend and IDP Go suites, frontend production build, 382 headless Angular tests, 31 executable CI contract tests, migration-chain checks, live workflow-repository PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 836 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
 | Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 
@@ -498,7 +498,8 @@ explicitly enabled, then applies post-phase migrations. See
 
 ### Prerequisites
 
-- Windows 11 with Docker Desktop, or another Docker Compose-capable environment.
+- Windows 11 with current Docker Desktop, or another environment with Docker
+  Compose 2.20 or newer (required for the canonical `include` entrypoint).
 - Git.
 - Node.js 22.22.3 with npm 10.9.8 for frontend development outside Docker.
   npm and `package-lock.json` are the sole frontend package-manager contract.
@@ -510,9 +511,9 @@ explicitly enabled, then applies post-phase migrations. See
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\initialize-windows.ps1
-docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
-docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
-docker compose --env-file .env.local -f docker-compose.local.yml ps
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
 ```
 
 The Windows initializer prompts for the first-run owner credentials and writes
@@ -520,6 +521,9 @@ an ignored `.env.local` with independent cryptographic secrets, a loopback-only
 gateway, production mode, and local-login bypass disabled. It never prints the
 password or generated secrets. Do not start production from an unchanged copy
 of `.env.example`: its placeholders are deliberately rejected by readiness.
+The default `docker-compose.yml` is a thin entrypoint to the same canonical
+source-built topology in `docker-compose.local.yml`; no legacy external HAI
+images or alternate broker topology remain reachable through Compose.
 
 The backend image is a static Go binary on a digest-pinned Alpine runtime. It
 runs as UID/GID `10001`, uses a read-only root filesystem, drops all Linux
@@ -836,6 +840,9 @@ npm.cmd run test -- --watch=false --browsers=ChromeHeadlessNoSandbox
 # Compose contract
 Set-Location ..
 docker compose --env-file .env.example -f docker-compose.local.yml config --quiet
+$env:HAI_ENV_FILE = '.env.example'
+docker compose -f docker-compose.yml config --quiet
+Remove-Item Env:HAI_ENV_FILE
 ```
 
 With the matching local Go toolchains installed, run the backend commands from
@@ -870,7 +877,8 @@ browser-extension/       Explicit user-authorized conversation capture
 scripts/                 Smoke and operational verification scripts
 docs/                    Architecture, runbooks, evidence, audits, and roadmap
 .github/workflows/       CI pipeline
-docker-compose.local.yml Windows/local-first Compose topology
+docker-compose.yml       Default entrypoint to the canonical local topology
+docker-compose.local.yml Canonical Windows/local-first Compose topology
 .env.example             Environment template; copy to untracked .env.local
 generic-auto/            Legacy service, not the canonical HAI engine
 gate/                    Legacy gateway/config area; local Compose uses nginx-config/

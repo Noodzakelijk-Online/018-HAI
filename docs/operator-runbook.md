@@ -11,18 +11,19 @@ by the action.
 
 ## Start And Stop
 
-Create an untracked `.env.local` from `.env.example`, replace placeholder
-secrets, and use the local Compose file:
+Run the Windows initializer to create the ignored `.env.local`, then use the
+default Compose entrypoint. It delegates to the single source-built topology in
+`docker-compose.local.yml`:
 
 ```bash
-docker compose -f docker-compose.local.yml --env-file .env.local up -d --build
-docker compose -f docker-compose.local.yml --env-file .env.local ps
+docker compose up -d --build
+docker compose ps
 ```
 
 Stop the stack without deleting volumes:
 
 ```bash
-docker compose -f docker-compose.local.yml --env-file .env.local down
+docker compose down
 ```
 
 Compose gives the backend and identity provider 20 seconds to drain HTTP

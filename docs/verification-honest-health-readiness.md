@@ -12,11 +12,11 @@ in `docs/operator-runbook.md`.
 - Stack file: `docker-compose.local.yml` with `--env-file .env.local`
 - Go build/test run in `golang:1.23` container (no Go toolchain on host)
 
-> Note on which compose file is authoritative: `docker-compose.local.yml` builds
-> the backend, frontend and IDP **from source**. `docker-compose.yml` pulls
-> prebuilt upstream `jacksonbarreto/*` images and is not the HAI stack. Use the
-> local file. This corrects the earlier `ANALYSIS_REPORT.md`, which recommended
-> the opposite.
+> Current note on Compose authority: `docker-compose.local.yml` defines the one
+> source-built topology. The root and backend `docker-compose.yml` files now
+> delegate to it; the retired `jacksonbarreto/*` images and three-broker
+> ZooKeeper topology are no longer Compose entrypoints. This supersedes the
+> historical warning below while preserving the dated verification record.
 
 ---
 

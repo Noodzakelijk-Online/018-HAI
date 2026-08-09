@@ -107,6 +107,13 @@ jobs:
       - name: Gateway authentication contract
         run: python3 nginx-config/test_gateway_contract.py
       - run: docker compose --env-file .env.example -f docker-compose.local.yml config
+      - name: Default Compose entrypoint resolves to canonical local stack
+        run: HAI_ENV_FILE=.env.example docker compose -f docker-compose.yml config
+      - name: Service-local Compose entrypoints resolve to canonical stack
+        run: |
+          for entrypoint in backend/docker-compose.yml idp/docker-compose.yml gate/docker-compose.yml kafka/docker-compose.yaml; do
+            HAI_ENV_FILE=../.env.example docker compose -f "$entrypoint" config --quiet
+          done
       - name: Ngrok container fail-closed gate
         run: |
           sh -n deploy/ngrok/start-ngrok.sh
