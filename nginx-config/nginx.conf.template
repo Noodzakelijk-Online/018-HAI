@@ -23,7 +23,7 @@ http {
         set $backend_upstream backend:80;
         set $idp_upstream idp:8080;
         set $frontend_upstream frontend:8080;
-        set $generic_auto_upstream generic-auto:80;
+        set $generic_auto_upstream generic-auto:8080;
 
         # Health endpoints are intentionally unauthenticated and must not fall
         # through to the Angular single-page application.

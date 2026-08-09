@@ -47,6 +47,10 @@ services:
       DB_NAME: ${IDP_DB_NAME}
       DB_HOST: ${IDP_DB_HOST}
       DB_PORT: ${DB_PORT}
+      DB_MAX_OPEN_CONNS: ${IDP_DB_MAX_OPEN_CONNS:-8}
+      DB_MAX_IDLE_CONNS: ${IDP_DB_MAX_IDLE_CONNS:-2}
+      DB_CONN_MAX_IDLE_TIME: ${IDP_DB_CONN_MAX_IDLE_TIME:-5m}
+      DB_CONN_MAX_LIFETIME: ${IDP_DB_CONN_MAX_LIFETIME:-30m}
       WEB_SERVER_PORT: ${WEB_SERVER_PORT}
       BASE_URL: ${BASE_URL}
       FIRST_RUN_ADMIN_EMAIL: ${FIRST_RUN_ADMIN_EMAIL}
@@ -120,6 +124,10 @@ services:
       DB_NAME: ${AUTOMATION_DB_NAME}
       DB_HOST: ${AUTOMATION_DB_HOST}
       DB_PORT: ${DB_PORT}
+      DB_MAX_OPEN_CONNS: ${BACKEND_DB_MAX_OPEN_CONNS:-16}
+      DB_MAX_IDLE_CONNS: ${BACKEND_DB_MAX_IDLE_CONNS:-4}
+      DB_CONN_MAX_IDLE_TIME: ${BACKEND_DB_CONN_MAX_IDLE_TIME:-5m}
+      DB_CONN_MAX_LIFETIME: ${BACKEND_DB_CONN_MAX_LIFETIME:-30m}
       IMAGE_MAX_SIZE_IN_MB: ${IMAGE_MAX_SIZE_IN_MB}
       IMAGE_EXTENSIONS: ${IMAGE_EXTENSIONS}
       IMAGE_SAVE_DIR: ${IMAGE_SAVE_DIR}
@@ -1467,10 +1475,30 @@ services:
       - service-hub
 
   postgres-idp:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
     restart: unless-stopped
+    init: true
+    mem_limit: ${POSTGRES_IDP_MEMORY_LIMIT:-192m}
+    mem_reservation: ${POSTGRES_IDP_MEMORY_RESERVATION:-32m}
+    cpus: ${POSTGRES_IDP_CPU_LIMIT:-0.5}
+    pids_limit: ${POSTGRES_IDP_PIDS_LIMIT:-64}
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - effective_cache_size=128MB
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1482,7 +1510,7 @@ services:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${IDP_DB_NAME}"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 12
       start_period: 10s
@@ -1492,10 +1520,30 @@ services:
   postgres-automation:
     # Pinned upstream pgvector Postgres 17 image. Existing data stays in the
     # named volume; take a backup before changing a live database image.
-    image: pgvector/pgvector:0.8.5-pg17-bookworm
+    image: pgvector/pgvector:0.8.5-pg17-bookworm@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped
+    init: true
+    mem_limit: ${POSTGRES_AUTOMATION_MEMORY_LIMIT:-384m}
+    mem_reservation: ${POSTGRES_AUTOMATION_MEMORY_RESERVATION:-96m}
+    cpus: ${POSTGRES_AUTOMATION_CPU_LIMIT:-0.75}
+    pids_limit: ${POSTGRES_AUTOMATION_PIDS_LIMIT:-96}
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=40
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=256MB
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1507,7 +1555,7 @@ services:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${AUTOMATION_DB_NAME}"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 12
       start_period: 10s
@@ -1515,16 +1563,40 @@ services:
       - automation-hub-network
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     container_name: 018-hai-redis
     hostname: redis
     restart: unless-stopped
-    command: ["redis-server", "--port", "${REDIS_PORT}"]
+    init: true
+    mem_limit: ${REDIS_MEMORY_LIMIT:-128m}
+    mem_reservation: ${REDIS_MEMORY_RESERVATION:-16m}
+    cpus: ${REDIS_CPU_LIMIT:-0.25}
+    pids_limit: ${REDIS_PIDS_LIMIT:-32}
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    command:
+      - redis-server
+      - --port
+      - ${REDIS_PORT}
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - "60"
+      - "1000"
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - noeviction
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "${REDIS_PORT}", "ping"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 12
       start_period: 10s
@@ -1616,9 +1688,20 @@ services:
       dockerfile: dockerfile
     container_name: 018-hai-generic-auto
     restart: unless-stopped
+    user: "65532:65532"
+    init: true
+    read_only: true
+    mem_limit: ${GENERIC_AUTO_MEMORY_LIMIT:-32m}
+    mem_reservation: ${GENERIC_AUTO_MEMORY_RESERVATION:-6m}
+    cpus: ${GENERIC_AUTO_CPU_LIMIT:-0.1}
+    pids_limit: ${GENERIC_AUTO_PIDS_LIMIT:-16}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
-      interval: 10s
+      test: ["CMD", "/server", "-healthcheck"]
+      interval: 30s
       timeout: 5s
       retries: 12
       start_period: 10s
@@ -1700,6 +1783,8 @@ volumes:
     name: 018-hai-postgres-idp-data
   postgres-automation-data:
     name: 018-hai-postgres-automation-data
+  redis-data:
+    name: 018-hai-redis-data
   zookeeper-data:
     name: 018-hai-zookeeper-data
   zookeeper-log:

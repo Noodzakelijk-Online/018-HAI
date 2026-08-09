@@ -259,6 +259,130 @@ class CIWorkflowContractTest(unittest.TestCase):
 
         self.assertNotIn("kafka-broker-api-versions", kafka)
 
+    def test_local_persistence_services_are_durable_pinned_and_bounded(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        idp_start = compose.index("\n  postgres-idp:\n") + 1
+        automation_start = compose.index("\n  postgres-automation:\n", idp_start) + 1
+        redis_start = compose.index("\n  redis:\n", automation_start) + 1
+        zookeeper_start = compose.index("\n  zookeeper:\n", redis_start) + 1
+        idp = compose[idp_start:automation_start]
+        automation = compose[automation_start:redis_start]
+        redis = compose[redis_start:zookeeper_start]
+
+        for block, requirements in (
+            (
+                idp,
+                (
+                    "postgres:17-alpine@sha256:",
+                    "mem_limit: ${POSTGRES_IDP_MEMORY_LIMIT:-192m}",
+                    "pids_limit: ${POSTGRES_IDP_PIDS_LIMIT:-64}",
+                    "no-new-privileges:true",
+                    "max_connections=20",
+                    "postgres-idp-data:/var/lib/postgresql/data",
+                ),
+            ),
+            (
+                automation,
+                (
+                    "pgvector:0.8.5-pg17-bookworm@sha256:",
+                    "mem_limit: ${POSTGRES_AUTOMATION_MEMORY_LIMIT:-384m}",
+                    "pids_limit: ${POSTGRES_AUTOMATION_PIDS_LIMIT:-96}",
+                    "no-new-privileges:true",
+                    "max_connections=40",
+                    "postgres-automation-data:/var/lib/postgresql/data",
+                ),
+            ),
+            (
+                redis,
+                (
+                    "redis:7-alpine@sha256:",
+                    "mem_limit: ${REDIS_MEMORY_LIMIT:-128m}",
+                    "pids_limit: ${REDIS_PIDS_LIMIT:-32}",
+                    "no-new-privileges:true",
+                    "--appendonly",
+                    "--maxmemory-policy",
+                    "noeviction",
+                    "redis-data:/data",
+                ),
+            ),
+        ):
+            for required in requirements:
+                with self.subTest(required=required):
+                    self.assertIn(required, block)
+
+    def test_application_database_pools_are_explicitly_bounded(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        idp = compose[compose.index("  idp:\n") : compose.index("\n  backend:\n")]
+        backend = compose[
+            compose.index("  backend:\n") : compose.index("\n  frontend:\n")
+        ]
+
+        for block, requirements in (
+            (
+                idp,
+                (
+                    "DB_MAX_OPEN_CONNS: ${IDP_DB_MAX_OPEN_CONNS:-8}",
+                    "DB_MAX_IDLE_CONNS: ${IDP_DB_MAX_IDLE_CONNS:-2}",
+                    "DB_CONN_MAX_IDLE_TIME: ${IDP_DB_CONN_MAX_IDLE_TIME:-5m}",
+                    "DB_CONN_MAX_LIFETIME: ${IDP_DB_CONN_MAX_LIFETIME:-30m}",
+                ),
+            ),
+            (
+                backend,
+                (
+                    "DB_MAX_OPEN_CONNS: ${BACKEND_DB_MAX_OPEN_CONNS:-16}",
+                    "DB_MAX_IDLE_CONNS: ${BACKEND_DB_MAX_IDLE_CONNS:-4}",
+                    "DB_CONN_MAX_IDLE_TIME: ${BACKEND_DB_CONN_MAX_IDLE_TIME:-5m}",
+                    "DB_CONN_MAX_LIFETIME: ${BACKEND_DB_CONN_MAX_LIFETIME:-30m}",
+                ),
+            ),
+        ):
+            for required in requirements:
+                with self.subTest(required=required):
+                    self.assertIn(required, block)
+
+    def test_generic_compatibility_runtime_is_static_non_root_and_bounded(self) -> None:
+        dockerfile = (ROOT / "generic-auto" / "dockerfile").read_text(
+            encoding="utf-8"
+        )
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        generic_start = compose.index("  generic-auto:\n")
+        generic_end = compose.index("\nnetworks:\n", generic_start)
+        generic = compose[generic_start:generic_end]
+
+        for required in (
+            "golang:1.25-alpine@sha256:",
+            "CGO_ENABLED=0",
+            "FROM scratch",
+            "USER 65532:65532",
+            'ENTRYPOINT ["/server"]',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, dockerfile)
+        for required in (
+            'user: "65532:65532"',
+            "init: true",
+            "read_only: true",
+            "mem_limit: ${GENERIC_AUTO_MEMORY_LIMIT:-32m}",
+            "pids_limit: ${GENERIC_AUTO_PIDS_LIMIT:-16}",
+            "no-new-privileges:true",
+            "cap_drop:",
+            '- ALL',
+            'test: ["CMD", "/server", "-healthcheck"]',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, generic)
+
+        for config_path in (
+            ROOT / "nginx-config" / "nginx.conf",
+            ROOT / "nginx-config" / "nginx.conf.template",
+        ):
+            with self.subTest(config_path=config_path):
+                self.assertIn(
+                    "set $generic_auto_upstream generic-auto:8080;",
+                    config_path.read_text(encoding="utf-8"),
+                )
+
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
             "nginx-config/test_gateway_contract.py",

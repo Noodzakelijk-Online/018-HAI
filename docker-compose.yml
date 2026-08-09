@@ -178,7 +178,7 @@ services:
   generic-auto:
     build:
       context: ./generic-auto
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
     container_name: generic-auto
     networks:
       - service-hub

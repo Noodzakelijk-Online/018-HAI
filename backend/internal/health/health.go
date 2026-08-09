@@ -78,11 +78,9 @@ func PostgresProbe(cfg config.Configuration) doctor.Probe {
 
 // RedisProbe checks the Redis declared in the compose stack.
 //
-// The backend does not currently connect to Redis: rate-limit and quota state
-// lives in an in-process map and is lost on restart. The probe still reports
-// Redis honestly, because an operator looking at readiness needs to see the
-// difference between "this dependency is healthy" and "this dependency is
-// running but nothing uses it".
+// Redis backs the shared rate limiter when configured. It remains a
+// non-critical readiness dependency because router startup deliberately falls
+// back to an in-process limiter when Redis is unavailable.
 func RedisProbe(cfg config.Configuration) doctor.Probe {
 	addr := strings.TrimSpace(cfg.RedisAddr)
 	return doctor.Probe{
@@ -90,7 +88,7 @@ func RedisProbe(cfg config.Configuration) doctor.Probe {
 		Critical: false,
 		Run: func(ctx context.Context) error {
 			if addr == "" {
-				return fmt.Errorf("REDIS_ADDR is not set; quota and rate-limit state stays in-process and resets on restart")
+				return fmt.Errorf("REDIS_ADDR is not set; rate-limit state stays in-process and resets on restart")
 			}
 			var dialer net.Dialer
 			conn, err := dialer.DialContext(ctx, "tcp", addr)
@@ -102,8 +100,8 @@ func RedisProbe(cfg config.Configuration) doctor.Probe {
 			if deadline, ok := ctx.Deadline(); ok {
 				_ = conn.SetDeadline(deadline)
 			}
-			// Inline RESP so a liveness check does not pull in a Redis client
-			// the backend has no other use for yet.
+			// Inline RESP keeps the readiness probe independent from the
+			// rate-limiter client's lifecycle.
 			if _, err := conn.Write([]byte("*1\r\n$4\r\nPING\r\n")); err != nil {
 				return fmt.Errorf("write PING to %s: %w", addr, err)
 			}
