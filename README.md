@@ -531,6 +531,18 @@ The reference build reduced the Docker-reported backend image size from
 71,322,131 to 24,462,696 bytes (65.7%) and the binary from 82,091,894 to
 61,526,200 bytes (25.1%).
 
+The identity service follows the same runtime boundary: a static Go binary on
+a digest-pinned Alpine image, UID/GID `10001`, a read-only root filesystem,
+no Linux capabilities, and `no-new-privileges`. Compose bounds it to 256 MiB,
+1 CPU, 128 processes, and a 32 MiB temporary filesystem by default; operators
+can tune `IDP_MEMORY_LIMIT`, `IDP_MEMORY_RESERVATION`, `IDP_CPU_LIMIT`,
+`IDP_PIDS_LIMIT`, and `IDP_TMPFS_SIZE` after representative authentication and
+account-recovery testing. Backend and gateway startup now wait for the IDP's
+HTTP `/healthz` check instead of treating an open TCP socket as readiness. The
+reference build reduced the Docker-reported IDP image size from 53,495,733 to
+15,684,852 bytes (70.7%) and the binary from 45,153,741 to 34,312,376 bytes
+(24.0%).
+
 Open [http://localhost](http://localhost).
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep

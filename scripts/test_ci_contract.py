@@ -32,7 +32,7 @@ class CIWorkflowContractTest(unittest.TestCase):
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
-        for relative_path in ("idp/Dockerfile", "nginx-config-manager/Dockerfile"):
+        for relative_path in ("nginx-config-manager/Dockerfile",):
             with self.subTest(path=relative_path):
                 dockerfile = (ROOT / relative_path).read_text(encoding="utf-8")
                 self.assertNotRegex(
@@ -45,6 +45,13 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotRegex(backend, r"(?m)^FROM\s+\S+:latest(?:\s|$)")
         self.assertRegex(
             backend,
+            r"(?m)^FROM alpine:3\.22@sha256:[0-9a-f]{64}$",
+        )
+
+        idp = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertNotRegex(idp, r"(?m)^FROM\s+\S+:latest(?:\s|$)")
+        self.assertRegex(
+            idp,
             r"(?m)^FROM alpine:3\.22@sha256:[0-9a-f]{64}$",
         )
 
@@ -87,6 +94,61 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, backend)
+
+    def test_idp_runtime_is_static_non_root_and_resource_bounded(self) -> None:
+        dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.local.yml").read_text(
+            encoding="utf-8"
+        )
+        idp_start = compose.index("  idp:\n")
+        idp_end = compose.index("\n  backend:\n", idp_start)
+        idp = compose[idp_start:idp_end]
+        backend_start = idp_end + 1
+        backend_end = compose.index("\n  frontend:\n", backend_start)
+        backend = compose[backend_start:backend_end]
+        nginx_start = compose.index("  nginx:\n")
+        nginx_end = compose.index("\n  ngrok:\n", nginx_start)
+        nginx = compose[nginx_start:nginx_end]
+
+        for required in (
+            "CGO_ENABLED=0",
+            "-trimpath",
+            '-ldflags "-s -w"',
+            "USER 10001:10001",
+            'ENTRYPOINT ["/app/idp"]',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, dockerfile)
+        self.assertNotIn("apt-get", dockerfile)
+        self.assertNotIn("curl", dockerfile)
+        self.assertNotIn("bash", dockerfile)
+        self.assertTrue((ROOT / "idp" / ".dockerignore").is_file())
+
+        for required in (
+            'user: "10001:10001"',
+            "init: true",
+            "read_only: true",
+            "/tmp:rw,noexec,nosuid,nodev,size=${IDP_TMPFS_SIZE:-32m}",
+            "mem_limit: ${IDP_MEMORY_LIMIT:-256m}",
+            "mem_reservation: ${IDP_MEMORY_RESERVATION:-48m}",
+            "cpus: ${IDP_CPU_LIMIT:-1.0}",
+            "pids_limit: ${IDP_PIDS_LIMIT:-128}",
+            "no-new-privileges:true",
+            "cap_drop:",
+            "- ALL",
+            "wget -q -O /dev/null http://127.0.0.1:${WEB_SERVER_PORT}/healthz",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, idp)
+
+        self.assertRegex(
+            backend,
+            r"(?s)idp:\s+condition: service_healthy",
+        )
+        self.assertRegex(
+            nginx,
+            r"(?s)backend:\s+condition: service_healthy.*idp:\s+condition: service_healthy",
+        )
 
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
