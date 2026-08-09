@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core'
+import { ChangeDetectionStrategy, Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IMCPPreflightOverview, IMCPPreflightResult, IMCPPreflightServer } from '../../models/mcp-preflight.model.interface'
@@ -15,6 +15,7 @@ import { MCPPreflightService } from '../../services/mcp-preflight.service'
 import { RuntimeLabService } from '../../services/runtime-lab.service'
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false,
   selector: 'app-runtime-lab',
   templateUrl: './runtime-lab.component.html',

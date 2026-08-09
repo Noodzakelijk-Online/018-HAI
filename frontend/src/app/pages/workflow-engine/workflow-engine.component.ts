@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
@@ -34,6 +34,7 @@ import { IWorkflowService } from '../../services/workflow.service.interface';
 type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false,
   selector: 'app-workflow-engine',
   templateUrl: './workflow-engine.component.html',

@@ -2,8 +2,11 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -16,7 +19,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const httpShutdownTimeout = 10 * time.Second
+
 func Initialize() error {
+	return InitializeContext(context.Background())
+}
+
+// InitializeContext starts the HTTP server and all background workers under a
+// single application lifetime. Cancelling ctx stops accepting requests,
+// drains in-flight handlers, and cancels every scheduler started by routes.
+func InitializeContext(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("application context is required")
+	}
+
 	// Startup config guard: refuse to serve with a broken configuration so a
 	// misconfigured deployment fails fast and loudly rather than half-working.
 	// Warnings (e.g. empty optional keys) do not block startup.
@@ -48,7 +64,7 @@ func Initialize() error {
 	router.Use(metricsExporter.Middleware())
 
 	// initialize routes
-	err = initializeRoutes(router)
+	err = initializeRoutes(ctx, router)
 	if err != nil {
 		return err
 	}
@@ -56,14 +72,47 @@ func Initialize() error {
 		router.GET("/metrics", metricsExporter.RequireBearerToken(), gin.WrapH(metricsExporter.Handler()))
 	}
 
-	// run server
-	port := config.AppConfig.ServerPort
-	err = router.Run(port)
+	server := &http.Server{
+		Addr:              config.AppConfig.ServerPort,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return err
 	}
+	return serveUntilCancelled(ctx, server, listener)
+}
 
-	return nil
+func serveUntilCancelled(ctx context.Context, server *http.Server, listener net.Listener) error {
+	if ctx == nil || server == nil || listener == nil {
+		return fmt.Errorf("server lifecycle requires context, server, and listener")
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return fmt.Errorf("graceful HTTP shutdown: %w", err)
+		}
+		err := <-errCh
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
 }
 
 // newRateLimitEnforcer selects where rate-limit counters live. When REDIS_ADDR

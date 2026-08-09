@@ -6,6 +6,16 @@ ROOT = Path(__file__).resolve().parents[1]
 NGINX_TEMPLATE = (ROOT / "nginx-config" / "nginx.conf.template").read_text(encoding="utf-8")
 COMPOSE = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
 
+SECURITY_HEADERS = (
+    'add_header X-Content-Type-Options "nosniff" always;',
+    'add_header X-Frame-Options "DENY" always;',
+    'add_header Referrer-Policy "no-referrer" always;',
+    'add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;',
+    'add_header Cross-Origin-Opener-Policy "same-origin" always;',
+    'add_header Cross-Origin-Resource-Policy "same-origin" always;',
+    "add_header Content-Security-Policy \"default-src 'self';",
+)
+
 
 def location_block(marker: str) -> str:
     start = NGINX_TEMPLATE.index(marker)
@@ -23,6 +33,24 @@ def location_block(marker: str) -> str:
 
 
 class GatewayAuthContractTest(unittest.TestCase):
+    def test_gateway_applies_security_headers_to_every_response(self) -> None:
+        server = location_block("server {")
+        for required in SECURITY_HEADERS:
+            with self.subTest(required=required):
+                self.assertIn(required, server)
+        self.assertIn("server_tokens off;", NGINX_TEMPLATE)
+
+        # An add_header in a location disables inherited add_header values, so
+        # locations that refresh the access cookie must repeat the baseline.
+        for marker in (
+            "location = /api/v1/agent-runtimes/openclaw/ecosystem/upload",
+            "location /api/v1 {",
+        ):
+            block = location_block(marker)
+            for required in SECURITY_HEADERS:
+                with self.subTest(marker=marker, required=required):
+                    self.assertIn(required, block)
+
     def test_backend_routes_use_authenticated_catch_all(self) -> None:
         backend = location_block("location /api/v1 {")
         self.assertIn("auth_request /auth-verify;", backend)

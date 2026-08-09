@@ -466,7 +466,7 @@ high/critical, and `npm audit --audit-level=high` is blocking. See
 The current Angular 22 frontend, IDP, and task-review backend were rebuilt and
 deployed into the retained local Windows Compose stack. The full backend and
 IDP Go suites passed, all 379 frontend tests passed under Node 22.22.3, the
-production frontend build passed, and all 17 executable CI contract tests
+production frontend build passed, and all 29 executable CI contract tests
 passed. An authenticated browser run against `http://localhost` verified login,
 the shared shell, Basic-to-Advanced disclosure, mobile overflow, and meaningful
 content on Control Center, Pursuits, Workflow Engine, Task Blueprint, Connected
@@ -497,6 +497,16 @@ success. Synthetic positive and negative ngrok preflight cases also passed.
 No real ngrok credential/domain was available for this verification, so public
 transport remains unproven and does not imply external-agent execution,
 distributed coordination, or full A2A task-lifecycle support.
+
+The backend and IDP now share signal-aware HTTP lifecycles with the backend's
+in-process schedulers and workers. A live Compose SIGTERM cycle drained both
+containers in 3.2 seconds with exit code 0, recovered both to healthy, retained
+all 59 pre-phase and three post-phase migrations, and reconciled all nine
+stored memories without findings. The gateway now serves a strict script CSP,
+COOP `same-origin`, CORP `same-origin`, clickjacking, MIME-sniffing, referrer,
+permissions, and server-token controls. Static contracts and live response
+headers verify the policy, including cookie-refresh locations where nginx
+header inheritance would otherwise be lost.
 
 ### Known recovery and deployment gaps
 

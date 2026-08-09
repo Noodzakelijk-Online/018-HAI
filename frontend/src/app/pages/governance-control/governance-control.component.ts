@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http'
-import { Component, OnDestroy, OnInit } from '@angular/core'
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit } from '@angular/core'
 import { NzModalService } from 'ng-zorro-antd/modal'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { catchError, forkJoin, map, of, Subscription, switchMap, throwError } from 'rxjs'
@@ -130,6 +130,7 @@ interface MonitorCompositionProvenanceDetail {
 }
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false,
   selector: 'app-governance-control',
   templateUrl: './governance-control.component.html',

@@ -25,6 +25,12 @@ Stop the stack without deleting volumes:
 docker compose -f docker-compose.local.yml --env-file .env.local down
 ```
 
+Compose gives the backend and identity provider 20 seconds to drain HTTP
+requests. Their signal-aware application context also cancels source,
+workflow, ambient, model-maintenance, catalog-maintenance, Temporal, and
+outcome-monitor workers before process exit. A forced kill does not provide
+this guarantee and should be reserved for an unresponsive process.
+
 Do not add `-v` unless the reviewed operation is intentionally deleting local
 database and queue volumes.
 

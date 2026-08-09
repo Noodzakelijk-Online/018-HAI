@@ -102,7 +102,10 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-func initializeRoutes(router *gin.Engine) error {
+func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
+	if appCtx == nil {
+		return fmt.Errorf("application context is required")
+	}
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
@@ -192,7 +195,7 @@ func initializeRoutes(router *gin.Engine) error {
 		catalogHandler := braincatalog.NewHandlerWithReviewersAndScout(catalogReviewer, collectionReviewer, repositoryScout).
 			WithMaintenance(catalogMaintenance)
 		initializeBrainCatalogRoutes(v1, catalogHandler)
-		braincatalog.StartCatalogRevalidationScheduler(context.Background(), catalogMaintenance, backgroundAllowed)
+		braincatalog.StartCatalogRevalidationScheduler(appCtx, catalogMaintenance, backgroundAllowed)
 		semanticService := semantic.NewServiceFromEnv()
 		memoryService := memory.NewServiceWithSemantic(memory.DefaultRepository(), semanticService)
 		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
@@ -393,7 +396,7 @@ func initializeRoutes(router *gin.Engine) error {
 			return err
 		}
 		if ambientmonitor.DurableSchedulerEnabled() {
-			if err := ambientmonitor.StartDurableScheduler(context.Background(), ambientMonitorService, backgroundAllowed); err != nil {
+			if err := ambientmonitor.StartDurableScheduler(appCtx, ambientMonitorService, backgroundAllowed); err != nil {
 				return err
 			}
 		}
@@ -579,7 +582,7 @@ func initializeRoutes(router *gin.Engine) error {
 			),
 		)
 		llm.StartModelMaintenanceScheduler(
-			context.Background(),
+			appCtx,
 			llmService,
 			backgroundAllowed,
 		)
@@ -595,7 +598,7 @@ func initializeRoutes(router *gin.Engine) error {
 			workflowService,
 			executionAuthorizationService,
 		)
-		temporalService.StartWorkerEventually(context.Background())
+		temporalService.StartWorkerEventually(appCtx)
 		initializeTemporalRoutes(
 			v1,
 			temporalbridge.NewHandler(temporalService),
@@ -721,8 +724,8 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeA2ABridgeStatusRoutes(v1, a2aBridgeHandler)
 		initializeA2ABridgeRoutes(router, relativePathV1, a2aBridgeHandler)
 		workflowRunner.Set(workflowtask.NewRunner(taskService, automationService))
-		source.StartScheduler(context.Background(), sourceService)
-		workflow.StartScheduler(context.Background(), workflowService)
+		source.StartScheduler(appCtx, sourceService)
+		workflow.StartScheduler(appCtx, workflowService)
 		mcpBridgeHandler := mcpbridge.NewHandler(mcpbridge.NewServiceFromEnv(workflowService))
 		initializeMCPBridgeStatusRoutes(v1, mcpBridgeHandler)
 		initializeMCPAgentRoutes(router, relativePathV1, mcpBridgeHandler)
@@ -742,7 +745,7 @@ func initializeRoutes(router *gin.Engine) error {
 		)
 		initializeMemoryEngineRoutes(v1, memoryengine.NewHandler(memoryEngineService))
 		ambientService := ambient.NewServiceWithPursuits(ambient.DefaultRepository(), workflowService, memoryEngineService, pursuitService, memoryService)
-		ambient.StartScheduler(context.Background(), ambientService)
+		ambient.StartScheduler(appCtx, ambientService)
 		initializeAmbientRoutes(v1, ambient.NewHandler(ambientService))
 		agentCycleService := agentcycle.NewServiceWithPursuits(sourceService, workflowService, ambientService, pursuitService, memoryService)
 		initializeAgentCycleRoutes(v1, agentcycle.NewHandler(agentCycleService))

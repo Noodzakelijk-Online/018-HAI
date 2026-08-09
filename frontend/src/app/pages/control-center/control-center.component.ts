@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit } from '@angular/core'
+import { ChangeDetectionStrategy, Component, Inject, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { forkJoin, of } from 'rxjs'
 import { catchError, timeout } from 'rxjs/operators'
@@ -75,6 +75,7 @@ interface NavigationItem {
 }
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false,
   selector: 'app-control-center',
   templateUrl: './control-center.component.html',

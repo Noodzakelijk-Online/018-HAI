@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import re
 import unittest
 
@@ -82,6 +83,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             'user: "10001:10001"',
             "init: true",
             "read_only: true",
+            "stop_grace_period: 20s",
             "/tmp:rw,noexec,nosuid,nodev,size=${BACKEND_TMPFS_SIZE:-128m}",
             "mem_limit: ${BACKEND_MEMORY_LIMIT:-512m}",
             "mem_reservation: ${BACKEND_MEMORY_RESERVATION:-96m}",
@@ -128,6 +130,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             'user: "10001:10001"',
             "init: true",
             "read_only: true",
+            "stop_grace_period: 20s",
             "/tmp:rw,noexec,nosuid,nodev,size=${IDP_TMPFS_SIZE:-32m}",
             "mem_limit: ${IDP_MEMORY_LIMIT:-256m}",
             "mem_reservation: ${IDP_MEMORY_RESERVATION:-48m}",
@@ -582,9 +585,12 @@ class CIWorkflowContractTest(unittest.TestCase):
         package = (ROOT / "frontend" / "package.json").read_text(
             encoding="utf-8"
         )
-        angular = (ROOT / "frontend" / "angular.json").read_text(
+        main = (ROOT / "frontend" / "src" / "main.ts").read_text(
             encoding="utf-8"
         )
+        angular_path = ROOT / "frontend" / "angular.json"
+        angular = angular_path.read_text(encoding="utf-8")
+        angular_config = json.loads(angular)
         dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(
             encoding="utf-8"
         )
@@ -594,6 +600,28 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('"@angular/core": "22.1.1"', package)
         self.assertIn('"@angular/build": "22.1.3"', package)
         self.assertIn('"builder": "@angular/build:application"', angular)
+        production_optimization = angular_config["projects"]["app"]["architect"][
+            "build"
+        ]["configurations"]["production"]["optimization"]
+        self.assertTrue(production_optimization["scripts"])
+        self.assertTrue(production_optimization["styles"]["minify"])
+        self.assertFalse(production_optimization["styles"]["inlineCritical"])
+        self.assertTrue(production_optimization["fonts"])
+        self.assertIn("provideZoneChangeDetection", main)
+        self.assertIn("applicationProviders:", main)
+        self.assertIn("eventCoalescing: true", main)
+        self.assertIn("runCoalescing: true", main)
+        component_paths = sorted(
+            (ROOT / "frontend" / "src" / "app").rglob("*.component.ts")
+        )
+        self.assertGreater(len(component_paths), 0)
+        for component_path in component_paths:
+            with self.subTest(component_path=component_path):
+                component = component_path.read_text(encoding="utf-8")
+                self.assertRegex(
+                    component,
+                    r"changeDetection:\s*ChangeDetectionStrategy\.(?:Eager|OnPush)",
+                )
         self.assertRegex(
             dockerfile,
             r"(?m)^FROM node:22\.22\.3-alpine@sha256:[0-9a-f]{64} AS build$",

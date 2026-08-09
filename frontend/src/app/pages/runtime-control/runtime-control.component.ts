@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core'
+import { ChangeDetectionStrategy, Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { catchError, finalize, forkJoin, of, switchMap } from 'rxjs'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
@@ -14,6 +14,7 @@ import { AuthSessionService } from '../../services/auth-session.service'
 import { RuntimeControlService } from '../../services/runtime-control.service'
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false,
   selector: 'app-runtime-control',
   templateUrl: './runtime-control.component.html',

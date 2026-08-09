@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit } from '@angular/core'
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit } from '@angular/core'
 import { NavigationEnd, Router } from '@angular/router'
 import { Subscription } from 'rxjs'
 import { filter } from 'rxjs/operators'
@@ -7,6 +7,7 @@ import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './
 import { ThemeMode, ThemeService } from '../services/theme.service'
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false,
   selector: 'app-shell',
   templateUrl: './app-shell.component.html',
