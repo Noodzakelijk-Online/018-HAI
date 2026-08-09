@@ -1,9 +1,11 @@
-# Stage 1: Build the Angular app
-FROM node:alpine AS build
+# Angular 16 is validated on Node 20 LTS. Pin the toolchain so a future
+# floating Alpine tag cannot silently move local Windows builds to an
+# unsupported Node release.
+FROM node:20.19.4-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 
-RUN npm install --prefer-offline --no-audit
+RUN npm ci --prefer-offline --no-audit
 
 
 COPY . .

@@ -21,8 +21,13 @@ export class HaiProgressiveSectionComponent implements OnChanges {
   }
 
   toggle(): void {
-    this.open = !this.open
-    this.preferences.setSection(this.moduleId, this.sectionId, this.open)
-    this.openChange.emit(this.open)
+    this.setOpen(!this.open)
+  }
+
+  setOpen(open: boolean): void {
+    if (this.open === open) return
+    this.open = open
+    this.preferences.setSection(this.moduleId, this.sectionId, open)
+    this.openChange.emit(open)
   }
 }

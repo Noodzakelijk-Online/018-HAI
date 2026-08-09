@@ -384,6 +384,145 @@ func TestAgentTeamRejectsAuthorityGrantAndSecretMaterial(t *testing.T) {
 	}
 }
 
+func TestGuidedAgentTeamCommandsOwnCanonicalEnvelopeAndRemainAdvisory(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC)
+	service := newAgentTeamService(NewMemoryAgentTeamRepository(), func() time.Time { return now }, deterministicTeamIDs("guided"))
+	team, err := service.CreateGuidedTeam("robert", CreateGuidedAgentTeamRequest{
+		Key:                       "owner-review-council",
+		Name:                      "Owner review council",
+		Purpose:                   "Compare source-backed recommendations before Robert decides.",
+		AuthorityCeiling:          4,
+		MaximumDelegatedAuthority: 2,
+		EvidenceRefs:              []string{"source://owner/team-charter"},
+		Actor:                     "robert",
+	})
+	if err != nil {
+		t.Fatalf("CreateGuidedTeam: %v", err)
+	}
+	if team.Status != AgentTeamDraft || team.RiskCeiling != TeamRiskLow || team.MaximumDelegatedRisk != TeamRiskLow {
+		t.Fatalf("guided defaults are unsafe or incomplete: %#v", team)
+	}
+	if !team.AdvisoryOnly || team.GrantsExecutionAuthority || !team.ExecutionAuthorizationRequired {
+		t.Fatalf("guided team grants authority: %#v", team)
+	}
+	if len(team.Roles) != 2 || len(team.Capabilities) != 2 || len(team.Members) != 0 {
+		t.Fatalf("guided charter was not expanded deterministically: %#v", team)
+	}
+
+	for _, member := range []TeamMembership{
+		{AgentID: "planner-agent", AgentVersion: "1.0.0", RoleIDs: []string{"coordinator"}, CapabilityIDs: []string{"analysis", "review"}, Status: TeamMemberActive, AuthorityCeiling: 3, RiskCeiling: TeamRiskLow, EvidenceRefs: []string{"agent://planner/manifest"}},
+		{AgentID: "reviewer-agent", AgentVersion: "1.0.0", RoleIDs: []string{"reviewer"}, CapabilityIDs: []string{"review"}, Status: TeamMemberActive, AuthorityCeiling: 2, RiskCeiling: TeamRiskLow, EvidenceRefs: []string{"agent://reviewer/manifest"}},
+	} {
+		team, err = service.AddMember("robert", team.ID, team.Version, AddTeamMemberRequest{
+			ExpectedRevision: team.Revision,
+			Actor:            "robert",
+			Reason:           "Register a verified advisory member.",
+			Member:           member,
+		})
+		if err != nil {
+			t.Fatalf("AddMember: %v", err)
+		}
+	}
+	team, err = service.ActivateTeam("robert", team.ID, team.Version, TeamTransitionRequest{
+		ExpectedRevision: team.Revision,
+		Actor:            "robert",
+		Reason:           "Two independent voting members satisfy quorum.",
+		EvidenceRefs:     []string{"audit://team/activation"},
+	})
+	if err != nil {
+		t.Fatalf("ActivateTeam: %v", err)
+	}
+
+	request := CreateTeamDecisionMessageRequest{
+		SenderMembershipID:     team.Members[0].ID,
+		RecipientMembershipID:  team.Members[1].ID,
+		CorrelationID:          deterministicUUID("guided-correlation"),
+		IdempotencyKey:         deterministicUUID("guided-decision-key"),
+		Issue:                  "Select the bounded review approach",
+		Position:               TeamVoteSupport,
+		Recommendation:         "Use the source-backed plan and keep execution approval separate.",
+		EvidenceRefs:           []string{"evidence://guided/decision"},
+		RequiresAcknowledgment: true,
+		ExpiresInMinutes:       60,
+	}
+	message, created, err := service.CreateDecisionMessage("robert", team.ID, team.Version, request)
+	if err != nil || !created {
+		t.Fatalf("CreateDecisionMessage = created %v, err %v", created, err)
+	}
+	if message.AuthorityLevel > 1 || message.PayloadDigest == "" || message.ID == "" || !message.RequiresAck {
+		t.Fatalf("decision envelope is not canonical least-authority state: %#v", message)
+	}
+	replayed, created, err := service.CreateDecisionMessage("robert", team.ID, team.Version, request)
+	if err != nil || created || replayed.ID != message.ID {
+		t.Fatalf("decision replay = %#v, created %v, err %v", replayed, created, err)
+	}
+
+	ackRequest := CreateTeamAcknowledgmentRequest{
+		Status:         string(agentcoordination.AcknowledgmentAccepted),
+		Reason:         "The advisory recommendation was received for review.",
+		IdempotencyKey: deterministicUUID("guided-ack-key"),
+	}
+	acknowledgment, created, err := service.CreateMessageAcknowledgment("robert", team.ID, team.Version, message.ID, ackRequest)
+	if err != nil || !created {
+		t.Fatalf("CreateMessageAcknowledgment = created %v, err %v", created, err)
+	}
+	if acknowledgment.MessageID != message.ID || acknowledgment.RecipientID != message.Recipient.ID {
+		t.Fatalf("acknowledgment is not bound to the exact message: %#v", acknowledgment)
+	}
+	replayedAck, created, err := service.CreateMessageAcknowledgment("robert", team.ID, team.Version, message.ID, ackRequest)
+	if err != nil || created || replayedAck.ID != acknowledgment.ID {
+		t.Fatalf("acknowledgment replay = %#v, created %v, err %v", replayedAck, created, err)
+	}
+}
+
+func TestAgentTeamDecisionRejectsNonVotingMember(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 9, 11, 0, 0, 0, time.UTC)
+	service := newAgentTeamService(NewMemoryAgentTeamRepository(), func() time.Time { return now }, deterministicTeamIDs("non-voter"))
+	request := testTeamRequest(now)
+	request.Roles = append(request.Roles, TeamRoleContract{
+		ID: "observer", Name: "Observer", Purpose: "Observe advisory deliberation without voting.",
+		CapabilityIDs: []string{"analysis"}, AllowedRecommendationTypes: []string{"status"},
+		ProhibitedActions: []string{"vote", "execute work"}, EvidenceRequirements: []string{"source reference"},
+		AuthorityCeiling: 1, RiskCeiling: TeamRiskLow, AdvisoryOnly: true,
+	})
+	team, err := service.CreateTeam("robert", request)
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	for _, member := range []TeamMembership{
+		{AgentID: "planner", AgentVersion: "1.0.0", RoleIDs: []string{"coordinator"}, CapabilityIDs: []string{"analysis", "review"}, Status: TeamMemberActive, AuthorityCeiling: 2, RiskCeiling: TeamRiskLow, EvidenceRefs: []string{"agent://planner"}},
+		{AgentID: "reviewer", AgentVersion: "1.0.0", RoleIDs: []string{"reviewer"}, CapabilityIDs: []string{"review"}, Status: TeamMemberActive, AuthorityCeiling: 2, RiskCeiling: TeamRiskLow, EvidenceRefs: []string{"agent://reviewer"}},
+		{AgentID: "observer", AgentVersion: "1.0.0", RoleIDs: []string{"observer"}, CapabilityIDs: []string{"analysis"}, Status: TeamMemberActive, AuthorityCeiling: 1, RiskCeiling: TeamRiskLow, EvidenceRefs: []string{"agent://observer"}},
+	} {
+		team, err = service.AddMember("robert", team.ID, team.Version, AddTeamMemberRequest{ExpectedRevision: team.Revision, Actor: "robert", Reason: "Register advisory member.", Member: member})
+		if err != nil {
+			t.Fatalf("AddMember: %v", err)
+		}
+	}
+	team, err = service.ActivateTeam("robert", team.ID, team.Version, TeamTransitionRequest{ExpectedRevision: team.Revision, Actor: "robert", Reason: "Voting quorum verified.", EvidenceRefs: []string{"audit://activation"}})
+	if err != nil {
+		t.Fatalf("ActivateTeam: %v", err)
+	}
+	observer, observerFound := activeMemberByAgentID(*team, "observer")
+	reviewer, reviewerFound := activeMemberByAgentID(*team, "reviewer")
+	if !observerFound || !reviewerFound {
+		t.Fatalf("expected active observer and reviewer memberships: %#v", team.Members)
+	}
+	_, _, err = service.CreateDecisionMessage("robert", team.ID, team.Version, CreateTeamDecisionMessageRequest{
+		SenderMembershipID: observer.ID, RecipientMembershipID: reviewer.ID,
+		CorrelationID: deterministicUUID("observer-correlation"), IdempotencyKey: deterministicUUID("observer-key"),
+		Issue: "Observer attempts to vote", Position: TeamVoteSupport, Recommendation: "Reject this vote.",
+		EvidenceRefs: []string{"evidence://observer"}, ExpiresInMinutes: 60,
+	})
+	if err == nil || !strings.Contains(err.Error(), "voting role") {
+		t.Fatalf("non-voting member decision was not rejected: %v", err)
+	}
+}
+
 func createActiveTestTeam(t *testing.T, service *AgentTeamService, owner string, now time.Time) *AgentTeamContract {
 	t.Helper()
 	team, err := service.CreateTeam(owner, testTeamRequest(now))

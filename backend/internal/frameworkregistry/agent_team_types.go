@@ -259,6 +259,53 @@ type CreateAgentTeamRequest struct {
 	Actor                     string                             `json:"actor"`
 }
 
+// CreateGuidedAgentTeamRequest is the bounded operator-facing team charter.
+// The service expands it into the canonical role, capability, coordination,
+// consensus, provenance, and authority contracts; callers cannot weaken those
+// invariants or submit their own digests.
+type CreateGuidedAgentTeamRequest struct {
+	Key                       string   `json:"key"`
+	Version                   string   `json:"version"`
+	Name                      string   `json:"name"`
+	Purpose                   string   `json:"purpose"`
+	AuthorityCeiling          int      `json:"authorityCeiling"`
+	RiskCeiling               string   `json:"riskCeiling"`
+	MaximumDelegatedAuthority int      `json:"maximumDelegatedAuthority"`
+	MaximumDelegatedRisk      string   `json:"maximumDelegatedRisk"`
+	ConsensusMode             string   `json:"consensusMode"`
+	Quorum                    int      `json:"quorum"`
+	MinimumSupport            int      `json:"minimumSupport"`
+	AllowAbstention           bool     `json:"allowAbstention"`
+	EvidenceRefs              []string `json:"evidenceRefs"`
+	Actor                     string   `json:"actor"`
+}
+
+// CreateTeamDecisionMessageRequest lets an operator record one bounded vote
+// without manufacturing the canonical coordination envelope in the browser.
+// IDs, agent references, timestamps, authority, schema, and digest are owned by
+// the service.
+type CreateTeamDecisionMessageRequest struct {
+	SenderMembershipID     string   `json:"senderMembershipId"`
+	RecipientMembershipID  string   `json:"recipientMembershipId"`
+	CorrelationID          string   `json:"correlationId"`
+	IdempotencyKey         string   `json:"idempotencyKey"`
+	Issue                  string   `json:"issue"`
+	Position               string   `json:"position"`
+	Recommendation         string   `json:"recommendation"`
+	EvidenceRefs           []string `json:"evidenceRefs"`
+	RequiresAcknowledgment bool     `json:"requiresAcknowledgment"`
+	ExpiresInMinutes       int      `json:"expiresInMinutes"`
+}
+
+// CreateTeamAcknowledgmentRequest binds an acknowledgment to the persisted
+// message and its recipient. The service creates the record identity and time.
+type CreateTeamAcknowledgmentRequest struct {
+	Status            string `json:"status"`
+	Reason            string `json:"reason"`
+	RetryAfterMinutes int    `json:"retryAfterMinutes"`
+	IdempotencyKey    string `json:"idempotencyKey"`
+}
+
 type CreateAgentTeamVersionRequest struct {
 	PreviousVersion           string                             `json:"previousVersion"`
 	Version                   string                             `json:"version"`
