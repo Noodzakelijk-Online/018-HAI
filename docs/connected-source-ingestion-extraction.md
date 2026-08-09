@@ -13,6 +13,7 @@ to its source, and only promotes useful low-risk facts into memory.
 - cloud drives and documents
 - Trello or project boards
 - GitHub repositories, issues, pull requests, commits, and actions
+- LARO case summaries and source-linked legal analyses
 - selected local folders
 
 The live Google paths are separate least-privilege grants: Gmail read-only,
@@ -31,6 +32,12 @@ tombstones; a cancellation first stops any prior source-derived workflow and
 then opens owner review. It never deletes canonical people, tasks, obligations,
 or evidence. These adapters have no remote create, update, merge,
 invitation-response, or delete method.
+
+LARO uses a separate `laro` adapter rather than the unauthenticated generic
+JSON feed. Its bearer credential comes only from the protected HAI environment,
+is never stored in the source row or request URL, and can only read LARO's
+bounded `hai:read` feed. HAI marks every LARO extraction sensitive, prevents
+automatic memory promotion, and has no LARO write operation.
 
 The connector registry is configuration-friendly, so future connector keys can
 be added without changing the task engine. The implementation exposes

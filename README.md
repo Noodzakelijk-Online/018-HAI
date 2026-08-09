@@ -604,6 +604,25 @@ general importer accepts `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`,
 `.yaml`, `.yml`, and `.log`; export connectors also support `.mbox`, `.eml`,
 and `.ics` within the same allowlisted root.
 
+### Connect LARO case intelligence
+
+HAI includes a dedicated `laro` read-only connected-source adapter. Create the
+credential in **LARO Settings > HAI**, then set these values in HAI's protected
+local environment and restart only the backend service:
+
+```text
+HAI_LARO_ENABLED=true
+HAI_LARO_BASE_URL=https://laro-api-000.ngrok.app/laro
+HAI_LARO_CONNECTOR_TOKEN=<one-time LARO credential>
+HAI_LARO_SYNC_LIMIT=50
+```
+
+Create the source from **Connected Sources** with connector `laro`, **Local
+only** disabled, and an empty sync target. The endpoint and credential remain
+environment-owned rather than being stored in the source row. Sync is bounded
+and cursor-based. Imported LARO records are always sensitive and review-gated;
+HAI does not create automatic memory from them and has no LARO write path.
+
 ## Dashboard Entry Points
 
 | Route | Purpose |
