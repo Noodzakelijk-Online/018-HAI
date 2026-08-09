@@ -5,12 +5,15 @@ source of truth for current state.
 
 ## Near-term hardening
 
-- **Fresh-clone Windows acceptance (phase 032, TD-8):** the maintained Windows
-  Compose installation now builds and runs with healthy Postgres, Redis, Kafka,
-  nginx, IDP, backend, and frontend services. Repeat the same acceptance from a
-  clean clone and empty volumes before calling installation reproducibility
-  complete.
-- **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
+- **Fresh-clone Windows acceptance (phase 032/TD-8):** a separate clean checkout
+  on the current Windows host generated new secrets, built empty volumes, became
+  healthy, signed in, and completed the bounded operator chain. Repeat that
+  release gate on every distinct target machine; it is no longer an
+  implementation gap in this repository.
+- **RBAC — implemented (phase 008/TD-9):** the IDP persists and signs
+  owner/operator/viewer roles, the backend trusts only verified JWT claims, and
+  read/write/approve/execute/admin guards cover the protected route groups.
+  Continue adding route-specific permission regression cases with new APIs.
 - **Frontend dependency hardening (TD-6/BH-7) completed:** Angular 22.1.1,
   ng-zorro 22.0.1, TypeScript 6.0.3, and the supported esbuild/Vite builder are
   in place; the 379-test suite and production build pass; high/critical audit
@@ -44,12 +47,9 @@ source of truth for current state.
 
 | Item | Blocker | Next action |
 | --- | --- | --- |
-| Fresh-clone Windows 11 acceptance | The maintained local stack is proven, but it contains retained volumes and configured local state | Clone into a clean directory, create a new `.env.local`, build empty volumes, and run the documented operator chain |
+| Release-target Windows 11 acceptance | Clean-clone acceptance is retained for the current host, but hardware, Docker Desktop, ports, and local policy vary by target | Run the documented clean-clone operator chain on each distinct release target and retain the result |
 | Google Drive/Contacts/Calendar live acceptance | Live sandbox credentials and retained evidence; adapters remain unconfigured by default | Run bounded consent, backfill, incremental-change, revoke, and source-link acceptance for each account |
 | Paid LLM routing / grounded LLM verification | Paid-budget approval (currently €0); no LLM provider configured | Approve budget / configure a local LLM provider |
-
-Blocked items are blocked by external credentials/approvals or an unavailable
-Docker daemon — not by engineering difficulty — and are documented rather than faked.
 
 Blocked items are blocked by external credentials/approvals, not by engineering
 difficulty, and are documented rather than faked.

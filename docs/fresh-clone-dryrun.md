@@ -34,11 +34,11 @@ curl.exe -i http://localhost/api/v1/llm/policy
 ```
 
 The initializer prompts for the first-run owner email and a password of at
-least 12 characters. It generates independent random backend, memory, JWT, and
-approval-proof secrets, keeps the gateway on loopback, disables local-login
-bypass, and does not print credentials. Copying `.env.example` without running
-the initializer is expected to fail closed in production because its shipped
-values are placeholders.
+least 12 characters. It generates independent random backend, memory, JWT,
+approval-proof, database-owner, and database-runtime secrets, keeps the gateway
+on loopback, disables local-login bypass, and does not print credentials.
+Copying `.env.example` without running the initializer is expected to fail
+closed in production because its shipped values are placeholders.
 
 The root `docker-compose.yml` contains no second service topology. It includes
 `docker-compose.local.yml` with `.env.local`, so the standard Compose command

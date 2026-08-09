@@ -28,7 +28,7 @@ Go test asserts it; "manual" means a documented step.
 | Provider fallback | Free before paid; never paid unless allowed | Automated — `providerfallback` |
 | Autonomy gate | Risky/irreversible never auto-runs | Automated — `autonomygate` |
 | Upload safety | Traversal/extension/size rejected | Automated — `upload`, `pathsafety` |
-| Full-stack boot | Compose stack healthy end-to-end | **Manual/pending** — `docs/fresh-clone-dryrun.md` |
+| Full-stack boot | A clean checkout generates fresh secrets, builds empty volumes, reaches healthy state, serves `/readyz`, signs in, and completes a bounded governed workflow | **Accepted on the current Windows host; repeat per release target** — `docs/fresh-clone-dryrun.md` |
 | Accessibility / responsive | WCAG + breakpoints | **Pending** — frontend work |
 
 ## Gate

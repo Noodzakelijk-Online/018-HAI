@@ -30,7 +30,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 005 | Data model, ownership & persistence design | Implemented | `be/models`, Gorm + `docs/data-model.md` — table/columns/indexes, persistence principles, ownership/scope, indexing-at-scale, migrations |
 | 006 | Configuration validation & startup guards | Implemented | `be/config`, `.env.example`, per-service env + startup guard: `router.Initialize` runs `doctor.Diagnose` and refuses to serve on any failing check (warnings still boot). `RUN_MODE` added + surfaced as a `runtime.mode` check |
 | 007 | Authentication model & session security | Implemented | `idp/`, `fe/services/auth`, `fe/pages/login`, backend API-key middleware + `internal/session` TTL/validity model (empty token never valid, clamped remaining); tested |
-| 008 | Authorization & resource ownership | Implemented | `be/safety`, `be/autonomy` + RBAC middleware now driven by **per-user identity**: `identityMiddleware` verifies an IDP-issued HS256 JWT (stdlib, no new deps) against `JWT_SECRET`, extracts the role claim, and `requirePermission` enforces it (JWT role → X-HAI-Role header → viewer default; invalid token → 401). Full owner/operator/viewer × read/write/approve/admin matrix tested; **runtime-proven in the smoke** (viewer JWT → 403, owner JWT → 200 on the admin route). Remaining: the IDP must emit a `role` claim (backend side is done) |
+| 008 | Authorization & resource ownership | Implemented | `be/safety`, `be/autonomy`, IDP role persistence, and RBAC middleware are driven by **per-user identity**: the IDP signs owner/operator/viewer roles into access tokens, `identityMiddleware` verifies that JWT against `JWT_SECRET`, and `requirePermission` enforces read/write/approve/execute/admin policy. Full role matrices and route-specific permission suites pass; unknown claims fail closed. |
 | 009 | API contract & error envelope | Implemented | `be/router`, swagger + shared `respondError`/`respondErr` helpers writing the `apierror` envelope with code-derived status; tested. Handler-by-handler adoption ongoing |
 | 010 | Frontend architecture & navigation model | Implemented | 13 `fe/pages`, 11 `fe/services` |
 | 011 | Core workflow vertical slice | Implemented | `be/workflow`, `be/workflowtask`, `fe/pages/workflow-engine` — vertical slice demonstrated end-to-end by the smoke run against real Postgres: workflow **intake → approval gate → approval resolved → audit trail (events/transitions/decisions) recorded**, item persisted & fetchable. Grounded execution/verification via LLM not exercised (no provider) |
@@ -143,7 +143,7 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 | 103 | Migration from prototype to production | Implemented | `docs/prototype-to-production.md` — config/data/security/providers/ops checklist + cutover procedure |
 | 104 | Operator safety stop & emergency controls | Implemented | emergency-stop reg #68–70/88/104; blocks LLM/automation/task/workflow |
 | 105 | User onboarding & first-run wizard | Implemented | `fe/pages/onboarding` multi-step `nz-steps` wizard (welcome/remember/approve/safety), skip/back/next, persists completion to localStorage, routes to control-center; builds; specs pass |
-| 106 | Role-based settings & team permissions | Implemented | pure `internal/rbac` model — owner/operator/viewer roles → read/write/approve/admin grants, `Can()` checks (unknown role grants nothing), tested. Middleware enforcement is a follow-up |
+| 106 | Role-based settings & team permissions | Implemented | `internal/rbac`, verified-JWT `identityMiddleware`, and `requirePermission` enforce owner/operator/viewer grants across protected route groups. The IDP persists and signs roles, unknown claims fail closed, and role-matrix plus route-specific tests cover read/write/approve/execute/admin boundaries. |
 | 107 | Quality scoring & confidence display | Implemented | readiness score reg #98 + `internal/quality` (weighted confidence/evidence/freshness score + high/medium/low bands, bounded); tested |
 | 108 | Human decision minimization | Implemented | `be/autonomy` + `internal/autonomygate.Decide` (auto/review/block from confidence/risk/reversibility/approval; never auto-runs risky-irreversible); tested |
 | 109 | Exception-based workflow dashboard | Implemented | `fe/pages/exceptions` surfaces only items needing attention (awaiting_approval/failed/dead_letter/blocked/interrupted), colored state tags, all-clear empty state; builds; specs pass |
@@ -154,8 +154,8 @@ Evidence key: `be=backend/internal`, `fe=frontend/src/app`, `reg=docs/engineerin
 
 | Status | Count |
 | --- | --- |
-| Implemented | 110 |
-| Partial | 1 |
+| Implemented | 111 |
+| Partial | 0 |
 | Missing | 0 |
 | Blocked | 0 |
 | N/A | 1 |
@@ -167,4 +167,4 @@ from verified IDP JWT claims; the IDP emits signed owner/operator/viewer roles,
 refreshes access tokens from the persisted user role, and unknown or missing
 roles are viewer-only.
 
-**Reading of the roll-up:** the product's critical path (dashboard → source → task → LLM routing → approval → controlled execution → verification → workflow → audit) is substantially built and builds cleanly. The gaps concentrate in cross-cutting product polish (search/pagination, templates, analytics, feature flags, onboarding, RBAC) and in formal QA/sign-off artifacts (red-team loops, accessibility, performance, backup/restore, dedicated security & privacy docs). None are `Blocked`; all `Missing` items are buildable in later runs.
+**Reading of the roll-up:** every actionable phase has implemented evidence, including the current-host clean-clone Compose run and verified-claim RBAC. This roll-up does not convert local implementation into external-provider proof: each configured account, model, mutable runtime, release target, recovery path, and consequential side effect still requires its own retained acceptance evidence.

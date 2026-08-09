@@ -12,8 +12,8 @@ the engineering action register and bug-hunt log.
 | TD-5 | Low | Agent runtime CLI test flakiness under parallel load. | Resolved: timeouts were raised to 30 seconds and repeated runs pass. |
 | TD-6 | Moderate | Resolved at high/critical severity: the Angular 22 migration, 379-test regression pass, production build, and blocking audit gate leave 0 high/critical findings. Three moderate findings remain in the Angular CLI-only MCP/Hono development chain. | Remove the time-bounded exception when upstream Angular CLI adopts MCP SDK 1.30+; review no later than 2026-09-09. Keep the CLI server loopback-only and out of the nginx runtime image. |
 | TD-7 | Info | i18n catalog and feature flags are backend-only. | The Angular dashboard consumes `/flags` and translated messages. |
-| TD-8 | Medium | The local Compose topology and gateway contract have been exercised, but a clean-machine Windows 11 fresh-clone run, signed-in browser journey, and Kafka event-publishing proof are still outstanding. | A fresh clone reaches `/readyz` through nginx, the intended signed-in workflow succeeds, and the required event path is observed on the target machine. |
-| TD-9 | Low | RBAC is not fully driven by per-user role issuance. The backend verifies an IDP JWT and maps a role claim, but the IDP still needs to issue role claims and sensitive routes need broader permission enforcement. | Role claims are issued by the IDP and permission checks cover the remaining ownership-sensitive routes. |
+| TD-8 | Low | Resolved for the current host: a separate clean checkout generated fresh secrets, built empty volumes, reached `/readyz`, signed in, and completed a bounded governed workflow. Release-target variation remains an operator gate rather than repository debt. | Re-run and retain the same chain on every distinct release target. |
+| TD-9 | Low | Resolved: the IDP persists and signs owner/operator/viewer roles; the backend trusts verified claims and applies read/write/approve/execute/admin permission guards across protected route groups. | Keep role-matrix and route-specific permission regression tests mandatory for new APIs. |
 
 ## Rules
 

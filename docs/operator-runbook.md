@@ -49,11 +49,13 @@ must be reassigned to the migration owner before startup can continue.
 Compose starts the backend only after `backend-migrate` exits successfully, and
 the backend itself runs with `DB_RUN_MIGRATIONS=false`.
 
-An `.env.local` created before this boundary was introduced must receive a
-fresh `DB_RUNTIME_PASSWORD` before the next start. Generate a 32-byte random
-secret and add it to the ignored file; never reuse `DB_PASSWORD`. The Windows
-initializer and Unix `generate-secrets.sh` do this automatically for new
-environments. A missing or shipped placeholder fails the migrator closed.
+An `.env.local` created before this boundary was introduced must receive fresh,
+independent `DB_PASSWORD` and `DB_RUNTIME_PASSWORD` values before the next
+start. Generate a separate 32-byte random secret for each and add them to the
+ignored file. The Windows initializer and Unix `generate-secrets.sh` do this
+automatically for new environments. A missing, weak, or shipped database-owner
+password fails the IDP closed in production; a missing or shipped runtime-role
+password fails the migrator closed.
 
 After an upgrade, verify both the one-shot result and runtime identity:
 
@@ -1111,9 +1113,10 @@ include raw source content, tokens, passwords, approval proofs, or private
 request payloads.
 
 Repository tests prove implementation contracts, not real-world capability.
-Before operational trust still require:
+Before operational trust on a release target still require:
 
-- a clean Windows 11 clone, migration, sign-in, and browser journey;
+- repeating the retained clean-clone, migration, sign-in, and browser journey
+  on that distinct Windows 11 target;
 - a two-real-account owner-isolation exercise;
 - one bounded configured local-model task;
 - separately approved and evidenced live connector/runtime exercises;

@@ -101,6 +101,8 @@ Require-Secret $settings 'JWT_SECRET' 32
 Require-Secret $settings 'BACKEND_API_SHARED_KEY' 32
 Require-Secret $settings 'HAI_MEMORY_ENCRYPTION_KEY' 32
 Require-Secret $settings 'HAI_APPROVAL_PROOF_SIGNING_KEY' 32
+Require-Secret $settings 'DB_PASSWORD' 32
+Require-Secret $settings 'DB_RUNTIME_PASSWORD' 32
 
 $publicUrlText = (Get-Setting $settings 'HAI_NGROK_URL').TrimEnd('/')
 $publicUri = $null

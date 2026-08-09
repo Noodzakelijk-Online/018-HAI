@@ -794,6 +794,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_MEMORY_ENCRYPTION_KEY",
             "JWT_SECRET",
             "HAI_APPROVAL_PROOF_SIGNING_KEY",
+            "DB_PASSWORD",
             "DB_RUNTIME_PASSWORD",
         ):
             with self.subTest(required=required):
@@ -804,6 +805,18 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('GATEWAY_HOST_BIND\" \"127.0.0.1', initializer)
         self.assertIn('RUN_MODE\" \"production', initializer)
         self.assertIn("were not printed", initializer)
+        self.assertIn(
+            "DB_PASSWORD=change-this-database-owner-password",
+            (ROOT / ".env.example").read_text(encoding="utf-8"),
+        )
+
+        ngrok_preflight = (ROOT / "scripts" / "start-ngrok.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Require-Secret $settings 'DB_PASSWORD' 32", ngrok_preflight)
+        self.assertIn(
+            "Require-Secret $settings 'DB_RUNTIME_PASSWORD' 32", ngrok_preflight
+        )
 
     def test_backend_database_owner_is_separated_from_runtime(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
