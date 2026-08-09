@@ -213,6 +213,52 @@ class CIWorkflowContractTest(unittest.TestCase):
                     config_path.read_text(encoding="utf-8"),
                 )
 
+    def test_local_kafka_runtime_avoids_healthcheck_jvms_and_is_bounded(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        zookeeper_start = compose.index("  zookeeper:\n")
+        kafka_start = compose.index("  kafka:\n", zookeeper_start)
+        kafka_end = compose.index("\n  generic-auto:\n", kafka_start)
+        zookeeper = compose[zookeeper_start:kafka_start]
+        kafka = compose[kafka_start:kafka_end]
+
+        for block, requirements in (
+            (
+                zookeeper,
+                (
+                    "cp-zookeeper:7.6.1@sha256:",
+                    'KAFKA_HEAP_OPTS: "-Xms${ZOOKEEPER_HEAP_MIN:-64m} -Xmx${ZOOKEEPER_HEAP_MAX:-128m}"',
+                    "mem_limit: ${ZOOKEEPER_MEMORY_LIMIT:-256m}",
+                    "cpus: ${ZOOKEEPER_CPU_LIMIT:-0.25}",
+                    "pids_limit: ${ZOOKEEPER_PIDS_LIMIT:-128}",
+                    "no-new-privileges:true",
+                    "cap_drop:",
+                    "zookeeper-data:/var/lib/zookeeper/data",
+                    "zookeeper-log:/var/lib/zookeeper/log",
+                ),
+            ),
+            (
+                kafka,
+                (
+                    "cp-kafka:7.6.1@sha256:",
+                    'KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-128m} -Xmx${KAFKA_HEAP_MAX:-256m}"',
+                    "KAFKA_NUM_NETWORK_THREADS: 2",
+                    "KAFKA_NUM_IO_THREADS: 4",
+                    "mem_limit: ${KAFKA_MEMORY_LIMIT:-512m}",
+                    "cpus: ${KAFKA_CPU_LIMIT:-1.0}",
+                    "pids_limit: ${KAFKA_PIDS_LIMIT:-192}",
+                    "no-new-privileges:true",
+                    "cap_drop:",
+                    'test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]',
+                    "kafka-data:/var/lib/kafka/data",
+                ),
+            ),
+        ):
+            for required in requirements:
+                with self.subTest(required=required):
+                    self.assertIn(required, block)
+
+        self.assertNotIn("kafka-broker-api-versions", kafka)
+
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
             "nginx-config/test_gateway_contract.py",

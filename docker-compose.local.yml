@@ -1536,26 +1536,48 @@ services:
       - automation-hub-network
 
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.1
+    image: confluentinc/cp-zookeeper:7.6.1@sha256:4dc780642bfc5ec3a2d4901e2ff1f9ddef7f7c5c0b793e1e2911cbfb4e3a3214
     container_name: 018-hai-zookeeper
     restart: unless-stopped
+    init: true
+    mem_limit: ${ZOOKEEPER_MEMORY_LIMIT:-256m}
+    mem_reservation: ${ZOOKEEPER_MEMORY_RESERVATION:-64m}
+    cpus: ${ZOOKEEPER_CPU_LIMIT:-0.25}
+    pids_limit: ${ZOOKEEPER_PIDS_LIMIT:-128}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT}
       ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_HEAP_OPTS: "-Xms${ZOOKEEPER_HEAP_MIN:-64m} -Xmx${ZOOKEEPER_HEAP_MAX:-128m}"
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 ${ZOOKEEPER_PORT}"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 12
       start_period: 10s
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
     networks:
       - kafka-network
 
   kafka:
-    image: confluentinc/cp-kafka:7.6.1
+    image: confluentinc/cp-kafka:7.6.1@sha256:620734d9fc0bb1f9886932e5baf33806074469f40e3fe246a3fdbb59309535fa
     container_name: 018-hai-kafka
     hostname: kafka
     restart: unless-stopped
+    init: true
+    mem_limit: ${KAFKA_MEMORY_LIMIT:-512m}
+    mem_reservation: ${KAFKA_MEMORY_RESERVATION:-256m}
+    cpus: ${KAFKA_CPU_LIMIT:-1.0}
+    pids_limit: ${KAFKA_PIDS_LIMIT:-192}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -1570,12 +1592,20 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-128m} -Xmx${KAFKA_HEAP_MAX:-256m}"
+      KAFKA_NUM_NETWORK_THREADS: 2
+      KAFKA_NUM_IO_THREADS: 4
+      KAFKA_BACKGROUND_THREADS: 2
+      KAFKA_NUM_RECOVERY_THREADS_PER_DATA_DIR: 1
+      KAFKA_LOG_CLEANER_THREADS: 1
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 10s
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]
+      interval: 30s
+      timeout: 5s
       retries: 18
       start_period: 30s
+    volumes:
+      - kafka-data:/var/lib/kafka/data
     networks:
       - kafka-network
       - service-hub
@@ -1670,6 +1700,12 @@ volumes:
     name: 018-hai-postgres-idp-data
   postgres-automation-data:
     name: 018-hai-postgres-automation-data
+  zookeeper-data:
+    name: 018-hai-zookeeper-data
+  zookeeper-log:
+    name: 018-hai-zookeeper-log
+  kafka-data:
+    name: 018-hai-kafka-data
   temporal-postgres-data:
     name: 018-hai-temporal-postgres-data
   runner-ollama-data:

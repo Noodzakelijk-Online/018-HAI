@@ -571,6 +571,20 @@ host port remains loopback-bound by default. Compose limits the gateway to
 profile reaches that private port and still passes through the gateway's
 authentication, rate limiting, and owner-scoped backend controls.
 
+The local Kafka pair remains a single broker plus ZooKeeper to avoid an unsafe
+in-place metadata migration, but both images are digest-pinned and bounded. The
+default broker heap is 128-256 MiB and ZooKeeper is 64-128 MiB. Their Compose
+ceilings are 512 MiB and 256 MiB respectively. The broker health check uses a
+lightweight TCP readiness probe instead of starting a second JVM every ten
+seconds; the config manager's real Kafka consumer remains the end-to-end
+messaging readiness signal. Kafka data and ZooKeeper snapshots/logs use named
+volumes so recreating either container no longer discards queued events or
+broker metadata. In the reference idle Windows run, Kafka fell from about
+489 MiB, 116 processes, and a health-check-driven 130% CPU spike to about
+284 MiB, 60 processes, and 1.5-2% CPU. ZooKeeper fell from about 129 MiB and
+84 processes to about 94 MiB and 38 processes. Existing topic offsets survived
+the live migration into the named volumes.
+
 Open [http://localhost](http://localhost).
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep
