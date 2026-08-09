@@ -100,9 +100,11 @@ func GetDefaultDB() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := RunMigrations(db); err != nil {
-		closeDatabase(db)
-		return nil, err
+	if databaseMigrationsEnabled() {
+		if err := RunMigrations(db); err != nil {
+			closeDatabase(db)
+			return nil, err
+		}
 	}
 
 	if defaultDatabaseState.database != nil {
@@ -112,6 +114,19 @@ func GetDefaultDB() (*gorm.DB, error) {
 	defaultDatabaseState.identity = identity
 
 	return db, nil
+}
+
+// databaseMigrationsEnabled preserves the historical single-process behavior
+// unless a deployment explicitly separates migration ownership from runtime
+// access. Production Compose sets DB_RUN_MIGRATIONS=false on the long-lived
+// backend and gates it on the one-shot migration service.
+func databaseMigrationsEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DB_RUN_MIGRATIONS"))) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 func loadPoolSettings(defaultMaxOpen, defaultMaxIdle int, defaultIdleTime, defaultLifetime time.Duration) (poolSettings, error) {

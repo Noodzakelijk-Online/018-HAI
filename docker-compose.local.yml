@@ -6,6 +6,10 @@ x-hai-service-defaults: &hai-service-defaults
       max-file: ${HAI_LOG_MAX_FILES:-3}
       compress: "true"
 
+x-backend-build: &backend-build
+  context: ./backend
+  dockerfile: Dockerfile
+
 services:
   idp:
     <<: *hai-service-defaults
@@ -97,11 +101,47 @@ services:
       - service-hub
       - idp-network
 
+  backend-migrate:
+    <<: *hai-service-defaults
+    image: 018-hai-backend:local
+    container_name: 018-hai-backend-migrate
+    restart: "no"
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    mem_limit: ${BACKEND_MIGRATION_MEMORY_LIMIT:-256m}
+    mem_reservation: ${BACKEND_MIGRATION_MEMORY_RESERVATION:-32m}
+    cpus: ${BACKEND_MIGRATION_CPU_LIMIT:-0.75}
+    pids_limit: ${BACKEND_MIGRATION_PIDS_LIMIT:-128}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      postgres-automation:
+        condition: service_healthy
+    environment:
+      GIN_MODE: release
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${AUTOMATION_DB_NAME}
+      DB_HOST: ${AUTOMATION_DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_RUNTIME_USER: ${DB_RUNTIME_USER:-hai_runtime}
+      DB_RUNTIME_PASSWORD: ${DB_RUNTIME_PASSWORD:-change-this-runtime-database-password}
+      DB_AUTOMIGRATE: "false"
+      HAI_SEMANTIC_RETRIEVAL_ENABLED: ${HAI_SEMANTIC_RETRIEVAL_ENABLED}
+      IMAGE_SAVE_DIR: /tmp/images
+    command: ["migrate", "up"]
+    networks:
+      - automation-hub-network
+
   backend:
     <<: *hai-service-defaults
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: 018-hai-backend:local
+    build: *backend-build
     container_name: 018-hai-backend
     hostname: backend
     restart: unless-stopped
@@ -120,6 +160,8 @@ services:
     cap_drop:
       - ALL
     depends_on:
+      backend-migrate:
+        condition: service_completed_successfully
       postgres-automation:
         condition: service_healthy
       kafka:
@@ -134,11 +176,12 @@ services:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
       HAI_MEMORY_ENCRYPTION_KEY: ${HAI_MEMORY_ENCRYPTION_KEY}
       HAI_APPROVAL_PROOF_SIGNING_KEY: ${HAI_APPROVAL_PROOF_SIGNING_KEY}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USER: ${DB_RUNTIME_USER:-hai_runtime}
+      DB_PASSWORD: ${DB_RUNTIME_PASSWORD:-change-this-runtime-database-password}
       DB_NAME: ${AUTOMATION_DB_NAME}
       DB_HOST: ${AUTOMATION_DB_HOST}
       DB_PORT: ${DB_PORT}
+      DB_RUN_MIGRATIONS: "false"
       DB_MAX_OPEN_CONNS: ${BACKEND_DB_MAX_OPEN_CONNS:-16}
       DB_MAX_IDLE_CONNS: ${BACKEND_DB_MAX_IDLE_CONNS:-4}
       DB_CONN_MAX_IDLE_TIME: ${BACKEND_DB_CONN_MAX_IDLE_TIME:-5m}

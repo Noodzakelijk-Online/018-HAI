@@ -103,7 +103,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             encoding="utf-8"
         )
         idp_start = compose.index("  idp:\n")
-        idp_end = compose.index("\n  backend:\n", idp_start)
+        idp_end = compose.index("\n  backend-migrate:\n", idp_start)
         idp = compose[idp_start:idp_end]
         backend_start = idp_end + 1
         backend_end = compose.index("\n  frontend:\n", backend_start)
@@ -337,7 +337,9 @@ class CIWorkflowContractTest(unittest.TestCase):
 
     def test_application_database_pools_are_explicitly_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
-        idp = compose[compose.index("  idp:\n") : compose.index("\n  backend:\n")]
+        idp = compose[
+            compose.index("  idp:\n") : compose.index("\n  backend-migrate:\n")
+        ]
         backend = compose[
             compose.index("  backend:\n") : compose.index("\n  frontend:\n")
         ]
@@ -726,6 +728,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_MEMORY_ENCRYPTION_KEY",
             "JWT_SECRET",
             "HAI_APPROVAL_PROOF_SIGNING_KEY",
+            "DB_RUNTIME_PASSWORD",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, initializer)
@@ -735,6 +738,51 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('GATEWAY_HOST_BIND\" \"127.0.0.1', initializer)
         self.assertIn('RUN_MODE\" \"production', initializer)
         self.assertIn("were not printed", initializer)
+
+    def test_backend_database_owner_is_separated_from_runtime(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        migrator = compose[
+            compose.index("  backend-migrate:\n") : compose.index("\n  backend:\n")
+        ]
+        backend = compose[
+            compose.index("  backend:\n") : compose.index("\n  frontend:\n")
+        ]
+        runtime_role = (
+            ROOT / "backend" / "internal" / "infra" / "runtime_role.go"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            'command: ["migrate", "up"]',
+            "DB_USER: ${DB_USER}",
+            "DB_PASSWORD: ${DB_PASSWORD}",
+            "DB_RUNTIME_USER:",
+            "DB_RUNTIME_PASSWORD:",
+            'restart: "no"',
+            "read_only: true",
+            "no-new-privileges:true",
+        ):
+            with self.subTest(migrator_required=required):
+                self.assertIn(required, migrator)
+        for required in (
+            "DB_USER: ${DB_RUNTIME_USER:-hai_runtime}",
+            "DB_PASSWORD: ${DB_RUNTIME_PASSWORD:-change-this-runtime-database-password}",
+            'DB_RUN_MIGRATIONS: "false"',
+            "backend-migrate:\n        condition: service_completed_successfully",
+        ):
+            with self.subTest(backend_required=required):
+                self.assertIn(required, backend)
+        self.assertNotIn("DB_PASSWORD: ${DB_PASSWORD}", backend)
+        for required in (
+            "NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES",
+            "REVOKE ALL PRIVILEGES ON TABLE public.schema_migrations",
+            "REVOKE CREATE ON SCHEMA public FROM PUBLIC",
+            "revokeRuntimeRoleMemberships",
+            "rejectRuntimeObjectOwnership",
+            '"ALTER ROLE " + quotedRole + " RESET ALL"',
+        ):
+            with self.subTest(role_required=required):
+                self.assertIn(required, runtime_role)
 
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")

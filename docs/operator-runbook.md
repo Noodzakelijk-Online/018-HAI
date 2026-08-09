@@ -34,6 +34,33 @@ this guarantee and should be reserved for an unresponsive process.
 Do not add `-v` unless the reviewed operation is intentionally deleting local
 database and queue volumes.
 
+### Database Ownership Boundary
+
+The automation database uses two identities. `DB_USER` is the schema owner and
+is passed only to Postgres and the one-shot `backend-migrate` service.
+`DB_RUNTIME_USER` is the long-lived backend identity. The migrator creates or
+rotates that role, grants table DML plus required sequence/function use, and
+explicitly withholds schema creation, migration-ledger access, `TRUNCATE`, role
+administration, database creation, replication, and row-security bypass.
+It also removes inherited role memberships, resets role-level configuration,
+and fails closed if a pre-existing runtime role owns database objects; ownership
+must be reassigned to the migration owner before startup can continue.
+Compose starts the backend only after `backend-migrate` exits successfully, and
+the backend itself runs with `DB_RUN_MIGRATIONS=false`.
+
+An `.env.local` created before this boundary was introduced must receive a
+fresh `DB_RUNTIME_PASSWORD` before the next start. Generate a 32-byte random
+secret and add it to the ignored file; never reuse `DB_PASSWORD`. The Windows
+initializer and Unix `generate-secrets.sh` do this automatically for new
+environments. A missing or shipped placeholder fails the migrator closed.
+
+After an upgrade, verify both the one-shot result and runtime identity:
+
+```bash
+docker compose -f docker-compose.local.yml --env-file .env.local ps -a backend-migrate backend
+docker compose -f docker-compose.local.yml --env-file .env.local exec backend /app/hai-backend doctor
+```
+
 ### Kafka KRaft Cutover And Rollback
 
 The local stack runs one Kafka 7.6.1 process in combined KRaft

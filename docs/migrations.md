@@ -44,12 +44,19 @@ after it has shipped; add a new numbered pair.
 ## Runner
 
 `internal/infra/migrate.go` loads the embedded files, applies each pending
-migration in its own transaction, and records it. `RunMigrations`, called by
-startup and `GetDefaultDB`, executes:
+migration in its own transaction, and records it. `RunMigrations` executes:
 
 ```text
 pre -> optional development AutoMigrate -> post
 ```
+
+The production Compose path invokes that sequence only from the non-root,
+one-shot `backend-migrate` service using the schema-owner credentials. It then
+creates or rotates the least-privilege runtime role. The long-lived backend is
+gated on successful migration, connects as that runtime role, and sets
+`DB_RUN_MIGRATIONS=false`. Direct/non-Compose development retains the historic
+default of running migrations from `GetDefaultDB` unless the variable is
+explicitly disabled.
 
 ### CLI
 

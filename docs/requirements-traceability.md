@@ -99,7 +99,7 @@ Every critical-path link has a repository implementation and at least focused
 contract coverage. This is not production-readiness evidence. Open traceability
 gaps include exact outcome/proactivity snapshot pinning for delayed composition,
 retained live provider reconciliation for Contacts and life ledgers,
-standing-mandate acceptance by configured external runtimes, a least-privilege runtime
-database role, independent exact assertion producers for every execution and
+standing-mandate acceptance by configured external runtimes, independent exact
+assertion producers for every execution and
 postcondition evidence contract, and broader end-to-end cross-link tests that
 require a live stack.

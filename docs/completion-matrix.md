@@ -152,6 +152,7 @@ claimed.
 | --- | :--: | :--: | :--: | :--: | --- |
 | Versioned DB migrations (`backend/migrations/`, `internal/infra/migrate.go`) | ✅ | ✅ | ✅ | ✅ | Runner + `schema_migrations` + two-phase (pre/post) + `migrate status\|up\|down` CLI. **Verified against real Postgres 17**: full schema apply, idempotency, rollback+re-apply. Destructive lifecycle tests now create one temporary database per test and load only the ordered migration chain through the target, so they cannot modify the configured HAI database or collide with later migrations. |
 | Replace production reliance on AutoMigrate | ✅ | ✅ | ✅ | ✅ | **Done.** Generated baseline (`pre/0002_baseline`, 53 tables / 301 indexes / 56 guarded constraints) and `DB_AUTOMIGRATE` now defaults to **false**. Proven 3 ways on real Postgres 17: fresh DB builds all 54 tables from migrations alone; re-run idempotent; baseline safe over an existing AutoMigrate-built DB. Regenerate via `scripts/generate-migration-baseline.sh`. |
+| Least-privilege runtime database identity | ✅ | ✅ | ✅ | ✅ | A one-shot, non-root `backend-migrate` service owns schema changes and provisions a separate `hai_runtime` login. The long-lived backend starts only after successful migration, runs with `DB_RUN_MIGRATIONS=false`, and receives DML/sequence/function use without schema creation, temporary tables, `TRUNCATE`, migration-ledger access, database/role administration, replication, or row-security bypass. A real PostgreSQL integration test proves the boundary; the retained local stack also completed an authenticated automation create/delete and published both outbox events under the restricted identity. |
 | Durable worker (scheduling/retry) | ✅ | ✅ | ✅ | ⬜ | **Built** (`internal/durablejob`): persisted jobs, `RunAt` scheduling, bounded retry with backoff, dead-lettering, lease-based crash recovery, panic containment. 8 tests pass incl. **real Postgres**: survives process restart, 25 jobs × 2 concurrent workers each executed exactly once (`FOR UPDATE SKIP LOCKED`), orphaned leases reclaimed. **All three schedulers now run on it** — source (`source.scan` → one retryable `source.sync` per due source), workflow (`workflow.sweep`), and ambient (`ambient.scan`), via a shared `RegisterRecurring` helper that keeps each a self-rescheduling singleton. Each falls back to its legacy in-process ticker (with a log line) if the queue is unreachable. Recurring jobs reschedule on success **or** final attempt, so a burst of failures cannot silently kill a schedule. |
 | Two-account isolation | ✅ | ✅ | ✅ | ✅ | **Live-proven against a running stack (2026-07-23), 9/9 assertions pass.** Two authenticated owners over real HTTP + real Postgres: source listing, extracted content, grounded search, and sync history are all owner-scoped, and the second owner cannot pause/sync/revoke the first owner's source by id — each returns **404, not 403**, so the refusal does not confirm the resource exists. Repeatable: `scripts/two-account-isolation-test.sh` (exits non-zero on first failure). Complements the unit-level test. |
 | Risky runtimes disabled until gated | ✅ | ✅ | — | ⬜ | Agent runtimes, browser automation, paid providers, and external side effects are disabled by default behind approval boundaries. Per-runtime **live** integration tests remain deferred gates. |
@@ -179,11 +180,11 @@ claimed.
 4. **Standing-mandate runtime acceptance** — prove that a configured runtime honors exact scope, expiry, approval, risk, stop-condition, and revocation decisions end to end; the advisory life-graph node is not evidence of enforcement by an external runtime.
 
 5. **External contact reconciliation** — verify approved canonical contacts against an explicitly authorized address-book provider; local review decisions do not write to external accounts.
-6. **Least-privilege runtime database identity** — separate migration ownership from the backend runtime role and enforce minimum table privileges plus owner isolation before production deployment.
 
 > Closed since the first pass: the migration baseline (AutoMigrate is now off by
-> default) and the durable worker model are both built and verified against real
-> Postgres — they are no longer external gates.
+> default), the durable worker model, and the least-privilege database identity
+> are built and verified against real Postgres — they are no longer external
+> gates.
 
 ## Reproduce the automated evidence
 
