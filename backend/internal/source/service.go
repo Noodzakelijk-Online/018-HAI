@@ -310,6 +310,14 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 			}
 		}
 	}
+	if _, err := laroConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == laroConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "live read-only LARO adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
 	return connectors, nil
 }
 
@@ -366,6 +374,20 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		}
 		if strings.TrimSpace(request.SyncTarget) != "" {
 			return nil, fmt.Errorf("Airbyte inventory endpoint is configured only through HAI_AIRBYTE_BASE_URL; syncTarget must be empty")
+		}
+	}
+	if connectorKey == laroConnectorKey {
+		if _, err := laroConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("LARO connector requires explicit configuration: %w", err)
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("LARO must use the legal_case category")
+		}
+		if request.LocalOnly {
+			return nil, fmt.Errorf("LARO is an authenticated account bridge; localOnly must be false")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("LARO endpoint is configured only through HAI_LARO_BASE_URL; syncTarget must be empty")
 		}
 	}
 	if connectorKey == openSpecArtifactConnectorKey {
@@ -460,6 +482,17 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 		}
 		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
 			return nil, fmt.Errorf("Airbyte inventory endpoint is configured only through HAI_AIRBYTE_BASE_URL; syncTarget must remain empty")
+		}
+	}
+	if source.ConnectorKey == laroConnectorKey {
+		if _, err := laroConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("LARO connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly != nil && *request.LocalOnly {
+			return nil, fmt.Errorf("LARO is an authenticated account bridge; localOnly must remain false")
+		}
+		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
+			return nil, fmt.Errorf("LARO endpoint is configured only through HAI_LARO_BASE_URL; syncTarget must remain empty")
 		}
 	}
 	if source.ConnectorKey == openSpecArtifactConnectorKey {
@@ -832,6 +865,19 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			return nil, err
 		}
 		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == laroConnectorKey {
+		items, adapterCursor, err = fetchLAROSource(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.laro_read", fmt.Sprintf("read %d bounded, owner-scoped LARO legal record(s)", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == openSpecArtifactConnectorKey {
 		items, err = s.openSpecArtifactItems(source, request)
@@ -1806,7 +1852,7 @@ func (s *service) extractAndStore(source *models.ConnectedSource, raw *models.So
 	existing.SourceURI = raw.SourceURI
 	existing.SourceLabel = raw.Title
 	existing.ContentHash = raw.ContentHash
-	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
+	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || source.ConnectorKey == laroConnectorKey || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
 	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || sourceRawItemRequiresReview(raw) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
 	existing.LastIndexedAt = &now
 	return s.repo.SaveExtraction(existing)
@@ -2316,6 +2362,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
 		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
 		{ConnectorKey: airbyteInventoryConnectorKey, Name: "Airbyte source and connection inventory (local read only)", Category: "connector_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "airbyte-api-key,approved-workspace:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded source and connection metadata from a configured local Airbyte API and fixed workspace allowlist; never reads credentials/configuration/records or creates, changes, starts, stops, or deletes a sync"},
+		{ConnectorKey: laroConnectorKey, Name: "LARO legal case intelligence (read only)", Category: "legal_case", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "laro:hai:read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "reads bounded, owner-scoped case summaries and source-linked legal analyses from LARO with a revocable connector credential; source bytes and client contact details are excluded and HAI never writes back"},
 		{ConnectorKey: openSpecArtifactConnectorKey, Name: "OpenSpec change artifacts (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only proposal.md, design.md, tasks.md, and specs Markdown below a selected local openspec/changes folder; never installs or runs OpenSpec, edits a repository, or authorizes code changes"},
 		{ConnectorKey: projectInstructionsConnectorKey, Name: "Project instructions (manual context only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only root AGENTS.md and CLAUDE.md from a selected local project; stores untrusted review context and never authorizes execution"},
 		{ConnectorKey: fabricPatternsConnectorKey, Name: "Fabric patterns (manual context only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded immediate-child system.md pattern files from a selected local folder; never runs or auto-attaches patterns"},
@@ -2348,7 +2395,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || isGoogleOAuthConnector(connectorKey) || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || isGoogleOAuthConnector(connectorKey) || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == laroConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
