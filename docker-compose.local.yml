@@ -1765,6 +1765,7 @@ services:
 
   generic-auto:
     <<: *hai-service-defaults
+    profiles: ["compatibility"]
     build:
       context: ./generic-auto
       dockerfile: dockerfile

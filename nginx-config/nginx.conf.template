@@ -36,7 +36,6 @@ http {
         set $backend_upstream backend:80;
         set $idp_upstream idp:8080;
         set $frontend_upstream frontend:8080;
-        set $generic_auto_upstream generic-auto:8080;
 
         # Health endpoints are intentionally unauthenticated and must not fall
         # through to the Angular single-page application.
@@ -164,6 +163,12 @@ http {
         error_page 401 /login;
 
         include /etc/nginx/sites-enabled/*.conf;
+
+        # generic-auto is an internal, opt-in compatibility runtime. Keep its
+        # former public path from falling through to the Angular application.
+        location ^~ /generic-auto/ {
+            return 404;
+        }
 
         location / {
             proxy_pass http://$frontend_upstream;

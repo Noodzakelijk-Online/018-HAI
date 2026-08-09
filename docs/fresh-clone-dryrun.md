@@ -57,6 +57,8 @@ Expected result:
 
 The nginx gateway resolves Docker service names per request. Recreating the
 frontend or backend must not leave nginx pinned to a prior container IP.
+The legacy `generic-auto` endpoint is not part of the default boot; it is
+available only through the explicit `compatibility` profile.
 
 ## Status Of This Evidence
 

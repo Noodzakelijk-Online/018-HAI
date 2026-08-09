@@ -593,11 +593,20 @@ that retention period. In the retained-data Windows cutover, the previous
 Kafka-plus-ZooKeeper pair used about 413.5 MiB and 98 processes at idle. Three
 post-transaction KRaft samples had a median of 303.4 MiB, 69 processes, and
 1.13% CPU: about 110.1 MiB (26.6%) and 29 processes (29.6%) less for the event
-topology. The full ten-service HAI stack measured about 473.2 MiB at the same
-point, versus about 574.2 MiB before the cutover (17.6% lower); host workload
-and JVM settling can move these point-in-time values. `backend-migrate` is an
-additional one-shot container: it exits before steady state and therefore does
-not increase the ten active-service resource footprint.
+topology. The prior ten-service HAI stack, including the legacy `generic-auto`
+compatibility endpoint, measured about 473.2 MiB at the same point, versus about
+574.2 MiB before the cutover (17.6% lower); host workload and JVM settling can
+move these point-in-time values. `generic-auto` now belongs to the opt-in
+`compatibility` profile, removing its observed 4.6 MiB and 9 processes from the
+default nine-service steady state. `backend-migrate` is an additional one-shot
+container: it exits before steady state and does not increase that footprint.
+
+Start the retired internal compatibility target only for an explicit legacy
+test. It is no longer exposed through the public gateway:
+
+```powershell
+docker compose --profile compatibility up -d generic-auto
+```
 
 Open [http://localhost](http://localhost).
 

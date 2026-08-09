@@ -387,6 +387,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, dockerfile)
         for required in (
+            'profiles: ["compatibility"]',
             'user: "65532:65532"',
             "init: true",
             "read_only: true",
@@ -400,10 +401,14 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, generic)
 
-        gateway_template = ROOT / "nginx-config" / "nginx.conf.template"
-        self.assertIn(
-            "set $generic_auto_upstream generic-auto:8080;",
-            gateway_template.read_text(encoding="utf-8"),
+        gateway_template = (ROOT / "nginx-config" / "nginx.conf.template").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("generic_auto_upstream", gateway_template)
+        self.assertIn("location ^~ /generic-auto/", gateway_template)
+        self.assertIn("return 404;", gateway_template)
+        self.assertFalse(
+            (ROOT / "nginx-config" / "sites-enabled" / "generic-auto.conf").exists()
         )
 
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
