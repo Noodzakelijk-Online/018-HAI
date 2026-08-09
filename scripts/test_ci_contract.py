@@ -310,6 +310,45 @@ class CIWorkflowContractTest(unittest.TestCase):
                 with self.subTest(required=required):
                     self.assertIn(required, block)
 
+    def test_every_local_service_has_bounded_rotating_logs(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        services = compose.split("\nservices:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+        service_names = re.findall(r"^  ([a-zA-Z0-9][a-zA-Z0-9_-]*):\n", services, re.MULTILINE)
+
+        self.assertGreater(len(service_names), 30)
+        self.assertEqual(
+            services.count("    <<: *hai-service-defaults"),
+            len(service_names),
+        )
+        for required in (
+            "x-hai-service-defaults: &hai-service-defaults",
+            "driver: local",
+            "max-size: ${HAI_LOG_MAX_SIZE:-10m}",
+            "max-file: ${HAI_LOG_MAX_FILES:-3}",
+            'compress: "true"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, compose)
+        self.assertIn("HAI_LOG_MAX_SIZE=10m", environment)
+        self.assertIn("HAI_LOG_MAX_FILES=3", environment)
+
+    def test_local_health_probes_are_low_churn_and_brokers_are_quiet(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+
+        self.assertNotIn("interval: 10s", compose)
+        self.assertEqual(compose.count("start_interval: 2s"), 9)
+        for required in (
+            "GIN_MODE: release",
+            "ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN",
+            "KAFKA_LOG4J_ROOT_LOGLEVEL: WARN",
+            "kafka=WARN,kafka.controller=WARN,state.change.logger=WARN",
+            "printf srvr | nc -w 2 127.0.0.1 ${ZOOKEEPER_PORT}",
+            "filecount=2,filesize=10M",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, compose)
+
     def test_application_database_pools_are_explicitly_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         idp = compose[compose.index("  idp:\n") : compose.index("\n  backend:\n")]

@@ -1,5 +1,14 @@
+x-hai-service-defaults: &hai-service-defaults
+  logging:
+    driver: local
+    options:
+      max-size: ${HAI_LOG_MAX_SIZE:-10m}
+      max-file: ${HAI_LOG_MAX_FILES:-3}
+      compress: "true"
+
 services:
   idp:
+    <<: *hai-service-defaults
     build:
       context: ./idp
       dockerfile: Dockerfile
@@ -27,6 +36,7 @@ services:
       kafka:
         condition: service_healthy
     environment:
+      GIN_MODE: release
       BLOCKING_TIME_EXPONENTIATION_BASIS: ${BLOCKING_TIME_EXPONENTIATION_BASIS}
       MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK: ${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK}
       MIN_TIME_BETWEEN_ATTEMPTS_IN_SECONDS: ${MIN_TIME_BETWEEN_ATTEMPTS_IN_SECONDS}
@@ -77,7 +87,8 @@ services:
       SMTP_REQUIRE_STARTTLS: ${SMTP_REQUIRE_STARTTLS:-true}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${WEB_SERVER_PORT}/healthz"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 12
       start_period: 30s
@@ -86,6 +97,7 @@ services:
       - idp-network
 
   backend:
+    <<: *hai-service-defaults
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -113,6 +125,7 @@ services:
       idp:
         condition: service_healthy
     environment:
+      GIN_MODE: release
       SERVER_PORT: ${SERVER_PORT}
       BASE_URL: ${BASE_URL}
       JWT_SECRET: ${JWT_SECRET}
@@ -512,11 +525,12 @@ services:
     # dead database as healthy.
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${SERVER_PORT}/readyz"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
-      # 3 strikes (~30s) before unhealthy: long enough to ride out a dependency
-      # blip, short enough that a real outage is reflected quickly. start_period
-      # still covers the slower first boot while migrations run.
+      # Three consecutive misses (~90s) prevent a brief local dependency stall
+      # from flapping the stack while still surfacing sustained outages.
+      # start_period covers the slower first boot while migrations run.
       retries: 3
       start_period: 40s
     networks:
@@ -538,6 +552,7 @@ services:
       - coding-runners-internal
 
   frontend:
+    <<: *hai-service-defaults
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -562,7 +577,8 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 12
       start_period: 20s
@@ -570,6 +586,7 @@ services:
       - service-hub
 
   browser-verifier:
+    <<: *hai-service-defaults
     build:
       context: ./services/browser-verifier
       dockerfile: Dockerfile
@@ -586,7 +603,8 @@ services:
         - CMD-SHELL
         - >-
           node -e 'fetch("http://127.0.0.1:8080/healthz").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 6
       start_period: 15s
@@ -597,6 +615,7 @@ services:
   # ./security-snapshots. They cannot inspect the repository, Docker socket,
   # connected sources, or host filesystem unless content is copied there.
   gitleaks-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/gitleaks-runner
     profiles: ["security-scanning"]
@@ -624,6 +643,7 @@ services:
     networks: [security-runners-internal]
 
   gosec-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/gosec-runner
     profiles: ["security-scanning"]
@@ -651,6 +671,7 @@ services:
     networks: [security-runners-internal]
 
   syft-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/syft-runner
     profiles: ["security-scanning"]
@@ -678,6 +699,7 @@ services:
     networks: [security-runners-internal]
 
   grype-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/grype-runner
     profiles: ["security-scanning"]
@@ -707,6 +729,7 @@ services:
     networks: [security-runners-internal]
 
   trivy-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/trivy-runner
     profiles: ["security-scanning"]
@@ -737,6 +760,7 @@ services:
   # publishes no host port. Model tags are pulled by HAI's dedicated mini-SWE
   # maintenance gate before use; image upgrades remain an operator action.
   ollama-miniswe:
+    <<: *hai-service-defaults
     image: ${HAI_RUNNER_OLLAMA_IMAGE:-ollama/ollama:0.11.10}
     profiles: ["patch-proposals"]
     restart: unless-stopped
@@ -759,6 +783,7 @@ services:
     networks: [coding-runners-internal]
 
   agent-framework-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/agent-framework-runner
     profiles: ["agent-framework-planning"]
@@ -786,6 +811,7 @@ services:
     networks: [agent-runners-internal]
 
   crewai-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/crewai-runner
     profiles: ["crewai-planning"]
@@ -813,6 +839,7 @@ services:
     networks: [agent-runners-internal]
 
   docling-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/docling-runner
     profiles: ["local-document-extraction"]
@@ -842,6 +869,7 @@ services:
     networks: [document-runners-internal]
 
   miniswe-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/miniswe-runner
     profiles: ["patch-proposals"]
@@ -873,6 +901,7 @@ services:
     networks: [coding-runners-internal]
 
   nginx:
+    <<: *hai-service-defaults
     image: nginx:stable-alpine-slim@sha256:ddde39c6e51f02fde7410c2e9c234cf2d0a4c7bdbbe176aeb37d8ad7ab4eb58c
     container_name: gateway
     hostname: gateway
@@ -911,7 +940,8 @@ services:
       - ./nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 12
       start_period: 20s
@@ -923,6 +953,7 @@ services:
   # insecure cookies, placeholder secrets, and mismatched OAuth callbacks.
   # The inspector/API is reachable only inside this container.
   ngrok:
+    <<: *hai-service-defaults
     image: ngrok/ngrok:alpine@sha256:85bea0e9c697bdad142b09cd9704420812cc44b5ae417ec4c7ac74d0a49d72f2
     profiles: ["cloud-tunnel"]
     container_name: 018-hai-ngrok
@@ -958,7 +989,8 @@ services:
     pids_limit: 64
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:4040/api/endpoints | grep -q '\"url\"'"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 12
       start_period: 15s
@@ -966,6 +998,7 @@ services:
       - service-hub
 
   nginxconfigmanager:
+    <<: *hai-service-defaults
     build:
       context: ./nginx-config-manager
       dockerfile: Dockerfile
@@ -1000,7 +1033,8 @@ services:
       - ./nginx-config/sites-enabled:/app/sites-enabled
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${NGINX_CONFIG_MANAGER_HEALTH_PORT:-8081}/healthz"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 12
       start_period: 10s
@@ -1008,6 +1042,7 @@ services:
       - service-hub
 
   ortools-solver:
+    <<: *hai-service-defaults
     build:
       context: ./services/ortools-solver
     profiles: ["optimization"]
@@ -1033,6 +1068,7 @@ services:
       - service-hub
 
   evidently-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/evidently-runner
     profiles: ["evaluation"]
@@ -1056,6 +1092,7 @@ services:
       - evidently-internal
 
   guardrails-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/guardrails-runner
     profiles: ["validation"]
@@ -1079,6 +1116,7 @@ services:
       - guardrails-internal
 
   pydantic-ai-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/pydantic-ai-runner
     profiles: ["typed-planning"]
@@ -1113,6 +1151,7 @@ services:
   # exposes exactly two read-only tools and is bound to the host loopback only.
   # It does not make HAI's normal API or any write/action endpoint available.
   fastmcp-bridge:
+    <<: *hai-service-defaults
     build:
       context: ./services/fastmcp-bridge
     profiles: ["mcp-bridge"]
@@ -1140,6 +1179,7 @@ services:
       - fastmcp-internal
 
   lm-eval-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/lm-eval-runner
     profiles: ["model-evaluation"]
@@ -1168,6 +1208,7 @@ services:
       - lm-eval-internal
 
   promptfoo-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/promptfoo-runner
     profiles: ["safety-evaluation"]
@@ -1198,6 +1239,7 @@ services:
       - promptfoo-internal
 
   deepteam-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/deepteam-runner
     profiles: ["deepteam-evaluation"]
@@ -1237,6 +1279,7 @@ services:
       - deepteam-internal
 
   deepeval-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/deepeval-runner
     profiles: ["deepeval-evaluation"]
@@ -1279,6 +1322,7 @@ services:
       - deepeval-internal
 
   garak-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/garak-runner
     profiles: ["garak-evaluation"]
@@ -1318,6 +1362,7 @@ services:
       - garak-internal
 
   whispercpp-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/whispercpp-runner
     profiles: ["local-transcription"]
@@ -1352,6 +1397,7 @@ services:
       - whispercpp-internal
 
   wasi-runner:
+    <<: *hai-service-defaults
     build:
       context: ./services/wasi-runner
     profiles: ["wasi"]
@@ -1381,6 +1427,7 @@ services:
   # from HAI's primary Postgres instance and is enabled only with
   # `--profile durability`. No Temporal port is exposed to the host.
   temporal-postgres:
+    <<: *hai-service-defaults
     image: postgres:17-alpine
     profiles: ["durability"]
     restart: unless-stopped
@@ -1392,7 +1439,8 @@ services:
       - temporal-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 12
       start_period: 10s
@@ -1400,6 +1448,7 @@ services:
       - service-hub
 
   temporal-schema:
+    <<: *hai-service-defaults
     image: temporalio/admin-tools:1.31.2
     profiles: ["durability"]
     restart: "no"
@@ -1423,6 +1472,7 @@ services:
       - service-hub
 
   temporal:
+    <<: *hai-service-defaults
     image: temporalio/server:1.31.2
     profiles: ["durability"]
     restart: unless-stopped
@@ -1443,7 +1493,8 @@ services:
       - ./services/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
-      interval: 10s
+      interval: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 12
       start_period: 30s
@@ -1455,6 +1506,7 @@ services:
       - service-hub
 
   temporal-namespace:
+    <<: *hai-service-defaults
     image: temporalio/admin-tools:1.31.2
     profiles: ["durability"]
     restart: "no"
@@ -1475,6 +1527,7 @@ services:
       - service-hub
 
   postgres-idp:
+    <<: *hai-service-defaults
     image: postgres:17-alpine@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
@@ -1518,6 +1571,7 @@ services:
       - idp-network
 
   postgres-automation:
+    <<: *hai-service-defaults
     # Pinned upstream pgvector Postgres 17 image. Existing data stays in the
     # named volume; take a backup before changing a live database image.
     image: pgvector/pgvector:0.8.5-pg17-bookworm@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
@@ -1563,6 +1617,7 @@ services:
       - automation-hub-network
 
   redis:
+    <<: *hai-service-defaults
     image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     container_name: 018-hai-redis
     hostname: redis
@@ -1608,10 +1663,13 @@ services:
       - automation-hub-network
 
   zookeeper:
+    <<: *hai-service-defaults
     image: confluentinc/cp-zookeeper:7.6.1@sha256:4dc780642bfc5ec3a2d4901e2ff1f9ddef7f7c5c0b793e1e2911cbfb4e3a3214
     container_name: 018-hai-zookeeper
     restart: unless-stopped
     init: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
     mem_limit: ${ZOOKEEPER_MEMORY_LIMIT:-256m}
     mem_reservation: ${ZOOKEEPER_MEMORY_RESERVATION:-64m}
     cpus: ${ZOOKEEPER_CPU_LIMIT:-0.25}
@@ -1623,9 +1681,11 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT}
       ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN
+      KAFKA_GC_LOG_OPTS: "-Xlog:gc*:file=/tmp/zookeeper-gc.log:time,tags:filecount=2,filesize=10M"
       KAFKA_HEAP_OPTS: "-Xms${ZOOKEEPER_HEAP_MIN:-64m} -Xmx${ZOOKEEPER_HEAP_MAX:-128m}"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${ZOOKEEPER_PORT}"]
+      test: ["CMD-SHELL", "printf srvr | nc -w 2 127.0.0.1 ${ZOOKEEPER_PORT} | grep -q 'Mode: standalone'"]
       interval: 30s
       timeout: 5s
       retries: 12
@@ -1637,11 +1697,14 @@ services:
       - kafka-network
 
   kafka:
+    <<: *hai-service-defaults
     image: confluentinc/cp-kafka:7.6.1@sha256:620734d9fc0bb1f9886932e5baf33806074469f40e3fe246a3fdbb59309535fa
     container_name: 018-hai-kafka
     hostname: kafka
     restart: unless-stopped
     init: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
     mem_limit: ${KAFKA_MEMORY_LIMIT:-512m}
     mem_reservation: ${KAFKA_MEMORY_RESERVATION:-256m}
     cpus: ${KAFKA_CPU_LIMIT:-1.0}
@@ -1664,6 +1727,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
+      KAFKA_LOG4J_LOGGERS: "kafka=WARN,kafka.controller=WARN,state.change.logger=WARN,kafka.log.LogCleaner=WARN"
+      KAFKA_GC_LOG_OPTS: "-Xlog:gc*:file=/tmp/kafka-gc.log:time,tags:filecount=2,filesize=10M"
       KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-128m} -Xmx${KAFKA_HEAP_MAX:-256m}"
       KAFKA_NUM_NETWORK_THREADS: 2
       KAFKA_NUM_IO_THREADS: 4
@@ -1683,6 +1749,7 @@ services:
       - service-hub
 
   generic-auto:
+    <<: *hai-service-defaults
     build:
       context: ./generic-auto
       dockerfile: dockerfile
