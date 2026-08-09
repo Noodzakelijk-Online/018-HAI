@@ -536,11 +536,24 @@ services:
     container_name: 018-hai-frontend
     hostname: frontend
     restart: unless-stopped
+    user: "101:101"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${FRONTEND_TMPFS_SIZE:-16m}
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-64m}
+    mem_reservation: ${FRONTEND_MEMORY_RESERVATION:-8m}
+    cpus: ${FRONTEND_CPU_LIMIT:-0.25}
+    pids_limit: ${FRONTEND_PIDS_LIMIT:-32}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 5s
       retries: 12

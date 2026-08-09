@@ -553,6 +553,16 @@ route files are flushed and atomically renamed into place. The reference build
 reduced its Docker-reported image size from 37,546,819 to 8,437,021 bytes
 (77.5%) and its binary from 14,649,290 to 11,493,560 bytes (21.5%).
 
+The Angular frontend runs behind a digest-pinned Nginx runtime as UID/GID
+`101` with one worker, a read-only root filesystem, and no Linux capabilities.
+It listens only on the internal port 8080 and exposes a dedicated `/healthz`
+route; both gateway configurations use that same upstream. Compose defaults to
+64 MiB, 0.25 CPU, 32 processes, and a 16 MiB temporary filesystem. The pinned
+runtime image remains effectively unchanged at 6.86 MB, while the reference
+idle Windows run fell from 17 to 3 processes and from 15.02 MiB to 2.44 MiB of
+memory (83.8%). The production Angular build remains lazy-loaded at 836.16 kB
+initial raw output and approximately 104.05 kB estimated transfer size.
+
 Open [http://localhost](http://localhost).
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep

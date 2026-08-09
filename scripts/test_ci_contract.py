@@ -150,6 +150,69 @@ class CIWorkflowContractTest(unittest.TestCase):
             r"(?s)backend:\s+condition: service_healthy.*idp:\s+condition: service_healthy",
         )
 
+    def test_frontend_runtime_is_non_root_single_worker_and_resource_bounded(
+        self,
+    ) -> None:
+        dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        main_config = (ROOT / "frontend" / "nginx-main.conf").read_text(
+            encoding="utf-8"
+        )
+        site_config = (ROOT / "frontend" / "nginx-custom.conf").read_text(
+            encoding="utf-8"
+        )
+        compose = (ROOT / "docker-compose.local.yml").read_text(
+            encoding="utf-8"
+        )
+        frontend_start = compose.index("  frontend:\n")
+        frontend_end = compose.index("\n  browser-verifier:\n", frontend_start)
+        frontend = compose[frontend_start:frontend_end]
+
+        self.assertRegex(
+            dockerfile,
+            r"(?m)^FROM node:22\.22\.3-alpine@sha256:[0-9a-f]{64} AS build$",
+        )
+        self.assertRegex(
+            dockerfile,
+            r"(?m)^FROM nginx:stable-alpine-slim@sha256:[0-9a-f]{64}$",
+        )
+        self.assertIn("USER 101:101", dockerfile)
+        self.assertIn('ENTRYPOINT ["nginx", "-g", "daemon off;"]', dockerfile)
+        self.assertIn("worker_processes 1;", main_config)
+        self.assertIn("pid /tmp/nginx.pid;", main_config)
+        self.assertIn("client_body_temp_path /tmp/client_temp;", main_config)
+        self.assertIn("listen 8080;", site_config)
+        self.assertIn("location = /healthz", site_config)
+
+        for required in (
+            'user: "101:101"',
+            "init: true",
+            "read_only: true",
+            "/tmp:rw,noexec,nosuid,nodev,size=${FRONTEND_TMPFS_SIZE:-16m}",
+            "mem_limit: ${FRONTEND_MEMORY_LIMIT:-64m}",
+            "mem_reservation: ${FRONTEND_MEMORY_RESERVATION:-8m}",
+            "cpus: ${FRONTEND_CPU_LIMIT:-0.25}",
+            "pids_limit: ${FRONTEND_PIDS_LIMIT:-32}",
+            "no-new-privileges:true",
+            "cap_drop:",
+            "- ALL",
+            "condition: service_healthy",
+            "http://127.0.0.1:8080/healthz",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, frontend)
+
+        for config_path in (
+            ROOT / "nginx-config" / "nginx.conf",
+            ROOT / "nginx-config" / "nginx.conf.template",
+        ):
+            with self.subTest(config_path=config_path):
+                self.assertIn(
+                    "set $frontend_upstream frontend:8080;",
+                    config_path.read_text(encoding="utf-8"),
+                )
+
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
             "nginx-config/test_gateway_contract.py",
@@ -322,7 +385,10 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('"@angular/core": "22.1.1"', package)
         self.assertIn('"@angular/build": "22.1.3"', package)
         self.assertIn('"builder": "@angular/build:application"', angular)
-        self.assertIn("FROM node:22.22.3-alpine AS build", dockerfile)
+        self.assertRegex(
+            dockerfile,
+            r"(?m)^FROM node:22\.22\.3-alpine@sha256:[0-9a-f]{64} AS build$",
+        )
         self.assertIn('node-version: "22.22.3"', frontend)
         self.assertIn("npm ci --no-audit --no-fund", frontend)
         self.assertIn("npm audit --audit-level=high", frontend)
