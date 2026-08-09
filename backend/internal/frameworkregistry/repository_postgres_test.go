@@ -3,6 +3,7 @@
 package frameworkregistry
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"

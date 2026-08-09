@@ -362,8 +362,8 @@ jobs:
           DB_USER: postgres
           DB_PASSWORD: postgres
           DB_NAME: automation_hub
-          # Empty CI database: let the schema materialise on boot.
-          DB_AUTOMIGRATE: "true"
+          # Empty CI database: production migrations are the schema authority.
+          DB_AUTOMIGRATE: "false"
           JWT_SECRET: devsecret
           HAI_APPROVAL_PROOF_SIGNING_KEY: ci-isolation-approval-proof-signing-key-v1
           SERVER_PORT: "8080"
