@@ -73,6 +73,13 @@ lifetime of that volume. Do not point KRaft at the former
 `018-hai-kafka-data` volume: it contains ZooKeeper-era broker metadata and is
 not an in-place migration source.
 
+The local broker uses a bounded 256 MiB maximum Java heap inside a 512 MiB
+container limit. Do not lower the heap without a retained metadata-snapshot
+test: 160 MiB caused the KRaft snapshot emitter to exhaust its heap while the
+broker port remained reachable. `-XX:+ExitOnOutOfMemoryError` now converts any
+future heap exhaustion into a visible container restart instead of leaving a
+partially functioning process reported healthy by a TCP-only probe.
+
 Upgrades from the former ZooKeeper topology leave
 `018-hai-kafka-data`, `018-hai-zookeeper-data`, and
 `018-hai-zookeeper-log` detached and unchanged for rollback. This means queued

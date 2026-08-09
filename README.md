@@ -580,10 +580,12 @@ authentication, rate limiting, and owner-scoped backend controls.
 
 The local event bus uses one digest-pinned Kafka 7.6.1 process in combined
 KRaft broker/controller mode; ZooKeeper is not part of the active topology. The
-default heap is 64-160 MiB and the Compose envelope is 384 MiB, 0.75 CPU, and
-160 processes. The broker health check uses a lightweight TCP readiness probe
-instead of starting a second JVM every ten seconds; the config manager's real
-Kafka consumer remains the end-to-end messaging readiness signal. KRaft data
+default heap is 64-256 MiB and the Compose envelope is 512 MiB, 0.75 CPU, and
+160 processes. `-XX:+ExitOnOutOfMemoryError` makes heap exhaustion terminate
+the broker instead of leaving a partially functioning process behind a passing
+TCP probe. The broker health check uses that lightweight probe instead of
+starting a second JVM every ten seconds; the config manager's real Kafka
+consumer remains the end-to-end messaging readiness signal. KRaft data
 uses the named `018-hai-kafka-kraft-data` volume. Upgrading from the earlier
 ZooKeeper topology deliberately starts a fresh local event log because the old
 metadata cannot be mounted safely into KRaft. The detached
@@ -592,12 +594,15 @@ metadata cannot be mounted safely into KRaft. The detached
 operator reviews and removes them. Never use `docker compose down -v` during
 that retention period. In the retained-data Windows cutover, the previous
 Kafka-plus-ZooKeeper pair used about 413.5 MiB and 98 processes at idle. Three
-post-transaction KRaft samples had a median of 303.4 MiB, 69 processes, and
-1.13% CPU: about 110.1 MiB (26.6%) and 29 processes (29.6%) less for the event
-topology. The prior ten-service HAI stack, including the legacy `generic-auto`
-compatibility endpoint, measured about 473.2 MiB at the same point, versus about
-574.2 MiB before the cutover (17.6% lower); host workload and JVM settling can
-move these point-in-time values. `generic-auto` now belongs to the opt-in
+post-transaction KRaft samples initially had a median of 303.4 MiB, but that
+160 MiB heap ceiling later caused a real metadata-snapshot OOM and is not a
+safe operating target. After raising only the bounded Kafka heap and container
+envelope, three steady samples had a median of 352.8 MiB, 69 processes, and
+1.67% CPU. That remains about 60.7 MiB (14.7%) and 29 processes (29.6%) less
+than the former event topology. The current nine-service stack measured a
+median 498.1 MiB in the same post-fix sample, versus about 574.2 MiB before the
+cutover (13.3% lower); host workload and JVM settling can move these
+point-in-time values. `generic-auto` now belongs to the opt-in
 `compatibility` profile, removing its observed 4.6 MiB and 9 processes from the
 default nine-service steady state. `backend-migrate` is an additional one-shot
 container: it exits before steady state and does not increase that footprint.

@@ -226,10 +226,10 @@ class CIWorkflowContractTest(unittest.TestCase):
             "KAFKA_PROCESS_ROLES: broker,controller",
             "KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093",
             "KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER",
-            'KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-64m} -Xmx${KAFKA_HEAP_MAX:-160m}"',
+            'KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-64m} -Xmx${KAFKA_HEAP_MAX:-256m} -XX:+ExitOnOutOfMemoryError"',
             "KAFKA_NUM_NETWORK_THREADS: 2",
             "KAFKA_NUM_IO_THREADS: 2",
-            "mem_limit: ${KAFKA_MEMORY_LIMIT:-384m}",
+            "mem_limit: ${KAFKA_MEMORY_LIMIT:-512m}",
             "cpus: ${KAFKA_CPU_LIMIT:-0.75}",
             "pids_limit: ${KAFKA_PIDS_LIMIT:-160}",
             "no-new-privileges:true",
@@ -244,8 +244,8 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotIn("zookeeper", compose.lower())
         self.assertNotIn("kafka-network", compose)
         self.assertIn("KAFKA_CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk", environment)
-        self.assertIn("KAFKA_HEAP_MAX=160m", environment)
-        self.assertIn("KAFKA_MEMORY_LIMIT=384m", environment)
+        self.assertIn("KAFKA_HEAP_MAX=256m", environment)
+        self.assertIn("KAFKA_MEMORY_LIMIT=512m", environment)
 
     def test_local_persistence_services_are_durable_pinned_and_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")

@@ -1722,8 +1722,8 @@ services:
     init: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m
-    mem_limit: ${KAFKA_MEMORY_LIMIT:-384m}
-    mem_reservation: ${KAFKA_MEMORY_RESERVATION:-192m}
+    mem_limit: ${KAFKA_MEMORY_LIMIT:-512m}
+    mem_reservation: ${KAFKA_MEMORY_RESERVATION:-256m}
     cpus: ${KAFKA_CPU_LIMIT:-0.75}
     pids_limit: ${KAFKA_PIDS_LIMIT:-160}
     security_opt:
@@ -1747,7 +1747,7 @@ services:
       KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
       KAFKA_LOG4J_LOGGERS: "kafka=WARN,kafka.controller=WARN,state.change.logger=WARN,kafka.log.LogCleaner=WARN"
       KAFKA_GC_LOG_OPTS: "-Xlog:gc*:file=/tmp/kafka-gc.log:time,tags:filecount=2,filesize=10M"
-      KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-64m} -Xmx${KAFKA_HEAP_MAX:-160m}"
+      KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-64m} -Xmx${KAFKA_HEAP_MAX:-256m} -XX:+ExitOnOutOfMemoryError"
       KAFKA_NUM_NETWORK_THREADS: 2
       KAFKA_NUM_IO_THREADS: 2
       KAFKA_BACKGROUND_THREADS: 2

@@ -88,6 +88,16 @@ and 1.13% CPU. The previous Kafka-plus-ZooKeeper pair used about 413.5 MiB and
 98 processes in the pre-cutover sample. The full active HAI stack dropped from
 about 574.2 MiB to 473.2 MiB in the comparable point-in-time measurements.
 
+That first KRaft envelope was subsequently proven unsafe: its 160 MiB heap
+exhausted while the snapshot emitter serialized retained metadata, even though
+the TCP health probe stayed green. The corrected 2026-08-09 validation used a
+256 MiB maximum heap inside a 512 MiB container, retained the same named KRaft
+volume, and produced a new snapshot at offset `25531` without an OOM or snapshot
+error. Three stabilized samples measured a median 352.8 MiB, 69 processes, and
+1.67% CPU for Kafka, while the current nine-service stack measured a median
+498.1 MiB. These later values supersede the lower unsafe memory figure as the
+supported local operating envelope.
+
 ## 3. The readiness lie (before the fix)
 
 `/readyz` was backed by `doctor.Diagnose`, which performs no I/O — it only checks
