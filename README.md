@@ -519,8 +519,11 @@ docker compose ps
 The Windows initializer prompts for the first-run owner credentials and writes
 an ignored `.env.local` with independent cryptographic secrets, separate random
 database-owner and runtime-role passwords, a loopback-only gateway, production
-mode, and local-login bypass disabled. It never prints the password or generated
-secrets. Do not start production from an unchanged copy of `.env.example`: its
+mode, local-login bypass disabled, and a token-authenticated local A2A planning
+connector bound to the first-run owner. The connector can return planning drafts
+but cannot execute, approve, mutate, or disclose source context; its public
+ngrok mode remains disabled. The initializer never prints the password or
+generated secrets. Do not start production from an unchanged copy of `.env.example`: its
 placeholders are deliberately rejected by readiness and IDP startup.
 The default `docker-compose.yml` is a thin entrypoint to the same canonical
 source-built topology in `docker-compose.local.yml`; no legacy external HAI

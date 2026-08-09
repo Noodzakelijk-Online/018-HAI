@@ -796,6 +796,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_APPROVAL_PROOF_SIGNING_KEY",
             "DB_PASSWORD",
             "DB_RUNTIME_PASSWORD",
+            "HAI_A2A_BRIDGE_TOKEN",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, initializer)
@@ -804,6 +805,10 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('LOCAL_LOGIN_BYPASS_ENABLED\" \"false', initializer)
         self.assertIn('GATEWAY_HOST_BIND\" \"127.0.0.1', initializer)
         self.assertIn('RUN_MODE\" \"production', initializer)
+        self.assertIn('HAI_A2A_BRIDGE_ENABLED\" \"true', initializer)
+        self.assertIn('HAI_A2A_BRIDGE_OWNER_ID\" $AdminEmail', initializer)
+        self.assertIn('HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED\" \"false', initializer)
+        self.assertIn('http://127.0.0.1:$GatewayPort/api/v1/a2a', initializer)
         self.assertIn("were not printed", initializer)
         self.assertIn(
             "DB_PASSWORD=change-this-database-owner-password",

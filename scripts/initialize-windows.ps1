@@ -84,6 +84,16 @@ $content = Set-DotEnvValue $content "DB_PASSWORD" (New-HaiSecret)
 $content = Set-DotEnvValue $content "DB_RUNTIME_PASSWORD" (New-HaiSecret)
 $content = Set-DotEnvValue $content "FIRST_RUN_ADMIN_EMAIL" $AdminEmail
 $content = Set-DotEnvValue $content "FIRST_RUN_ADMIN_PASSWORD" ("'" + $AdminPasswordPlainText + "'")
+$a2aBridgeUrl = if ($GatewayPort -eq 80) {
+    "http://127.0.0.1/api/v1/a2a"
+} else {
+    "http://127.0.0.1:$GatewayPort/api/v1/a2a"
+}
+$content = Set-DotEnvValue $content "HAI_A2A_BRIDGE_ENABLED" "true"
+$content = Set-DotEnvValue $content "HAI_A2A_BRIDGE_OWNER_ID" $AdminEmail
+$content = Set-DotEnvValue $content "HAI_A2A_BRIDGE_TOKEN" (New-HaiSecret)
+$content = Set-DotEnvValue $content "HAI_A2A_BRIDGE_URL" $a2aBridgeUrl
+$content = Set-DotEnvValue $content "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED" "false"
 $content = Set-DotEnvValue $content "GATEWAY_HOST_PORT" $GatewayPort.ToString()
 $content = Set-DotEnvValue $content "GATEWAY_HOST_BIND" "127.0.0.1"
 $content = Set-DotEnvValue $content "LOCAL_LOGIN_BYPASS_ENABLED" "false"
@@ -99,4 +109,5 @@ $utf8WithoutBom = New-Object Text.UTF8Encoding($false)
 Write-Host "Created $EnvFile"
 Write-Host "Owner: $AdminEmail"
 Write-Host "Gateway: http://127.0.0.1:$GatewayPort"
+Write-Host "Local planning connector: $a2aBridgeUrl"
 Write-Host "Secrets and the owner password were written to the ignored environment file and were not printed."

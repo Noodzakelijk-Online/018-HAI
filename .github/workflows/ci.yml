@@ -451,10 +451,23 @@ jobs:
             "BACKEND_API_SHARED_KEY",
             "HAI_MEMORY_ENCRYPTION_KEY",
             "JWT_SECRET",
-            "HAI_APPROVAL_PROOF_SIGNING_KEY"
+            "HAI_APPROVAL_PROOF_SIGNING_KEY",
+            "DB_PASSWORD",
+            "DB_RUNTIME_PASSWORD",
+            "HAI_A2A_BRIDGE_TOKEN"
           )) {
             if ($content -notmatch "(?m)^$name=[0-9a-f]{64}$") {
               throw "$name was not generated as an independent 32-byte secret"
+            }
+          }
+          foreach ($expected in @(
+            "HAI_A2A_BRIDGE_ENABLED=true",
+            "HAI_A2A_BRIDGE_OWNER_ID=owner@example.test",
+            "HAI_A2A_BRIDGE_URL=http://127.0.0.1:18080/api/v1/a2a",
+            "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED=false"
+          )) {
+            if ($content -notmatch "(?m)^$([Regex]::Escape($expected))$") {
+              throw "Generated Windows environment is missing $expected"
             }
           }
           if (($output | Out-String) -match "CI-Fresh-Clone-123!") {
