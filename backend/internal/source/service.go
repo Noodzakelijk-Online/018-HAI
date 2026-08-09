@@ -294,6 +294,14 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 			}
 		}
 	}
+	if _, err := shareTConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == shareTConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "live read-only ShareT adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
 	if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
 		for i := range connectors {
 			if connectors[i].ConnectorKey == cloudQuerySummaryConnectorKey {
@@ -338,6 +346,20 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		}
 		if strings.TrimSpace(request.SyncTarget) != "" {
 			return nil, fmt.Errorf("Odoo JSON-2 endpoint is configured only through HAI_ODOO_BASE_URL; syncTarget must be empty")
+		}
+	}
+	if connectorKey == shareTConnectorKey {
+		if _, err := shareTConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("ShareT connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly {
+			return nil, fmt.Errorf("ShareT is a remote read-only source; localOnly must be false")
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("ShareT must use the project_board category")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("ShareT endpoint is configured only through HAI_SHARET_BASE_URL; syncTarget must be empty")
 		}
 	}
 	if connectorKey == cloudQuerySummaryConnectorKey {
@@ -449,6 +471,17 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 		}
 		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
 			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must remain empty")
+		}
+	}
+	if source.ConnectorKey == shareTConnectorKey {
+		if _, err := shareTConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("ShareT connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly != nil && *request.LocalOnly {
+			return nil, fmt.Errorf("ShareT is a remote read-only source; localOnly must remain false")
+		}
+		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
+			return nil, fmt.Errorf("ShareT endpoint is configured only through HAI_SHARET_BASE_URL; syncTarget must remain empty")
 		}
 	}
 	if source.ConnectorKey == airbyteInventoryConnectorKey {
@@ -623,6 +656,14 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 		if len(request.Items) != 0 {
 			return nil, fmt.Errorf("CloudQuery sync summaries must be read from the configured local summary file; manual items are not accepted")
+		}
+	}
+	if source.ConnectorKey == shareTConnectorKey {
+		if source.LocalOnly || strings.TrimSpace(source.SyncTarget) != "" {
+			return nil, fmt.Errorf("ShareT must remain remote and use only the environment-configured endpoint")
+		}
+		if len(request.Items) != 0 {
+			return nil, fmt.Errorf("ShareT links must be read from the configured API; manual items are not accepted")
 		}
 	}
 	if source.ConnectorKey == airbyteInventoryConnectorKey {
@@ -806,6 +847,19 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			return nil, err
 		}
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == shareTConnectorKey {
+		items, adapterCursor, err = fetchShareTSource(context.Background(), source)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", err.Error())
+			return nil, err
+		}
+		s.audit(sourceID, "source.sharet_read", fmt.Sprintf("read %d bounded ShareT link record(s) through a read-only connector credential", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == cloudQuerySummaryConnectorKey {
 		items, adapterCursor, err = fetchCloudQuerySummary(source)
@@ -2314,6 +2368,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
+		{ConnectorKey: shareTConnectorKey, Name: "ShareT links (read only)", Category: "project_board", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "connector:read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only ShareT link inventory through a scoped connector token; fetches every page within an explicit completeness limit, excludes participant email addresses, and never creates, changes, comments on, or revokes links"},
 		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
 		{ConnectorKey: airbyteInventoryConnectorKey, Name: "Airbyte source and connection inventory (local read only)", Category: "connector_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "airbyte-api-key,approved-workspace:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded source and connection metadata from a configured local Airbyte API and fixed workspace allowlist; never reads credentials/configuration/records or creates, changes, starts, stops, or deletes a sync"},
 		{ConnectorKey: openSpecArtifactConnectorKey, Name: "OpenSpec change artifacts (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only proposal.md, design.md, tasks.md, and specs Markdown below a selected local openspec/changes folder; never installs or runs OpenSpec, edits a repository, or authorizes code changes"},
@@ -2348,7 +2403,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || isGoogleOAuthConnector(connectorKey) || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || isGoogleOAuthConnector(connectorKey) || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == shareTConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {

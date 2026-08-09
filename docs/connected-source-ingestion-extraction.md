@@ -12,6 +12,7 @@ to its source, and only promotes useful low-risk facts into memory.
 - calendars
 - cloud drives and documents
 - Trello or project boards
+- ShareT link inventories
 - GitHub repositories, issues, pull requests, commits, and actions
 - selected local folders
 
@@ -31,6 +32,14 @@ tombstones; a cancellation first stops any prior source-derived workflow and
 then opens owner review. It never deletes canonical people, tasks, obligations,
 or evidence. These adapters have no remote create, update, merge,
 invitation-response, or delete method.
+
+The ShareT path uses an operator-created `connector:read` credential stored only
+in the HAI environment. It verifies read capability, follows all link-history
+pages up to an explicit completeness limit, and fails instead of silently
+truncating a larger account. Imported records contain card/board labels,
+permissions, lifecycle state, counts, and public-link provenance. Participant
+email addresses and all credentials are excluded. HAI has no ShareT create,
+update, comment, relay, or revoke method.
 
 The connector registry is configuration-friendly, so future connector keys can
 be added without changing the task engine. The implementation exposes
