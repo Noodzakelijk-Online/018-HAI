@@ -75,6 +75,7 @@ interface NavigationItem {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-control-center',
   templateUrl: './control-center.component.html',
   styleUrls: ['./control-center.component.scss'],

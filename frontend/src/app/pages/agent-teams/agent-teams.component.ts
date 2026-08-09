@@ -19,6 +19,7 @@ import { AuthSessionService } from '../../services/auth-session.service'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 
 @Component({
+  standalone: false,
   selector: 'app-agent-teams',
   templateUrl: './agent-teams.component.html',
   styleUrls: ['./agent-teams.component.scss'],

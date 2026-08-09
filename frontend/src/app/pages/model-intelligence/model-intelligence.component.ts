@@ -13,6 +13,7 @@ import {
 import { ModelIntelligenceService } from '../../services/model-intelligence.service'
 
 @Component({
+  standalone: false,
   selector: 'app-model-intelligence',
   templateUrl: './model-intelligence.component.html',
   styleUrls: ['./model-intelligence.component.scss'],

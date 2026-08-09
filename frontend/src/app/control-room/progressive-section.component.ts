@@ -2,6 +2,7 @@ import { Component, EventEmitter, Input, OnChanges, Output, SimpleChanges } from
 import { ModuleViewPreferencesService } from './module-view-preferences.service'
 
 @Component({
+  standalone: false,
   selector: 'hai-progressive-section',
   templateUrl: './progressive-section.component.html',
 })

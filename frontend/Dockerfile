@@ -1,11 +1,12 @@
-# Angular 16 is validated on Node 20 LTS. Pin the toolchain so a future
+# Angular 22 requires Node 22.22.3 or newer. Pin the toolchain so a future
 # floating Alpine tag cannot silently move local Windows builds to an
 # unsupported Node release.
-FROM node:20.19.4-alpine AS build
+FROM node:22.22.3-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 
-RUN npm ci --prefer-offline --no-audit
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --no-audit --no-fund
 
 
 COPY . .

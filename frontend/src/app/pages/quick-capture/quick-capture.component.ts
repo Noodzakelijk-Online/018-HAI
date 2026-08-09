@@ -7,6 +7,7 @@ import { ContextMemoryService } from '../../services/context-memory/context-memo
 const DRAFT_KEY = 'hai_quick_capture_draft';
 
 @Component({
+  standalone: false,
   selector: 'app-quick-capture',
   templateUrl: './quick-capture.component.html',
   styleUrls: ['./quick-capture.component.scss'],

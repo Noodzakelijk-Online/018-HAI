@@ -27,6 +27,7 @@ interface PreviewForm {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-plan-coordination',
   templateUrl: './plan-coordination.component.html',
   styleUrls: ['./plan-coordination.component.scss'],

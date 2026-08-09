@@ -27,6 +27,7 @@ interface MemoryActionCard {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-memory',
   templateUrl: './memory.component.html',
   styleUrls: ['./memory.component.scss'],

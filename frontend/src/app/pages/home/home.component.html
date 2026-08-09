@@ -234,7 +234,7 @@
               >Password</nz-form-label
             >
             <nz-form-control [nzSpan]="12" nzHasFeedback>
-              <nz-input-group [nzSuffix]="suffixIcon">
+              <nz-input-wrapper>
                 <input
                   nz-input
                   type="password"
@@ -242,14 +242,14 @@
                   placeholder="Enter password"
                   [type]="hidePassword ? 'password' : 'text'"
                 />
-              </nz-input-group>
-              <ng-template #suffixIcon>
-                <i
-                  nz-icon
-                  [nzType]="hidePassword ? 'eye-invisible' : 'eye'"
-                  (click)="hidePassword = !hidePassword"
-                ></i>
-              </ng-template>
+                <ng-template nzInputSuffix>
+                  <i
+                    nz-icon
+                    [nzType]="hidePassword ? 'eye-invisible' : 'eye'"
+                    (click)="hidePassword = !hidePassword"
+                  ></i>
+                </ng-template>
+              </nz-input-wrapper>
             </nz-form-control>
           </nz-form-item>
           <nz-form-item>
@@ -261,7 +261,7 @@
               nzHasFeedback
               [ngClass]="{'has-error': profileForm.errors?.['notSame']}"
             >
-              <nz-input-group [nzSuffix]="suffixIcon2">
+              <nz-input-wrapper>
                 <input
                   nz-input
                   type="password"
@@ -269,14 +269,14 @@
                   placeholder="Confirm password"
                   [type]="hidePasswordConfirm ? 'password' : 'text'"
                 />
-              </nz-input-group>
-              <ng-template #suffixIcon2>
-                <i
-                  nz-icon
-                  [nzType]="hidePasswordConfirm ? 'eye-invisible' : 'eye'"
-                  (click)="hidePasswordConfirm = !hidePasswordConfirm"
-                ></i>
-              </ng-template>
+                <ng-template nzInputSuffix>
+                  <i
+                    nz-icon
+                    [nzType]="hidePasswordConfirm ? 'eye-invisible' : 'eye'"
+                    (click)="hidePasswordConfirm = !hidePasswordConfirm"
+                  ></i>
+                </ng-template>
+              </nz-input-wrapper>
             </nz-form-control>
           </nz-form-item>
           <p

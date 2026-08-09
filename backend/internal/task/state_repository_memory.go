@@ -138,6 +138,14 @@ func (r *MemoryTaskStateRepository) CreateReviewItem(ownerIdentity string, item 
 }
 
 func (r *MemoryTaskStateRepository) ListReviewItems(ownerIdentity string, limit int) ([]ReviewQueueItem, error) {
+	return r.listReviewItems(ownerIdentity, limit, false)
+}
+
+func (r *MemoryTaskStateRepository) ListPendingReviewItems(ownerIdentity string, limit int) ([]ReviewQueueItem, error) {
+	return r.listReviewItems(ownerIdentity, limit, true)
+}
+
+func (r *MemoryTaskStateRepository) listReviewItems(ownerIdentity string, limit int, pendingOnly bool) ([]ReviewQueueItem, error) {
 	ownerIdentity, err := normalizeTaskStateOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
@@ -148,7 +156,7 @@ func (r *MemoryTaskStateRepository) ListReviewItems(ownerIdentity string, limit 
 	rows := make([]models.TaskReviewItemRecord, 0)
 	decisions := append([]models.TaskReviewDecisionRecord(nil), r.decisions...)
 	for _, row := range r.reviews {
-		if row.OwnerIdentity == ownerIdentity {
+		if row.OwnerIdentity == ownerIdentity && (!pendingOnly || row.Status == "open" || row.Status == "needs_review") {
 			rows = append(rows, row)
 		}
 	}

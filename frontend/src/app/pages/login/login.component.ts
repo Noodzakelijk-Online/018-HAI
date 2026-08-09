@@ -6,6 +6,7 @@ import { IAuthService } from "../../services/auth.service.interface";
 import { Router } from "@angular/router";
 
 @Component({
+  standalone: false,
   selector: "app-login",
   templateUrl: "./login.component.html",
   styleUrls: ["./login.component.scss"],

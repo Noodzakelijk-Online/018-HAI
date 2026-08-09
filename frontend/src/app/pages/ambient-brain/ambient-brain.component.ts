@@ -11,6 +11,7 @@ import { AmbientService } from '../../services/ambient.service';
 import { AutonomyService } from '../../services/autonomy.service';
 
 @Component({
+  standalone: false,
   selector: 'app-ambient-brain',
   templateUrl: './ambient-brain.component.html',
   styleUrls: ['./ambient-brain.component.scss'],

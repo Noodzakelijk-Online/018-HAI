@@ -1341,7 +1341,22 @@ func (s *service) ReviewQueueForOwnerWithError(ownerIdentity string) ([]ReviewQu
 	if ownerIdentity == "" {
 		return nil, fmt.Errorf("owner identity is required")
 	}
-	items, err := s.stateRepository.ListReviewItems(ownerIdentity, taskStateDefaultLimit)
+	var items []ReviewQueueItem
+	var err error
+	if pendingRepository, ok := s.stateRepository.(PendingReviewStateRepository); ok {
+		items, err = pendingRepository.ListPendingReviewItems(ownerIdentity, taskStateDefaultLimit)
+	} else {
+		items, err = s.stateRepository.ListReviewItems(ownerIdentity, taskStateDefaultLimit)
+		if err == nil {
+			pending := items[:0]
+			for _, item := range items {
+				if item.Status == "open" || item.Status == "needs_review" {
+					pending = append(pending, item)
+				}
+			}
+			items = pending
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

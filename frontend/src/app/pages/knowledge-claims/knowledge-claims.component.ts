@@ -15,6 +15,7 @@ import { KnowledgeClaimService } from '../../services/knowledge-claim.service'
 type ClaimFilter = 'attention' | 'all' | ClaimAssessmentStatus
 
 @Component({
+  standalone: false,
   selector: 'app-knowledge-claims',
   templateUrl: './knowledge-claims.component.html',
   styleUrls: ['./knowledge-claims.component.scss'],

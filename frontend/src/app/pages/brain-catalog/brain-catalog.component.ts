@@ -64,6 +64,7 @@ interface BoundedCatalogStatus {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-brain-catalog',
   templateUrl: './brain-catalog.component.html',
   styleUrls: ['./brain-catalog.component.scss'],

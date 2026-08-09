@@ -232,22 +232,22 @@ func (h *Handler) IsUserAuthenticated(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// CurrentSession returns only authorization state needed by the dashboard.
-// The token comes from AuthMiddleware context after signature, expiry, blocklist,
-// and refresh validation; request identity headers are never consulted.
+// CurrentSession returns only authorization state needed by the dashboard. An
+// unauthenticated browser receives an explicit false state rather than a 401 so
+// route guards can redirect without creating a console-level network error.
+// Request identity headers are never consulted.
 func (h *Handler) CurrentSession(c *gin.Context) {
-	value, ok := c.Get(authenticatedTokenContextKey)
-	accessToken, tokenOK := value.(string)
-	if !ok || !tokenOK || accessToken == "" {
-		c.Status(http.StatusUnauthorized)
+	c.Header("Cache-Control", "no-store")
+	accessToken, ok := h.resolveAuthenticatedAccessToken(c)
+	if !ok {
+		c.JSON(http.StatusOK, dto.AuthSession{})
 		return
 	}
 	session, err := h.authService.GetSessionFromToken(accessToken)
 	if err != nil {
-		c.Status(http.StatusUnauthorized)
+		c.JSON(http.StatusOK, dto.AuthSession{})
 		return
 	}
-	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, session)
 }
 

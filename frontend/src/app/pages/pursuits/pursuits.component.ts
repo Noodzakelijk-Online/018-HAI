@@ -80,6 +80,7 @@ interface PortfolioPursuitDraft {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-pursuits',
   templateUrl: './pursuits.component.html',
   styleUrls: ['./pursuits.component.scss'],

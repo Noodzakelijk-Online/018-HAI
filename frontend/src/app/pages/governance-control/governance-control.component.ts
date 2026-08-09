@@ -130,6 +130,7 @@ interface MonitorCompositionProvenanceDetail {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-governance-control',
   templateUrl: './governance-control.component.html',
   styleUrls: ['./governance-control.component.scss'],

@@ -92,6 +92,7 @@ interface IConstitutionRuleSection {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-framework-registry',
   templateUrl: './framework-registry.component.html',
   styleUrls: ['./framework-registry.component.scss'],

@@ -49,6 +49,7 @@ interface PriorityField {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-life-ops',
   templateUrl: './life-ops.component.html',
   styleUrls: ['./life-ops.component.scss'],

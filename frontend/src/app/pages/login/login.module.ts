@@ -7,7 +7,6 @@ import {NzFormModule} from "ng-zorro-antd/form";
 import {NzInputModule} from "ng-zorro-antd/input";
 import {NzIconModule} from "ng-zorro-antd/icon";
 import {NzButtonModule} from "ng-zorro-antd/button";
-import {NzNotificationModule} from "ng-zorro-antd/notification";
 import {NzCheckboxModule} from "ng-zorro-antd/checkbox";
 import {NzCardModule} from "ng-zorro-antd/card";
 import {NzLayoutModule} from "ng-zorro-antd/layout";
@@ -26,7 +25,6 @@ const routes: Routes = [
     ReactiveFormsModule,
     NzIconModule,
     NzButtonModule,
-    NzNotificationModule,
     NzCheckboxModule,
     NzCardModule,
     NzLayoutModule,

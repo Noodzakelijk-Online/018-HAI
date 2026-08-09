@@ -42,6 +42,7 @@ interface SourceActionCard {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-connected-sources',
   templateUrl: './connected-sources.component.html',
   styleUrls: ['./connected-sources.component.scss'],

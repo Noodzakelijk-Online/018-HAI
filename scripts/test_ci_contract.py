@@ -134,6 +134,30 @@ class CIWorkflowContractTest(unittest.TestCase):
                 content = (ROOT / compose_file).read_text(encoding="utf-8")
                 self.assertNotIn("/var/run/docker.sock", content)
 
+    def test_frontend_toolchain_and_security_gate_are_pinned(self) -> None:
+        package = (ROOT / "frontend" / "package.json").read_text(
+            encoding="utf-8"
+        )
+        angular = (ROOT / "frontend" / "angular.json").read_text(
+            encoding="utf-8"
+        )
+        dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        frontend = job_block("frontend")
+
+        self.assertIn('"packageManager": "npm@10.9.8"', package)
+        self.assertIn('"@angular/core": "22.1.1"', package)
+        self.assertIn('"@angular/build": "22.1.3"', package)
+        self.assertIn('"builder": "@angular/build:application"', angular)
+        self.assertIn("FROM node:22.22.3-alpine AS build", dockerfile)
+        self.assertIn('node-version: "22.22.3"', frontend)
+        self.assertIn("npm ci --no-audit --no-fund", frontend)
+        self.assertIn("npm audit --audit-level=high", frontend)
+        self.assertNotIn("continue-on-error", frontend)
+        self.assertFalse((ROOT / "frontend" / "pnpm-lock.yaml").exists())
+        self.assertFalse((ROOT / "frontend" / "pnpm-workspace.yaml").exists())
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")

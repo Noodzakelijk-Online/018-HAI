@@ -48,6 +48,7 @@ interface RuntimeSurfaceGroup {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-command-dashboard',
   templateUrl: './command-dashboard.component.html',
   styleUrls: ['./command-dashboard.component.scss'],

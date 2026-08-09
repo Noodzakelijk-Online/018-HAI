@@ -66,7 +66,8 @@
         nzHasFeedback
         [nzValidateStatus]="validateForm.controls['password']"
       >
-        <nz-input-group nzPrefixIcon="lock" [nzSuffix]="suffixIcon">
+        <nz-input-wrapper>
+          <ng-template nzInputPrefix><i nz-icon nzType="lock"></i></ng-template>
           <input
             type="password"
             nz-input
@@ -76,15 +77,14 @@
             [attr.aria-label]="recoveryMode ? 'New password' : 'Password'"
             data-testid="login-password"
           />
-        </nz-input-group>
-
-        <ng-template #suffixIcon>
-          <i
-            nz-icon
-            [nzType]="hidePassword ? 'eye-invisible' : 'eye'"
-            (click)="hidePassword = !hidePassword"
-          ></i>
-        </ng-template>
+          <ng-template nzInputSuffix>
+            <i
+              nz-icon
+              [nzType]="hidePassword ? 'eye-invisible' : 'eye'"
+              (click)="hidePassword = !hidePassword"
+            ></i>
+          </ng-template>
+        </nz-input-wrapper>
       </nz-form-control>
     </nz-form-item>
 

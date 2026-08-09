@@ -46,6 +46,7 @@ interface SuggestedPrompt {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-task-blueprint',
   templateUrl: './task-blueprint.component.html',
   styleUrls: ['./task-blueprint.component.scss'],

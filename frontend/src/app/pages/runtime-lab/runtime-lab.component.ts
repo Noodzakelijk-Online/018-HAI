@@ -15,6 +15,7 @@ import { MCPPreflightService } from '../../services/mcp-preflight.service'
 import { RuntimeLabService } from '../../services/runtime-lab.service'
 
 @Component({
+  standalone: false,
   selector: 'app-runtime-lab',
   templateUrl: './runtime-lab.component.html',
   styleUrls: ['./runtime-lab.component.scss'],

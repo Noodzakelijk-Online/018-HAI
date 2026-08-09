@@ -4,7 +4,6 @@ import { RouterModule, Routes } from '@angular/router';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzCardModule } from 'ng-zorro-antd/card';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { SystemStatusComponent } from './system-status.component';
 import { SYSTEM_STATUS_SERVICE_TOKEN } from '../../services/system-status/system-status.service.token';
 import { SystemStatusService } from '../../services/system-status/system-status.service';
@@ -19,7 +18,6 @@ const routes: Routes = [{ path: '', component: SystemStatusComponent }];
     NzButtonModule,
     NzCardModule,
     NzIconModule,
-    NzNotificationModule,
   ],
   providers: [
     { provide: SYSTEM_STATUS_SERVICE_TOKEN, useClass: SystemStatusService },

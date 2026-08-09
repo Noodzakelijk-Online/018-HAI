@@ -13,6 +13,7 @@ import {
 import { BackgroundOperationsService } from '../../services/background-operations.service'
 
 @Component({
+  standalone: false,
   selector: 'app-background-operations',
   templateUrl: './background-operations.component.html',
   styleUrls: ['./background-operations.component.scss'],

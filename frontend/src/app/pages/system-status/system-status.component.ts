@@ -29,6 +29,7 @@ const GROUP_TITLES: Record<string, string> = {
 };
 
 @Component({
+  standalone: false,
   selector: 'app-system-status',
   templateUrl: './system-status.component.html',
   styleUrls: ['./system-status.component.scss'],

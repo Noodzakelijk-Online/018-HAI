@@ -34,8 +34,8 @@ The authenticated `/agent-teams` workspace now exposes the local governed
 Agent Teams chain end to end: server-expanded advisory charter creation,
 bounded membership and lifecycle, canonical evidence-backed votes, exact
 message acknowledgments, deterministic consensus, attention state, and the
-hash-linked audit ledger. The full backend suite, 378 frontend tests, direct
-TypeScript compilation, cold Node 20 and Go production-image builds, and the
+hash-linked audit ledger. The full backend suite, 379 frontend tests, direct
+TypeScript compilation, cold Node 22.22.3 and Go production-image builds, and the
 deployed authenticated route pass. Browser acceptance covered the persisted
 team, post-consensus next-action state, console errors, and horizontal overflow
 at desktop and the browser's narrow mobile floor. The frontend rejects any

@@ -43,6 +43,7 @@ interface PolicyActionCard {
 }
 
 @Component({
+  standalone: false,
   selector: 'app-llm-policy',
   templateUrl: './llm-policy.component.html',
   styleUrls: ['./llm-policy.component.scss'],

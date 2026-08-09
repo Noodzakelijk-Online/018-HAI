@@ -7,6 +7,7 @@ import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './
 import { ThemeMode, ThemeService } from '../services/theme.service'
 
 @Component({
+  standalone: false,
   selector: 'app-shell',
   templateUrl: './app-shell.component.html',
   styleUrls: ['./app-shell.component.scss'],

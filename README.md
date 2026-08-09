@@ -9,19 +9,20 @@ Compose stack. It is not an unrestricted desktop agent: planning, execution,
 verification, and approval are separate; external effects remain blocked until a
 reviewed runtime, policy, and evidence path are configured.
 
-> **Current repository state, evidence reviewed through 2026-08-04:** this repository
+> **Current repository state, evidence reviewed through 2026-08-09:** this repository
 > implements a governed local operating layer, including the Angular dashboard,
 > Go engines, IDP, Compose topology, pursuit/workflow routing, persistence, and
-> safety gates. On the development workspace used for this review, the Compose
-> services were healthy, nginx served `/` and Angular deep links such as
-> `/control-center`, gateway health routes responded, and protected APIs rejected
-> unsigned sessions. Those observations are local-environment evidence, not a
-> claim that every Windows machine or account integration is ready. Backend/IDP
-> tests, frontend production build and 226 unit tests, Compose validation, and a
-> Postgres-backed critical-path smoke have been exercised. A signed-in browser
-> acceptance run on the local Windows Compose stack also completed source intake,
-> pursuit creation, exact runtime selection, durable approval, a real read-only
-> backend probe, and terminal verification. A clean-clone Windows run and any
+> safety gates. On the development workspace used for this review, the rebuilt
+> backend, IDP, frontend, and nginx gateway were healthy. A signed-in browser
+> regression run served the shared shell and eight representative deep routes,
+> changed Basic to Advanced view state, and passed a narrow mobile check without
+> console errors, HTTP failures, redirects, framework overlays, or horizontal
+> overflow. The full backend and IDP suites, Angular production build, 379
+> frontend tests, 17 CI contract tests, Compose validation, and Postgres-backed
+> critical-path checks have been exercised. The task review queue also passed
+> against the retained live PostgreSQL data. These observations are
+> local-environment evidence, not a claim that every Windows machine or account
+> integration is ready. A clean-clone Windows run and any
 > newly configured third-party account, paid model, browser-control, mutable
 > runtime, or broad-host-control journey remain release gates.
 
@@ -227,7 +228,7 @@ either observability server.
 | Status | Current position |
 | --- | --- |
 | Canonical product | This Go/Angular/Postgres/Docker Compose repository. The separate Manus React/tRPC/MySQL implementation is reference-only. |
-| Local platform | The current Windows Compose workspace has a retained browser acceptance run covering password login, read-only local source registration and sync, explicit pursuit creation, governed high-risk workflow intake, durable approval, and one bounded worker pass (2026-08-04). A separate fresh-clone Windows 11 acceptance run is still required. |
+| Local platform | The current Windows Compose workspace has retained end-to-end acceptance evidence for password login, read-only local source registration and sync, explicit pursuit creation, governed high-risk workflow intake, durable approval, and one bounded worker pass. A 2026-08-09 regression pass also covered the rebuilt shared shell, eight deep routes, Basic/Advanced disclosure, mobile overflow, and a clean browser console. A separate fresh-clone Windows 11 acceptance run is still required. |
 | Core operating flow | Pursuits, workflows, task attempts, approvals, verification, audit, compact memory, source extraction, and ambient proposals are implemented and persisted. |
 | Intake safety | New source, assistant, and ambient input is matched to an active pursuit or becomes a non-executable candidate. An approval-capable user must accept a candidate before its first governed workflow is created. |
 | External accounts | Local/export ingestion and read-only GitHub sync are available. Gmail and Trello have bounded live acceptance evidence. Google Drive, Google Contacts, and primary Google Calendar have separate read-only OAuth adapters with bounded backfills and native change/sync cursors, but no retained live sandbox acceptance evidence yet. Contact candidates require review. Calendar event times feed deterministic due dates, bounded preparation proposals, and overlap review; moving or cancelling source events retracts stale Calendar-derived work without deleting obligations. These paths cannot write back. WhatsApp and browser connectors are not live. |
@@ -242,8 +243,8 @@ target-machine checks before relying on a path for real work.
 | Surface | Current evidence | Still required before operational trust |
 | --- | --- | --- |
 | Local Compose and gateway | The local services are running; `/`, `/control-center`, `/healthz`, and `/readyz` are served through nginx. Both health probes are intentionally public; protected `/api/v1/*` engine routes still require a signed session. Angular deep links return the application shell. | Fresh-clone Windows 11 run with a newly created `.env.local`. |
-| Browser session | The unauthenticated session check returns `401`; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
-| Go and Angular code | The full Go suite, frontend production build, 324 headless Angular tests, migration-chain contract through `0047`, isolated PostgreSQL `0046`+`0047` ledger test, live workflow-repository PostgreSQL test, and signed-in browser reminder prepare/approve/persist/cleanup acceptance pass. Migration `0046` defines the append-only owner-scoped reminder request/decision ledger; `0047` adds a strict monotonic chain-tip timestamp guard. | Keep these gates green and close the existing CSS/initial-bundle budget warnings before a production release. The browser exercise proves the local non-executing evidence flow only: no reminder worker, Calendar write, message delivery, provider invocation, or follow-up execution was exercised or implied. |
+| Browser session | The unauthenticated session check returns HTTP 200 with `authenticated:false` and no-store caching; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. The 2026-08-09 regression run reported no console or HTTP failures. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
+| Go and Angular code | The full backend and IDP Go suites, frontend production build, 379 headless Angular tests, 17 executable CI contract tests, migration-chain checks, live workflow-repository PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 836 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
 | Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 
@@ -482,7 +483,9 @@ Postgres + Redis + Kafka
 The local deployment targets Windows 11 with Docker Desktop. The control-plane
 backend, IDP, and nginx configuration manager use Go 1.25.12 and share an
 executable CI alignment contract. They use Gin, Gorm, Postgres, and
-Sarama/Kafka where applicable. The frontend uses Angular 16 and ng-zorro-antd.
+Sarama/Kafka where applicable. The frontend uses Angular 22.1.1,
+ng-zorro-antd 22.0.1, TypeScript 6.0.3, and the supported esbuild/Vite
+application builder.
 Versioned SQL migrations are the schema source of truth and `DB_AUTOMIGRATE`
 defaults to `false`. Startup applies pre-phase migrations, optionally runs
 development-only AutoMigrate when explicitly enabled, then applies
@@ -495,7 +498,8 @@ post-phase migrations. See
 
 - Windows 11 with Docker Desktop, or another Docker Compose-capable environment.
 - Git.
-- Node.js 20 for frontend development outside Docker.
+- Node.js 22.22.3 with npm 10.9.8 for frontend development outside Docker.
+  npm and `package-lock.json` are the sole frontend package-manager contract.
 - Go 1.25.12 for control-plane backend, IDP, and nginx-config-manager
   development outside Docker. Their modules, Docker builders, and CI toolchains
   are checked for version alignment.
@@ -724,9 +728,9 @@ go build ./...
 
 # Frontend
 Set-Location ..\frontend
-npm.cmd ci
+npm.cmd ci --no-audit --no-fund
 npm.cmd run build
-npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
+npm.cmd run test -- --watch=false --browsers=ChromeHeadlessNoSandbox
 
 # Compose contract
 Set-Location ..

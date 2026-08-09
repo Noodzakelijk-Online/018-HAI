@@ -9,6 +9,7 @@ import {
 import { AccountBridgesService } from '../../services/account-bridges.service'
 
 @Component({
+  standalone: false,
   selector: 'app-account-bridges',
   templateUrl: './account-bridges.component.html',
   styleUrls: ['./account-bridges.component.scss'],

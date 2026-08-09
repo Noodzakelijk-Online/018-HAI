@@ -11,11 +11,11 @@ source of truth for current state.
   clean clone and empty volumes before calling installation reproducibility
   complete.
 - **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
-- **Make the frontend dependency scan blocking (TD-6/BH-6):** the backend is
-  clean and blocking. Perform a coordinated migration from the vulnerable
-  Angular 16/CDK/ng-zorro family to a supported release, preserve authenticated
-  routes and the full UI regression suite, then make the frontend scan a hard
-  gate.
+- **Frontend dependency hardening (TD-6/BH-7) completed:** Angular 22.1.1,
+  ng-zorro 22.0.1, TypeScript 6.0.3, and the supported esbuild/Vite builder are
+  in place; the 379-test suite and production build pass; high/critical audit
+  findings are zero and blocking. Recheck the documented moderate CLI-only
+  exception by 2026-09-09 or when Angular CLI adopts MCP SDK 1.30+.
 - Adopt the `apierror` envelope across handlers in step with the frontend (TD-1).
 - **Advisory outcome monitor release acceptance:** retain a disposable-PostgreSQL
   and signed-browser run for all three fixed collectors, exact replay after a
@@ -25,7 +25,7 @@ source of truth for current state.
   proactivity decisions, and inbox records, with zero execution, delivery,
   Calendar, workflow, mandate, provider, or learning effects.
 
-## Frontend-dependent (need Angular work)
+## Frontend follow-up
 
 - Wire the memory search UI and feature-flag/i18n surfaces into the dashboard (TD-7).
 - Deeper accessibility + cross-browser visual passes on the existing pages.

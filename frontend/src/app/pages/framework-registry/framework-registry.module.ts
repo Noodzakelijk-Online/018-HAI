@@ -10,12 +10,11 @@ import { NzEmptyModule } from 'ng-zorro-antd/empty';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzInputNumberModule } from 'ng-zorro-antd/input-number';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
 import { NzTableModule } from 'ng-zorro-antd/table';
 import { NzTagModule } from 'ng-zorro-antd/tag';
-import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { NzTooltipModule } from 'ng-zorro-antd/tooltip';
 import { FrameworkRegistryComponent } from './framework-registry.component';
 import { FrameworkRegistryInspectorComponent } from './framework-registry-inspector.component';
 import { FrameworkRegistryRecommendationComponent } from './framework-registry-recommendation.component';
@@ -40,12 +39,11 @@ const routes: Routes = [{ path: '', component: FrameworkRegistryComponent }];
     NzIconModule,
     NzInputModule,
     NzInputNumberModule,
-    NzNotificationModule,
     NzSelectModule,
     NzSpinModule,
     NzTableModule,
     NzTagModule,
-    NzToolTipModule,
+    NzTooltipModule,
   ],
 })
 export class FrameworkRegistryModule {}

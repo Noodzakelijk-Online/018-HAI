@@ -14,6 +14,7 @@ import { AuthSessionService } from '../../services/auth-session.service'
 import { RuntimeControlService } from '../../services/runtime-control.service'
 
 @Component({
+  standalone: false,
   selector: 'app-runtime-control',
   templateUrl: './runtime-control.component.html',
   styleUrls: ['./runtime-control.component.scss'],

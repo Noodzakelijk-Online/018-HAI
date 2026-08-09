@@ -10,7 +10,6 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzListModule } from 'ng-zorro-antd/list';
 import { NzModalModule } from 'ng-zorro-antd/modal';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzTableModule } from 'ng-zorro-antd/table';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { CommandDashboardComponent } from './command-dashboard.component';
@@ -33,7 +32,6 @@ const routes: Routes = [{ path: '', component: CommandDashboardComponent }];
     NzLayoutModule,
     NzListModule,
     NzModalModule,
-    NzNotificationModule,
     NzTableModule,
     NzTagModule,
   ],
