@@ -66,6 +66,17 @@ the executor. The run uncovered and fixed an ambiguity where infrastructure
 "health" was incorrectly classified as personal health; genuine personal or
 clinical requests still retain the stricter care-evidence contract.
 
+An authenticated live task run then selected an existing read-only API
+automation for the backend readiness endpoint. It skipped connected-source
+refresh and search, classified the work as `automation`, found resource
+feasibility without consuming owner capacity, verified all 24 applicable
+pre-authorization assertions, executed the configured API target, produced a
+durable launch record, returned `test_passed`, and persisted the task as
+`validated` without selecting a model or allowing paid usage. A complementary
+personal-medication request selected the health domain, required
+`health_admin_assistant`, recorded that specialist as `requires_assignment`,
+and remained `review_required` with no tool execution.
+
 This evidence does not prove Robert's separate target Windows installation,
 event delivery outside the local stack, or any third-party provider/account
 connector. Those checks remain provider- and environment-specific release

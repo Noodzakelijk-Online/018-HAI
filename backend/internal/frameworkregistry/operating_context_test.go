@@ -266,6 +266,53 @@ func TestBuildAgentCardsResolvesSpecialistRolesByVerifiedCapability(t *testing.T
 	}
 }
 
+func TestBuildAgentCardsAssignsImplementedControlPlaneRolesToEmbeddedEngine(t *testing.T) {
+	t.Parallel()
+
+	cards, err := buildAgentCards(
+		[]string{"chief_of_staff", "planner", "policy_guardian", "runtime_broker"},
+		nil,
+		5,
+		time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("build agent cards: %v", err)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("embedded roles created phantom agent cards: %#v", cards)
+	}
+	coordinator := cards[0]
+	if coordinator.ID != "hai_task_engine" || !coordinator.Verified || coordinator.Status != "available" {
+		t.Fatalf("embedded coordinator is not a verified participant: %#v", coordinator)
+	}
+	for _, role := range []string{"chief_of_staff", "planner", "policy_guardian", "runtime_broker"} {
+		if !containsExact(coordinator.Capabilities, role) {
+			t.Errorf("embedded coordinator capabilities %v do not contain %q", coordinator.Capabilities, role)
+		}
+	}
+}
+
+func TestBuildAgentCardsKeepsUnimplementedSpecialistExplicitlyUnassigned(t *testing.T) {
+	t.Parallel()
+
+	cards, err := buildAgentCards(
+		[]string{"chief_of_staff", "health_admin_assistant"},
+		nil,
+		3,
+		time.Date(2026, time.August, 9, 10, 5, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("build agent cards: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("cards = %#v, want embedded coordinator and unassigned specialist", cards)
+	}
+	specialist := findAgentCard(cards, "health_admin_assistant")
+	if specialist == nil || specialist.Verified || specialist.Status != "required_unassigned" || specialist.Owner != "unassigned" {
+		t.Fatalf("missing specialist was not retained as an explicit unassigned requirement: %#v", specialist)
+	}
+}
+
 func TestBuildSelectionNeverLeaksSecretsIntoOperatingContract(t *testing.T) {
 	decision, err := BuildSelection(
 		testCatalog(t),

@@ -115,6 +115,55 @@ func TestLowRiskReadOnlyAPIRuntimeCompletesWithoutModelOrApproval(t *testing.T) 
 	}
 }
 
+func TestLowRiskReadOnlyAPIRuntimeIgnoresUnknownHumanCapacity(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "false")
+	t.Setenv("LLM_PROVIDERS_JSON", "[]")
+	t.Setenv("LLM_POLICY_JSON", "")
+	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "false")
+
+	llmService, err := llm.NewServiceFromEnv()
+	if err != nil {
+		t.Fatalf("NewServiceFromEnv: %v", err)
+	}
+	executor := &fakeToolExecutor{result: deterministicReadOnlyToolExecution()}
+	provider := &operatingContextProviderStub{capacity: &frameworkregistry.CapacitySnapshot{
+		Status:      "unknown",
+		NeedsReview: true,
+		Constraints: []string{"no owner-confirmed capacity snapshot is available"},
+	}}
+	service := NewServiceWithDependencies(
+		&fakeMemoryService{},
+		llmService,
+		nil,
+		nil,
+		executor,
+		nil,
+		nil,
+		nil,
+		provider,
+	)
+
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		Request:        "Probe the local backend readiness endpoint and verify HTTP 200.",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if executor.calls != 1 || plan.CompletionStatus != "validated" || !plan.ValidationResult.Passed {
+		t.Fatalf("bounded automation was blocked by unrelated human capacity: calls=%d plan=%#v", executor.calls, plan)
+	}
+	if plan.RiskAssessment.ApprovalRequired || !plan.RiskAssessment.AllowedNow {
+		t.Fatalf("bounded automation acquired a human-capacity approval gate: %#v", plan.RiskAssessment)
+	}
+	if provider.capacityCalls != 1 {
+		t.Fatalf("operating capacity was not evaluated exactly once: %d", provider.capacityCalls)
+	}
+}
+
 func TestUnapprovedHighRiskRuntimeStillBlocksBeforeExecutor(t *testing.T) {
 	t.Setenv("HAI_EMERGENCY_STOP", "false")
 	executor := &fakeToolExecutor{result: deterministicReadOnlyToolExecution()}
@@ -291,6 +340,33 @@ func TestFrameworkOperatingContractBlocksUnavailableCapacityAndUnassignedTeamExe
 	}
 }
 
+func TestFrameworkOperatingContractBlocksUnassignedSpecialistInSingleEngineMode(t *testing.T) {
+	risk := applyFrameworkRisk(
+		RiskAssessment{AllowedNow: true},
+		&frameworkregistry.SelectionDecision{
+			MaximumAutonomyLevel: 8,
+			Capacity:             frameworkregistry.CapacitySnapshot{Status: "available"},
+			Coordination:         frameworkregistry.CoordinationPlan{Mode: "single_engine"},
+			Delegations: []frameworkregistry.DelegationContract{
+				{Delegatee: "hai_task_engine", State: "ready"},
+				{Delegatee: "health_admin_assistant", State: "requires_assignment"},
+			},
+			ActionAutonomy: []frameworkregistry.ActionAutonomyDecision{{
+				Action: "execute_reversible_low_risk_action", RequiredLevel: 8, EffectiveCeiling: 8, Allowed: true,
+			}},
+		},
+		IntakeAnalysis{NeedsTools: true},
+		IntakeRequest{ExecuteAllowed: true},
+	)
+
+	if risk.AllowedNow {
+		t.Fatalf("single-engine fallback silently bypassed an unassigned required specialist: %#v", risk)
+	}
+	if !strings.Contains(strings.Join(risk.Reasons, "\n"), "every required delegated participant") {
+		t.Fatalf("missing-specialist reason was not retained: %#v", risk.Reasons)
+	}
+}
+
 func TestRequiredFrameworkAutonomyDistinguishesApprovedAndAutomaticExecution(t *testing.T) {
 	intake := IntakeAnalysis{NeedsTools: true}
 	if got := requiredFrameworkAutonomy(intake, IntakeRequest{
@@ -351,6 +427,26 @@ func TestAnalyzeIntakeRequiresRuntimeForTechnicalImplementation(t *testing.T) {
 	}
 }
 
+func TestAnalyzeIntakeUsesExplicitAutomationForReadOnlyProbe(t *testing.T) {
+	analysis := analyzeIntake(IntakeRequest{
+		Request:      "Probe the local backend readiness endpoint and verify HTTP 200.",
+		AutomationID: uuid.NewString(),
+	})
+	if !analysis.NeedsTools || analysis.NeedsLocalExecution {
+		t.Fatalf("explicit API automation was not classified as a controlled non-local tool: %#v", analysis)
+	}
+	if analysis.TaskType != "automation" || analysis.RequiredReasoning != "low" {
+		t.Fatalf("read-only automation classification = %#v", analysis)
+	}
+	tools := routeTools(analysis, IntakeRequest{
+		Request:      "Probe the local backend readiness endpoint and verify HTTP 200.",
+		AutomationID: uuid.NewString(),
+	})
+	if !containsString(tools.SelectedTools, "automation.launch") {
+		t.Fatalf("controlled automation tool was not selected: %#v", tools)
+	}
+}
+
 func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	mem := &fakeMemoryService{}
 	src := &fakeTaskSourceService{}
@@ -378,6 +474,34 @@ func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	}
 	if len(plan.ContextPlan.SourceContext) != 1 {
 		t.Fatalf("source context = %d, want 1", len(plan.ContextPlan.SourceContext))
+	}
+}
+
+func TestPlanSkipsConnectedSourceSearchForBoundedReadOnlyAutomation(t *testing.T) {
+	mem := &fakeMemoryService{}
+	src := &fakeTaskSourceService{}
+	service := NewService(mem, newTaskTestLLMService(t), src)
+
+	plan, err := service.Plan(IntakeRequest{
+		OwnerIdentity: "alice",
+		Request:       "Probe the local backend readiness endpoint and verify HTTP 200.",
+		ProjectKey:    "018-HAI",
+		AutomationID:  uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if src.refreshCalls != 0 || len(src.ownerRefreshOwners) != 0 {
+		t.Fatalf("bounded automation refreshed connected sources: global=%d owner=%#v", src.refreshCalls, src.ownerRefreshOwners)
+	}
+	if src.searchCalls != 0 || len(src.searchRequests) != 0 {
+		t.Fatalf("bounded automation searched connected sources: calls=%d requests=%#v", src.searchCalls, src.searchRequests)
+	}
+	if len(plan.ContextPlan.SourceContext) != 0 {
+		t.Fatalf("bounded automation loaded source context: %#v", plan.ContextPlan.SourceContext)
+	}
+	if !strings.Contains(plan.ContextPlan.Explanation, "retrieval skipped") {
+		t.Fatalf("context explanation does not disclose the source skip: %q", plan.ContextPlan.Explanation)
 	}
 }
 

@@ -392,6 +392,31 @@ including its supplied timestamp. Separate service calls normally use
 different timestamps, so reproducibility should be evaluated from the version
 and digest fields rather than by expecting the same UUID on later calls.
 
+### Embedded And External Agent Roles
+
+The canonical Go task engine may satisfy only an explicit allowlist of
+control-plane roles backed by deterministic HAI modules. Examples include task
+intake, context planning, policy, risk, approval, resource planning, execution
+authorization, verification, audit, and recovery. The generated
+`hai_task_engine` card lists the exact role capabilities and module dependencies
+that were used; a generic coordinator label is not accepted as proof that every
+specialist exists.
+
+Domain and external specialist roles remain separate. A role such as
+`health_admin_assistant` must have a fresh, non-revoked, verified agent card
+before its delegation becomes ready. Missing specialists are recorded as
+`requires_assignment`, and task execution is blocked even when coordination is
+otherwise `single_engine`. This prevents the generic task engine from silently
+impersonating clinical, legal, financial, or other specialist competence.
+
+Low-risk configured automations are also separated from operator capacity. A
+bounded read-only automation may be feasible without reserving human time, but
+the resource decision remains advisory and cannot grant authority. Runtime
+authorization, framework-evidence preflight, execution receipts, and verified
+postconditions still apply independently. Connected-source retrieval is skipped
+when the task does not depend on source context, avoiding unrelated private
+context and unnecessary source-index work.
+
 ## Persistence And Migration
 
 Migration `backend/migrations/pre/0003_framework_registry.up.sql` creates:

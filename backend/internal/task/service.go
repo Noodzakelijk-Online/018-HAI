@@ -1085,7 +1085,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	if err != nil {
 		return nil, err
 	}
-	sourceContext, sourceExplanation := s.retrieveSourceContext(request)
+	sourceContext, sourceExplanation := s.retrieveSourceContext(request, intake)
 	modelDecision, err := s.llmService.Route(llm.RouteRequest{
 		Task:              request.Request,
 		TaskType:          intake.TaskType,
@@ -1104,7 +1104,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 		return nil, fmt.Errorf("retrieve whole-life context: %w", err)
 	}
 
-	toolDecision := routeTools(intake, request.Request)
+	toolDecision := routeTools(intake, request)
 	minimalityDecision := decideMinimality(request, intake)
 	risk := assessRisk(intake, request)
 	risk = applyFrameworkRisk(risk, frameworkDecision, intake, request)
@@ -1140,6 +1140,11 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 		PaidAllowed:    paidAllowed,
 		PaidBudgetEUR:  paidBudget,
 		PaidBudgetUsed: paidUsed,
+		AutomatedExecution: boundedAutomatedExecution(
+			intake,
+			risk,
+			request,
+		),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plan resource and time feasibility: %w", err)
@@ -1168,7 +1173,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 				"rank by keyword relevance, recency, confidence, and project match",
 				"load only top relevant memories",
 				"refresh due connected sources when the task likely depends on project, local, or document context",
-				"check connected-source extractions before task planning",
+				"check connected-source extractions before task planning only when the task depends on source context",
 				"preserve source references on returned memories",
 				"apply the selected framework context requirements without loading unrelated private context",
 				"retrieve only source-backed whole-life entities from task-relevant domains",
@@ -2322,6 +2327,10 @@ func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnal
 }
 
 func shouldRefreshSourcesForTask(request IntakeRequest, intake IntakeAnalysis) bool {
+	return shouldUseConnectedSourcesForTask(request, intake)
+}
+
+func shouldUseConnectedSourcesForTask(request IntakeRequest, intake IntakeAnalysis) bool {
 	text := strings.ToLower(request.Request + " " + request.ProjectKey)
 	if intake.NeedsDocuments || intake.NeedsLocalExecution {
 		return true
@@ -2339,9 +2348,12 @@ func unsupportedClaimCount(claims []models.VerificationClaim) int {
 	return count
 }
 
-func (s *service) retrieveSourceContext(request IntakeRequest) ([]source.RankedExtraction, string) {
+func (s *service) retrieveSourceContext(request IntakeRequest, intake IntakeAnalysis) ([]source.RankedExtraction, string) {
 	if s.sourceService == nil {
 		return []source.RankedExtraction{}, "Connected-source retrieval is not configured."
+	}
+	if !shouldUseConnectedSourcesForTask(request, intake) {
+		return []source.RankedExtraction{}, "Connected-source retrieval skipped because the task does not depend on connected-source context."
 	}
 	result, err := s.sourceService.Search(source.SearchRequest{
 		OwnerIdentity:        request.OwnerIdentity,
@@ -2364,10 +2376,11 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 	risk := "low"
 	reasons := []string{"default completion-first intake"}
 
-	needsTools := requiresControlledExecution(text)
+	configuredAutomation := strings.TrimSpace(request.AutomationID) != ""
+	needsTools := configuredAutomation || requiresControlledExecution(text)
 	needsDocs := containsAny(text, "document", "pdf", "spreadsheet", "slides", "docx")
 	needsWeb := containsAny(text, "latest", "current", "today", "web", "browse", "search")
-	needsLocal := needsTools && containsWordOrPhrase(text, "local", "file", "files", "repo", "repository", "docker", "windows", "code", "build", "test", "tests", "script", "command", "commit", "push")
+	needsLocal := requiresControlledExecution(text) && containsWordOrPhrase(text, "local", "file", "files", "repo", "repository", "docker", "windows", "code", "build", "test", "tests", "script", "command", "commit", "push")
 
 	if containsWordOrPhrase(
 		text,
@@ -2389,6 +2402,12 @@ func analyzeIntake(request IntakeRequest) IntakeAnalysis {
 		difficulty = maxInt(difficulty, 4)
 		reasoning = maxReasoning(reasoning, "high")
 		reasons = append(reasons, "architecture terms detected")
+	}
+	if configuredAutomation && readOnlyAutomationIntent(text) {
+		taskType = "automation"
+		difficulty = 2
+		reasoning = "low"
+		reasons = append(reasons, "configured read-only automation detected")
 	}
 	risk = classifyTaskRisk(text, needsTools)
 	if risk == "high" {
@@ -2584,7 +2603,7 @@ func applyFrameworkExecution(plan ExecutionPlan, decision *frameworkregistry.Sel
 	return plan
 }
 
-func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
+func routeTools(intake IntakeAnalysis, request IntakeRequest) ToolRouteDecision {
 	selected := []string{"memory.retrieve", "llm.route", "validator.criteria"}
 	skipped := []string{}
 	blocked := []string{}
@@ -2592,6 +2611,10 @@ func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
 
 	if intake.NeedsTools {
 		selected = append(selected, "tool-router")
+	}
+	if strings.TrimSpace(request.AutomationID) != "" {
+		selected = append(selected, "automation.launch")
+		reasons = append(reasons, "the caller selected a controlled automation explicitly")
 	}
 	if intake.NeedsDocuments {
 		selected = append(selected, "document-context-reader")
@@ -2613,8 +2636,8 @@ func routeTools(intake IntakeAnalysis, request string) ToolRouteDecision {
 		reasons = append(reasons, "high-risk tools blocked until human approval")
 	}
 
-	catalogRecommendations := braincatalog.Recommend(intake.TaskType, request)
-	capabilityRecommendations, capabilityRecommendationErr := braincatalog.RecommendForNeed(request)
+	catalogRecommendations := braincatalog.Recommend(intake.TaskType, request.Request)
+	capabilityRecommendations, capabilityRecommendationErr := braincatalog.RecommendForNeed(request.Request)
 	if len(catalogRecommendations) > 0 || (capabilityRecommendationErr == nil && len(capabilityRecommendations.Recommendations) > 0) {
 		reasons = append(reasons, "external agent capabilities are recommendations only until a reviewed adapter is configured")
 		for _, recommendation := range catalogRecommendations {
@@ -2757,7 +2780,7 @@ func applyFrameworkRisk(
 			),
 		)
 	}
-	if request.ExecuteAllowed &&
+	if request.ExecuteAllowed && !boundedAutomatedExecution(intake, risk, request) &&
 		(decision.Capacity.Status == "unavailable" || decision.Capacity.Status == "overloaded") {
 		risk.AllowedNow = false
 		risk.Reasons = append(
@@ -2765,13 +2788,13 @@ func applyFrameworkRisk(
 			"current human capacity is unavailable; execution must be rescheduled or explicitly re-planned without creating new operator commitments",
 		)
 	}
-	if request.ExecuteAllowed && decision.Coordination.Mode != "single_engine" {
+	if request.ExecuteAllowed {
 		for _, delegation := range decision.Delegations {
 			if delegation.State != "ready" {
 				risk.AllowedNow = false
 				risk.Reasons = append(
 					risk.Reasons,
-					"multi-agent execution is blocked until every delegated participant has a fresh verified agent card",
+					"execution is blocked until every required delegated participant has a fresh verified agent card",
 				)
 				break
 			}
@@ -2792,6 +2815,18 @@ func applyFrameworkRisk(
 	}
 	risk.Reasons = uniqueStrings(risk.Reasons)
 	return risk
+}
+
+func boundedAutomatedExecution(
+	intake IntakeAnalysis,
+	risk RiskAssessment,
+	request IntakeRequest,
+) bool {
+	return request.ExecuteAllowed &&
+		strings.TrimSpace(request.AutomationID) != "" &&
+		intake.NeedsTools &&
+		strings.EqualFold(risk.Level, "low") &&
+		!risk.ApprovalRequired
 }
 
 func requiredFrameworkAutonomy(intake IntakeAnalysis, request IntakeRequest) int {
@@ -3111,6 +3146,19 @@ func requiresControlledExecution(value string) bool {
 		"script", "test", "tests",
 	)
 	return action && target
+}
+
+func readOnlyAutomationIntent(value string) bool {
+	if !containsWordOrPhrase(value,
+		"check", "health", "health check", "inspect", "probe", "readiness", "status", "verify",
+	) {
+		return false
+	}
+	return !containsWordOrPhrase(value,
+		"add", "apply", "build", "change", "commit", "create", "delete", "deploy",
+		"implement", "install", "merge", "modify", "move", "publish", "push", "refactor",
+		"rename", "send", "start", "update", "write",
+	)
 }
 
 func containsWordOrPhrase(value string, terms ...string) bool {
