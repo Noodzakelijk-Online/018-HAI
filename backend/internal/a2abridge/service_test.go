@@ -108,6 +108,17 @@ func TestLocalBridgeRequiresExactEndpointPath(t *testing.T) {
 	}
 }
 
+func TestLocalBridgeRejectsLANEndpointAndWhitespaceToken(t *testing.T) {
+	lan := NewService(Config{Enabled: true, Token: testBridgeToken, OwnerID: "owner", URL: "http://192.168.1.10/api/v1/a2a"}, &previewStub{})
+	if status := lan.Status(); status.Configured || !strings.Contains(status.ConfigError, "must be local") {
+		t.Fatalf("LAN endpoint status = %#v", status)
+	}
+	spaced := NewService(Config{Enabled: true, Token: "aaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaa", OwnerID: "owner", URL: "http://127.0.0.1/api/v1/a2a"}, &previewStub{})
+	if status := spaced.Status(); status.Configured || !strings.Contains(status.ConfigError, "non-whitespace") {
+		t.Fatalf("whitespace token status = %#v", status)
+	}
+}
+
 func TestHandlerProvidesCardAndTokenBoundedSendMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewHandler(configuredService(&previewStub{}))
@@ -176,5 +187,37 @@ func TestHandlerRejectsOldShapesAndUnsupportedA2AVersion(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "-32009") {
 		t.Fatalf("version response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHandlerRejectsAmbiguousJSONRPCEnvelopesBeforePlanning(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	planner := &previewStub{}
+	handler := NewHandler(configuredService(planner))
+	router := gin.New()
+	router.POST("/api/v1/a2a", handler.Send)
+
+	valid := `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"message-1","role":"ROLE_USER","parts":[{"text":"test"}]}}}`
+	tests := map[string]string{
+		"trailing document":   valid + `{}`,
+		"object id":           `{"jsonrpc":"2.0","id":{"unsafe":true},"method":"SendMessage","params":{"message":{"messageId":"message-1","role":"ROLE_USER","parts":[{"text":"test"}]}}}`,
+		"unknown envelope":    `{"jsonrpc":"2.0","id":1,"method":"SendMessage","unexpected":true,"params":{"message":{"messageId":"message-1","role":"ROLE_USER","parts":[{"text":"test"}]}}}`,
+		"unknown message key": `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"message-1","role":"ROLE_USER","unexpected":true,"parts":[{"text":"test"}]}}}`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/a2a", strings.NewReader(body))
+			request.Header.Set("Authorization", "Bearer "+testBridgeToken)
+			request.Header.Set("A2A-Version", "1.0")
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if len(planner.requests) != 0 {
+		t.Fatalf("ambiguous envelopes reached planner: %#v", planner.requests)
 	}
 }

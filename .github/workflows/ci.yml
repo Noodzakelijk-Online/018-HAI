@@ -115,6 +115,7 @@ jobs:
             LOCAL_LOGIN_BYPASS_ENABLED=false \
             IDP_COOKIE_SECURE=true \
             GATEWAY_HOST_BIND=127.0.0.1 \
+            RATE_LIMIT_PER_MINUTE=120 \
             NGROK_AUTHTOKEN=ci-ngrok-token-000000000000 \
             HAI_NGROK_URL=https://hai-ci.ngrok.app \
             HAI_A2A_BRIDGE_ENABLED=true \
@@ -129,6 +130,7 @@ jobs:
             LOCAL_LOGIN_BYPASS_ENABLED=false \
             IDP_COOKIE_SECURE=true \
             GATEWAY_HOST_BIND=127.0.0.1 \
+            RATE_LIMIT_PER_MINUTE=120 \
             NGROK_AUTHTOKEN=ci-ngrok-token-000000000000 \
             HAI_NGROK_URL=https://hai-ci.ngrok.app \
             HAI_A2A_BRIDGE_ENABLED=true \
@@ -139,6 +141,19 @@ jobs:
             HAI_NGROK_VALIDATE_ONLY=true \
             sh deploy/ngrok/start-ngrok.sh; then
             echo "mismatched public A2A origin unexpectedly passed" >&2
+            exit 1
+          fi
+          if env \
+            RUN_MODE=production \
+            LOCAL_LOGIN_BYPASS_ENABLED=false \
+            IDP_COOKIE_SECURE=true \
+            GATEWAY_HOST_BIND=127.0.0.1 \
+            RATE_LIMIT_PER_MINUTE=0 \
+            NGROK_AUTHTOKEN=ci-ngrok-token-000000000000 \
+            HAI_NGROK_URL=https://hai-ci.ngrok.app \
+            HAI_NGROK_VALIDATE_ONLY=true \
+            sh deploy/ngrok/start-ngrok.sh; then
+            echo "disabled rate limit unexpectedly passed" >&2
             exit 1
           fi
       - name: Nginx syntax

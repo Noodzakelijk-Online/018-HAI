@@ -107,9 +107,28 @@ class GatewayAuthContractTest(unittest.TestCase):
 
     def test_a2a_connector_has_dedicated_rate_limit_zone(self) -> None:
         self.assertIn(
-            "limit_req_zone $binary_remote_addr zone=hai_a2a_bridge:10m rate=10r/m;",
+            "limit_req_zone $binary_remote_addr zone=hai_a2a_bridge:1m rate=10r/m;",
             NGINX_TEMPLATE,
         )
+
+    def test_public_identity_routes_are_resource_bounded(self) -> None:
+        self.assertIn(
+            "limit_req_zone $binary_remote_addr zone=hai_auth:1m rate=30r/m;",
+            NGINX_TEMPLATE,
+        )
+        self.assertIn("limit_req_status 429;", NGINX_TEMPLATE)
+        for marker in (
+            "location ^~ /api/v1/auth/",
+            "location ^~ /api/v1/user/",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(
+                    "limit_req zone=hai_auth burst=10 nodelay;",
+                    location_block(marker),
+                )
+
+    def test_gateway_has_one_authoritative_configuration(self) -> None:
+        self.assertFalse((ROOT / "nginx-config" / "nginx.conf").exists())
 
     def test_idp_namespaces_cannot_request_or_receive_verified_token_header(self) -> None:
         for marker in (

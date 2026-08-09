@@ -10,6 +10,12 @@ fail() {
 [ "${LOCAL_LOGIN_BYPASS_ENABLED:-}" = "false" ] || fail "local login bypass must be false"
 [ "${IDP_COOKIE_SECURE:-}" = "true" ] || fail "secure IDP cookies are required"
 [ "${GATEWAY_HOST_BIND:-}" = "127.0.0.1" ] || fail "gateway host bind must remain loopback-only"
+case "${RATE_LIMIT_PER_MINUTE:-}" in
+  ''|*[!0-9]*)
+    fail "RATE_LIMIT_PER_MINUTE must be a positive integer"
+    ;;
+esac
+[ "$RATE_LIMIT_PER_MINUTE" -gt 0 ] 2>/dev/null || fail "RATE_LIMIT_PER_MINUTE must be a positive integer"
 ngrok_token="${NGROK_AUTHTOKEN:-}"
 [ "${#ngrok_token}" -ge 20 ] || fail "a dedicated ngrok authtoken is required"
 

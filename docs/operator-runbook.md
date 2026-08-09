@@ -986,8 +986,11 @@ See [Database Migrations And Rollback Safety](migrations.md).
   rotate while approved actions are awaiting execution.
 - **Backups:** follow [backup and restore](backup-restore.md); test restore
   evidence, not only dump creation.
-- **Rate limiting:** if exposed beyond loopback, configure
-  `RATE_LIMIT_PER_MINUTE` and verify Redis-backed enforcement.
+- **Rate limiting:** ngrok preflight requires a positive
+  `RATE_LIMIT_PER_MINUTE`; verify Redis-backed enforcement before exposure.
+  The gateway separately throttles public authentication and A2A requests with
+  fixed one-MiB zones so Redis failure does not leave those entry points
+  unbounded.
 - **Emergency stop:** set `HAI_EMERGENCY_STOP=true` in `.env.local` and recreate
   the backend service. Confirm task, workflow, LLM, automation, and runtime
   execution are blocked while read/review surfaces remain available.

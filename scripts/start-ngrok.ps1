@@ -91,6 +91,10 @@ if ((Get-Setting $settings 'IDP_COOKIE_SECURE' 'false').ToLowerInvariant() -ne '
 if ((Get-Setting $settings 'GATEWAY_HOST_BIND' '127.0.0.1') -ne '127.0.0.1') {
     throw 'GATEWAY_HOST_BIND must remain 127.0.0.1; ngrok reaches nginx on the private Docker network.'
 }
+$rateLimit = 0
+if (-not [int]::TryParse((Get-Setting $settings 'RATE_LIMIT_PER_MINUTE' '0'), [ref]$rateLimit) -or $rateLimit -le 0) {
+    throw 'RATE_LIMIT_PER_MINUTE must be a positive integer before public access is enabled.'
+}
 
 Require-Secret $settings 'NGROK_AUTHTOKEN' 20
 Require-Secret $settings 'JWT_SECRET' 32

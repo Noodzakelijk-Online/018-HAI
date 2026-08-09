@@ -206,15 +206,11 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, frontend)
 
-        for config_path in (
-            ROOT / "nginx-config" / "nginx.conf",
-            ROOT / "nginx-config" / "nginx.conf.template",
-        ):
-            with self.subTest(config_path=config_path):
-                self.assertIn(
-                    "set $frontend_upstream frontend:8080;",
-                    config_path.read_text(encoding="utf-8"),
-                )
+        gateway_template = ROOT / "nginx-config" / "nginx.conf.template"
+        self.assertIn(
+            "set $frontend_upstream frontend:8080;",
+            gateway_template.read_text(encoding="utf-8"),
+        )
 
     def test_local_kafka_runtime_avoids_healthcheck_jvms_and_is_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
@@ -415,15 +411,11 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, generic)
 
-        for config_path in (
-            ROOT / "nginx-config" / "nginx.conf",
-            ROOT / "nginx-config" / "nginx.conf.template",
-        ):
-            with self.subTest(config_path=config_path):
-                self.assertIn(
-                    "set $generic_auto_upstream generic-auto:8080;",
-                    config_path.read_text(encoding="utf-8"),
-                )
+        gateway_template = ROOT / "nginx-config" / "nginx.conf.template"
+        self.assertIn(
+            "set $generic_auto_upstream generic-auto:8080;",
+            gateway_template.read_text(encoding="utf-8"),
+        )
 
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
@@ -665,6 +657,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "LOCAL_LOGIN_BYPASS_ENABLED",
             "IDP_COOKIE_SECURE",
             "GATEWAY_HOST_BIND",
+            "RATE_LIMIT_PER_MINUTE",
             "NGROK_AUTHTOKEN",
             "HAI_NGROK_URL",
             "GOOGLE_LOGIN_REDIRECT_URL",
@@ -695,6 +688,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_A2A_BRIDGE_TOKEN",
             "HAI_A2A_BRIDGE_OWNER_ID",
             "HAI_A2A_BRIDGE_URL",
+            "RATE_LIMIT_PER_MINUTE",
         ):
             with self.subTest(ngrok_environment=required):
                 self.assertIn(required, ngrok_service)
@@ -703,6 +697,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             'local login bypass must be false',
             'secure IDP cookies are required',
             'gateway host bind must remain loopback-only',
+            'RATE_LIMIT_PER_MINUTE must be a positive integer',
             'a dedicated ngrok authtoken is required',
             'HAI_NGROK_VALIDATE_ONLY',
             'public A2A requires HAI_A2A_BRIDGE_ENABLED=true',

@@ -79,8 +79,9 @@ func PostgresProbe(cfg config.Configuration) doctor.Probe {
 // RedisProbe checks the Redis declared in the compose stack.
 //
 // Redis backs the shared rate limiter when configured. It remains a
-// non-critical readiness dependency because router startup deliberately falls
-// back to an in-process limiter when Redis is unavailable.
+// non-critical readiness dependency because router startup and runtime
+// deliberately fall back to a bounded in-process limiter when Redis is
+// unavailable.
 func RedisProbe(cfg config.Configuration) doctor.Probe {
 	addr := strings.TrimSpace(cfg.RedisAddr)
 	return doctor.Probe{

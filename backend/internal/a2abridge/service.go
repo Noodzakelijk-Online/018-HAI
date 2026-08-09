@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"automation-hub-backend/internal/task"
@@ -129,8 +130,8 @@ func NewService(config Config, planner task.PreviewService) *Service {
 	if !config.Enabled {
 		return s
 	}
-	if len(config.Token) < 32 || strings.ContainsAny(config.Token, "\r\n") {
-		s.err = tokenEnv + " must contain at least 32 non-newline characters"
+	if len(config.Token) < 32 || strings.IndexFunc(config.Token, unicode.IsSpace) >= 0 {
+		s.err = tokenEnv + " must contain at least 32 non-whitespace characters"
 		return s
 	}
 	if !validOwner(config.OwnerID) {
@@ -298,7 +299,7 @@ func isLocalHost(host string) bool {
 		return true
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+	return ip != nil && ip.IsLoopback()
 }
 
 func validateNgrokOrigin(raw string) (*url.URL, error) {

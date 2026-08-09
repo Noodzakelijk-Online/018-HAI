@@ -13,6 +13,7 @@ The preflight fails closed unless:
 - `LOCAL_LOGIN_BYPASS_ENABLED=false`;
 - `IDP_COOKIE_SECURE=true`;
 - `GATEWAY_HOST_BIND=127.0.0.1`;
+- `RATE_LIMIT_PER_MINUTE` is a positive integer;
 - the ngrok token and HAI signing/encryption secrets are non-placeholder values;
 - `HAI_NGROK_URL` is a fixed HTTPS origin; and
 - configured Google login/source callbacks exactly match that public origin.
@@ -25,10 +26,12 @@ these connector checks, so invoking Compose directly cannot create a tunnel
 whose advertised A2A endpoint disagrees with the public origin.
 
 The container entrypoint independently rechecks production mode, disabled
-local-login bypass, secure cookies, loopback gateway binding, a dedicated token,
-and a fixed ngrok HTTPS origin. Calling Compose directly therefore cannot bypass
-the core exposure gate; the PowerShell preflight adds the stronger secret and
-OAuth consistency checks.
+local-login bypass, secure cookies, loopback gateway binding, enabled API rate
+limiting, a dedicated token, and a fixed ngrok HTTPS origin. Calling Compose
+directly therefore cannot bypass the core exposure gate; the PowerShell
+preflight adds the stronger secret and OAuth consistency checks. The gateway
+also applies a small fixed-memory throttle to unauthenticated authentication
+and A2A routes, independently of the backend's Redis-backed limiter.
 
 Use a dedicated ngrok authtoken with an ACL restricted to the reserved HAI
 domain. Do not reuse a general account token. The agent image is digest-pinned,
@@ -46,6 +49,7 @@ RUN_MODE=production
 LOCAL_LOGIN_BYPASS_ENABLED=false
 IDP_COOKIE_SECURE=true
 GATEWAY_HOST_BIND=127.0.0.1
+RATE_LIMIT_PER_MINUTE=120
 ```
 
 Optional bounded A2A planning through this same origin requires:

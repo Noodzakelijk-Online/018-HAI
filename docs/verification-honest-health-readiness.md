@@ -233,7 +233,11 @@ only in the local Postgres volume.
 The per-IP rate limiter kept its counters in a per-process map, so the limit
 reset on every restart and could not hold across multiple backend instances.
 Counters now live in Redis when `REDIS_ADDR` is set, with an in-process
-fallback when it is not.
+fallback when it is absent at startup or becomes unavailable at runtime. The
+runtime fallback remains bounded; a Redis outage no longer turns an enabled
+limiter into an unlimited pass-through. Its per-key map is capped at 4,096
+entries, pruning expired windows before evicting the oldest active key, so
+rotating client identifiers cannot grow fallback memory indefinitely.
 
 Fixing this surfaced another plumbing gap first: `RATE_LIMIT_PER_MINUTE` was
 defined in `.env` but never passed to the backend container, so the limiter
@@ -270,8 +274,9 @@ without the backend having counted it locally.
 
 Default is unchanged (`RATE_LIMIT_PER_MINUTE=0`, disabled): 12 rapid requests
 all return 200, so normal use is unaffected. Unit tests cover the limit
-boundary, per-key isolation, and fail-open/fail-closed behaviour when Redis is
-unavailable, using a deterministic fake so they need no running Redis.
+boundary, per-key isolation, bounded local failover, and fail-closed behaviour
+when no fallback exists, using a deterministic fake so they need no running
+Redis.
 
 ## 12. Honest connector status
 
