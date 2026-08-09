@@ -50,7 +50,9 @@ docker compose -f docker-compose.local.yml --env-file .env.local up -d --build
 docker compose -f docker-compose.local.yml --env-file .env.local ps
 ```
 
-Result: **11/11 services up, 10 healthy.**
+Result at the time of this historical capture: **11/11 services up, 10 healthy.**
+The current local topology has since replaced the Kafka plus ZooKeeper pair
+with one bounded Kafka KRaft process; the readiness method below is unchanged.
 
 | Service | Status |
 | --- | --- |
@@ -62,9 +64,29 @@ Result: **11/11 services up, 10 healthy.**
 | postgres-idp | Up (healthy) |
 | redis | Up (healthy) |
 | kafka | Up (healthy) |
-| zookeeper | Up (healthy) |
 | generic-auto | Up (healthy) |
 | nginxconfigmanager | Up |
+
+### Current KRaft cutover evidence (2026-08-09)
+
+The retained-data Windows stack was cut over to a fresh
+`018-hai-kafka-kraft-data` volume without deleting the three legacy Kafka and
+ZooKeeper volumes. The active topology contained ten services and no ZooKeeper
+container. Kafka topic `automation-events` was recreated with one partition,
+leader `1`, and in-sync replica `1`.
+
+An authenticated automation transaction exercised the real backend, Postgres,
+Kafka publisher, and nginx-config-manager consumer: create returned `201`, read
+returned `200`, delete returned `204`, and the deleted record returned `404`.
+The topic end offset advanced from `2` to `4`, and the temporary generated
+route was removed. `/readyz` reported live Postgres, Redis, and Kafka probes as
+reachable with `fail: 0`; it remained truthfully `degraded` only because no LLM
+provider was configured.
+
+Three immediate idle samples placed KRaft at a median 303.4 MiB, 69 processes,
+and 1.13% CPU. The previous Kafka-plus-ZooKeeper pair used about 413.5 MiB and
+98 processes in the pre-cutover sample. The full active HAI stack dropped from
+about 574.2 MiB to 473.2 MiB in the comparable point-in-time measurements.
 
 ## 3. The readiness lie (before the fix)
 

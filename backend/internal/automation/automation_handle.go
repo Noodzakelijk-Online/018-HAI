@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -166,6 +168,10 @@ func (h *Handler) GetByID(c *gin.Context) {
 
 	automation, err := h.service.FindByID(id)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Automation not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

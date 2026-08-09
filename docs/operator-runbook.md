@@ -34,6 +34,24 @@ this guarantee and should be reserved for an unresponsive process.
 Do not add `-v` unless the reviewed operation is intentionally deleting local
 database and queue volumes.
 
+### Kafka KRaft Cutover And Rollback
+
+The local stack runs one Kafka 7.6.1 process in combined KRaft
+broker/controller mode and stores its metadata in
+`018-hai-kafka-kraft-data`. `KAFKA_CLUSTER_ID` must remain stable for the
+lifetime of that volume. Do not point KRaft at the former
+`018-hai-kafka-data` volume: it contains ZooKeeper-era broker metadata and is
+not an in-place migration source.
+
+Upgrades from the former ZooKeeper topology leave
+`018-hai-kafka-data`, `018-hai-zookeeper-data`, and
+`018-hai-zookeeper-log` detached and unchanged for rollback. This means queued
+local events and consumer offsets do not transfer into the fresh KRaft log.
+Before removing the legacy volumes, verify that no required local event remains
+only in them and record the decision in the operational audit. `down -v`,
+`docker volume prune`, and broad Docker cleanup are prohibited while that
+review is pending.
+
 ## Health Checks
 
 | Check | Command | Healthy |

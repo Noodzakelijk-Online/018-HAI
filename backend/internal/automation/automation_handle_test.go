@@ -5,9 +5,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/identity"
+	"automation-hub-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func TestAutomationRoutesRequireVerifiedOperator(t *testing.T) {
@@ -35,5 +38,27 @@ func TestAutomationRoutesRequireVerifiedOperator(t *testing.T) {
 	authenticated.ServeHTTP(authenticatedRecorder, httptest.NewRequest(http.MethodGet, "/automation/", nil))
 	if authenticatedRecorder.Code != http.StatusNoContent {
 		t.Fatalf("authenticated automation route status = %d, want %d: %s", authenticatedRecorder.Code, http.StatusNoContent, authenticatedRecorder.Body.String())
+	}
+}
+
+func TestGetAutomationReturnsNotFoundForDeletedRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	existingID := uuid.New()
+	handler := NewHandler(newTestService(
+		newFakeAutomationRepo(&models.Automation{ID: existingID}),
+		events.Publisher{},
+	))
+	router := gin.New()
+	router.GET("/automation/:id", handler.GetByID)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/automation/"+uuid.NewString(), nil),
+	)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("missing automation status = %d, want %d: %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }

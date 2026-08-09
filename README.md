@@ -571,19 +571,25 @@ host port remains loopback-bound by default. Compose limits the gateway to
 profile reaches that private port and still passes through the gateway's
 authentication, rate limiting, and owner-scoped backend controls.
 
-The local Kafka pair remains a single broker plus ZooKeeper to avoid an unsafe
-in-place metadata migration, but both images are digest-pinned and bounded. The
-default broker heap is 128-256 MiB and ZooKeeper is 64-128 MiB. Their Compose
-ceilings are 512 MiB and 256 MiB respectively. The broker health check uses a
-lightweight TCP readiness probe instead of starting a second JVM every ten
-seconds; the config manager's real Kafka consumer remains the end-to-end
-messaging readiness signal. Kafka data and ZooKeeper snapshots/logs use named
-volumes so recreating either container no longer discards queued events or
-broker metadata. In the reference idle Windows run, Kafka fell from about
-489 MiB, 116 processes, and a health-check-driven 130% CPU spike to about
-284 MiB, 60 processes, and 1.5-2% CPU. ZooKeeper fell from about 129 MiB and
-84 processes to about 94 MiB and 38 processes. Existing topic offsets survived
-the live migration into the named volumes.
+The local event bus uses one digest-pinned Kafka 7.6.1 process in combined
+KRaft broker/controller mode; ZooKeeper is not part of the active topology. The
+default heap is 64-160 MiB and the Compose envelope is 384 MiB, 0.75 CPU, and
+160 processes. The broker health check uses a lightweight TCP readiness probe
+instead of starting a second JVM every ten seconds; the config manager's real
+Kafka consumer remains the end-to-end messaging readiness signal. KRaft data
+uses the named `018-hai-kafka-kraft-data` volume. Upgrading from the earlier
+ZooKeeper topology deliberately starts a fresh local event log because the old
+metadata cannot be mounted safely into KRaft. The detached
+`018-hai-kafka-data`, `018-hai-zookeeper-data`, and
+`018-hai-zookeeper-log` volumes are retained for explicit rollback until an
+operator reviews and removes them. Never use `docker compose down -v` during
+that retention period. In the retained-data Windows cutover, the previous
+Kafka-plus-ZooKeeper pair used about 413.5 MiB and 98 processes at idle. Three
+post-transaction KRaft samples had a median of 303.4 MiB, 69 processes, and
+1.13% CPU: about 110.1 MiB (26.6%) and 29 processes (29.6%) less for the event
+topology. The full ten-service HAI stack measured about 473.2 MiB at the same
+point, versus about 574.2 MiB before the cutover (17.6% lower); host workload
+and JVM settling can move these point-in-time values.
 
 Open [http://localhost](http://localhost).
 

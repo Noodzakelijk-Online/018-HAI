@@ -212,61 +212,50 @@ class CIWorkflowContractTest(unittest.TestCase):
             gateway_template.read_text(encoding="utf-8"),
         )
 
-    def test_local_kafka_runtime_avoids_healthcheck_jvms_and_is_bounded(self) -> None:
+    def test_local_kafka_runtime_uses_bounded_single_node_kraft(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
-        zookeeper_start = compose.index("  zookeeper:\n")
-        kafka_start = compose.index("  kafka:\n", zookeeper_start)
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        kafka_start = compose.index("  kafka:\n")
         kafka_end = compose.index("\n  generic-auto:\n", kafka_start)
-        zookeeper = compose[zookeeper_start:kafka_start]
         kafka = compose[kafka_start:kafka_end]
 
-        for block, requirements in (
-            (
-                zookeeper,
-                (
-                    "cp-zookeeper:7.6.1@sha256:",
-                    'KAFKA_HEAP_OPTS: "-Xms${ZOOKEEPER_HEAP_MIN:-64m} -Xmx${ZOOKEEPER_HEAP_MAX:-128m}"',
-                    "mem_limit: ${ZOOKEEPER_MEMORY_LIMIT:-256m}",
-                    "cpus: ${ZOOKEEPER_CPU_LIMIT:-0.25}",
-                    "pids_limit: ${ZOOKEEPER_PIDS_LIMIT:-128}",
-                    "no-new-privileges:true",
-                    "cap_drop:",
-                    "zookeeper-data:/var/lib/zookeeper/data",
-                    "zookeeper-log:/var/lib/zookeeper/log",
-                ),
-            ),
-            (
-                kafka,
-                (
-                    "cp-kafka:7.6.1@sha256:",
-                    'KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-128m} -Xmx${KAFKA_HEAP_MAX:-256m}"',
-                    "KAFKA_NUM_NETWORK_THREADS: 2",
-                    "KAFKA_NUM_IO_THREADS: 4",
-                    "mem_limit: ${KAFKA_MEMORY_LIMIT:-512m}",
-                    "cpus: ${KAFKA_CPU_LIMIT:-1.0}",
-                    "pids_limit: ${KAFKA_PIDS_LIMIT:-192}",
-                    "no-new-privileges:true",
-                    "cap_drop:",
-                    'test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]',
-                    "kafka-data:/var/lib/kafka/data",
-                ),
-            ),
+        for required in (
+            "cp-kafka:7.6.1@sha256:",
+            "CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}",
+            "KAFKA_NODE_ID: 1",
+            "KAFKA_PROCESS_ROLES: broker,controller",
+            "KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093",
+            "KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER",
+            'KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-64m} -Xmx${KAFKA_HEAP_MAX:-160m}"',
+            "KAFKA_NUM_NETWORK_THREADS: 2",
+            "KAFKA_NUM_IO_THREADS: 2",
+            "mem_limit: ${KAFKA_MEMORY_LIMIT:-384m}",
+            "cpus: ${KAFKA_CPU_LIMIT:-0.75}",
+            "pids_limit: ${KAFKA_PIDS_LIMIT:-160}",
+            "no-new-privileges:true",
+            "cap_drop:",
+            'test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]',
+            "kafka-kraft-data:/var/lib/kafka/data",
         ):
-            for required in requirements:
-                with self.subTest(required=required):
-                    self.assertIn(required, block)
+            with self.subTest(required=required):
+                self.assertIn(required, kafka)
 
         self.assertNotIn("kafka-broker-api-versions", kafka)
+        self.assertNotIn("zookeeper", compose.lower())
+        self.assertNotIn("kafka-network", compose)
+        self.assertIn("KAFKA_CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk", environment)
+        self.assertIn("KAFKA_HEAP_MAX=160m", environment)
+        self.assertIn("KAFKA_MEMORY_LIMIT=384m", environment)
 
     def test_local_persistence_services_are_durable_pinned_and_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         idp_start = compose.index("\n  postgres-idp:\n") + 1
         automation_start = compose.index("\n  postgres-automation:\n", idp_start) + 1
         redis_start = compose.index("\n  redis:\n", automation_start) + 1
-        zookeeper_start = compose.index("\n  zookeeper:\n", redis_start) + 1
+        kafka_start = compose.index("\n  kafka:\n", redis_start) + 1
         idp = compose[idp_start:automation_start]
         automation = compose[automation_start:redis_start]
-        redis = compose[redis_start:zookeeper_start]
+        redis = compose[redis_start:kafka_start]
 
         for block, requirements in (
             (
@@ -339,10 +328,8 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertEqual(compose.count("start_interval: 2s"), 9)
         for required in (
             "GIN_MODE: release",
-            "ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN",
             "KAFKA_LOG4J_ROOT_LOGLEVEL: WARN",
             "kafka=WARN,kafka.controller=WARN,state.change.logger=WARN",
-            "printf srvr | nc -w 2 127.0.0.1 ${ZOOKEEPER_PORT}",
             "filecount=2,filesize=10M",
         ):
             with self.subTest(required=required):
