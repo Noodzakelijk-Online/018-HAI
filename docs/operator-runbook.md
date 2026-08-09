@@ -78,6 +78,19 @@ failure. The backend retries the committed event with a stable event ID,
 bounded exponential backoff, a fenced worker lease, and at-least-once delivery.
 The nginx-config consumer treats redelivery idempotently.
 
+The nginx-config consumer uses the stable
+`NGINX_CONFIG_MANAGER_GROUP_ID` cursor and starts at the oldest uncommitted
+offset. Events published while that service is stopped are therefore consumed
+after it returns. It writes payload-free completion receipts below
+`NGINX_CONFIG_MANAGER_INBOX_DIR` before advancing offsets. A replay first checks
+that persistent inbox. The filesystem effect also compares rendered content
+before replacing a file and treats an already-absent delete as successful, so
+the narrow crash window between applying an effect and writing its receipt is
+still replay-safe. Processing failures remain uncommitted until the configured
+retry budget is exhausted; poison messages then receive a durable dead-letter
+receipt and no longer block the partition. Receipts are pruned after the
+configured retention period in bounded startup batches.
+
 Inspect owner-scoped delivery health at `GET /api/v1/event-delivery/`. The
 response contains pending, published, and dead-letter counts, the oldest
 pending timestamp, and up to ten recent failures. Event payloads are

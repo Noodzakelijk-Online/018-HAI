@@ -3,6 +3,7 @@ package autoconfig
 import (
 	"automation-hub-nginxconfigmanager/internal/app/config"
 	"automation-hub-nginxconfigmanager/internal/app/entities"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/IBM/sarama"
@@ -22,22 +23,24 @@ const (
 )
 
 func manageConfig(action ConfigAction, auto entities.Automation) error {
-	var err error
 	log.Printf("Managing config: %v\n", auto)
-	err = auto.Validate()
-	if err != nil {
+	if err := auto.Validate(); err != nil {
 		return err
 	}
+	var (
+		changed bool
+		err     error
+	)
 	switch action {
 	case Add:
-		err = addConfig(auto)
+		changed, err = addConfig(auto)
 	case Remove:
-		err = removeConfig(auto.URLPath)
+		changed, err = removeConfig(auto.URLPath)
 	case Update:
 		if auto.OldUrlPath == "" {
 			return fmt.Errorf("oldUrlPath is required for update events")
 		}
-		err = updateConfig(auto)
+		changed, err = updateConfig(auto)
 	default:
 		return fmt.Errorf("invalid action")
 	}
@@ -46,22 +49,37 @@ func manageConfig(action ConfigAction, auto entities.Automation) error {
 		return err
 	}
 
+	if !changed {
+		log.Printf("Config already matches requested state for %s; reload skipped", auto.URLPath)
+		return nil
+	}
 	return reloadNginx()
 }
 
-func addConfig(auto entities.Automation) error {
+func addConfig(auto entities.Automation) (bool, error) {
 	filePath, err := configPath(auto.URLPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	tmpl, err := template.New("config").Parse(configTemplate)
 	if err != nil {
-		return err
+		return false, err
+	}
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, auto); err != nil {
+		return false, err
+	}
+	if existing, readErr := os.ReadFile(filePath); readErr == nil {
+		if bytes.Equal(existing, rendered.Bytes()) {
+			return false, nil
+		}
+	} else if !os.IsNotExist(readErr) {
+		return false, readErr
 	}
 
 	file, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".*.tmp")
 	if err != nil {
-		return err
+		return false, err
 	}
 	tempPath := file.Name()
 	committed := false
@@ -72,50 +90,57 @@ func addConfig(auto entities.Automation) error {
 		}
 	}()
 
-	if err := tmpl.Execute(file, auto); err != nil {
-		return err
+	if _, err := file.Write(rendered.Bytes()); err != nil {
+		return false, err
 	}
 	if err := file.Sync(); err != nil {
-		return err
+		return false, err
 	}
 	if err := file.Chmod(0o644); err != nil {
-		return err
+		return false, err
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return false, err
 	}
 	if err := os.Rename(tempPath, filePath); err != nil {
-		return err
+		return false, err
 	}
 	committed = true
-	return nil
+	return true, nil
 }
 
-func removeConfig(name string) error {
+func removeConfig(name string) (bool, error) {
 	filePath, err := configPath(name)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		// The transactional outbox provides at-least-once delivery. A repeated
 		// delete has already reached the requested state and is therefore a
 		// successful idempotent operation.
-		return nil
+		return false, nil
+	} else if err != nil {
+		return false, err
 	}
-	return os.Remove(filePath)
+	if err := os.Remove(filePath); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-func updateConfig(auto entities.Automation) error {
+func updateConfig(auto entities.Automation) (bool, error) {
 	if auto.OldUrlPath == auto.URLPath {
 		return addConfig(auto)
 	}
-	if err := addConfig(auto); err != nil {
-		return err
+	added, err := addConfig(auto)
+	if err != nil {
+		return false, err
 	}
-	if err := removeConfig(auto.OldUrlPath); err != nil {
-		return fmt.Errorf("new config written but old config could not be removed: %w", err)
+	removed, err := removeConfig(auto.OldUrlPath)
+	if err != nil {
+		return false, fmt.Errorf("new config written but old config could not be removed: %w", err)
 	}
-	return nil
+	return added || removed, nil
 }
 
 func reloadNginx() error {
@@ -146,15 +171,22 @@ func configPath(name string) (string, error) {
 }
 
 func processMessage(msg *sarama.ConsumerMessage) {
+	if err := applyMessage(msg); err != nil {
+		log.Printf("Failed to process event: %v", err)
+	}
+}
+
+func applyMessage(msg *sarama.ConsumerMessage) error {
+	if msg == nil {
+		return fmt.Errorf("Kafka message is required")
+	}
 	var event entities.AutomationEvent
 	err := json.Unmarshal(msg.Value, &event)
 	if err != nil {
-		log.Printf("Failed to unmarshal message: %v", err)
-		return
+		return fmt.Errorf("decode automation event: %w", err)
 	}
 	if event.Automation == nil {
-		log.Printf("Ignoring %s event without automation payload", event.Type)
-		return
+		return fmt.Errorf("%s event has no automation payload", event.Type)
 	}
 
 	switch event.Type {
@@ -165,11 +197,7 @@ func processMessage(msg *sarama.ConsumerMessage) {
 	case entities.DeleteEvent:
 		err = manageConfig(Remove, *event.Automation)
 	default:
-		log.Printf("Unknown event type: %s", event.Type)
-		return
+		return fmt.Errorf("unknown event type: %s", event.Type)
 	}
-
-	if err != nil {
-		log.Printf("Failed to process event: %v", err)
-	}
+	return err
 }

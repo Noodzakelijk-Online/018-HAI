@@ -522,6 +522,14 @@ class CIWorkflowContractTest(unittest.TestCase):
             / "autoconfig"
             / "auto_config_service.go"
         ).read_text(encoding="utf-8")
+        inbox = (
+            ROOT
+            / "nginx-config-manager"
+            / "internal"
+            / "app"
+            / "autoconfig"
+            / "inbox.go"
+        ).read_text(encoding="utf-8")
 
         for required in (
             "CGO_ENABLED=0",
@@ -549,13 +557,23 @@ class CIWorkflowContractTest(unittest.TestCase):
             "- ALL",
             "condition: service_healthy",
             "/healthz",
+            "NGINX_CONFIG_MANAGER_GROUP_ID:",
+            "NGINX_CONFIG_MANAGER_INBOX_DIR:",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, manager)
 
-        self.assertIn("Consumer.Return.Errors = true", consumer)
+        self.assertIn("sarama.NewConsumerGroup", consumer)
+        self.assertIn("Consumer.Offsets.Initial = sarama.OffsetOldest", consumer)
+        self.assertIn("h.inbox.Process", consumer)
+        self.assertIn("session.MarkMessage", consumer)
         self.assertIn("ready.Store(true)", consumer)
-        self.assertIn("Kafka message channel closed", consumer)
+        self.assertNotIn("ConsumePartition", consumer)
+        self.assertNotIn("sarama.OffsetNewest", consumer)
+        self.assertIn("os.O_EXCL", inbox)
+        self.assertIn('".dead.json"', inbox)
+        self.assertIn("maxAttempts", inbox)
+        self.assertIn("Prune", inbox)
         self.assertIn("os.CreateTemp", config_writer)
         self.assertIn("file.Sync()", config_writer)
         self.assertIn("os.Rename", config_writer)
