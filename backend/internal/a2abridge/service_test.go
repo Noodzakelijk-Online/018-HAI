@@ -61,6 +61,53 @@ func TestStatusRejectsExternalEndpointAndWrongToken(t *testing.T) {
 	}
 }
 
+func TestPublicNgrokBridgeRequiresExactFailClosedProductionConfiguration(t *testing.T) {
+	valid := Config{
+		Enabled:     true,
+		Token:       testBridgeToken,
+		OwnerID:     "owner@example.test",
+		URL:         "https://hai-example.ngrok.app/api/v1/a2a",
+		PublicNgrok: true,
+		NgrokURL:    "https://hai-example.ngrok.app",
+		RunMode:     "production",
+	}
+	if status := NewService(valid, &previewStub{}).Status(); !status.Configured || status.Transport != "fixed_ngrok_https" {
+		t.Fatalf("valid public bridge status = %#v", status)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "explicit opt in", mutate: func(c *Config) { c.PublicNgrok = false }},
+		{name: "production mode", mutate: func(c *Config) { c.RunMode = "development" }},
+		{name: "login bypass disabled", mutate: func(c *Config) { c.LocalLoginBypass = true }},
+		{name: "https only", mutate: func(c *Config) { c.URL = "http://hai-example.ngrok.app/api/v1/a2a" }},
+		{name: "known ngrok host", mutate: func(c *Config) { c.URL = "https://example.com/api/v1/a2a" }},
+		{name: "matching origin", mutate: func(c *Config) { c.NgrokURL = "https://other.ngrok.app" }},
+		{name: "exact endpoint path", mutate: func(c *Config) { c.URL = "https://hai-example.ngrok.app/a2a" }},
+		{name: "no public port", mutate: func(c *Config) { c.URL = "https://hai-example.ngrok.app:8443/api/v1/a2a" }},
+		{name: "public flag cannot label local URL", mutate: func(c *Config) { c.URL = "http://127.0.0.1/api/v1/a2a" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := valid
+			test.mutate(&config)
+			status := NewService(config, &previewStub{}).Status()
+			if status.Configured || status.ConfigError == "" {
+				t.Fatalf("misconfigured public bridge status = %#v", status)
+			}
+		})
+	}
+}
+
+func TestLocalBridgeRequiresExactEndpointPath(t *testing.T) {
+	service := NewService(Config{Enabled: true, Token: testBridgeToken, OwnerID: "owner", URL: "http://127.0.0.1/not-a2a"}, &previewStub{})
+	if status := service.Status(); status.Configured || !strings.Contains(status.ConfigError, "/api/v1/a2a") {
+		t.Fatalf("local path validation status = %#v", status)
+	}
+}
+
 func TestHandlerProvidesCardAndTokenBoundedSendMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewHandler(configuredService(&previewStub{}))

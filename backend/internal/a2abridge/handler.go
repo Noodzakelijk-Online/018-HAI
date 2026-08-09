@@ -36,8 +36,8 @@ func (h *Handler) AgentCard(c *gin.Context) {
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
-	c.Header("Cache-Control", "private, max-age=300")
-	c.Header("ETag", `"hai-a2a-controlled-planning-1.0.1"`)
+	c.Header("Cache-Control", "public, max-age=300")
+	c.Header("ETag", `"hai-a2a-controlled-planning-1.0.2"`)
 	c.JSON(http.StatusOK, card)
 }
 
@@ -63,11 +63,11 @@ func (h *Handler) Send(c *gin.Context) {
 		return
 	}
 	if strings.TrimSpace(c.GetHeader("A2A-Version")) != a2aVersion {
-		writeRPCError(c, request.ID, -32009, "A2A-Version 1.0 is required by this local bridge")
+		writeRPCError(c, request.ID, -32009, "A2A-Version 1.0 is required by this bridge")
 		return
 	}
 	if request.Method != "SendMessage" {
-		writeRPCError(c, request.ID, -32601, "only SendMessage is supported by this local planning bridge")
+		writeRPCError(c, request.ID, -32601, "only SendMessage is supported by this planning bridge")
 		return
 	}
 	text, err := taskText(request.Params)

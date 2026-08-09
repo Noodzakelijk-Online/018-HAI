@@ -17,6 +17,13 @@ The preflight fails closed unless:
 - `HAI_NGROK_URL` is a fixed HTTPS origin; and
 - configured Google login/source callbacks exactly match that public origin.
 
+When the bounded A2A planning connector is publicly enabled, preflight also
+requires the base bridge to be enabled, a separate 32-or-more-character bridge
+token, one named owner, and an endpoint exactly equal to
+`${HAI_NGROK_URL}/api/v1/a2a`. The container entrypoint independently repeats
+these connector checks, so invoking Compose directly cannot create a tunnel
+whose advertised A2A endpoint disagrees with the public origin.
+
 The container entrypoint independently rechecks production mode, disabled
 local-login bypass, secure cookies, loopback gateway binding, a dedicated token,
 and a fixed ngrok HTTPS origin. Calling Compose directly therefore cannot bypass
@@ -41,6 +48,20 @@ IDP_COOKIE_SECURE=true
 GATEWAY_HOST_BIND=127.0.0.1
 ```
 
+Optional bounded A2A planning through this same origin requires:
+
+```text
+HAI_A2A_BRIDGE_ENABLED=true
+HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED=true
+HAI_A2A_BRIDGE_OWNER_ID=<one configured HAI owner identity>
+HAI_A2A_BRIDGE_TOKEN=<dedicated random token of at least 32 characters>
+HAI_A2A_BRIDGE_URL=https://your-hai-domain.ngrok.app/api/v1/a2a
+```
+
+This exposes an authenticated planning draft only. It does not create or
+execute tasks, disclose HAI source or memory context, approve work, call models
+or tools, discover peers, or implement the full A2A task lifecycle.
+
 If Google login or Google connected sources are configured, register and set:
 
 ```text
@@ -60,6 +81,17 @@ Start and stop the profile:
 .\scripts\start-ngrok.ps1
 .\scripts\start-ngrok.ps1 -Stop
 ```
+
+Verify the A2A chain locally before exposure, then through the live tunnel:
+
+```powershell
+.\scripts\smoke-a2a-bridge.ps1
+.\scripts\smoke-a2a-bridge.ps1 -Public
+```
+
+The public smoke requires the real tunnel and its configured token. It checks
+the Agent Card, denial without that token, and a successful non-executable
+planning response without printing the credential.
 
 Build the ordinary HAI stack before the first tunnel start. On every start, the
 script reconciles and health-checks the IDP, backend, frontend, and gateway with

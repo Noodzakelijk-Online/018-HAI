@@ -610,6 +610,14 @@ placeholders, the gateway is not loopback-bound, or Google OAuth callbacks do
 not match the fixed ngrok origin. The tunnel reaches only nginx on the private
 Docker network and publishes no database, backend, IDP, or inspector port.
 
+The optional A2A connector remains a planning-only integration surface. It is
+local by default. To expose only that bounded endpoint through the same fixed
+ngrok origin, explicitly enable its public mode, configure its separate token
+and owner, and set its URL to `${HAI_NGROK_URL}/api/v1/a2a`. Validate the local
+chain with `scripts/smoke-a2a-bridge.ps1`; after starting a real reviewed tunnel,
+use `scripts/smoke-a2a-bridge.ps1 -Public`. Neither path grants execution,
+approval, source, memory, provider, or runtime authority.
+
 See [governed ngrok cloud access](docs/ngrok-cloud-access.md) for token ACL,
 configuration, validation, start, stop, and recovery instructions.
 

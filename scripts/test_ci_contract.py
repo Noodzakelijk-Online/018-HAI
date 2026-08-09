@@ -160,6 +160,9 @@ class CIWorkflowContractTest(unittest.TestCase):
 
     def test_ngrok_profile_is_opt_in_pinned_and_preflight_gated(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
         preflight = (ROOT / "scripts" / "start-ngrok.ps1").read_text(
             encoding="utf-8"
         )
@@ -204,6 +207,22 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("update_check: false", config)
         self.assertIn("inspect_db_size: -1", config)
         self.assertIn("http://nginx:80", entrypoint)
+        self.assertIn("Test-NgrokHostname", preflight)
+        self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED", preflight)
+        self.assertIn("HAI_A2A_BRIDGE_TOKEN", preflight)
+        self.assertIn("/api/v1/a2a", preflight)
+        self.assertIn("Ngrok container fail-closed gate", workflow)
+        self.assertIn("sh -n deploy/ngrok/start-ngrok.sh", workflow)
+        self.assertIn("mismatched public A2A origin unexpectedly passed", workflow)
+        for required in (
+            "HAI_A2A_BRIDGE_ENABLED",
+            "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED",
+            "HAI_A2A_BRIDGE_TOKEN",
+            "HAI_A2A_BRIDGE_OWNER_ID",
+            "HAI_A2A_BRIDGE_URL",
+        ):
+            with self.subTest(ngrok_environment=required):
+                self.assertIn(required, ngrok_service)
         for required in (
             'RUN_MODE must be production',
             'local login bypass must be false',
@@ -211,6 +230,10 @@ class CIWorkflowContractTest(unittest.TestCase):
             'gateway host bind must remain loopback-only',
             'a dedicated ngrok authtoken is required',
             'HAI_NGROK_VALIDATE_ONLY',
+            'public A2A requires HAI_A2A_BRIDGE_ENABLED=true',
+            'public A2A requires a dedicated 32+ character bridge token',
+            'public A2A requires one named owner',
+            'public A2A URL must exactly match the fixed ngrok origin',
             '/bin/ngrok http http://nginx:80',
         ):
             with self.subTest(entrypoint_required=required):

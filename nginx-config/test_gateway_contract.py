@@ -61,6 +61,28 @@ class GatewayAuthContractTest(unittest.TestCase):
         self.assertIn("internal;", block)
         self.assertIn('proxy_set_header X-HAI-Auth-Subrequest "1";', block)
 
+    def test_a2a_connector_bypasses_browser_auth_but_keeps_narrow_token_boundary(self) -> None:
+        card = location_block("location = /.well-known/agent-card.json")
+        send = location_block("location = /api/v1/a2a")
+
+        for block in (card, send):
+            self.assertIn("limit_req zone=hai_a2a_bridge", block)
+            self.assertIn("proxy_pass http://$backend_upstream;", block)
+            self.assertIn("proxy_set_header Cookie \"\";", block)
+            self.assertNotIn("auth_request /auth-verify;", block)
+
+        self.assertIn("proxy_set_header Authorization \"\";", card)
+        self.assertIn("proxy_set_header Authorization $http_authorization;", send)
+        self.assertIn("proxy_set_header A2A-Version $http_a2a_version;", send)
+        self.assertIn("limit_except POST { deny all; }", send)
+        self.assertIn("client_max_body_size 16k;", send)
+
+    def test_a2a_connector_has_dedicated_rate_limit_zone(self) -> None:
+        self.assertIn(
+            "limit_req_zone $binary_remote_addr zone=hai_a2a_bridge:10m rate=10r/m;",
+            NGINX_TEMPLATE,
+        )
+
     def test_idp_namespaces_cannot_request_or_receive_verified_token_header(self) -> None:
         for marker in (
             "location ^~ /api/v1/auth/",

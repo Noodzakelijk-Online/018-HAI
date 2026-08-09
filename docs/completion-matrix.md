@@ -135,6 +135,17 @@ cases, and Windows CI contracts pass. A real ACL-restricted token/domain and a
 retained external login acceptance run remain required before this path is
 live-proven.
 
+The bounded A2A planning bridge is now reachable through nginx both locally and,
+only with a second explicit production opt-in, through the same fixed ngrok
+origin. Browser auth is intentionally not accepted on those two exact routes;
+`SendMessage` requires its separate bridge token and nginx applies a dedicated
+request throttle and 16 KiB body limit. Backend, gateway, and Windows smoke
+tests prove the local Agent Card, anonymous denial, authenticated planning
+response, and no-execution scope. The Windows and container tunnel gates reject
+misaligned public bridge configuration. A real public tunnel run remains an
+external acceptance requirement and no full distributed A2A lifecycle is
+claimed.
+
 ## 3. Production engineering
 
 | Item | Implemented | Unit-tested | Sandbox-tested | Live-tested | Notes / Deferred |

@@ -57,6 +57,16 @@ function Require-Secret([hashtable]$Values, [string]$Name, [int]$MinimumLength) 
     }
 }
 
+function Test-NgrokHostname([string]$HostName) {
+    $normalized = $HostName.Trim().ToLowerInvariant()
+    foreach ($suffix in @('.ngrok.app', '.ngrok.dev', '.ngrok-free.app', '.ngrok-free.dev')) {
+        if ($normalized.Length -gt $suffix.Length -and $normalized.EndsWith($suffix)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 $envPath = Resolve-RepoFile $EnvFile
 $composePath = Resolve-RepoFile $ComposeFile
 
@@ -96,8 +106,24 @@ if (-not [Uri]::TryCreate($publicUrlText, [UriKind]::Absolute, [ref]$publicUri) 
     $publicUri.AbsolutePath -ne '/' -or
     -not [string]::IsNullOrEmpty($publicUri.Query) -or
     -not [string]::IsNullOrEmpty($publicUri.Fragment) -or
+    -not $publicUri.IsDefaultPort -or
+    -not (Test-NgrokHostname $publicUri.DnsSafeHost) -or
     $publicUri.Host -eq 'your-reserved-domain.ngrok.app') {
-    throw 'HAI_NGROK_URL must be a fixed HTTPS origin without credentials, path, query, or fragment.'
+    throw 'HAI_NGROK_URL must be a fixed ngrok HTTPS origin without credentials, port, path, query, or fragment.'
+}
+
+$publicA2A = (Get-Setting $settings 'HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED' 'false').ToLowerInvariant() -eq 'true'
+if ($publicA2A) {
+    if ((Get-Setting $settings 'HAI_A2A_BRIDGE_ENABLED' 'false').ToLowerInvariant() -ne 'true') {
+        throw 'HAI_A2A_BRIDGE_ENABLED must be true when the public ngrok bridge is enabled.'
+    }
+    Require-Secret $settings 'HAI_A2A_BRIDGE_TOKEN' 32
+    if ([string]::IsNullOrWhiteSpace((Get-Setting $settings 'HAI_A2A_BRIDGE_OWNER_ID'))) {
+        throw 'HAI_A2A_BRIDGE_OWNER_ID is required when the public ngrok bridge is enabled.'
+    }
+    if ((Get-Setting $settings 'HAI_A2A_BRIDGE_URL').TrimEnd('/') -ne ($publicUrlText + '/api/v1/a2a')) {
+        throw "HAI_A2A_BRIDGE_URL must equal $publicUrlText/api/v1/a2a when the public ngrok bridge is enabled."
+    }
 }
 
 $callbackPaths = @{

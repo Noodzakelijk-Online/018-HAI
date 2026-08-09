@@ -28,6 +28,14 @@ case "$ngrok_origin" in
     ;;
 esac
 
+if [ "${HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED:-false}" = "true" ]; then
+  [ "${HAI_A2A_BRIDGE_ENABLED:-false}" = "true" ] || fail "public A2A requires HAI_A2A_BRIDGE_ENABLED=true"
+  a2a_token="${HAI_A2A_BRIDGE_TOKEN:-}"
+  [ "${#a2a_token}" -ge 32 ] || fail "public A2A requires a dedicated 32+ character bridge token"
+  [ -n "${HAI_A2A_BRIDGE_OWNER_ID:-}" ] || fail "public A2A requires one named owner"
+  [ "${HAI_A2A_BRIDGE_URL:-}" = "${HAI_NGROK_URL%/}/api/v1/a2a" ] || fail "public A2A URL must exactly match the fixed ngrok origin"
+fi
+
 if [ "${HAI_NGROK_VALIDATE_ONLY:-false}" = "true" ]; then
   echo "ngrok exposure gate: validation passed"
   exit 0

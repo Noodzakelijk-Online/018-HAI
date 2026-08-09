@@ -1701,9 +1701,10 @@ func initializeAutoGenCompatibilityRoutes(apiVersion *gin.RouterGroup, handler *
 	}
 }
 
-// initializeA2ABridgeRoutes implements a small local A2A compatibility
-// boundary. The Agent Card carries no user context, and the JSON-RPC endpoint
-// requires a separate bridge token rather than browser identity or API keys.
+// initializeA2ABridgeRoutes implements a small A2A compatibility boundary.
+// It is local by default and can use only the explicitly governed fixed-ngrok
+// mode. The Agent Card carries no user context, and the JSON-RPC endpoint uses
+// a separate bridge token rather than browser identity or API keys.
 func initializeA2ABridgeRoutes(router *gin.Engine, relativePathV1 string, handler *a2abridge.Handler) {
 	router.GET("/.well-known/agent-card.json", handler.AgentCard)
 	router.POST(relativePathV1+"/a2a", handler.Send)

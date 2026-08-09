@@ -107,6 +107,40 @@ jobs:
       - name: Gateway authentication contract
         run: python3 nginx-config/test_gateway_contract.py
       - run: docker compose --env-file .env.example -f docker-compose.local.yml config
+      - name: Ngrok container fail-closed gate
+        run: |
+          sh -n deploy/ngrok/start-ngrok.sh
+          env \
+            RUN_MODE=production \
+            LOCAL_LOGIN_BYPASS_ENABLED=false \
+            IDP_COOKIE_SECURE=true \
+            GATEWAY_HOST_BIND=127.0.0.1 \
+            NGROK_AUTHTOKEN=ci-ngrok-token-000000000000 \
+            HAI_NGROK_URL=https://hai-ci.ngrok.app \
+            HAI_A2A_BRIDGE_ENABLED=true \
+            HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED=true \
+            HAI_A2A_BRIDGE_TOKEN=ci-a2a-token-00000000000000000000 \
+            HAI_A2A_BRIDGE_OWNER_ID=owner@example.test \
+            HAI_A2A_BRIDGE_URL=https://hai-ci.ngrok.app/api/v1/a2a \
+            HAI_NGROK_VALIDATE_ONLY=true \
+            sh deploy/ngrok/start-ngrok.sh
+          if env \
+            RUN_MODE=production \
+            LOCAL_LOGIN_BYPASS_ENABLED=false \
+            IDP_COOKIE_SECURE=true \
+            GATEWAY_HOST_BIND=127.0.0.1 \
+            NGROK_AUTHTOKEN=ci-ngrok-token-000000000000 \
+            HAI_NGROK_URL=https://hai-ci.ngrok.app \
+            HAI_A2A_BRIDGE_ENABLED=true \
+            HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED=true \
+            HAI_A2A_BRIDGE_TOKEN=ci-a2a-token-00000000000000000000 \
+            HAI_A2A_BRIDGE_OWNER_ID=owner@example.test \
+            HAI_A2A_BRIDGE_URL=https://other.ngrok.app/api/v1/a2a \
+            HAI_NGROK_VALIDATE_ONLY=true \
+            sh deploy/ngrok/start-ngrok.sh; then
+            echo "mismatched public A2A origin unexpectedly passed" >&2
+            exit 1
+          fi
       - name: Nginx syntax
         run: |
           python3 - "$RUNNER_TEMP/hai-nginx.conf" <<'PY'

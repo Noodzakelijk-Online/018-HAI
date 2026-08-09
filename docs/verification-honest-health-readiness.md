@@ -488,6 +488,16 @@ negative fail-closed gate cases pass. No live ngrok token or public endpoint was
 used in this verification, so external tunnel and callback behavior remains a
 target-environment acceptance gate rather than a readiness claim.
 
+The A2A planning subset now has exact unauthenticated gateway routes for its
+public Agent Card and token-protected `SendMessage` endpoint, plus a dedicated
+nginx throttle and 16 KiB request limit. Its backend accepts only one bounded
+standalone text message and returns a non-executable HAI planning draft. A local
+end-to-end gateway smoke passed, including anonymous denial and authenticated
+success. Synthetic positive and negative ngrok preflight cases also passed.
+No real ngrok credential/domain was available for this verification, so public
+transport remains unproven and does not imply external-agent execution,
+distributed coordination, or full A2A task-lifecycle support.
+
 ### Known recovery and deployment gaps
 
 - Automation approval-proof replay state is owner-scoped and durable in the
