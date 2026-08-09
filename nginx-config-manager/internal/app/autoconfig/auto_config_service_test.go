@@ -37,6 +37,39 @@ func TestAddConfigUsesURLPathForPublicLocation(t *testing.T) {
 	}
 }
 
+func TestAddConfigAtomicallyReplacesExistingConfig(t *testing.T) {
+	config.AppConfig = config.Configuration{ConfigDir: t.TempDir()}
+	auto := entities.Automation{
+		Name:    "Dashboard",
+		URLPath: "dashboard",
+		Host:    "backend",
+		Port:    8080,
+	}
+	if err := addConfig(auto); err != nil {
+		t.Fatalf("first addConfig: %v", err)
+	}
+
+	auto.Port = 9090
+	if err := addConfig(auto); err != nil {
+		t.Fatalf("second addConfig: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(config.AppConfig.ConfigDir, "dashboard.conf"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(raw), "set $upstream_port 9090;") {
+		t.Fatalf("config = %q, want replacement upstream", raw)
+	}
+	tempFiles, err := filepath.Glob(filepath.Join(config.AppConfig.ConfigDir, ".*.tmp"))
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	if len(tempFiles) != 0 {
+		t.Fatalf("temporary config files remain: %v", tempFiles)
+	}
+}
+
 func TestConfigPathRejectsTraversal(t *testing.T) {
 	config.AppConfig = config.Configuration{ConfigDir: t.TempDir()}
 

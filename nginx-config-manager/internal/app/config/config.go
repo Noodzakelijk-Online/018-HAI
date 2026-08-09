@@ -11,6 +11,7 @@ const (
 	kafkaBrokers  string = "KAFKA_BROKERS"
 	kafkaTopic    string = "KAFKA_TOPIC"
 	reloadEnabled string = "NGINX_RELOAD_ENABLED"
+	healthPort    string = "NGINX_CONFIG_MANAGER_HEALTH_PORT"
 )
 
 type Configuration struct {
@@ -18,6 +19,7 @@ type Configuration struct {
 	Brokers       []string
 	Topic         string
 	ReloadEnabled bool
+	HealthPort    string
 }
 
 var AppConfig Configuration
@@ -29,6 +31,7 @@ func Init() {
 		Brokers:       kafkaBrokersList,
 		Topic:         getEnvString(kafkaTopic, "automation-events"),
 		ReloadEnabled: getEnvBool(reloadEnabled, false),
+		HealthPort:    getEnvString(healthPort, "8081"),
 	}
 }
 

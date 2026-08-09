@@ -936,19 +936,39 @@ services:
       dockerfile: Dockerfile
     container_name: 018-hai-nginx-config-manager
     restart: unless-stopped
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${NGINX_CONFIG_MANAGER_TMPFS_SIZE:-16m}
+    mem_limit: ${NGINX_CONFIG_MANAGER_MEMORY_LIMIT:-128m}
+    mem_reservation: ${NGINX_CONFIG_MANAGER_MEMORY_RESERVATION:-16m}
+    cpus: ${NGINX_CONFIG_MANAGER_CPU_LIMIT:-0.5}
+    pids_limit: ${NGINX_CONFIG_MANAGER_PIDS_LIMIT:-64}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       BROKERS_ADDR: ${BROKERS_ADDR}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
       CONFIG_DIR: ${CONFIG_DIR}
       NGINX_RELOAD_ENABLED: ${NGINX_RELOAD_ENABLED}
+      NGINX_CONFIG_MANAGER_HEALTH_PORT: ${NGINX_CONFIG_MANAGER_HEALTH_PORT:-8081}
     depends_on:
       kafka:
         condition: service_healthy
       nginx:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./nginx-config/sites-enabled:/app/sites-enabled
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${NGINX_CONFIG_MANAGER_HEALTH_PORT:-8081}/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       - service-hub
 

@@ -50,7 +50,6 @@ func manageConfig(action ConfigAction, auto entities.Automation) error {
 }
 
 func addConfig(auto entities.Automation) error {
-
 	filePath, err := configPath(auto.URLPath)
 	if err != nil {
 		return err
@@ -60,18 +59,36 @@ func addConfig(auto entities.Automation) error {
 		return err
 	}
 
-	file, err := os.Create(filePath)
+	file, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".*.tmp")
 	if err != nil {
 		return err
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
+	tempPath := file.Name()
+	committed := false
+	defer func() {
+		_ = file.Close()
+		if !committed {
+			_ = os.Remove(tempPath)
 		}
-	}(file)
+	}()
 
-	return tmpl.Execute(file, auto)
+	if err := tmpl.Execute(file, auto); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func removeConfig(name string) error {
@@ -86,10 +103,16 @@ func removeConfig(name string) error {
 }
 
 func updateConfig(auto entities.Automation) error {
-	if err := removeConfig(auto.OldUrlPath); err != nil {
+	if auto.OldUrlPath == auto.URLPath {
+		return addConfig(auto)
+	}
+	if err := addConfig(auto); err != nil {
 		return err
 	}
-	return addConfig(auto)
+	if err := removeConfig(auto.OldUrlPath); err != nil {
+		return fmt.Errorf("new config written but old config could not be removed: %w", err)
+	}
+	return nil
 }
 
 func reloadNginx() error {

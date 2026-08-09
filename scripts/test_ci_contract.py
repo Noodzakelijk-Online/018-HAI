@@ -32,15 +32,6 @@ class CIWorkflowContractTest(unittest.TestCase):
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
-        for relative_path in ("nginx-config-manager/Dockerfile",):
-            with self.subTest(path=relative_path):
-                dockerfile = (ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertNotRegex(
-                    dockerfile,
-                    r"(?m)^FROM\s+\S+:latest(?:\s|$)",
-                )
-                self.assertIn("FROM ubuntu:24.04", dockerfile)
-
         backend = (ROOT / "backend" / "Dockerfile").read_text(encoding="utf-8")
         self.assertNotRegex(backend, r"(?m)^FROM\s+\S+:latest(?:\s|$)")
         self.assertRegex(
@@ -52,6 +43,15 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotRegex(idp, r"(?m)^FROM\s+\S+:latest(?:\s|$)")
         self.assertRegex(
             idp,
+            r"(?m)^FROM alpine:3\.22@sha256:[0-9a-f]{64}$",
+        )
+
+        manager = (ROOT / "nginx-config-manager" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotRegex(manager, r"(?m)^FROM\s+\S+:latest(?:\s|$)")
+        self.assertRegex(
+            manager,
             r"(?m)^FROM alpine:3\.22@sha256:[0-9a-f]{64}$",
         )
 
@@ -238,6 +238,73 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(compose_file=compose_file):
                 content = (ROOT / compose_file).read_text(encoding="utf-8")
                 self.assertNotIn("/var/run/docker.sock", content)
+
+    def test_nginx_manager_is_observable_non_root_and_resource_bounded(
+        self,
+    ) -> None:
+        dockerfile = (ROOT / "nginx-config-manager" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        dockerignore = ROOT / "nginx-config-manager" / ".dockerignore"
+        compose = (ROOT / "docker-compose.local.yml").read_text(
+            encoding="utf-8"
+        )
+        manager_start = compose.index("  nginxconfigmanager:\n")
+        manager_end = compose.index("\n  ortools-solver:\n", manager_start)
+        manager = compose[manager_start:manager_end]
+        consumer = (
+            ROOT
+            / "nginx-config-manager"
+            / "internal"
+            / "app"
+            / "autoconfig"
+            / "consumer.go"
+        ).read_text(encoding="utf-8")
+        config_writer = (
+            ROOT
+            / "nginx-config-manager"
+            / "internal"
+            / "app"
+            / "autoconfig"
+            / "auto_config_service.go"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "CGO_ENABLED=0",
+            "-trimpath",
+            '-ldflags "-s -w"',
+            "USER 10001:10001",
+            'ENTRYPOINT ["/app/nginx-config-manager"]',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, dockerfile)
+        self.assertNotIn("apt-get", dockerfile)
+        self.assertTrue(dockerignore.is_file())
+
+        for required in (
+            'user: "10001:10001"',
+            "init: true",
+            "read_only: true",
+            "/tmp:rw,noexec,nosuid,nodev,size=${NGINX_CONFIG_MANAGER_TMPFS_SIZE:-16m}",
+            "mem_limit: ${NGINX_CONFIG_MANAGER_MEMORY_LIMIT:-128m}",
+            "mem_reservation: ${NGINX_CONFIG_MANAGER_MEMORY_RESERVATION:-16m}",
+            "cpus: ${NGINX_CONFIG_MANAGER_CPU_LIMIT:-0.5}",
+            "pids_limit: ${NGINX_CONFIG_MANAGER_PIDS_LIMIT:-64}",
+            "no-new-privileges:true",
+            "cap_drop:",
+            "- ALL",
+            "condition: service_healthy",
+            "/healthz",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, manager)
+
+        self.assertIn("Consumer.Return.Errors = true", consumer)
+        self.assertIn("ready.Store(true)", consumer)
+        self.assertIn("Kafka message channel closed", consumer)
+        self.assertIn("os.CreateTemp", config_writer)
+        self.assertIn("file.Sync()", config_writer)
+        self.assertIn("os.Rename", config_writer)
 
     def test_frontend_toolchain_and_security_gate_are_pinned(self) -> None:
         package = (ROOT / "frontend" / "package.json").read_text(

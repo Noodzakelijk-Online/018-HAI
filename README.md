@@ -543,6 +543,16 @@ reference build reduced the Docker-reported IDP image size from 53,495,733 to
 15,684,852 bytes (70.7%) and the binary from 45,153,741 to 34,312,376 bytes
 (24.0%).
 
+The Nginx config manager is also a static, digest-pinned Alpine service under
+UID/GID `10001`, a read-only root filesystem, and a writable route-config mount
+only. Its default envelope is 128 MiB, 0.5 CPU, 64 processes, and 16 MiB of
+temporary storage, configurable through the `NGINX_CONFIG_MANAGER_*` variables.
+Its HTTP health check reports ready only after the Kafka partition consumer is
+active; closed message channels now fail the process for restart, and generated
+route files are flushed and atomically renamed into place. The reference build
+reduced its Docker-reported image size from 37,546,819 to 8,437,021 bytes
+(77.5%) and its binary from 14,649,290 to 11,493,560 bytes (21.5%).
+
 Open [http://localhost](http://localhost).
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep
