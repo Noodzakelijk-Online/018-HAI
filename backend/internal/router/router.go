@@ -25,6 +25,13 @@ func Initialize() error {
 		return fmt.Errorf("configuration not ready: %d failing check(s); run `backend doctor` for details", fail)
 	}
 
+	// Keep production startup quiet and efficient. RUN_MODE already controls
+	// whether real side effects are permitted, so use the same source of truth
+	// for Gin instead of requiring a second deployment-only switch.
+	if strings.EqualFold(strings.TrimSpace(config.AppConfig.RunMode), "production") {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	// initialize Router
 	router := gin.Default()
 	if err := router.SetTrustedProxies(nil); err != nil {

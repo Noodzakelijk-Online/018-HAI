@@ -243,6 +243,13 @@ func TestPostgresReminderDeliveryReplayUsesStableEvidenceNotGeneratedRecordIdent
 	}
 
 	deliveryRepo := repo.(reminderDeliveryRepository)
+	due, err := deliveryRepo.FindDueReminderDeliveryAuthorizations(owner, reminderAt.Add(time.Second), 10, ReminderDeliveryMaxAttempts)
+	if err != nil {
+		t.Fatalf("find due reminder delivery authorization: %v", err)
+	}
+	if len(due) != 1 || due[0].Authorization.ID != authorized.Authorization.ID || due[0].AttemptCount != 0 {
+		t.Fatalf("due reminder delivery authorizations=%#v, want newly authorized reminder %s", due, authorized.Authorization.ID)
+	}
 	attempt := &models.WorkflowReminderDeliveryAttempt{
 		ID: uuid.New(), AuthorizationID: authorized.Authorization.ID, OwnerIdentity: owner,
 		AttemptNumber: 1, Status: ReminderDeliveryStatusRetryableFailure, Reason: "transient internal sink failure",
