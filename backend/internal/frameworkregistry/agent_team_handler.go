@@ -43,6 +43,7 @@ func RegisterAgentTeamRoutes(parent *gin.RouterGroup, handler *AgentTeamHandler,
 	{
 		routes.GET("", guards.Read, handler.List)
 		routes.POST("", guards.Govern, handler.Create)
+		routes.POST("/guided", guards.Govern, handler.CreateGuided)
 		routes.GET("/:id/versions", guards.Read, handler.ListVersions)
 		routes.POST("/:id/versions", guards.Govern, handler.CreateVersion)
 		routes.GET("/:id/versions/:version", guards.Read, handler.Get)
@@ -56,8 +57,10 @@ func RegisterAgentTeamRoutes(parent *gin.RouterGroup, handler *AgentTeamHandler,
 		routes.GET("/:id/versions/:version/message-attention", guards.Read, handler.MessageAttention)
 		routes.GET("/:id/versions/:version/messages", guards.Read, handler.Messages)
 		routes.POST("/:id/versions/:version/messages", guards.Write, handler.StoreMessage)
+		routes.POST("/:id/versions/:version/decision-messages", guards.Write, handler.CreateDecisionMessage)
 		routes.GET("/:id/versions/:version/messages/:messageId/acknowledgments", guards.Read, handler.MessageAcknowledgments)
 		routes.POST("/:id/versions/:version/messages/:messageId/acknowledgments", guards.Write, handler.AcknowledgeMessage)
+		routes.POST("/:id/versions/:version/messages/:messageId/acknowledgments/guided", guards.Write, handler.CreateMessageAcknowledgment)
 		routes.POST("/:id/versions/:version/delegations/assess", guards.Write, handler.AssessDelegation)
 		routes.GET("/:id/versions/:version/consensus", guards.Read, handler.ConsensusOutcomes)
 		routes.POST("/:id/versions/:version/consensus", guards.Govern, handler.RecordConsensus)
@@ -84,6 +87,19 @@ func (h *AgentTeamHandler) Create(c *gin.Context) {
 		return
 	}
 	result, err := h.service.CreateTeam(owner, request)
+	respondAgentTeam(c, result, err, http.StatusCreated)
+}
+
+func (h *AgentTeamHandler) CreateGuided(c *gin.Context) {
+	owner, ok := frameworkOwner(c)
+	if !ok {
+		return
+	}
+	var request CreateGuidedAgentTeamRequest
+	if !decodeFrameworkJSON(c, &request) {
+		return
+	}
+	result, err := h.service.CreateGuidedTeam(owner, request)
 	respondAgentTeam(c, result, err, http.StatusCreated)
 }
 
@@ -199,6 +215,23 @@ func (h *AgentTeamHandler) StoreMessage(c *gin.Context) {
 	respondAgentTeam(c, result, err, status)
 }
 
+func (h *AgentTeamHandler) CreateDecisionMessage(c *gin.Context) {
+	owner, ok := frameworkOwner(c)
+	if !ok {
+		return
+	}
+	var request CreateTeamDecisionMessageRequest
+	if !decodeFrameworkJSON(c, &request) {
+		return
+	}
+	result, created, err := h.service.CreateDecisionMessage(owner, c.Param("id"), c.Param("version"), request)
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	respondAgentTeam(c, result, err, status)
+}
+
 func (h *AgentTeamHandler) Messages(c *gin.Context) {
 	owner, ok := frameworkOwner(c)
 	if !ok {
@@ -225,6 +258,23 @@ func (h *AgentTeamHandler) AcknowledgeMessage(c *gin.Context) {
 		c.Param("messageId"),
 		request,
 	)
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	respondAgentTeam(c, result, err, status)
+}
+
+func (h *AgentTeamHandler) CreateMessageAcknowledgment(c *gin.Context) {
+	owner, ok := frameworkOwner(c)
+	if !ok {
+		return
+	}
+	var request CreateTeamAcknowledgmentRequest
+	if !decodeFrameworkJSON(c, &request) {
+		return
+	}
+	result, created, err := h.service.CreateMessageAcknowledgment(owner, c.Param("id"), c.Param("version"), c.Param("messageId"), request)
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
@@ -334,6 +384,15 @@ func respondAgentTeam(c *gin.Context, value any, err error, successStatus int) {
 		"deferred acknowledgment requires",
 		"rejected acknowledgment requires",
 		"accepted acknowledgment cannot",
+		"decision sender and recipient",
+		"decision sender does not hold",
+		"decision position is invalid",
+		"decision issue and recommendation",
+		"decision evidence references",
+		"decision expiry",
+		"decision correlation ID",
+		"decision idempotency key",
+		"retry window",
 	} {
 		if strings.Contains(message, fragment) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent team request"})

@@ -355,6 +355,9 @@ func validateTeamCoordinationMessage(team AgentTeamContract, message agentcoordi
 	if !memberHasRole(sender, message.Sender.Role) || !memberHasRole(recipient, message.Recipient.Role) {
 		return fmt.Errorf("coordination message role does not match team membership")
 	}
+	if message.Type == agentcoordination.MessageTypeDecision && !teamMemberMayVote(team, sender.ID) {
+		return fmt.Errorf("coordination decision sender does not hold a voting role")
+	}
 	return agentcoordination.ValidateMessage(team.CoordinationPolicy, message, now.UTC())
 }
 

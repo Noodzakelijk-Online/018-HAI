@@ -158,6 +158,14 @@ const authenticatedRoutes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: "agent-teams",
+    loadChildren: () =>
+      import("./pages/agent-teams/agent-teams.module").then(
+        (m) => m.AgentTeamsModule
+      ),
+    canActivate: [authGuard],
+  },
+  {
     path: "knowledge-claims",
     loadChildren: () =>
       import("./pages/knowledge-claims/knowledge-claims.module").then(

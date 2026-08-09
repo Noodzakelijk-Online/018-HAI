@@ -30,6 +30,20 @@ Legend: ✅ done · 🟡 partial · ⬜ not yet · — n/a
 
 ## 2. Operational proof
 
+The authenticated `/agent-teams` workspace now exposes the local governed
+Agent Teams chain end to end: server-expanded advisory charter creation,
+bounded membership and lifecycle, canonical evidence-backed votes, exact
+message acknowledgments, deterministic consensus, attention state, and the
+hash-linked audit ledger. The full backend suite, 378 frontend tests, direct
+TypeScript compilation, cold Node 20 and Go production-image builds, and the
+deployed authenticated route pass. Browser acceptance covered the persisted
+team, post-consensus next-action state, console errors, and horizontal overflow
+at desktop and the browser's narrow mobile floor. The frontend rejects any
+response that claims execution authority and promotes consensus only after
+distinct voters meet the threshold. Distributed A2A transport, cryptographic
+peer identity, external delivery, and a live consensus cluster remain
+explicitly unimplemented and are not implied by this UI.
+
 The agent-team message acknowledgment path is implemented, unit-tested, and
 sandbox-tested against real local PostgreSQL, but not live-tested against an
 external A2A transport. Migration `0059` persists append-only owner-scoped

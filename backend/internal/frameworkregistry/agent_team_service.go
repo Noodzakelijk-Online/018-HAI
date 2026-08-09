@@ -1,6 +1,7 @@
 package frameworkregistry
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -83,6 +84,88 @@ func (s *AgentTeamService) CreateTeam(owner string, request CreateAgentTeamReque
 	}
 	result := cloneAgentTeam(team)
 	return &result, nil
+}
+
+// CreateGuidedTeam expands a small operator-authored charter into a complete,
+// conservative team contract. It deliberately creates a draft with no members
+// and no execution authority; members and activation remain separate governed
+// lifecycle commands.
+func (s *AgentTeamService) CreateGuidedTeam(owner string, request CreateGuidedAgentTeamRequest) (*AgentTeamContract, error) {
+	request.Key = normalizeIdentifier(request.Key)
+	request.Version = strings.TrimSpace(request.Version)
+	if request.Version == "" {
+		request.Version = "1.0.0"
+	}
+	request.RiskCeiling = normalizeIdentifier(request.RiskCeiling)
+	if request.RiskCeiling == "" {
+		request.RiskCeiling = TeamRiskLow
+	}
+	request.MaximumDelegatedRisk = normalizeIdentifier(request.MaximumDelegatedRisk)
+	if request.MaximumDelegatedRisk == "" {
+		request.MaximumDelegatedRisk = request.RiskCeiling
+	}
+	request.ConsensusMode = normalizeIdentifier(request.ConsensusMode)
+	if request.ConsensusMode == "" {
+		request.ConsensusMode = TeamConsensusMajority
+	}
+	if request.Quorum <= 0 {
+		request.Quorum = 2
+	}
+	if request.MinimumSupport <= 0 {
+		request.MinimumSupport = request.Quorum
+	}
+	policy := agentcoordination.DefaultValidationPolicy()
+	policy.MaximumAuthority = request.AuthorityCeiling
+	return s.CreateTeam(owner, CreateAgentTeamRequest{
+		Key:                       request.Key,
+		Version:                   request.Version,
+		Name:                      request.Name,
+		Purpose:                   request.Purpose,
+		AuthorityCeiling:          request.AuthorityCeiling,
+		RiskCeiling:               request.RiskCeiling,
+		MaximumDelegatedAuthority: request.MaximumDelegatedAuthority,
+		MaximumDelegatedRisk:      request.MaximumDelegatedRisk,
+		Capabilities: []TeamCapabilityContract{
+			{
+				ID: "analysis", Name: "Analysis", Description: "Analyze bounded, source-backed inputs.",
+				InputSchema: "schema://hai/team-analysis/input/v1", OutputSchema: "schema://hai/team-analysis/output/v1",
+				EvidenceRequired: []string{"source reference"}, ProhibitedActions: []string{"execute tools", "grant authority"},
+				AuthorityCeiling: request.AuthorityCeiling, RiskCeiling: request.RiskCeiling, AdvisoryOnly: true,
+			},
+			{
+				ID: "review", Name: "Independent review", Description: "Review an advisory recommendation and its evidence.",
+				InputSchema: "schema://hai/team-review/input/v1", OutputSchema: "schema://hai/team-review/output/v1",
+				EvidenceRequired: []string{"proposal digest", "source reference"}, ProhibitedActions: []string{"approve execution", "execute work"},
+				AuthorityCeiling: request.AuthorityCeiling, RiskCeiling: request.RiskCeiling, AdvisoryOnly: true,
+			},
+		},
+		Roles: []TeamRoleContract{
+			{
+				ID: "coordinator", Name: "Coordinator", Purpose: "Coordinate bounded analysis and evidence gathering.",
+				CapabilityIDs: []string{"analysis", "review"}, AllowedRecommendationTypes: []string{"plan", "decision"},
+				ProhibitedActions: []string{"grant authority", "approve own work"}, EvidenceRequirements: []string{"source references"},
+				AuthorityCeiling: request.AuthorityCeiling, RiskCeiling: request.RiskCeiling, MayCoordinate: true, MayVote: true, AdvisoryOnly: true,
+			},
+			{
+				ID: "reviewer", Name: "Reviewer", Purpose: "Challenge and verify recommendations independently.",
+				CapabilityIDs: []string{"review"}, AllowedRecommendationTypes: []string{"review", "decision"},
+				ProhibitedActions: []string{"execute work", "grant authority"}, EvidenceRequirements: []string{"proposal digest", "source references"},
+				AuthorityCeiling: request.AuthorityCeiling, RiskCeiling: request.RiskCeiling, MayVote: true, AdvisoryOnly: true,
+			},
+		},
+		CoordinationPolicy: policy,
+		Consensus: TeamConsensusPolicy{
+			Mode: request.ConsensusMode, DecisionPayloadSchema: "schema://hai/team-decision/v1",
+			Quorum: request.Quorum, MinimumSupport: request.MinimumSupport,
+			AllowAbstention: request.AllowAbstention, RequireEvidence: true,
+			ConflictEscalationRequired: true, TieOutcome: TeamOutcomeEscalated,
+		},
+		EvidenceRefs: request.EvidenceRefs,
+		Provenance: TeamProvenance{
+			Source: "owner configuration", Reference: firstAgentTeamEvidence(request.EvidenceRefs), AuthoredBy: request.Actor,
+		},
+		Actor: request.Actor,
+	})
 }
 
 func (s *AgentTeamService) CreateTeamVersion(owner, teamID string, request CreateAgentTeamVersionRequest) (*AgentTeamContract, error) {
@@ -294,6 +377,79 @@ func (s *AgentTeamService) StoreCoordinationMessage(owner, teamID, version strin
 	return &stored, created, nil
 }
 
+// CreateDecisionMessage resolves exact active memberships and constructs the
+// canonical decision envelope on the server. Recording a vote is advisory and
+// never represents execution approval.
+func (s *AgentTeamService) CreateDecisionMessage(owner, teamID, version string, request CreateTeamDecisionMessageRequest) (*agentcoordination.Message, bool, error) {
+	team, err := s.repo.GetTeam(owner, strings.TrimSpace(teamID), strings.TrimSpace(version))
+	if err != nil {
+		return nil, false, err
+	}
+	senderIndex := findTeamMember(team, strings.TrimSpace(request.SenderMembershipID))
+	recipientIndex := findTeamMember(team, strings.TrimSpace(request.RecipientMembershipID))
+	if senderIndex < 0 || recipientIndex < 0 {
+		return nil, false, fmt.Errorf("decision sender and recipient memberships are required")
+	}
+	sender := team.Members[senderIndex]
+	recipient := team.Members[recipientIndex]
+	if sender.Status != TeamMemberActive || recipient.Status != TeamMemberActive || sender.ID == recipient.ID {
+		return nil, false, fmt.Errorf("decision sender and recipient must be different active team members")
+	}
+	if !teamMemberMayVote(team, sender.ID) {
+		return nil, false, fmt.Errorf("decision sender does not hold a voting role")
+	}
+	position := normalizeIdentifier(request.Position)
+	if !containsExact([]string{TeamVoteSupport, TeamVoteOppose, TeamVoteAbstain}, position) {
+		return nil, false, fmt.Errorf("decision position is invalid")
+	}
+	if position == TeamVoteAbstain && !team.Consensus.AllowAbstention {
+		return nil, false, fmt.Errorf("consensus policy does not allow abstention")
+	}
+	issue := compactContractText(request.Issue)
+	recommendation := compactContractText(request.Recommendation)
+	if issue == "" || (position != TeamVoteAbstain && recommendation == "") {
+		return nil, false, fmt.Errorf("decision issue and recommendation are required")
+	}
+	evidence := redactedSortedUnique(request.EvidenceRefs)
+	if len(evidence) == 0 {
+		return nil, false, fmt.Errorf("decision evidence references are required")
+	}
+	if request.ExpiresInMinutes == 0 {
+		request.ExpiresInMinutes = 60
+	}
+	if request.ExpiresInMinutes < 5 || request.ExpiresInMinutes > 1440 {
+		return nil, false, fmt.Errorf("decision expiry must be between 5 and 1440 minutes")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(request.CorrelationID)); err != nil {
+		return nil, false, fmt.Errorf("decision correlation ID must be a UUID")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(request.IdempotencyKey)); err != nil {
+		return nil, false, fmt.Errorf("decision idempotency key must be a UUID")
+	}
+	payload, err := json.Marshal(map[string]string{"position": position, "recommendation": recommendation})
+	if err != nil {
+		return nil, false, err
+	}
+	now := s.now().UTC()
+	authority := minimumAgentTeamAuthority(1, team.AuthorityCeiling, sender.AuthorityCeiling, recipient.AuthorityCeiling)
+	message := agentcoordination.Message{
+		ID: s.newID(), IdempotencyKey: strings.TrimSpace(request.IdempotencyKey), CorrelationID: strings.TrimSpace(request.CorrelationID),
+		SchemaVersion: team.CoordinationPolicy.SchemaVersion, Type: agentcoordination.MessageTypeDecision,
+		Sender:          agentcoordination.AgentRef{ID: sender.AgentID, Role: sender.RoleIDs[0], AuthorityCeiling: sender.AuthorityCeiling},
+		Recipient:       agentcoordination.AgentRef{ID: recipient.AgentID, Role: recipient.RoleIDs[0], AuthorityCeiling: recipient.AuthorityCeiling},
+		Confidentiality: agentcoordination.ConfidentialityInternal, AuthorityLevel: authority,
+		Payload:      agentcoordination.MessagePayload{Schema: team.Consensus.DecisionPayloadSchema, Subject: issue, Data: payload},
+		EvidenceRefs: evidence, RequiresAck: request.RequiresAcknowledgment,
+		CreatedAt: now, ExpiresAt: now.Add(time.Duration(request.ExpiresInMinutes) * time.Minute),
+		ProvenanceSummary: "Owner-recorded advisory team decision.",
+	}
+	message.PayloadDigest, err = agentcoordination.ComputeMessageDigest(message)
+	if err != nil {
+		return nil, false, err
+	}
+	return s.StoreCoordinationMessage(owner, team.ID, team.Version, message)
+}
+
 func (s *AgentTeamService) CoordinationMessages(owner, teamID, version, correlationID string) ([]agentcoordination.Message, error) {
 	return s.repo.ListCoordinationMessages(owner, teamID, version, correlationID)
 }
@@ -317,6 +473,36 @@ func (s *AgentTeamService) AcknowledgeCoordinationMessage(owner, teamID, version
 		return nil, false, err
 	}
 	return &stored, created, nil
+}
+
+// CreateMessageAcknowledgment constructs an acknowledgment for the exact
+// persisted recipient and current server time.
+func (s *AgentTeamService) CreateMessageAcknowledgment(owner, teamID, version, messageID string, request CreateTeamAcknowledgmentRequest) (*agentcoordination.Acknowledgment, bool, error) {
+	message, err := s.repo.GetCoordinationMessage(owner, strings.TrimSpace(teamID), strings.TrimSpace(version), strings.TrimSpace(messageID))
+	if err != nil {
+		return nil, false, err
+	}
+	status := agentcoordination.AcknowledgmentStatus(normalizeIdentifier(request.Status))
+	if status != agentcoordination.AcknowledgmentAccepted && status != agentcoordination.AcknowledgmentRejected && status != agentcoordination.AcknowledgmentDeferred {
+		return nil, false, fmt.Errorf("acknowledgment status is invalid")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(request.IdempotencyKey)); err != nil {
+		return nil, false, fmt.Errorf("acknowledgment idempotency key must be a UUID")
+	}
+	now := s.now().UTC()
+	var retryAfter *time.Time
+	if status == agentcoordination.AcknowledgmentDeferred {
+		if request.RetryAfterMinutes < 1 || request.RetryAfterMinutes > 1440 {
+			return nil, false, fmt.Errorf("deferred acknowledgment requires a retry window between 1 and 1440 minutes")
+		}
+		retryAfter = agentTeamTimePointer(now.Add(time.Duration(request.RetryAfterMinutes) * time.Minute))
+	}
+	acknowledgment := agentcoordination.Acknowledgment{
+		ID: s.newID(), MessageID: message.ID, CorrelationID: message.CorrelationID,
+		RecipientID: message.Recipient.ID, Status: status, Reason: compactContractText(request.Reason),
+		CreatedAt: now, RetryAfter: retryAfter, IdempotencyKey: strings.TrimSpace(request.IdempotencyKey),
+	}
+	return s.AcknowledgeCoordinationMessage(owner, teamID, version, messageID, acknowledgment)
 }
 
 func (s *AgentTeamService) MessageAcknowledgments(owner, teamID, version, messageID string) ([]agentcoordination.Acknowledgment, error) {
@@ -684,4 +870,25 @@ func validMembershipTransition(current, next string) bool {
 func agentTeamTimePointer(value time.Time) *time.Time {
 	normalized := value.UTC()
 	return &normalized
+}
+
+func firstAgentTeamEvidence(values []string) string {
+	values = redactedSortedUnique(values)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func minimumAgentTeamAuthority(values ...int) int {
+	result := 0
+	if len(values) > 0 {
+		result = values[0]
+	}
+	for _, value := range values[1:] {
+		if value < result {
+			result = value
+		}
+	}
+	return result
 }
