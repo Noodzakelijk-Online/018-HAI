@@ -75,6 +75,19 @@ services:
     container_name: 018-hai-backend
     hostname: backend
     restart: unless-stopped
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${BACKEND_TMPFS_SIZE:-128m}
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-512m}
+    mem_reservation: ${BACKEND_MEMORY_RESERVATION:-96m}
+    cpus: ${BACKEND_CPU_LIMIT:-1.5}
+    pids_limit: ${BACKEND_PIDS_LIMIT:-256}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       postgres-automation:
         condition: service_healthy
@@ -477,7 +490,7 @@ services:
     # dependency is unreachable, so `docker ps` stops reporting a backend with a
     # dead database as healthy.
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${SERVER_PORT}/readyz > /dev/null"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${SERVER_PORT}/readyz"]
       interval: 10s
       timeout: 5s
       # 3 strikes (~30s) before unhealthy: long enough to ride out a dependency

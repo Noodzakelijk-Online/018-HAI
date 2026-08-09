@@ -32,11 +32,7 @@ class CIWorkflowContractTest(unittest.TestCase):
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
-        for relative_path in (
-            "backend/Dockerfile",
-            "idp/Dockerfile",
-            "nginx-config-manager/Dockerfile",
-        ):
+        for relative_path in ("idp/Dockerfile", "nginx-config-manager/Dockerfile"):
             with self.subTest(path=relative_path):
                 dockerfile = (ROOT / relative_path).read_text(encoding="utf-8")
                 self.assertNotRegex(
@@ -44,6 +40,53 @@ class CIWorkflowContractTest(unittest.TestCase):
                     r"(?m)^FROM\s+\S+:latest(?:\s|$)",
                 )
                 self.assertIn("FROM ubuntu:24.04", dockerfile)
+
+        backend = (ROOT / "backend" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertNotRegex(backend, r"(?m)^FROM\s+\S+:latest(?:\s|$)")
+        self.assertRegex(
+            backend,
+            r"(?m)^FROM alpine:3\.22@sha256:[0-9a-f]{64}$",
+        )
+
+    def test_backend_runtime_is_static_non_root_and_resource_bounded(self) -> None:
+        dockerfile = (ROOT / "backend" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        compose = (ROOT / "docker-compose.local.yml").read_text(
+            encoding="utf-8"
+        )
+        backend_start = compose.index("  backend:\n")
+        backend_end = compose.index("\n  frontend:\n", backend_start)
+        backend = compose[backend_start:backend_end]
+
+        for required in (
+            "CGO_ENABLED=0",
+            "-trimpath",
+            '-ldflags "-s -w"',
+            "USER 10001:10001",
+            'ENTRYPOINT ["/app/hai-backend"]',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, dockerfile)
+        self.assertNotIn("apt-get", dockerfile)
+        self.assertNotIn("curl", dockerfile)
+
+        for required in (
+            'user: "10001:10001"',
+            "init: true",
+            "read_only: true",
+            "/tmp:rw,noexec,nosuid,nodev,size=${BACKEND_TMPFS_SIZE:-128m}",
+            "mem_limit: ${BACKEND_MEMORY_LIMIT:-512m}",
+            "mem_reservation: ${BACKEND_MEMORY_RESERVATION:-96m}",
+            "cpus: ${BACKEND_CPU_LIMIT:-1.5}",
+            "pids_limit: ${BACKEND_PIDS_LIMIT:-256}",
+            "no-new-privileges:true",
+            "cap_drop:",
+            "- ALL",
+            "wget -q -O /dev/null",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, backend)
 
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (

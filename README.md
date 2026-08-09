@@ -519,6 +519,18 @@ gateway, production mode, and local-login bypass disabled. It never prints the
 password or generated secrets. Do not start production from an unchanged copy
 of `.env.example`: its placeholders are deliberately rejected by readiness.
 
+The backend image is a static Go binary on a digest-pinned Alpine runtime. It
+runs as UID/GID `10001`, uses a read-only root filesystem, drops all Linux
+capabilities, and receives only the documented writable media, workspace, and
+temporary mounts. Compose defaults cap it at 512 MiB, 1.5 CPUs, 256 processes,
+and 128 MiB of temporary storage. Advanced operators can tune the five
+`BACKEND_MEMORY_LIMIT`, `BACKEND_MEMORY_RESERVATION`, `BACKEND_CPU_LIMIT`,
+`BACKEND_PIDS_LIMIT`, and `BACKEND_TMPFS_SIZE` values in `.env.local`; lowering
+them requires a representative migration, ingestion, and workflow load test.
+The reference build reduced the Docker-reported backend image size from
+71,322,131 to 24,462,696 bytes (65.7%) and the binary from 82,091,894 to
+61,526,200 bytes (25.1%).
+
 Open [http://localhost](http://localhost).
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep
