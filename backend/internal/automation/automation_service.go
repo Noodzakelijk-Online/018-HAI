@@ -303,14 +303,19 @@ func (s *service) Create(automation *models.Automation) (*models.Automation, err
 		return nil, err
 	}
 
+	event := &events.AutomationEvent{
+		Type:       events.CreateEvent,
+		Automation: automation,
+	}
+	if durableRepo, ok := s.repo.(DurableEventRepository); ok {
+		return durableRepo.CreateWithEvent(automation, event)
+	}
+
 	automationCreated, err := s.repo.Create(automation)
 	if err != nil {
 		return nil, err
 	}
-	event := &events.AutomationEvent{
-		Type:       events.CreateEvent,
-		Automation: automationCreated,
-	}
+	event.Automation = automationCreated
 	err = s.publisher.Publish(event)
 	if err != nil {
 		log.Printf("Failed to publish create event to Kafka: %v", err)
@@ -368,13 +373,21 @@ func (s *service) Update(automation *models.Automation) (*models.Automation, err
 		return nil, errValidate
 	}
 
-	automationUpdated, err := s.repo.Update(automation)
-	automationUpdated.OldUrlPath = oldUrlPath
-
+	automation.OldUrlPath = oldUrlPath
 	event := &events.AutomationEvent{
 		Type:       events.UpdateEvent,
-		Automation: automationUpdated,
+		Automation: automation,
 	}
+	if durableRepo, ok := s.repo.(DurableEventRepository); ok {
+		return durableRepo.UpdateWithEvent(automation, event)
+	}
+
+	automationUpdated, err := s.repo.Update(automation)
+	if err != nil {
+		return nil, err
+	}
+	automationUpdated.OldUrlPath = oldUrlPath
+	event.Automation = automationUpdated
 
 	err = s.publisher.Publish(event)
 	if err != nil {
@@ -391,14 +404,17 @@ func (s *service) Delete(id uuid.UUID) error {
 		return err
 	}
 
-	err = s.repo.Delete(id)
-	if err != nil {
-		return err
-	}
-
 	event := &events.AutomationEvent{
 		Type:       events.DeleteEvent,
 		Automation: automation,
+	}
+	if durableRepo, ok := s.repo.(DurableEventRepository); ok {
+		return durableRepo.DeleteWithEvent(id, event)
+	}
+
+	err = s.repo.Delete(id)
+	if err != nil {
+		return err
 	}
 
 	err = s.publisher.Publish(event)

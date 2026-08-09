@@ -66,6 +66,52 @@
       </ul>
     </div>
 
+    <section class="delivery-panel" aria-labelledby="delivery-title">
+      <div class="delivery-heading">
+        <div>
+          <span class="eyebrow">Durable automation events</span>
+          <h2 id="delivery-title">{{ deliveryStateLabel() }}</h2>
+        </div>
+        <span class="delivery-freshness" *ngIf="eventDelivery?.checkedAt">
+          Checked {{ eventDelivery.checkedAt | date: 'HH:mm:ss' }}
+        </span>
+      </div>
+
+      <div class="delivery-error" *ngIf="eventDeliveryError">
+        Delivery detail is unavailable. The readiness result above remains authoritative for queue health.
+      </div>
+
+      <ng-container *ngIf="eventDelivery as delivery">
+        <div class="delivery-metrics" aria-label="Automation event delivery totals">
+          <div><strong>{{ delivery.pending }}</strong><span>Pending</span></div>
+          <div [class.metric-danger]="delivery.deadLettered > 0"><strong>{{ delivery.deadLettered }}</strong><span>Dead letter</span></div>
+          <div><strong>{{ delivery.published }}</strong><span>Published in retention window</span></div>
+        </div>
+
+        <div class="delivery-failures" *ngIf="delivery.recentFailures.length">
+          <div class="delivery-failure" *ngFor="let failure of delivery.recentFailures">
+            <div class="delivery-failure-copy">
+              <strong>{{ failure.eventType | titlecase }} event</strong>
+              <span>{{ failure.status === 'dead_lettered' ? 'Retry budget exhausted' : 'Retry scheduled' }} &middot; attempt {{ failure.attemptCount }}/{{ failure.maxAttempts }}</span>
+              <small>{{ failure.lastError }}</small>
+            </div>
+            <button
+              *ngIf="failure.status === 'dead_lettered'"
+              nz-button
+              nzType="default"
+              type="button"
+              [nzLoading]="retryingEventId === failure.id"
+              [disabled]="!!retryingEventId"
+              title="Reset the bounded delivery retry budget after correcting the broker or consumer problem"
+              (click)="retryEventDelivery(failure)"
+            >
+              Retry delivery
+            </button>
+          </div>
+        </div>
+      </ng-container>
+    </section>
+
     <div class="groups">
       <nz-card
         *ngFor="let group of groups"

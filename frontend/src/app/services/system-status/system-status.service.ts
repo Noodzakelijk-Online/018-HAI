@@ -3,7 +3,11 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { ISystemStatusService } from './system-status.service.interface';
-import { ISystemReadiness } from '../../models/system-status.model.interface';
+import {
+  IEventDeliveryRetryResult,
+  IEventDeliveryStats,
+  ISystemReadiness,
+} from '../../models/system-status.model.interface';
 
 @Injectable({
   providedIn: 'root',
@@ -12,6 +16,7 @@ export class SystemStatusService implements ISystemStatusService {
   // Root path, not /api/v1: the readiness probe lives beside /healthz so an
   // orchestrator can reach it without knowing the API version.
   private readonly readinessUrl = '/readyz';
+  private readonly eventDeliveryUrl = '/api/v1/event-delivery';
 
   constructor(private http: HttpClient) {}
 
@@ -34,5 +39,16 @@ export class SystemStatusService implements ISystemStatusService {
           return throwError(() => error);
         })
       );
+  }
+
+  eventDelivery(): Observable<IEventDeliveryStats> {
+    return this.http.get<IEventDeliveryStats>(`${this.eventDeliveryUrl}/`);
+  }
+
+  retryEventDelivery(id: string): Observable<IEventDeliveryRetryResult> {
+    return this.http.post<IEventDeliveryRetryResult>(
+      `${this.eventDeliveryUrl}/${encodeURIComponent(id)}/retry`,
+      {}
+    );
   }
 }

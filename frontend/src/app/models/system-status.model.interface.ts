@@ -23,3 +23,30 @@ export interface ISystemReadiness {
   summary: ISystemReadinessSummary;
   checks: ISystemCheck[];
 }
+
+export type EventDeliveryStatus = 'pending' | 'published' | 'dead_lettered';
+
+export interface IEventDeliveryFailure {
+  id: string;
+  aggregateId: string;
+  eventType: 'create' | 'update' | 'delete';
+  status: EventDeliveryStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  lastError: string;
+  updatedAt: string;
+}
+
+export interface IEventDeliveryStats {
+  pending: number;
+  deadLettered: number;
+  published: number;
+  oldestPendingAt?: string;
+  recentFailures: IEventDeliveryFailure[];
+  checkedAt: string;
+}
+
+export interface IEventDeliveryRetryResult {
+  status: 'queued';
+  eventId: string;
+}

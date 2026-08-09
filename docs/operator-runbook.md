@@ -69,6 +69,33 @@ route is explicitly documented as a public callback.
 `degraded` is not equivalent to full capability. For example, a missing LLM
 provider may leave the control plane available while generation is unavailable.
 
+### Automation Event Delivery
+
+Automation create, update, and delete operations commit their Kafka delivery
+intent in the same Postgres transaction as the automation mutation. A broker
+outage therefore does not turn a successful API mutation into an ambiguous
+failure. The backend retries the committed event with a stable event ID,
+bounded exponential backoff, a fenced worker lease, and at-least-once delivery.
+The nginx-config consumer treats redelivery idempotently.
+
+Inspect owner-scoped delivery health at `GET /api/v1/event-delivery/`. The
+response contains pending, published, and dead-letter counts, the oldest
+pending timestamp, and up to ten recent failures. Event payloads are
+intentionally excluded from this endpoint. Readiness also reports the
+`kafka.connection` and `events.outbox` probes independently.
+
+A dead letter is never silently discarded. After correcting the broker or
+consumer problem, an authenticated owner with admin permission may queue one
+again with `POST /api/v1/event-delivery/{event-id}/retry`. The operation resets
+the bounded retry counter and the dispatcher wakes on its next poll. Published
+delivery rows older than 30 days are pruned in bounded batches; domain audit and
+verification records are separate and are not removed by this retention job.
+
+If `KAFKA_BROKERS` is empty or unreachable, mutations remain available because
+their events are durable in Postgres, but readiness is degraded and delivery
+stays pending. Do not describe those events as published until the outbox state
+confirms it.
+
 ## Identity And Permission Contract
 
 The gateway and backend derive identity and role from a verified IDP token.

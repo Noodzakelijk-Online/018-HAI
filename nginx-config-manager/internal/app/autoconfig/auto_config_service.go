@@ -97,7 +97,10 @@ func removeConfig(name string) error {
 		return err
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return fmt.Errorf("config %s not found", name)
+		// The transactional outbox provides at-least-once delivery. A repeated
+		// delete has already reached the requested state and is therefore a
+		// successful idempotent operation.
+		return nil
 	}
 	return os.Remove(filePath)
 }

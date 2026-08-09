@@ -1,0 +1,38 @@
+import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing'
+import { TestBed } from '@angular/core/testing'
+import { SystemStatusService } from './system-status.service'
+
+describe('SystemStatusService', () => {
+  let service: SystemStatusService
+  let http: HttpTestingController
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({ imports: [HttpClientTestingModule] })
+    service = TestBed.inject(SystemStatusService)
+    http = TestBed.inject(HttpTestingController)
+  })
+
+  afterEach(() => http.verify())
+
+  it('reads public readiness without requiring an API route', () => {
+    service.readiness().subscribe()
+    const request = http.expectOne('/readyz')
+    expect(request.request.method).toBe('GET')
+    request.flush({ status: 'ready', service: 'backend', summary: { ok: 1, warn: 0, fail: 0 }, checks: [] })
+  })
+
+  it('reads owner-scoped durable event delivery status', () => {
+    service.eventDelivery().subscribe()
+    const request = http.expectOne('/api/v1/event-delivery/')
+    expect(request.request.method).toBe('GET')
+    request.flush({ pending: 0, deadLettered: 0, published: 2, recentFailures: [], checkedAt: '2026-08-09T00:00:00Z' })
+  })
+
+  it('encodes the dead-letter id when requesting an explicit retry', () => {
+    service.retryEventDelivery('event/id').subscribe()
+    const request = http.expectOne('/api/v1/event-delivery/event%2Fid/retry')
+    expect(request.request.method).toBe('POST')
+    expect(request.request.body).toEqual({})
+    request.flush({ status: 'queued', eventId: 'event/id' })
+  })
+})

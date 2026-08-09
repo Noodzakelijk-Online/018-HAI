@@ -24,6 +24,7 @@ import (
 
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
+	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/infra"
 
 	"github.com/IBM/sarama"
@@ -38,7 +39,8 @@ const DefaultTimeout = 3 * time.Second
 //
 // Criticality reflects what the process can actually serve without:
 //   - Postgres is critical: every domain route reads or writes it.
-//   - Kafka is not: the publisher degrades to a no-op when brokers are absent.
+//   - Kafka is not: committed events remain queued in the transactional outbox
+//     until a configured broker becomes available.
 //   - Redis is not: the backend does not connect to it yet (see RedisProbe).
 //   - An LLM provider is not: generation is one capability, not the service.
 func Probes(cfg config.Configuration) []doctor.Probe {
@@ -46,6 +48,7 @@ func Probes(cfg config.Configuration) []doctor.Probe {
 		PostgresProbe(cfg),
 		RedisProbe(cfg),
 		KafkaProbe(cfg),
+		EventOutboxProbe(),
 		LLMProviderProbe(),
 	}
 }
@@ -119,8 +122,8 @@ func RedisProbe(cfg config.Configuration) doctor.Probe {
 }
 
 // KafkaProbe connects to the configured brokers. Kafka being down is a
-// degradation rather than an outage: the event publisher falls back to a no-op,
-// so this is reported as a warning and does not make the service unready.
+// degradation rather than an API outage: committed automation events remain in
+// the Postgres outbox and are retried after the broker recovers.
 func KafkaProbe(cfg config.Configuration) doctor.Probe {
 	brokers := nonEmpty(cfg.Brokers)
 	return doctor.Probe{
@@ -128,7 +131,7 @@ func KafkaProbe(cfg config.Configuration) doctor.Probe {
 		Critical: false,
 		Run: func(ctx context.Context) error {
 			if len(brokers) == 0 {
-				return fmt.Errorf("KAFKA_BROKERS is empty; event publishing is disabled and events are dropped")
+				return fmt.Errorf("KAFKA_BROKERS is empty; committed events remain queued until a broker is configured")
 			}
 			saramaCfg := sarama.NewConfig()
 			saramaCfg.Net.DialTimeout = DefaultTimeout
@@ -144,6 +147,33 @@ func KafkaProbe(cfg config.Configuration) doctor.Probe {
 
 			if len(client.Brokers()) == 0 {
 				return fmt.Errorf("no reachable brokers among %s", strings.Join(brokers, ","))
+			}
+			return nil
+		},
+	}
+}
+
+// EventOutboxProbe exposes delivery failures separately from broker
+// connectivity. A brief pending row is normal; dead letters or a queue that has
+// made no progress for two minutes require operator attention.
+func EventOutboxProbe() doctor.Probe {
+	return doctor.Probe{
+		Name:     "events.outbox",
+		Critical: false,
+		Run: func(ctx context.Context) error {
+			db, err := infra.GetDefaultDB()
+			if err != nil {
+				return err
+			}
+			stats, err := events.NewOutboxStore(db).Stats(ctx)
+			if err != nil {
+				return err
+			}
+			if stats.DeadLettered > 0 {
+				return fmt.Errorf("%d event deliveries are dead-lettered", stats.DeadLettered)
+			}
+			if stats.Pending > 0 && stats.OldestPendingAt != nil && time.Since(*stats.OldestPendingAt) > 2*time.Minute {
+				return fmt.Errorf("%d event deliveries are pending; oldest is %s old", stats.Pending, time.Since(*stats.OldestPendingAt).Round(time.Second))
 			}
 			return nil
 		},

@@ -70,6 +70,14 @@ func TestAddConfigAtomicallyReplacesExistingConfig(t *testing.T) {
 	}
 }
 
+func TestRemoveConfigIsIdempotentForOutboxRedelivery(t *testing.T) {
+	config.AppConfig = config.Configuration{ConfigDir: t.TempDir()}
+
+	if err := removeConfig("already-removed"); err != nil {
+		t.Fatalf("repeated removeConfig should succeed: %v", err)
+	}
+}
+
 func TestConfigPathRejectsTraversal(t *testing.T) {
 	config.AppConfig = config.Configuration{ConfigDir: t.TempDir()}
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -49,6 +50,7 @@ import (
 	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/health"
 	"automation-hub-backend/internal/i18n"
+	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/knowledgegraph"
 	"automation-hub-backend/internal/langfuse"
 	"automation-hub-backend/internal/lifeledger"
@@ -106,6 +108,21 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 	if appCtx == nil {
 		return fmt.Errorf("application context is required")
 	}
+	database, err := infra.GetDefaultDB()
+	if err != nil {
+		return fmt.Errorf("initialize event delivery database: %w", err)
+	}
+	eventPublisher := events.DefaultPublisher()
+	eventOutbox := events.NewOutboxStore(database)
+	eventDispatcher := events.NewOutboxDispatcher(eventOutbox, eventPublisher)
+	go eventDispatcher.Run(appCtx)
+	go func() {
+		<-appCtx.Done()
+		if err := eventPublisher.Close(); err != nil {
+			log.Printf("close Kafka event publisher: %v", err)
+		}
+	}()
+
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
@@ -648,8 +665,8 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 			return fmt.Errorf("initialize durable automation approval proofs: %w", err)
 		}
 		automationService := automation.NewServiceWithRuntimeRegistryApprovalProofsExecutionAuthorizationAndFinalEffects(
-			automation.DefaultRepository(),
-			*events.DefaultPublisher(),
+			automation.NewGormUserRepositoryWithNotifier(database, eventDispatcher.Notify),
+			*eventPublisher,
 			runtimeRegistry,
 			approvalProofService,
 			executionAuthorizationService,
@@ -659,6 +676,7 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 		if err := initializeAutomationsRoutes(v1, autoHandler); err != nil {
 			return err
 		}
+		initializeEventDeliveryRoutes(v1, events.NewHandler(eventOutbox))
 		taskService := task.WithControlledLearning(
 			task.NewServiceWithDependenciesAndAgentContext(
 				memoryService,
@@ -1175,6 +1193,13 @@ func initializeAutomationsRoutes(apiVersion *gin.RouterGroup, autoHandler *autom
 	}
 
 	return nil
+}
+
+func initializeEventDeliveryRoutes(apiVersion *gin.RouterGroup, handler *events.Handler) {
+	routes := apiVersion.Group("/event-delivery")
+	routes.Use(requireAuthenticatedOwner())
+	routes.GET("/", requirePermission(rbac.PermRead), handler.Stats)
+	routes.POST("/:id/retry", requirePermission(rbac.PermAdmin), handler.Retry)
 }
 
 func initializeLLMRoutes(apiVersion *gin.RouterGroup, llmHandler *llm.Handler) {

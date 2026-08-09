@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, Inject, OnDestroy, OnInit } from '@
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { Subscription, interval } from 'rxjs';
 import {
+  IEventDeliveryFailure,
+  IEventDeliveryStats,
   ISystemCheck,
   ISystemReadiness,
   SystemCheckSeverity,
@@ -26,6 +28,7 @@ const GROUP_TITLES: Record<string, string> = {
   security: 'Secrets & security',
   media: 'Media storage',
   runtime: 'Runtime mode',
+  events: 'Automation delivery',
 };
 
 @Component({
@@ -42,6 +45,10 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   loading = false;
   loadError = false;
   lastUpdated?: Date;
+  eventDelivery?: IEventDeliveryStats;
+  eventDeliveryLoading = false;
+  eventDeliveryError = false;
+  retryingEventId = '';
 
   private pollSub?: Subscription;
 
@@ -84,6 +91,56 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
             'Could not reach the readiness probe. You may need to sign in again.'
           );
         }
+      },
+    });
+    if (!silent) {
+      this.loadEventDelivery();
+    }
+  }
+
+  retryEventDelivery(failure: IEventDeliveryFailure): void {
+    if (failure.status !== 'dead_lettered' || this.retryingEventId) {
+      return;
+    }
+    this.retryingEventId = failure.id;
+    this.systemStatusService.retryEventDelivery(failure.id).subscribe({
+      next: () => {
+        this.retryingEventId = '';
+        this.notification.success(
+          'Delivery queued',
+          'HAI reset the bounded retry budget. Delivery still requires a healthy Kafka consumer.'
+        );
+        this.loadEventDelivery();
+        this.refresh(true);
+      },
+      error: () => {
+        this.retryingEventId = '';
+        this.notification.error(
+          'Retry failed',
+          'The delivery was not changed. Refresh its status before trying again.'
+        );
+      },
+    });
+  }
+
+  deliveryStateLabel(): string {
+    if (!this.eventDelivery) return 'Unavailable';
+    if (this.eventDelivery.deadLettered > 0) return 'Action required';
+    if (this.eventDelivery.pending > 0) return 'Delivery pending';
+    return 'Caught up';
+  }
+
+  private loadEventDelivery(): void {
+    this.eventDeliveryLoading = true;
+    this.systemStatusService.eventDelivery().subscribe({
+      next: (stats) => {
+        this.eventDelivery = stats;
+        this.eventDeliveryError = false;
+        this.eventDeliveryLoading = false;
+      },
+      error: () => {
+        this.eventDeliveryError = true;
+        this.eventDeliveryLoading = false;
       },
     });
   }
