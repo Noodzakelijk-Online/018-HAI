@@ -69,6 +69,80 @@ func TestPlanReturnsConfigurationErrorWhenLLMRouterIsMissing(t *testing.T) {
 	}
 }
 
+func TestLowRiskReadOnlyAPIRuntimeCompletesWithoutModelOrApproval(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "false")
+	t.Setenv("LLM_PROVIDERS_JSON", "[]")
+	t.Setenv("LLM_POLICY_JSON", "")
+	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "false")
+
+	llmService, err := llm.NewServiceFromEnv()
+	if err != nil {
+		t.Fatalf("NewServiceFromEnv: %v", err)
+	}
+	executor := &fakeToolExecutor{result: deterministicReadOnlyToolExecution()}
+	service := NewServiceWithEngines(
+		&fakeMemoryService{},
+		llmService,
+		nil,
+		nil,
+		executor,
+	)
+
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		Request:        "Launch the local dashboard API for a bounded health review using the configured local dashboard automation.",
+		ProjectKey:     "018-HAI",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if plan.RiskAssessment.ApprovalRequired || plan.RiskAssessment.ApprovalGranted {
+		t.Fatalf("bounded read-only runtime acquired an approval requirement: %#v", plan.RiskAssessment)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1; risk=%#v preflight=%#v", executor.calls, plan.RiskAssessment, plan.FrameworkEvidencePreflight)
+	}
+	if plan.ExecutionResult == nil || !deterministicReadOnlyRuntimeCompleted(plan.ExecutionResult.ToolExecution) {
+		t.Fatalf("deterministic runtime result was not retained: %#v", plan.ExecutionResult)
+	}
+	if plan.ModelDecision.SelectedModelID != "" {
+		t.Fatalf("deterministic runtime unexpectedly selected model %q", plan.ModelDecision.SelectedModelID)
+	}
+	if !plan.ValidationResult.Passed || plan.CompletionStatus != "validated" {
+		t.Fatalf("deterministic runtime did not validate: completion=%q validation=%#v preflight=%#v", plan.CompletionStatus, plan.ValidationResult, plan.FrameworkEvidencePreflight)
+	}
+}
+
+func TestUnapprovedHighRiskRuntimeStillBlocksBeforeExecutor(t *testing.T) {
+	t.Setenv("HAI_EMERGENCY_STOP", "false")
+	executor := &fakeToolExecutor{result: deterministicReadOnlyToolExecution()}
+	service := NewServiceWithEngines(
+		&fakeMemoryService{},
+		newTaskTestLLMService(t),
+		nil,
+		nil,
+		executor,
+	)
+
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "alice",
+		Request:        "Delete the external account and all retained records.",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !plan.RiskAssessment.ApprovalRequired || plan.RiskAssessment.AllowedNow {
+		t.Fatalf("high-risk action escaped the approval gate: %#v", plan.RiskAssessment)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("high-risk executor calls = %d, want zero", executor.calls)
+	}
+}
+
 func TestTaskEntryPointsRejectMalformedStandingMandateBeforePlanning(t *testing.T) {
 	engine := NewService(&fakeMemoryService{}, newTaskTestLLMService(t)).(*service)
 	request := IntakeRequest{

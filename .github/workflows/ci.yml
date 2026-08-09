@@ -376,6 +376,33 @@ jobs:
               throw
             }
           }
+      - name: Windows first-run environment contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $envPath = Join-Path $env:RUNNER_TEMP "hai-windows.env"
+          $output = & .\scripts\initialize-windows.ps1 `
+            -EnvFile $envPath `
+            -AdminEmail "owner@example.test" `
+            -AdminPasswordPlainText "CI-Fresh-Clone-123!" `
+            -GatewayPort 18080
+          $content = Get-Content -LiteralPath $envPath -Raw
+          if ($content -match "(?m)^[A-Z0-9_]+=(?:change-this-[^\r\n]*|ChangeMe123!)$") {
+            throw "Generated Windows environment still contains a shipped placeholder"
+          }
+          foreach ($name in @(
+            "BACKEND_API_SHARED_KEY",
+            "HAI_MEMORY_ENCRYPTION_KEY",
+            "JWT_SECRET",
+            "HAI_APPROVAL_PROOF_SIGNING_KEY"
+          )) {
+            if ($content -notmatch "(?m)^$name=[0-9a-f]{64}$") {
+              throw "$name was not generated as an independent 32-byte secret"
+            }
+          }
+          if (($output | Out-String) -match "CI-Fresh-Clone-123!") {
+            throw "Windows initializer printed the owner password"
+          }
       - name: Git Bash syntax and space-containing path
         shell: pwsh
         run: |

@@ -23,7 +23,7 @@ against a real local Postgres instance.
 
 ```powershell
 cd 018-HAI
-Copy-Item .env.example .env.local
+powershell -ExecutionPolicy Bypass -File .\scripts\initialize-windows.ps1
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
@@ -32,6 +32,13 @@ curl.exe -i http://localhost/healthz
 curl.exe -i http://localhost/readyz
 curl.exe -i http://localhost/api/v1/llm/policy
 ```
+
+The initializer prompts for the first-run owner email and a password of at
+least 12 characters. It generates independent random backend, memory, JWT, and
+approval-proof secrets, keeps the gateway on loopback, disables local-login
+bypass, and does not print credentials. Copying `.env.example` without running
+the initializer is expected to fail closed in production because its shipped
+values are placeholders.
 
 Expected result:
 
@@ -48,12 +55,21 @@ frontend or backend must not leave nginx pinned to a prior container IP.
 
 ## Status Of This Evidence
 
-The Compose configuration, local topology, dashboard shell, gateway health and
-readiness routes, and protected-route rejection were exercised in the current
-repository on 2026-07-14. This does not prove a fresh clone on Robert's target
-Windows 11 machine, a signed-in browser journey, event publishing, or any
-third-party provider or account connector. Those checks remain required before
-the system is trusted for real operational work.
+On 2026-08-09, this sequence was exercised from a separate clean checkout on
+the current Windows host using the Windows initializer. All 11 Compose services
+became healthy. The gateway served the dashboard, health and readiness passed,
+the first-run owner could sign in, protected routes required that session, and
+a pursuit candidate could be accepted into a workflow. A bounded read-only API
+runtime regression also proves that deterministic local execution can complete
+without an LLM or approval, while destructive execution remains blocked before
+the executor. The run uncovered and fixed an ambiguity where infrastructure
+"health" was incorrectly classified as personal health; genuine personal or
+clinical requests still retain the stricter care-evidence contract.
+
+This evidence does not prove Robert's separate target Windows installation,
+event delivery outside the local stack, or any third-party provider/account
+connector. Those checks remain provider- and environment-specific release
+gates before HAI is trusted for real operational work.
 
 ## Definition Of Pass
 

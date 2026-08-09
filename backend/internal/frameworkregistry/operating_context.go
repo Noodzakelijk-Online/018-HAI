@@ -143,7 +143,7 @@ func classifyLifeDomains(text string) []LifeDomainAssignment {
 	for _, rule := range domainRules {
 		matched := make([]string, 0)
 		for _, signal := range rule.signals {
-			if containsPhrase(text, signal) {
+			if domainSignalApplies(rule.name, signal, text) {
 				matched = append(matched, signal)
 			}
 		}
@@ -179,6 +179,34 @@ func classifyLifeDomains(text string) []LifeDomainAssignment {
 	})
 	assignments[0].Primary = true
 	return assignments
+}
+
+func domainSignalApplies(domainID, signal, text string) bool {
+	if !containsPhrase(text, signal) {
+		return false
+	}
+	if domainID != "health_wellbeing" || signal != "health" {
+		return true
+	}
+
+	// "Health" is overloaded in an automation hub. Runtime, service, API, and
+	// container health are operational signals, not evidence that the operator
+	// has a personal-care need. Explicit personal or clinical context always
+	// wins so real health requests retain the stricter care-source contract.
+	if containsAnyPhrase(text, []string{
+		"my health", "personal health", "physical health", "mental health",
+		"health condition", "health concern", "health appointment", "health record",
+		"doctor", "medical", "medication", "medicine", "therapy", "symptom",
+		"patient", "wellbeing", "care plan",
+	}) {
+		return true
+	}
+	return !containsAnyPhrase(text, []string{
+		"api", "automation", "backend", "container", "dashboard", "deployment",
+		"endpoint", "frontend", "health check", "health probe", "health status",
+		"healthcheck", "infrastructure", "liveness", "model provider", "readiness",
+		"runtime", "service", "system", "worker",
+	})
 }
 
 func buildNeedsState(request SelectionRequest, domains []LifeDomainAssignment) ([]NeedStateAssessment, error) {

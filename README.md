@@ -507,12 +507,17 @@ post-phase migrations. See
 ### Start the local stack
 
 ```powershell
-Copy-Item .env.example .env.local
-# Edit .env.local: set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY.
+powershell -ExecutionPolicy Bypass -File .\scripts\initialize-windows.ps1
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
 ```
+
+The Windows initializer prompts for the first-run owner credentials and writes
+an ignored `.env.local` with independent cryptographic secrets, a loopback-only
+gateway, production mode, and local-login bypass disabled. It never prints the
+password or generated secrets. Do not start production from an unchanged copy
+of `.env.example`: its placeholders are deliberately rejected by readiness.
 
 Open [http://localhost](http://localhost).
 
@@ -588,9 +593,8 @@ Expected behavior:
 - Protected engine routes such as `/api/v1/llm/policy` return `401` without a
   signed session, not anonymous application data.
 
-If port 80 is already in use, change the nginx port mapping in
-`docker-compose.local.yml` from `\"80:80\"` to, for example, `\"8088:80\"`, then
-open `http://localhost:8088`.
+If port 80 is already in use, set `GATEWAY_HOST_PORT=8088` in `.env.local`,
+recreate `gateway`, and open `http://localhost:8088`.
 
 For the target-machine acceptance sequence, use
 [fresh-clone dry run](docs/fresh-clone-dryrun.md). For diagnosis, use

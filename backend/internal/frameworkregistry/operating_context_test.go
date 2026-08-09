@@ -92,6 +92,36 @@ func TestBuildSelectionCoversAdditionalWholeLifeDomains(t *testing.T) {
 	}
 }
 
+func TestClassifyLifeDomainsTreatsRuntimeHealthAsOperational(t *testing.T) {
+	t.Parallel()
+
+	domains := classifyLifeDomains("Launch the local dashboard API for a bounded health review using the configured automation runtime.")
+	if hasLifeDomain(domains, "health_wellbeing") {
+		t.Fatalf("runtime health was classified as personal health: %#v", domains)
+	}
+	if !hasLifeDomain(domains, "general_operations") {
+		t.Fatalf("operational request did not retain a general operations fallback: %#v", domains)
+	}
+}
+
+func TestClassifyLifeDomainsRetainsExplicitPersonalHealthContext(t *testing.T) {
+	t.Parallel()
+
+	domains := classifyLifeDomains("Review my health condition and medication against the doctor's care plan.")
+	if !hasLifeDomain(domains, "health_wellbeing") {
+		t.Fatalf("explicit personal health request lost the health domain: %#v", domains)
+	}
+}
+
+func TestClassifyLifeDomainsLetsClinicalContextWinInMixedHealthRequest(t *testing.T) {
+	t.Parallel()
+
+	domains := classifyLifeDomains("Use the health app API to review my symptoms and medication history.")
+	if !hasLifeDomain(domains, "health_wellbeing") {
+		t.Fatalf("clinical context was suppressed by an API reference: %#v", domains)
+	}
+}
+
 func TestBuildSelectionMarksStaleCapacityAndConstrainsPlanning(t *testing.T) {
 	now := time.Date(2026, time.July, 30, 13, 0, 0, 0, time.UTC)
 	captured := now.Add(-25 * time.Hour)

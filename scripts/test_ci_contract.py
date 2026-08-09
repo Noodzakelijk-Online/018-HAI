@@ -216,6 +216,28 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(entrypoint_required=required):
                 self.assertIn(required, entrypoint)
 
+    def test_windows_initializer_generates_every_required_production_secret(self) -> None:
+        initializer = (ROOT / "scripts" / "initialize-windows.ps1").read_text(
+            encoding="utf-8"
+        )
+        unix_generator = (ROOT / "scripts" / "generate-secrets.sh").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "BACKEND_API_SHARED_KEY",
+            "HAI_MEMORY_ENCRYPTION_KEY",
+            "JWT_SECRET",
+            "HAI_APPROVAL_PROOF_SIGNING_KEY",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, initializer)
+                self.assertIn(required, unix_generator)
+        self.assertIn("RandomNumberGenerator", initializer)
+        self.assertIn('LOCAL_LOGIN_BYPASS_ENABLED\" \"false', initializer)
+        self.assertIn('GATEWAY_HOST_BIND\" \"127.0.0.1', initializer)
+        self.assertIn('RUN_MODE\" \"production', initializer)
+        self.assertIn("were not printed", initializer)
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")
@@ -385,6 +407,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "python scripts/test_ci_contract.py",
             "python scripts/test_smoke_auth_contract.py",
             r".\scripts\start-ngrok.ps1 -ValidateOnly",
+            r".\scripts\initialize-windows.ps1",
+            "Generated Windows environment still contains a shipped placeholder",
             "Insecure example environment unexpectedly passed ngrok preflight",
         ):
             with self.subTest(contract=contract):
