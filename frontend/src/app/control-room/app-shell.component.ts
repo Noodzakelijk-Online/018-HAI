@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit } from '@angular/core'
+import { Title } from '@angular/platform-browser'
 import { NavigationEnd, Router } from '@angular/router'
 import { Subscription } from 'rxjs'
 import { filter } from 'rxjs/operators'
-import { HAI_MODULE_GROUPS, HAI_MODULES, HaiModuleDefinition, moduleForUrl } from './module-registry'
+import { HAI_MODULE_GROUPS, HAI_MODULES, HaiModuleDefinition, moduleDocumentTitle, moduleForUrl } from './module-registry'
 import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './module-view-preferences.service'
 import { ThemeMode, ThemeService } from '../services/theme.service'
 
@@ -37,6 +38,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
     private router: Router,
     private preferences: ModuleViewPreferencesService,
     private themeService: ThemeService,
+    private documentTitle: Title,
   ) {}
 
   ngOnInit(): void {
@@ -90,6 +92,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
 
   private updateCurrent(url: string): void {
     this.current = moduleForUrl(url)
+    this.documentTitle.setTitle(moduleDocumentTitle(this.current))
     const preferences = this.preferences.get(this.current.id)
     this.viewMode = preferences.mode
     this.navigationMode = preferences.navigationMode

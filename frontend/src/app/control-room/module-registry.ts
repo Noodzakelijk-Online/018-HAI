@@ -144,3 +144,7 @@ export function moduleForUrl(url: string): HaiModuleDefinition {
   const path = url.split('?')[0].split('#')[0]
   return HAI_MODULES.find((module) => path === module.route || path.startsWith(`${module.route}/`)) || HAI_MODULES[0]
 }
+
+export function moduleDocumentTitle(module: HaiModuleDefinition): string {
+  return `${module.title} | HAI Automation Hub`
+}
