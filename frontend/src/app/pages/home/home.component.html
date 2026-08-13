@@ -113,14 +113,18 @@
             </a>
           </div>
           <ng-template #extraTemplate>
-            <i
+            <button
+              nz-button
+              nzType="text"
               nz-dropdown
-              nz-icon
-              nzType="more"
-              nzTheme="outline"
+              class="automation-card__menu"
               [nzDropdownMenu]="cardMenu"
               nzPlacement="bottomRight"
-            ></i>
+              [attr.aria-label]="'Open actions for ' + automation.name"
+              [title]="'Open actions for ' + automation.name"
+            >
+              <i nz-icon nzType="more" nzTheme="outline"></i>
+            </button>
             <nz-dropdown-menu #cardMenu="nzDropdownMenu" class="dropdown-menu">
               <ul nz-menu>
                 <li

@@ -701,6 +701,42 @@ input::placeholder {
   pointer-events: auto;
 }
 
+/* NG-ZORRO overlays are portaled outside app-shell, so theme them from the
+   document-level tokens rather than relying on a shell descendant selector. */
+.ant-drawer-content,
+.ant-drawer-header,
+.ant-drawer-body,
+.ant-drawer-footer,
+.ant-modal-content,
+.ant-modal-header,
+.ant-modal-body,
+.ant-modal-footer,
+.ant-notification-notice,
+.ant-dropdown-menu {
+  color: var(--hai-text) !important;
+  background: var(--hai-surface) !important;
+  border-color: var(--hai-border) !important;
+}
+
+.ant-drawer-title,
+.ant-drawer-close,
+.ant-modal-title,
+.ant-modal-close,
+.ant-notification-notice-message,
+.ant-notification-notice-description,
+.ant-notification-notice-close,
+.ant-dropdown-menu-item,
+.ant-dropdown-menu-submenu-title {
+  color: var(--hai-text) !important;
+}
+
+.ant-dropdown-menu-item:hover,
+.ant-dropdown-menu-item:focus-visible,
+.ant-dropdown-menu-submenu-title:hover,
+.ant-dropdown-menu-submenu-title:focus-visible {
+  background: var(--hai-surface-hover) !important;
+}
+
 .status-pill,
 .budget-pill,
 .model-tag-meta {
