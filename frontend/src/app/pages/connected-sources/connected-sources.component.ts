@@ -60,7 +60,7 @@ export class ConnectedSourcesComponent implements OnInit {
   graphLoading = false;
   graphIncludeSensitive = false;
   lastSyncResult?: ISourceSyncResult;
-  includeDisabled = true;
+  includeDisabled = false;
   includeArchived = false;
   loading = false;
   connecting = false;
@@ -77,7 +77,7 @@ export class ConnectedSourcesComponent implements OnInit {
     name: ['Selected local folder', [Validators.required]],
     localOnly: [true],
     syncFrequency: ['manual'],
-    syncTarget: ['.'],
+    syncTarget: ['', [Validators.required]],
     defaultProjectKey: ['018-HAI'],
     excludePatterns: ['spam,trash'],
   });
@@ -567,7 +567,7 @@ export class ConnectedSourcesComponent implements OnInit {
       this.sourceForm.patchValue({
         name: 'Selected local folder',
         syncFrequency: 'manual',
-        syncTarget: '.',
+        syncTarget: '',
         localOnly: true,
       });
       return;
@@ -698,7 +698,7 @@ export class ConnectedSourcesComponent implements OnInit {
     if (this.sourceForm.value.connectorKey === 'odoo-herp') {
       return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';
     }
-    return 'Folder target, e.g. .';
+    return 'Explicit subfolder under the connected-source root, e.g. legal/vivare';
   }
 
   syncSource(source: IConnectedSource): void {

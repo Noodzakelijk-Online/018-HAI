@@ -169,6 +169,9 @@
               <label>
                 <span>Sync target</span>
                 <input nz-input formControlName="syncTarget" [placeholder]="syncTargetPlaceholder()" data-testid="source-target" />
+                <small *ngIf="sourceForm.value.connectorKey === 'local-folder'">
+                  Choose an explicit subfolder. HAI will not select the entire connected-source root by default.
+                </small>
               </label>
               <label>
                 <span>Exclude patterns</span>

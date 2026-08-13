@@ -41,6 +41,8 @@ security-snapshots/
 # threads, sync summaries). Keep the folder, never the contents.
 /connected-sources/*
 !/connected-sources/.gitkeep
+!/connected-sources/e2e-fixture/
+!/connected-sources/e2e-fixture/.gitkeep
 
 # Generated diagnostics, work reports, and support bundles.
 /*.pdf

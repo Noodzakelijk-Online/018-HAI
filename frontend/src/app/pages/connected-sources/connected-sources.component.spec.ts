@@ -100,4 +100,18 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     component.connectors[4].adapterStatus = 'operational';
     expect(component.googleConnectorMetric()).toBe('4 ready');
   });
+
+  it('requires an explicit local folder instead of defaulting to the whole source root', () => {
+    const { component } = createComponent();
+
+    expect(component.sourceForm.controls['syncTarget'].value).toBe('');
+    expect(component.sourceForm.invalid).toBeTrue();
+
+    component.sourceForm.controls['syncTarget'].setValue('legal/vivare');
+    expect(component.sourceForm.valid).toBeTrue();
+
+    component.connectorChanged('local-folder');
+    expect(component.sourceForm.controls['syncTarget'].value).toBe('');
+    expect(component.syncTargetPlaceholder()).toContain('Explicit subfolder');
+  });
 });
