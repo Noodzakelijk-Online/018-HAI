@@ -55,4 +55,21 @@ describe('LLMPolicyComponent', () => {
     expect(component.validationColor('failed')).toBe('red')
     expect(component.validationColor()).toBe('default')
   })
+
+  it('distinguishes configured endpoints from catalog-enabled integrations', () => {
+    const component = createComponent()
+    const policy = {
+      requireRecentLiveProviderProbe: false,
+      providers: [
+        { id: 'configured', enabled: true, configured: true, models: [] },
+        { id: 'catalog-only', enabled: true, configured: false, models: [] },
+        { id: 'disabled', enabled: false, configured: false, models: [] },
+      ],
+    } as any
+
+    expect(component.enabledProviderCount(policy)).toBe(2)
+    expect(component.configuredProviderCount(policy)).toBe(1)
+    expect(component.configuredProviderSummary(policy)).toBe('1 / 3')
+    expect(component.strictProbePolicyLabel(policy)).toBe('probe optional')
+  })
 })

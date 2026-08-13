@@ -318,8 +318,8 @@ export class LLMPolicyComponent implements OnInit {
         title: 'Provider inventory',
         detail: 'Inspect readiness, quota, budget, and token use.',
         icon: 'deployment-unit',
-        metric: `${this.enabledProviderCount(policy)} enabled`,
-        secondaryMetric: `${this.configuredProviderSummary(policy)} endpoints configured`,
+        metric: `${this.configuredProviderSummary(policy)} configured`,
+        secondaryMetric: `${this.liveProbeCount()} live / ${this.enabledProviderCount(policy)} catalog-enabled`,
         context:
           'Shows provider readiness, quota, budget, token counters, endpoint state, and model availability.',
         tone: 'blue',
@@ -893,7 +893,7 @@ export class LLMPolicyComponent implements OnInit {
 
   strictProbePolicyLabel(policy: ILLMPolicy): string {
     if (!policy.requireRecentLiveProviderProbe) {
-      return 'configured allowed';
+      return 'probe optional';
     }
     return `strict / ${this.probeAgeLabel(policy.providerProbeMaxAgeSeconds)}`;
   }

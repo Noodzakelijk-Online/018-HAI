@@ -124,9 +124,27 @@ func TestPaidProviderDisabledByDefault(t *testing.T) {
 	if decision.RequiresApproval {
 		t.Fatalf("default route should not select paid or expensive models")
 	}
-	for _, skipped := range decision.Skipped {
-		if skipped.ProviderID == "paid-provider" && skipped.Reason == "" {
-			t.Fatalf("paid provider skip should include a reason")
+	for _, provider := range service.policy.Providers {
+		if provider.ID == decision.SelectedProviderID && provider.Paid {
+			t.Fatalf("default route selected paid provider %q", provider.ID)
+		}
+	}
+}
+
+func TestDefaultPolicyDoesNotExposeSyntheticProviderFillers(t *testing.T) {
+	forbidden := map[string]bool{
+		"cheap-provider":      true,
+		"acceptable-provider": true,
+		"high-provider":       true,
+		"premium-provider":    true,
+		"paid-provider":       true,
+	}
+	for _, provider := range defaultPolicy().Providers {
+		if forbidden[provider.ID] {
+			t.Fatalf("default policy exposes synthetic provider %q", provider.ID)
+		}
+		if strings.Contains(strings.ToLower(provider.Name), "placeholder") {
+			t.Fatalf("default policy exposes placeholder provider name %q", provider.Name)
 		}
 	}
 }
@@ -1257,6 +1275,28 @@ func testPolicyWithoutEndpoints() Policy {
 	return annotatePolicyReadiness(policy)
 }
 
+func withTestPaidProvider(policy Policy, endpoint string) Policy {
+	policy.Providers = append(policy.Providers, Provider{
+		ID:          "test-paid-provider",
+		Name:        "Test paid provider",
+		Enabled:     true,
+		Paid:        true,
+		EndpointURL: endpoint,
+		Models: []Model{{
+			ID:               "test-paid-high-capability",
+			Name:             "Test paid high capability model",
+			Tier:             TierExpensive,
+			Capabilities:     []string{"general", "coding", "planning", "verification", "extraction"},
+			MaxDifficulty:    5,
+			MaxReasoning:     "very_high",
+			EstimatedCostEUR: 0.05,
+			RequiresApproval: true,
+			Enabled:          true,
+		}},
+	})
+	return annotatePolicyReadiness(policy)
+}
+
 func providerIndex(t *testing.T, policy Policy, providerID string) int {
 	t.Helper()
 	for index, provider := range policy.Providers {
@@ -1665,10 +1705,7 @@ func TestLiteLLMGatewayGenerationRequiresLiveProbe(t *testing.T) {
 }
 
 func TestGenerateBlocksPaidWithoutApproval(t *testing.T) {
-	policy := testPolicyWithoutEndpoints()
-	paidIndex := providerIndex(t, policy, "paid-provider")
-	policy.Providers[paidIndex].Enabled = true
-	policy.Providers[paidIndex].EndpointURL = "http://example.invalid"
+	policy := withTestPaidProvider(testPolicyWithoutEndpoints(), "http://example.invalid")
 	policy.PaidCallsAllowed = true
 	policy.DailyPaidBudgetEUR = 1
 	service := &Service{policy: policy}
@@ -1676,9 +1713,9 @@ func TestGenerateBlocksPaidWithoutApproval(t *testing.T) {
 	result, err := service.Generate(GenerateRequest{
 		Task: "Handle a difficult verification task",
 		RouteDecision: &RouteDecision{
-			SelectedProviderID: "paid-provider",
-			SelectedModelID:    "paid-high-capability",
-			SelectedModelName:  "Paid high capability model",
+			SelectedProviderID: "test-paid-provider",
+			SelectedModelID:    "test-paid-high-capability",
+			SelectedModelName:  "Test paid high capability model",
 			Tier:               TierExpensive,
 		},
 	})

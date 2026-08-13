@@ -94,8 +94,8 @@
       </button>
 
       <button type="button" class="status-tile" (click)="scrollToSection('provider-inventory')" title="Open provider readiness, quota, budget, and endpoint details">
-        <strong>{{ enabledProviderCount(p) }}/{{ p.providers.length }}</strong>
-        <span>providers enabled</span>
+        <strong>{{ configuredProviderSummary(p) }}</strong>
+        <span>endpoints configured</span>
       </button>
 
       <button
@@ -211,10 +211,10 @@
           </div>
 
           <div class="scorecard-grid">
-            <button type="button" (click)="scrollToSection('provider-inventory')" title="Enabled model providers">
+            <button type="button" (click)="scrollToSection('provider-inventory')" title="Configured and live model providers">
               <span>Providers</span>
-              <strong>{{ enabledProviderCount(p) }}</strong>
-              <small>{{ configuredProviderSummary(p) }} configured</small>
+              <strong>{{ configuredProviderCount(p) }}</strong>
+              <small>{{ liveProbeCount() }} live / {{ enabledProviderCount(p) }} catalog-enabled</small>
             </button>
             <button type="button" (click)="scrollToSection('model-catalog')" title="Total configured model catalog">
               <span>Models</span>
@@ -432,7 +432,7 @@
     <details class="advanced-section" id="provider-inventory">
       <summary title="Expand or collapse provider readiness, budget, quota, and model detail">
         <span>Provider inventory</span>
-        <small>{{ enabledProviderCount(p) }} enabled, {{ configuredProviderSummary(p) }} configured endpoints</small>
+        <small>{{ configuredProviderSummary(p) }} configured, {{ liveProbeCount() }} live, {{ enabledProviderCount(p) }} catalog-enabled</small>
       </summary>
 
       <div class="provider-grid">

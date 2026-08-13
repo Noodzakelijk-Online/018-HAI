@@ -27,10 +27,7 @@ func TestGenerateHandlerIgnoresClientPaidApprovalFlag(t *testing.T) {
 	}))
 	defer server.Close()
 
-	policy := testPolicyWithoutEndpoints()
-	paidIndex := providerIndex(t, policy, "paid-provider")
-	policy.Providers[paidIndex].Enabled = true
-	policy.Providers[paidIndex].EndpointURL = server.URL
+	policy := withTestPaidProvider(testPolicyWithoutEndpoints(), server.URL)
 	policy.PaidCallsAllowed = true
 	policy.DailyPaidBudgetEUR = 1
 	handler := &Handler{service: &Service{policy: policy}}
@@ -39,9 +36,9 @@ func TestGenerateHandlerIgnoresClientPaidApprovalFlag(t *testing.T) {
 		Task:              "Handle a difficult verification task",
 		AllowPaidApproved: true,
 		RouteDecision: &RouteDecision{
-			SelectedProviderID: "paid-provider",
-			SelectedModelID:    "paid-high-capability",
-			SelectedModelName:  "Paid high capability model",
+			SelectedProviderID: "test-paid-provider",
+			SelectedModelID:    "test-paid-high-capability",
+			SelectedModelName:  "Test paid high capability model",
 			Tier:               TierExpensive,
 		},
 	})
