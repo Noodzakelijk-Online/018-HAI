@@ -771,6 +771,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	items := request.Items
 	adapterCursor := ""
+	adapterCursorAuthoritative := false
 	if len(items) == 0 && sourceUsesLocalFolder(source.ConnectorKey) {
 		items, err = s.localFolderItems(source, request)
 		items = filterConnectorLocalItems(items, source.ConnectorKey)
@@ -921,7 +922,8 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == laroConnectorKey {
-		items, adapterCursor, err = fetchLAROSource(context.Background(), source)
+		var laroResult laroFetchResult
+		laroResult, err = fetchLAROSource(context.Background(), source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -930,6 +932,12 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			_, _ = s.repo.UpdateSyncJob(job)
 			s.audit(sourceID, "source.sync_failed", err.Error())
 			return nil, err
+		}
+		items = laroResult.items
+		adapterCursor = laroResult.nextCursor
+		adapterCursorAuthoritative = true
+		if laroResult.cursorReset {
+			s.audit(sourceID, "source.laro_cursor_reset", "LARO rejected the stored incremental cursor; HAI completed one bounded read without it and cleared the stale cursor")
 		}
 		s.audit(sourceID, "source.laro_read", fmt.Sprintf("read %d bounded, owner-scoped LARO legal record(s)", len(items)))
 	}
@@ -1082,7 +1090,11 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	job.CursorAfter = source.Cursor
 	if failed == 0 {
 		source.LastSyncedAt = &now
-		source.Cursor = firstNonEmpty(adapterCursor, fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(items)))
+		if adapterCursorAuthoritative {
+			source.Cursor = adapterCursor
+		} else {
+			source.Cursor = firstNonEmpty(adapterCursor, fmt.Sprintf("%s:%d", now.Format(time.RFC3339), len(items)))
+		}
 		job.Status = "completed"
 		job.CursorAfter = source.Cursor
 		job.Message = "sync completed with cached extraction and provenance links"
