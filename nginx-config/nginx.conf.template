@@ -23,8 +23,18 @@ http {
     server {
         listen 8080;
         limit_req_status 429;
+        # The gateway owns the public security policy. Hide equivalent
+        # upstream headers so clients receive one unambiguous value instead of
+        # comma-joined backend/frontend policies.
+        proxy_hide_header Content-Security-Policy;
+        proxy_hide_header Cross-Origin-Resource-Policy;
+        proxy_hide_header Referrer-Policy;
+        proxy_hide_header X-Content-Type-Options;
+        proxy_hide_header X-Frame-Options;
+        proxy_hide_header X-XSS-Protection;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
+        add_header X-XSS-Protection "0" always;
         add_header Referrer-Policy "no-referrer" always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
         add_header Cross-Origin-Opener-Policy "same-origin" always;
@@ -59,6 +69,7 @@ http {
             add_header Set-Cookie $hai_refreshed_access_cookie always;
             add_header X-Content-Type-Options "nosniff" always;
             add_header X-Frame-Options "DENY" always;
+            add_header X-XSS-Protection "0" always;
             add_header Referrer-Policy "no-referrer" always;
             add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
             add_header Cross-Origin-Opener-Policy "same-origin" always;
@@ -138,6 +149,7 @@ http {
             add_header Set-Cookie $hai_refreshed_access_cookie always;
             add_header X-Content-Type-Options "nosniff" always;
             add_header X-Frame-Options "DENY" always;
+            add_header X-XSS-Protection "0" always;
             add_header Referrer-Policy "no-referrer" always;
             add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
             add_header Cross-Origin-Opener-Policy "same-origin" always;

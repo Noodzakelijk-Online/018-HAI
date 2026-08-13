@@ -9,6 +9,7 @@ COMPOSE = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
 SECURITY_HEADERS = (
     'add_header X-Content-Type-Options "nosniff" always;',
     'add_header X-Frame-Options "DENY" always;',
+    'add_header X-XSS-Protection "0" always;',
     'add_header Referrer-Policy "no-referrer" always;',
     'add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;',
     'add_header Cross-Origin-Opener-Policy "same-origin" always;',
@@ -33,6 +34,19 @@ def location_block(marker: str) -> str:
 
 
 class GatewayAuthContractTest(unittest.TestCase):
+    def test_gateway_is_the_single_public_security_header_authority(self) -> None:
+        server = location_block("server {")
+        for header in (
+            "Content-Security-Policy",
+            "Cross-Origin-Resource-Policy",
+            "Referrer-Policy",
+            "X-Content-Type-Options",
+            "X-Frame-Options",
+            "X-XSS-Protection",
+        ):
+            with self.subTest(header=header):
+                self.assertIn(f"proxy_hide_header {header};", server)
+
     def test_gateway_applies_security_headers_to_every_response(self) -> None:
         server = location_block("server {")
         for required in SECURITY_HEADERS:
