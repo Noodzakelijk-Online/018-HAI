@@ -418,16 +418,7 @@ func TestConfirmPasswordResetRejectsWeakPasswordBeforeLookup(t *testing.T) {
 }
 
 func TestConfirmPasswordResetUpdatesPasswordAndClearsToken(t *testing.T) {
-	userID := uuid.New()
-	userService := &fakeUserService{
-		userByResetToken: &models.User{
-			ID:                 userID,
-			Email:              "user@example.com",
-			Password:           "old-hash",
-			ResetPasswordToken: "reset-token",
-			ResetTokenExpires:  ptrTime(time.Now().Add(time.Hour)),
-		},
-	}
+	userService := &fakeUserService{}
 	svc := &service{
 		userService: userService,
 		logger:      noopLogger{},
@@ -435,11 +426,17 @@ func TestConfirmPasswordResetUpdatesPasswordAndClearsToken(t *testing.T) {
 
 	err := svc.ConfirmPasswordReset("reset-token", "new-password")
 	require.NoError(t, err)
-	require.Equal(t, "reset-token", userService.lookupResetToken)
-	require.Equal(t, "new-password", userService.updatedPassword)
-	require.NotNil(t, userService.updatedUser)
-	require.Empty(t, userService.updatedUser.ResetPasswordToken)
-	require.Nil(t, userService.updatedUser.ResetTokenExpires)
+	require.Equal(t, "reset-token", userService.completedResetToken)
+	require.Equal(t, "new-password", userService.completedResetPassword)
+}
+
+func TestConfirmPasswordResetMapsConsumedOrExpiredTokenToInvalid(t *testing.T) {
+	userService := &fakeUserService{completeResetErr: users.ErrInvalidResetToken}
+	svc := &service{userService: userService, logger: noopLogger{}}
+
+	err := svc.ConfirmPasswordReset("replayed-token", "new-password")
+	require.EqualError(t, err, "invalid token")
+	require.Equal(t, "replayed-token", userService.completedResetToken)
 }
 
 func TestRequestPasswordResetDoesNotPersistTokenWhenEmailDeliveryIsUnavailable(t *testing.T) {
@@ -453,12 +450,13 @@ func TestRequestPasswordResetDoesNotPersistTokenWhenEmailDeliveryIsUnavailable(t
 
 	_, _, err := svc.RequestPasswordReset("operator@example.com")
 	require.EqualError(t, err, "password reset email delivery is not configured")
-	require.Nil(t, userService.updatedUser)
+	require.Empty(t, userService.storedResetToken)
 }
 
 func TestRequestPasswordResetClearsTokenWhenEmailDeliveryFails(t *testing.T) {
 	setupAuthConfig(t)
-	userService := &fakeUserService{userByEmail: &models.User{ID: uuid.New(), Email: "operator@example.com"}}
+	userID := uuid.New()
+	userService := &fakeUserService{userByEmail: &models.User{ID: userID, Email: "operator@example.com"}}
 	svc := &service{
 		userService:      userService,
 		passwordResetter: fakePasswordResetSender{configured: true, err: errors.New("smtp unavailable")},
@@ -467,9 +465,28 @@ func TestRequestPasswordResetClearsTokenWhenEmailDeliveryFails(t *testing.T) {
 
 	_, _, err := svc.RequestPasswordReset("operator@example.com")
 	require.EqualError(t, err, "failed to send password reset email")
-	require.NotNil(t, userService.updatedUser)
-	require.Empty(t, userService.updatedUser.ResetPasswordToken)
-	require.Nil(t, userService.updatedUser.ResetTokenExpires)
+	require.Equal(t, userID, userService.storedResetUserID)
+	require.NotEmpty(t, userService.storedResetToken)
+	require.Equal(t, userService.storedResetToken, userService.clearedResetToken)
+	require.Equal(t, userID, userService.clearedResetUserID)
+}
+
+func TestRequestPasswordResetStoresDeliveredTokenWithoutRollback(t *testing.T) {
+	setupAuthConfig(t)
+	userID := uuid.New()
+	userService := &fakeUserService{userByEmail: &models.User{ID: userID, Email: "operator@example.com"}}
+	svc := &service{
+		userService:      userService,
+		passwordResetter: fakePasswordResetSender{configured: true},
+		logger:           noopLogger{},
+	}
+
+	token, expiresAt, err := svc.RequestPasswordReset("operator@example.com")
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+	require.Equal(t, token, userService.storedResetToken)
+	require.Equal(t, expiresAt, userService.storedResetExpiresAt)
+	require.Empty(t, userService.clearedResetToken)
 }
 
 func TestAuthCapabilitiesReflectConfiguredOptionalPaths(t *testing.T) {
@@ -568,13 +585,21 @@ func ptrTime(value time.Time) *time.Time {
 }
 
 type fakeUserService struct {
-	userByID         *models.User
-	userByEmail      *models.User
-	userByResetToken *models.User
-	lookupResetToken string
-	lookupEmail      string
-	updatedPassword  string
-	updatedUser      *models.User
+	userByID               *models.User
+	userByEmail            *models.User
+	userByResetToken       *models.User
+	lookupResetToken       string
+	lookupEmail            string
+	updatedPassword        string
+	updatedUser            *models.User
+	completedResetToken    string
+	completedResetPassword string
+	completeResetErr       error
+	storedResetUserID      uuid.UUID
+	storedResetToken       string
+	storedResetExpiresAt   time.Time
+	clearedResetUserID     uuid.UUID
+	clearedResetToken      string
 }
 
 func (f *fakeUserService) CreateUser(user models.User) (*models.User, error) {
@@ -619,6 +644,25 @@ func (f *fakeUserService) GetAllUsers(p *utils.Pagination) ([]*models.User, erro
 
 func (f *fakeUserService) UpdatePassword(id uuid.UUID, newPassword string) error {
 	f.updatedPassword = newPassword
+	return nil
+}
+
+func (f *fakeUserService) CompletePasswordReset(token, newPassword string) error {
+	f.completedResetToken = token
+	f.completedResetPassword = newPassword
+	return f.completeResetErr
+}
+
+func (f *fakeUserService) StorePasswordReset(id uuid.UUID, token string, expiresAt time.Time) error {
+	f.storedResetUserID = id
+	f.storedResetToken = token
+	f.storedResetExpiresAt = expiresAt
+	return nil
+}
+
+func (f *fakeUserService) ClearPasswordResetIfToken(id uuid.UUID, token string) error {
+	f.clearedResetUserID = id
+	f.clearedResetToken = token
 	return nil
 }
 

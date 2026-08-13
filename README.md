@@ -640,7 +640,10 @@ database directories, uploaded material, frontend build output, or secrets.
 The local password login works without external accounts. The login page only
 offers Google sign-in or email recovery after their private credentials are set
 in `.env.local`; it will not route an operator to a broken OAuth flow or claim a
-reset code was delivered when no mail sender exists.
+reset code was delivered when no mail sender exists. Password replacement and
+single-use token consumption occur in one conditional PostgreSQL update. A
+failed mail delivery clears only the token from that exact attempt, so it cannot
+erase a newer concurrent recovery request.
 
 For a dedicated Google OAuth **web** client, register this redirect URI for the
 local gateway:

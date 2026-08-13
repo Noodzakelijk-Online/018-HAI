@@ -510,21 +510,14 @@ func (a *service) RequestPasswordReset(email string) (string, time.Time, error) 
 	resetToken := uuid.New().String()
 	resetTokenExpires := time.Now().Add(time.Hour * config.AuthenticationConfig.ExpirationTimeResetTokenHours)
 
-	// Add the reset token to the user
-	user.ResetPasswordToken = resetToken
-	user.ResetTokenExpires = &resetTokenExpires
-
-	_, err = a.userService.UpdateUser(*user)
-	if err != nil {
-		a.logger.Error("Error updating user: %v", err)
+	if err := a.userService.StorePasswordReset(user.ID, resetToken, resetTokenExpires); err != nil {
+		a.logger.Error("Error storing password reset: %v", err)
 		return "", time.Time{}, errors.New("failed to update user")
 	}
 
 	if err := a.passwordResetter.SendPasswordReset(email, resetToken, resetTokenExpires); err != nil {
 		a.logger.Error("Error sending password-reset email: %v", err)
-		user.ResetPasswordToken = ""
-		user.ResetTokenExpires = nil
-		if _, rollbackErr := a.userService.UpdateUser(*user); rollbackErr != nil {
+		if rollbackErr := a.userService.ClearPasswordResetIfToken(user.ID, resetToken); rollbackErr != nil {
 			a.logger.Error("Failed to remove undelivered reset token: %v", rollbackErr)
 		}
 		return "", time.Time{}, errors.New("failed to send password reset email")
@@ -543,37 +536,12 @@ func (a *service) ConfirmPasswordReset(token, newPassword string) error {
 		return ErrRegistrationPasswordWeak
 	}
 
-	user, err := a.userService.GetUserByResetToken(token)
-	if err != nil {
-		a.logger.Error("Error fetching user by reset token: %v", err)
-		return errors.New("invalid token")
-	}
-
-	if user == nil {
-		return errors.New("invalid token")
-	}
-
-	if user.ResetTokenExpires == nil {
-		return errors.New("invalid token")
-	}
-
-	if user.ResetTokenExpires.Before(time.Now()) {
-		return errors.New("token expired")
-	}
-
-	user.ResetPasswordToken = ""
-	user.ResetTokenExpires = nil
-
-	err = a.userService.UpdatePassword(user.ID, newPassword)
-	if err != nil {
-		a.logger.Error("Error updating user: %v", err)
+	if err := a.userService.CompletePasswordReset(token, newPassword); err != nil {
+		if errors.Is(err, users.ErrInvalidResetToken) {
+			return errors.New("invalid token")
+		}
+		a.logger.Error("Error completing password reset: %v", err)
 		return errors.New("failed to change password")
-	}
-
-	_, err = a.userService.UpdateUser(*user)
-	if err != nil {
-		a.logger.Error("Error updating user: %v", err)
-		return errors.New("failed to update user")
 	}
 
 	return nil
