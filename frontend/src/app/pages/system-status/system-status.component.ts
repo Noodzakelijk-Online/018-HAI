@@ -1,6 +1,7 @@
+import { DOCUMENT } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { Subscription, interval } from 'rxjs';
+import { Subscription, finalize, fromEvent, interval, merge } from 'rxjs';
 import {
   IEventDeliveryFailure,
   IEventDeliveryStats,
@@ -51,18 +52,27 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   retryingEventId = '';
 
   private pollSub?: Subscription;
+  private readinessInFlight = false;
 
   constructor(
     @Inject(SYSTEM_STATUS_SERVICE_TOKEN)
     private systemStatusService: ISystemStatusService,
-    private notification: NzNotificationService
+    private notification: NzNotificationService,
+    @Inject(DOCUMENT) private document: Document
   ) {}
 
   ngOnInit(): void {
     this.refresh();
-    // Readiness is a live signal; poll it so the page reflects a dependency
-    // going down without the operator reloading.
-    this.pollSub = interval(15000).subscribe(() => this.refresh(true));
+    // Hidden tabs must not keep probing every dependency. A visible tab polls,
+    // and returning to it triggers one immediate refresh.
+    this.pollSub = merge(
+      interval(15000),
+      fromEvent(this.document, 'visibilitychange')
+    ).subscribe(() => {
+      if (!this.document.hidden) {
+        this.refresh(true);
+      }
+    });
   }
 
   ngOnDestroy(): void {
@@ -71,9 +81,18 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
 
   refresh(silent = false): void {
     if (!silent) {
+      this.loadEventDelivery();
+    }
+    if (this.readinessInFlight) {
+      return;
+    }
+    this.readinessInFlight = true;
+    if (!silent) {
       this.loading = true;
     }
-    this.systemStatusService.readiness().subscribe({
+    this.systemStatusService.readiness().pipe(finalize(() => {
+      this.readinessInFlight = false;
+    })).subscribe({
       next: (readiness) => {
         this.readiness = readiness;
         this.groups = this.buildGroups(readiness.checks);
@@ -93,9 +112,6 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         }
       },
     });
-    if (!silent) {
-      this.loadEventDelivery();
-    }
   }
 
   retryEventDelivery(failure: IEventDeliveryFailure): void {

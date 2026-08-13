@@ -154,7 +154,7 @@ Constitution, run an approval-gated task, or resolve a task review item.
 
 | Area | Implemented capability | Important operating boundary |
 | --- | --- | --- |
-| Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, task planning, and the Framework Registry. | A dashboard card is operational visibility, not proof that an external action occurred. |
+| Operator UI | Angular onboarding, Quick Capture, Control Center, Command Dashboard, Operational Brain, HAI OS, pursuits, workflow exceptions, sources, memory, LLM policy, grounded answers, task planning, and the Framework Registry. | A dashboard card or projected relationship is operational visibility, not proof that an external action occurred. |
 | Pursuits and workflows | Durable pursuits, workflow states, checklists, decisions, open loops, blockers, follow-ups, approvals, review queues, retries, task-attempt evidence, read-only VA delegation briefs, ambient opportunity routing, navigable related-pursuit links, owner-scoped internal reminder proposals, an append-only reminder preparation/decision ledger, and calendar-aware resource/dependency planning. | In the canonical routed stack, new source, assistant, or ambient context is matched to an active pursuit first; otherwise it becomes an approval-gated candidate, not executable work. Resource plans and reminder projections are advisory, owner-scoped, conservative, and non-executing. A reminder preparation request or approval is evidence only: it cannot create a Calendar event, schedule or send a notification or message, invoke a provider, execute a follow-up, or mutate the source checklist. No reminder worker consumes this ledger. |
 | Memory and knowledge | Compact memory, retrieval, deduplication, correction, export/deletion planning, provenance, encrypted user-authorized conversation capture, and source/extraction links. | Raw imported conversations are not automatically promoted to trusted facts. |
 | Source ingestion | Allowlisted local files; MBOX/EML, ICS, Trello JSON, WhatsApp exports, Odoo/HERP snapshots, normalized JSON feeds, synced document folders, read-only GitHub, Gmail, Google Drive, Google Contacts, Google Calendar, Trello, and ShareT sync. | Gmail and Trello have bounded live acceptance evidence but are unconfigured by default. ShareT has a bounded, paginated, read-only adapter with contract coverage; its live token activation remains operator-gated. Drive, Contacts, and Calendar have unit/contract coverage but still need real sandbox acceptance runs. Imported contacts remain review candidates. Meaningful events within 14 days may create source-backed preparation work; past events stay context-only. Overlaps within 30 days create stable review-gated conflict records, while moved or cancelled events retract stale work. No Calendar or ShareT write-back exists. WhatsApp and browser accounts remain export/local-folder paths. |
@@ -755,6 +755,7 @@ HAI does not create automatic memory from them and has no LARO write path.
 | Route | Purpose |
 | --- | --- |
 | `/control-center` | Primary operational overview and bounded maintenance actions. |
+| `/operational-brain` | Owner-scoped map of work, knowledge, sources, memory, agents, and inherited agent constraints. |
 | `/command-dashboard` | Robert-only decisions, open loops, source-backed context, memory-derived work, and unified approval actions for pursuits and linked workflows. |
 | `/pursuits` | Long-running objectives with workflow, source, memory, verification, blocker, approval, activity, and related-pursuit links. |
 | `/workflow-engine` | Work queue, approvals, quality gates, interruptions, retries, follow-ups, and read-only internal reminder proposals. |
@@ -913,6 +914,7 @@ gate/                    Legacy gateway/config area; local Compose uses nginx-co
 - [Verification and anti-hallucination policy](docs/anti-hallucination-verification.md)
 - [Source-grounded answer engine](docs/source-grounded-answer-engine.md)
 - [Automation Control Center](docs/automation-control-center-blueprint.md)
+- [Operational Brain](docs/OPERATIONAL_BRAIN.md)
 - [Release process](docs/release-process.md)
 - [Privacy impact assessment](docs/privacy-impact-assessment.md)
 

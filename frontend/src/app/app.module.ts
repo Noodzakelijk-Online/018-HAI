@@ -8,16 +8,16 @@ import {registerLocaleData} from '@angular/common';
 import en from '@angular/common/locales/en';
 import {HttpClientModule} from "@angular/common/http";
 import {BrowserAnimationsModule} from '@angular/platform-browser/animations';
-import {BulbOutline, CalendarOutline, ContactsOutline, HeartOutline, NodeIndexOutline, StarOutline} from '@ant-design/icons-angular/icons';
 import {NZ_ICONS} from 'ng-zorro-antd/icon';
 import {AUTH_SERVICE_TOKEN} from './services/auth/auth.service.token';
 import {AuthService} from './services/auth/auth.service';
 import {ChunkLoadRecoveryHandler} from './services/chunk-load-recovery.handler';
 import {ControlRoomModule} from './control-room/control-room.module';
+import {HAI_ICONS} from './hai-icons';
 
 registerLocaleData(en);
 
-export const HAI_ICONS = [BulbOutline, CalendarOutline, ContactsOutline, HeartOutline, NodeIndexOutline, StarOutline];
+export {HAI_ICONS} from './hai-icons';
 
 @NgModule({
     declarations: [

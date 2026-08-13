@@ -66,6 +66,7 @@ import (
 	"automation-hub-backend/internal/mlflow"
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/openlit"
+	"automation-hub-backend/internal/operationalgraph"
 	"automation-hub-backend/internal/opscontrol"
 	"automation-hub-backend/internal/outcomeevaluation"
 	"automation-hub-backend/internal/phase2"
@@ -437,6 +438,30 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 			return err
 		}
 		initializeAgentRegistryRoutes(v1, agentregistry.NewHandler(agentRegistryService))
+		ownerMemoryService, ok := memoryService.(memory.OwnerScopedService)
+		if !ok {
+			return fmt.Errorf("operational graph requires owner-scoped memory persistence")
+		}
+		operationalGraphService, err := operationalgraph.NewService(
+			knowledgeRepository,
+			knowledgeService,
+			agentRegistryService,
+			agentTeamService,
+			workflowService,
+			pursuitService,
+			sourceService,
+			ownerMemoryService,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		if err := initializeOperationalGraphRoutes(
+			v1,
+			operationalgraph.NewHandler(operationalGraphService),
+		); err != nil {
+			return err
+		}
 		agentContext, err := task.NewAgentContextProvider(agentRepository)
 		if err != nil {
 			return err
@@ -984,6 +1009,15 @@ func initializeAgentRegistryRoutes(apiVersion *gin.RouterGroup, handler *agentre
 			handler.RecordAssignmentOutcome,
 		)
 	}
+}
+
+func initializeOperationalGraphRoutes(apiVersion *gin.RouterGroup, handler *operationalgraph.Handler) error {
+	return operationalgraph.RegisterRoutes(apiVersion, handler, operationalgraph.RouteGuards{
+		AuthenticatedOwner: requireAuthenticatedOwner(),
+		RecognizedRole:     requireRecognizedRole(),
+		Read:               requirePermission(rbac.PermRead),
+		Write:              requirePermission(rbac.PermWrite),
+	})
 }
 
 func initializeFrameworkRegistryRoutes(apiVersion *gin.RouterGroup, handler *frameworkregistry.Handler) {
