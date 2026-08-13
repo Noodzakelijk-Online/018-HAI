@@ -43,3 +43,24 @@ consider a trigram/full-text index for `content` to back search.
 - Pagination is bounded (`pageSize` max 100) so a single request can never load
   an unbounded result set.
 - Large-dataset correctness is covered by `largedataset_test.go` (50k rows).
+
+## Local event-broker baseline (Windows Docker Desktop)
+
+HAI clients continue to use the Kafka protocol at `kafka:9092`. The local
+Compose implementation is Redpanda Community Edition so the single-user stack
+does not pay for an idle JVM and KRaft controller.
+
+| Broker | Ready-state memory | Processes | Scope |
+| --- | ---: | ---: | --- |
+| Previous Kafka 7.6.1 KRaft broker | about 364 MiB | 64 | Active local broker immediately before cutover |
+| Pinned Redpanda v26.2.1 durable broker | about 58.7 MiB | 3 | Same host/network; fsync bypass disabled, cluster info and topic creation passed |
+| Pinned Redpanda with connected HAI clients | 153 MiB median | 4 | Three live samples after backend, IDP, config-manager, and application round-trip |
+
+The isolated durable-broker reduction is about 305 MiB (83.9%) and 61
+processes (95.3%). The connected live broker still reduced measured broker
+memory by about 211 MiB (58.0%) and 60 processes (93.8%). These are point-in-time
+measurements, not throughput claims.
+CI starts the actual Compose service and requires a Kafka metadata request plus
+topic creation/description, disabled write caching, and no unsafe fsync bypass.
+Release acceptance additionally requires the HAI producer, config-manager
+consumer, and readiness path against the rebuilt local stack.

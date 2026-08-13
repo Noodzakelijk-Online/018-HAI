@@ -581,33 +581,31 @@ host port remains loopback-bound by default. Compose limits the gateway to
 profile reaches that private port and still passes through the gateway's
 authentication, rate limiting, and owner-scoped backend controls.
 
-The local event bus uses one digest-pinned Kafka 7.6.1 process in combined
-KRaft broker/controller mode; ZooKeeper is not part of the active topology. The
-default heap is 64-256 MiB and the Compose envelope is 512 MiB, 0.75 CPU, and
-160 processes. `-XX:+ExitOnOutOfMemoryError` makes heap exhaustion terminate
-the broker instead of leaving a partially functioning process behind a passing
-TCP probe. The broker health check uses that lightweight probe instead of
-starting a second JVM every ten seconds; the config manager's real Kafka
-consumer remains the end-to-end messaging readiness signal. KRaft data
-uses the named `018-hai-kafka-kraft-data` volume. Upgrading from the earlier
-ZooKeeper topology deliberately starts a fresh local event log because the old
-metadata cannot be mounted safely into KRaft. The detached
-`018-hai-kafka-data`, `018-hai-zookeeper-data`, and
-`018-hai-zookeeper-log` volumes are retained for explicit rollback until an
-operator reviews and removes them. Never use `docker compose down -v` during
-that retention period. In the retained-data Windows cutover, the previous
-Kafka-plus-ZooKeeper pair used about 413.5 MiB and 98 processes at idle. Three
-post-transaction KRaft samples initially had a median of 303.4 MiB, but that
-160 MiB heap ceiling later caused a real metadata-snapshot OOM and is not a
-safe operating target. After raising only the bounded Kafka heap and container
-envelope, three steady samples had a median of 352.8 MiB, 69 processes, and
-1.67% CPU. That remains about 60.7 MiB (14.7%) and 29 processes (29.6%) less
-than the former event topology. The current nine-service stack measured a
-median 498.1 MiB in the same post-fix sample, versus about 574.2 MiB before the
-cutover (13.3% lower); host workload and JVM settling can move these
-point-in-time values. `generic-auto` now belongs to the opt-in
-`compatibility` profile, removing its observed 4.6 MiB and 9 processes from the
-default nine-service steady state. `backend-migrate` is an additional one-shot
+The local event bus retains the Kafka wire protocol and stable `kafka:9092`
+address, but now uses one digest-pinned Redpanda Community Edition broker. This
+removes the Java/KRaft idle cost without changing the Sarama clients, durable
+backend outbox, config-manager consumer inbox, health model, or application
+topics. The broker is limited to one shard, 256 MiB, 0.5 CPU, and 96 processes.
+Development mode, write caching, and unsafe fsync bypass are disabled so an
+acknowledged outbox event crosses a real durability boundary. Its health check
+performs a real metadata request through `rpk`, while the
+config manager's active Kafka-protocol consumer remains the end-to-end delivery
+readiness signal. A local Windows benchmark reached ready state and created a
+topic at about 58.7 MiB and 3 processes with disk flushes retained, compared
+with about 364 MiB and 64
+processes for the replaced idle Java broker on the same host. These are
+point-in-time local measurements, not throughput guarantees.
+
+Redpanda data uses `018-hai-redpanda-data`. The former
+`018-hai-kafka-kraft-data`, `018-hai-kafka-data`,
+`018-hai-zookeeper-data`, and `018-hai-zookeeper-log` volumes are never mounted
+or deleted by this cutover; an operator must verify that no required event or
+offset exists only in a legacy volume before removing it. Never use
+`docker compose down -v` during that review. Redpanda Community Edition is
+source-available under BSL 1.1, not an MIT/Apache dependency; HAI uses only its
+free Kafka-compatible local broker features and does not offer it as a
+third-party streaming or queuing service. `generic-auto` remains in the opt-in
+`compatibility` profile. `backend-migrate` is an additional one-shot
 container: it exits before steady state and does not increase that footprint.
 
 Start the retired internal compatibility target only for an explicit legacy

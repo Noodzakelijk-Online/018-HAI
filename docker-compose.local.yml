@@ -1722,55 +1722,53 @@ services:
 
   kafka:
     <<: *hai-service-defaults
-    image: confluentinc/cp-kafka:7.6.1@sha256:620734d9fc0bb1f9886932e5baf33806074469f40e3fe246a3fdbb59309535fa
+    # HAI uses the Kafka protocol, but the local single-user broker is
+    # Redpanda Community Edition. It avoids the Java/KRaft idle footprint
+    # while retaining the same kafka:9092 contract for every existing client.
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.1@sha256:9a47c1f8d6736f98fa2616f6f0b715c051cb0bdac1a1176e38321bf45a5b572d
     container_name: 018-hai-kafka
     hostname: kafka
     restart: unless-stopped
     init: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m
-    mem_limit: ${KAFKA_MEMORY_LIMIT:-384m}
-    mem_reservation: ${KAFKA_MEMORY_RESERVATION:-192m}
-    cpus: ${KAFKA_CPU_LIMIT:-0.75}
-    pids_limit: ${KAFKA_PIDS_LIMIT:-160}
+    mem_limit: ${KAFKA_MEMORY_LIMIT:-256m}
+    mem_reservation: ${KAFKA_MEMORY_RESERVATION:-64m}
+    cpus: ${KAFKA_CPU_LIMIT:-0.5}
+    pids_limit: ${KAFKA_PIDS_LIMIT:-96}
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    environment:
-      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: ${KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS:-1}
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: ${KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS:-1}
-      KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS:-1}
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
-      KAFKA_LOG4J_LOGGERS: "kafka=WARN,kafka.controller=WARN,state.change.logger=WARN,kafka.log.LogCleaner=WARN"
-      KAFKA_GC_LOG_OPTS: "-Xlog:gc*:file=/tmp/kafka-gc.log:time,tags:filecount=2,filesize=10M"
-      KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-48m} -Xmx${KAFKA_HEAP_MAX:-192m} -XX:+ExitOnOutOfMemoryError"
-      KAFKA_NUM_NETWORK_THREADS: ${KAFKA_NUM_NETWORK_THREADS:-1}
-      KAFKA_NUM_IO_THREADS: ${KAFKA_NUM_IO_THREADS:-1}
-      KAFKA_BACKGROUND_THREADS: ${KAFKA_BACKGROUND_THREADS:-1}
-      KAFKA_NUM_RECOVERY_THREADS_PER_DATA_DIR: 1
-      KAFKA_LOG_CLEANER_THREADS: 1
+    command:
+      - redpanda
+      - start
+      - --kafka-addr
+      - internal://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - internal://kafka:9092
+      - --rpc-addr
+      - 0.0.0.0:33145
+      - --advertise-rpc-addr
+      - kafka:33145
+      - --smp
+      - "1"
+      - --overprovisioned=false
+      - --unsafe-bypass-fsync=false
+      - --lock-memory=false
+      - --reserve-memory
+      - 0M
+      - --check=false
+      - --default-log-level
+      - warn
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]
+      test: ["CMD", "rpk", "cluster", "info", "-X", "brokers=127.0.0.1:9092"]
       interval: 30s
       timeout: 5s
       retries: 18
-      start_period: 30s
+      start_period: 15s
     volumes:
-      - kafka-kraft-data:/var/lib/kafka/data
+      - redpanda-data:/var/lib/redpanda/data
     networks:
       - service-hub
 
@@ -1876,8 +1874,8 @@ volumes:
     name: 018-hai-postgres-automation-data
   redis-data:
     name: 018-hai-redis-data
-  kafka-kraft-data:
-    name: 018-hai-kafka-kraft-data
+  redpanda-data:
+    name: 018-hai-redpanda-data
   phase2-control-state:
     name: 018-hai-phase2-control-state
   temporal-postgres-data:

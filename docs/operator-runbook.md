@@ -72,30 +72,53 @@ docker compose -f docker-compose.local.yml --env-file .env.local ps -a backend-m
 docker compose -f docker-compose.local.yml --env-file .env.local exec backend /app/hai-backend doctor
 ```
 
-### Kafka KRaft Cutover And Rollback
+### Kafka-Protocol Broker Cutover And Rollback
 
-The local stack runs one Kafka 7.6.1 process in combined KRaft
-broker/controller mode and stores its metadata in
-`018-hai-kafka-kraft-data`. `KAFKA_CLUSTER_ID` must remain stable for the
-lifetime of that volume. Do not point KRaft at the former
-`018-hai-kafka-data` volume: it contains ZooKeeper-era broker metadata and is
-not an in-place migration source.
+The local stack keeps the Kafka API and `kafka:9092` address but runs a
+digest-pinned Redpanda Community Edition broker with one shard. Its active data
+volume is `018-hai-redpanda-data`. Backend and IDP Sarama producers and the
+nginx config-manager consumer require no protocol or address change.
 
-The local broker uses a bounded 256 MiB maximum Java heap inside a 512 MiB
-container limit. Do not lower the heap without a retained metadata-snapshot
-test: 160 MiB caused the KRaft snapshot emitter to exhaust its heap while the
-broker port remained reachable. `-XX:+ExitOnOutOfMemoryError` now converts any
-future heap exhaustion into a visible container restart instead of leaving a
-partially functioning process reported healthy by a TCP-only probe.
+HAI does not use Redpanda's development mode. The Compose command explicitly
+sets `--unsafe-bypass-fsync=false`, and the production cluster default keeps
+`write_caching_default=false`, so a successful `acks=all` response is flushed
+to disk. Do not replace these with `dev-container` or `--overprovisioned`: both
+enable an unsafe fsync bypass in the current image.
 
-Upgrades from the former ZooKeeper topology leave
-`018-hai-kafka-data`, `018-hai-zookeeper-data`, and
-`018-hai-zookeeper-log` detached and unchanged for rollback. This means queued
-local events and consumer offsets do not transfer into the fresh KRaft log.
-Before removing the legacy volumes, verify that no required local event remains
-only in them and record the decision in the operational audit. `down -v`,
-`docker volume prune`, and broad Docker cleanup are prohibited while that
-review is pending.
+The cutover intentionally does not mount or modify the former
+`018-hai-kafka-kraft-data`, `018-hai-kafka-data`,
+`018-hai-zookeeper-data`, or `018-hai-zookeeper-log` volumes. Kafka and
+Redpanda storage formats are not an in-place migration boundary, so queued
+events and offsets in a detached legacy log do not transfer automatically.
+The backend's transactional outbox remains authoritative for undelivered
+automation events, but an operator must still review legacy broker state before
+removing any volume. `down -v`, `docker volume prune`, and broad Docker cleanup
+are prohibited while that review is pending.
+
+After the first start, require all of the following before accepting the
+cutover:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml ps kafka nginxconfigmanager
+docker compose --env-file .env.local -f docker-compose.local.yml exec kafka rpk cluster info -X brokers=127.0.0.1:9092
+docker compose --env-file .env.local -f docker-compose.local.yml exec kafka rpk cluster config get write_caching_default
+Invoke-WebRequest http://127.0.0.1/readyz -UseBasicParsing
+```
+
+If `018-hai-redpanda-data` was first created by an earlier development-mode
+candidate, correct its persisted cluster setting once and recreate all clients
+so no stale broker connection survives the cutover:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml exec kafka rpk cluster config set write_caching_default false
+docker compose --env-file .env.local -f docker-compose.local.yml up -d --force-recreate idp backend nginxconfigmanager
+```
+
+Then run `scripts\smoke-event-pipeline.ps1`. It creates and deletes one
+disposable read-only health automation through the authenticated loopback API,
+confirms both generated-config effects, and requires two topic-offset advances.
+A healthy broker alone proves Kafka-protocol transport, not application
+delivery.
 
 ## Health Checks
 

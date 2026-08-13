@@ -67,7 +67,7 @@ with one bounded Kafka KRaft process; the readiness method below is unchanged.
 | generic-auto | Up (healthy) |
 | nginxconfigmanager | Up |
 
-### Current KRaft cutover evidence (2026-08-09)
+### Historical KRaft cutover evidence (2026-08-09)
 
 The retained-data Windows stack was cut over to a fresh
 `018-hai-kafka-kraft-data` volume without deleting the three legacy Kafka and
@@ -97,6 +97,30 @@ error. Three stabilized samples measured a median 352.8 MiB, 69 processes, and
 1.67% CPU for Kafka, while the current nine-service stack measured a median
 498.1 MiB. These later values supersede the lower unsafe memory figure as the
 supported local operating envelope.
+
+### Kafka-protocol Redpanda cutover evidence (2026-08-13)
+
+The replacement broker was first tested side by side on the same Docker
+network using the exact digest pinned in Compose. It reached cluster-ready
+state, created a one-partition topic, and idled at approximately 58.7 MiB with
+3 processes under a 256 MiB/0.5 CPU/96-process envelope while retaining fsync.
+The active Java KRaft
+broker measured approximately 364 MiB and 64 processes immediately beforehand.
+Three stabilized connected-live samples measured a median 153 MiB and 4
+processes after the backend, IDP, config manager, and application transaction.
+Development mode and unsafe fsync bypass are disabled, and the cluster's
+`write_caching_default` must remain false.
+
+The authenticated live application smoke then created a disposable automation
+(`201`), read it (`200`), consumed its create event into a generated nginx
+route, deleted it (`204`), consumed the delete event and removed the route, and
+returned `404` for the deleted record. The topic high watermark advanced by
+exactly two. `/readyz` reported reachable database, Redis, Kafka, and outbox;
+its only warning was the truthful absence of a configured LLM provider.
+
+The new broker writes only to `018-hai-redpanda-data`. All prior Kafka and
+ZooKeeper volumes remain detached and untouched. Their presence is rollback
+evidence, not permission to delete them.
 
 ## 3. The readiness lie (before the fix)
 

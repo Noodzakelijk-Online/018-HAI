@@ -216,7 +216,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             gateway_template.read_text(encoding="utf-8"),
         )
 
-    def test_local_kafka_runtime_uses_bounded_single_node_kraft(self) -> None:
+    def test_local_kafka_protocol_runtime_uses_bounded_single_node_redpanda(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         environment = (ROOT / ".env.example").read_text(encoding="utf-8")
         kafka_start = compose.index("  kafka:\n")
@@ -224,38 +224,37 @@ class CIWorkflowContractTest(unittest.TestCase):
         kafka = compose[kafka_start:kafka_end]
 
         for required in (
-            "cp-kafka:7.6.1@sha256:",
-            "CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}",
-            "KAFKA_NODE_ID: 1",
-            "KAFKA_PROCESS_ROLES: broker,controller",
-            "KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093",
-            "KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER",
-            "KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: ${KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS:-1}",
-            "KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: ${KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS:-1}",
-            "KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS:-1}",
-            'KAFKA_HEAP_OPTS: "-Xms${KAFKA_HEAP_MIN:-48m} -Xmx${KAFKA_HEAP_MAX:-192m} -XX:+ExitOnOutOfMemoryError"',
-            "KAFKA_NUM_NETWORK_THREADS: ${KAFKA_NUM_NETWORK_THREADS:-1}",
-            "KAFKA_NUM_IO_THREADS: ${KAFKA_NUM_IO_THREADS:-1}",
-            "KAFKA_BACKGROUND_THREADS: ${KAFKA_BACKGROUND_THREADS:-1}",
-            "mem_limit: ${KAFKA_MEMORY_LIMIT:-384m}",
-            "cpus: ${KAFKA_CPU_LIMIT:-0.75}",
-            "pids_limit: ${KAFKA_PIDS_LIMIT:-160}",
+            "redpandadata/redpanda:v26.2.1@sha256:",
+            "internal://0.0.0.0:9092",
+            "internal://kafka:9092",
+            "--smp",
+            '"1"',
+            "--overprovisioned=false",
+            "--unsafe-bypass-fsync=false",
+            "--lock-memory=false",
+            "--reserve-memory",
+            "--check=false",
+            "mem_limit: ${KAFKA_MEMORY_LIMIT:-256m}",
+            "mem_reservation: ${KAFKA_MEMORY_RESERVATION:-64m}",
+            "cpus: ${KAFKA_CPU_LIMIT:-0.5}",
+            "pids_limit: ${KAFKA_PIDS_LIMIT:-96}",
             "no-new-privileges:true",
             "cap_drop:",
-            'test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]',
-            "kafka-kraft-data:/var/lib/kafka/data",
+            'test: ["CMD", "rpk", "cluster", "info", "-X", "brokers=127.0.0.1:9092"]',
+            "redpanda-data:/var/lib/redpanda/data",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, kafka)
 
-        self.assertNotIn("kafka-broker-api-versions", kafka)
+        self.assertNotIn("cp-kafka", kafka)
+        self.assertNotIn("KAFKA_HEAP_OPTS", kafka)
+        self.assertNotIn("dev-container", kafka)
+        self.assertNotIn("--unsafe-bypass-fsync=true", kafka)
         self.assertNotIn("zookeeper", compose.lower())
         self.assertNotIn("kafka-network", compose)
-        self.assertIn("KAFKA_CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk", environment)
-        self.assertIn("KAFKA_HEAP_MAX=192m", environment)
-        self.assertIn("KAFKA_MEMORY_LIMIT=384m", environment)
-        self.assertIn("KAFKA_NUM_NETWORK_THREADS=1", environment)
-        self.assertIn("KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS=1", environment)
+        self.assertIn("KAFKA_MEMORY_LIMIT=256m", environment)
+        self.assertIn("KAFKA_MEMORY_RESERVATION=64m", environment)
+        self.assertIn("KAFKA_PIDS_LIMIT=96", environment)
 
     def test_local_persistence_services_are_durable_pinned_and_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
@@ -331,19 +330,25 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("HAI_LOG_MAX_SIZE=10m", environment)
         self.assertIn("HAI_LOG_MAX_FILES=3", environment)
 
-    def test_local_health_probes_are_low_churn_and_brokers_are_quiet(self) -> None:
+    def test_local_health_probes_are_low_churn_and_broker_is_quiet(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
 
         self.assertNotIn("interval: 10s", compose)
         self.assertEqual(compose.count("start_interval: 2s"), 9)
         for required in (
             "GIN_MODE: release",
-            "KAFKA_LOG4J_ROOT_LOGLEVEL: WARN",
-            "kafka=WARN,kafka.controller=WARN,state.change.logger=WARN",
-            "filecount=2,filesize=10M",
+            "--default-log-level",
+            "warn",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, compose)
+        for removed_java_setting in (
+            "KAFKA_LOG4J_ROOT_LOGLEVEL",
+            "KAFKA_HEAP_OPTS",
+            "KAFKA_GC_LOG_OPTS",
+        ):
+            with self.subTest(removed=removed_java_setting):
+                self.assertNotIn(removed_java_setting, compose)
 
     def test_application_database_pools_are_explicitly_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
