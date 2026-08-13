@@ -47,8 +47,15 @@ if [ "${HAI_NGROK_VALIDATE_ONLY:-false}" = "true" ]; then
   exit 0
 fi
 
+policy_file=/etc/hai/private-a2a-policy.yml
+if [ "${HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED:-false}" = "true" ]; then
+  policy_file=/etc/hai/public-policy.yml
+fi
+[ -r "$policy_file" ] || fail "required traffic policy is unavailable"
+
 exec /bin/ngrok http http://nginx:8080 \
   --config=/etc/ngrok.yml \
   --url="$HAI_NGROK_URL" \
+  --traffic-policy-file="$policy_file" \
   --log=stdout \
   --log-format=json

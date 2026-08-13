@@ -727,6 +727,12 @@ class CIWorkflowContractTest(unittest.TestCase):
         entrypoint = (ROOT / "deploy" / "ngrok" / "start-ngrok.sh").read_text(
             encoding="utf-8"
         )
+        public_policy = (ROOT / "deploy" / "ngrok" / "public-policy.yml").read_text(
+            encoding="utf-8"
+        )
+        private_policy = (
+            ROOT / "deploy" / "ngrok" / "private-a2a-policy.yml"
+        ).read_text(encoding="utf-8")
         ngrok_start = compose.index("  ngrok:\n")
         ngrok_end = compose.index("\n  nginxconfigmanager:\n", ngrok_start)
         ngrok_service = compose[ngrok_start:ngrok_end]
@@ -741,6 +747,14 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("no-new-privileges:true", ngrok_service)
         self.assertIn("cap_drop:", ngrok_service)
         self.assertIn('entrypoint: ["/bin/sh", "/etc/hai/start-ngrok.sh"]', ngrok_service)
+        self.assertIn(
+            "./deploy/ngrok/public-policy.yml:/etc/hai/public-policy.yml:ro",
+            ngrok_service,
+        )
+        self.assertIn(
+            "./deploy/ngrok/private-a2a-policy.yml:/etc/hai/private-a2a-policy.yml:ro",
+            ngrok_service,
+        )
         for required in (
             "LOCAL_LOGIN_BYPASS_ENABLED",
             "IDP_COOKIE_SECURE",
@@ -767,6 +781,36 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED", preflight)
         self.assertIn("HAI_A2A_BRIDGE_TOKEN", preflight)
         self.assertIn("/api/v1/a2a", preflight)
+        self.assertIn("Test-PublicOrigin $publicUrlText $publicA2A", preflight)
+        self.assertIn("$healthPayload.status -ne 'ok'", preflight)
+        self.assertIn("$healthPayload.service -ne 'backend'", preflight)
+        self.assertIn("smoke-a2a-bridge.ps1", preflight)
+        self.assertIn("the tunnel was stopped", preflight)
+        self.assertIn("Strict-Transport-Security", preflight)
+        self.assertIn("Cache-Control", preflight)
+        self.assertIn("no-store", preflight)
+        self.assertIn("Content-Security-Policy", preflight)
+        self.assertIn("X-Content-Type-Options", preflight)
+        self.assertIn("X-Frame-Options", preflight)
+        self.assertIn("ngrok-skip-browser-warning", preflight)
+        self.assertIn("--traffic-policy-file=\"$policy_file\"", entrypoint)
+        self.assertIn("private-a2a-policy.yml", entrypoint)
+        self.assertIn("public-policy.yml", entrypoint)
+        for policy in (public_policy, private_policy):
+            with self.subTest(policy="hsts"):
+                self.assertIn("on_http_response:", policy)
+                self.assertIn("type: add-headers", policy)
+                self.assertIn("strict-transport-security", policy)
+                self.assertIn("max-age=31536000", policy)
+        for blocked_path in (
+            "/.well-known/agent-card.json",
+            "/api/v1/a2a",
+        ):
+            with self.subTest(blocked_path=blocked_path):
+                self.assertIn(blocked_path, private_policy)
+        self.assertIn("type: custom-response", private_policy)
+        self.assertIn("status_code: 404", private_policy)
+        self.assertNotIn("custom-response", public_policy)
         self.assertIn("Ngrok container fail-closed gate", workflow)
         self.assertIn("sh -n deploy/ngrok/start-ngrok.sh", workflow)
         self.assertIn("mismatched public A2A origin unexpectedly passed", workflow)

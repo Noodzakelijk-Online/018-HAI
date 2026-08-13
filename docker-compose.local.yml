@@ -1031,6 +1031,8 @@ services:
     volumes:
       - ./deploy/ngrok/ngrok.yml:/etc/ngrok.yml:ro
       - ./deploy/ngrok/start-ngrok.sh:/etc/hai/start-ngrok.sh:ro
+      - ./deploy/ngrok/public-policy.yml:/etc/hai/public-policy.yml:ro
+      - ./deploy/ngrok/private-a2a-policy.yml:/etc/hai/private-a2a-policy.yml:ro
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m

@@ -25,6 +25,13 @@ token, one named owner, and an endpoint exactly equal to
 these connector checks, so invoking Compose directly cannot create a tunnel
 whose advertised A2A endpoint disagrees with the public origin.
 
+The ngrok edge applies one of two immutable traffic policies. Both add an HSTS
+response policy. Unless public A2A is explicitly enabled, the private policy
+returns HTTP 404 for both the Agent Card and `SendMessage` path at the edge,
+while the same connector can remain available through the loopback gateway.
+This means opening the general HAI tunnel cannot silently publish a locally
+enabled connector.
+
 The container entrypoint independently rechecks production mode, disabled
 local-login bypass, secure cookies, loopback gateway binding, enabled API rate
 limiting, a dedicated token, and a fixed ngrok HTTPS origin. Calling Compose
@@ -85,6 +92,14 @@ Start and stop the profile:
 .\scripts\start-ngrok.ps1
 .\scripts\start-ngrok.ps1 -Stop
 ```
+
+Startup does not declare the endpoint available merely because the tunnel
+process is healthy. It waits for the real fixed HTTPS origin, checks backend
+health, an anonymous no-permission session, the Angular shell, and HSTS. It
+also proves that A2A is edge-blocked when public mode is disabled, or runs the
+authenticated bounded A2A acceptance when public mode is enabled. A failed
+public-origin probe stops the tunnel instead of leaving an unverified endpoint
+online.
 
 Verify the A2A chain locally before exposure, then through the live tunnel:
 

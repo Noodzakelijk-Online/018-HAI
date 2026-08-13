@@ -11,6 +11,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Net.Http
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 
 function Resolve-RepoFile([string]$PathValue) {
@@ -172,6 +173,108 @@ function Wait-ForHealthyContainer([string]$ContainerName, [int]$Attempts = 45) {
     throw "$ContainerName did not become healthy within $($Attempts * 2) seconds."
 }
 
+function Invoke-PublicRequest(
+    [System.Net.Http.HttpClient]$Client,
+    [System.Net.Http.HttpMethod]$Method,
+    [string]$Url,
+    [int]$ExpectedStatus,
+    [int]$Attempts = 1
+) {
+    $lastStatus = 0
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $request = [System.Net.Http.HttpRequestMessage]::new($Method, $Url)
+        try {
+            # The header suppresses the free-tier HTML interstitial for this
+            # machine probe. It is not an authentication or authorization
+            # credential and is never forwarded as HAI identity.
+            $request.Headers.TryAddWithoutValidation('ngrok-skip-browser-warning', 'hai-cloud-readiness') | Out-Null
+            $response = $Client.SendAsync($request).GetAwaiter().GetResult()
+            try {
+                $lastStatus = [int]$response.StatusCode
+                $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                if ($lastStatus -eq $ExpectedStatus) {
+                    $selectedHeaders = @{}
+                    foreach ($headerName in @(
+                        'Strict-Transport-Security',
+                        'Cache-Control',
+                        'Content-Security-Policy',
+                        'X-Content-Type-Options',
+                        'X-Frame-Options'
+                    )) {
+                        $selectedHeaders[$headerName] = ''
+                        if ($response.Headers.Contains($headerName)) {
+                            $selectedHeaders[$headerName] = $response.Headers.GetValues($headerName) -join ','
+                        } elseif ($response.Content.Headers.Contains($headerName)) {
+                            $selectedHeaders[$headerName] = $response.Content.Headers.GetValues($headerName) -join ','
+                        }
+                    }
+                    return [pscustomobject]@{
+                        Status = $lastStatus
+                        Body = $body
+                        Headers = $selectedHeaders
+                    }
+                }
+                $lastError = "HTTP $lastStatus"
+            } finally {
+                $response.Dispose()
+            }
+        } catch {
+            $lastError = $_.Exception.Message
+        } finally {
+            $request.Dispose()
+        }
+        if ($attempt -lt $Attempts) {
+            Start-Sleep -Seconds 2
+        }
+    }
+    throw "$Url did not return HTTP $ExpectedStatus after $Attempts attempt(s); last result: $lastError."
+}
+
+function Test-PublicOrigin([string]$BaseUrl, [bool]$PublicA2A) {
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(10)
+    try {
+        $health = Invoke-PublicRequest $client ([System.Net.Http.HttpMethod]::Get) "$BaseUrl/healthz" 200 30
+        $healthPayload = $health.Body | ConvertFrom-Json
+        if ($healthPayload.status -ne 'ok' -or $healthPayload.service -ne 'backend') {
+            throw 'The public health response did not identify a healthy HAI backend.'
+        }
+        if ($health.Headers['Strict-Transport-Security'] -notmatch 'max-age=31536000') {
+            throw 'The public origin did not return the required HSTS policy.'
+        }
+
+        $session = Invoke-PublicRequest $client ([System.Net.Http.HttpMethod]::Get) "$BaseUrl/api/v1/auth/session" 200
+        $sessionPayload = $session.Body | ConvertFrom-Json
+        if ($sessionPayload.authenticated -ne $false -or $sessionPayload.permissions.canRead -ne $false) {
+            throw 'The unauthenticated public session check returned an unsafe identity state.'
+        }
+        if ($session.Headers['Cache-Control'] -notmatch 'no-store') {
+            throw 'The anonymous session response was not marked no-store.'
+        }
+
+        $page = Invoke-PublicRequest $client ([System.Net.Http.HttpMethod]::Get) "$BaseUrl/" 200
+        if ($page.Body -notmatch '<app-root') {
+            throw 'The public origin did not return the HAI frontend shell.'
+        }
+        if ($page.Headers['X-Content-Type-Options'] -notmatch 'nosniff' -or
+            $page.Headers['X-Frame-Options'] -notmatch 'DENY' -or
+            $page.Headers['Content-Security-Policy'] -notmatch "frame-ancestors 'none'") {
+            throw 'The public frontend shell did not return the required browser security headers.'
+        }
+
+        if (-not $PublicA2A) {
+            Invoke-PublicRequest $client ([System.Net.Http.HttpMethod]::Get) "$BaseUrl/.well-known/agent-card.json" 404 | Out-Null
+            Invoke-PublicRequest $client ([System.Net.Http.HttpMethod]::Post) "$BaseUrl/api/v1/a2a" 404 | Out-Null
+        }
+    } finally {
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
+
 # Reconcile the security-sensitive base services before creating any public
 # endpoint. This applies secure-cookie and OAuth callback changes to the actual
 # running IDP rather than trusting only the env file.
@@ -198,4 +301,13 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Failed to start the ngrok service.'
 }
 Wait-ForHealthyContainer '018-hai-ngrok' 30
+try {
+    Test-PublicOrigin $publicUrlText $publicA2A
+    if ($publicA2A) {
+        & (Join-Path $repoRoot 'scripts/smoke-a2a-bridge.ps1') -EnvFile $envPath -Public
+    }
+} catch {
+    & docker compose --env-file $envPath --profile cloud-tunnel -f $composePath stop ngrok | Out-Null
+    throw "The public HAI acceptance probe failed and the tunnel was stopped. $($_.Exception.Message)"
+}
 Write-Host "HAI is available through $publicUrlText"
