@@ -34,8 +34,13 @@ source of truth for current state.
   isolation, exact no-op replay, and a whole-schema assertion that only the
   advisory monitor, outcome-evaluation, and proactivity ledgers changed. A
   retained signed-browser not-due pass separately proves truthful HTTP/UI no-op
-  reporting and no duplicate ledgers. The remaining gate is the equivalent
-  signed due-run and crash/recovery lifecycle through the Windows gateway/UI.
+  reporting and no duplicate ledgers. The signed due-run, pause/re-enable, and
+  expired-lease recovery lifecycle also passed through the Windows gateway and
+  Governance Control on 2026-08-14. Its isolated database reconciliation found
+  one observation/run/handoff chain and zero workflow, automation, provider, or
+  execution-authority records. Repeat both signed checks on each distinct
+  release target; see
+  `docs/evidence/ambient-monitor-windows-acceptance-2026-08-14.md`.
 
 ## Frontend follow-up
 
