@@ -414,7 +414,9 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
   refresh(): void {
     this.loadExecution()
     this.loadMandates()
-    this.loadLearning()
+    this.loadLearning(
+      this.preferences.get(this.moduleId).openSections['controlled-learning'] === true
+    )
     this.loadAgents()
     this.loadDomains()
     this.loadAgentTeams(true, true)
@@ -454,12 +456,14 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
     })
   }
 
-  loadLearning(): void {
+  loadLearning(includeOutcomeHistory = false): void {
     this.beginLoad('learning')
     this.surfaceSubscriptions.learning?.unsubscribe()
     this.surfaceSubscriptions.learning = forkJoin({
       proposals: this.service.listLearningProposals(100),
-      outcomes: this.service.listLearningOutcomes(100),
+      outcomes: includeOutcomeHistory
+        ? this.service.listLearningOutcomes(100)
+        : of({ outcomes: this.learningOutcomes }),
     }).subscribe({
       next: (response) => {
         this.proposals = response.proposals.proposals || []
@@ -468,6 +472,10 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
       },
       error: (error) => this.failLoad('learning', error, 'Learning evidence and proposals are unavailable.'),
     })
+  }
+
+  loadLearningSection(open: boolean): void {
+    if (open) this.loadLearning(true)
   }
 
   loadAgents(): void {

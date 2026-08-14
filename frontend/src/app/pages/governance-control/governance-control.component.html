@@ -1093,6 +1093,7 @@
       sectionId="controlled-learning"
       title="Controlled-learning review"
       summary="Evidence-backed proposals, human decisions, and honest application status."
+      (openChange)="loadLearningSection($event)"
     >
       <div class="section-error" *ngIf="state.learning.error">{{ state.learning.error }}</div>
       <div class="section-loading" *ngIf="state.learning.loading" role="status"><i nz-icon nzType="loading"></i> Loading learning evidence and proposals</div>

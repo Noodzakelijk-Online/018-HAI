@@ -369,7 +369,7 @@ describe('GovernanceControlComponent', () => {
     expect(service.listExecutionReceipts).toHaveBeenCalledWith(50)
     expect(service.listMandates).toHaveBeenCalled()
     expect(service.listLearningProposals).toHaveBeenCalledWith(100)
-    expect(service.listLearningOutcomes).toHaveBeenCalledWith(100)
+    expect(service.listLearningOutcomes).not.toHaveBeenCalled()
     expect(service.listAgents).toHaveBeenCalled()
     expect(service.domainCatalog).toHaveBeenCalled()
     expect(component.surfaceMetric('execution')).toBe('1 need attention')
@@ -377,6 +377,16 @@ describe('GovernanceControlComponent', () => {
     expect(component.surfaceMetric('learning')).toBe('1 awaiting review')
     expect(component.surfaceMetric('agents')).toBe('0 ready')
     expect(component.surfaceMetric('domains')).toBe('1 enabled')
+  })
+
+  it('loads full controlled-learning outcome history only when its section opens', () => {
+    component.ngOnInit()
+    expect(service.listLearningOutcomes).not.toHaveBeenCalled()
+
+    component.loadLearningSection(true)
+
+    expect(service.listLearningOutcomes).toHaveBeenCalledOnceWith(100)
+    expect(service.listLearningProposals).toHaveBeenCalledTimes(2)
   })
 
   it('builds the Basic decision queue only from unresolved records', () => {
