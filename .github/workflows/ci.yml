@@ -130,15 +130,17 @@ jobs:
           }
           docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
             rpk topic create hai-ci-contract --if-not-exists -X brokers=127.0.0.1:9092
-          docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
-            rpk topic describe hai-ci-contract -X brokers=127.0.0.1:9092 | grep -q PARTITION
+          topic_description="$(docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
+            rpk topic describe hai-ci-contract -X brokers=127.0.0.1:9092)"
+          grep -q PARTITION <<<"$topic_description"
           durability_ready=""
           for attempt in $(seq 1 15); do
-            if docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
-              rpk cluster config get write_caching_default -X brokers=127.0.0.1:9092 \
-              | tr -d '"' | grep -qx false; then
-              durability_ready=1
-              break
+            if durability_value="$(docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
+              rpk cluster config get write_caching_default -X brokers=127.0.0.1:9092 2>/dev/null)"; then
+              if [ "$(tr -d '"' <<<"$durability_value")" = false ]; then
+                durability_ready=1
+                break
+              fi
             fi
             sleep 1
           done
@@ -146,8 +148,11 @@ jobs:
             docker compose --env-file .env.example -f docker-compose.local.yml logs kafka
             exit 1
           }
-          ! docker compose --env-file .env.example -f docker-compose.local.yml logs kafka \
-            | grep -q -- '--unsafe-bypass-fsync=true'
+          kafka_logs="$(docker compose --env-file .env.example -f docker-compose.local.yml logs kafka)"
+          if grep -q -- '--unsafe-bypass-fsync=true' <<<"$kafka_logs"; then
+            echo 'Kafka started with unsafe fsync bypass enabled.' >&2
+            exit 1
+          fi
       - name: Default Compose entrypoint resolves to canonical local stack
         run: HAI_ENV_FILE=.env.example docker compose -f docker-compose.yml config
       - name: Service-local Compose entrypoints resolve to canonical stack

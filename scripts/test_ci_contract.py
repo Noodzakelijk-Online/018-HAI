@@ -256,6 +256,21 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("KAFKA_MEMORY_RESERVATION=64m", environment)
         self.assertIn("KAFKA_PIDS_LIMIT=96", environment)
 
+    def test_kafka_acceptance_captures_output_before_matching_under_pipefail(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('topic_description="$(docker compose', workflow)
+        self.assertIn('grep -q PARTITION <<<"$topic_description"', workflow)
+        self.assertIn('durability_value="$(docker compose', workflow)
+        self.assertIn('kafka_logs="$(docker compose', workflow)
+        self.assertNotIn(
+            "rpk topic describe hai-ci-contract -X brokers=127.0.0.1:9092 | grep -q",
+            workflow,
+        )
+        self.assertNotIn("logs kafka \\\n            | grep -q", workflow)
+
     def test_local_persistence_services_are_durable_pinned_and_bounded(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         idp_start = compose.index("\n  postgres-idp:\n") + 1
