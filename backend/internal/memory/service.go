@@ -122,6 +122,13 @@ type OwnerScopedService interface {
 	RetrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error)
 }
 
+// OwnerQueryService is an optional extension for bounded owner-scoped query
+// execution. Keeping it separate preserves compatibility with integrations
+// that only need the established OwnerScopedService contract.
+type OwnerQueryService interface {
+	QueryForOwner(context.Context, string, string, bool, QueryParams) (PageResult, error)
+}
+
 // SemanticReindexService is intentionally separate from Service so existing
 // workers and test doubles do not gain a bulk local-embedding capability by
 // accident. HTTP access remains authenticated and write-authorized.
@@ -289,7 +296,7 @@ func (s *service) createForOwner(ownerIdentity string, request CreateRequest) (*
 		}
 	}
 
-	memories, err := s.repo.FindAll(projectKey, false)
+	memories, err := s.FindAllForOwner(ownerIdentity, projectKey, false)
 	if err != nil {
 		return nil, err
 	}
@@ -385,11 +392,35 @@ func (s *service) FindAll(projectKey string, includeArchived bool) ([]models.Con
 }
 
 func (s *service) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity != "" {
+		if scoped, ok := s.repo.(OwnerScopedRepository); ok {
+			return scoped.FindAllForOwner(ownerIdentity, projectKey, includeArchived)
+		}
+	}
 	memories, err := s.repo.FindAll(projectKey, includeArchived)
 	if err != nil {
 		return nil, err
 	}
 	return filterReadableMemories(memories, ownerIdentity), nil
+}
+
+func (s *service) QueryForOwner(
+	ctx context.Context,
+	ownerIdentity string,
+	projectKey string,
+	includeArchived bool,
+	params QueryParams,
+) (PageResult, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if queryRepository, ok := s.repo.(OwnerQueryRepository); ok {
+		return queryRepository.QueryForOwner(ctx, ownerIdentity, projectKey, includeArchived, params)
+	}
+	memories, err := s.FindAllForOwner(ownerIdentity, projectKey, includeArchived)
+	if err != nil {
+		return PageResult{}, err
+	}
+	return Query(memories, params), nil
 }
 
 func (s *service) FindByID(id uuid.UUID) (*models.ContextMemory, error) {

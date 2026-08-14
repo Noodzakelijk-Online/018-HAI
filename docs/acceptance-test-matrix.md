@@ -6,8 +6,8 @@ Go test asserts it; "manual" means a documented step.
 | Capability | Acceptance criterion | Coverage |
 | --- | --- | --- |
 | Remember context | Duplicate memories merge; retrieval ranks relevant ones | Automated — `memory/service_test.go` |
-| Search memories | Filter by kind/tag, sort, paginate; bounded | Automated — `memory/query_test.go`, `handler_test.go` |
-| Large datasets | Pagination correct at 50k rows | Automated — `memory/largedataset_test.go` |
+| Search memories | Authenticated owner/project/archive isolation; literal escaped search; exact tag, kind, sort and bounded pagination; database work respects request cancellation | Automated - `memory/query_test.go`, `memory/repository_query_postgres_test.go`, `memory/handler_test.go`, frontend context-memory service tests; live signed-browser search/filter/reset pass against the rebuilt stack |
+| Large datasets | Pure Go compatibility fallback paginates correctly at 50k rows | Automated - `memory/largedataset_test.go`; production PostgreSQL scale/latency remains a release-target measurement gate |
 | Hostile input | No panic; bounded output | Automated — `memory/adversarial_test.go` |
 | Project isolation | No cross-project leakage | Automated — `memory/isolation_test.go` |
 | Readiness | `/readyz` = 200 ready / 503 not-ready | Automated — `router/readiness_test.go` |

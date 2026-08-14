@@ -549,6 +549,18 @@ Applying this migration creates no task, workflow, approval, runtime call, or
 external effect. Accepted plan revisions remain coordination evidence only and
 retain `canExecute: false` at the API boundary.
 
+## Owner-scoped Memory Query Indexes
+
+`pre/0061_context_memory_owner_query_indexes` enables `pg_trgm` when needed and
+adds four indexes for the authenticated memory-library query path: owner/archive
+freshness, owner/project/archive freshness, owner/case-insensitive-kind/archive
+freshness, and trigram search over the normalized title/content/source
+expression.
+
+The migration changes no table shape or row data. Its down migration removes
+only these four HAI indexes. It deliberately leaves the `pg_trgm` extension in
+place because another schema object or future migration may share it.
+
 ## Rules
 
 1. **Additive first.** Add columns, tables, and indexes before code depends on

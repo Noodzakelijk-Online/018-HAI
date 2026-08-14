@@ -30,13 +30,14 @@ source of truth for current state.
 
 ## Frontend follow-up
 
-- Wire the memory search UI and feature-flag/i18n surfaces into the dashboard (TD-7).
+- Extend feature-flag/i18n surfaces across the dashboard (remaining TD-7 scope).
 - Deeper accessibility + cross-browser visual passes on the existing pages.
 
 ## Larger initiatives
 
-- Move list/search from in-memory to SQL with composite/trigram indexes at scale
-  (see `docs/performance-baseline.md`).
+- Retain production-scale `EXPLAIN (ANALYZE, BUFFERS)`, latency percentiles, and
+  resource measurements for the owner-scoped PostgreSQL memory query against a
+  representative release-target dataset (see `docs/performance-baseline.md`).
 - Retained live acceptance runs for each implemented, read-only provider connector.
 - Retain local scrape acceptance for the implemented tenant-free durable
   outcome-monitor metrics. Configure collector-side retention and alert rules
