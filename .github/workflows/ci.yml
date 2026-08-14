@@ -133,21 +133,16 @@ jobs:
           topic_description="$(docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
             rpk topic describe hai-ci-contract -X brokers=127.0.0.1:9092)"
           grep -q PARTITION <<<"$topic_description"
-          durability_ready=""
-          for attempt in $(seq 1 15); do
-            if durability_value="$(docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
-              rpk cluster config get write_caching_default -X brokers=127.0.0.1:9092 2>/dev/null)"; then
-              if [ "$(tr -d '"' <<<"$durability_value")" = false ]; then
-                durability_ready=1
-                break
-              fi
-            fi
-            sleep 1
-          done
-          [ -n "$durability_ready" ] || {
-            docker compose --env-file .env.example -f docker-compose.local.yml logs kafka
+          kafka_command="$(docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
+            cat /proc/1/cmdline | tr '\\0' ' ')"
+          if ! grep -q -- '--unsafe-bypass-fsync=false' <<<"$kafka_command"; then
+            echo 'Kafka runtime did not retain the required fsync policy.' >&2
             exit 1
-          }
+          fi
+          if grep -q -- '--unsafe-bypass-fsync=true' <<<"$kafka_command"; then
+            echo 'Kafka runtime enabled unsafe fsync bypass.' >&2
+            exit 1
+          fi
           kafka_logs="$(docker compose --env-file .env.example -f docker-compose.local.yml logs kafka)"
           if grep -q -- '--unsafe-bypass-fsync=true' <<<"$kafka_logs"; then
             echo 'Kafka started with unsafe fsync bypass enabled.' >&2
