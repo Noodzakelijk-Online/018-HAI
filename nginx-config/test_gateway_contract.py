@@ -141,6 +141,19 @@ class GatewayAuthContractTest(unittest.TestCase):
                     location_block(marker),
                 )
 
+    def test_read_only_identity_checks_do_not_exhaust_the_login_bucket(self) -> None:
+        for marker in (
+            "location = /api/v1/auth/session",
+            "location = /api/v1/auth/capabilities",
+        ):
+            with self.subTest(marker=marker):
+                block = location_block(marker)
+                self.assertIn("limit_except GET { deny all; }", block)
+                self.assertIn("proxy_pass http://$idp_upstream;", block)
+                self.assertIn('proxy_set_header X-HAI-Auth-Subrequest "";', block)
+                self.assertIn("proxy_hide_header X-HAI-Verified-Access-Token;", block)
+                self.assertNotIn("limit_req zone=hai_auth", block)
+
     def test_gateway_has_one_authoritative_configuration(self) -> None:
         self.assertFalse((ROOT / "nginx-config" / "nginx.conf").exists())
 

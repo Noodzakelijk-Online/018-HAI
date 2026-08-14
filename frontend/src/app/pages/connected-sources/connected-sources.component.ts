@@ -167,7 +167,7 @@ export class ConnectedSourcesComponent implements OnInit {
         timeout(this.loadTimeoutMs),
         catchError(() => of([] as ISourceExtraction[]))
       ),
-      auditLogs: this.sourceService.auditLogs().pipe(
+      auditLogs: this.sourceService.auditLogs(undefined, 8).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => of([] as ISourceAuditLog[]))
       ),
@@ -1255,13 +1255,6 @@ export class ConnectedSourcesComponent implements OnInit {
           this.updateSourceActions();
         },
       });
-  }
-
-  private loadAuditLogs(): void {
-    this.sourceService.auditLogs().pipe(timeout(this.loadTimeoutMs)).subscribe({
-      next: (logs) => (this.auditLogs = logs),
-      error: () => (this.auditLogs = []),
-    });
   }
 
   private loadSyncJobs(): void {

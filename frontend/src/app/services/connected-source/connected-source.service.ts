@@ -130,10 +130,13 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.delete<void>(`${this.apiUrl}/extractions/${id}`);
   }
 
-  auditLogs(sourceId?: string): Observable<ISourceAuditLog[]> {
+  auditLogs(sourceId?: string, limit?: number): Observable<ISourceAuditLog[]> {
     let params = new HttpParams();
     if (sourceId) {
       params = params.set('sourceId', sourceId);
+    }
+    if (limit) {
+      params = params.set('limit', limit);
     }
     return this.http.get<ISourceAuditLog[]>(`${this.apiUrl}/audit-logs`, { params });
   }

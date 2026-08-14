@@ -36,5 +36,5 @@ export interface IConnectedSourceService {
   updateExtraction(id: string, extraction: Partial<ISourceExtraction>): Observable<ISourceExtraction>;
   archiveExtraction(id: string): Observable<ISourceExtraction>;
   deleteExtraction(id: string): Observable<void>;
-  auditLogs(sourceId?: string): Observable<ISourceAuditLog[]>;
+  auditLogs(sourceId?: string, limit?: number): Observable<ISourceAuditLog[]>;
 }

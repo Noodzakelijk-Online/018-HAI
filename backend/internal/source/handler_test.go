@@ -68,6 +68,48 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	}
 }
 
+func TestHandlerBoundsAuditLogsAfterOwnerFiltering(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	repo.auditLogs = []models.SourceAuditLog{
+		{ID: uuid.New(), SourceID: bobID, Action: "bob.hidden", Message: "must be filtered first"},
+		{ID: uuid.New(), SourceID: aliceID, Action: "alice.latest", Message: "latest"},
+		{ID: uuid.New(), SourceID: aliceID, Action: "alice.previous", Message: "previous"},
+		{ID: uuid.New(), SourceID: aliceID, Action: "alice.old", Message: "old"},
+	}
+
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/audit-logs", handler.AuditLogs)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/audit-logs?limit=2", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("audit logs status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var logs []models.SourceAuditLog
+	if err := json.Unmarshal(response.Body.Bytes(), &logs); err != nil {
+		t.Fatalf("decode audit logs: %v", err)
+	}
+	if len(logs) != 2 || logs[0].SourceID != aliceID || logs[1].SourceID != aliceID {
+		t.Fatalf("bounded owner logs = %#v, want two Alice logs", logs)
+	}
+
+	for _, query := range []string{"limit=0", "limit=501", "limit=invalid"} {
+		invalid := httptest.NewRecorder()
+		router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/sources/audit-logs?"+query, nil))
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d, body=%s", query, invalid.Code, invalid.Body.String())
+		}
+	}
+}
+
 func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	foreignID := uuid.New()

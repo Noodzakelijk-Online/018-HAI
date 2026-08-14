@@ -448,6 +448,15 @@ func (h *Handler) DeleteExtraction(c *gin.Context) {
 }
 
 func (h *Handler) AuditLogs(c *gin.Context) {
+	limit := 0
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "audit log limit must be between 1 and 500"})
+			return
+		}
+		limit = parsed
+	}
 	var sourceID *uuid.UUID
 	if raw := c.Query("sourceId"); raw != "" {
 		parsed, err := uuid.Parse(raw)
@@ -472,6 +481,9 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 			return
 		}
 		logs = filterVisibleAuditLogs(logs, visibleSourceIDs)
+	}
+	if limit > 0 && len(logs) > limit {
+		logs = logs[:limit]
 	}
 	c.JSON(http.StatusOK, logs)
 }
