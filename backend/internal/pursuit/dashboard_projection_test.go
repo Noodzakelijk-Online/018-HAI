@@ -2,10 +2,45 @@ package pursuit
 
 import (
 	"automation-hub-backend/internal/models"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 )
+
+func TestDashboardProjectionColumnsExcludeLargePayloads(t *testing.T) {
+	tests := []struct {
+		name      string
+		columns   []string
+		required  []string
+		forbidden []string
+	}{
+		{name: "workflow evidence", columns: dashboardWorkflowEvidenceColumns, required: []string{"id", "workflow_id"}, forbidden: []string{"claim_text", "source_uri", "source_label"}},
+		{name: "memory", columns: dashboardMemoryColumns, required: []string{"id"}, forbidden: []string{"content", "summary", "tags", "source_uri", "content_hash"}},
+		{name: "source item", columns: pursuitSourceItemProjectionColumns, required: []string{"id", "source_id", "metadata", "updated_at"}, forbidden: []string{"content", "content_hash"}},
+		{name: "source extraction", columns: dashboardSourceExtractionColumns, required: []string{"id", "summary", "archived", "updated_at"}, forbidden: []string{"text", "entities", "dates", "tasks", "decisions", "follow_ups", "content_hash"}},
+		{name: "verification claim", columns: dashboardVerificationClaimColumns, required: []string{"id", "run_id", "status"}, forbidden: []string{"claim_text", "source_refs", "support_explanation"}},
+		{name: "verification evidence", columns: dashboardVerificationEvidenceColumns, required: []string{"id", "run_id", "source_type"}, forbidden: []string{"snippet", "source_label", "authority", "freshness", "reject_reason"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			selected := map[string]bool{}
+			for _, column := range test.columns {
+				selected[strings.ToLower(strings.TrimSpace(column))] = true
+			}
+			for _, column := range test.required {
+				if !selected[column] {
+					t.Fatalf("required projection column %q is missing from %v", column, test.columns)
+				}
+			}
+			for _, column := range test.forbidden {
+				if selected[column] {
+					t.Fatalf("large payload column %q is present in %v", column, test.columns)
+				}
+			}
+		})
+	}
+}
 
 func TestPartitionRecordsPreservesOrderAndDeduplicatesOwners(t *testing.T) {
 	firstPursuitID, secondPursuitID := uuid.New(), uuid.New()

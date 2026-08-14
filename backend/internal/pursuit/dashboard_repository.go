@@ -2,6 +2,7 @@ package pursuit
 
 import (
 	"automation-hub-backend/internal/models"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -16,13 +17,76 @@ type pursuitDashboardBulkRepository interface {
 	FindActivitiesForPursuits(pursuitIDs []uuid.UUID, limitPerPursuit int) ([]models.PursuitActivity, error)
 	FindTaskAttemptsForPursuits(ownerIdentity string, pursuitIDs []uuid.UUID, limitPerPursuit int) ([]models.PursuitTaskAttempt, error)
 	FindRuntimeAttemptsForOwner(ownerIdentity string, automationIDs, launchIDs []uuid.UUID) ([]models.AutomationLaunchEvent, error)
+	FindEvidenceProjectionForDashboard(workflowIDs, memoryIDs, sourceItemIDs, extractionIDs, verificationRunIDs []uuid.UUID) (pursuitDashboardEvidenceProjection, error)
 	FindResourceProjectionForPursuits(ownerIdentity string, pursuits []models.Pursuit) (pursuitDashboardResourceProjection, error)
+}
+
+type pursuitDashboardEvidenceProjection struct {
+	WorkflowEvidence     []models.WorkflowEvidenceClaim
+	Memories             []models.ContextMemory
+	SourceItems          []models.SourceRawItem
+	SourceExtractions    []models.SourceExtraction
+	VerificationClaims   []models.VerificationClaim
+	VerificationEvidence []models.VerificationEvidence
 }
 
 type pursuitDashboardResourceProjection struct {
 	Totals             map[uuid.UUID]PursuitResourceTotals
 	ReservationTotals  map[uuid.UUID]PursuitResourceReservationTotals
 	ActiveReservations map[uuid.UUID][]models.PursuitResourceReservation
+}
+
+var dashboardWorkflowEvidenceColumns = []string{"id", "workflow_id", "status", "needs_review", "created_at"}
+var dashboardMemoryColumns = []string{"id"}
+var dashboardSourceExtractionColumns = []string{
+	"id", "source_id", "raw_item_id", "content_type", "summary", "source_uri", "source_label",
+	"sensitive", "uncertain", "archived", "created_at", "updated_at",
+}
+var dashboardVerificationClaimColumns = []string{"id", "run_id", "status", "needs_review", "high_risk", "created_at", "updated_at"}
+var dashboardVerificationEvidenceColumns = []string{"id", "run_id", "source_type", "source_uri", "used", "rejected", "created_at", "updated_at"}
+
+// FindEvidenceProjectionForDashboard intentionally excludes large source,
+// memory, extraction, claim, and evidence payloads. Dashboard derivation only
+// needs counts, safety state, labels, and freshness; rich content remains on
+// the separately owner-scoped detail and evidence endpoints.
+func (r *GormRepository) FindEvidenceProjectionForDashboard(workflowIDs, memoryIDs, sourceItemIDs, extractionIDs, verificationRunIDs []uuid.UUID) (pursuitDashboardEvidenceProjection, error) {
+	result := pursuitDashboardEvidenceProjection{
+		WorkflowEvidence:     []models.WorkflowEvidenceClaim{},
+		Memories:             []models.ContextMemory{},
+		SourceItems:          []models.SourceRawItem{},
+		SourceExtractions:    []models.SourceExtraction{},
+		VerificationClaims:   []models.VerificationClaim{},
+		VerificationEvidence: []models.VerificationEvidence{},
+	}
+	if ids := uniqueUUIDs(workflowIDs); len(ids) > 0 {
+		if err := r.DB.Select(dashboardWorkflowEvidenceColumns).Where("workflow_id IN ?", ids).Order("created_at DESC").Find(&result.WorkflowEvidence).Error; err != nil {
+			return result, fmt.Errorf("workflow evidence: %w", err)
+		}
+	}
+	if ids := uniqueUUIDs(memoryIDs); len(ids) > 0 {
+		if err := r.DB.Select(dashboardMemoryColumns).Where("id IN ?", ids).Order("updated_at DESC").Find(&result.Memories).Error; err != nil {
+			return result, fmt.Errorf("memories: %w", err)
+		}
+	}
+	if ids := uniqueUUIDs(sourceItemIDs); len(ids) > 0 {
+		if err := r.DB.Select(pursuitSourceItemProjectionColumns).Where("id IN ?", ids).Order("updated_at DESC").Find(&result.SourceItems).Error; err != nil {
+			return result, fmt.Errorf("source items: %w", err)
+		}
+	}
+	if ids := uniqueUUIDs(extractionIDs); len(ids) > 0 {
+		if err := r.DB.Select(dashboardSourceExtractionColumns).Where("id IN ?", ids).Order("updated_at DESC").Find(&result.SourceExtractions).Error; err != nil {
+			return result, fmt.Errorf("source extractions: %w", err)
+		}
+	}
+	if ids := uniqueUUIDs(verificationRunIDs); len(ids) > 0 {
+		if err := r.DB.Select(dashboardVerificationClaimColumns).Where("run_id IN ?", ids).Order("created_at ASC").Find(&result.VerificationClaims).Error; err != nil {
+			return result, fmt.Errorf("verification claims: %w", err)
+		}
+		if err := r.DB.Select(dashboardVerificationEvidenceColumns).Where("run_id IN ?", ids).Order("created_at ASC").Find(&result.VerificationEvidence).Error; err != nil {
+			return result, fmt.Errorf("verification evidence: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func (r *GormRepository) FindVisibleLinksForPursuits(ownerIdentity string, pursuitIDs []uuid.UUID) ([]models.PursuitLink, error) {

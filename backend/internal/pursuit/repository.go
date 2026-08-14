@@ -577,10 +577,20 @@ func (r *GormRepository) FindLinkedSourceItems(ids []uuid.UUID) ([]models.Source
 	if len(ids) == 0 {
 		return items, nil
 	}
-	if err := r.DB.Where("id IN ?", ids).Order("updated_at DESC").Find(&items).Error; err != nil {
+	// Pursuit responses expose provenance metadata, never the duplicated raw
+	// source body. Rich content stays behind the owner-scoped source endpoint.
+	if err := r.DB.Select(pursuitSourceItemProjectionColumns).
+		Where("id IN ?", ids).
+		Order("updated_at DESC").
+		Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
+}
+
+var pursuitSourceItemProjectionColumns = []string{
+	"id", "source_id", "external_id", "project_key", "item_type", "title",
+	"source_uri", "metadata", "fetched_at", "created_at", "updated_at",
 }
 
 func (r *GormRepository) FindLinkedExtractions(ids []uuid.UUID) ([]models.SourceExtraction, error) {

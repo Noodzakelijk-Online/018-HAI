@@ -90,14 +90,6 @@ func (s *service) dashboardDetailsForOwner(ownerIdentity string, pursuits []mode
 	if err != nil {
 		return nil, true, pursuitDetailLoadError("dashboard events", err)
 	}
-	evidence, err := s.repo.FindLinkedEvidence(workflowIDs)
-	if err != nil {
-		return nil, true, pursuitDetailLoadError("dashboard evidence", err)
-	}
-	memories, err := s.repo.FindLinkedMemories(memoryIDs)
-	if err != nil {
-		return nil, true, pursuitDetailLoadError("dashboard memories", err)
-	}
 	conversations, err := s.repo.FindLinkedConversations(conversationIDs)
 	if err != nil {
 		return nil, true, pursuitDetailLoadError("dashboard conversations", err)
@@ -106,27 +98,21 @@ func (s *service) dashboardDetailsForOwner(ownerIdentity string, pursuits []mode
 	if err != nil {
 		return nil, true, pursuitDetailLoadError("dashboard ambient opportunities", err)
 	}
-	sourceItems, err := s.repo.FindLinkedSourceItems(sourceItemIDs)
-	if err != nil {
-		return nil, true, pursuitDetailLoadError("dashboard source items", err)
-	}
-	extractions, err := s.repo.FindLinkedExtractions(extractionIDs)
-	if err != nil {
-		return nil, true, pursuitDetailLoadError("dashboard source extractions", err)
-	}
 	verificationRuns, err := s.repo.FindLinkedVerificationRuns(verificationIDs)
 	if err != nil {
 		return nil, true, pursuitDetailLoadError("dashboard verification runs", err)
 	}
 	allVerificationRunIDs := verificationRunIDs(verificationRuns)
-	verificationClaims, err := s.repo.FindLinkedVerificationClaims(allVerificationRunIDs)
+	evidenceProjection, err := bulk.FindEvidenceProjectionForDashboard(workflowIDs, memoryIDs, sourceItemIDs, extractionIDs, allVerificationRunIDs)
 	if err != nil {
-		return nil, true, pursuitDetailLoadError("dashboard verification claims", err)
+		return nil, true, pursuitDetailLoadError("dashboard evidence projection", err)
 	}
-	verificationEvidence, err := s.repo.FindLinkedVerificationEvidence(allVerificationRunIDs)
-	if err != nil {
-		return nil, true, pursuitDetailLoadError("dashboard verification evidence", err)
-	}
+	evidence := evidenceProjection.WorkflowEvidence
+	memories := evidenceProjection.Memories
+	sourceItems := evidenceProjection.SourceItems
+	extractions := evidenceProjection.SourceExtractions
+	verificationClaims := evidenceProjection.VerificationClaims
+	verificationEvidence := evidenceProjection.VerificationEvidence
 	automationIDs := uniqueUUIDs(append(linkedAutomationIDs, workflowAutomationIDs(workflows)...))
 	automations, err := s.repo.FindLinkedAutomations(automationIDs)
 	if err != nil {

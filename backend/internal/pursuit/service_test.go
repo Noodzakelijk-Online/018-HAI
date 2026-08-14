@@ -1776,10 +1776,46 @@ func TestDashboardBulkProjectionMatchesEstablishedOwnerScopedPath(t *testing.T) 
 		ID: foreignWorkflowID, OwnerIdentity: "bob", Title: "Bob private work", CurrentState: workflow.StateNeedsApproval,
 		RequiresApproval: true, ApprovalStatus: "pending", UpdatedAt: now,
 	}
+	sourceID, rawItemID, extractionID := uuid.New(), uuid.New(), uuid.New()
+	memoryID, verificationID := uuid.New(), uuid.New()
+	repo.sourceOwners[sourceID] = "alice"
+	repo.sourceItems[rawItemID] = models.SourceRawItem{
+		ID: rawItemID, SourceID: sourceID, ExternalID: "large-source", ItemType: "document", Title: "Linked source",
+		SourceURI: "source://large", Content: strings.Repeat("raw-content-", 1000), Metadata: `{"page":1}`, ContentHash: "raw-hash",
+		FetchedAt: now.Add(-25 * time.Minute), CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-25 * time.Minute),
+	}
+	repo.extractions[extractionID] = models.SourceExtraction{
+		ID: extractionID, SourceID: sourceID, RawItemID: rawItemID, ContentType: "document", Summary: "Grounded source summary",
+		Text: strings.Repeat("extracted-content-", 1000), Entities: strings.Repeat("entity,", 1000), SourceURI: "source://large", SourceLabel: "Linked source",
+		CreatedAt: now.Add(-24 * time.Minute), UpdatedAt: now.Add(-24 * time.Minute),
+	}
+	repo.memories[memoryID] = models.ContextMemory{
+		ID: memoryID, OwnerIdentity: "alice", Kind: "project", Content: strings.Repeat("memory-content-", 1000), Summary: "Stable memory summary",
+		SourceURI: "memory://large", CreatedAt: now.Add(-50 * time.Minute), UpdatedAt: now.Add(-23 * time.Minute),
+	}
+	repo.evidence = append(repo.evidence, models.WorkflowEvidenceClaim{
+		ID: uuid.New(), WorkflowID: firstWorkflowID, ClaimText: strings.Repeat("workflow-claim-", 1000), Status: "source_supported", CreatedAt: now.Add(-22 * time.Minute),
+	})
+	repo.verificationRuns[verificationID] = models.VerificationRun{
+		ID: verificationID, OwnerIdentity: "alice", Mode: "grounded", Question: "Verify linked source", Answer: "Supported", Status: "source_supported",
+		CreatedAt: now.Add(-21 * time.Minute), UpdatedAt: now.Add(-21 * time.Minute),
+	}
+	claimID, verificationEvidenceID := uuid.New(), uuid.New()
+	repo.verificationClaims[claimID] = models.VerificationClaim{
+		ID: claimID, RunID: verificationID, ClaimText: strings.Repeat("verification-claim-", 1000), Status: "source_supported", CreatedAt: now.Add(-20 * time.Minute), UpdatedAt: now.Add(-20 * time.Minute),
+	}
+	repo.verificationEvidence[verificationEvidenceID] = models.VerificationEvidence{
+		ID: verificationEvidenceID, RunID: verificationID, SourceType: "document", SourceURI: "source://large", Snippet: strings.Repeat("evidence-snippet-", 1000),
+		Used: true, CreatedAt: now.Add(-19 * time.Minute), UpdatedAt: now.Add(-19 * time.Minute),
+	}
 	for _, link := range []models.PursuitLink{
 		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkWorkflow, LinkID: firstWorkflowID.String(), Relationship: "primary", CreatedAt: now},
 		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkWorkflow, LinkID: foreignWorkflowID.String(), Relationship: "legacy_import", CreatedAt: now.Add(-time.Minute)},
 		{ID: uuid.New(), PursuitID: secondID, LinkType: LinkWorkflow, LinkID: secondWorkflowID.String(), Relationship: "primary", CreatedAt: now},
+		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkMemory, LinkID: memoryID.String(), Relationship: "context", CreatedAt: now},
+		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkSourceItem, LinkID: rawItemID.String(), Relationship: "source_record", CreatedAt: now},
+		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkSourceExtraction, LinkID: extractionID.String(), Relationship: "evidence", CreatedAt: now},
+		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkVerification, LinkID: verificationID.String(), Relationship: "verification", CreatedAt: now},
 	} {
 		repo.links[link.ID] = link
 	}
@@ -1803,6 +1839,9 @@ func TestDashboardBulkProjectionMatchesEstablishedOwnerScopedPath(t *testing.T) 
 	}
 	if bulkRepo.bulkCalls != 1 {
 		t.Fatalf("bulk projection calls = %d, want 1", bulkRepo.bulkCalls)
+	}
+	if bulkRepo.evidenceProjectionCalls != 1 {
+		t.Fatalf("dashboard evidence projection calls = %d, want 1", bulkRepo.evidenceProjectionCalls)
 	}
 	if bulkRepo.findByIDCalls != 0 {
 		t.Fatalf("bulk dashboard re-fetched %d pursuits", bulkRepo.findByIDCalls)
@@ -5226,8 +5265,9 @@ type pursuitRepositoryWithoutResourceLedger struct{ Repository }
 
 type fakeBulkDashboardRepo struct {
 	*fakeRepo
-	bulkCalls     int
-	findByIDCalls int
+	bulkCalls               int
+	evidenceProjectionCalls int
+	findByIDCalls           int
 }
 
 func (r *fakeBulkDashboardRepo) FindByID(id uuid.UUID) (*models.Pursuit, error) {
@@ -5283,6 +5323,64 @@ func (r *fakeBulkDashboardRepo) FindTaskAttemptsForPursuits(ownerIdentity string
 func (r *fakeBulkDashboardRepo) FindRuntimeAttemptsForOwner(ownerIdentity string, automationIDs, launchIDs []uuid.UUID) ([]models.AutomationLaunchEvent, error) {
 	items, err := r.fakeRepo.FindLinkedAutomationLaunches(automationIDs, launchIDs, 50)
 	return runtimeAttemptsVisibleToOwner(ownerIdentity, items), err
+}
+
+func (r *fakeBulkDashboardRepo) FindEvidenceProjectionForDashboard(workflowIDs, memoryIDs, sourceItemIDs, extractionIDs, verificationRunIDs []uuid.UUID) (pursuitDashboardEvidenceProjection, error) {
+	r.evidenceProjectionCalls++
+	result := pursuitDashboardEvidenceProjection{}
+	var err error
+	if result.WorkflowEvidence, err = r.fakeRepo.FindLinkedEvidence(workflowIDs); err != nil {
+		return result, err
+	}
+	if result.Memories, err = r.fakeRepo.FindLinkedMemories(memoryIDs); err != nil {
+		return result, err
+	}
+	if result.SourceItems, err = r.fakeRepo.FindLinkedSourceItems(sourceItemIDs); err != nil {
+		return result, err
+	}
+	if result.SourceExtractions, err = r.fakeRepo.FindLinkedExtractions(extractionIDs); err != nil {
+		return result, err
+	}
+	if result.VerificationClaims, err = r.fakeRepo.FindLinkedVerificationClaims(verificationRunIDs); err != nil {
+		return result, err
+	}
+	if result.VerificationEvidence, err = r.fakeRepo.FindLinkedVerificationEvidence(verificationRunIDs); err != nil {
+		return result, err
+	}
+	for index := range result.WorkflowEvidence {
+		result.WorkflowEvidence[index].ClaimText = ""
+		result.WorkflowEvidence[index].SourceURI = ""
+		result.WorkflowEvidence[index].SourceLabel = ""
+	}
+	for index := range result.Memories {
+		result.Memories[index] = models.ContextMemory{ID: result.Memories[index].ID}
+	}
+	for index := range result.SourceItems {
+		result.SourceItems[index].Content = ""
+		result.SourceItems[index].ContentHash = ""
+	}
+	for index := range result.SourceExtractions {
+		result.SourceExtractions[index].Text = ""
+		result.SourceExtractions[index].Entities = ""
+		result.SourceExtractions[index].Dates = ""
+		result.SourceExtractions[index].Tasks = ""
+		result.SourceExtractions[index].Decisions = ""
+		result.SourceExtractions[index].FollowUps = ""
+		result.SourceExtractions[index].ContentHash = ""
+	}
+	for index := range result.VerificationClaims {
+		result.VerificationClaims[index].ClaimText = ""
+		result.VerificationClaims[index].SourceRefs = ""
+		result.VerificationClaims[index].SupportExplanation = ""
+	}
+	for index := range result.VerificationEvidence {
+		result.VerificationEvidence[index].Snippet = ""
+		result.VerificationEvidence[index].SourceLabel = ""
+		result.VerificationEvidence[index].Authority = ""
+		result.VerificationEvidence[index].Freshness = ""
+		result.VerificationEvidence[index].RejectReason = ""
+	}
+	return result, nil
 }
 
 func (r *fakeBulkDashboardRepo) FindResourceProjectionForPursuits(_ string, _ []models.Pursuit) (pursuitDashboardResourceProjection, error) {
@@ -5976,7 +6074,17 @@ func (r *fakeRepo) FindLinkedEvents(workflowIDs []uuid.UUID) ([]models.WorkflowE
 }
 
 func (r *fakeRepo) FindLinkedEvidence(workflowIDs []uuid.UUID) ([]models.WorkflowEvidenceClaim, error) {
-	return append([]models.WorkflowEvidenceClaim{}, r.evidence...), nil
+	workflowSet := map[uuid.UUID]bool{}
+	for _, id := range workflowIDs {
+		workflowSet[id] = true
+	}
+	result := []models.WorkflowEvidenceClaim{}
+	for _, item := range r.evidence {
+		if workflowSet[item.WorkflowID] {
+			result = append(result, item)
+		}
+	}
+	return result, nil
 }
 
 func (r *fakeRepo) FindLinkedMemories(ids []uuid.UUID) ([]models.ContextMemory, error) {
