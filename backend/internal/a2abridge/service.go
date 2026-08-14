@@ -325,13 +325,14 @@ func normalize(value string) string { return strings.Join(strings.Fields(value),
 
 func bounded(value string, max int) string {
 	value = normalize(value)
-	if len(value) <= max {
+	runes := []rune(value)
+	if len(runes) <= max {
 		return value
 	}
 	if max < 4 {
-		return value[:max]
+		return string(runes[:max])
 	}
-	return strings.TrimSpace(value[:max-3]) + "..."
+	return strings.TrimSpace(string(runes[:max-3])) + "..."
 }
 
 func boundedList(values []string, limit, width int) []string {

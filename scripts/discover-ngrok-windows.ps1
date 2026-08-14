@@ -49,6 +49,9 @@ function Get-SafeNgrokFailure([string[]]$LogPaths) {
     $summary = ($messages | Select-Object -Unique | Select-Object -First 6) -join ' | '
     $summary = $summary -replace '(?i)((?:auth|api)[_-]?token|api[_-]?key)([\s"''=:]+)[^\s,"'']+', '$1$2[redacted]'
     $summary = $summary -replace '[A-Za-z0-9_-]{32,}', '[redacted]'
+    if ($summary -match '(?i)ERR_NGROK_334|already online') {
+        return 'The configured ngrok endpoint is already online under another agent (ERR_NGROK_334). HAI did not stop or take over that agent. Provision a dedicated fixed HAI endpoint, or intentionally stop the known owner before retrying.'
+    }
     if ($summary.Length -gt 600) {
         $summary = $summary.Substring(0, 600)
     }

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"automation-hub-backend/internal/task"
 
@@ -48,6 +49,20 @@ func TestDraftCreatesSanitizedPreviewWithoutExecution(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(proposal.Scope), "execute") == false || strings.Contains(strings.ToLower(proposal.Scope), "did not create") == false {
 		t.Fatalf("proposal scope is not explicit: %q", proposal.Scope)
+	}
+}
+
+func TestBoundedPreservesUnicodeAtTheLimit(t *testing.T) {
+	value := strings.Repeat("e", 77) + "\u20acuro"
+	result := bounded(value, 80)
+	if !utf8.ValidString(result) {
+		t.Fatalf("bounded returned invalid UTF-8: %q", result)
+	}
+	if utf8.RuneCountInString(result) != 80 || !strings.HasSuffix(result, "...") {
+		t.Fatalf("bounded unicode result = %q (%d runes)", result, utf8.RuneCountInString(result))
+	}
+	if strings.ContainsRune(result, utf8.RuneError) {
+		t.Fatalf("bounded replaced a split rune: %q", result)
 	}
 }
 

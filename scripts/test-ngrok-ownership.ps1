@@ -4,6 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 $launcherPath = Join-Path $PSScriptRoot 'start-ngrok.ps1'
+$discoveryPath = Join-Path $PSScriptRoot 'discover-ngrok-windows.ps1'
 
 $tokens = $null
 $errors = $null
@@ -29,6 +30,40 @@ foreach ($name in @(
         throw "Launcher function not found: $name"
     }
     Invoke-Expression $function.Extent.Text
+}
+
+$discoveryTokens = $null
+$discoveryErrors = $null
+$discoveryAst = [Management.Automation.Language.Parser]::ParseFile(
+    $discoveryPath,
+    [ref]$discoveryTokens,
+    [ref]$discoveryErrors
+)
+if ($discoveryErrors.Count -gt 0) {
+    throw 'discover-ngrok-windows.ps1 contains parse errors.'
+}
+$safeFailureFunction = $discoveryAst.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-SafeNgrokFailure'
+}, $true)
+if ($null -eq $safeFailureFunction) {
+    throw 'Discovery diagnostic function not found: Get-SafeNgrokFailure'
+}
+Invoke-Expression $safeFailureFunction.Extent.Text
+
+$diagnosticPath = Join-Path ([IO.Path]::GetTempPath()) ("hai-ngrok-diagnostic-" + [Guid]::NewGuid().ToString('N') + '.log')
+try {
+    $fixture = '{"err":"endpoint already online: ERR_NGROK_334","api_token":"this-value-must-never-appear-in-diagnostics"}'
+    [IO.File]::WriteAllText($diagnosticPath, $fixture, [Text.UTF8Encoding]::new($false))
+    $diagnostic = Get-SafeNgrokFailure @($diagnosticPath)
+    if ($diagnostic -notmatch 'ERR_NGROK_334' -or
+        $diagnostic -notmatch 'did not stop or take over' -or
+        $diagnostic -match 'this-value-must-never-appear') {
+        throw "Unsafe or unactionable discovery diagnostic: $diagnostic"
+    }
+} finally {
+    Remove-Item -LiteralPath $diagnosticPath -Force -ErrorAction SilentlyContinue
 }
 
 function Get-FreeLoopbackPort {
