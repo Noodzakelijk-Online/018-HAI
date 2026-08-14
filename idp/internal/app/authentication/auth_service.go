@@ -325,7 +325,7 @@ func calculateBlockDuration(failedLoginAttempts int) time.Duration {
 	return initialBlockDuration * time.Duration(math.Pow(2, exponent))
 }
 
-func (a *service) Logout(accessToken string) error {
+func (a *service) Logout(ctx context.Context, accessToken string) error {
 	_, claims, err := a.parseAndValidateToken(accessToken)
 	if err != nil {
 		a.logger.Error("Error parsing access token: %v", err)
@@ -373,11 +373,11 @@ func (a *service) Logout(accessToken string) error {
 	// Attempt both revocations even when one backing-store operation fails.
 	// Refresh is blocked first because it can mint new access tokens.
 	var revokeErrors []error
-	if refreshErr := a.blockListService.AddToBlockList(refreshUUID, rtDuration); refreshErr != nil {
+	if refreshErr := a.blockListService.AddToBlockList(ctx, refreshUUID, rtDuration); refreshErr != nil {
 		a.logger.Error("Failed to add refresh token to block list for user: %s, Error: %v", userID, refreshErr)
 		revokeErrors = append(revokeErrors, fmt.Errorf("revoke refresh token: %w", refreshErr))
 	}
-	if accessErr := a.blockListService.AddToBlockList(accessUUID, atDuration); accessErr != nil {
+	if accessErr := a.blockListService.AddToBlockList(ctx, accessUUID, atDuration); accessErr != nil {
 		a.logger.Error("Failed to add access token to block list for user: %s, Error: %v", userID, accessErr)
 		revokeErrors = append(revokeErrors, fmt.Errorf("revoke access token: %w", accessErr))
 	}
@@ -389,7 +389,7 @@ func (a *service) Logout(accessToken string) error {
 	return nil
 }
 
-func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
+func (a *service) RefreshToken(ctx context.Context, refreshToken string) (*dto.TokenDetails, error) {
 	_, claims, err := a.parseAndValidateToken(refreshToken)
 	if err != nil {
 		a.logger.Error("Error parsing refresh token: %v", err)
@@ -406,7 +406,7 @@ func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 	}
 
 	// Check if the refresh token is on the block list
-	isBlocked, err := a.blockListService.IsInBlockList(refreshUUID)
+	isBlocked, err := a.blockListService.IsInBlockList(ctx, refreshUUID)
 	if err != nil {
 		a.logger.Error("Failed to check blockList status: %v", err)
 		return nil, errors.New("error checking blockList status")
@@ -457,7 +457,7 @@ func (a *service) RefreshToken(refreshToken string) (*dto.TokenDetails, error) {
 	return td, nil
 }
 
-func (a *service) IsUserAuthenticated(accessToken string) (bool, error) {
+func (a *service) IsUserAuthenticated(ctx context.Context, accessToken string) (bool, error) {
 	_, claims, err := a.parseAndValidateToken(accessToken)
 	if err != nil {
 		a.logger.Error("Error parsing accessToken: %v", err)
@@ -473,7 +473,7 @@ func (a *service) IsUserAuthenticated(accessToken string) (bool, error) {
 		return false, errors.New("invalid accessToken")
 	}
 
-	isBlocked, err := a.blockListService.IsInBlockList(accessUUID)
+	isBlocked, err := a.blockListService.IsInBlockList(ctx, accessUUID)
 	if err != nil {
 		a.logger.Error("Error checking accessToken in block list: %v", err)
 		return false, err

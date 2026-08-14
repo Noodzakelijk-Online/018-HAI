@@ -121,15 +121,17 @@ func (s *middlewareAuthService) LoginWithGoogle(context.Context, string, string)
 func (s *middlewareAuthService) LocalPreviewLogin() (*dto.TokenDetails, error) {
 	return nil, errors.New("not implemented")
 }
-func (s *middlewareAuthService) Logout(token string) error {
+func (s *middlewareAuthService) Logout(_ context.Context, token string) error {
 	s.logoutToken = token
 	return s.logoutErr
 }
-func (s *middlewareAuthService) RefreshToken(string) (*dto.TokenDetails, error) {
+func (s *middlewareAuthService) RefreshToken(context.Context, string) (*dto.TokenDetails, error) {
 	s.refreshCalls++
 	return s.refreshResult, nil
 }
-func (s *middlewareAuthService) IsUserAuthenticated(string) (bool, error) { return s.valid, nil }
+func (s *middlewareAuthService) IsUserAuthenticated(context.Context, string) (bool, error) {
+	return s.valid, nil
+}
 
 func (s *middlewareAuthService) RequestPasswordReset(ctx context.Context, _ string) (string, time.Time, error) {
 	s.passwordResetContext = ctx

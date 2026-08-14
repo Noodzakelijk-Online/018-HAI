@@ -72,7 +72,7 @@ func TestRefreshTokenUsesRefreshTokenExpiration(t *testing.T) {
 	refreshToken, refreshUUID, refreshExp, err := svc.generateRefreshToken(userID)
 	require.NoError(t, err)
 
-	tokenDetails, err := svc.RefreshToken(refreshToken)
+	tokenDetails, err := svc.RefreshToken(context.Background(), refreshToken)
 	require.NoError(t, err)
 	require.NotEmpty(t, tokenDetails.AccessToken)
 	require.Equal(t, refreshToken, tokenDetails.RefreshToken)
@@ -149,7 +149,7 @@ func TestLogoutRejectsTokenWithoutUserID(t *testing.T) {
 		jwtSecret:        "test-secret",
 	}
 
-	err = svc.Logout(tokenString)
+	err = svc.Logout(context.Background(), tokenString)
 	require.EqualError(t, err, "user ID not found in the token")
 }
 
@@ -171,7 +171,7 @@ func TestRefreshTokenRejectsAccessToken(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = svc.RefreshToken(accessToken)
+	_, err = svc.RefreshToken(context.Background(), accessToken)
 	require.EqualError(t, err, "invalid refresh token")
 }
 
@@ -187,7 +187,7 @@ func TestAccessTokenConsumersRejectRefreshToken(t *testing.T) {
 	refreshToken, _, _, err := svc.generateRefreshToken(userID)
 	require.NoError(t, err)
 
-	authenticated, err := svc.IsUserAuthenticated(refreshToken)
+	authenticated, err := svc.IsUserAuthenticated(context.Background(), refreshToken)
 	require.False(t, authenticated)
 	require.EqualError(t, err, "invalid accessToken")
 	_, err = svc.GetIdFromToken(refreshToken)
@@ -256,7 +256,7 @@ func TestRefreshTokenRejectsInactiveOrBlockedUsers(t *testing.T) {
 		refreshToken, _, _, err := svc.generateRefreshToken(userID)
 		require.NoError(t, err)
 
-		_, err = svc.RefreshToken(refreshToken)
+		_, err = svc.RefreshToken(context.Background(), refreshToken)
 		require.EqualError(t, err, "user is unavailable")
 	}
 }
@@ -279,7 +279,7 @@ func TestAccessAndSessionChecksRejectUnavailableUsers(t *testing.T) {
 		token, _, err := svc.generateAccessToken(userID, "owner", uuid.NewString(), time.Now().Add(time.Hour).Unix())
 		require.NoError(t, err)
 
-		authenticated, err := svc.IsUserAuthenticated(token)
+		authenticated, err := svc.IsUserAuthenticated(context.Background(), token)
 		require.False(t, authenticated)
 		require.EqualError(t, err, "user is unavailable")
 		_, err = svc.GetSessionFromToken(token)
@@ -362,7 +362,7 @@ func TestLogoutAttemptsBothRevocations(t *testing.T) {
 	token, _, err := svc.generateAccessToken(userID, "owner", "refresh-id", time.Now().Add(time.Hour).Unix())
 	require.NoError(t, err)
 
-	err = svc.Logout(token)
+	err = svc.Logout(context.Background(), token)
 	require.ErrorContains(t, err, "revoke refresh token")
 	require.Len(t, blockList.added, 2)
 	require.Equal(t, "refresh-id", blockList.added[0])
@@ -669,11 +669,11 @@ func (f *fakeUserService) ClearPasswordResetIfToken(id uuid.UUID, token string) 
 
 type fakeBlockListService struct{}
 
-func (fakeBlockListService) AddToBlockList(jwtUUID string, expirationTime time.Duration) error {
+func (fakeBlockListService) AddToBlockList(context.Context, string, time.Duration) error {
 	return nil
 }
 
-func (fakeBlockListService) IsInBlockList(jwtUUID string) (bool, error) {
+func (fakeBlockListService) IsInBlockList(context.Context, string) (bool, error) {
 	return false, nil
 }
 
@@ -682,7 +682,7 @@ type recordingBlockListService struct {
 	errorsByCall []error
 }
 
-func (f *recordingBlockListService) AddToBlockList(jwtUUID string, _ time.Duration) error {
+func (f *recordingBlockListService) AddToBlockList(_ context.Context, jwtUUID string, _ time.Duration) error {
 	f.added = append(f.added, jwtUUID)
 	call := len(f.added) - 1
 	if call < len(f.errorsByCall) {
@@ -691,7 +691,7 @@ func (f *recordingBlockListService) AddToBlockList(jwtUUID string, _ time.Durati
 	return nil
 }
 
-func (*recordingBlockListService) IsInBlockList(string) (bool, error) {
+func (*recordingBlockListService) IsInBlockList(context.Context, string) (bool, error) {
 	return false, nil
 }
 
