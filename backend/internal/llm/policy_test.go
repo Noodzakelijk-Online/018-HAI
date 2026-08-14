@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -595,6 +596,22 @@ func TestProviderHTTPClientDoesNotUseEnvironmentProxy(t *testing.T) {
 	}
 	if err := client.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
 		t.Fatalf("redirect behavior = %v, want %v", err, http.ErrUseLastResponse)
+	}
+	if client != noRedirectHTTPClient() {
+		t.Fatal("provider calls must reuse the bounded HTTP client")
+	}
+}
+
+func TestProviderHTTPClientRejectsBlockedDNSResolution(t *testing.T) {
+	t.Parallel()
+
+	client := newProviderHTTPClient(func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	})
+	transport := client.Transport.(*http.Transport)
+	_, err := transport.DialContext(context.Background(), "tcp", "models.example:443")
+	if err == nil || !strings.Contains(err.Error(), "blocked address space") {
+		t.Fatalf("DialContext error = %v, want blocked address rejection", err)
 	}
 }
 

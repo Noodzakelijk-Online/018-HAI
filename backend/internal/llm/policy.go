@@ -1897,7 +1897,16 @@ func isLocalModelHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+type providerLookupIPAddr func(context.Context, string) ([]net.IPAddr, error)
+
+var sharedProviderHTTPClient = newProviderHTTPClient(net.DefaultResolver.LookupIPAddr)
+
 func noRedirectHTTPClient() *http.Client {
+	return sharedProviderHTTPClient
+}
+
+func newProviderHTTPClient(lookup providerLookupIPAddr) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -1906,8 +1915,41 @@ func noRedirectHTTPClient() *http.Client {
 		// maintenance requests. Do not inherit machine proxy settings: local
 		// runtimes must stay local and configured cloud endpoints must be
 		// contacted directly rather than silently through an environment proxy.
-		Transport: &http.Transport{Proxy: nil},
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			MaxIdleConns:          32,
+			MaxIdleConnsPerHost:   4,
+			IdleConnTimeout:       60 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(address)
+				if err != nil {
+					return nil, fmt.Errorf("LLM provider: invalid network address: %w", err)
+				}
+				resolved, err := lookup(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("LLM provider: resolve endpoint: %w", err)
+				}
+				if len(resolved) == 0 {
+					return nil, fmt.Errorf("LLM provider: endpoint resolved to no addresses")
+				}
+				for _, candidate := range resolved {
+					if providerIPAddressBlocked(candidate.IP) {
+						return nil, fmt.Errorf("LLM provider: endpoint resolved to blocked address space")
+					}
+				}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(resolved[0].IP.String(), port))
+			},
+		},
 	}
+}
+
+func providerIPAddressBlocked(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.String() == "169.254.169.254"
 }
 
 func buildPrompt(request GenerateRequest) string {
