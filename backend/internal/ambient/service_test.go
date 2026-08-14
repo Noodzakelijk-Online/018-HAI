@@ -507,16 +507,13 @@ func TestPursuitOpportunityVisibilityFailsClosedWhenOwnerLookupFails(t *testing.
 	}
 }
 
-func TestOverviewForOwnerIsReadOnlyAndFallsBackToDefaults(t *testing.T) {
+func TestOverviewForOwnerFallsBackToDefaults(t *testing.T) {
 	repo := &ambientRepositoryStub{}
 	engine := NewService(repo, nil, nil)
 
 	overview, err := engine.OverviewForOwner("alice")
 	if err != nil {
 		t.Fatalf("OverviewForOwner: %v", err)
-	}
-	if repo.ensureNeedsCalls != 0 {
-		t.Fatalf("overview performed %d default-need writes, want 0", repo.ensureNeedsCalls)
 	}
 	if len(overview.Needs) != len(defaultNeeds()) {
 		t.Fatalf("fallback needs = %d, want %d", len(overview.Needs), len(defaultNeeds()))
@@ -585,6 +582,20 @@ func TestAmbientNeedProfilesArePrivateToEachOwner(t *testing.T) {
 	}
 	if findAmbientNeed(bobNeeds, "safety").Notes != "" {
 		t.Fatalf("bob received alice's ambient notes: %#v", bobNeeds)
+	}
+}
+
+func TestAmbientNeedUpdateUsesReadOnlyDefaultsFallback(t *testing.T) {
+	repo := &ambientRepositoryStub{}
+	engine := NewService(repo, nil, nil).(*service)
+	priority := 84
+
+	updated, err := engine.UpdateNeedForOwner("alice", "safety", NeedUpdateRequest{PriorityWeight: &priority})
+	if err != nil {
+		t.Fatalf("UpdateNeedForOwner with unseeded repository: %v", err)
+	}
+	if updated.Key != "safety" || updated.PriorityWeight != priority || len(repo.overrides) != 1 {
+		t.Fatalf("fallback update = %#v overrides=%#v", updated, repo.overrides)
 	}
 }
 

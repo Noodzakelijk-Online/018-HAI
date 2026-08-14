@@ -173,9 +173,6 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 		return nil, ErrScanInProgress
 	}
 	defer s.scanning.Store(false)
-	if err := s.ensureNeeds(); err != nil {
-		return nil, err
-	}
 	started := time.Now().UTC()
 	scan, err := s.repo.CreateScan(&models.AmbientScan{
 		Trigger:   firstNonEmpty(strings.TrimSpace(trigger), "manual"),
@@ -194,7 +191,7 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 		return scan, scanErr
 	}
 
-	needs, err := s.repo.Needs()
+	needs, err := s.needsForOwner("")
 	if err != nil {
 		return fail(err)
 	}
@@ -333,9 +330,6 @@ func (s *service) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientSc
 		return nil, ErrScanInProgress
 	}
 	defer s.scanning.Store(false)
-	if err := s.ensureNeeds(); err != nil {
-		return nil, err
-	}
 	started := time.Now().UTC()
 	scan, err := s.repo.CreateScan(&models.AmbientScan{
 		OwnerIdentity: ownerIdentity,
@@ -484,10 +478,7 @@ func (s *service) UpdateNeedForOwner(ownerIdentity, key string, request NeedUpda
 	if ownerIdentity == "" {
 		return nil, fmt.Errorf("an authenticated owner is required to update ambient planning preferences")
 	}
-	if err := s.ensureNeeds(); err != nil {
-		return nil, err
-	}
-	defaults, err := s.repo.Needs()
+	defaults, err := s.needsForOwner("")
 	if err != nil {
 		return nil, err
 	}
@@ -877,10 +868,6 @@ func (s *service) rememberOpportunityFeedback(item *models.AmbientOpportunity, o
 		SourceURI:   sourceURI,
 		SourceLabel: ambientFeedbackSourceLabel(*item),
 	})
-}
-
-func (s *service) ensureNeeds() error {
-	return s.repo.EnsureNeeds(defaultNeeds())
 }
 
 func (s *service) needsForOwner(ownerIdentity string) ([]models.AmbientNeed, error) {

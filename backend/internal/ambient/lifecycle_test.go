@@ -166,13 +166,7 @@ type ambientRepositoryStub struct {
 	needs                []models.AmbientNeed
 	overrides            []models.AmbientNeedOverride
 	scans                []models.AmbientScan
-	ensureNeedsCalls     int
 	saveOpportunityCalls int
-}
-
-func (r *ambientRepositoryStub) EnsureNeeds([]models.AmbientNeed) error {
-	r.ensureNeedsCalls++
-	return nil
 }
 
 func (r *ambientRepositoryStub) Needs() ([]models.AmbientNeed, error) {

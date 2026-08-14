@@ -7,11 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type Repository interface {
-	EnsureNeeds(needs []models.AmbientNeed) error
 	Needs() ([]models.AmbientNeed, error)
 	NeedOverridesForOwner(ownerIdentity string) ([]models.AmbientNeedOverride, error)
 	FindNeedOverride(ownerIdentity, needKey string) (*models.AmbientNeedOverride, error)
@@ -42,18 +40,6 @@ func DefaultRepository() Repository {
 		panic(err)
 	}
 	return NewGormRepository(db)
-}
-
-func (r *GormRepository) EnsureNeeds(needs []models.AmbientNeed) error {
-	for index := range needs {
-		if err := r.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
-			DoNothing: true,
-		}).Create(&needs[index]).Error; err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (r *GormRepository) Needs() ([]models.AmbientNeed, error) {
