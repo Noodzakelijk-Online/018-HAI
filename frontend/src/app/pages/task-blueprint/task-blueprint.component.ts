@@ -6,6 +6,7 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { timeout } from 'rxjs/operators';
 import {
   ICompletionPlan,
+	ITaskPlanHistoryItem,
 	IApprovedReviewReconciliationResult,
   IReviewQueueItem,
   IToolExecutionResult,
@@ -56,7 +57,7 @@ export class TaskBlueprintComponent implements OnInit {
 	private readonly taskOperationRetryConfirmation = 'RETRY UNCERTAIN OPERATION';
   plan?: ICompletionPlan;
   lastCommand?: IAssistantCommandResult;
-  logs: ICompletionPlan[] = [];
+  logs: ITaskPlanHistoryItem[] = [];
   reviewQueue: IReviewQueueItem[] = [];
   loading = false;
   running = false;
@@ -376,7 +377,7 @@ export class TaskBlueprintComponent implements OnInit {
 
   loadLogs(): void {
     this.taskPlanService.logs().pipe(timeout(this.loadTimeoutMs)).subscribe({
-      next: (logs) => (this.logs = (logs || []).map((plan) => this.normalizePlan(plan))),
+      next: (logs) => (this.logs = logs || []),
       error: () => (this.logs = []),
     });
   }
@@ -498,7 +499,7 @@ export class TaskBlueprintComponent implements OnInit {
     this.plan = undefined;
   }
 
-  copyPlanToComposer(plan: ICompletionPlan): void {
+  copyPlanToComposer(plan: ITaskPlanHistoryItem): void {
     this.planForm.patchValue({
       request: plan.request,
       projectKey: plan.projectKey || this.planForm.value.projectKey,
@@ -701,7 +702,7 @@ export class TaskBlueprintComponent implements OnInit {
 		return item.status === 'open' || item.status === 'needs_review';
 	}
 
-  latestLog(): ICompletionPlan | undefined {
+  latestLog(): ITaskPlanHistoryItem | undefined {
     return this.logs[0];
   }
 

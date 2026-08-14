@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -14,6 +16,25 @@ import (
 type Handler struct {
 	service Service
 }
+
+type CompletionPlanHistoryItem struct {
+	ID               string                      `json:"id"`
+	CreatedAt        time.Time                   `json:"createdAt"`
+	Request          string                      `json:"request"`
+	ProjectKey       string                      `json:"projectKey,omitempty"`
+	Intake           CompletionPlanHistoryIntake `json:"intake"`
+	CompletionStatus string                      `json:"completionStatus"`
+}
+
+type CompletionPlanHistoryIntake struct {
+	TaskType        string   `json:"taskType"`
+	SuccessCriteria []string `json:"successCriteria"`
+}
+
+const (
+	defaultTaskLogLimit = 10
+	maximumTaskLogLimit = 50
+)
 
 func NewHandler(service Service) *Handler {
 	return &Handler{service: service}
@@ -169,13 +190,26 @@ func (h *Handler) Logs(c *gin.Context) {
 	if !ok {
 		return
 	}
+	limit, ok := taskLogLimit(c)
+	if !ok {
+		return
+	}
+	if bounded, ok := h.service.(BoundedDurableOwnerScopedService); ok {
+		logs, err := bounded.LogsForOwnerWithLimit(ownerIdentity, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "task history is temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, completionPlanHistory(logs))
+		return
+	}
 	if durable, ok := h.service.(DurableOwnerScopedService); ok {
 		logs, err := durable.LogsForOwnerWithError(ownerIdentity)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "task history is temporarily unavailable"})
 			return
 		}
-		c.JSON(http.StatusOK, logs)
+		c.JSON(http.StatusOK, completionPlanHistory(recentCompletionPlans(logs, limit)))
 		return
 	}
 	scoped, ok := h.service.(OwnerScopedService)
@@ -183,7 +217,49 @@ func (h *Handler) Logs(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "owner-scoped task history is unavailable"})
 		return
 	}
-	c.JSON(http.StatusOK, scoped.LogsForOwner(ownerIdentity))
+	c.JSON(http.StatusOK, completionPlanHistory(recentCompletionPlans(scoped.LogsForOwner(ownerIdentity), limit)))
+}
+
+func taskLogLimit(c *gin.Context) (int, bool) {
+	values, exists := c.Request.URL.Query()["limit"]
+	if !exists {
+		return defaultTaskLogLimit, true
+	}
+	if len(values) != 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task history limit must be provided exactly once"})
+		return 0, false
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(values[0]))
+	if err != nil || limit < 1 || limit > maximumTaskLogLimit {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task history limit must be between 1 and 50"})
+		return 0, false
+	}
+	return limit, true
+}
+
+func recentCompletionPlans(logs []CompletionPlan, limit int) []CompletionPlan {
+	if len(logs) <= limit {
+		return logs
+	}
+	return logs[:limit]
+}
+
+func completionPlanHistory(logs []CompletionPlan) []CompletionPlanHistoryItem {
+	items := make([]CompletionPlanHistoryItem, 0, len(logs))
+	for _, plan := range logs {
+		items = append(items, CompletionPlanHistoryItem{
+			ID:         plan.ID,
+			CreatedAt:  plan.CreatedAt,
+			Request:    plan.Request,
+			ProjectKey: plan.ProjectKey,
+			Intake: CompletionPlanHistoryIntake{
+				TaskType:        plan.Intake.TaskType,
+				SuccessCriteria: append([]string(nil), plan.Intake.SuccessCriteria...),
+			},
+			CompletionStatus: plan.CompletionStatus,
+		})
+	}
+	return items
 }
 
 func (h *Handler) ReviewQueue(c *gin.Context) {

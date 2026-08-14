@@ -423,6 +423,12 @@ type DurableOwnerScopedService interface {
 	ReviewQueueForOwnerWithError(ownerIdentity string) ([]ReviewQueueItem, error)
 }
 
+// BoundedDurableOwnerScopedService lets HTTP readers request a smaller recent
+// history without changing the wider internal worker contract.
+type BoundedDurableOwnerScopedService interface {
+	LogsForOwnerWithLimit(ownerIdentity string, limit int) ([]CompletionPlan, error)
+}
+
 const internalTaskStateOwnerIdentity = "urn:hai:internal:task-system"
 
 // PreviewService is the side-effect-free planning boundary used by reviewed
@@ -1347,11 +1353,15 @@ func (s *service) LogsForOwner(ownerIdentity string) []CompletionPlan {
 }
 
 func (s *service) LogsForOwnerWithError(ownerIdentity string) ([]CompletionPlan, error) {
+	return s.LogsForOwnerWithLimit(ownerIdentity, taskStateDefaultLimit)
+}
+
+func (s *service) LogsForOwnerWithLimit(ownerIdentity string, limit int) ([]CompletionPlan, error) {
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	if ownerIdentity == "" {
 		return nil, fmt.Errorf("owner identity is required")
 	}
-	logs, err := s.stateRepository.ListCompletionPlans(ownerIdentity, taskStateDefaultLimit)
+	logs, err := s.stateRepository.ListCompletionPlans(ownerIdentity, normalizeTaskStateLimit(limit))
 	if err != nil {
 		return nil, err
 	}

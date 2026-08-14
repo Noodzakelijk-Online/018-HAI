@@ -555,7 +555,8 @@ and an API key do not grant a role or owner identity.
 | `GET` | `/api/v1/framework-registry/frameworks/:id` | read | Framework inspector |
 | `POST` | `/api/v1/framework-registry/select` | write | Persisted owner-scoped preview selection |
 | `PATCH` | `/api/v1/framework-registry/frameworks/:id/preference` | admin | Owner preference update |
-| `GET` | `/api/v1/framework-registry/selections` | read | Owner selection history |
+| `GET` | `/api/v1/framework-registry/selections?limit=10` | read | Bounded owner selection history; maximum 100 |
+| `GET` | `/api/v1/framework-registry/selections/:id` | read | Exact owner-scoped selection provenance |
 | `GET` | `/api/v1/framework-registry/constitution` | read | Active or fallback Constitution |
 | `POST` | `/api/v1/framework-registry/constitution/drafts` | admin | Create owner draft |
 | `POST` | `/api/v1/framework-registry/constitution/:id/activate` | admin | Explicit activation |

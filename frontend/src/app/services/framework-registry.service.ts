@@ -98,8 +98,14 @@ export class FrameworkRegistryService {
     );
   }
 
-  selections(): Observable<IFrameworkSelectionDecision[]> {
-    return this.http.get<SelectionListResponse>(`${this.apiUrl}/selections`).pipe(
+  selections(limit = 10): Observable<IFrameworkSelectionDecision[]> {
+    const boundedLimit = Number.isInteger(limit) && limit > 0 && limit <= 100
+      ? limit
+      : 10;
+    return this.http.get<SelectionListResponse>(
+      `${this.apiUrl}/selections`,
+      { params: new HttpParams().set('limit', boundedLimit) }
+    ).pipe(
       map((response) => this.normalizeSelectionList(response))
     );
   }

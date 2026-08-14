@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -281,6 +282,57 @@ func TestLogsHandlerUsesVerifiedOwnerScopedView(t *testing.T) {
 	if service.logsOwner != "alice" {
 		t.Fatalf("logs owner = %q, want verified owner alice", service.logsOwner)
 	}
+	if service.logsLimit != defaultTaskLogLimit {
+		t.Fatalf("logs limit = %d, want %d", service.logsLimit, defaultTaskLogLimit)
+	}
+}
+
+func TestLogsHandlerRejectsUnboundedHistoryRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	request := httptest.NewRequest(http.MethodGet, "/task/logs?limit=51", nil)
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = request
+	context.Set(identity.ContextSubjectKey, "alice")
+
+	NewHandler(&capturingTaskService{}).Logs(context)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCompletionPlanHistoryExcludesHeavyExecutionDetails(t *testing.T) {
+	createdAt := time.Date(2026, time.August, 14, 9, 30, 0, 0, time.UTC)
+	items := completionPlanHistory([]CompletionPlan{{
+		ID:         "plan-1",
+		CreatedAt:  createdAt,
+		Request:    "Prepare a verified project brief",
+		ProjectKey: "hai",
+		Intake: IntakeAnalysis{
+			TaskType:        "research",
+			SuccessCriteria: []string{"Sources are cited"},
+		},
+		CompletionStatus: "verified",
+		ExecutionPlan: ExecutionPlan{
+			AuditEvents: []string{"large-step"},
+		},
+	}})
+
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("marshal history: %v", err)
+	}
+	response := string(encoded)
+	for _, forbidden := range []string{"executionPlan", "contextPlan", "large-step"} {
+		if strings.Contains(response, forbidden) {
+			t.Fatalf("history response exposed %q: %s", forbidden, response)
+		}
+	}
+	if !strings.Contains(response, `"request":"Prepare a verified project brief"`) ||
+		!strings.Contains(response, `"successCriteria":["Sources are cited"]`) {
+		t.Fatalf("history response omitted the compact UI contract: %s", response)
+	}
 }
 
 func TestTaskHandlersRejectRequestsWithoutVerifiedOwner(t *testing.T) {
@@ -393,6 +445,7 @@ type capturingTaskService struct {
 	planErr      error
 	runErr       error
 	logsOwner    string
+	logsLimit    int
 	queueOwner   string
 	resolveOwner string
 	resolveErr   error
@@ -445,6 +498,12 @@ func (s *capturingTaskService) ResolveReviewItem(id string, decision ApprovalDec
 func (s *capturingTaskService) LogsForOwner(ownerIdentity string) []CompletionPlan {
 	s.logsOwner = ownerIdentity
 	return nil
+}
+
+func (s *capturingTaskService) LogsForOwnerWithLimit(ownerIdentity string, limit int) ([]CompletionPlan, error) {
+	s.logsOwner = ownerIdentity
+	s.logsLimit = limit
+	return nil, nil
 }
 
 func (s *capturingTaskService) ReviewQueueForOwner(ownerIdentity string) []ReviewQueueItem {

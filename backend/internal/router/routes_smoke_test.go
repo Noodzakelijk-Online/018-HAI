@@ -272,6 +272,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	frameworkRoutes.POST("/select", mark("frameworkSelect"))
 	frameworkRoutes.PATCH("/frameworks/:id/preference", mark("frameworkPreference"))
 	frameworkRoutes.GET("/selections", mark("frameworkSelections"))
+	frameworkRoutes.GET("/selections/:id", mark("frameworkSelection"))
 	frameworkRoutes.GET("/constitution", mark("frameworkConstitution"))
 	frameworkRoutes.GET("/constitution/history", mark("frameworkConstitutionHistory"))
 	frameworkRoutes.POST("/constitution/drafts", mark("frameworkConstitutionDraft"))
@@ -446,6 +447,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/framework-registry/select", "frameworkSelect"},
 		{"PATCH", "/api/v1/framework-registry/frameworks/human-sovereignty/preference", "frameworkPreference"},
 		{"GET", "/api/v1/framework-registry/selections", "frameworkSelections"},
+		{"GET", "/api/v1/framework-registry/selections/11111111-1111-1111-1111-111111111111", "frameworkSelection"},
 		{"GET", "/api/v1/framework-registry/constitution", "frameworkConstitution"},
 		{"GET", "/api/v1/framework-registry/constitution/history", "frameworkConstitutionHistory"},
 		{"POST", "/api/v1/framework-registry/constitution/drafts", "frameworkConstitutionDraft"},
