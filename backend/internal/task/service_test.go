@@ -2,8 +2,11 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +60,88 @@ func TestPlanIncludesSuccessCriteriaAndValidationGate(t *testing.T) {
 	}
 	if plan.FrameworkDecision.ConstitutionVersion == 0 {
 		t.Fatalf("expected framework decision to identify its Constitution version")
+	}
+}
+
+func TestTaskExecutionCancelsLLMGenerationWithTaskContext(t *testing.T) {
+	requestStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-releaseProvider
+	}))
+	defer func() {
+		close(releaseProvider)
+		server.CloseClientConnections()
+		server.Close()
+	}()
+
+	providers, err := json.Marshal([]llm.Provider{{
+		ID: "localai", Name: "LocalAI", Enabled: true, Local: true,
+		EndpointURL: server.URL,
+		Models: []llm.Model{{
+			ID: "task-local-model", Name: "Task local model", Tier: llm.TierLocal,
+			Enabled: true, MaxDifficulty: 5, MaxReasoning: "very_high",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("marshal providers: %v", err)
+	}
+	t.Setenv("LLM_PROVIDERS_JSON", string(providers))
+	llmService, err := llm.NewServiceFromEnv()
+	if err != nil {
+		t.Fatalf("NewServiceFromEnv: %v", err)
+	}
+	llmService.WithFinalEffectAuthorization(
+		llm.FinalEffectAuthorizerFunc(func(context.Context, llm.FinalEffectAuthorizationRequest) error { return nil }),
+		llm.EmergencyStopEvaluatorFunc(func(context.Context) (llm.EmergencyStopState, error) {
+			return llm.EmergencyStopState{}, nil
+		}),
+	)
+	taskService := &service{llmService: llmService}
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan *ExecutionResult, 1)
+	go func() {
+		resultCh <- taskService.executeAllowedSteps(&CompletionPlan{
+			ID:            "task-cancel-generation",
+			OwnerIdentity: "alice",
+			Request:       "Summarize context",
+			RealGoal:      "Summarize context",
+			ProjectKey:    "018-hai",
+			RiskAssessment: RiskAssessment{
+				AllowedNow: true,
+			},
+			ModelDecision: llm.RouteDecision{
+				SelectedProviderID: "localai",
+				SelectedModelID:    "task-local-model",
+				SelectedModelName:  "Task local model",
+				Tier:               llm.TierLocal,
+			},
+		}, IntakeRequest{Request: "Summarize context", ProjectKey: "018-hai", executionContext: ctx})
+	}()
+
+	select {
+	case <-requestStarted:
+	case result := <-resultCh:
+		t.Fatalf("task generation returned before provider call: %#v", result)
+	case <-time.After(time.Second):
+		t.Fatal("task generation did not reach the provider")
+	}
+	cancel()
+	var result *ExecutionResult
+	select {
+	case result = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("task execution did not return after cancellation")
+	}
+	if result == nil || result.LLMGeneration == nil || result.LLMGeneration.Status != "stopped" {
+		t.Fatalf("task generation result = %#v", result)
+	}
+	if !strings.Contains(result.BlockedReason, "caller canceled") || !hasTaskAction(result.Actions, "task.cancelled", "stopped") {
+		t.Fatalf("task cancellation was not surfaced truthfully: %#v", result)
+	}
+	if hasTaskAction(result.Actions, "verification.answer", "completed") {
+		t.Fatalf("task continued into verification after cancellation: %#v", result.Actions)
 	}
 }
 

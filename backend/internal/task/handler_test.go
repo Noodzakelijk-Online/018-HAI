@@ -3,6 +3,7 @@ package task
 import (
 	"automation-hub-backend/internal/identity"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -93,6 +94,29 @@ func TestRunHandlerUsesVerifiedOwner(t *testing.T) {
 	}
 	if service.runRequest.OwnerIdentity != "alice" {
 		t.Fatalf("task owner = %q, want verified owner alice", service.runRequest.OwnerIdentity)
+	}
+}
+
+func TestRunHandlerPassesHTTPContextToContextAwareService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &contextCapturingTaskService{}
+	handler := NewHandler(service)
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/task/run", strings.NewReader(`{"request":"Summarize context"}`)).WithContext(requestContext)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(response)
+	ginContext.Request = request
+	ginContext.Set(identity.ContextSubjectKey, "alice")
+
+	handler.Run(ginContext)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	if service.runContext == nil || !errors.Is(service.runContext.Err(), context.Canceled) {
+		t.Fatalf("task service context = %v, want canceled HTTP context", service.runContext)
 	}
 }
 
@@ -349,6 +373,16 @@ type capturingTaskService struct {
 	queueOwner   string
 	resolveOwner string
 	resolveErr   error
+}
+
+type contextCapturingTaskService struct {
+	capturingTaskService
+	runContext context.Context
+}
+
+func (s *contextCapturingTaskService) RunContext(ctx context.Context, request IntakeRequest) (*CompletionPlan, error) {
+	s.runContext = ctx
+	return s.Run(request)
 }
 
 func (s *capturingTaskService) Plan(request IntakeRequest) (*CompletionPlan, error) {

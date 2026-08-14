@@ -78,7 +78,13 @@ func (h *Handler) Run(c *gin.Context) {
 	c.Header("Idempotency-Key", request.IdempotencyKey)
 	request.HumanApproved = false
 	request.ApprovalNote = ""
-	plan, err := h.service.Run(request)
+	var plan *CompletionPlan
+	var err error
+	if contextService, ok := h.service.(ContextService); ok {
+		plan, err = contextService.RunContext(c.Request.Context(), request)
+	} else {
+		plan, err = h.service.Run(request)
+	}
 	if err != nil {
 		writeTaskOperationError(c, err, "task run could not be completed")
 		return

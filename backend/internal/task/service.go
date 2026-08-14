@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -74,6 +75,7 @@ type IntakeRequest struct {
 	Deadline              *time.Time                              `json:"-"`
 	operationID           string
 	reviewItemID          string
+	executionContext      context.Context
 }
 
 type IntakeAnalysis struct {
@@ -259,6 +261,7 @@ type ToolExecutionRequest struct {
 	ApprovalBindingDigest string                           `json:"-"`
 	Governance            executionauth.GovernanceEvidence `json:"-"`
 	approvalDecision      *automation.TaskApprovalDecisionRequest
+	executionContext      context.Context
 }
 
 type ToolExecutionResult struct {
@@ -389,6 +392,13 @@ type Service interface {
 	Logs() []CompletionPlan
 	ReviewQueue() []ReviewQueueItem
 	ResolveReviewItem(id string, decision ApprovalDecision) (*ReviewResolutionResult, error)
+}
+
+// ContextService binds an interactive task run to its caller lifecycle while
+// preserving the legacy Service contract used by durable workflow workers and
+// narrow test doubles.
+type ContextService interface {
+	RunContext(context.Context, IntakeRequest) (*CompletionPlan, error)
 }
 
 // OwnerScopedService is the authenticated view over task history and approvals.
@@ -704,6 +714,14 @@ func (s *service) Preview(request IntakeRequest) (*CompletionPlan, error) {
 }
 
 func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
+	return s.RunContext(context.Background(), request)
+}
+
+func (s *service) RunContext(ctx context.Context, request IntakeRequest) (*CompletionPlan, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request.executionContext = ctx
 	return s.withTaskOperation(request, "run", s.runOperation)
 }
 
@@ -1719,11 +1737,15 @@ func (s *service) storeLessons(plan *CompletionPlan) []string {
 
 func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeRequest) *ExecutionResult {
 	started := time.Now().UTC()
+	executionContext := taskExecutionContext(request)
 	result := &ExecutionResult{
 		StartedAt:          started,
 		Mode:               executionMode(plan, request),
 		VerificationStatus: verification.StatusNeedsReview,
 		Actions:            []ExecutedAction{},
+	}
+	if executionContext.Err() != nil {
+		return stoppedTaskExecution(result, plan, executionContext.Err(), started)
 	}
 
 	if !plan.RiskAssessment.AllowedNow {
@@ -1801,8 +1823,12 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 				),
 				Governance:       governance,
 				approvalDecision: approvalDecision,
+				executionContext: taskExecutionContext(request),
 			})
 			if err != nil {
+				if executionContext.Err() != nil {
+					return stoppedTaskExecution(result, plan, executionContext.Err(), toolStarted)
+				}
 				return blockExecution(result, "controlled runtime execution failed: "+err.Error(), plan, toolStarted)
 			}
 			if executed == nil {
@@ -1884,7 +1910,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 				effectContext.ApprovalBindingDigest = approvalDecision.ApprovalBindingDigest
 			}
 		}
-		generation, err := s.llmService.Generate(llm.GenerateRequest{
+		generation, err := s.llmService.GenerateContext(taskExecutionContext(request), llm.GenerateRequest{
 			Task:         plan.RealGoal,
 			SystemPrompt: "Produce a concise draft answer using only the provided context. Do not invent facts; unsupported details will be rejected by verification." + minimalitySystemContract(plan.MinimalityDecision),
 			Context:      context,
@@ -1911,6 +1937,9 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		} else if err != nil {
 			result.Actions = append(result.Actions, executedAction("llm.generate", "failed", plan.ModelDecision.SelectedModelID, err.Error(), generateStarted))
 			plan.Events = append(plan.Events, event("llm", "model generation failed; falling back to source-grounded evidence synthesis"))
+		}
+		if executionContext.Err() != nil {
+			return stoppedTaskExecution(result, plan, executionContext.Err(), generateStarted)
 		}
 	}
 
@@ -1961,6 +1990,13 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	result.Actions = append(result.Actions, executedAction("verification.answer", "completed", request.Request, verificationResult.Run.Status, verifyStarted))
 	plan.Events = append(plan.Events, event("verification", "claims were checked against retrieved evidence before completion"))
 	return result
+}
+
+func taskExecutionContext(request IntakeRequest) context.Context {
+	if request.executionContext != nil {
+		return request.executionContext
+	}
+	return context.Background()
 }
 
 func (s *service) recordGenerationValidation(plan *CompletionPlan) {
@@ -2058,6 +2094,20 @@ func blockExecution(result *ExecutionResult, reason string, plan *CompletionPlan
 	if len(result.Actions) == 0 || result.Actions[len(result.Actions)-1].Name != "automation.launch" {
 		result.Actions = append(result.Actions, executedAction("automation.launch", "blocked", plan.Request, reason, started))
 	}
+	plan.Events = append(plan.Events, event("execution", reason))
+	return result
+}
+
+func stoppedTaskExecution(result *ExecutionResult, plan *CompletionPlan, cause error, started time.Time) *ExecutionResult {
+	reason := "task execution stopped because the caller canceled the operation"
+	if errors.Is(cause, context.DeadlineExceeded) {
+		reason = "task execution stopped because the caller deadline expired"
+	}
+	result.CompletedAt = time.Now().UTC()
+	result.Output = reason
+	result.VerificationStatus = verification.StatusNeedsReview
+	result.BlockedReason = reason
+	result.Actions = append(result.Actions, executedAction("task.cancelled", "stopped", plan.Request, reason, started))
 	plan.Events = append(plan.Events, event("execution", reason))
 	return result
 }
