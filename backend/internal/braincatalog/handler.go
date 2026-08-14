@@ -2,10 +2,14 @@ package braincatalog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,6 +30,10 @@ type Handler struct {
 	collectionReviewer OSSInsightCollectionReviewer
 	repositoryScout    OSSInsightRepositoryScout
 	maintenance        *CatalogMaintenanceService
+	catalogOnce        sync.Once
+	catalogJSON        []byte
+	catalogETag        string
+	catalogErr         error
 }
 
 func NewHandler() *Handler {
@@ -52,15 +60,43 @@ func (h *Handler) WithMaintenance(maintenance *CatalogMaintenanceService) *Handl
 }
 
 func (h *Handler) List(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"sourceCatalog":       sourceCatalogURL,
-		"discoverySources":    DiscoverySources(),
-		"verifiedAt":          verifiedAt,
-		"entries":             Entries(),
-		"planeCoverage":       CapabilityPlaneCoverageReport(),
-		"collectionScreening": OSSInsightScreening(),
-		"activationPolicy":    "Catalog discovery is read-only. HAI never installs, enables, or executes a listed project without a reviewed adapter and the existing approval gates.",
+	h.catalogOnce.Do(func() {
+		h.catalogJSON, h.catalogErr = json.Marshal(gin.H{
+			"sourceCatalog":       sourceCatalogURL,
+			"discoverySources":    DiscoverySources(),
+			"verifiedAt":          verifiedAt,
+			"entries":             Entries(),
+			"planeCoverage":       CapabilityPlaneCoverageReport(),
+			"collectionScreening": OSSInsightScreening(),
+			"activationPolicy":    "Catalog discovery is read-only. HAI never installs, enables, or executes a listed project without a reviewed adapter and the existing approval gates.",
+		})
+		if h.catalogErr == nil {
+			digest := sha256.Sum256(h.catalogJSON)
+			h.catalogETag = fmt.Sprintf(`"%x"`, digest)
+		}
 	})
+	if h.catalogErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not encode capability catalog"})
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=300, must-revalidate")
+	c.Header("ETag", h.catalogETag)
+	c.Header("Vary", "Authorization, Cookie")
+	if matchesETag(c.GetHeader("If-None-Match"), h.catalogETag) {
+		c.Status(http.StatusNotModified)
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", h.catalogJSON)
+}
+
+func matchesETag(header, current string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == current {
+			return true
+		}
+	}
+	return false
 }
 
 // AdoptionPlan exposes the reviewed implementation queue. It is derived only
