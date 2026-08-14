@@ -246,6 +246,19 @@ function Test-PublicOrigin([string]$BaseUrl, [bool]$PublicA2A) {
             throw 'The public origin did not return the required HSTS policy.'
         }
 
+        $readiness = Invoke-PublicRequest $client ([System.Net.Http.HttpMethod]::Get) "$BaseUrl/readyz" 200
+        $readinessPayload = $readiness.Body | ConvertFrom-Json
+        if ($readinessPayload.service -ne 'backend' -or
+            $readinessPayload.status -notin @('ready', 'degraded')) {
+            throw 'The public readiness response did not identify a serving HAI backend.'
+        }
+        if ($null -ne $readinessPayload.PSObject.Properties['checks']) {
+            throw 'The public readiness response exposed internal dependency checks.'
+        }
+        if ($readiness.Headers['Cache-Control'] -notmatch 'no-store') {
+            throw 'The public readiness response was not marked no-store.'
+        }
+
         $session = Invoke-PublicRequest $client ([System.Net.Http.HttpMethod]::Get) "$BaseUrl/api/v1/auth/session" 200
         $sessionPayload = $session.Body | ConvertFrom-Json
         if ($sessionPayload.authenticated -ne $false -or $sessionPayload.permissions.canRead -ne $false) {
@@ -291,6 +304,17 @@ try {
     $ready = Invoke-WebRequest -Uri "http://127.0.0.1:$gatewayPort/readyz" -UseBasicParsing -TimeoutSec 5
     if ($ready.StatusCode -ne 200) {
         throw "unexpected HTTP $($ready.StatusCode)"
+    }
+    $readyPayload = $ready.Content | ConvertFrom-Json
+    if ($readyPayload.service -ne 'backend' -or
+        $readyPayload.status -notin @('ready', 'degraded')) {
+        throw 'the local readiness response did not identify a serving HAI backend'
+    }
+    if ($null -ne $readyPayload.PSObject.Properties['checks']) {
+        throw 'the local readiness response exposed internal dependency checks'
+    }
+    if ($ready.Headers['Cache-Control'] -notmatch 'no-store') {
+        throw 'the local readiness response was not marked no-store'
     }
 } catch {
     throw "The reconciled local HAI gateway is not ready on port $gatewayPort. $($_.Exception.Message)"

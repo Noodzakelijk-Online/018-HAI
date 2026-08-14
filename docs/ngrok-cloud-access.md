@@ -95,11 +95,12 @@ Start and stop the profile:
 
 Startup does not declare the endpoint available merely because the tunnel
 process is healthy. It waits for the real fixed HTTPS origin, checks backend
-health, an anonymous no-permission session, the Angular shell, and HSTS. It
-also proves that A2A is edge-blocked when public mode is disabled, or runs the
-authenticated bounded A2A acceptance when public mode is enabled. A failed
-public-origin probe stops the tunnel instead of leaving an unverified endpoint
-online.
+health, aggregate readiness, an anonymous no-permission session, the Angular
+shell, and HSTS. The local and public readiness checks reject a payload that
+contains internal dependency details or is cacheable. The launcher also proves
+that A2A is edge-blocked when public mode is disabled, or runs the authenticated
+bounded A2A acceptance when public mode is enabled. A failed public-origin probe
+stops the tunnel instead of leaving an unverified endpoint online.
 
 Verify the A2A chain locally before exposure, then through the live tunnel:
 

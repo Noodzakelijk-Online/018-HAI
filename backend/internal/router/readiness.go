@@ -9,6 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func livenessHandler(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "backend"})
+}
+
 // readinessHandler exposes only the aggregate readiness state needed by a
 // load balancer or container orchestrator. Detailed checks can contain
 // internal topology and configuration information, so they are served by the
@@ -41,6 +46,7 @@ func readinessDetailHandler(diagnose func(ctx context.Context) doctor.Report) gi
 
 func readinessResponseHandler(diagnose func(ctx context.Context) doctor.Report, includeChecks bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
 		report := diagnose(c.Request.Context())
 		ok, warn, fail := report.Counts()
 

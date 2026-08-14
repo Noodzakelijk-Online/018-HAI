@@ -59,6 +59,29 @@ func TestReadinessReadyWhenEverythingPasses(t *testing.T) {
 	}
 }
 
+func TestPublicHealthResponsesAreNeverCacheable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range []struct {
+		name    string
+		handler gin.HandlerFunc
+	}{
+		{name: "liveness", handler: livenessHandler},
+		{name: "readiness", handler: readinessHandler(func(context.Context) doctor.Report { return doctor.Report{} })},
+		{name: "detailed readiness", handler: readinessDetailHandler(func(context.Context) doctor.Report { return doctor.Report{} })},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+			test.handler(c)
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+		})
+	}
+}
+
 func TestReadinessDetailIncludesChecksForAuthenticatedSystemRoute(t *testing.T) {
 	report := doctor.Report{Checks: []doctor.Check{
 		{Name: "database.host", Severity: doctor.SeverityOK, Detail: "postgres"},

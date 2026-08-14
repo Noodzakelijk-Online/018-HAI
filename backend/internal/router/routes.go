@@ -124,9 +124,7 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 		}
 	}()
 
-	router.GET("/healthz", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
-	})
+	router.GET("/healthz", livenessHandler)
 	readinessReport := func(ctx context.Context) doctor.Report {
 		// Static configuration diagnosis, then live dependency probes. The
 		// second half is what makes the answer trustworthy: without it a

@@ -689,7 +689,7 @@ Expected behavior:
 - `/healthz` and `/readyz` reach the backend through nginx without a session.
   They are intentionally public liveness/readiness probes and return backend
   health JSON (`/readyz` uses HTTP `200` or `503` and exposes aggregate counts,
-  not internal dependency details).
+  not internal dependency details). Both responses are marked `no-store`.
 - Protected engine routes such as `/api/v1/llm/policy` return `401` without a
   signed session, not anonymous application data.
 - Signed-in operators can inspect the full live readiness report at
