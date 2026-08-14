@@ -64,6 +64,32 @@ func TestPostgresCollectorsMatchOwnerScopedCanonicalRecords(t *testing.T) {
 	}
 }
 
+func TestPostgresCollectorSnapshotUsesReadOnlyRepeatableRead(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("HAI_AMBIENT_MONITOR_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("HAI_AMBIENT_MONITOR_POSTGRES_TEST_DSN is not configured")
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open Postgres collector database: %v", err)
+	}
+
+	var isolation string
+	var readOnly string
+	err = withCollectorSnapshot(t.Context(), db, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SHOW transaction_isolation`).Row().Scan(&isolation); err != nil {
+			return err
+		}
+		return tx.Raw(`SHOW transaction_read_only`).Row().Scan(&readOnly)
+	})
+	if err != nil {
+		t.Fatalf("inspect collector snapshot transaction: %v", err)
+	}
+	if isolation != "repeatable read" || readOnly != "on" {
+		t.Fatalf("collector snapshot transaction = isolation %q read-only %q", isolation, readOnly)
+	}
+}
+
 func createCollectorTestTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	statements := []string{
