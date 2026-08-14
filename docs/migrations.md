@@ -515,13 +515,16 @@ remain false. Here, "delivery" names an internal durable handoff record; it is
 not authorization to send a message, invoke a provider, mutate a workflow, or
 perform any external effect.
 
-Migration `0050` pins the immutable run and observation identities and digests,
-but it does not yet pin the exact outcome-definition revision, proactivity
-policy/feedback history, or composer implementation version used by a delayed
-attempt. A later retry can therefore compose against newer advisory state. A
-`succeeded` delivery proves that the handoff was processed, not that the exact
-historical outcome/proactivity snapshot can be reconstructed. Snapshot pinning
-and end-to-end replay acceptance remain release gates.
+Migration `0051` closes the historical-replay ambiguity left by `0050`. Before
+the completed monitor run is committed, it pins the exact outcome revision and
+audit digest, proactivity policy/signal/decision/feedback watermarks, composer
+version, capture time, and canonical snapshot digest. Every composition attempt
+binds that digest, and legacy unpinned deliveries are dead-lettered rather than
+being recomposed against newer state. Deterministic package tests prove delayed
+replay uses the pinned outcome and attention context after current state
+advances. Disposable-PostgreSQL lifecycle and signed-browser acceptance remain
+release gates; a `succeeded` handoff is still advisory processing evidence, not
+authorization for an external effect.
 
 ## Immutable Plan Graph
 

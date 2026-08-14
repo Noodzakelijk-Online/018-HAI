@@ -49,6 +49,21 @@ The PostgreSQL integration test proves owner/project/archive isolation, literal
 The retained local stack applied migration 0061, exposed all four indexes to the
 restricted runtime role, and denied that role temporary-table creation.
 
+## HAI OS aggregate snapshot
+
+`GET /api/v1/os/overview` loads dashboard aggregates in one request-cancellable
+PostgreSQL statement. The previous handler issued repeated sequential count
+queries, including duplicate reads for values and statuses, and suppressed
+database errors as zero. The consolidated query reuses owner-scoped source,
+workflow, and verification-run CTEs, returns one consistent snapshot, and fails
+closed when PostgreSQL cannot supply it.
+
+A disposable PostgreSQL integration fixture proves owner isolation, archived
+and revoked record exclusion, due-date handling, literal `pursuit_` prefix
+matching, and deterministic latest-scan selection. This is query-count and
+correctness evidence, not a production latency claim; representative
+release-target percentiles remain required.
+
 ## Guardrails already in place
 
 - Pagination and query inputs are bounded before repository execution.
