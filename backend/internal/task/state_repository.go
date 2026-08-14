@@ -2,6 +2,7 @@ package task
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -39,6 +40,7 @@ var (
 	ErrTaskReviewInvalidTransition    = errors.New("invalid task review state transition")
 	ErrTaskOperationInProgress        = errors.New("task operation is already in progress")
 	ErrTaskOperationNeedsReview       = errors.New("task operation outcome requires review")
+	ErrTaskOperationCanceled          = errors.New("task operation was canceled before execution")
 	ErrTaskOperationRetryConfirmation = errors.New("uncertain task operation retry requires explicit confirmation")
 )
 
@@ -47,11 +49,44 @@ const (
 	TaskOperationReplay      = "replay"
 	TaskOperationInProgress  = "in_progress"
 	TaskOperationNeedsReview = "needs_review"
+	TaskOperationCanceled    = "canceled"
 )
 
 type TaskOperationClaim struct {
 	Operation   models.TaskOperationRecord
 	Disposition string
+}
+
+// ContextTaskOperationClaimer allows request-scoped claim acquisition to stop
+// promptly when the HTTP caller goes away. The legacy repository contract stays
+// valid for external implementations, while production storage implements this
+// context-aware extension.
+type ContextTaskOperationClaimer interface {
+	ClaimTaskOperationContext(context.Context, string, string, string, string, string, time.Time, time.Duration) (TaskOperationClaim, error)
+}
+
+type ContextTaskOperationHeartbeater interface {
+	HeartbeatTaskOperationContext(context.Context, string, uuid.UUID, string, int64, time.Time) (bool, error)
+}
+
+type ContextTaskOperationCompleter interface {
+	CompleteTaskOperationContext(context.Context, string, uuid.UUID, string, int64, string, time.Time) (bool, error)
+}
+
+type ContextTaskOperationReviewer interface {
+	MarkTaskOperationNeedsReviewContext(context.Context, string, uuid.UUID, string, int64, string, time.Time) (bool, error)
+}
+
+type TaskOperationCanceler interface {
+	CancelTaskOperation(string, uuid.UUID, string, int64, string, time.Time) (bool, error)
+}
+
+type ContextTaskOperationCanceler interface {
+	CancelTaskOperationContext(context.Context, string, uuid.UUID, string, int64, string, time.Time) (bool, error)
+}
+
+type ContextCompletionPlanFinder interface {
+	FindCompletionPlanContext(context.Context, string, string) (*CompletionPlan, error)
 }
 
 // TaskStateRepository is the durable boundary for task completion history and

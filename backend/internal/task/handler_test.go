@@ -439,6 +439,38 @@ func TestResolveReviewItemExplainsUncertainOperationConfirmationContract(t *test
 	}
 }
 
+func TestTaskOperationErrorResponsesExplainRecovery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "canceled operation",
+			err:        ErrTaskOperationCanceled,
+			wantStatus: http.StatusConflict,
+			wantBody:   "new idempotency key",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+
+			writeTaskOperationError(context, test.err, "task operation failed")
+
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.wantStatus, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), test.wantBody) {
+				t.Fatalf("response does not explain recovery: %s", response.Body.String())
+			}
+		})
+	}
+}
+
 type capturingTaskService struct {
 	planRequest  IntakeRequest
 	runRequest   IntakeRequest

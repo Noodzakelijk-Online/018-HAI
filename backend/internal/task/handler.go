@@ -143,6 +143,8 @@ func writeTaskOperationError(c *gin.Context, err error, fallback string) {
 		c.JSON(http.StatusConflict, gin.H{"error": "task operation is already in progress"})
 	case errors.Is(err, ErrTaskOperationNeedsReview):
 		c.JSON(http.StatusConflict, gin.H{"error": "task operation outcome requires review before retry"})
+	case errors.Is(err, ErrTaskOperationCanceled):
+		c.JSON(http.StatusConflict, gin.H{"error": "task operation was canceled before execution; retry with a new idempotency key"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fallback})
 	}

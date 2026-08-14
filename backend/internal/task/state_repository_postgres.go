@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -123,6 +124,16 @@ func (r *PostgresTaskStateRepository) ListCompletionPlanHistory(ownerIdentity st
 }
 
 func (r *PostgresTaskStateRepository) FindCompletionPlan(ownerIdentity, taskPlanID string) (*CompletionPlan, error) {
+	return r.FindCompletionPlanContext(context.Background(), ownerIdentity, taskPlanID)
+}
+
+func (r *PostgresTaskStateRepository) FindCompletionPlanContext(ctx context.Context, ownerIdentity, taskPlanID string) (*CompletionPlan, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ownerIdentity, err := normalizeTaskStateOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
@@ -132,7 +143,7 @@ func (r *PostgresTaskStateRepository) FindCompletionPlan(ownerIdentity, taskPlan
 		return nil, fmt.Errorf("task plan id is required")
 	}
 	var row models.TaskCompletionPlanLog
-	err = r.DB.
+	err = r.DB.WithContext(ctx).
 		Where("owner_identity = ? AND task_plan_id = ?", ownerIdentity, taskPlanID).
 		Order("created_at DESC, id DESC").
 		First(&row).Error

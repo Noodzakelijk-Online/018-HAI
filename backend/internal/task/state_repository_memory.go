@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -90,6 +91,16 @@ func (r *MemoryTaskStateRepository) ListCompletionPlanHistory(ownerIdentity stri
 }
 
 func (r *MemoryTaskStateRepository) FindCompletionPlan(ownerIdentity, taskPlanID string) (*CompletionPlan, error) {
+	return r.FindCompletionPlanContext(context.Background(), ownerIdentity, taskPlanID)
+}
+
+func (r *MemoryTaskStateRepository) FindCompletionPlanContext(ctx context.Context, ownerIdentity, taskPlanID string) (*CompletionPlan, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ownerIdentity, err := normalizeTaskStateOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
@@ -100,6 +111,10 @@ func (r *MemoryTaskStateRepository) FindCompletionPlan(ownerIdentity, taskPlanID
 	}
 
 	r.mu.RLock()
+	if err := ctx.Err(); err != nil {
+		r.mu.RUnlock()
+		return nil, err
+	}
 	rows := make([]models.TaskCompletionPlanLog, 0)
 	for _, row := range r.completions {
 		if row.OwnerIdentity == ownerIdentity && row.TaskPlanID == taskPlanID {
