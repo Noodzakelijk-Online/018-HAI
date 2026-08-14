@@ -494,8 +494,16 @@ func (s *Service) ProcessDue(ctx context.Context, request ProcessDueRequest) (Pr
 	if len(compositionWorker) > maxIdentifierLength {
 		compositionWorker = "ambient-composition-worker"
 	}
+	// Collection and immutable snapshot capture can finish after the sweep's
+	// original as-of time. Claim compositions against the current service clock
+	// so handoffs enqueued by this pass are eligible immediately, while future
+	// retry schedules remain fenced by their own next-attempt timestamp.
+	compositionAsOf := s.now().UTC().Truncate(time.Microsecond)
+	if compositionAsOf.Before(request.Now) {
+		compositionAsOf = request.Now
+	}
 	compositions, compositionErr := s.ProcessCompositions(ctx, ProcessCompositionsRequest{
-		Scope: request.Scope, WorkerID: compositionWorker, Now: request.Now,
+		Scope: request.Scope, WorkerID: compositionWorker, Now: compositionAsOf,
 		LeaseDuration: request.LeaseDuration, Limit: request.Limit,
 	})
 	if compositionErr != nil {

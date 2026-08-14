@@ -116,7 +116,7 @@ jobs:
           trap cleanup EXIT
           docker compose --env-file .env.example -f docker-compose.local.yml up -d kafka
           broker_ready=""
-          for attempt in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker compose --env-file .env.example -f docker-compose.local.yml exec -T kafka \
               rpk cluster info -X brokers=127.0.0.1:9092 >/dev/null 2>&1; then
               broker_ready=1
@@ -300,7 +300,8 @@ jobs:
              hai_executionauth_test \
              hai_framework_registry_test \
             hai_task_state_test \
-            hai_agent_registry_test
+            hai_agent_registry_test \
+            hai_ambient_monitor_test
           do
             createdb \
               --host=127.0.0.1 \
@@ -320,12 +321,14 @@ jobs:
            registry_log="$RUNNER_TEMP/framework-registry-postgres.log"
           task_log="$RUNNER_TEMP/task-state-postgres.log"
           agent_registry_log="$RUNNER_TEMP/agent-registry-postgres.log"
+          ambient_monitor_log="$RUNNER_TEMP/ambient-monitor-postgres.log"
            migration_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_runner_test port=5432 sslmode=disable TimeZone=UTC"
            lifecycle_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_lifecycle_test port=5432 sslmode=disable TimeZone=UTC"
            executionauth_dsn="host=localhost user=postgres password=postgres dbname=hai_executionauth_test port=5432 sslmode=disable TimeZone=UTC"
            registry_dsn="host=localhost user=postgres password=postgres dbname=hai_framework_registry_test port=5432 sslmode=disable TimeZone=UTC"
           task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
           agent_registry_dsn="host=localhost user=postgres password=postgres dbname=hai_agent_registry_test port=5432 sslmode=disable TimeZone=UTC"
+          ambient_monitor_dsn="host=localhost user=postgres password=postgres dbname=hai_ambient_monitor_test port=5432 sslmode=disable TimeZone=UTC"
           HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 -tags integration \
             -run '^(TestConcurrentMigrationRunnersSerializeAndRecheck|TestLegacyBaselineRejectsDifferentExistingPrimaryKey|TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration|TestRuntimeRoleCanUseApplicationDataButCannotOwnSchema)$' \
             ./internal/infra/ -v | tee "$infra_log"
@@ -354,6 +357,13 @@ jobs:
             ./internal/agentregistry/ -v | tee "$agent_registry_log"
           grep -q -- '^--- PASS: TestPostgresRepositoryRoundTripOwnerIsolationCASAndImmutableLedgers' "$agent_registry_log"
           grep -q -- '^--- PASS: TestPostgresAgentRegistryMigrationCanReplayAgainstExistingSchema' "$agent_registry_log"
+          HAI_AMBIENT_MONITOR_POSTGRES_TEST_DSN="$ambient_monitor_dsn" go test -p 1 -count=1 \
+            -run '^(TestPostgresCollectorsMatchOwnerScopedCanonicalRecords|TestPostgresCollectorSnapshotUsesReadOnlyRepeatableRead|TestPostgresRepositoryLifecycle|TestPostgresCompositionRepositoryLifecycle)$' \
+            ./internal/ambientmonitor/ -v | tee "$ambient_monitor_log"
+          grep -q -- '^--- PASS: TestPostgresCollectorsMatchOwnerScopedCanonicalRecords' "$ambient_monitor_log"
+          grep -q -- '^--- PASS: TestPostgresCollectorSnapshotUsesReadOnlyRepeatableRead' "$ambient_monitor_log"
+          grep -q -- '^--- PASS: TestPostgresRepositoryLifecycle' "$ambient_monitor_log"
+          grep -q -- '^--- PASS: TestPostgresCompositionRepositoryLifecycle' "$ambient_monitor_log"
 
   # Boots the real backend against a real Postgres + Redis and runs the
   # two-account isolation acceptance test over HTTP: two authenticated owners

@@ -1152,12 +1152,14 @@ class CIWorkflowContractTest(unittest.TestCase):
             "hai_framework_registry_test",
             "hai_task_state_test",
             "hai_agent_registry_test",
+            "hai_ambient_monitor_test",
             "createdb",
             'HAI_ALLOW_DESTRUCTIVE_DATABASE_TESTS: "true"',
             'HAI_REQUIRE_POSTGRES_INTEGRATION: "true"',
             'HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 -tags integration',
             'HAI_TEST_DATABASE_DSN="$registry_dsn" go test -count=1 -tags integration',
             'HAI_TEST_DATABASE_DSN="$task_dsn" go test -count=1 -tags integration',
+            'HAI_AMBIENT_MONITOR_POSTGRES_TEST_DSN="$ambient_monitor_dsn" go test -p 1 -count=1',
             "^--- PASS: TestRunMigrationsAppliesAndIsIdempotent",
             "^--- PASS: TestRollbackMigrationReversesPostMigration",
             "^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck",
@@ -1168,6 +1170,10 @@ class CIWorkflowContractTest(unittest.TestCase):
             "^--- PASS: TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability",
             "^--- PASS: TestPostgresRepositoryRoundTripOwnerIsolationCASAndImmutableLedgers",
             "^--- PASS: TestPostgresAgentRegistryMigrationCanReplayAgainstExistingSchema",
+            "^--- PASS: TestPostgresCollectorsMatchOwnerScopedCanonicalRecords",
+            "^--- PASS: TestPostgresCollectorSnapshotUsesReadOnlyRepeatableRead",
+            "^--- PASS: TestPostgresRepositoryLifecycle",
+            "^--- PASS: TestPostgresCompositionRepositoryLifecycle",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, migrations)
@@ -1177,7 +1183,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         )
         database_assignments = dict(
             re.findall(
-                r'^\s*(migration|registry|task|agent_registry)_dsn="[^"]*dbname=([^ "\n]+)',
+                r'^\s*(migration|registry|task|agent_registry|ambient_monitor)_dsn="[^"]*dbname=([^ "\n]+)',
                 migrations,
                 re.MULTILINE,
             )
@@ -1189,9 +1195,10 @@ class CIWorkflowContractTest(unittest.TestCase):
                 "registry": "hai_framework_registry_test",
                 "task": "hai_task_state_test",
                 "agent_registry": "hai_agent_registry_test",
+                "ambient_monitor": "hai_ambient_monitor_test",
             },
         )
-        self.assertEqual(len(set(database_assignments.values())), 4)
+        self.assertEqual(len(set(database_assignments.values())), 5)
 
     def test_running_stack_must_be_live_before_acceptance_test(self) -> None:
         isolation = job_block("isolation-acceptance")

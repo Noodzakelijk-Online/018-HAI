@@ -27,6 +27,12 @@ source of truth for current state.
   that the path creates only observations, runs, outcome evaluations,
   proactivity decisions, and inbox records, with zero execution, delivery,
   Calendar, workflow, mandate, provider, or learning effects.
+  The three fixed collectors plus repository/composition lifecycles are now
+  mandatory in CI through a dedicated disposable database, and a retained
+  signed-browser not-due pass proves truthful no-op reporting and no duplicate
+  ledgers. The remaining gate is a disposable signed due-run, transient retry,
+  pause/re-enable, and crash/recovery lifecycle with the full zero-side-effect
+  assertion.
 
 ## Frontend follow-up
 
