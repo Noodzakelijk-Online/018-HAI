@@ -3065,6 +3065,9 @@ func (a *openClawAdapter) validGatewayURL() string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "OPENCLAW_GATEWAY_URL must be an absolute URL"
 	}
+	if parsed.User != nil {
+		return "OPENCLAW_GATEWAY_URL must not contain credentials"
+	}
 	switch parsed.Scheme {
 	case "ws", "wss", "http", "https":
 	default:
@@ -3117,6 +3120,7 @@ type odysseusAdapter struct {
 	timeout     time.Duration
 	outputLimit int64
 	allowedHost map[string]bool
+	httpClient  *http.Client
 
 	allowBash      bool
 	allowWebSearch bool
@@ -3151,15 +3155,17 @@ type odysseusAdapter struct {
 
 func newOdysseusAdapterFromEnv() *odysseusAdapter {
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("ODYSSEUS_BASE_URL")), "/")
+	timeout := time.Duration(boundedIntEnv("ODYSSEUS_AGENT_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second
 	return &odysseusAdapter{
 		enabled:     envEnabled("ODYSSEUS_AGENT_ENABLED"),
 		baseURL:     baseURL,
 		token:       strings.TrimSpace(os.Getenv("ODYSSEUS_API_TOKEN")),
 		sessionID:   strings.TrimSpace(os.Getenv("ODYSSEUS_AGENT_SESSION_ID")),
 		workspace:   strings.TrimSpace(os.Getenv("ODYSSEUS_AGENT_WORKSPACE")),
-		timeout:     time.Duration(boundedIntEnv("ODYSSEUS_AGENT_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second,
+		timeout:     timeout,
 		outputLimit: int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
 		allowedHost: csvMap(firstNonEmpty(os.Getenv("AGENT_RUNTIME_ALLOWED_HOSTS"), "localhost,127.0.0.1,::1,host.docker.internal,odysseus")),
+		httpClient:  noRedirectClient(timeout),
 
 		allowBash:      envEnabled("ODYSSEUS_AGENT_ALLOW_BASH"),
 		allowWebSearch: envEnabled("ODYSSEUS_AGENT_ALLOW_WEB_SEARCH"),
@@ -3226,6 +3232,9 @@ func (a *odysseusAdapter) validBaseURL() string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "ODYSSEUS_BASE_URL must be an absolute HTTP or HTTPS URL"
 	}
+	if parsed.User != nil {
+		return "ODYSSEUS_BASE_URL must not contain credentials"
+	}
 	host := strings.ToLower(parsed.Hostname())
 	if !a.allowedHost["*"] && !a.allowedHost[host] {
 		return "Odysseus host is not in AGENT_RUNTIME_ALLOWED_HOSTS"
@@ -3263,7 +3272,7 @@ func (a *odysseusAdapter) HealthCheck(parent context.Context) Health {
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+"/api/codex/capabilities", nil)
 	a.authorize(req)
-	resp, err := noRedirectClient(a.timeout).Do(req)
+	resp, err := a.directHTTPClient().Do(req)
 	if err != nil {
 		health.Status = "unavailable"
 		health.Reason = safety.RedactSecrets(err.Error())
@@ -3379,7 +3388,7 @@ func (a *odysseusAdapter) ExecuteTask(parent context.Context, task Task) Result 
 	if result, blocked := emergencyStopResult("odysseus"); blocked {
 		return result
 	}
-	resp, err := noRedirectClient(a.timeout).Do(req)
+	resp, err := a.directHTTPClient().Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return Result{RuntimeID: "odysseus", Status: "blocked", Message: "Odysseus execution exceeded the configured timeout and was stopped", ExitCode: -1, DurationMs: time.Since(started).Milliseconds()}
@@ -3608,13 +3617,66 @@ func runtimeFailure(runtimeID string, started time.Time, message string) Result 
 	}
 }
 
+type runtimeLookupIPAddr func(context.Context, string) ([]net.IPAddr, error)
+
 func noRedirectClient(timeout time.Duration) *http.Client {
+	return noRedirectClientWithResolver(timeout, net.DefaultResolver.LookupIPAddr)
+}
+
+func noRedirectClientWithResolver(timeout time.Duration, lookup runtimeLookupIPAddr) *http.Client {
+	dialTimeout := timeout
+	if dialTimeout <= 0 || dialTimeout > 10*time.Second {
+		dialTimeout = 10 * time.Second
+	}
+	dialer := &net.Dialer{Timeout: dialTimeout}
 	return &http.Client{
 		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			MaxIdleConns:          8,
+			MaxIdleConnsPerHost:   2,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: dialTimeout,
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(address)
+				if err != nil {
+					return nil, fmt.Errorf("agent runtime: invalid network address: %w", err)
+				}
+				resolved, err := lookup(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("agent runtime: resolve endpoint: %w", err)
+				}
+				if len(resolved) == 0 {
+					return nil, fmt.Errorf("agent runtime: endpoint resolved to no addresses")
+				}
+				for _, candidate := range resolved {
+					if runtimeIPAddressBlocked(candidate.IP) {
+						return nil, fmt.Errorf("agent runtime: endpoint resolved to blocked address space")
+					}
+				}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(resolved[0].IP.String(), port))
+			},
+		},
 	}
+}
+
+func (a *odysseusAdapter) directHTTPClient() *http.Client {
+	if a.httpClient != nil {
+		return a.httpClient
+	}
+	return noRedirectClient(a.timeout)
+}
+
+func runtimeIPAddressBlocked(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.String() == "169.254.169.254"
 }
 
 func csvValues(value string) []string {

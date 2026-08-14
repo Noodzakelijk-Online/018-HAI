@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -545,6 +546,55 @@ func TestOdysseusAdapterUsesAgentModeWithoutBash(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("request body %q missing %q", body, expected)
 		}
+	}
+}
+
+func TestAgentRuntimeHTTPClientRejectsBlockedDNSResolution(t *testing.T) {
+	t.Parallel()
+
+	client := noRedirectClientWithResolver(5*time.Second, func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	})
+	transport := client.Transport.(*http.Transport)
+	if transport.Proxy != nil {
+		t.Fatal("agent runtime transport must not inherit environment proxy settings")
+	}
+	_, err := transport.DialContext(context.Background(), "tcp", "odysseus.example:443")
+	if err == nil || !strings.Contains(err.Error(), "blocked address space") {
+		t.Fatalf("DialContext error = %v, want blocked address rejection", err)
+	}
+}
+
+func TestOdysseusAdapterFromEnvReusesDirectHTTPClient(t *testing.T) {
+	t.Setenv("ODYSSEUS_AGENT_TIMEOUT_SECONDS", "15")
+	adapter := newOdysseusAdapterFromEnv()
+	if adapter.httpClient == nil || adapter.directHTTPClient() != adapter.directHTTPClient() {
+		t.Fatal("production Odysseus adapter must reuse its bounded HTTP client")
+	}
+	transport, ok := adapter.httpClient.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil {
+		t.Fatalf("Odysseus transport = %#v, want direct no-proxy transport", adapter.httpClient.Transport)
+	}
+}
+
+func TestRuntimeEndpointURLsRejectEmbeddedCredentials(t *testing.T) {
+	t.Parallel()
+
+	odysseus := &odysseusAdapter{
+		baseURL:     "https://user:secret@odysseus.example",
+		allowedHost: map[string]bool{"odysseus.example": true},
+	}
+	if reason := odysseus.validBaseURL(); !strings.Contains(reason, "must not contain credentials") {
+		t.Fatalf("Odysseus URL rejection = %q", reason)
+	}
+	openClaw := &openClawAdapter{
+		gatewayURL: "wss://user:secret@openclaw.example",
+		allowedHost: map[string]bool{
+			"openclaw.example": true,
+		},
+	}
+	if reason := openClaw.validGatewayURL(); !strings.Contains(reason, "must not contain credentials") {
+		t.Fatalf("OpenClaw URL rejection = %q", reason)
 	}
 }
 
