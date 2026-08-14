@@ -563,6 +563,42 @@ func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	}
 }
 
+func TestTaskSourceRefreshPropagatesTaskCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	src := &fakeTaskSourceService{refreshStarted: make(chan struct{})}
+	svc := NewService(&fakeMemoryService{}, newTaskTestLLMService(t), src).(*service)
+
+	type result struct {
+		run *source.ScheduledSyncRun
+		err error
+	}
+	finished := make(chan result, 1)
+	go func() {
+		run, _, err := svc.refreshSourcesForTask(
+			IntakeRequest{OwnerIdentity: "alice", Request: "Summarize the connected documents", executionContext: ctx},
+			IntakeAnalysis{NeedsDocuments: true},
+		)
+		finished <- result{run: run, err: err}
+	}()
+	select {
+	case <-src.refreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("context-aware source refresh did not start")
+	}
+	cancel()
+	select {
+	case got := <-finished:
+		if !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("refresh sources error = %v, want context canceled", got.err)
+		}
+		if got.run != nil || len(src.ownerRefreshOwners) != 0 {
+			t.Fatalf("canceled refresh used detached path: run=%#v owners=%#v", got.run, src.ownerRefreshOwners)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("source refresh did not stop after task cancellation")
+	}
+}
+
 func TestPlanSkipsConnectedSourceSearchForBoundedReadOnlyAutomation(t *testing.T) {
 	mem := &fakeMemoryService{}
 	src := &fakeTaskSourceService{}
@@ -1701,6 +1737,7 @@ type fakeTaskSourceService struct {
 	calendarOwner      string
 	calendarStart      time.Time
 	calendarEnd        time.Time
+	refreshStarted     chan struct{}
 }
 
 func (s *fakeTaskSourceService) CalendarBusyIntervalsForOwner(ownerIdentity string, start, end time.Time) ([]source.CalendarBusyInterval, error) {
@@ -1766,6 +1803,15 @@ func (s *fakeTaskSourceService) RunDueScheduledSyncsForOwner(now time.Time, owne
 	s.ownerRefreshOwners = append(s.ownerRefreshOwners, ownerIdentity)
 	s.order = append(s.order, "owner-refresh")
 	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
+}
+
+func (s *fakeTaskSourceService) RunDueScheduledSyncsForOwnerContext(ctx context.Context, now time.Time, ownerIdentity string) (*source.ScheduledSyncRun, error) {
+	if s.refreshStarted == nil {
+		return s.RunDueScheduledSyncsForOwner(now, ownerIdentity)
+	}
+	close(s.refreshStarted)
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (s *fakeTaskSourceService) Reindex(sourceID uuid.UUID) (*source.SyncResult, error) {

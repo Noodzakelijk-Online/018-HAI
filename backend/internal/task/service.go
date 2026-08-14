@@ -1121,7 +1121,10 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	var sourceRefresh *source.ScheduledSyncRun
 	var sourceRefreshExplanation string
 	if allowSourceRefresh {
-		sourceRefresh, sourceRefreshExplanation = s.refreshSourcesForTask(request, intake)
+		sourceRefresh, sourceRefreshExplanation, err = s.refreshSourcesForTask(request, intake)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		sourceRefreshExplanation = "Source refresh is disabled for this planning preview."
 	}
@@ -1330,7 +1333,7 @@ func (s *service) loadOperatingContext(request IntakeRequest) (IntakeRequest, er
 		request.Capacity = capacity
 	}
 	if s.agentContext != nil && len(request.AvailableAgents) == 0 {
-		agents, err := s.agentContext.LatestAgents(request.OwnerIdentity, now)
+		agents, err := latestAgentsForTask(s.agentContext, request, now)
 		if err != nil {
 			return request, fmt.Errorf("load available agents: %w", err)
 		}
@@ -2411,22 +2414,26 @@ func countLabel(count int, label string) string {
 	return strconv.Itoa(count) + " " + label + "s"
 }
 
-func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnalysis) (*source.ScheduledSyncRun, string) {
+func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnalysis) (*source.ScheduledSyncRun, string, error) {
 	if s.sourceService == nil {
-		return nil, "Connected-source refresh is not configured."
+		return nil, "Connected-source refresh is not configured.", nil
 	}
 	if !shouldRefreshSourcesForTask(request, intake) {
-		return nil, "Connected-source refresh skipped because the task does not appear to need source-backed context."
+		return nil, "Connected-source refresh skipped because the task does not appear to need source-backed context.", nil
 	}
 	ownerIdentity := strings.TrimSpace(request.OwnerIdentity)
 	if ownerIdentity == "" {
-		return nil, "Connected-source refresh skipped for an unowned planning preview."
+		return nil, "Connected-source refresh skipped for an unowned planning preview.", nil
 	}
-	result, err := s.sourceService.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
+	ctx := taskExecutionContext(request)
+	result, err := source.RunDueScheduledSyncsForOwnerWithContext(s.sourceService, ctx, time.Now().UTC(), ownerIdentity)
 	if err != nil {
-		return nil, "Owner-scoped connected-source refresh failed before context retrieval: " + err.Error()
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			return nil, "", firstTaskContextError(ctx, err)
+		}
+		return nil, "Owner-scoped connected-source refresh failed before context retrieval: " + err.Error(), nil
 	}
-	return result, fmt.Sprintf("Owner-scoped connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped)
+	return result, fmt.Sprintf("Owner-scoped connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped), nil
 }
 
 func shouldRefreshSourcesForTask(request IntakeRequest, intake IntakeAnalysis) bool {
