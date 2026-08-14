@@ -3,6 +3,8 @@ package memory
 import (
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -165,8 +167,11 @@ func (h *Handler) Retrieve(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.ownerService(c).RetrieveForOwner(memoryOwner(c), request)
+	result, err := RetrieveForOwnerContext(h.service, c.Request.Context(), memoryOwner(c), request)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -180,8 +185,17 @@ func (h *Handler) ReindexSemantic(c *gin.Context) {
 		return
 	}
 	limit, _ := strconv.Atoi(c.Query("limit"))
-	result, err := reindex.ReindexSemanticForOwner(memoryOwner(c), limit)
+	var result *SemanticReindexResult
+	var err error
+	if contextual, ok := h.service.(SemanticReindexContextService); ok {
+		result, err = contextual.ReindexSemanticForOwnerContext(c.Request.Context(), memoryOwner(c), limit)
+	} else {
+		result, err = reindex.ReindexSemanticForOwner(memoryOwner(c), limit)
+	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "local semantic memory indexing failed"})
 		return
 	}

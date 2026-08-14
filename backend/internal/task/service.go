@@ -1113,7 +1113,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	} else {
 		sourceRefreshExplanation = "Source refresh is disabled for this planning preview."
 	}
-	contextResult, err := memory.RetrieveForOwner(s.memoryService, request.OwnerIdentity, memory.RetrieveRequest{
+	contextResult, err := memory.RetrieveForOwnerContext(s.memoryService, taskExecutionContext(request), request.OwnerIdentity, memory.RetrieveRequest{
 		Query:      request.Request,
 		ProjectKey: request.ProjectKey,
 		Limit:      8,

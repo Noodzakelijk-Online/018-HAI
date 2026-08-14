@@ -214,6 +214,8 @@ type semanticMemoryStub struct {
 	requests         []semantic.MemorySearchRequest
 	indexedMemoryIDs []uuid.UUID
 	searchErr        error
+	searchMemory     func(context.Context, semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error)
+	indexMemory      func(context.Context, *models.ContextMemory) error
 }
 
 var _ semantic.Service = (*semanticMemoryStub)(nil)
@@ -224,19 +226,79 @@ func (s *semanticMemoryStub) Index(context.Context, *models.SourceExtraction) er
 func (s *semanticMemoryStub) Search(context.Context, semantic.SearchRequest) ([]semantic.Match, error) {
 	return nil, nil
 }
-func (s *semanticMemoryStub) IndexMemory(_ context.Context, memory *models.ContextMemory) error {
+func (s *semanticMemoryStub) IndexMemory(ctx context.Context, memory *models.ContextMemory) error {
+	if s.indexMemory != nil {
+		return s.indexMemory(ctx, memory)
+	}
 	if memory != nil {
 		s.indexedMemoryIDs = append(s.indexedMemoryIDs, memory.ID)
 	}
 	return nil
 }
 func (s *semanticMemoryStub) DeleteMemory(context.Context, uuid.UUID) error { return nil }
-func (s *semanticMemoryStub) SearchMemory(_ context.Context, request semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error) {
+func (s *semanticMemoryStub) SearchMemory(ctx context.Context, request semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error) {
 	s.requests = append(s.requests, request)
+	if s.searchMemory != nil {
+		return s.searchMemory(ctx, request)
+	}
 	if s.searchErr != nil {
 		return nil, s.searchErr
 	}
 	return s.matches, nil
+}
+
+func TestRetrieveContextCancelsSemanticMemorySearch(t *testing.T) {
+	repo := newFakeRepository()
+	started := make(chan struct{})
+	semanticSpy := &semanticMemoryStub{searchMemory: func(ctx context.Context, _ semantic.MemorySearchRequest) ([]semantic.MemoryMatch, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	service := NewServiceWithSemantic(repo, semanticSpy)
+	_, err := service.Create(CreateRequest{ProjectKey: "018-hai", Kind: "project", Content: "Cancelable local memory search."})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := RetrieveForOwnerContext(service, ctx, "alice", RetrieveRequest{Query: "local memory", ProjectKey: "018-hai"})
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("RetrieveForOwnerContext error = %v, want context.Canceled", err)
+	}
+}
+
+func TestReindexContextStopsBetweenSemanticWrites(t *testing.T) {
+	repo := newFakeRepository()
+	semanticSpy := &semanticMemoryStub{}
+	service := NewServiceWithSemantic(repo, semanticSpy)
+	scoped := service.(OwnerScopedService)
+	_, _ = scoped.CreateForOwner("alice", CreateRequest{Kind: "project", Content: "First memory"})
+	_, _ = scoped.CreateForOwner("alice", CreateRequest{Kind: "project", Content: "Second memory"})
+	started := make(chan struct{})
+	semanticSpy.indexMemory = func(ctx context.Context, _ *models.ContextMemory) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.(SemanticReindexContextService).ReindexSemanticForOwnerContext(ctx, "alice", 10)
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReindexSemanticForOwnerContext error = %v, want context.Canceled", err)
+	}
 }
 
 func TestOwnerScopedMemoryQuarantinesOwnerlessRecords(t *testing.T) {

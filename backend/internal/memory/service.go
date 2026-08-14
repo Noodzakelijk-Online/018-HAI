@@ -123,6 +123,12 @@ type OwnerScopedService interface {
 	RetrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error)
 }
 
+// OwnerContextService lets request-bound callers cancel semantic retrieval
+// without widening the established owner-scoped service contract.
+type OwnerContextService interface {
+	RetrieveForOwnerContext(context.Context, string, RetrieveRequest) (*RetrieveResult, error)
+}
+
 // OwnerQueryService is an optional extension for bounded owner-scoped query
 // execution. Keeping it separate preserves compatibility with integrations
 // that only need the established OwnerScopedService contract.
@@ -135,6 +141,10 @@ type OwnerQueryService interface {
 // accident. HTTP access remains authenticated and write-authorized.
 type SemanticReindexService interface {
 	ReindexSemanticForOwner(ownerIdentity string, limit int) (*SemanticReindexResult, error)
+}
+
+type SemanticReindexContextService interface {
+	ReindexSemanticForOwnerContext(context.Context, string, int) (*SemanticReindexResult, error)
 }
 
 type MemoryHealthService interface {
@@ -266,7 +276,20 @@ func CreateForOwner(service Service, ownerIdentity string, request CreateRequest
 }
 
 func RetrieveForOwner(service Service, ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+	return RetrieveForOwnerContext(service, context.Background(), ownerIdentity, request)
+}
+
+func RetrieveForOwnerContext(service Service, ctx context.Context, ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if contextual, ok := service.(OwnerContextService); ok {
+		return contextual.RetrieveForOwnerContext(ctx, ownerIdentity, request)
+	}
 	if ownerIdentity == "" {
 		return service.Retrieve(request)
 	}
@@ -481,14 +504,28 @@ func (s *service) DeleteForOwner(ownerIdentity string, id uuid.UUID) error {
 }
 
 func (s *service) Retrieve(request RetrieveRequest) (*RetrieveResult, error) {
-	return s.retrieveForOwner("", request)
+	return s.retrieveForOwner(context.Background(), "", request)
 }
 
 func (s *service) RetrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
-	return s.retrieveForOwner(ownerIdentity, request)
+	return s.retrieveForOwner(context.Background(), ownerIdentity, request)
 }
 
 func (s *service) ReindexSemanticForOwner(ownerIdentity string, limit int) (*SemanticReindexResult, error) {
+	return s.ReindexSemanticForOwnerContext(context.Background(), ownerIdentity, limit)
+}
+
+func (s *service) RetrieveForOwnerContext(ctx context.Context, ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+	return s.retrieveForOwner(ctx, ownerIdentity, request)
+}
+
+func (s *service) ReindexSemanticForOwnerContext(ctx context.Context, ownerIdentity string, limit int) (*SemanticReindexResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.semanticService == nil || !s.semanticService.Enabled() {
 		return &SemanticReindexResult{
 			Enabled:     false,
@@ -505,13 +542,19 @@ func (s *service) ReindexSemanticForOwner(ownerIdentity string, limit int) (*Sem
 	visible := filterReadableMemories(memories, ownerIdentity)
 	result := &SemanticReindexResult{Enabled: true}
 	for index, item := range visible {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if index >= limit {
 			result.Deferred = len(visible) - index
 			break
 		}
 		result.Attempted++
 		copyItem := item
-		if err := s.semanticService.IndexMemory(context.Background(), &copyItem); err != nil {
+		if err := s.semanticService.IndexMemory(ctx, &copyItem); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			result.Failed++
 			continue
 		}
@@ -524,7 +567,13 @@ func (s *service) ReindexSemanticForOwner(ownerIdentity string, limit int) (*Sem
 	return result, nil
 }
 
-func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+func (s *service) retrieveForOwner(ctx context.Context, ownerIdentity string, request RetrieveRequest) (*RetrieveResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limit := request.Limit
 	if limit <= 0 || limit > 20 {
 		limit = 8
@@ -532,6 +581,9 @@ func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest
 	projectKey := strings.TrimSpace(request.ProjectKey)
 	memories, err := s.repo.FindAll("", false)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	candidates := make([]models.ContextMemory, 0, len(memories))
@@ -544,10 +596,16 @@ func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest
 		}
 		candidates = append(candidates, memory)
 	}
-	semanticScores, semanticState := s.semanticScores(ownerIdentity, request)
+	semanticScores, semanticState, err := s.semanticScores(ctx, ownerIdentity, request)
+	if err != nil {
+		return nil, err
+	}
 
 	ranked := make([]RankedMemory, 0, len(candidates))
 	for _, memory := range candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		score, explanation := scoreMemory(memory, request, semanticScores[memory.ID])
 		if score <= 0.12 {
 			continue
@@ -568,6 +626,9 @@ func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest
 
 	now := time.Now().UTC()
 	for i := range ranked {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		ranked[i].Memory.LastUsedAt = &now
 		updated := ranked[i].Memory
 		if writeableByOwner(&updated, ownerIdentity) {
@@ -713,24 +774,27 @@ func (s *service) deleteMemoryIndex(id uuid.UUID) {
 	_ = s.semanticService.DeleteMemory(context.Background(), id)
 }
 
-func (s *service) semanticScores(ownerIdentity string, request RetrieveRequest) (map[uuid.UUID]float64, string) {
+func (s *service) semanticScores(ctx context.Context, ownerIdentity string, request RetrieveRequest) (map[uuid.UUID]float64, string, error) {
 	if s.semanticService == nil || !s.semanticService.Enabled() {
-		return map[uuid.UUID]float64{}, ""
+		return map[uuid.UUID]float64{}, "", nil
 	}
-	matches, err := s.semanticService.SearchMemory(context.Background(), semantic.MemorySearchRequest{
+	matches, err := s.semanticService.SearchMemory(ctx, semantic.MemorySearchRequest{
 		OwnerIdentity: ownerIdentity,
 		Query:         request.Query,
 		ProjectKey:    request.ProjectKey,
 		Limit:         request.Limit,
 	})
 	if err != nil {
-		return map[uuid.UUID]float64{}, "Local semantic memory enrichment was unavailable; keyword ranking was used."
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, "", ctxErr
+		}
+		return map[uuid.UUID]float64{}, "Local semantic memory enrichment was unavailable; keyword ranking was used.", nil
 	}
 	scores := make(map[uuid.UUID]float64, len(matches))
 	for _, match := range matches {
 		scores[match.Memory.ID] = match.Similarity
 	}
-	return scores, fmt.Sprintf("Local pgvector semantic enrichment evaluated %d eligible memory matches after owner and project filtering.", len(matches))
+	return scores, fmt.Sprintf("Local pgvector semantic enrichment evaluated %d eligible memory matches after owner and project filtering.", len(matches)), nil
 }
 
 func hashContent(projectKey, kind, content string) string {

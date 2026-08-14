@@ -623,6 +623,25 @@ func TestPlanScopesMemoryAndSourceSearchToOwnerAndSkipsGlobalRefresh(t *testing.
 	}
 }
 
+func TestPlanContextReachesMemoryRetrieval(t *testing.T) {
+	type contextKey struct{}
+	mem := &fakeMemoryService{}
+	service := NewService(mem, newTaskTestLLMService(t))
+	ctx := context.WithValue(context.Background(), contextKey{}, "request-bound")
+
+	_, err := service.(PlanningContextService).PlanContext(ctx, IntakeRequest{
+		OwnerIdentity: "alice",
+		Request:       "Prepare a bounded project status brief",
+		ProjectKey:    "018-HAI",
+	})
+	if err != nil {
+		t.Fatalf("PlanContext: %v", err)
+	}
+	if mem.lastRetrieveContext == nil || mem.lastRetrieveContext.Value(contextKey{}) != "request-bound" {
+		t.Fatal("task planning did not propagate its request context to memory retrieval")
+	}
+}
+
 func TestPlanUsesOwnerScopedCalendarCapacityEvidence(t *testing.T) {
 	now := time.Now().UTC()
 	src := &fakeTaskSourceService{calendarBusy: []source.CalendarBusyInterval{{
@@ -1493,6 +1512,7 @@ func (f *fakeFrameworkSelector) PlanSelection(request frameworkregistry.Selectio
 type fakeMemoryService struct {
 	ownerCreateOwners   []string
 	ownerRetrieveOwners []string
+	lastRetrieveContext context.Context
 	memories            map[uuid.UUID]models.ContextMemory
 }
 
@@ -1882,4 +1902,9 @@ func (f *fakeMemoryService) RetrieveForOwner(ownerIdentity string, request memor
 		f.memories[result.UsedContext[index].Memory.ID] = result.UsedContext[index].Memory
 	}
 	return result, nil
+}
+
+func (f *fakeMemoryService) RetrieveForOwnerContext(ctx context.Context, ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	f.lastRetrieveContext = ctx
+	return f.RetrieveForOwner(ownerIdentity, request)
 }
