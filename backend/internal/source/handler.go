@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
+	"context"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -364,8 +365,11 @@ func (h *Handler) Search(c *gin.Context) {
 		return
 	}
 	request.OwnerIdentity = sourceOwner(c)
-	result, err := h.service.Search(request)
+	result, err := SearchWithContext(h.service, c.Request.Context(), request)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

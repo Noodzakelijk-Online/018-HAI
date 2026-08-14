@@ -401,6 +401,10 @@ type ContextService interface {
 	RunContext(context.Context, IntakeRequest) (*CompletionPlan, error)
 }
 
+type PlanningContextService interface {
+	PlanContext(context.Context, IntakeRequest) (*CompletionPlan, error)
+}
+
 // OwnerScopedService is the authenticated view over task history and approvals.
 // It is intentionally separate from Service so background workers can retain
 // their system-level access without becoming an HTTP data-leak path.
@@ -659,6 +663,17 @@ func DefaultService() (Service, error) {
 }
 
 func (s *service) Plan(request IntakeRequest) (*CompletionPlan, error) {
+	return s.PlanContext(context.Background(), request)
+}
+
+func (s *service) PlanContext(ctx context.Context, request IntakeRequest) (*CompletionPlan, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	request.executionContext = ctx
 	return s.withTaskOperation(request, "plan", s.planOperation)
 }
 
@@ -720,6 +735,9 @@ func (s *service) Run(request IntakeRequest) (*CompletionPlan, error) {
 func (s *service) RunContext(ctx context.Context, request IntakeRequest) (*CompletionPlan, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	request.executionContext = ctx
 	return s.withTaskOperation(request, "run", s.runOperation)
@@ -1103,7 +1121,10 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 	if err != nil {
 		return nil, err
 	}
-	sourceContext, sourceExplanation := s.retrieveSourceContext(request, intake)
+	sourceContext, sourceExplanation, err := s.retrieveSourceContext(taskExecutionContext(request), request, intake)
+	if err != nil {
+		return nil, err
+	}
 	modelDecision, err := s.llmService.Route(llm.RouteRequest{
 		Task:              request.Request,
 		TaskType:          intake.TaskType,
@@ -1953,7 +1974,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		return result
 	}
 
-	verificationResult, err := s.verificationService.Answer(verification.AnswerRequest{
+	verificationResult, err := verification.AnswerWithContext(s.verificationService, executionContext, verification.AnswerRequest{
 		OwnerIdentity:     plan.OwnerIdentity,
 		Question:          verificationQuestion(plan),
 		ProjectKey:        plan.ProjectKey,
@@ -1965,6 +1986,9 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		HumanApproved:     plan.RiskAssessment.ApprovalGranted || !plan.RiskAssessment.ApprovalRequired,
 		AllowMemoryUpdate: false,
 	})
+	if executionContext.Err() != nil {
+		return stoppedTaskExecution(result, plan, executionContext.Err(), verifyStarted)
+	}
 	if err != nil {
 		result.CompletedAt = time.Now().UTC()
 		result.Output = "Verification engine failed before a grounded answer could be accepted: " + err.Error()
@@ -2398,14 +2422,14 @@ func unsupportedClaimCount(claims []models.VerificationClaim) int {
 	return count
 }
 
-func (s *service) retrieveSourceContext(request IntakeRequest, intake IntakeAnalysis) ([]source.RankedExtraction, string) {
+func (s *service) retrieveSourceContext(ctx context.Context, request IntakeRequest, intake IntakeAnalysis) ([]source.RankedExtraction, string, error) {
 	if s.sourceService == nil {
-		return []source.RankedExtraction{}, "Connected-source retrieval is not configured."
+		return []source.RankedExtraction{}, "Connected-source retrieval is not configured.", nil
 	}
 	if !shouldUseConnectedSourcesForTask(request, intake) {
-		return []source.RankedExtraction{}, "Connected-source retrieval skipped because the task does not depend on connected-source context."
+		return []source.RankedExtraction{}, "Connected-source retrieval skipped because the task does not depend on connected-source context.", nil
 	}
-	result, err := s.sourceService.Search(source.SearchRequest{
+	result, err := source.SearchWithContext(s.sourceService, ctx, source.SearchRequest{
 		OwnerIdentity:        request.OwnerIdentity,
 		Query:                request.Request,
 		ProjectKey:           request.ProjectKey,
@@ -2413,9 +2437,19 @@ func (s *service) retrieveSourceContext(request IntakeRequest, intake IntakeAnal
 		ExcludeConnectorKeys: source.ManualPlanningContextOnlyConnectorKeys(),
 	})
 	if err != nil {
-		return []source.RankedExtraction{}, "Connected-source retrieval failed or has no available index."
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || (ctx != nil && ctx.Err() != nil) {
+			return nil, "", firstTaskContextError(ctx, err)
+		}
+		return []source.RankedExtraction{}, "Connected-source retrieval failed or has no available index.", nil
 	}
-	return result.UsedContext, result.Explanation
+	return result.UsedContext, result.Explanation, nil
+}
+
+func firstTaskContextError(ctx context.Context, fallback error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return fallback
 }
 
 func analyzeIntake(request IntakeRequest) IntakeAnalysis {

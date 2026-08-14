@@ -120,6 +120,29 @@ func TestRunHandlerPassesHTTPContextToContextAwareService(t *testing.T) {
 	}
 }
 
+func TestPlanHandlerPassesHTTPContextToContextAwareService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &contextCapturingTaskService{}
+	handler := NewHandler(service)
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/task/plan", strings.NewReader(`{"request":"Plan context"}`)).WithContext(requestContext)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(response)
+	ginContext.Request = request
+	ginContext.Set(identity.ContextSubjectKey, "alice")
+
+	handler.Plan(ginContext)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	if service.planContext == nil || !errors.Is(service.planContext.Err(), context.Canceled) {
+		t.Fatalf("task planning context = %v, want canceled HTTP context", service.planContext)
+	}
+}
+
 func TestTaskHandlersBindIdempotencyHeaderAndRejectMismatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := &capturingTaskService{}
@@ -377,7 +400,13 @@ type capturingTaskService struct {
 
 type contextCapturingTaskService struct {
 	capturingTaskService
-	runContext context.Context
+	planContext context.Context
+	runContext  context.Context
+}
+
+func (s *contextCapturingTaskService) PlanContext(ctx context.Context, request IntakeRequest) (*CompletionPlan, error) {
+	s.planContext = ctx
+	return s.Plan(request)
 }
 
 func (s *contextCapturingTaskService) RunContext(ctx context.Context, request IntakeRequest) (*CompletionPlan, error) {

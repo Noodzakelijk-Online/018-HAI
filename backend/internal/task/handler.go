@@ -2,6 +2,7 @@ package task
 
 import (
 	"automation-hub-backend/internal/identity"
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -48,8 +49,17 @@ func (h *Handler) Plan(c *gin.Context) {
 	c.Header("Idempotency-Key", request.IdempotencyKey)
 	request.HumanApproved = false
 	request.ApprovalNote = ""
-	plan, err := h.service.Plan(request)
+	var plan *CompletionPlan
+	var err error
+	if contextual, ok := h.service.(PlanningContextService); ok {
+		plan, err = contextual.PlanContext(c.Request.Context(), request)
+	} else {
+		plan, err = h.service.Plan(request)
+	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		writeTaskOperationError(c, err, "task plan could not be created")
 		return
 	}
@@ -86,6 +96,9 @@ func (h *Handler) Run(c *gin.Context) {
 		plan, err = h.service.Run(request)
 	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		writeTaskOperationError(c, err, "task run could not be completed")
 		return
 	}

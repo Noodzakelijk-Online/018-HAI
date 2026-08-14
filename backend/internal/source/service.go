@@ -184,6 +184,28 @@ type Service interface {
 	CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error)
 }
 
+// ContextSearchService binds an interactive source lookup to its caller while
+// preserving the legacy Service contract used by narrow test doubles and
+// trusted in-process workers.
+type ContextSearchService interface {
+	SearchContext(context.Context, SearchRequest) (*SearchResult, error)
+}
+
+// SearchWithContext uses the cancellable search path when the service supports
+// it and fails promptly when the caller is already gone.
+func SearchWithContext(service Service, ctx context.Context, request SearchRequest) (*SearchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if contextual, ok := service.(ContextSearchService); ok {
+		return contextual.SearchContext(ctx, request)
+	}
+	return service.Search(request)
+}
+
 type service struct {
 	repo                  Repository
 	memoryService         memory.Service
@@ -1361,6 +1383,16 @@ func (s *service) RevokeAuthorized(
 }
 
 func (s *service) Search(request SearchRequest) (*SearchResult, error) {
+	return s.SearchContext(context.Background(), request)
+}
+
+func (s *service) SearchContext(ctx context.Context, request SearchRequest) (*SearchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limit := request.Limit
 	if limit <= 0 || limit > 20 {
 		limit = 8
@@ -1369,11 +1401,17 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(request.ExcludeConnectorKeys) == 0 && s.semanticService != nil && s.semanticService.Enabled() {
-		matches, semanticErr := s.semanticService.Search(context.Background(), semantic.SearchRequest{
+		matches, semanticErr := s.semanticService.Search(ctx, semantic.SearchRequest{
 			OwnerIdentity: request.OwnerIdentity, Query: request.Query, ProjectKey: request.ProjectKey,
 			Limit: limit, IncludeSensitive: request.IncludeSensitive,
 		})
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if semanticErr == nil && len(matches) > 0 {
 			ranked := make([]RankedExtraction, 0, len(matches))
 			for _, match := range matches {
@@ -1393,8 +1431,14 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 					Explanation: fmt.Sprintf("Retrieved %d source-backed records through local pgvector semantic retrieval; owner, source-revocation, project, archive, and sensitivity filters were enforced.", len(ranked))}, nil
 			}
 		}
+		if semanticErr != nil && (errors.Is(semanticErr, context.Canceled) || errors.Is(semanticErr, context.DeadlineExceeded) || ctx.Err() != nil) {
+			return nil, firstContextError(ctx, semanticErr)
+		}
 		// A semantic failure falls back to the existing bounded keyword search.
 		// It is deliberately not attached to an arbitrary source audit record.
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	extractions, err := s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), strings.TrimSpace(request.ProjectKey), false)
 	if err != nil {
@@ -1402,6 +1446,9 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	}
 	ranked := []RankedExtraction{}
 	for _, extraction := range extractions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !visibleSourceIDs[extraction.SourceID] {
 			continue
 		}
@@ -1430,6 +1477,13 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 		UsedContext: ranked,
 		Explanation: fmt.Sprintf("Retrieved %d relevant connected-source records from %d visible cached extractions; unrelated, other-user, and sensitive records were not loaded.", len(ranked), len(extractions)),
 	}, nil
+}
+
+func firstContextError(ctx context.Context, fallback error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return fallback
 }
 
 func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, error) {
