@@ -521,7 +521,6 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		}
 		mandateID = &parsedMandateID
 	}
-	_ = s.ensureDefaultRules()
 	sourceType := strings.TrimSpace(request.SourceType)
 	sourceID := strings.TrimSpace(request.SourceID)
 	sourceRevision := workflowSourceRevision(request, input)
@@ -922,7 +921,6 @@ func (s *service) Dashboard() (*WorkflowDashboard, error) {
 }
 
 func (s *service) DashboardForOwner(ownerIdentity string) (*WorkflowDashboard, error) {
-	_ = s.ensureDefaultRules()
 	items, err := s.ItemsForOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
@@ -951,6 +949,9 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*WorkflowDashboard, e
 	rules, err := s.repo.FindRules()
 	if err != nil {
 		return nil, err
+	}
+	if len(rules) == 0 {
+		rules = defaultWorkflowRules()
 	}
 	dashboard := &WorkflowDashboard{
 		Counts: map[string]int64{
@@ -3024,7 +3025,10 @@ func (s *service) requireQualityGate(workflowID uuid.UUID, gateName, status, rea
 }
 
 func (s *service) Overview() Overview {
-	rules := s.ensureDefaultRules()
+	rules, err := s.repo.FindRules()
+	if err != nil || len(rules) == 0 {
+		rules = defaultWorkflowRules()
+	}
 	return Overview{
 		States: []string{StateNewInput, StateClassified, StateLinked, StateChecklistGenerated, StateWaitingInput, StateNeedsApproval, StateReady, StateInProgress, StateCompleted, StateArchived, StateBlocked},
 		SafetyRules: []string{
@@ -3038,17 +3042,6 @@ func (s *service) Overview() Overview {
 		Capabilities: engineCapabilities(),
 		Rules:        rules,
 	}
-}
-
-func (s *service) ensureDefaultRules() []models.WorkflowRule {
-	for _, rule := range defaultWorkflowRules() {
-		_, _ = s.repo.SaveRule(&rule)
-	}
-	rules, err := s.repo.FindRules()
-	if err != nil {
-		return defaultWorkflowRules()
-	}
-	return rules
 }
 
 func (s *service) audit(workflowID uuid.UUID, eventType, from, to, message, trigger, rule, sourceURI, actor string) {

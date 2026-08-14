@@ -2592,23 +2592,24 @@ func TestRunDueDoesNotRepeatCompletedExternalActionAfterQualityGateFailure(t *te
 	}
 }
 
-func TestDefaultRulesPreserveCreatedAtAcrossUpserts(t *testing.T) {
-	service := NewService(newFakeWorkflowRepo())
-	first := service.Overview()
-	firstRule, ok := findRule(first.Rules, "approval.legal_external")
-	if !ok {
-		t.Fatalf("expected default rule")
+func TestDefaultRuleFallbackIsReadOnlyAcrossOverviewDashboardAndIntake(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	service := NewService(repo)
+
+	for pass := 0; pass < 2; pass++ {
+		overview := service.Overview()
+		if _, ok := findRule(overview.Rules, "approval.legal_external"); !ok {
+			t.Fatal("expected read-only default rule fallback")
+		}
+		if _, err := service.Dashboard(); err != nil {
+			t.Fatalf("Dashboard: %v", err)
+		}
 	}
-	second := service.Overview()
-	secondRule, ok := findRule(second.Rules, "approval.legal_external")
-	if !ok {
-		t.Fatalf("expected default rule on second overview")
+	if _, err := service.Intake(IntakeRequest{Input: "Create a low-risk administrative checklist"}); err != nil {
+		t.Fatalf("Intake: %v", err)
 	}
-	if !firstRule.CreatedAt.Equal(secondRule.CreatedAt) {
-		t.Fatalf("created at changed from %s to %s", firstRule.CreatedAt, secondRule.CreatedAt)
-	}
-	if firstRule.ID != secondRule.ID {
-		t.Fatalf("rule ID changed from %s to %s", firstRule.ID, secondRule.ID)
+	if repo.saveRuleCalls != 0 || len(repo.rules) != 0 {
+		t.Fatalf("runtime path persisted default rules: calls=%d rules=%d", repo.saveRuleCalls, len(repo.rules))
 	}
 }
 
@@ -3128,6 +3129,7 @@ type fakeWorkflowRepo struct {
 	proposals            map[uuid.UUID][]models.WorkflowProposal
 	qualityGate          map[uuid.UUID][]models.WorkflowQualityGate
 	rules                map[string]models.WorkflowRule
+	saveRuleCalls        int
 	transitions          map[uuid.UUID][]models.WorkflowTransition
 	sourceLinks          map[uuid.UUID][]models.WorkflowSourceLink
 	decisions            map[uuid.UUID][]models.WorkflowDecision
@@ -3792,6 +3794,7 @@ func (r *fakeWorkflowRepo) FindQualityGates(workflowID uuid.UUID) ([]models.Work
 }
 
 func (r *fakeWorkflowRepo) SaveRule(rule *models.WorkflowRule) (*models.WorkflowRule, error) {
+	r.saveRuleCalls++
 	existing, exists := r.rules[rule.RuleKey]
 	if rule.ID == uuid.Nil {
 		if exists {
