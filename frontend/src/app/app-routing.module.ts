@@ -4,12 +4,11 @@ import { authGuard } from "./services/auth/guards/auth.guard";
 import { RedirectIfLoggedGuard } from "./services/auth/guards/login.guard";
 import { AppShellComponent } from './control-room/app-shell.component';
 
-const authenticatedRoutes: Routes = [
+export const AUTHENTICATED_ROUTES: Routes = [
   {
     path: "home",
     loadChildren: () =>
       import("./pages/home/home.module").then((m) => m.HomeModule),
-    canActivate: [authGuard],
   },
   {
     path: "command-dashboard",
@@ -17,7 +16,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/command-dashboard/command-dashboard.module").then(
         (m) => m.CommandDashboardModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "ambient-brain",
@@ -25,13 +23,11 @@ const authenticatedRoutes: Routes = [
       import("./pages/ambient-brain/ambient-brain.module").then(
         (m) => m.AmbientBrainModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "hai-os",
     loadChildren: () =>
       import("./pages/hai-os/hai-os.module").then((m) => m.HAIOSModule),
-    canActivate: [authGuard],
   },
   {
     path: "life-ops",
@@ -39,7 +35,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/life-ops/life-ops.module").then(
         (m) => m.LifeOpsModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "framework-registry",
@@ -47,7 +42,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/framework-registry/framework-registry.module").then(
         (m) => m.FrameworkRegistryModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "control-center",
@@ -55,7 +49,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/control-center/control-center.module").then(
         (m) => m.ControlCenterModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "llm-policy",
@@ -63,13 +56,11 @@ const authenticatedRoutes: Routes = [
       import("./pages/llm-policy/llm-policy.module").then(
         (m) => m.LLMPolicyModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "memory",
     loadChildren: () =>
       import("./pages/memory/memory.module").then((m) => m.MemoryModule),
-    canActivate: [authGuard],
   },
   {
     path: "operational-brain",
@@ -77,7 +68,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/operational-brain/operational-brain.module").then(
         (m) => m.OperationalBrainModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "task-blueprint",
@@ -85,7 +75,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/task-blueprint/task-blueprint.module").then(
         (m) => m.TaskBlueprintModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "connected-sources",
@@ -93,7 +82,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/connected-sources/connected-sources.module").then(
         (m) => m.ConnectedSourcesModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "grounded-answers",
@@ -101,7 +89,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/grounded-answers/grounded-answers.module").then(
         (m) => m.GroundedAnswersModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "workflow-engine",
@@ -109,13 +96,11 @@ const authenticatedRoutes: Routes = [
       import("./pages/workflow-engine/workflow-engine.module").then(
         (m) => m.WorkflowEngineModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "pursuits",
     loadChildren: () =>
       import("./pages/pursuits/pursuits.module").then((m) => m.PursuitsModule),
-    canActivate: [authGuard],
   },
   {
     path: "background-operations",
@@ -123,7 +108,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/background-operations/background-operations.module").then(
         (m) => m.BackgroundOperationsModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "model-intelligence",
@@ -131,7 +115,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/model-intelligence/model-intelligence.module").then(
         (m) => m.ModelIntelligenceModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "runtime-lab",
@@ -139,7 +122,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/runtime-lab/runtime-lab.module").then(
         (m) => m.RuntimeLabModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "account-bridges",
@@ -147,7 +129,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/account-bridges/account-bridges.module").then(
         (m) => m.AccountBridgesModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "runtime-control",
@@ -155,7 +136,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/runtime-control/runtime-control.module").then(
         (m) => m.RuntimeControlModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "plans",
@@ -163,7 +143,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/plan-coordination/plan-coordination.module").then(
         (m) => m.PlanCoordinationModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "agent-teams",
@@ -171,7 +150,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/agent-teams/agent-teams.module").then(
         (m) => m.AgentTeamsModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "knowledge-claims",
@@ -179,7 +157,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/knowledge-claims/knowledge-claims.module").then(
         (m) => m.KnowledgeClaimsModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "governance-control",
@@ -187,7 +164,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/governance-control/governance-control.module").then(
         (m) => m.GovernanceControlModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "exceptions",
@@ -195,7 +171,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/exceptions/exceptions.module").then(
         (m) => m.ExceptionsModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "quick-capture",
@@ -203,7 +178,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/quick-capture/quick-capture.module").then(
         (m) => m.QuickCaptureModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "system-status",
@@ -211,7 +185,6 @@ const authenticatedRoutes: Routes = [
       import("./pages/system-status/system-status.module").then(
         (m) => m.SystemStatusModule
       ),
-    canActivate: [authGuard],
   },
   {
     path: "brain-catalog",
@@ -219,11 +192,10 @@ const authenticatedRoutes: Routes = [
       import("./pages/brain-catalog/brain-catalog.module").then(
         (m) => m.BrainCatalogModule
       ),
-    canActivate: [authGuard],
   },
 ]
 
-const routes: Routes = [
+export const APP_ROUTES: Routes = [
   {
     path: "login",
     loadChildren: () =>
@@ -241,8 +213,9 @@ const routes: Routes = [
   {
     path: '',
     component: AppShellComponent,
+    canActivate: [authGuard],
     children: [
-      ...authenticatedRoutes,
+      ...AUTHENTICATED_ROUTES,
       { path: "", redirectTo: "control-center", pathMatch: "full" },
       { path: "**", redirectTo: "control-center" },
     ],
@@ -250,7 +223,7 @@ const routes: Routes = [
 ];
 
 @NgModule({
-  imports: [RouterModule.forRoot(routes)],
+  imports: [RouterModule.forRoot(APP_ROUTES)],
   exports: [RouterModule],
 })
 export class AppRoutingModule {}

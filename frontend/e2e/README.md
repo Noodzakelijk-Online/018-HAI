@@ -29,6 +29,12 @@ temporary workflow and pursuit records are archived, the temporary source is
 paused, and the disposable readiness automation is deleted by the `afterEach`
 cleanup hook on both successful and failed runs.
 
+`tests/authenticated-routes.spec.ts` separately opens a loopback-only local
+preview session and navigates to every module through the shared shell. It
+verifies the URL, title, active shell identity, visible module outlet, and
+absence of uncaught page errors. The route audit is read-only and does not need
+operator credentials or the mutation acknowledgement.
+
 ## Run it
 
 ```powershell
