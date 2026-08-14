@@ -690,7 +690,17 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("provideZoneChangeDetection", main)
         self.assertIn("applicationProviders:", main)
         self.assertIn("eventCoalescing: true", main)
-        self.assertIn("runCoalescing: true", main)
+        self.assertNotIn("runCoalescing: true", main)
+        http_refresh = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "services"
+            / "http-view-refresh.interceptor.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn("HttpViewRefreshScheduler", http_refresh)
+        self.assertIn("HttpEventType.Response", http_refresh)
         component_paths = sorted(
             (ROOT / "frontend" / "src" / "app").rglob("*.component.ts")
         )
@@ -698,6 +708,9 @@ class CIWorkflowContractTest(unittest.TestCase):
         for component_path in component_paths:
             with self.subTest(component_path=component_path):
                 component = component_path.read_text(encoding="utf-8")
+                if component_path.name == "app.component.ts" or component_path.name == "app-shell.component.ts":
+                    self.assertNotIn("ChangeDetectionStrategy.OnPush", component)
+                    continue
                 self.assertRegex(
                     component,
                     r"changeDetection:\s*ChangeDetectionStrategy\.(?:Eager|OnPush)",
@@ -1101,12 +1114,28 @@ class CIWorkflowContractTest(unittest.TestCase):
             "python scripts/test_ci_contract.py",
             "python scripts/test_smoke_auth_contract.py",
             r".\scripts\start-ngrok.ps1 -ValidateOnly",
+            "scripts/backup-windows.ps1",
             r".\scripts\initialize-windows.ps1",
             "Generated Windows environment still contains a shipped placeholder",
             "Insecure example environment unexpectedly passed ngrok preflight",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, windows)
+
+    def test_windows_backup_covers_identity_automation_media_and_recovery(self) -> None:
+        backup = (ROOT / "scripts" / "backup-windows.ps1").read_text(encoding="utf-8")
+        for contract in (
+            'Require-Setting $settings "AUTOMATION_DB_NAME"',
+            'Require-Setting $settings "IDP_DB_NAME"',
+            'pg_restore --list $temporaryFiles[0].Path',
+            'pg_restore --list $temporaryFiles[1].Path',
+            '[IO.Compression.ZipFile]::CreateFromDirectory',
+            'Get-FileHash -Algorithm SHA256',
+            'Wait-ContainerHealthy "018-hai-idp"',
+            'Wait-ContainerHealthy "018-hai-backend"',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, backup)
 
     def test_smoke_aggregator_rejects_zero_or_missing_assertions(self) -> None:
         aggregator = (ROOT / "scripts" / "smoke-all.sh").read_text(

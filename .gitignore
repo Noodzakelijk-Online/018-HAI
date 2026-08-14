@@ -7,6 +7,7 @@
 db_data_automation/
 db_data_idp/
 images/
+backups/
 nginx-config/sites-enabled/.hai-event-inbox/
 
 # Dependencies and build output.

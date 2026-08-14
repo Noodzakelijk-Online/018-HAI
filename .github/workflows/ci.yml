@@ -475,6 +475,11 @@ jobs:
               throw
             }
           }
+      - name: Windows backup PowerShell contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $null = [ScriptBlock]::Create((Get-Content scripts/backup-windows.ps1 -Raw))
       - name: Windows first-run environment contract
         shell: pwsh
         run: |
