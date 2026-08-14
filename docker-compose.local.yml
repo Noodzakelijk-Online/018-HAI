@@ -1594,8 +1594,8 @@ services:
     hostname: postgres-idp
     restart: unless-stopped
     init: true
-    mem_limit: ${POSTGRES_IDP_MEMORY_LIMIT:-192m}
-    mem_reservation: ${POSTGRES_IDP_MEMORY_RESERVATION:-32m}
+    mem_limit: ${POSTGRES_IDP_MEMORY_LIMIT:-128m}
+    mem_reservation: ${POSTGRES_IDP_MEMORY_RESERVATION:-24m}
     cpus: ${POSTGRES_IDP_CPU_LIMIT:-0.5}
     pids_limit: ${POSTGRES_IDP_PIDS_LIMIT:-64}
     security_opt:
@@ -1604,15 +1604,15 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=32MB
+      - shared_buffers=16MB
       - -c
-      - max_connections=20
+      - max_connections=16
       - -c
-      - work_mem=2MB
+      - work_mem=1MB
       - -c
-      - maintenance_work_mem=16MB
+      - maintenance_work_mem=8MB
       - -c
-      - effective_cache_size=128MB
+      - effective_cache_size=64MB
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1640,8 +1640,8 @@ services:
     hostname: postgres-automation
     restart: unless-stopped
     init: true
-    mem_limit: ${POSTGRES_AUTOMATION_MEMORY_LIMIT:-384m}
-    mem_reservation: ${POSTGRES_AUTOMATION_MEMORY_RESERVATION:-96m}
+    mem_limit: ${POSTGRES_AUTOMATION_MEMORY_LIMIT:-256m}
+    mem_reservation: ${POSTGRES_AUTOMATION_MEMORY_RESERVATION:-64m}
     cpus: ${POSTGRES_AUTOMATION_CPU_LIMIT:-0.75}
     pids_limit: ${POSTGRES_AUTOMATION_PIDS_LIMIT:-96}
     security_opt:
@@ -1650,15 +1650,15 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=64MB
+      - shared_buffers=32MB
       - -c
-      - max_connections=40
+      - max_connections=24
       - -c
       - work_mem=2MB
       - -c
-      - maintenance_work_mem=32MB
+      - maintenance_work_mem=16MB
       - -c
-      - effective_cache_size=256MB
+      - effective_cache_size=128MB
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
