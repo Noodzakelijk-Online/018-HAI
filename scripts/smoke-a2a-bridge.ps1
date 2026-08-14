@@ -93,6 +93,15 @@ $baseUrl = if ($Public) {
 
 $client = [System.Net.Http.HttpClient]::new()
 $client.Timeout = [TimeSpan]::FromSeconds(15)
+if ($Public) {
+    # Free ngrok endpoints can otherwise return the browser interstitial to the
+    # Agent Card GET. This header is not identity and does not replace the
+    # dedicated Bearer token required by SendMessage.
+    $client.DefaultRequestHeaders.TryAddWithoutValidation(
+        'ngrok-skip-browser-warning',
+        'hai-a2a-readiness'
+    ) | Out-Null
+}
 try {
     $card = Send-Request $client ([System.Net.Http.HttpMethod]::Get) "$baseUrl/.well-known/agent-card.json"
     if ($card.Status -ne 200) {

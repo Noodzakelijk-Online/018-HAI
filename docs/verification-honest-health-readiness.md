@@ -518,11 +518,11 @@ Framework Registry and task-state database tests in isolated PostgreSQL
 databases and to exercise signed-session and Windows shell contracts.
 
 On 2026-07-30, a fresh local verification pass completed the backend unit
-suite, vet, and build; the IDP unit suite, vet, and build; the frontend's 126
+suite, vet, and build; the IDP unit suite, vet, and build; the frontend's 418
 headless unit tests and production build; the Python CI, authentication, and
 gateway contract suites; Compose configuration validation; and Bash syntax
 checks for the smoke scripts. All three Go modules, container builders, and CI
-runners are pinned to the same Go 1.25.12 toolchain by an executable CI
+runners are pinned to the same Go 1.25.13 toolchain by an executable CI
 contract test. Refreshed `govulncheck` v1.6.0 scans report 0 vulnerabilities
 affecting backend, IDP, or nginx configuration manager code; all three pinned
 scans are blocking CI gates. The nginx manager no longer imports the Docker SDK

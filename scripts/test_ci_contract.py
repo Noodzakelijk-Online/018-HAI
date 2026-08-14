@@ -395,7 +395,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         generic = compose[generic_start:generic_end]
 
         for required in (
-            "golang:1.25-alpine@sha256:",
+            "golang:1.25.13-alpine@sha256:",
             "CGO_ENABLED=0",
             "FROM scratch",
             "USER 65532:65532",
@@ -481,7 +481,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             re.MULTILINE,
         )
         container = re.search(
-            r"^FROM\s+golang:(\d+\.\d+\.\d+)\s+AS\s+builder$",
+            r"^FROM\s+golang:(\d+\.\d+\.\d+)(?:@sha256:[0-9a-f]{64})?\s+AS\s+builder$",
             dockerfile,
             re.MULTILINE,
         )
@@ -739,6 +739,9 @@ class CIWorkflowContractTest(unittest.TestCase):
         generator = (ROOT / "scripts" / "prepare-ngrok-windows.ps1").read_text(
             encoding="utf-8"
         )
+        a2a_smoke = (ROOT / "scripts" / "smoke-a2a-bridge.ps1").read_text(
+            encoding="utf-8"
+        )
         config = (ROOT / "deploy" / "ngrok" / "ngrok.yml").read_text(
             encoding="utf-8"
         )
@@ -828,6 +831,8 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("X-Content-Type-Options", preflight)
         self.assertIn("X-Frame-Options", preflight)
         self.assertIn("ngrok-skip-browser-warning", preflight)
+        self.assertIn("ngrok-skip-browser-warning", a2a_smoke)
+        self.assertIn("if ($Public)", a2a_smoke)
         self.assertIn("--traffic-policy-file=\"$policy_file\"", entrypoint)
         self.assertIn("private-a2a-policy.yml", entrypoint)
         self.assertIn("public-policy.yml", entrypoint)
@@ -974,7 +979,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             re.MULTILINE,
         )
         container = re.search(
-            r"^FROM\s+golang:(\d+\.\d+\.\d+)\s+AS\s+builder$",
+            r"^FROM\s+golang:(\d+\.\d+\.\d+)(?:@sha256:[0-9a-f]{64})?\s+AS\s+builder$",
             dockerfile,
             re.MULTILINE,
         )
@@ -1005,7 +1010,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             re.MULTILINE,
         )
         container = re.search(
-            r"^FROM\s+golang:(\d+\.\d+\.\d+)\s+AS\s+builder$",
+            r"^FROM\s+golang:(\d+\.\d+\.\d+)(?:@sha256:[0-9a-f]{64})?\s+AS\s+builder$",
             dockerfile,
             re.MULTILINE,
         )

@@ -115,6 +115,10 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   private requestedEvidenceUri = '';
   highlightedDecisionId = '';
   private routeSub?: Subscription;
+  private dashboardSub?: Subscription;
+  private pursuitsListSub?: Subscription;
+  private pursuitDetailSub?: Subscription;
+  private destroyed = false;
   private resourceEventsSub?: Subscription;
   private portfolioAllocationHistorySub?: Subscription;
   private portfolioExecutionProposalHistoryReadSub?: Subscription;
@@ -351,7 +355,11 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     this.routeSub?.unsubscribe();
+    this.dashboardSub?.unsubscribe();
+    this.pursuitsListSub?.unsubscribe();
+    this.pursuitDetailSub?.unsubscribe();
     this.resourceEventsSub?.unsubscribe();
     this.portfolioAllocationHistorySub?.unsubscribe();
     this.portfolioExecutionProposalHistoryReadSub?.unsubscribe();
@@ -369,7 +377,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   load(): void {
     this.loading = true;
-    this.pursuitsService.dashboard().subscribe({
+    this.dashboardSub?.unsubscribe();
+    this.dashboardSub = this.pursuitsService.dashboard().subscribe({
       next: (dashboard) => {
         this.dashboard = dashboard;
         this.loadPursuits();
@@ -382,7 +391,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   loadPursuits(): void {
-    this.pursuitsService.list(this.includeArchived).subscribe({
+    this.pursuitsListSub?.unsubscribe();
+    this.pursuitsListSub = this.pursuitsService.list(this.includeArchived).subscribe({
       next: (pursuits) => {
         this.pursuits = pursuits || [];
         this.loading = false;
@@ -2536,7 +2546,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.delegationPackage = undefined;
     this.showContextEditor = false;
     this.resetResourceLedger(id);
-    this.pursuitsService.get(id).subscribe({
+    this.pursuitDetailSub?.unsubscribe();
+    this.pursuitDetailSub = this.pursuitsService.get(id).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.detailLoading = false;
@@ -2698,6 +2709,9 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   private setSelectedQuery(id?: string): void {
+    if (this.destroyed) {
+      return;
+    }
     this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { selected: id || null, evidence: null, decision: null },
@@ -2707,6 +2721,9 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   private openRequestedEvidence(): void {
+    if (this.destroyed) {
+      return;
+    }
     const uri = this.requestedEvidenceUri;
     if (!uri || !this.selected?.pursuit?.id || this.detailLoading) {
       return;
