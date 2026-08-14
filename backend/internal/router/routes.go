@@ -1336,10 +1336,9 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.POST("/:id/revoke", requirePermission(rbac.PermWrite), sourceHandler.Revoke)
 	}
 
-	// Google OAuth for Google-backed connectors. This group is not under
-	// requireAuthenticatedOwner because the browser returning from consent may
-	// not carry a HAI session. The callback is protected by HMAC-signed, expiring
-	// state. Start still verifies source ownership inside the handler.
+	// Google OAuth for Google-backed connectors. Both start and callback require
+	// a verified HAI role. The callback additionally consumes HMAC-signed,
+	// expiring state that is durably bound to the initiating source owner.
 	sourceOAuth := apiVersion.Group("/sources")
 	{
 		sourceOAuth.GET("/oauth/google/start", requirePermission(rbac.PermWrite), sourceHandler.StartGoogleOAuth)

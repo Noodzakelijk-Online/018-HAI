@@ -450,14 +450,17 @@ local files. Built against the developer's own Google OAuth app.
 Architecture:
 - `internal/googleoauth`: the authorization-code flow (consent URL with
   `access_type=offline` for a refresh token, code exchange, refresh), an
-  AES-256-GCM codec for tokens at rest, and a read-only Gmail REST client
-  (metadata only). All unit-tested against mock servers.
-- `internal/source/oauth.go`: HMAC-signed, stateless CSRF state; encrypted token
-  storage (`SourceOAuthToken`); transparent token refresh; and a Gmail fetch
-  wired into the sync dispatch.
-- Routes: `sources/oauth/google/start` (authenticated) and `.../callback`. The
-  gateway serves the callback publicly — Google has no HAI session — protected
-  by the signed state, not the login.
+  AES-256-GCM codec for tokens at rest, and a read-only Gmail REST client with
+  bounded message bodies, attachment metadata, and textual attachment content.
+  All are unit-tested against mock servers.
+- `internal/source/oauth.go`: HMAC-signed CSRF state with only an owner-bound,
+  single-use SHA-256 digest retained in PostgreSQL; encrypted token storage
+  (`SourceOAuthToken`); transparent token refresh; and a Gmail fetch wired into
+  the sync dispatch.
+- Routes: `sources/oauth/google/start` and `.../callback` both require a
+  verified HAI role. The callback additionally consumes the exact initiating
+  owner's state before code exchange, so restart, replay, denial, expiry, and
+  revocation fail closed.
 
 Verified on the running stack:
 

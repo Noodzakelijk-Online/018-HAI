@@ -1748,7 +1748,7 @@ func (s *fakeTaskSourceService) StartGoogleOAuth(sourceID uuid.UUID) (string, er
 	return "", nil
 }
 
-func (s *fakeTaskSourceService) CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error) {
+func (s *fakeTaskSourceService) CompleteGoogleOAuth(ctx context.Context, code, state, ownerIdentity string) (uuid.UUID, error) {
 	return uuid.Nil, nil
 }
 

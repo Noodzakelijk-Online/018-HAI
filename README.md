@@ -732,7 +732,11 @@ The Gmail, Drive, Contacts, and Calendar connected-source callback is separate. 
 requests only its own read-only scope. Also set independent
 `HAI_OAUTH_TOKEN_ENCRYPTION_KEY` and `HAI_OAUTH_STATE_SIGNING_KEY` values; HAI
 does not fall back to JWT or backend secrets. Google redirects the browser, so a
-public tunnel is not required for this local callback.
+public tunnel is not required for this local callback. The callback requires
+the initiating HAI session and a short-lived, owner-bound, single-use state.
+Only its SHA-256 digest is stored; a restarted consent flow invalidates the
+earlier attempt, and success, denial, replay, expiry, or source revocation fail
+closed without persisting the browser state secret.
 
 For reset emails, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM`, and `SMTP_REQUIRE_STARTTLS=true` in `.env.local`.

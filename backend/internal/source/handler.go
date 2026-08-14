@@ -62,16 +62,19 @@ func (h *Handler) StartGoogleOAuth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"authorizeUrl": url})
 }
 
-// GoogleOAuthCallback is the redirect target the user's browser returns to
-// after Google consent. The browser may not carry a HAI session, so the callback
-// is protected by signed, expiring state. On success it returns the browser to
-// the connected-sources page.
+// GoogleOAuthCallback is the authenticated, same-origin redirect target the
+// user's browser returns to after Google consent. Signed state is additionally
+// bound to that verified owner and consumed once before any code exchange.
 func (h *Handler) GoogleOAuthCallback(c *gin.Context) {
+	ownerIdentity := sourceOwner(c)
 	if oauthErr := c.Query("error"); oauthErr != "" {
+		// A denied consent attempt is terminal too. Burn a valid state so the
+		// browser URL cannot be replayed later with a substituted code.
+		_, _ = h.service.CompleteGoogleOAuth(c.Request.Context(), "", c.Query("state"), ownerIdentity)
 		c.Redirect(http.StatusFound, "/connected-sources?oauth=denied")
 		return
 	}
-	_, err := h.service.CompleteGoogleOAuth(c.Request.Context(), c.Query("code"), c.Query("state"))
+	_, err := h.service.CompleteGoogleOAuth(c.Request.Context(), c.Query("code"), c.Query("state"), ownerIdentity)
 	if err != nil {
 		c.Redirect(http.StatusFound, "/connected-sources?oauth=error")
 		return

@@ -140,6 +140,7 @@ func TestGovernanceMigrationTailPreservesSemanticUpgradeOrder(t *testing.T) {
 		"0062_ambient_need_defaults",
 		"0063_life_ontology_bounded_query_indexes",
 		"0064_task_completion_history_projection",
+		"0065_source_oauth_state",
 	}
 	entries, err := fs.ReadDir(Files, "pre")
 	if err != nil {

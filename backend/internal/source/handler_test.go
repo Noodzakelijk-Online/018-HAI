@@ -6,8 +6,10 @@ import (
 	"automation-hub-backend/internal/whispercpp"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -219,6 +221,39 @@ func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testin
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/oauth/google/start?sourceId="+foreignID.String(), nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("foreign OAuth start status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestGoogleOAuthDeniedCallbackBurnsOwnerBoundState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	configureGoogleOAuthTest(t)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: gmailConnectorKey,
+		Name: "Alice Gmail", Enabled: true, Status: "active",
+	})
+	service := NewService(repo, nil).(*service)
+	authorizeURL, err := service.StartGoogleOAuth(sourceID)
+	if err != nil {
+		t.Fatalf("StartGoogleOAuth: %v", err)
+	}
+	state := oauthStateFromAuthorizeURL(t, authorizeURL)
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/oauth/google/callback", handler.GoogleOAuthCallback)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/sources/oauth/google/callback?error=access_denied&state="+url.QueryEscape(state),
+		nil,
+	))
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/connected-sources?oauth=denied" {
+		t.Fatalf("denied callback = %d %q", response.Code, response.Header().Get("Location"))
+	}
+	if _, err := service.CompleteGoogleOAuth(context.Background(), "", state, "alice"); !errors.Is(err, ErrOAuthStateInvalid) {
+		t.Fatalf("denied state replay error = %v, want ErrOAuthStateInvalid", err)
 	}
 }
 

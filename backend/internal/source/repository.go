@@ -3,6 +3,7 @@ package source
 import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
+	"crypto/sha256"
 	"errors"
 	"strings"
 	"time"
@@ -43,6 +44,8 @@ type Repository interface {
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
 	FindAuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 	FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
+	SaveOAuthState(state *models.SourceOAuthState) error
+	ConsumeOAuthState(sourceID uuid.UUID, ownerIdentity, stateDigest string, consumedAt time.Time) error
 	SaveOAuthToken(token *models.SourceOAuthToken) error
 	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
 }
@@ -170,6 +173,10 @@ func (r *GormRepository) RevokeSource(
 		}
 		if err := tx.Where("source_id = ?", expected.ID).
 			Delete(&models.SourceOAuthToken{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_id = ?", expected.ID).
+			Delete(&models.SourceOAuthState{}).Error; err != nil {
 			return err
 		}
 		result := tx.Model(&models.ConnectedSource{}).
@@ -452,6 +459,101 @@ func (r *GormRepository) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit in
 		query = query.Limit(limit)
 	}
 	return logs, query.Find(&logs).Error
+}
+
+// SaveOAuthState replaces any earlier pending attempt for the source. The
+// source row lock serializes this with revocation and guarantees the state is
+// issued only for the current owner of a non-revoked source.
+func (r *GormRepository) SaveOAuthState(state *models.SourceOAuthState) error {
+	if state == nil {
+		return gorm.ErrRecordNotFound
+	}
+	ownerIdentity := strings.TrimSpace(state.OwnerIdentity)
+	stateDigest := strings.TrimSpace(state.StateDigest)
+	if state.SourceID == uuid.Nil || ownerIdentity == "" || !validOAuthStateDigest(stateDigest) ||
+		!state.ExpiresAt.After(time.Now().UTC()) {
+		return ErrOAuthStateInvalid
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var source models.ConnectedSource
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&source, "id = ?", state.SourceID).Error; err != nil {
+			return err
+		}
+		if err := rejectRevokedSource(&source); err != nil {
+			return err
+		}
+		if strings.TrimSpace(source.OwnerIdentity) != ownerIdentity {
+			return gorm.ErrRecordNotFound
+		}
+		if err := tx.Where("source_id = ?", state.SourceID).Delete(&models.SourceOAuthState{}).Error; err != nil {
+			return err
+		}
+		if state.ID == uuid.Nil {
+			state.ID = uuid.New()
+		}
+		state.OwnerIdentity = ownerIdentity
+		state.StateDigest = stateDigest
+		return tx.Create(state).Error
+	})
+}
+
+// ConsumeOAuthState atomically burns exactly one unexpired owner-bound state
+// before the authorization code is exchanged. A replay, stale callback, wrong
+// owner, or revoked source receives the same fail-closed error.
+func (r *GormRepository) ConsumeOAuthState(
+	sourceID uuid.UUID,
+	ownerIdentity, stateDigest string,
+	consumedAt time.Time,
+) error {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	stateDigest = strings.TrimSpace(stateDigest)
+	if sourceID == uuid.Nil || ownerIdentity == "" || !validOAuthStateDigest(stateDigest) {
+		return ErrOAuthStateInvalid
+	}
+	consumedAt = consumedAt.UTC()
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var source models.ConnectedSource
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&source, "id = ?", sourceID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrOAuthStateInvalid
+			}
+			return err
+		}
+		if err := rejectRevokedSource(&source); err != nil {
+			return ErrOAuthStateInvalid
+		}
+		if strings.TrimSpace(source.OwnerIdentity) != ownerIdentity {
+			return ErrOAuthStateInvalid
+		}
+		result := tx.Model(&models.SourceOAuthState{}).
+			Where(
+				"source_id = ? AND owner_identity = ? AND state_digest = ? AND consumed_at IS NULL AND expires_at >= ?",
+				sourceID,
+				ownerIdentity,
+				stateDigest,
+				consumedAt,
+			).
+			Update("consumed_at", consumedAt)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrOAuthStateInvalid
+		}
+		return nil
+	})
+}
+
+func validOAuthStateDigest(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // SaveOAuthToken upserts the token for a source (one token set per source).

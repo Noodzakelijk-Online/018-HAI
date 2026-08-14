@@ -2107,6 +2107,7 @@ type fakeSourceRepo struct {
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
+	oauthStates             map[uuid.UUID]*models.SourceOAuthState
 	globalSourceReads       int
 	ownerSourceReads        int
 	lastSourceOwner         string
@@ -2144,11 +2145,61 @@ func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
 		rawItems:    map[uuid.UUID]*models.SourceRawItem{},
 		extractions: map[uuid.UUID]*models.SourceExtraction{},
 		oauthTokens: map[uuid.UUID]*models.SourceOAuthToken{},
+		oauthStates: map[uuid.UUID]*models.SourceOAuthState{},
 	}
 	for _, source := range sources {
 		repo.sources[source.ID] = source
 	}
 	return repo
+}
+
+func (r *fakeSourceRepo) SaveOAuthState(state *models.SourceOAuthState) error {
+	if state == nil {
+		return gorm.ErrRecordNotFound
+	}
+	if !validOAuthStateDigest(strings.TrimSpace(state.StateDigest)) || !state.ExpiresAt.After(time.Now().UTC()) {
+		return ErrOAuthStateInvalid
+	}
+	source, ok := r.sources[state.SourceID]
+	if !ok {
+		return gorm.ErrRecordNotFound
+	}
+	if err := rejectRevokedSource(source); err != nil {
+		return err
+	}
+	if strings.TrimSpace(source.OwnerIdentity) != strings.TrimSpace(state.OwnerIdentity) {
+		return gorm.ErrRecordNotFound
+	}
+	stored := *state
+	if stored.ID == uuid.Nil {
+		stored.ID = uuid.New()
+	}
+	if stored.CreatedAt.IsZero() {
+		stored.CreatedAt = time.Now().UTC()
+	}
+	r.oauthStates[state.SourceID] = &stored
+	return nil
+}
+
+func (r *fakeSourceRepo) ConsumeOAuthState(
+	sourceID uuid.UUID,
+	ownerIdentity, stateDigest string,
+	consumedAt time.Time,
+) error {
+	source, ok := r.sources[sourceID]
+	if !ok || rejectRevokedSource(source) != nil ||
+		strings.TrimSpace(source.OwnerIdentity) != strings.TrimSpace(ownerIdentity) {
+		return ErrOAuthStateInvalid
+	}
+	state, ok := r.oauthStates[sourceID]
+	if !ok || state.ConsumedAt != nil ||
+		state.StateDigest != strings.TrimSpace(stateDigest) ||
+		state.ExpiresAt.Before(consumedAt) {
+		return ErrOAuthStateInvalid
+	}
+	consumedAt = consumedAt.UTC()
+	state.ConsumedAt = &consumedAt
+	return nil
 }
 
 func (r *fakeSourceRepo) SaveOAuthToken(token *models.SourceOAuthToken) error {
@@ -2257,6 +2308,7 @@ func (r *fakeSourceRepo) RevokeSource(
 	source.RevokedAt = &revokedAt
 	source.UpdatedAt = time.Now().UTC()
 	delete(r.oauthTokens, expected.ID)
+	delete(r.oauthStates, expected.ID)
 	copied := *source
 	return &copied, nil
 }

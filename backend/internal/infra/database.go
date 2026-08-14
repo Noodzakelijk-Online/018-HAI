@@ -298,6 +298,7 @@ func RunMigrations(db *gorm.DB) error {
 			&models.SourceIndexEntry{},
 			&models.SourceAuditLog{},
 			&models.SourceOAuthToken{},
+			&models.SourceOAuthState{},
 			&models.VerificationRun{},
 			&models.VerificationEvidence{},
 			&models.VerificationClaim{},

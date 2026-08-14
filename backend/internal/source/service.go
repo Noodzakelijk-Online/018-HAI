@@ -184,7 +184,7 @@ type Service interface {
 	AuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 	AuditLogsForOwner(ownerIdentity string, limit int) ([]models.SourceAuditLog, error)
 	StartGoogleOAuth(sourceID uuid.UUID) (string, error)
-	CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error)
+	CompleteGoogleOAuth(ctx context.Context, code, state, ownerIdentity string) (uuid.UUID, error)
 }
 
 // ContextSearchService binds an interactive source lookup to its caller while
@@ -236,9 +236,10 @@ type pursuitWorkflowIntakeRouter interface {
 
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var (
-	ErrSyncInProgress = errors.New("source sync is already in progress")
-	ErrSourceRevoked  = errors.New("source access is revoked")
-	ErrSourceChanged  = errors.New("source changed concurrently; refresh and retry")
+	ErrSyncInProgress    = errors.New("source sync is already in progress")
+	ErrSourceRevoked     = errors.New("source access is revoked")
+	ErrSourceChanged     = errors.New("source changed concurrently; refresh and retry")
+	ErrOAuthStateInvalid = errors.New("oauth state is invalid, expired, already used, or belongs to another operator")
 )
 
 func rejectRevokedSource(source *models.ConnectedSource) error {
