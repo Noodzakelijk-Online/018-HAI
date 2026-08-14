@@ -234,12 +234,17 @@ func TestProcessDueCompletesEveryClaimedTarget(t *testing.T) {
 		Scope: scope, WorkerID: "worker-batch", Now: now,
 		LeaseDuration: time.Minute, Limit: 10,
 	})
-	if err != nil || result.Claimed != 2 || len(result.Completions) != 2 || len(result.Failures) != 0 {
+	if err != nil || result.Claimed != 2 || len(result.Completions) != 2 || len(result.Failures) != 0 || result.Compositions.Succeeded != 2 {
 		t.Fatalf("ProcessDue() = (%+v, %v)", result, err)
 	}
 	assertAdvisoryControl(t, result.Authority)
 	if collector.calls != 2 {
 		t.Fatalf("collector calls = %d, want 2", collector.calls)
+	}
+	for _, completion := range result.Completions {
+		if !completion.Run.FinishedAt.After(completion.Run.StartedAt) {
+			t.Fatalf("completion did not advance beyond claim: started=%s finished=%s", completion.Run.StartedAt, completion.Run.FinishedAt)
+		}
 	}
 }
 

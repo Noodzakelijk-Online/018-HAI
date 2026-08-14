@@ -28,11 +28,14 @@ source of truth for current state.
   proactivity decisions, and inbox records, with zero execution, delivery,
   Calendar, workflow, mandate, provider, or learning effects.
   The three fixed collectors plus repository/composition lifecycles are now
-  mandatory in CI through a dedicated disposable database, and a retained
-  signed-browser not-due pass proves truthful no-op reporting and no duplicate
-  ledgers. The remaining gate is a disposable signed due-run, transient retry,
-  pause/re-enable, and crash/recovery lifecycle with the full zero-side-effect
-  assertion.
+  mandatory in CI through a dedicated disposable database. The integrated
+  release test covers a due run, one exact transient composition retry without
+  recollection, pause/re-enable, active and expired lease recovery, two-owner
+  isolation, exact no-op replay, and a whole-schema assertion that only the
+  advisory monitor, outcome-evaluation, and proactivity ledgers changed. A
+  retained signed-browser not-due pass separately proves truthful HTTP/UI no-op
+  reporting and no duplicate ledgers. The remaining gate is the equivalent
+  signed due-run and crash/recovery lifecycle through the Windows gateway/UI.
 
 ## Frontend follow-up
 

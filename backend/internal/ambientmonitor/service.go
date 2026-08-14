@@ -460,6 +460,12 @@ func (s *Service) ProcessDue(ctx context.Context, request ProcessDueRequest) (Pr
 			TargetID: target.ID, WorkerID: request.WorkerID,
 			LeaseGeneration: target.Lease.Generation, CompletedAt: s.now().UTC().Truncate(time.Microsecond),
 		}
+		// A fast local collector can finish in the same clock tick as its claim.
+		// Durable target transitions require strictly monotonic timestamps, so do
+		// not ask Postgres to persist a completion at the claim timestamp.
+		if !processRequest.CompletedAt.After(target.Lease.ClaimedAt) {
+			processRequest.CompletedAt = target.Lease.ClaimedAt.Add(time.Microsecond)
+		}
 		completion, processErr := s.ProcessClaim(ctx, processRequest)
 		if processErr != nil {
 			code := processFailureCode(processErr)
@@ -501,6 +507,11 @@ func (s *Service) ProcessDue(ctx context.Context, request ProcessDueRequest) (Pr
 	compositionAsOf := s.now().UTC().Truncate(time.Microsecond)
 	if compositionAsOf.Before(request.Now) {
 		compositionAsOf = request.Now
+	}
+	for _, completion := range result.Completions {
+		if completion.Composition.Status == CompositionPending && compositionAsOf.Before(completion.Composition.NextAttemptAt) {
+			compositionAsOf = completion.Composition.NextAttemptAt
+		}
 	}
 	compositions, compositionErr := s.ProcessCompositions(ctx, ProcessCompositionsRequest{
 		Scope: request.Scope, WorkerID: compositionWorker, Now: compositionAsOf,

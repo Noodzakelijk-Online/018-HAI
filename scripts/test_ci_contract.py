@@ -1174,6 +1174,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "^--- PASS: TestPostgresCollectorSnapshotUsesReadOnlyRepeatableRead",
             "^--- PASS: TestPostgresRepositoryLifecycle",
             "^--- PASS: TestPostgresCompositionRepositoryLifecycle",
+            "^--- PASS: TestPostgresAdvisoryReleaseLifecycle",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, migrations)
