@@ -83,6 +83,7 @@ func GetDefaultAuthService() (IService, error) {
 		config.MailConfig.Password,
 		config.MailConfig.From,
 		config.MailConfig.RequireStartTLS,
+		config.MailConfig.DeliveryTimeout,
 	)
 	return NewService(userService, hasher, sender, blockListService, logger, config.AuthenticationConfig.JwtSecret, passwordResetter), nil
 }
@@ -489,7 +490,7 @@ func (a *service) IsUserAuthenticated(accessToken string) (bool, error) {
 	return true, nil
 }
 
-func (a *service) RequestPasswordReset(email string) (string, time.Time, error) {
+func (a *service) RequestPasswordReset(ctx context.Context, email string) (string, time.Time, error) {
 	if a.passwordResetter == nil || !a.passwordResetter.Configured() {
 		a.logger.Warn("Password reset requested while email delivery is not configured")
 		return "", time.Time{}, errors.New("password reset email delivery is not configured")
@@ -515,7 +516,7 @@ func (a *service) RequestPasswordReset(email string) (string, time.Time, error) 
 		return "", time.Time{}, errors.New("failed to update user")
 	}
 
-	if err := a.passwordResetter.SendPasswordReset(email, resetToken, resetTokenExpires); err != nil {
+	if err := a.passwordResetter.SendPasswordReset(ctx, email, resetToken, resetTokenExpires); err != nil {
 		a.logger.Error("Error sending password-reset email: %v", err)
 		if rollbackErr := a.userService.ClearPasswordResetIfToken(user.ID, resetToken); rollbackErr != nil {
 			a.logger.Error("Failed to remove undelivered reset token: %v", rollbackErr)

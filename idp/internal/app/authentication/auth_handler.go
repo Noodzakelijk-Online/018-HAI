@@ -285,7 +285,7 @@ func (h *Handler) RequestPasswordReset(c *gin.Context) {
 
 	// Do not reveal whether an account exists or whether its delivery channel is available.
 	// The reset service records operational errors in its own logs.
-	_, _, _ = h.authService.RequestPasswordReset(email)
+	_, _, _ = h.authService.RequestPasswordReset(c.Request.Context(), email)
 	response := dto.SuccessResponse{
 		Message:    "If recovery is available for this account, reset instructions have been sent",
 		StatusCode: http.StatusOK,

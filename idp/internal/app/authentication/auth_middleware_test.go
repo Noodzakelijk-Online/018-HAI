@@ -81,19 +81,20 @@ func TestIsLoopbackHost(t *testing.T) {
 }
 
 type middlewareAuthService struct {
-	valid             bool
-	refreshResult     *dto.TokenDetails
-	userID            uuid.UUID
-	refreshCalls      int
-	lastIdentityToken string
-	identityToken     string
-	sessionResult     *dto.AuthSession
-	lastSessionToken  string
-	logoutToken       string
-	logoutErr         error
-	googleAuthURL     string
-	googleTokens      *dto.TokenDetails
-	googleLoginCalls  int
+	valid                bool
+	refreshResult        *dto.TokenDetails
+	userID               uuid.UUID
+	refreshCalls         int
+	lastIdentityToken    string
+	identityToken        string
+	sessionResult        *dto.AuthSession
+	lastSessionToken     string
+	logoutToken          string
+	logoutErr            error
+	googleAuthURL        string
+	googleTokens         *dto.TokenDetails
+	googleLoginCalls     int
+	passwordResetContext context.Context
 }
 
 func (s *middlewareAuthService) Capabilities() dto.AuthCapabilities { return dto.AuthCapabilities{} }
@@ -129,7 +130,9 @@ func (s *middlewareAuthService) RefreshToken(string) (*dto.TokenDetails, error) 
 	return s.refreshResult, nil
 }
 func (s *middlewareAuthService) IsUserAuthenticated(string) (bool, error) { return s.valid, nil }
-func (s *middlewareAuthService) RequestPasswordReset(string) (string, time.Time, error) {
+
+func (s *middlewareAuthService) RequestPasswordReset(ctx context.Context, _ string) (string, time.Time, error) {
+	s.passwordResetContext = ctx
 	return "", time.Time{}, errors.New("not implemented")
 }
 func (s *middlewareAuthService) ConfirmPasswordReset(string, string) error {

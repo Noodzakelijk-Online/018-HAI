@@ -7,6 +7,7 @@ import (
 	"automation-hub-idp/internal/app/services/iservice"
 	"automation-hub-idp/internal/app/users"
 	"automation-hub-idp/internal/app/utils"
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -448,7 +449,7 @@ func TestRequestPasswordResetDoesNotPersistTokenWhenEmailDeliveryIsUnavailable(t
 		logger:           noopLogger{},
 	}
 
-	_, _, err := svc.RequestPasswordReset("operator@example.com")
+	_, _, err := svc.RequestPasswordReset(context.Background(), "operator@example.com")
 	require.EqualError(t, err, "password reset email delivery is not configured")
 	require.Empty(t, userService.storedResetToken)
 }
@@ -463,7 +464,7 @@ func TestRequestPasswordResetClearsTokenWhenEmailDeliveryFails(t *testing.T) {
 		logger:           noopLogger{},
 	}
 
-	_, _, err := svc.RequestPasswordReset("operator@example.com")
+	_, _, err := svc.RequestPasswordReset(context.Background(), "operator@example.com")
 	require.EqualError(t, err, "failed to send password reset email")
 	require.Equal(t, userID, userService.storedResetUserID)
 	require.NotEmpty(t, userService.storedResetToken)
@@ -481,7 +482,7 @@ func TestRequestPasswordResetStoresDeliveredTokenWithoutRollback(t *testing.T) {
 		logger:           noopLogger{},
 	}
 
-	token, expiresAt, err := svc.RequestPasswordReset("operator@example.com")
+	token, expiresAt, err := svc.RequestPasswordReset(context.Background(), "operator@example.com")
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
 	require.Equal(t, token, userService.storedResetToken)
@@ -707,7 +708,7 @@ type fakePasswordResetSender struct {
 }
 
 func (f fakePasswordResetSender) Configured() bool { return f.configured }
-func (f fakePasswordResetSender) SendPasswordReset(string, string, time.Time) error {
+func (f fakePasswordResetSender) SendPasswordReset(context.Context, string, string, time.Time) error {
 	return f.err
 }
 

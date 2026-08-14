@@ -740,6 +740,8 @@ closed without persisting the browser state secret.
 
 For reset emails, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM`, and `SMTP_REQUIRE_STARTTLS=true` in `.env.local`.
+`SMTP_TIMEOUT_SECONDS` defaults to 10 seconds and bounds the complete SMTP
+delivery attempt; an abandoned HTTP request cancels the in-flight delivery.
 Use a dedicated mailbox or provider app password over STARTTLS (typically port
 587), never a primary mailbox password. Recreate the IDP container after
 changing either integration:
