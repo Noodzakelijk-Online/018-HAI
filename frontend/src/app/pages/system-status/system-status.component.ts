@@ -1,7 +1,7 @@
 import { DOCUMENT } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { Subscription, finalize, fromEvent, interval, merge } from 'rxjs';
+import { Subscription, finalize, fromEvent } from 'rxjs';
 import {
   IEventDeliveryFailure,
   IEventDeliveryStats,
@@ -32,6 +32,10 @@ const GROUP_TITLES: Record<string, string> = {
   events: 'Automation delivery',
 };
 
+const READY_POLL_MS = 120000;
+const DEGRADED_POLL_MS = 60000;
+const RECOVERY_POLL_MS = 15000;
+
 @Component({
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false,
@@ -51,8 +55,10 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   eventDeliveryError = false;
   retryingEventId = '';
 
-  private pollSub?: Subscription;
+  private visibilitySub?: Subscription;
+  private pollTimer?: ReturnType<typeof setTimeout>;
   private readinessInFlight = false;
+  private destroyed = false;
 
   constructor(
     @Inject(SYSTEM_STATUS_SERVICE_TOKEN)
@@ -62,24 +68,24 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
-    this.refresh();
-    // Hidden tabs must not keep probing every dependency. A visible tab polls,
-    // and returning to it triggers one immediate refresh.
-    this.pollSub = merge(
-      interval(15000),
-      fromEvent(this.document, 'visibilitychange')
-    ).subscribe(() => {
-      if (!this.document.hidden) {
-        this.refresh(true);
+    this.visibilitySub = fromEvent(this.document, 'visibilitychange').subscribe(() => {
+      if (this.document.hidden) {
+        this.clearPollTimer();
+        return;
       }
+      this.refresh(true);
     });
+    this.refresh();
   }
 
   ngOnDestroy(): void {
-    this.pollSub?.unsubscribe();
+    this.destroyed = true;
+    this.clearPollTimer();
+    this.visibilitySub?.unsubscribe();
   }
 
   refresh(silent = false): void {
+    this.clearPollTimer();
     if (!silent) {
       this.loadEventDelivery();
     }
@@ -100,10 +106,12 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.lastUpdated = new Date();
         this.loading = false;
         this.loadError = false;
+        this.scheduleNextPoll();
       },
       error: () => {
         this.loading = false;
         this.loadError = true;
+        this.scheduleNextPoll();
         if (!silent) {
           this.notification.error(
             'System status unavailable',
@@ -112,6 +120,30 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         }
       },
     });
+  }
+
+  private scheduleNextPoll(): void {
+    if (this.destroyed || this.document.hidden) {
+      return;
+    }
+    this.pollTimer = setTimeout(() => this.refresh(true), this.pollDelay());
+  }
+
+  private pollDelay(): number {
+    if (this.readiness?.status === 'not_ready') {
+      return RECOVERY_POLL_MS;
+    }
+    if (this.loadError || this.readiness?.status === 'degraded') {
+      return DEGRADED_POLL_MS;
+    }
+    return READY_POLL_MS;
+  }
+
+  private clearPollTimer(): void {
+    if (this.pollTimer !== undefined) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = undefined;
+    }
   }
 
   retryEventDelivery(failure: IEventDeliveryFailure): void {

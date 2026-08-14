@@ -28,7 +28,7 @@ describe('SystemStatusComponent polling', () => {
     return result;
   }
 
-  it('polls only while the page is visible and refreshes when it becomes visible', fakeAsync(() => {
+  it('polls healthy systems every two minutes and pauses completely while hidden', fakeAsync(() => {
     const statusService = service();
     const notification = jasmine.createSpyObj('NzNotificationService', ['error', 'success']);
     let hidden = false;
@@ -38,11 +38,14 @@ describe('SystemStatusComponent polling', () => {
     component.ngOnInit();
     expect(statusService.readiness).toHaveBeenCalledTimes(1);
 
-    tick(15000);
+    tick(119999);
+    expect(statusService.readiness).toHaveBeenCalledTimes(1);
+    tick(1);
     expect(statusService.readiness).toHaveBeenCalledTimes(2);
 
     hidden = true;
-    tick(30000);
+    document.dispatchEvent(new Event('visibilitychange'));
+    tick(240000);
     expect(statusService.readiness).toHaveBeenCalledTimes(2);
 
     hidden = false;
@@ -60,12 +63,27 @@ describe('SystemStatusComponent polling', () => {
     const component = new SystemStatusComponent(statusService, notification, document);
 
     component.ngOnInit();
-    tick(45000);
+    tick(360000);
     expect(statusService.readiness).toHaveBeenCalledTimes(1);
 
     response.next(readiness);
     response.complete();
-    tick(15000);
+    tick(120000);
+    expect(statusService.readiness).toHaveBeenCalledTimes(2);
+
+    component.ngOnDestroy();
+  }));
+
+  it('checks critical recovery every fifteen seconds', fakeAsync(() => {
+    const notReady: ISystemReadiness = { ...readiness, status: 'not_ready' };
+    const statusService = service(of(notReady));
+    const notification = jasmine.createSpyObj('NzNotificationService', ['error', 'success']);
+    const component = new SystemStatusComponent(statusService, notification, document);
+
+    component.ngOnInit();
+    tick(14999);
+    expect(statusService.readiness).toHaveBeenCalledTimes(1);
+    tick(1);
     expect(statusService.readiness).toHaveBeenCalledTimes(2);
 
     component.ngOnDestroy();

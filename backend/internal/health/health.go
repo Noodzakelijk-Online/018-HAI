@@ -53,25 +53,34 @@ func Probes(cfg config.Configuration) []doctor.Probe {
 	}
 }
 
-// PostgresProbe opens a real, authenticated connection and pings it. A plain TCP
-// dial would prove only that something is listening on the port; it would still
-// pass with wrong credentials or a missing database, which are exactly the
-// failures an operator needs readiness to surface.
+type postgresPinger interface {
+	PingContext(context.Context) error
+}
+
+// PostgresProbe pings the authenticated pool used by domain routes. A plain TCP
+// dial would prove only that something is listening on the port, while opening
+// a separate pool on every readiness request creates avoidable connection churn
+// and can disagree with the pool that is actually serving requests.
 func PostgresProbe(cfg config.Configuration) doctor.Probe {
+	return postgresProbe(cfg, func() (postgresPinger, error) {
+		gormDB, err := infra.GetDefaultDB()
+		if err != nil {
+			return nil, err
+		}
+		return gormDB.DB()
+	})
+}
+
+func postgresProbe(cfg config.Configuration, acquire func() (postgresPinger, error)) doctor.Probe {
 	return doctor.Probe{
 		Name:     "database.connection",
 		Critical: true,
 		Run: func(ctx context.Context) error {
-			gormDB, err := infra.NewPostgresDatabase(cfg.DbUser, cfg.DbPassword, cfg.DbName, cfg.DbHost, cfg.DbPort)
+			pinger, err := acquire()
 			if err != nil {
 				return fmt.Errorf("connect %s:%d/%s as %s: %w", cfg.DbHost, cfg.DbPort, cfg.DbName, cfg.DbUser, err)
 			}
-			sqlDB, err := gormDB.DB()
-			if err != nil {
-				return fmt.Errorf("acquire pool: %w", err)
-			}
-			defer sqlDB.Close()
-			if err := sqlDB.PingContext(ctx); err != nil {
+			if err := pinger.PingContext(ctx); err != nil {
 				return fmt.Errorf("ping %s:%d/%s: %w", cfg.DbHost, cfg.DbPort, cfg.DbName, err)
 			}
 			return nil
