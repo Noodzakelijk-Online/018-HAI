@@ -1,6 +1,6 @@
-// Mirrors the backend /readyz payload. The three-way status is meaningful and
-// must be preserved end to end: "degraded" is a serving-but-incomplete state
-// that a two-way up/down view would erase.
+// Mirrors the authenticated backend system readiness payload. The three-way
+// status is meaningful and must be preserved end to end: "degraded" is a
+// serving-but-incomplete state that a two-way up/down view would erase.
 export type SystemCheckSeverity = 'ok' | 'warn' | 'fail';
 
 export type SystemReadinessStatus = 'ready' | 'degraded' | 'not_ready';

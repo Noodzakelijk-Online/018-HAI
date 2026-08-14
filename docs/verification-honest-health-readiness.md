@@ -216,7 +216,9 @@ The 401 is correct for protected `/api/v1/*` engine routes: the route now maps
 to the backend, which the gateway guards with its `auth_request` login check.
 `/healthz` and `/readyz` are separate, intentionally public gateway probes.
 Neither requires an IDP session. `/healthz` reports liveness; `/readyz` returns
-the current readiness JSON with HTTP 200 or 503.
+the aggregate readiness state and counts with HTTP 200 or 503. Individual
+dependency checks are available only from authenticated
+`/api/v1/system/readiness`.
 
 ## 8. Two bugs the new probe surfaced immediately
 
@@ -248,11 +250,14 @@ the tri-state semantics.
 ## 10. Frontend — System Status page
 
 A new authenticated page at `/system-status` (nav: Control Center → System →
-System Status) consumes `/readyz` and renders it: an overall banner
+System Status) consumes authenticated `/api/v1/system/readiness` and renders it:
+an overall banner
 (ready/degraded/not ready), a recommended-next-actions list built from the
 non-healthy checks, and per-subsystem cards that sort failures to the top. It
-polls every 15s, and treats a 503 body as data rather than an error, so a
-not-ready backend is shown rather than swallowed.
+polls adaptively (15 seconds while not ready, 60 seconds after errors or while
+degraded, 120 seconds while ready), pauses while the page is hidden, and treats
+a 503 body as data rather than an error, so a not-ready backend is shown rather
+than swallowed.
 
 Build: the Angular image built cleanly; the page compiled into its own lazy
 chunk (`pages-system-status-system-status-module`, 10.53 kB).
@@ -269,14 +274,13 @@ user, through the gateway on :8088):
   Database card sorts to the top and shows the real driver error. Everything
   else stays green. Screenshot: `docs/evidence/system-status-db-down.png`.
 - **Unauthenticated readiness probe** - `/readyz` through the gateway is
-  intentionally public and returns the readiness payload and 200/503 semantics
-  without an IDP session. Protected `/api/v1/*` engine routes still return 401
-  when the session is absent.
+  intentionally public and returns only aggregate readiness plus 200/503
+  semantics without an IDP session. Protected `/api/v1/*` engine routes,
+  including `/api/v1/system/readiness`, return 401 when the session is absent.
 
-Because readiness includes subsystem status, deployment operators must treat
-network exposure of the public gateway as an explicit operational decision.
-Authentication must not be added to `/readyz` without also updating container
-health checks and monitoring clients that rely on a public probe.
+The public probe omits subsystem names, hosts, users, paths, and configuration
+details. Authentication must not be added to `/readyz` without also updating
+container health checks and monitoring clients that rely on a public probe.
 
 Note: the browser check registered a throwaway local account
 (`verify@local.test`) via the open `/api/v1/auth/register` endpoint. It exists

@@ -127,14 +127,15 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
-	router.GET("/readyz", readinessHandler(func(ctx context.Context) doctor.Report {
+	readinessReport := func(ctx context.Context) doctor.Report {
 		// Static configuration diagnosis, then live dependency probes. The
 		// second half is what makes the answer trustworthy: without it a
 		// process with an unreachable database still reports itself ready.
 		configured := doctor.Diagnose(config.AppConfig)
 		live := doctor.RunProbes(ctx, health.DefaultTimeout, health.Probes(config.AppConfig))
 		return configured.Merge(live...)
-	}))
+	}
+	router.GET("/readyz", readinessHandler(readinessReport))
 
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"
 	docs.SwaggerInfo.BasePath = relativePathV1
@@ -841,7 +842,7 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 		flagStore := defaultFeatureFlags()
 		initializeFeatureFlagRoutes(v1, flagStore)
 		diagnose := func() doctor.Report { return doctor.Diagnose(config.AppConfig) }
-		initializeSystemRoutes(v1, diagnose, func() map[string]int {
+		initializeSystemRoutes(v1, diagnose, readinessReport, func() map[string]int {
 			return map[string]int{
 				"featureFlags": len(flagStore.List()),
 				"languages":    len(i18n.Supported()),

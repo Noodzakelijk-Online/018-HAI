@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -49,6 +50,7 @@ func TestLegacyControlPlaneRejectsAPIKeyWithoutAuthenticatedOwner(t *testing.T) 
 		{method: http.MethodGet, path: "/api/v1/runtime-lab/feature-parity"},
 		{method: http.MethodGet, path: "/api/v1/runtime-lab/capabilities"},
 		{method: http.MethodGet, path: "/api/v1/system/info"},
+		{method: http.MethodGet, path: "/api/v1/system/readiness"},
 		{method: http.MethodGet, path: "/api/v1/flags"},
 	} {
 		recorder := performLegacyControlPlaneRequest(engine, test.method, test.path, test.body, "")
@@ -69,6 +71,7 @@ func TestLegacyControlPlaneViewerCanReadButCannotMutate(t *testing.T) {
 		"/api/v1/runtime-lab/capabilities",
 		"/api/v1/runtime-lab/openclaw/feature-parity",
 		"/api/v1/system/info",
+		"/api/v1/system/readiness",
 		"/api/v1/flags",
 	} {
 		recorder := performLegacyControlPlaneRequest(engine, http.MethodGet, path, "", "viewer")
@@ -252,6 +255,7 @@ func newLegacyControlPlanePermissionEngine(t *testing.T) *gin.Engine {
 	initializeSystemRoutes(
 		api,
 		func() doctor.Report { return doctor.Report{} },
+		func(context.Context) doctor.Report { return doctor.Report{} },
 		func() map[string]int { return map[string]int{} },
 	)
 	return engine

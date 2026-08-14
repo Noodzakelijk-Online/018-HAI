@@ -688,9 +688,12 @@ Expected behavior:
 - `/` serves the Angular shell.
 - `/healthz` and `/readyz` reach the backend through nginx without a session.
   They are intentionally public liveness/readiness probes and return backend
-  health JSON (`/readyz` uses HTTP `200` or `503` according to readiness).
+  health JSON (`/readyz` uses HTTP `200` or `503` and exposes aggregate counts,
+  not internal dependency details).
 - Protected engine routes such as `/api/v1/llm/policy` return `401` without a
   signed session, not anonymous application data.
+- Signed-in operators can inspect the full live readiness report at
+  `/api/v1/system/readiness` or on the System Status page.
 
 If port 80 is already in use, set `GATEWAY_HOST_PORT=8088` in `.env.local`,
 recreate `gateway`, and open `http://localhost:8088`.

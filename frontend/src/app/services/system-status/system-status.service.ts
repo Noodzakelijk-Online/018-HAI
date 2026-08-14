@@ -13,9 +13,9 @@ import {
   providedIn: 'root',
 })
 export class SystemStatusService implements ISystemStatusService {
-  // Root path, not /api/v1: the readiness probe lives beside /healthz so an
-  // orchestrator can reach it without knowing the API version.
-  private readonly readinessUrl = '/readyz';
+  // Detailed checks can reveal internal topology. The operator page uses the
+  // authenticated endpoint; the public /readyz probe exposes aggregates only.
+  private readonly readinessUrl = '/api/v1/system/readiness';
   private readonly eventDeliveryUrl = '/api/v1/event-delivery';
 
   constructor(private http: HttpClient) {}

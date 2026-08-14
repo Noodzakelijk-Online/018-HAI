@@ -115,7 +115,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         if (!silent) {
           this.notification.error(
             'System status unavailable',
-            'Could not reach the readiness probe. You may need to sign in again.'
+            'Could not load detailed system readiness. You may need to sign in again.'
           );
         }
       },

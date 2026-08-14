@@ -20,8 +20,8 @@
 
   <div *ngIf="loadError && !readiness" class="load-error">
     <span nz-icon nzType="disconnect"></span>
-    Could not reach the readiness probe. If you were redirected to sign in, your
-    session may have expired.
+    Could not load detailed system readiness. If you were redirected to sign in,
+    your session may have expired.
   </div>
 
   <ng-container *ngIf="readiness">

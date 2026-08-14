@@ -9,7 +9,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/healthz` | liveness |
-| GET | `/readyz` | readiness (doctor diagnosis; 200/503) |
+| GET | `/readyz` | aggregate readiness only; 200/503 without internal check detail |
 | GET | `/swagger/*` | API docs |
 
 ## Authenticated (`/api/v1`)
@@ -28,7 +28,7 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
 | `/task` | owner-gated plan, run, success, logs, review-queue, review resolution |
 | `/assistant`, `/agent-cycle`, `/autonomy`, `/ambient`, `/os` | owner-gated command/logs, run, overview/stress, scan/needs/proposal resolution, overview |
 | **`/flags`** | GET — feature flags (added this goal run) |
-| **`/system`** | **GET `/info`**, **GET `/support-bundle`** (added this goal run) |
+| **`/system`** | **GET `/info`**, **GET `/readiness`** (live detailed checks), **GET `/support-bundle`** |
 
 ## Findings
 

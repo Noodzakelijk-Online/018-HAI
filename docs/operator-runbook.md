@@ -134,6 +134,9 @@ Gateway `/healthz` and `/readyz` are intentionally public. They expose only
 service status. Operational `/api/v1/*` routes remain authenticated unless a
 route is explicitly documented as a public callback.
 
+Use the signed-in System Status page or authenticated
+`GET /api/v1/system/readiness` when individual dependency checks are needed.
+
 `degraded` is not equivalent to full capability. For example, a missing LLM
 provider may leave the control plane available while generation is unavailable.
 

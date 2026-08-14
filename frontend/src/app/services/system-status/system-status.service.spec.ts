@@ -14,9 +14,9 @@ describe('SystemStatusService', () => {
 
   afterEach(() => http.verify())
 
-  it('reads public readiness without requiring an API route', () => {
+  it('reads detailed readiness from the authenticated system route', () => {
     service.readiness().subscribe()
-    const request = http.expectOne('/readyz')
+    const request = http.expectOne('/api/v1/system/readiness')
     expect(request.request.method).toBe('GET')
     request.flush({ status: 'ready', service: 'backend', summary: { ok: 1, warn: 0, fail: 0 }, checks: [] })
   })
