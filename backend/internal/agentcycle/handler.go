@@ -27,7 +27,12 @@ func (h *Handler) Run(c *gin.Context) {
 		return
 	}
 	var request RunRequest
-	_ = c.ShouldBindJSON(&request)
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent cycle request"})
+			return
+		}
+	}
 	request.OwnerIdentity = ownerIdentity
 	result := h.service.Run(request)
 	status := http.StatusOK

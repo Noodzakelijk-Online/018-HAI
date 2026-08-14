@@ -488,6 +488,50 @@ func TestPursuitMutationEndpointsRejectOwnerlessLegacyRecords(t *testing.T) {
 	}
 }
 
+func TestPursuitOptionalBodyActionsRejectMalformedChunkedRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	pursuit, err := service.Create(CreateRequest{OwnerIdentity: "alice", Title: "Malformed request guard", DesiredOutcome: "Remain unchanged"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := service.ArchiveForOwner("alice", pursuit.ID, true, "alice"); err != nil {
+		t.Fatalf("ArchiveForOwner: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	handler := NewHandler(service)
+	router.POST("/pursuits/:id/reopen", handler.Reopen)
+	router.POST("/pursuits/:id/summary", handler.RefreshSummary)
+
+	for _, path := range []string{
+		"/pursuits/" + pursuit.ID.String() + "/reopen",
+		"/pursuits/" + pursuit.ID.String() + "/summary",
+	} {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"note":`))
+		request.Header.Set("Content-Type", "application/json")
+		request.ContentLength = -1
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d, want %d; body=%s", path, recorder.Code, http.StatusBadRequest, recorder.Body.String())
+		}
+	}
+
+	stored, err := repo.FindByID(pursuit.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !stored.Archived || stored.Status != StatusArchived {
+		t.Fatalf("malformed optional-body action changed pursuit: %#v", stored)
+	}
+}
+
 func TestDelegationPackageEndpointDoesNotExposeAnotherOwnersWork(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

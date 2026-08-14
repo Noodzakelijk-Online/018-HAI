@@ -806,7 +806,12 @@ func (h *Handler) Reopen(c *gin.Context) {
 	var request struct {
 		Note string `json:"note,omitempty"`
 	}
-	_ = c.ShouldBindJSON(&request)
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pursuit reopen request"})
+			return
+		}
+	}
 	record, err := h.service.ReopenForOwner(pursuitOwner(c), id, verifiedActor(c, "operator"), request.Note)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1018,7 +1023,12 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 	var request struct {
 		Actor string `json:"actor,omitempty"`
 	}
-	_ = c.ShouldBindJSON(&request)
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pursuit summary request"})
+			return
+		}
+	}
 	request.Actor = verifiedActor(c, "system")
 	_, err := h.service.RefreshSummaryForOwner(pursuitOwner(c), id, request.Actor)
 	if err != nil {

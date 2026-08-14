@@ -328,7 +328,7 @@ func (h *Handler) ReminderDeliveryHistory(c *gin.Context) {
 
 func (h *Handler) RunDueReminderDeliveries(c *gin.Context) {
 	var request RunDueRequest
-	if c.Request.ContentLength > 0 {
+	if c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&request); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -536,7 +536,9 @@ func (h *Handler) respondScopedWorkflow(c *gin.Context, id uuid.UUID, status int
 
 func (h *Handler) RunDue(c *gin.Context) {
 	var request RunDueRequest
-	_ = c.ShouldBindJSON(&request)
+	if !bindOptionalWorkflowRunRequest(c, &request, "invalid workflow run request") {
+		return
+	}
 	result, err := h.service.RunDueForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRunFailedMessage})
@@ -563,7 +565,9 @@ func (h *Handler) RunOne(c *gin.Context) {
 
 func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 	var request RunDueRequest
-	_ = c.ShouldBindJSON(&request)
+	if !bindOptionalWorkflowRunRequest(c, &request, "invalid workflow recovery request") {
+		return
+	}
 	result, err := h.service.RecoverStaleClaimsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRecoveryFailedMessage})
@@ -574,13 +578,26 @@ func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 
 func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 	var request RunDueRequest
-	_ = c.ShouldBindJSON(&request)
+	if !bindOptionalWorkflowRunRequest(c, &request, "invalid workflow follow-up request") {
+		return
+	}
 	result, err := h.service.RunDueOpenLoopsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowOpenLoopRunFailedMessage})
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func bindOptionalWorkflowRunRequest(c *gin.Context, request *RunDueRequest, message string) bool {
+	if c.Request.ContentLength == 0 {
+		return true
+	}
+	if err := c.ShouldBindJSON(request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": message})
+		return false
+	}
+	return true
 }
 
 func (h *Handler) Overview(c *gin.Context) {

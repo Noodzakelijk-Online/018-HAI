@@ -63,6 +63,26 @@ func TestCreateAutomationRejectsOversizedMultipartBeforeParsing(t *testing.T) {
 	}
 }
 
+func TestLaunchRejectsMalformedChunkedRequestBeforeServiceCall(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	id := uuid.New()
+	handler := NewHandler(newTestService(
+		newFakeAutomationRepo(&models.Automation{ID: id}),
+		events.Publisher{},
+	))
+	router := gin.New()
+	router.POST("/automation/:id/launch", handler.Launch)
+	request := httptest.NewRequest(http.MethodPost, "/automation/"+id.String()+"/launch", bytes.NewBufferString(`{"task":`))
+	request.Header.Set("Content-Type", "application/json")
+	request.ContentLength = -1
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("malformed launch status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
 func TestGetAutomationReturnsNotFoundForDeletedRecord(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
