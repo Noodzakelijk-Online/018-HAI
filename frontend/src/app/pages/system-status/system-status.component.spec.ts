@@ -31,14 +31,12 @@ describe('SystemStatusComponent polling', () => {
   it('polls healthy systems every two minutes and pauses completely while hidden', fakeAsync(() => {
     const statusService = service();
     const notification = jasmine.createSpyObj('NzNotificationService', ['error', 'success']);
-    const changeDetector = jasmine.createSpyObj('ChangeDetectorRef', ['detectChanges']);
     let hidden = false;
     const hiddenSpy = spyOnProperty(document, 'hidden', 'get').and.callFake(() => hidden);
-    const component = new SystemStatusComponent(statusService, notification, document, changeDetector);
+    const component = new SystemStatusComponent(statusService, notification, document);
 
     component.ngOnInit();
     expect(statusService.readiness).toHaveBeenCalledTimes(1);
-    expect(changeDetector.detectChanges).toHaveBeenCalled();
 
     tick(119999);
     expect(statusService.readiness).toHaveBeenCalledTimes(1);

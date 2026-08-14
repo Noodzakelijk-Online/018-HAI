@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit } from '@angular/core'
+import { ChangeDetectorRef, Component, OnDestroy, OnInit } from '@angular/core'
 import { Title } from '@angular/platform-browser'
 import { NavigationEnd, Router } from '@angular/router'
 import { Subscription } from 'rxjs'
@@ -6,6 +6,7 @@ import { filter } from 'rxjs/operators'
 import { HAI_MODULE_GROUPS, HAI_MODULES, HaiModuleDefinition, HaiModuleGroup, moduleDocumentTitle, moduleForUrl } from './module-registry'
 import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './module-view-preferences.service'
 import { ThemeMode, ThemeService } from '../services/theme.service'
+import { HttpViewRefreshScheduler } from '../services/http-view-refresh.interceptor'
 
 @Component({
   standalone: false,
@@ -41,9 +42,12 @@ export class AppShellComponent implements OnInit, OnDestroy {
     private preferences: ModuleViewPreferencesService,
     private themeService: ThemeService,
     private documentTitle: Title,
+    private changeDetector: ChangeDetectorRef,
+    private httpViewRefresh: HttpViewRefreshScheduler,
   ) {}
 
   ngOnInit(): void {
+    this.httpViewRefresh.registerShell(this.changeDetector)
     this.themeMode = this.themeService.mode()
     this.updateCurrent(this.router.url)
     this.routerSubscription = this.router.events.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd))
@@ -52,6 +56,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.httpViewRefresh.unregisterShell(this.changeDetector)
     this.routerSubscription?.unsubscribe()
     document.removeEventListener('toggle', this.onDetailsToggle, true)
   }

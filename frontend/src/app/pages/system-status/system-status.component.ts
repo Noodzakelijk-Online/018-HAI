@@ -1,12 +1,10 @@
 import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
-  ChangeDetectorRef,
   Component,
   Inject,
   OnDestroy,
   OnInit,
-  Optional,
 } from '@angular/core';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { Subscription, finalize, fromEvent, timeout } from 'rxjs';
@@ -74,8 +72,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
     @Inject(SYSTEM_STATUS_SERVICE_TOKEN)
     private systemStatusService: ISystemStatusService,
     private notification: NzNotificationService,
-    @Inject(DOCUMENT) private document: Document,
-    @Optional() private changeDetector?: ChangeDetectorRef
+    @Inject(DOCUMENT) private document: Document
   ) {}
 
   ngOnInit(): void {
@@ -121,7 +118,6 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.loading = false;
         this.loadError = false;
         this.scheduleNextPoll();
-        this.renderAsyncState();
       },
       error: () => {
         this.loading = false;
@@ -133,7 +129,6 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
             'Could not load detailed system readiness. You may need to sign in again.'
           );
         }
-        this.renderAsyncState();
       },
     });
   }
@@ -201,20 +196,12 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.eventDelivery = stats;
         this.eventDeliveryError = false;
         this.eventDeliveryLoading = false;
-        this.renderAsyncState();
       },
       error: () => {
         this.eventDeliveryError = true;
         this.eventDeliveryLoading = false;
-        this.renderAsyncState();
       },
     });
-  }
-
-  private renderAsyncState(): void {
-    if (!this.destroyed) {
-      this.changeDetector?.detectChanges();
-    }
   }
 
   statusLabel(): string {
